@@ -1032,8 +1032,13 @@ def business_dashboard(business_id):
     
     content = f'''
     <div class="container">
-        <h1 class="page-title">🏢 {biz.get("name", business_id)}</h1>
-        <p class="page-subtitle">What would you like to do?</p>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:20px">
+            <div>
+                <h1 class="page-title" style="margin-bottom:5px">🏢 {biz.get("name", business_id)}</h1>
+                <p class="page-subtitle" style="margin:0">What would you like to do?</p>
+            </div>
+            <a href="/business/{business_id}/settings" class="btn btn-outline" style="width:auto">⚙️ Settings</a>
+        </div>
         
         <div class="card">
             <div class="card-title">📥 CAPTURE (Supplier Invoices)</div>
@@ -1091,6 +1096,71 @@ def business_dashboard(business_id):
     
     return render_page(content, biz.get("name", "Business"), back_url="/")
 
+
+@app.route("/business/<business_id>/settings")
+def business_settings(business_id):
+    """Business settings page"""
+    biz = get_business(business_id)
+    
+    content = f'''
+    <div class="container">
+        <h1 class="page-title">⚙️ Business Settings</h1>
+        <p class="page-subtitle">{biz.get("name", business_id)}</p>
+        
+        <div class="card">
+            <div class="card-title">✏️ Rename Business</div>
+            <form action="/business/{business_id}/rename" method="POST">
+                <div class="form-group">
+                    <label class="form-label">Business Name</label>
+                    <input type="text" name="name" class="form-input" value="{biz.get('name', '')}" required>
+                </div>
+                <button type="submit" class="btn btn-success">✓ Save Name</button>
+            </form>
+        </div>
+        
+        <div class="card" style="border:1px solid var(--danger)">
+            <div class="card-title" style="color:var(--danger)">🗑️ Danger Zone</div>
+            <p style="color:var(--text-muted);margin-bottom:15px">Delete this business and all its data. This cannot be undone!</p>
+            <button onclick="confirmDelete()" class="btn" style="background:var(--danger);color:#fff">🗑️ Delete Business</button>
+        </div>
+    </div>
+    
+    <script>
+    function confirmDelete() {{
+        var name = prompt('Type the business name to confirm deletion:\\n{biz.get("name", business_id)}');
+        if (name === '{biz.get("name", business_id)}') {{
+            window.location.href = '/business/{business_id}/delete';
+        }} else if (name !== null) {{
+            alert('Name does not match. Deletion cancelled.');
+        }}
+    }}
+    </script>
+    '''
+    
+    return render_page(content, "Settings", back_url=f"/business/{business_id}")
+
+
+@app.route("/business/<business_id>/rename", methods=["POST"])
+def business_rename(business_id):
+    """Rename a business"""
+    data = load_data()
+    if business_id in data["businesses"]:
+        new_name = request.form.get("name", "").strip()
+        if new_name:
+            data["businesses"][business_id]["name"] = new_name
+            save_data(data)
+    return redirect(f"/business/{business_id}/settings")
+
+
+@app.route("/business/<business_id>/delete")
+def business_delete(business_id):
+    """Delete a business"""
+    data = load_data()
+    if business_id in data["businesses"]:
+        del data["businesses"][business_id]
+        save_data(data)
+    return redirect("/")
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ROUTES - SUPPLIER INVOICE (STOCK/COS)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1120,14 +1190,9 @@ def supplier_invoice_new(business_id):
         
         <div class="card">
             <div class="card-title">How do you want to capture?</div>
+            <div id="captureInfo" style="background:rgba(59,130,246,0.1);padding:15px;border-radius:10px;margin-bottom:20px;text-align:center"></div>
             
-            <div class="btn-row">
-                <button onclick="document.getElementById('cameraInput').click()" class="btn btn-primary">
-                    📷 Take Photo
-                </button>
-                <button onclick="document.getElementById('fileInput').click()" class="btn btn-secondary">
-                    📁 Upload File
-                </button>
+            <div class="btn-row" id="captureButtons">
             </div>
             
             <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" onchange="handleCapture(this)">
@@ -1139,6 +1204,21 @@ def supplier_invoice_new(business_id):
                 ✍️ Enter Manually
             </a>
         </div>
+        
+        <script>
+        // Detect device and show appropriate buttons
+        var isMobile = /mobile|android|iphone|ipad/i.test(navigator.userAgent);
+        var info = document.getElementById('captureInfo');
+        var btns = document.getElementById('captureButtons');
+        
+        if (isMobile) {{
+            info.innerHTML = '📱 Tap to open camera and snap your invoice';
+            btns.innerHTML = '<button onclick="document.getElementById(\\'cameraInput\\').click()" class="btn btn-primary" style="font-size:18px;padding:18px">📷 Take Photo</button>';
+        }} else {{
+            info.innerHTML = '💻 Upload an image, or use your phone at this URL to take photos';
+            btns.innerHTML = '<button onclick="document.getElementById(\\'fileInput\\').click()" class="btn btn-primary">📁 Upload Image</button>';
+        }}
+        </script>
         
         <div id="processingArea" style="display:none">
             <div class="card">
@@ -1805,17 +1885,20 @@ Extract:
 8. What type of expense this is
 
 Expense types (pick the best match):
-- 6100 = Rent
-- 6200 = Water & Electricity / Utilities
-- 6300 = Phone & Internet / Telecommunications
-- 6400 = Insurance
-- 6500 = Repairs & Maintenance
-- 6600 = Office Supplies / Stationery
-- 6700 = Bank Charges
-- 6800 = Advertising & Marketing
-- 6900 = Professional Fees (Accounting/Legal)
-- 6910 = Travel & Fuel
-- 6999 = Other Expense
+- 6100 = Rent (has VAT)
+- 6200 = Water & Electricity / Utilities (has VAT)
+- 6300 = Phone & Internet / Telecommunications (has VAT)
+- 6400 = Insurance (NO VAT - zero rated)
+- 6500 = Repairs & Maintenance (has VAT)
+- 6600 = Office Supplies / Stationery (has VAT)
+- 6700 = Bank Charges (NO VAT - exempt)
+- 6800 = Advertising & Marketing (has VAT)
+- 6900 = Professional Fees (Accounting/Legal) (has VAT)
+- 6910 = Fuel / Petrol / Diesel (NO VAT - zero rated in SA)
+- 6920 = Vehicle Expenses excl Fuel (has VAT)
+- 6999 = Other Expense (has VAT)
+
+IMPORTANT: Fuel/Petrol/Diesel has NO VAT in South Africa! If this is a fuel slip, set vat to 0.
 
 Return ONLY valid JSON:
 {{
@@ -2136,14 +2219,9 @@ def expense_new(business_id):
         
         <div class="card">
             <div class="card-title">How do you want to capture?</div>
+            <div id="captureInfo" style="background:rgba(59,130,246,0.1);padding:15px;border-radius:10px;margin-bottom:20px;text-align:center"></div>
             
-            <div class="btn-row">
-                <button onclick="document.getElementById('cameraInput').click()" class="btn btn-primary">
-                    📷 Take Photo
-                </button>
-                <button onclick="document.getElementById('fileInput').click()" class="btn btn-secondary">
-                    📁 Upload File
-                </button>
+            <div class="btn-row" id="captureButtons">
             </div>
             
             <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" onchange="handleCapture(this)">
@@ -2155,6 +2233,20 @@ def expense_new(business_id):
                 ✍️ Enter Manually
             </a>
         </div>
+        
+        <script>
+        var isMobile = /mobile|android|iphone|ipad/i.test(navigator.userAgent);
+        var info = document.getElementById('captureInfo');
+        var btns = document.getElementById('captureButtons');
+        
+        if (isMobile) {{
+            info.innerHTML = '📱 Tap to open camera and snap your receipt';
+            btns.innerHTML = '<button onclick="document.getElementById(\\'cameraInput\\').click()" class="btn btn-primary" style="font-size:18px;padding:18px">📷 Take Photo</button>';
+        }} else {{
+            info.innerHTML = '💻 Upload an image, or use your phone at this URL to take photos';
+            btns.innerHTML = '<button onclick="document.getElementById(\\'fileInput\\').click()" class="btn btn-primary">📁 Upload Image</button>';
+        }}
+        </script>
         
         <div id="processingArea" style="display:none">
             <div class="card">
@@ -2252,17 +2344,18 @@ def expense_manual(business_id):
     # Expense categories
     expense_categories = '''
         <option value="">-- Select Category --</option>
-        <option value="6100">🏠 Rent</option>
-        <option value="6200">💡 Water & Electricity</option>
-        <option value="6300">📞 Phone & Internet</option>
-        <option value="6400">🛡️ Insurance</option>
-        <option value="6500">🔧 Repairs & Maintenance</option>
-        <option value="6600">📎 Office Supplies</option>
-        <option value="6700">🏦 Bank Charges</option>
-        <option value="6800">📣 Advertising & Marketing</option>
-        <option value="6900">👔 Professional Fees (Accounting/Legal)</option>
-        <option value="6910">🚗 Travel & Fuel</option>
-        <option value="6999">📦 Other Expense</option>
+        <option value="6100" data-vat="yes">🏠 Rent</option>
+        <option value="6200" data-vat="yes">💡 Water & Electricity</option>
+        <option value="6300" data-vat="yes">📞 Phone & Internet</option>
+        <option value="6400" data-vat="no">🛡️ Insurance (No VAT)</option>
+        <option value="6500" data-vat="yes">🔧 Repairs & Maintenance</option>
+        <option value="6600" data-vat="yes">📎 Office Supplies</option>
+        <option value="6700" data-vat="no">🏦 Bank Charges (No VAT)</option>
+        <option value="6800" data-vat="yes">📣 Advertising & Marketing</option>
+        <option value="6900" data-vat="yes">👔 Professional Fees (Accounting/Legal)</option>
+        <option value="6910" data-vat="no">⛽ Fuel (No VAT)</option>
+        <option value="6920" data-vat="yes">🚗 Vehicle Expenses (excl Fuel)</option>
+        <option value="6999" data-vat="yes">📦 Other Expense</option>
     '''
     
     content = f'''
@@ -2306,7 +2399,7 @@ def expense_manual(business_id):
             
             <div class="form-group">
                 <label class="form-label">Expense Category</label>
-                <select id="expenseCategory" class="form-select">
+                <select id="expenseCategory" class="form-select" onchange="checkCategoryVat()">
                     {expense_categories}
                 </select>
             </div>
@@ -2367,6 +2460,14 @@ def expense_manual(business_id):
     function checkNewSupplier() {{
         var sel = document.getElementById('supplierSelect');
         document.getElementById('newSupplierFields').style.display = sel.value === 'NEW' ? 'block' : 'none';
+    }}
+    
+    function checkCategoryVat() {{
+        var sel = document.getElementById('expenseCategory');
+        var opt = sel.options[sel.selectedIndex];
+        var hasVat = opt.dataset.vat !== 'no';
+        document.getElementById('noVat').checked = !hasVat;
+        toggleVat();
     }}
     
     function calcTotals() {{
@@ -2599,6 +2700,232 @@ def expense_confirm(business_id):
     
     return render_page(content, "Confirm Expense", back_url=f"/business/{business_id}/expense/manual")
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXPENSE LIST
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/business/<business_id>/expenses")
+def expenses_list(business_id):
+    """List all expenses"""
+    data = load_data()
+    biz = data.get("businesses", {}).get(business_id, {})
+    docs = biz.get("documents", {})
+    
+    # Get expenses from both lists
+    expenses = docs.get("expenses", [])
+    supplier_exp = [d for d in docs.get("supplier_invoices", []) if d.get("expense_type")]
+    all_expenses = expenses + supplier_exp
+    
+    msg = request.args.get('msg', '')
+    alert = f'<div style="background:var(--success);color:#fff;padding:15px;border-radius:10px;margin-bottom:20px">{msg}</div>' if msg else ''
+    
+    # Category totals
+    cat_totals = {}
+    total = 0
+    for exp in all_expenses:
+        cat = exp.get("category_name", "Other")
+        amt = exp.get("amount_incl", 0) or exp.get("total", 0)
+        total += amt
+        cat_totals[cat] = cat_totals.get(cat, 0) + amt
+    
+    # Table rows
+    rows = ""
+    for exp in sorted(all_expenses, key=lambda x: x.get("date", ""), reverse=True):
+        amt = exp.get("amount_incl", 0) or exp.get("total", 0)
+        rows += f'''<tr>
+            <td>{exp.get("date", "")}</td>
+            <td><a href="/business/{business_id}/document/{exp.get('id')}" style="color:var(--primary)">{exp.get("id", "")}</a></td>
+            <td>{exp.get("supplier", {}).get("name", "")}</td>
+            <td>{exp.get("category_name", "Other")}</td>
+            <td style="text-align:right">R {amt:,.2f}</td>
+        </tr>'''
+    
+    if not rows:
+        rows = '<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--text-muted)">No expenses yet</td></tr>'
+    
+    # Category summary
+    cat_rows = ""
+    for cat, amt in sorted(cat_totals.items(), key=lambda x: x[1], reverse=True):
+        cat_rows += f'<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)"><span>{cat}</span><span>R {amt:,.2f}</span></div>'
+    
+    content = f'''
+    <div class="container">
+        <h1 class="page-title">💸 Expenses</h1>
+        <p class="page-subtitle">{len(all_expenses)} expenses • Total: R {total:,.2f}</p>
+        
+        {alert}
+        
+        <div class="btn-row" style="margin-bottom:20px">
+            <a href="/business/{business_id}/expense/new" class="btn btn-success">➕ Capture Expense</a>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">📊 By Category</div>
+            {cat_rows if cat_rows else '<p style="color:var(--text-muted)">No expenses</p>'}
+            <div style="display:flex;justify-content:space-between;padding:15px 0 0;margin-top:10px;border-top:2px solid var(--primary);font-weight:700;font-size:18px">
+                <span>TOTAL</span><span style="color:var(--success)">R {total:,.2f}</span>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">📋 All Expenses</div>
+            <div style="overflow-x:auto">
+                <table class="table">
+                    <thead><tr><th>Date</th><th>Doc</th><th>Supplier</th><th>Category</th><th style="text-align:right">Amount</th></tr></thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    '''
+    return render_page(content, "Expenses", back_url=f"/business/{business_id}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SUPPLIER INVOICE LIST
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/business/<business_id>/supplier-invoices")
+def supplier_invoices_list(business_id):
+    """List supplier invoices"""
+    data = load_data()
+    biz = data.get("businesses", {}).get(business_id, {})
+    invoices = [d for d in biz.get("documents", {}).get("supplier_invoices", []) if not d.get("expense_type")]
+    
+    total = sum(inv.get("total", 0) for inv in invoices)
+    
+    rows = ""
+    for inv in sorted(invoices, key=lambda x: x.get("date", ""), reverse=True):
+        rows += f'''<tr>
+            <td>{inv.get("date", "")}</td>
+            <td><a href="/business/{business_id}/document/{inv.get('id')}" style="color:var(--primary)">{inv.get("id", "")}</a></td>
+            <td>{inv.get("invoice_number", "")}</td>
+            <td>{inv.get("supplier", {}).get("name", "")}</td>
+            <td style="text-align:right">R {inv.get("total", 0):,.2f}</td>
+        </tr>'''
+    
+    if not rows:
+        rows = '<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--text-muted)">No supplier invoices yet</td></tr>'
+    
+    content = f'''
+    <div class="container">
+        <h1 class="page-title">📦 Supplier Invoices</h1>
+        <p class="page-subtitle">{len(invoices)} invoices • Total: R {total:,.2f}</p>
+        
+        <div class="btn-row" style="margin-bottom:20px">
+            <a href="/business/{business_id}/supplier-invoice/new" class="btn btn-success">➕ Capture Invoice</a>
+        </div>
+        
+        <div class="card">
+            <div style="overflow-x:auto">
+                <table class="table">
+                    <thead><tr><th>Date</th><th>Doc</th><th>Invoice #</th><th>Supplier</th><th style="text-align:right">Amount</th></tr></thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    '''
+    return render_page(content, "Supplier Invoices", back_url=f"/business/{business_id}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROFIT & LOSS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/business/<business_id>/profit-loss")
+def profit_loss(business_id):
+    """P&L Report"""
+    data = load_data()
+    biz = data.get("businesses", {}).get(business_id, {})
+    ledger = biz.get("ledger", [])
+    
+    income, cos, expenses = 0, 0, 0
+    
+    for e in ledger:
+        acc = e.get("account", "")
+        dr, cr = e.get("debit", 0), e.get("credit", 0)
+        if acc.startswith("4"): income += cr - dr
+        elif acc.startswith("5"): cos += dr - cr
+        elif acc.startswith("6"): expenses += dr - cr
+    
+    gross = income - cos
+    net = gross - expenses
+    
+    content = f'''
+    <div class="container">
+        <h1 class="page-title">📈 Profit & Loss</h1>
+        <p class="page-subtitle">{biz.get("name", "Business")}</p>
+        
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;padding:15px 0;border-bottom:1px solid var(--border)">
+                <span style="font-size:18px">Sales / Income</span>
+                <span style="font-size:18px;color:var(--success)">R {income:,.2f}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:15px 0;border-bottom:1px solid var(--border)">
+                <span>Less: Cost of Sales</span>
+                <span style="color:var(--danger)">(R {cos:,.2f})</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:15px 0;border-bottom:2px solid var(--primary);font-weight:700">
+                <span>Gross Profit</span>
+                <span style="color:{'var(--success)' if gross >= 0 else 'var(--danger)'}">R {gross:,.2f}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:15px 0;border-bottom:1px solid var(--border)">
+                <span>Less: Operating Expenses</span>
+                <span style="color:var(--danger)">(R {expenses:,.2f})</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:20px 0;font-size:24px;font-weight:800;background:{'rgba(34,197,94,0.1)' if net >= 0 else 'rgba(239,68,68,0.1)'};margin:15px -25px -25px;padding:20px 25px;border-radius:0 0 16px 16px">
+                <span>NET {'PROFIT' if net >= 0 else 'LOSS'}</span>
+                <span style="color:{'var(--success)' if net >= 0 else 'var(--danger)'}">R {abs(net):,.2f}</span>
+            </div>
+        </div>
+    </div>
+    '''
+    return render_page(content, "Profit & Loss", back_url=f"/business/{business_id}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VAT REPORT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/business/<business_id>/vat-report")
+def vat_report(business_id):
+    """VAT Report"""
+    data = load_data()
+    biz = data.get("businesses", {}).get(business_id, {})
+    ledger = biz.get("ledger", [])
+    
+    vat_in = sum(e.get("debit", 0) - e.get("credit", 0) for e in ledger if e.get("account") == "2100")
+    vat_out = sum(e.get("credit", 0) - e.get("debit", 0) for e in ledger if e.get("account") == "2200")
+    net = vat_out - vat_in
+    
+    content = f'''
+    <div class="container">
+        <h1 class="page-title">🧾 VAT Report</h1>
+        <p class="page-subtitle">{biz.get("name", "Business")}</p>
+        
+        <div class="card">
+            <div class="card-title">📥 VAT Input (Purchases)</div>
+            <p style="color:var(--text-muted)">VAT you paid - claim back from SARS</p>
+            <div style="font-size:32px;font-weight:800;color:var(--success)">R {vat_in:,.2f}</div>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">📤 VAT Output (Sales)</div>
+            <p style="color:var(--text-muted)">VAT you collected - owe to SARS</p>
+            <div style="font-size:32px;font-weight:800;color:var(--danger)">R {vat_out:,.2f}</div>
+        </div>
+        
+        <div class="card" style="background:{'rgba(239,68,68,0.1)' if net > 0 else 'rgba(34,197,94,0.1)'}">
+            <div class="card-title">{'💰 Pay to SARS' if net > 0 else '💵 Refund from SARS'}</div>
+            <div style="font-size:36px;font-weight:800;color:{'var(--danger)' if net > 0 else 'var(--success)'}">R {abs(net):,.2f}</div>
+        </div>
+    </div>
+    '''
+    return render_page(content, "VAT Report", back_url=f"/business/{business_id}")
+
+
 @app.route("/business/<business_id>/quote/new")
 def quote_new(business_id):
     """Create quote - Coming soon"""
@@ -2660,7 +2987,7 @@ def stock_list(business_id):
     
     rows = ""
     total_value = 0
-    for s in stock:
+    for i, s in enumerate(stock):
         qty = s.get("qty", 0)
         cost = s.get("cost", 0)
         price = s.get("price", 0)
@@ -2673,7 +3000,10 @@ def stock_list(business_id):
             <td style="text-align:center">{qty}</td>
             <td style="text-align:right">R {cost:,.2f}</td>
             <td style="text-align:right">R {price:,.2f}</td>
-            <td style="text-align:right">R {value:,.2f}</td>
+            <td>
+                <a href="/business/{business_id}/stock/{i}/edit" style="color:var(--primary);text-decoration:none">✏️</a>
+                <a href="/business/{business_id}/stock/{i}/delete" style="color:var(--danger);text-decoration:none;margin-left:10px" onclick="return confirm('Delete this item?')">🗑️</a>
+            </td>
         </tr>'''
     
     if not rows:
@@ -2698,7 +3028,7 @@ def stock_list(business_id):
             <div style="overflow-x:auto">
             <table class="table">
                 <thead>
-                    <tr><th>Code</th><th>Description</th><th>Category</th><th style="text-align:center">Qty</th><th style="text-align:right">Cost</th><th style="text-align:right">Price</th><th style="text-align:right">Value</th></tr>
+                    <tr><th>Code</th><th>Description</th><th>Category</th><th style="text-align:center">Qty</th><th style="text-align:right">Cost</th><th style="text-align:right">Price</th><th>Actions</th></tr>
                 </thead>
                 <tbody>{rows}</tbody>
             </table>
@@ -2825,6 +3155,85 @@ def stock_add(business_id):
         biz["stock"].append(item)
         save_data(data)
     return redirect(f'/business/{business_id}/stock')
+
+
+@app.route("/business/<business_id>/stock/<int:index>/edit", methods=["GET", "POST"])
+def stock_edit(business_id, index):
+    """Edit stock item"""
+    data = load_data()
+    biz = data.get("businesses", {}).get(business_id, {})
+    stock = biz.get("stock", [])
+    
+    if index >= len(stock):
+        return redirect(f"/business/{business_id}/stock")
+    
+    item = stock[index]
+    
+    if request.method == "POST":
+        item["code"] = request.form.get("code", "").strip()
+        item["description"] = request.form.get("description", "").strip()
+        item["category"] = request.form.get("category", "General").strip()
+        item["qty"] = int(float(request.form.get("qty", 0) or 0))
+        item["cost"] = float(request.form.get("cost", 0) or 0)
+        item["price"] = float(request.form.get("price", 0) or 0)
+        save_data(data)
+        return redirect(f"/business/{business_id}/stock")
+    
+    content = f'''
+    <div class="container">
+        <h1 class="page-title">✏️ Edit Stock Item</h1>
+        
+        <div class="card">
+            <form method="POST">
+                <div class="btn-row">
+                    <div class="form-group" style="flex:1">
+                        <label class="form-label">Code</label>
+                        <input type="text" name="code" class="form-input" value="{item.get('code', '')}">
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label class="form-label">Category</label>
+                        <input type="text" name="category" class="form-input" value="{item.get('category', 'General')}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <input type="text" name="description" class="form-input" value="{item.get('description', '')}" required>
+                </div>
+                <div class="btn-row">
+                    <div class="form-group" style="flex:1">
+                        <label class="form-label">Qty</label>
+                        <input type="number" name="qty" class="form-input" value="{item.get('qty', 0)}">
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label class="form-label">Cost</label>
+                        <input type="number" name="cost" class="form-input" step="0.01" value="{item.get('cost', 0)}">
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label class="form-label">Price</label>
+                        <input type="number" name="price" class="form-input" step="0.01" value="{item.get('price', 0)}">
+                    </div>
+                </div>
+                <div class="btn-row">
+                    <button type="submit" class="btn btn-success">✓ Save</button>
+                    <a href="/business/{business_id}/stock" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    '''
+    return render_page(content, "Edit Stock", back_url=f"/business/{business_id}/stock")
+
+
+@app.route("/business/<business_id>/stock/<int:index>/delete")
+def stock_delete(business_id, index):
+    """Delete stock item"""
+    data = load_data()
+    biz = data.get("businesses", {}).get(business_id, {})
+    stock = biz.get("stock", [])
+    if index < len(stock):
+        del stock[index]
+        save_data(data)
+    return redirect(f"/business/{business_id}/stock")
 
 
 @app.route("/business/<business_id>/suppliers")
