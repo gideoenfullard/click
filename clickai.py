@@ -41,8 +41,16 @@ DATA_FILE = os.path.join(DATA_DIR, "clickai_data.json")
 # For persistent cloud storage, we'll use a simple file
 # In production, you'd use a database like PostgreSQL
 
-# API Key - Set via settings page
-ANTHROPIC_API_KEY = ""
+# API Key - from environment or settings
+def get_api_key():
+    """Get API key from environment variable or data file"""
+    # First check environment variable
+    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if env_key:
+        return env_key
+    # Then check data file
+    data = load_data()
+    return data.get("settings", {}).get("api_key", "")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CHART OF ACCOUNTS - South African Standard
