@@ -156,7 +156,7 @@ def dashboard(bid):
     b = biz(bid)
     mobile_js = f'<script>if(/iPhone|iPad|Android/i.test(navigator.userAgent)&&!sessionStorage.desktop)window.location.href="/m/{bid}"</script>'
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{b.get("name",bid)}</title>{CSS}</head><body>{mobile_js}
-<div class="header"><div class="logo">⚡ {b.get("name",bid)}</div><div style="display:flex;gap:10px"><a href="/{bid}/pos" class="btn btn-green">🛒 POS</a><a href="/" class="btn btn-dark">🏠</a></div></div>
+<div class="header"><div class="logo">⚡ {b.get("name",bid)}</div><div style="display:flex;gap:10px"><a href="/{bid}/pos" class="btn btn-green">🛒 POS</a><a href="/{bid}/settings" class="btn btn-dark">⚙️</a><a href="/" class="btn btn-dark">🏠</a></div></div>
 <div class="container">
 <div class="grid2">
 <div class="card"><div style="font-weight:700;margin-bottom:15px">📥 CAPTURE</div><div class="grid2"><a href="/{bid}/capture/stock" class="btn btn-purple">📦 Stock</a><a href="/{bid}/capture/expense" class="btn btn-red">💸 Expense</a></div></div>
@@ -282,16 +282,23 @@ def stock_list(bid):
     stock = b.get("stock",[])
     tq = sum(int(s.get("qty",0)or 0) for s in stock)
     tv = sum(float(s.get("price",0)or s.get("sell",0)or 0)*int(s.get("qty",0)or 0) for s in stock)
-    rows = "".join([f'<tr><td><strong>{s.get("code","")}</strong></td><td>{s.get("description","")[:40]}</td><td>{s.get("category","")}</td><td>R {float(s.get("price",0)or s.get("sell",0)or 0):.2f}</td><td>{int(s.get("qty",0)or 0)}</td><td>R {float(s.get("price",0)or s.get("sell",0)or 0)*int(s.get("qty",0)or 0):.2f}</td></tr>' for s in stock[:100]])
+    rows = "".join([f'<tr onclick="location.href=\'/{bid}/stock/{i}/edit\'" style="cursor:pointer"><td><strong>{s.get("code","")}</strong></td><td>{s.get("description","")[:40]}</td><td>{s.get("category","")}</td><td>R {float(s.get("price",0)or s.get("sell",0)or 0):.2f}</td><td>{int(s.get("qty",0)or 0)}</td><td>R {float(s.get("price",0)or s.get("sell",0)or 0)*int(s.get("qty",0)or 0):.2f}</td></tr>' for i,s in enumerate(stock[:100])])
+    msg = ""
+    if request.args.get("imported"): msg = f'<div style="background:#10b981;color:#fff;padding:12px;border-radius:8px;margin-bottom:15px">✓ Imported {request.args.get("imported")} items!</div>'
+    if request.args.get("error"): msg = f'<div style="background:#ef4444;color:#fff;padding:12px;border-radius:8px;margin-bottom:15px">Error: {request.args.get("error")}</div>'
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock</title>{CSS}</head><body>
-<div class="header"><div class="logo">📦 Stock</div><a href="/{bid}" class="btn btn-dark">← Back</a></div>
-<div class="container">
+<div class="header"><div class="logo">📦 Stock</div><div style="display:flex;gap:10px"><a href="/{bid}/stock/add" class="btn btn-purple">+ Add</a><a href="/{bid}" class="btn btn-dark">← Back</a></div></div>
+<div class="container">{msg}
 <div class="grid3" style="margin-bottom:20px">
 <div class="card" style="text-align:center"><div style="font-size:24px;font-weight:800;color:#8b5cf6">{len(stock)}</div><div style="color:#666;font-size:12px">ITEMS</div></div>
-<div class="card" style="text-align:center"><div style="font-size:24px;font-weight:800;color:#3b82f6">{tq}</div><div style="color:#666;font-size:12px">TOTAL QTY</div></div>
+<div class="card" style="text-align:center"><div style="font-size:24px;font-weight:800;color:#3b82f6">{tq:,}</div><div style="color:#666;font-size:12px">TOTAL QTY</div></div>
 <div class="card" style="text-align:center"><div style="font-size:24px;font-weight:800;color:#10b981">R {tv:,.2f}</div><div style="color:#666;font-size:12px">VALUE</div></div>
 </div>
-<div class="card"><table class="table"><thead><tr><th>Code</th><th>Description</th><th>Category</th><th>Price</th><th>Qty</th><th>Value</th></tr></thead><tbody>{rows}</tbody></table></div>
+<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px"><span style="font-weight:700">Import from CSV</span></div>
+<form method="POST" action="/{bid}/stock/import" enctype="multipart/form-data" style="display:flex;gap:10px"><input type="file" name="file" accept=".csv" class="input" style="flex:1" required><button type="submit" class="btn btn-blue">📤 Import</button></form>
+<div style="font-size:11px;color:#666;margin-top:8px">CSV columns: code, description, category, qty, cost, price</div>
+</div>
+<div class="card"><table class="table"><thead><tr><th>Code</th><th>Description</th><th>Category</th><th>Price</th><th>Qty</th><th>Value</th></tr></thead><tbody>{rows or '<tr><td colspan="6" style="text-align:center;color:#666">No stock - add items or import CSV</td></tr>'}</tbody></table></div>
 </div></body></html>'''
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -366,18 +373,34 @@ def vat(bid):
 @app.route("/<bid>/customers")
 def customers(bid):
     b = biz(bid)
-    rows = "".join([f'<tr><td><strong>{c.get("code","")}</strong></td><td>{c.get("name","")}</td><td>{c.get("phone","")}</td><td style="color:{"#ef4444" if float(c.get("balance",0)or 0)>0 else "#10b981"}">R {float(c.get("balance",0)or 0):.2f}</td></tr>' for c in b.get("customers",[])])
+    rows = "".join([f'<tr><td><strong>{c.get("code","")}</strong></td><td>{c.get("name","")}</td><td>{c.get("phone","")}</td><td>{c.get("email","")}</td><td style="color:{"#ef4444" if float(c.get("balance",0)or 0)>0 else "#10b981"}">R {float(c.get("balance",0)or 0):.2f}</td></tr>' for c in b.get("customers",[])])
+    msg = ""
+    if request.args.get("imported"): msg = f'<div style="background:#10b981;color:#fff;padding:12px;border-radius:8px;margin-bottom:15px">✓ Imported {request.args.get("imported")} customers!</div>'
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Customers</title>{CSS}</head><body>
-<div class="header"><div class="logo">👤 Customers</div><a href="/{bid}" class="btn btn-dark">← Back</a></div>
-<div class="container"><div class="card"><table class="table"><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Balance</th></tr></thead><tbody>{rows or '<tr><td colspan="4" style="text-align:center;color:#666">No customers</td></tr>'}</tbody></table></div></div></body></html>'''
+<div class="header"><div class="logo">👤 Customers</div><div style="display:flex;gap:10px"><a href="/{bid}/customers/add" class="btn btn-purple">+ Add</a><a href="/{bid}" class="btn btn-dark">← Back</a></div></div>
+<div class="container">{msg}
+<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px"><span style="font-weight:700">Import from CSV</span></div>
+<form method="POST" action="/{bid}/customers/import" enctype="multipart/form-data" style="display:flex;gap:10px"><input type="file" name="file" accept=".csv" class="input" style="flex:1" required><button type="submit" class="btn btn-blue">📤 Import</button></form>
+<div style="font-size:11px;color:#666;margin-top:8px">CSV columns: code, name, phone, email, balance</div>
+</div>
+<div class="card"><table class="table"><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Email</th><th>Balance</th></tr></thead><tbody>{rows or '<tr><td colspan="5" style="text-align:center;color:#666">No customers</td></tr>'}</tbody></table></div>
+</div></body></html>'''
 
 @app.route("/<bid>/suppliers")
 def suppliers(bid):
     b = biz(bid)
-    rows = "".join([f'<tr><td><strong>{s.get("code","")}</strong></td><td>{s.get("name","")}</td><td>{s.get("phone","")}</td><td style="color:{"#ef4444" if float(s.get("balance",0)or 0)>0 else "#10b981"}">R {float(s.get("balance",0)or 0):.2f}</td></tr>' for s in b.get("suppliers",[])])
+    rows = "".join([f'<tr><td><strong>{s.get("code","")}</strong></td><td>{s.get("name","")}</td><td>{s.get("phone","")}</td><td>{s.get("email","")}</td><td style="color:{"#ef4444" if float(s.get("balance",0)or 0)>0 else "#10b981"}">R {float(s.get("balance",0)or 0):.2f}</td></tr>' for s in b.get("suppliers",[])])
+    msg = ""
+    if request.args.get("imported"): msg = f'<div style="background:#10b981;color:#fff;padding:12px;border-radius:8px;margin-bottom:15px">✓ Imported {request.args.get("imported")} suppliers!</div>'
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Suppliers</title>{CSS}</head><body>
-<div class="header"><div class="logo">👥 Suppliers</div><a href="/{bid}" class="btn btn-dark">← Back</a></div>
-<div class="container"><div class="card"><table class="table"><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Balance</th></tr></thead><tbody>{rows or '<tr><td colspan="4" style="text-align:center;color:#666">No suppliers</td></tr>'}</tbody></table></div></div></body></html>'''
+<div class="header"><div class="logo">👥 Suppliers</div><div style="display:flex;gap:10px"><a href="/{bid}/suppliers/add" class="btn btn-purple">+ Add</a><a href="/{bid}" class="btn btn-dark">← Back</a></div></div>
+<div class="container">{msg}
+<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px"><span style="font-weight:700">Import from CSV</span></div>
+<form method="POST" action="/{bid}/suppliers/import" enctype="multipart/form-data" style="display:flex;gap:10px"><input type="file" name="file" accept=".csv" class="input" style="flex:1" required><button type="submit" class="btn btn-blue">📤 Import</button></form>
+<div style="font-size:11px;color:#666;margin-top:8px">CSV columns: code, name, phone, email, balance</div>
+</div>
+<div class="card"><table class="table"><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Email</th><th>Balance</th></tr></thead><tbody>{rows or '<tr><td colspan="5" style="text-align:center;color:#666">No suppliers</td></tr>'}</tbody></table></div>
+</div></body></html>'''
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DESKTOP CAPTURE
@@ -535,6 +558,207 @@ def api_invoice(bid):
         if s: s["qty"]=max(0,int(s.get("qty",0))-i["qty"])
     save()
     return jsonify({"success":True,"doc_id":doc_id})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STOCK MANAGEMENT - Add, Edit, Import CSV
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.route("/<bid>/stock/add", methods=["GET","POST"])
+def stock_add(bid):
+    b = biz(bid)
+    if request.method == "POST":
+        b["stock"].append({"code":request.form.get("code","").strip(),"description":request.form.get("description","").strip(),"category":request.form.get("category","General").strip(),"qty":int(float(request.form.get("qty",0) or 0)),"cost":float(request.form.get("cost",0) or 0),"price":float(request.form.get("price",0) or 0)})
+        save()
+        return redirect(f"/{bid}/stock")
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Add Stock</title>{CSS}</head><body>
+<div class="header"><div class="logo">📦 Add Stock Item</div><a href="/{bid}/stock" class="btn btn-dark">← Back</a></div>
+<div class="container"><div class="card"><form method="POST">
+<div class="grid2" style="margin-bottom:12px"><div><label style="font-size:12px;color:#888">Code</label><input name="code" class="input" required></div><div><label style="font-size:12px;color:#888">Category</label><input name="category" class="input" value="General"></div></div>
+<div style="margin-bottom:12px"><label style="font-size:12px;color:#888">Description</label><input name="description" class="input" required></div>
+<div class="grid3" style="margin-bottom:20px"><div><label style="font-size:12px;color:#888">Qty</label><input name="qty" type="number" class="input" value="0"></div><div><label style="font-size:12px;color:#888">Cost</label><input name="cost" type="number" step="0.01" class="input" value="0"></div><div><label style="font-size:12px;color:#888">Sell Price</label><input name="price" type="number" step="0.01" class="input" value="0"></div></div>
+<button type="submit" class="btn btn-purple" style="width:100%">+ Add Item</button>
+</form></div></div></body></html>'''
+
+@app.route("/<bid>/stock/<int:idx>/edit", methods=["GET","POST"])
+def stock_edit(bid,idx):
+    b = biz(bid)
+    if idx >= len(b["stock"]): return redirect(f"/{bid}/stock")
+    item = b["stock"][idx]
+    if request.method == "POST":
+        item["code"] = request.form.get("code","").strip()
+        item["description"] = request.form.get("description","").strip()
+        item["category"] = request.form.get("category","General").strip()
+        item["qty"] = int(float(request.form.get("qty",0) or 0))
+        item["cost"] = float(request.form.get("cost",0) or 0)
+        item["price"] = float(request.form.get("price",0) or 0)
+        save()
+        return redirect(f"/{bid}/stock")
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Edit Stock</title>{CSS}</head><body>
+<div class="header"><div class="logo">📦 Edit Stock Item</div><a href="/{bid}/stock" class="btn btn-dark">← Back</a></div>
+<div class="container"><div class="card"><form method="POST">
+<div class="grid2" style="margin-bottom:12px"><div><label style="font-size:12px;color:#888">Code</label><input name="code" class="input" value="{item.get('code','')}" required></div><div><label style="font-size:12px;color:#888">Category</label><input name="category" class="input" value="{item.get('category','General')}"></div></div>
+<div style="margin-bottom:12px"><label style="font-size:12px;color:#888">Description</label><input name="description" class="input" value="{item.get('description','')}" required></div>
+<div class="grid3" style="margin-bottom:20px"><div><label style="font-size:12px;color:#888">Qty</label><input name="qty" type="number" class="input" value="{int(item.get('qty',0))}"></div><div><label style="font-size:12px;color:#888">Cost</label><input name="cost" type="number" step="0.01" class="input" value="{float(item.get('cost',0))}"></div><div><label style="font-size:12px;color:#888">Sell Price</label><input name="price" type="number" step="0.01" class="input" value="{float(item.get('price',0))}"></div></div>
+<div class="grid2"><button type="submit" class="btn btn-green">✓ Save</button><a href="/{bid}/stock/{idx}/delete" class="btn btn-red" onclick="return confirm('Delete this item?')">🗑️ Delete</a></div>
+</form></div></div></body></html>'''
+
+@app.route("/<bid>/stock/<int:idx>/delete")
+def stock_delete(bid,idx):
+    b = biz(bid)
+    if idx < len(b["stock"]): b["stock"].pop(idx)
+    save()
+    return redirect(f"/{bid}/stock")
+
+@app.route("/<bid>/stock/import", methods=["POST"])
+def stock_import(bid):
+    b = biz(bid)
+    try:
+        f = request.files['file']
+        content = f.read().decode('utf-8-sig')
+        # Handle both comma and semicolon delimiters
+        delim = ';' if ';' in content.split('\n')[0] else ','
+        reader = csv.DictReader(io.StringIO(content), delimiter=delim)
+        count = 0
+        for row in reader:
+            code = row.get('code') or row.get('Code') or row.get('CODE') or row.get('sku') or row.get('SKU') or ''
+            desc = row.get('description') or row.get('Description') or row.get('name') or row.get('Name') or ''
+            if code or desc:
+                b["stock"].append({
+                    'code': code.strip(),
+                    'description': desc.strip(),
+                    'category': (row.get('category') or row.get('Category') or 'General').strip(),
+                    'qty': int(float(row.get('qty') or row.get('Qty') or row.get('quantity') or 0)),
+                    'cost': float(row.get('cost') or row.get('Cost') or 0),
+                    'price': float(row.get('price') or row.get('Price') or row.get('sell') or row.get('Sell') or 0)
+                })
+                count += 1
+        save()
+        return redirect(f"/{bid}/stock?imported={count}")
+    except Exception as e:
+        return redirect(f"/{bid}/stock?error={str(e)}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CUSTOMER MANAGEMENT
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.route("/<bid>/customers/add", methods=["GET","POST"])
+def customer_add(bid):
+    b = biz(bid)
+    if request.method == "POST":
+        b["customers"].append({"code":request.form.get("code","").strip(),"name":request.form.get("name","").strip(),"phone":request.form.get("phone","").strip(),"email":request.form.get("email","").strip(),"balance":0})
+        save()
+        return redirect(f"/{bid}/customers")
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Add Customer</title>{CSS}</head><body>
+<div class="header"><div class="logo">👤 Add Customer</div><a href="/{bid}/customers" class="btn btn-dark">← Back</a></div>
+<div class="container"><div class="card"><form method="POST">
+<div class="grid2" style="margin-bottom:12px"><div><label style="font-size:12px;color:#888">Code</label><input name="code" class="input" placeholder="C001"></div><div><label style="font-size:12px;color:#888">Name</label><input name="name" class="input" required></div></div>
+<div class="grid2" style="margin-bottom:20px"><div><label style="font-size:12px;color:#888">Phone</label><input name="phone" class="input"></div><div><label style="font-size:12px;color:#888">Email</label><input name="email" type="email" class="input"></div></div>
+<button type="submit" class="btn btn-purple" style="width:100%">+ Add Customer</button>
+</form></div></div></body></html>'''
+
+@app.route("/<bid>/customers/import", methods=["POST"])
+def customer_import(bid):
+    b = biz(bid)
+    try:
+        f = request.files['file']
+        content = f.read().decode('utf-8-sig')
+        delim = ';' if ';' in content.split('\n')[0] else ','
+        reader = csv.DictReader(io.StringIO(content), delimiter=delim)
+        count = 0
+        for row in reader:
+            name = row.get('name') or row.get('Name') or row.get('customer') or ''
+            if name:
+                b["customers"].append({
+                    'code': (row.get('code') or row.get('Code') or f"C{len(b['customers'])+1:03d}").strip(),
+                    'name': name.strip(),
+                    'phone': (row.get('phone') or row.get('Phone') or row.get('tel') or '').strip(),
+                    'email': (row.get('email') or row.get('Email') or '').strip(),
+                    'balance': float(row.get('balance') or row.get('Balance') or 0)
+                })
+                count += 1
+        save()
+        return redirect(f"/{bid}/customers?imported={count}")
+    except Exception as e:
+        return redirect(f"/{bid}/customers?error={str(e)}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SUPPLIER MANAGEMENT
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.route("/<bid>/suppliers/add", methods=["GET","POST"])
+def supplier_add(bid):
+    b = biz(bid)
+    if request.method == "POST":
+        b["suppliers"].append({"code":request.form.get("code","").strip(),"name":request.form.get("name","").strip(),"phone":request.form.get("phone","").strip(),"email":request.form.get("email","").strip(),"balance":0})
+        save()
+        return redirect(f"/{bid}/suppliers")
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Add Supplier</title>{CSS}</head><body>
+<div class="header"><div class="logo">👥 Add Supplier</div><a href="/{bid}/suppliers" class="btn btn-dark">← Back</a></div>
+<div class="container"><div class="card"><form method="POST">
+<div class="grid2" style="margin-bottom:12px"><div><label style="font-size:12px;color:#888">Code</label><input name="code" class="input" placeholder="S001"></div><div><label style="font-size:12px;color:#888">Name</label><input name="name" class="input" required></div></div>
+<div class="grid2" style="margin-bottom:20px"><div><label style="font-size:12px;color:#888">Phone</label><input name="phone" class="input"></div><div><label style="font-size:12px;color:#888">Email</label><input name="email" type="email" class="input"></div></div>
+<button type="submit" class="btn btn-purple" style="width:100%">+ Add Supplier</button>
+</form></div></div></body></html>'''
+
+@app.route("/<bid>/suppliers/import", methods=["POST"])
+def supplier_import(bid):
+    b = biz(bid)
+    try:
+        f = request.files['file']
+        content = f.read().decode('utf-8-sig')
+        delim = ';' if ';' in content.split('\n')[0] else ','
+        reader = csv.DictReader(io.StringIO(content), delimiter=delim)
+        count = 0
+        for row in reader:
+            name = row.get('name') or row.get('Name') or row.get('supplier') or ''
+            if name:
+                b["suppliers"].append({
+                    'code': (row.get('code') or row.get('Code') or f"S{len(b['suppliers'])+1:03d}").strip(),
+                    'name': name.strip(),
+                    'phone': (row.get('phone') or row.get('Phone') or row.get('tel') or '').strip(),
+                    'email': (row.get('email') or row.get('Email') or '').strip(),
+                    'balance': float(row.get('balance') or row.get('Balance') or 0)
+                })
+                count += 1
+        save()
+        return redirect(f"/{bid}/suppliers?imported={count}")
+    except Exception as e:
+        return redirect(f"/{bid}/suppliers?error={str(e)}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BUSINESS SETTINGS
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.route("/<bid>/settings", methods=["GET","POST"])
+def settings(bid):
+    b = biz(bid)
+    if "settings" not in b: b["settings"] = {}
+    if request.method == "POST":
+        b["settings"]["company_name"] = request.form.get("company_name","").strip()
+        b["settings"]["trading_as"] = request.form.get("trading_as","").strip()
+        b["settings"]["reg_number"] = request.form.get("reg_number","").strip()
+        b["settings"]["vat_number"] = request.form.get("vat_number","").strip()
+        b["settings"]["address"] = request.form.get("address","").strip()
+        b["settings"]["phone"] = request.form.get("phone","").strip()
+        b["settings"]["email"] = request.form.get("email","").strip()
+        b["settings"]["bank_name"] = request.form.get("bank_name","").strip()
+        b["settings"]["bank_account"] = request.form.get("bank_account","").strip()
+        b["settings"]["bank_branch"] = request.form.get("bank_branch","").strip()
+        b["name"] = b["settings"]["company_name"] or b["name"]
+        save()
+        return redirect(f"/{bid}/settings?saved=1")
+    s = b.get("settings",{})
+    saved = '<div style="background:#10b981;color:#fff;padding:12px;border-radius:8px;margin-bottom:15px">✓ Settings saved!</div>' if request.args.get("saved") else ""
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Settings</title>{CSS}</head><body>
+<div class="header"><div class="logo">⚙️ Business Settings</div><a href="/{bid}" class="btn btn-dark">← Back</a></div>
+<div class="container">{saved}<form method="POST">
+<div class="card"><div style="font-weight:700;margin-bottom:15px">🏢 Company Details</div>
+<div class="grid2" style="margin-bottom:12px"><div><label style="font-size:12px;color:#888">Company Name (Pty Ltd)</label><input name="company_name" class="input" value="{s.get('company_name','')}"></div><div><label style="font-size:12px;color:#888">Trading As</label><input name="trading_as" class="input" value="{s.get('trading_as','')}"></div></div>
+<div class="grid2" style="margin-bottom:12px"><div><label style="font-size:12px;color:#888">Registration Number</label><input name="reg_number" class="input" value="{s.get('reg_number','')}"></div><div><label style="font-size:12px;color:#888">VAT Number</label><input name="vat_number" class="input" value="{s.get('vat_number','')}"></div></div>
+<div style="margin-bottom:12px"><label style="font-size:12px;color:#888">Address</label><textarea name="address" class="input" rows="2">{s.get('address','')}</textarea></div>
+<div class="grid2"><div><label style="font-size:12px;color:#888">Phone</label><input name="phone" class="input" value="{s.get('phone','')}"></div><div><label style="font-size:12px;color:#888">Email</label><input name="email" type="email" class="input" value="{s.get('email','')}"></div></div>
+</div>
+<div class="card"><div style="font-weight:700;margin-bottom:15px">🏦 Banking Details</div>
+<div class="grid3"><div><label style="font-size:12px;color:#888">Bank Name</label><input name="bank_name" class="input" value="{s.get('bank_name','')}"></div><div><label style="font-size:12px;color:#888">Account Number</label><input name="bank_account" class="input" value="{s.get('bank_account','')}"></div><div><label style="font-size:12px;color:#888">Branch Code</label><input name="bank_branch" class="input" value="{s.get('bank_branch','')}"></div></div>
+</div>
+<button type="submit" class="btn btn-green" style="width:100%">💾 Save Settings</button>
+</form></div></body></html>'''
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
