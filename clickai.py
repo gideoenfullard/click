@@ -595,7 +595,7 @@ body {
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 .container {
-    max-width: 900px;
+    max-width: 1400px;
     margin: 0 auto;
     padding: 20px 15px;
 }
@@ -1322,7 +1322,10 @@ def business_dashboard(business_id):
                 <h1 class="page-title" style="margin-bottom:5px">🏢 {biz.get("name", business_id)}</h1>
                 <p class="page-subtitle" style="margin:0">What would you like to do?</p>
             </div>
-            <a href="/business/{business_id}/settings" class="btn btn-outline" style="width:auto">⚙️ Settings</a>
+            <div style="display:flex;gap:10px">
+                <a href="/business/{business_id}/pos" class="btn btn-success" style="width:auto;font-size:18px;padding:15px 25px">🛒 POS</a>
+                <a href="/business/{business_id}/settings" class="btn btn-outline" style="width:auto">⚙️ Settings</a>
+            </div>
         </div>
         
         <div class="card">
@@ -1349,7 +1352,7 @@ def business_dashboard(business_id):
                     <div class="action-card-title">Quote</div>
                     <div class="action-card-desc">{len(docs.get("quotes", []))} quotes</div>
                 </a>
-                <a href="/business/{business_id}/invoices" class="action-card" style="text-decoration:none;color:inherit">
+                <a href="/business/{business_id}/invoice/new" class="action-card" style="text-decoration:none;color:inherit">
                     <div class="action-card-icon">🧾</div>
                     <div class="action-card-title">Invoice</div>
                     <div class="action-card-desc">{len(docs.get("invoices", []))} invoices</div>
@@ -1392,6 +1395,461 @@ def business_dashboard(business_id):
     '''
     
     return render_page(content, biz.get("name", "Business"), back_url="/")
+
+
+@app.route("/business/<business_id>/pos")
+def business_pos(business_id):
+    """Point of Sale - Full featured POS system"""
+    biz = get_business(business_id)
+    stock = biz.get("stock", [])
+    customers = biz.get("customers", [])
+    
+    # Get unique categories
+    categories = list(set(s.get("category", "General") for s in stock))
+    categories = ["All"] + sorted([c for c in categories if c])
+    
+    cat_buttons = ""
+    for i, cat in enumerate(categories):
+        active = " active" if i == 0 else ""
+        data_cat = "all" if cat == "All" else cat
+        cat_buttons += f'<button class="cat-btn{active}" data-cat="{data_cat}">{cat}</button>'
+    
+    return f'''<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>POS - {biz.get("name", "Business")}</title>
+<style>
+:root{{--bg:#0a0a0a;--card:#141414;--green:#22c55e;--blue:#3b82f6;--purple:#8b5cf6;--red:#ef4444;--border:#222;--accent:#22c55e}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:system-ui;background:var(--bg);color:#fff;height:100vh;overflow:hidden}}
+.header{{background:linear-gradient(135deg,#22c55e,#16a34a);padding:12px 20px;display:flex;justify-content:space-between;align-items:center}}
+.logo{{font-size:22px;font-weight:900}}
+.back{{color:rgba(255,255,255,0.9);text-decoration:none;font-size:20px;margin-right:15px}}
+.nav a{{background:rgba(255,255,255,0.15);padding:8px 15px;border-radius:6px;color:#fff;text-decoration:none;margin-left:8px;font-size:13px}}
+.main{{display:flex;height:calc(100vh - 56px)}}
+.left-panel{{flex:1;display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden}}
+.search-box{{padding:10px}}
+.search-input{{width:100%;padding:12px 15px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:#fff;font-size:15px}}
+.search-input:focus{{outline:none;border-color:var(--accent)}}
+.categories{{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 10px 10px}}
+.cat-btn{{background:var(--card);border:1px solid var(--border);color:#888;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:all 0.15s}}
+.cat-btn:hover,.cat-btn.active{{background:var(--accent);color:#fff;border-color:var(--accent)}}
+.info-line{{padding:8px 15px;background:var(--card);font-size:12px;color:#666;border-bottom:1px solid var(--border)}}
+.stock-scroll{{flex:1;overflow-y:auto;padding:10px}}
+.results{{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}}
+.item{{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;transition:all 0.15s}}
+.item:hover{{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 5px 20px rgba(0,0,0,0.3)}}
+.item-code{{font-weight:900;color:var(--accent);font-size:13px}}
+.item-desc{{font-size:11px;color:#aaa;margin:5px 0;height:28px;overflow:hidden}}
+.item-price{{font-weight:900;color:var(--green);font-size:16px}}
+.item-stock{{font-size:10px;color:#666;margin-top:3px}}
+.right-panel{{width:350px;min-width:350px;display:flex;flex-direction:column;background:var(--card)}}
+.cart-header{{padding:15px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}}
+.cart-title{{font-weight:900;font-size:18px}}
+.cart-count{{background:var(--accent);padding:3px 10px;border-radius:20px;font-size:12px}}
+.cart-scroll{{flex:1;overflow-y:auto;padding:10px}}
+.cart-item{{background:var(--bg);border-radius:8px;padding:10px;margin-bottom:8px}}
+.cart-item-top{{display:flex;justify-content:space-between;align-items:flex-start}}
+.cart-item-code{{font-weight:700;color:var(--accent);font-size:12px}}
+.cart-item-desc{{font-size:11px;color:#888;margin:3px 0}}
+.cart-item-bottom{{display:flex;justify-content:space-between;align-items:center;margin-top:8px}}
+.cart-item-qty{{display:flex;align-items:center;gap:8px}}
+.cart-item-qty button{{width:28px;height:28px;border:1px solid var(--border);background:var(--card);color:#fff;border-radius:6px;cursor:pointer;font-weight:700}}
+.cart-item-qty button:hover{{background:var(--accent);border-color:var(--accent)}}
+.cart-item-qty span{{min-width:30px;text-align:center;font-weight:700}}
+.cart-item-total{{font-weight:900;color:var(--green);font-size:14px}}
+.cart-item-del{{background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px;padding:5px}}
+.total-box{{padding:15px;border-top:1px solid var(--border);text-align:center}}
+.total-label{{font-size:11px;color:#888}}
+.total-amount{{font-size:36px;font-weight:900;color:var(--green)}}
+.btn-box{{padding:15px;display:flex;flex-direction:column;gap:8px}}
+.btn{{width:100%;padding:14px;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:14px;transition:all 0.15s}}
+.btn:hover{{transform:translateY(-1px)}}
+.btn-green{{background:var(--green);color:#fff}}
+.btn-blue{{background:var(--blue);color:#fff}}
+.btn-red{{background:var(--red);color:#fff}}
+.modal{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);justify-content:center;align-items:center;z-index:1000}}
+.modal.show{{display:flex}}
+.modal-box{{background:var(--card);padding:25px;border-radius:16px;width:90%;max-width:400px}}
+.modal-title{{font-size:20px;font-weight:900;margin-bottom:20px;text-align:center}}
+.modal-input{{width:100%;padding:15px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:#fff;font-size:16px;margin-bottom:10px}}
+.modal-input:focus{{outline:none;border-color:var(--accent)}}
+.qty-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:15px 0}}
+.qty-btn{{background:var(--bg);border:1px solid var(--border);color:#fff;padding:15px;border-radius:8px;cursor:pointer;font-weight:700;font-size:16px}}
+.qty-btn:hover{{background:var(--accent);border-color:var(--accent)}}
+.customer-list{{max-height:300px;overflow-y:auto;background:var(--bg);border-radius:8px;margin:10px 0}}
+.customer-item{{padding:12px 15px;border-bottom:1px solid var(--border);cursor:pointer}}
+.customer-item:hover{{background:var(--accent)}}
+.empty-cart{{padding:40px;text-align:center;color:#666}}
+.empty-cart-icon{{font-size:48px;margin-bottom:10px}}
+</style>
+</head>
+<body>
+<div class="header">
+<div style="display:flex;align-items:center">
+<a href="/business/{business_id}" class="back">←</a>
+<div class="logo">🛒 {biz.get("name", "POS")}</div>
+</div>
+<div class="nav">
+<a href="/business/{business_id}">🏠 Dashboard</a>
+<a href="/business/{business_id}/stock">📦 Stock</a>
+</div>
+</div>
+
+<div class="main">
+<div class="left-panel">
+<div class="search-box">
+<input type="text" id="searchBox" class="search-input" placeholder="🔍 Search item by code or description..." autofocus>
+</div>
+<div class="categories">{cat_buttons}</div>
+<div id="infoLine" class="info-line">Loading...</div>
+<div class="stock-scroll">
+<div id="results" class="results"></div>
+</div>
+</div>
+
+<div class="right-panel">
+<div class="cart-header">
+<div class="cart-title">🛒 CART</div>
+<div class="cart-count" id="cartCount">0 items</div>
+</div>
+<div id="cartScroll" class="cart-scroll">
+<div class="empty-cart">
+<div class="empty-cart-icon">🛒</div>
+<div>Cart is empty</div>
+</div>
+</div>
+<div class="total-box">
+<div class="total-label">TOTAL</div>
+<div class="total-amount" id="cartTotal">R 0.00</div>
+</div>
+<div class="btn-box">
+<button class="btn btn-green" onclick="showCashModal()">💵 CASH</button>
+<button class="btn btn-blue" onclick="showAccountModal()">👤 ACCOUNT</button>
+<button class="btn btn-red" onclick="clearCart()">🗑️ CLEAR</button>
+</div>
+</div>
+</div>
+
+<!-- Quantity Modal -->
+<div id="qtyModal" class="modal">
+<div class="modal-box">
+<div class="modal-title" style="color:var(--green)">How Many?</div>
+<div style="background:var(--bg);padding:15px;border-radius:10px;margin-bottom:15px">
+<div id="qtyItemCode" style="font-weight:900;color:var(--accent)"></div>
+<div id="qtyItemDesc" style="color:#888;font-size:13px;margin-top:5px"></div>
+<div id="qtyItemStock" style="color:#666;font-size:11px;margin-top:5px"></div>
+</div>
+<div class="qty-grid">
+<button class="qty-btn" onclick="setQty(1)">1</button>
+<button class="qty-btn" onclick="setQty(5)">5</button>
+<button class="qty-btn" onclick="setQty(10)">10</button>
+<button class="qty-btn" onclick="setQty(25)">25</button>
+<button class="qty-btn" onclick="setQty(50)">50</button>
+<button class="qty-btn" onclick="setQty(100)">100</button>
+</div>
+<input type="number" id="qtyInput" class="modal-input" placeholder="Or type quantity..." min="1" value="1">
+<div style="display:flex;gap:10px">
+<button class="btn btn-green" style="flex:1" onclick="addToCart()">✅ Add</button>
+<button class="btn btn-red" style="flex:1" onclick="closeQtyModal()">Cancel</button>
+</div>
+</div>
+</div>
+
+<!-- Cash Modal -->
+<div id="cashModal" class="modal">
+<div class="modal-box">
+<div class="modal-title" style="color:var(--green)">💵 Cash Sale</div>
+<div id="cashTotal" style="font-size:32px;font-weight:900;color:var(--green);text-align:center;margin:20px 0">R 0.00</div>
+<button class="btn btn-green" onclick="completeCashSale()">✅ Complete Sale</button>
+<button class="btn btn-red" style="margin-top:10px" onclick="closeCashModal()">Cancel</button>
+</div>
+</div>
+
+<!-- Account Modal -->
+<div id="accountModal" class="modal">
+<div class="modal-box" style="max-width:500px">
+<div class="modal-title" style="color:var(--blue)">👤 Account Sale</div>
+<div id="accountTotal" style="font-size:28px;font-weight:900;color:var(--blue);text-align:center;margin:15px 0">R 0.00</div>
+<input type="text" id="customerSearch" class="modal-input" placeholder="🔍 Search customer..." oninput="filterCustomers()">
+<div class="customer-list" id="customerList"></div>
+<div id="selectedCustomerBox" style="display:none;background:var(--bg);padding:15px;border-radius:8px;margin:10px 0">
+<div style="color:#888;font-size:12px">Selected:</div>
+<div id="selectedCustomerName" style="font-weight:900;color:var(--blue);font-size:18px"></div>
+</div>
+<button class="btn btn-blue" id="completeAccountBtn" onclick="completeAccountSale()" disabled style="opacity:0.5">✅ Complete Account Sale</button>
+<button class="btn btn-red" style="margin-top:10px" onclick="closeAccountModal()">Cancel</button>
+</div>
+</div>
+
+<script>
+var businessId = '{business_id}';
+var stock = {json.dumps([{{"code": s.get("code",""), "description": s.get("description",""), "price": float(s.get("price",0)), "qty": int(s.get("qty",0)), "category": s.get("category","General")}} for s in stock])};
+var customers = {json.dumps([{{"code": c.get("code",""), "name": c.get("name",""), "phone": c.get("phone",""), "balance": float(c.get("balance",0))}} for c in customers])};
+var cart = [];
+var selectedItem = null;
+var selectedCustomer = null;
+var currentCat = 'all';
+
+// Initialize
+renderStock();
+document.getElementById('infoLine').textContent = stock.length + ' items loaded';
+
+// Search
+document.getElementById('searchBox').addEventListener('input', renderStock);
+
+// Categories
+document.querySelectorAll('.cat-btn').forEach(function(btn) {{
+    btn.addEventListener('click', function() {{
+        document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        currentCat = this.dataset.cat;
+        renderStock();
+    }});
+}});
+
+function renderStock() {{
+    var search = document.getElementById('searchBox').value.toLowerCase();
+    var filtered = stock.filter(function(item) {{
+        if (currentCat !== 'all' && item.category !== currentCat) return false;
+        if (search && !item.code.toLowerCase().includes(search) && !item.description.toLowerCase().includes(search)) return false;
+        return true;
+    }});
+    
+    var html = '';
+    filtered.slice(0, 100).forEach(function(item) {{
+        html += '<div class="item" onclick="pickItem(\\'' + item.code.replace(/'/g, "\\\\'") + '\\')">';
+        html += '<div class="item-code">' + item.code + '</div>';
+        html += '<div class="item-desc">' + item.description.substring(0, 40) + '</div>';
+        html += '<div class="item-price">R ' + item.price.toFixed(2) + '</div>';
+        html += '<div class="item-stock">Stock: ' + item.qty + '</div>';
+        html += '</div>';
+    }});
+    
+    document.getElementById('results').innerHTML = html || '<div style="padding:40px;text-align:center;color:#666">No items found</div>';
+    document.getElementById('infoLine').textContent = 'Showing ' + Math.min(filtered.length, 100) + ' of ' + filtered.length + ' items';
+}}
+
+function pickItem(code) {{
+    selectedItem = stock.find(s => s.code === code);
+    if (!selectedItem) return;
+    document.getElementById('qtyItemCode').textContent = selectedItem.code;
+    document.getElementById('qtyItemDesc').textContent = selectedItem.description;
+    document.getElementById('qtyItemStock').textContent = 'In stock: ' + selectedItem.qty;
+    document.getElementById('qtyInput').value = 1;
+    document.getElementById('qtyModal').classList.add('show');
+}}
+
+function setQty(n) {{ document.getElementById('qtyInput').value = n; }}
+function closeQtyModal() {{ document.getElementById('qtyModal').classList.remove('show'); }}
+
+function addToCart() {{
+    if (!selectedItem) return;
+    var qty = parseInt(document.getElementById('qtyInput').value) || 1;
+    var existing = cart.find(c => c.code === selectedItem.code);
+    if (existing) {{ existing.qty += qty; }}
+    else {{ cart.push({{code: selectedItem.code, description: selectedItem.description, price: selectedItem.price, qty: qty}}); }}
+    closeQtyModal();
+    renderCart();
+}}
+
+function renderCart() {{
+    if (cart.length === 0) {{
+        document.getElementById('cartScroll').innerHTML = '<div class="empty-cart"><div class="empty-cart-icon">🛒</div><div>Cart is empty</div></div>';
+        document.getElementById('cartCount').textContent = '0 items';
+        document.getElementById('cartTotal').textContent = 'R 0.00';
+        return;
+    }}
+    var html = '';
+    var total = 0;
+    cart.forEach(function(item, i) {{
+        var lineTotal = item.price * item.qty;
+        total += lineTotal;
+        html += '<div class="cart-item">';
+        html += '<div class="cart-item-top"><div><div class="cart-item-code">' + item.code + '</div>';
+        html += '<div class="cart-item-desc">' + item.description.substring(0, 25) + '</div></div>';
+        html += '<button class="cart-item-del" onclick="removeFromCart(' + i + ')">🗑️</button></div>';
+        html += '<div class="cart-item-bottom"><div class="cart-item-qty">';
+        html += '<button onclick="changeQty(' + i + ', -1)">−</button><span>' + item.qty + '</span><button onclick="changeQty(' + i + ', 1)">+</button></div>';
+        html += '<div class="cart-item-total">R ' + lineTotal.toFixed(2) + '</div></div></div>';
+    }});
+    document.getElementById('cartScroll').innerHTML = html;
+    document.getElementById('cartCount').textContent = cart.length + ' items';
+    document.getElementById('cartTotal').textContent = 'R ' + total.toFixed(2);
+}}
+
+function changeQty(i, d) {{ cart[i].qty += d; if (cart[i].qty <= 0) cart.splice(i, 1); renderCart(); }}
+function removeFromCart(i) {{ cart.splice(i, 1); renderCart(); }}
+function clearCart() {{ if (cart.length && confirm('Clear cart?')) {{ cart = []; renderCart(); }} }}
+
+function showCashModal() {{
+    if (cart.length === 0) {{ alert('Cart is empty'); return; }}
+    var total = cart.reduce((s, i) => s + (i.price * i.qty), 0);
+    document.getElementById('cashTotal').textContent = 'R ' + total.toFixed(2);
+    document.getElementById('cashModal').classList.add('show');
+}}
+function closeCashModal() {{ document.getElementById('cashModal').classList.remove('show'); }}
+
+function completeCashSale() {{
+    fetch('/api/business/' + businessId + '/pos-sale', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{items: cart, type: 'cash'}})
+    }}).then(r => r.json()).then(d => {{
+        if (d.success) {{ alert('✅ Cash sale R ' + d.total.toFixed(2) + ' complete!'); cart = []; renderCart(); }}
+        else {{ alert('Error: ' + d.error); }}
+    }});
+    closeCashModal();
+}}
+
+function showAccountModal() {{
+    if (cart.length === 0) {{ alert('Cart is empty'); return; }}
+    var total = cart.reduce((s, i) => s + (i.price * i.qty), 0);
+    document.getElementById('accountTotal').textContent = 'R ' + total.toFixed(2);
+    selectedCustomer = null;
+    document.getElementById('selectedCustomerBox').style.display = 'none';
+    document.getElementById('completeAccountBtn').disabled = true;
+    document.getElementById('completeAccountBtn').style.opacity = '0.5';
+    filterCustomers();
+    document.getElementById('accountModal').classList.add('show');
+}}
+function closeAccountModal() {{ document.getElementById('accountModal').classList.remove('show'); }}
+
+function filterCustomers() {{
+    var search = (document.getElementById('customerSearch').value || '').toLowerCase();
+    var filtered = customers.filter(c => c.name.toLowerCase().includes(search) || c.code.toLowerCase().includes(search));
+    var html = '';
+    filtered.forEach(function(c) {{
+        html += '<div class="customer-item" onclick="selectCustomer(\\'' + c.code + '\\', \\'' + c.name.replace(/'/g, "\\\\'") + '\\')">';
+        html += '<div style="font-weight:700">' + c.name + '</div>';
+        html += '<div style="font-size:12px;color:#888">' + c.code + ' • Balance: R ' + c.balance.toFixed(2) + '</div></div>';
+    }});
+    document.getElementById('customerList').innerHTML = html || '<div style="padding:20px;text-align:center;color:#666">No customers</div>';
+}}
+
+function selectCustomer(code, name) {{
+    selectedCustomer = {{code: code, name: name}};
+    document.getElementById('selectedCustomerName').textContent = name + ' (' + code + ')';
+    document.getElementById('selectedCustomerBox').style.display = 'block';
+    document.getElementById('completeAccountBtn').disabled = false;
+    document.getElementById('completeAccountBtn').style.opacity = '1';
+}}
+
+function completeAccountSale() {{
+    if (!selectedCustomer) {{ alert('Select a customer'); return; }}
+    fetch('/api/business/' + businessId + '/pos-sale', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{items: cart, type: 'account', customer_code: selectedCustomer.code, customer_name: selectedCustomer.name}})
+    }}).then(r => r.json()).then(d => {{
+        if (d.success) {{ alert('✅ Account sale for ' + selectedCustomer.name + ' complete!'); cart = []; renderCart(); }}
+        else {{ alert('Error: ' + d.error); }}
+    }});
+    closeAccountModal();
+}}
+</script>
+</body>
+</html>'''
+
+
+@app.route("/api/business/<business_id>/pos-sale", methods=["POST"])
+def api_pos_sale(business_id):
+    """Process a POS sale"""
+    try:
+        data = load_data()
+        biz = data["businesses"].get(business_id)
+        if not biz:
+            return jsonify({"success": False, "error": "Business not found"})
+        
+        req = request.get_json()
+        items = req.get("items", [])
+        sale_type = req.get("type", "cash")
+        
+        # Calculate total
+        subtotal = sum(item.get("price", 0) * item.get("qty", 0) for item in items)
+        vat = round(subtotal * 0.15, 2)
+        total = round(subtotal + vat, 2)
+        
+        # Generate sale ID
+        sale_id = f"SALE{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        timestamp = datetime.now().isoformat()
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        
+        # Ledger entries
+        # Debit: Cash/Debtors
+        if sale_type == "cash":
+            biz["ledger"].append({
+                "id": str(uuid.uuid4())[:8],
+                "date": date_str,
+                "account": "1000",
+                "account_name": "Bank/Cash",
+                "description": f"Cash Sale {sale_id}",
+                "debit": total,
+                "credit": 0,
+                "document_id": sale_id,
+                "created_at": timestamp
+            })
+        else:
+            cust_name = req.get("customer_name", "Customer")
+            biz["ledger"].append({
+                "id": str(uuid.uuid4())[:8],
+                "date": date_str,
+                "account": "1200",
+                "account_name": "Accounts Receivable",
+                "description": f"Account Sale {sale_id} - {cust_name}",
+                "debit": total,
+                "credit": 0,
+                "document_id": sale_id,
+                "created_at": timestamp
+            })
+            # Update customer balance
+            cust_code = req.get("customer_code")
+            for c in biz.get("customers", []):
+                if c.get("code") == cust_code:
+                    c["balance"] = c.get("balance", 0) + total
+                    break
+        
+        # Credit: Sales
+        biz["ledger"].append({
+            "id": str(uuid.uuid4())[:8],
+            "date": date_str,
+            "account": "4000",
+            "account_name": "Sales",
+            "description": f"Sale {sale_id}",
+            "debit": 0,
+            "credit": subtotal,
+            "document_id": sale_id,
+            "created_at": timestamp
+        })
+        
+        # Credit: VAT Output
+        biz["ledger"].append({
+            "id": str(uuid.uuid4())[:8],
+            "date": date_str,
+            "account": "2200",
+            "account_name": "VAT Output",
+            "description": f"VAT on Sale {sale_id}",
+            "debit": 0,
+            "credit": vat,
+            "document_id": sale_id,
+            "created_at": timestamp
+        })
+        
+        # Update stock quantities
+        for item in items:
+            for s in biz.get("stock", []):
+                if s.get("code") == item.get("code"):
+                    s["qty"] = s.get("qty", 0) - item.get("qty", 0)
+                    break
+        
+        save_data(data)
+        
+        return jsonify({"success": True, "sale_id": sale_id, "total": total})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 
 @app.route("/business/<business_id>/settings")
@@ -2419,6 +2877,107 @@ def api_create_quote(business_id):
         save_document_to_supabase(business_id, quote, "quote")
         
         return jsonify({"success": True, "quote_id": quote_id, "total": total})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/business/<business_id>/create-invoice", methods=["POST"])
+def api_create_invoice(business_id):
+    """Create invoice directly (without quote)"""
+    try:
+        data = load_data()
+        biz = data["businesses"].get(business_id)
+        if not biz:
+            return jsonify({"success": False, "error": "Business not found"})
+        
+        req = request.get_json()
+        
+        # Generate invoice ID
+        invoices = biz.get("documents", {}).get("invoices", [])
+        inv_num = len(invoices) + 1
+        inv_id = f"INV{inv_num:04d}"
+        
+        # Calculate totals
+        lines = req.get("lines", [])
+        subtotal = sum(line.get("total", 0) for line in lines)
+        vat = round(subtotal * 0.15, 2)
+        total = round(subtotal + vat, 2)
+        
+        # Create invoice document
+        invoice = {
+            "id": inv_id,
+            "type": "invoice",
+            "customer": req.get("customer", {}),
+            "date": datetime.now().strftime('%Y-%m-%d'),
+            "due_date": (datetime.now().replace(day=datetime.now().day + 30)).strftime('%Y-%m-%d'),
+            "lines": lines,
+            "subtotal": subtotal,
+            "vat": vat,
+            "total": total,
+            "status": "unpaid",
+            "paid_amount": 0,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        if "invoices" not in biz.get("documents", {}):
+            biz["documents"]["invoices"] = []
+        biz["documents"]["invoices"].append(invoice)
+        
+        # Post to ledger - Debit Debtors, Credit Sales & VAT
+        timestamp = datetime.now().isoformat()
+        cust_name = req.get("customer", {}).get("name", "Customer")
+        
+        # Debit: Accounts Receivable
+        biz["ledger"].append({
+            "id": str(uuid.uuid4())[:8],
+            "date": invoice["date"],
+            "account": "1200",
+            "account_name": "Accounts Receivable",
+            "description": f"Invoice {inv_id} - {cust_name}",
+            "debit": total,
+            "credit": 0,
+            "document_id": inv_id,
+            "created_at": timestamp
+        })
+        
+        # Credit: Sales
+        biz["ledger"].append({
+            "id": str(uuid.uuid4())[:8],
+            "date": invoice["date"],
+            "account": "4000",
+            "account_name": "Sales",
+            "description": f"Invoice {inv_id} - {cust_name}",
+            "debit": 0,
+            "credit": subtotal,
+            "document_id": inv_id,
+            "created_at": timestamp
+        })
+        
+        # Credit: VAT Output
+        if vat > 0:
+            biz["ledger"].append({
+                "id": str(uuid.uuid4())[:8],
+                "date": invoice["date"],
+                "account": "2200",
+                "account_name": "VAT Output",
+                "description": f"VAT on Invoice {inv_id}",
+                "debit": 0,
+                "credit": vat,
+                "document_id": inv_id,
+                "created_at": timestamp
+            })
+        
+        # Update customer balance
+        for c in biz.get("customers", []):
+            if c.get("code") == invoice.get("customer", {}).get("code"):
+                c["balance"] = c.get("balance", 0) + total
+                break
+        
+        save_data(data)
+        save_document_to_supabase(business_id, invoice, "invoice")
+        
+        return jsonify({"success": True, "invoice_id": inv_id, "total": total})
         
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
@@ -3458,193 +4017,474 @@ def vat_report(business_id):
 
 @app.route("/business/<business_id>/quote/new")
 def quote_new(business_id):
-    """Create new quote"""
+    """Create quote - POS Style"""
+    return document_creator(business_id, "quote")
+
+
+@app.route("/business/<business_id>/invoice/new")
+def invoice_new(business_id):
+    """Create invoice directly - POS Style"""
+    return document_creator(business_id, "invoice")
+
+
+def document_creator(business_id, doc_type):
+    """POS-style document creator for quotes and invoices"""
     biz = get_business(business_id)
-    customers = biz.get("customers", [])
     stock = biz.get("stock", [])
+    customers = biz.get("customers", [])
     
-    # Customer options
-    cust_options = '<option value="">-- Select Customer --</option>'
-    for c in customers:
-        cust_options += f'<option value="{c.get("code", "")}" data-name="{c.get("name", "")}">{c.get("name", "")} ({c.get("code", "")})</option>'
+    # Get unique categories
+    categories = list(set(s.get("category", "General") for s in stock))
+    categories = ["All"] + sorted([c for c in categories if c])
     
-    # Stock options for line items
-    stock_options = '<option value="">-- Select Item --</option>'
-    for s in stock:
-        stock_options += f'<option value="{s.get("code", "")}" data-desc="{s.get("description", "")}" data-price="{s.get("price", 0)}">{s.get("code", "")} - {s.get("description", "")}</option>'
+    cat_buttons = ""
+    for i, cat in enumerate(categories):
+        active = " active" if i == 0 else ""
+        data_cat = "all" if cat == "All" else cat
+        cat_buttons += f'<button class="cat-btn{active}" data-cat="{data_cat}">{cat}</button>'
     
-    content = f'''
-    <div class="container">
-        <h1 class="page-title">📝 New Quote</h1>
-        <p class="page-subtitle">Create a quote for a customer</p>
-        
-        <form id="quoteForm">
-            <div class="card">
-                <div class="card-title">👤 Customer</div>
-                <select id="customerSelect" class="form-select" required onchange="updateCustomer()">
-                    {cust_options}
-                </select>
-                <input type="hidden" id="customerName" value="">
-            </div>
-            
-            <div class="card">
-                <div class="card-title">📦 Line Items</div>
-                <div id="lineItems">
-                    <div class="line-item" style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:10px;margin-bottom:10px;align-items:end">
-                        <div>
-                            <label class="form-label">Item</label>
-                            <select class="form-select item-select" onchange="updateLineItem(this)">
-                                {stock_options}
-                            </select>
-                        </div>
-                        <div>
-                            <label class="form-label">Qty</label>
-                            <input type="number" class="form-input item-qty" value="1" min="1" onchange="calculateTotals()">
-                        </div>
-                        <div>
-                            <label class="form-label">Price</label>
-                            <input type="number" class="form-input item-price" step="0.01" value="0" onchange="calculateTotals()">
-                        </div>
-                        <div>
-                            <label class="form-label">Total</label>
-                            <input type="text" class="form-input item-total" readonly value="R 0.00">
-                        </div>
-                        <button type="button" onclick="removeLine(this)" class="btn btn-danger" style="width:auto;padding:10px 15px">🗑️</button>
-                    </div>
-                </div>
-                <button type="button" onclick="addLine()" class="btn btn-outline" style="margin-top:10px">➕ Add Line</button>
-            </div>
-            
-            <div class="card">
-                <div class="card-title">💰 Totals</div>
-                <div class="totals-box">
-                    <div class="totals-row">
-                        <span>Subtotal (excl VAT):</span>
-                        <span id="subtotal">R 0.00</span>
-                    </div>
-                    <div class="totals-row">
-                        <span>VAT (15%):</span>
-                        <span id="vatTotal">R 0.00</span>
-                    </div>
-                    <div class="totals-row grand">
-                        <span>TOTAL:</span>
-                        <span id="grandTotal">R 0.00</span>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="btn-row">
-                <button type="button" onclick="saveQuote()" class="btn btn-success">✅ Create Quote</button>
-                <a href="/business/{business_id}" class="btn btn-secondary">Cancel</a>
-            </div>
-        </form>
-    </div>
+    title = "📝 New Quote" if doc_type == "quote" else "🧾 New Invoice"
+    color = "#8b5cf6" if doc_type == "quote" else "#3b82f6"  # Purple for quote, blue for invoice
     
-    <script>
-    var stockData = {json.dumps([{"code": s.get("code",""), "description": s.get("description",""), "price": s.get("price",0)} for s in stock])};
+    return f'''<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} - {biz.get("name", "Business")}</title>
+<style>
+:root{{--bg:#0a0a0a;--card:#141414;--green:#22c55e;--blue:#3b82f6;--purple:#8b5cf6;--red:#ef4444;--border:#222;--accent:{color}}}
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:system-ui;background:var(--bg);color:#fff;height:100vh;overflow:hidden}}
+.header{{background:var(--accent);padding:12px 20px;display:flex;justify-content:space-between;align-items:center}}
+.logo{{font-size:22px;font-weight:900}}
+.back{{color:rgba(255,255,255,0.9);text-decoration:none;font-size:20px;margin-right:15px}}
+.nav a{{background:rgba(255,255,255,0.15);padding:8px 15px;border-radius:6px;color:#fff;text-decoration:none;margin-left:8px;font-size:13px}}
+.main{{display:flex;height:calc(100vh - 56px)}}
+.left-panel{{flex:1;display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden}}
+.customer-bar{{padding:10px;background:var(--card);border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center}}
+.customer-bar input{{flex:1;padding:10px 15px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:#fff;font-size:14px}}
+.customer-bar input:focus{{outline:none;border-color:var(--accent)}}
+.selected-customer{{background:var(--accent);padding:8px 15px;border-radius:8px;font-weight:700;display:none;align-items:center;gap:10px}}
+.selected-customer .remove{{cursor:pointer;opacity:0.7}}
+.search-box{{padding:10px}}
+.search-input{{width:100%;padding:12px 15px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:#fff;font-size:15px}}
+.search-input:focus{{outline:none;border-color:var(--accent)}}
+.categories{{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 10px 10px}}
+.cat-btn{{background:var(--card);border:1px solid var(--border);color:#888;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:all 0.15s}}
+.cat-btn:hover,.cat-btn.active{{background:var(--accent);color:#fff;border-color:var(--accent)}}
+.info-line{{padding:8px 15px;background:var(--card);font-size:12px;color:#666;border-bottom:1px solid var(--border)}}
+.stock-scroll{{flex:1;overflow-y:auto;padding:10px}}
+.results{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}}
+.item{{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;transition:all 0.15s}}
+.item:hover{{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 5px 20px rgba(0,0,0,0.3)}}
+.item-code{{font-weight:900;color:var(--accent);font-size:13px}}
+.item-desc{{font-size:11px;color:#aaa;margin:5px 0;height:32px;overflow:hidden}}
+.item-price{{font-weight:900;color:var(--green);font-size:16px}}
+.item-stock{{font-size:10px;color:#666;margin-top:5px}}
+.right-panel{{width:380px;min-width:380px;display:flex;flex-direction:column;background:var(--card)}}
+.cart-header{{padding:15px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}}
+.cart-title{{font-weight:900;font-size:18px}}
+.cart-count{{background:var(--accent);padding:3px 10px;border-radius:20px;font-size:12px}}
+.cart-scroll{{flex:1;overflow-y:auto;padding:10px}}
+.cart-item{{background:var(--bg);border-radius:8px;padding:12px;margin-bottom:8px}}
+.cart-item-top{{display:flex;justify-content:space-between;align-items:flex-start}}
+.cart-item-code{{font-weight:700;color:var(--accent);font-size:13px}}
+.cart-item-desc{{font-size:11px;color:#888;margin:3px 0}}
+.cart-item-bottom{{display:flex;justify-content:space-between;align-items:center;margin-top:8px}}
+.cart-item-qty{{display:flex;align-items:center;gap:8px}}
+.cart-item-qty button{{width:28px;height:28px;border:1px solid var(--border);background:var(--card);color:#fff;border-radius:6px;cursor:pointer;font-weight:700}}
+.cart-item-qty button:hover{{background:var(--accent);border-color:var(--accent)}}
+.cart-item-qty span{{min-width:30px;text-align:center;font-weight:700}}
+.cart-item-total{{font-weight:900;color:var(--green);font-size:15px}}
+.cart-item-del{{background:transparent;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:5px}}
+.totals-box{{padding:15px;border-top:1px solid var(--border);background:var(--bg)}}
+.totals-row{{display:flex;justify-content:space-between;padding:5px 0;color:#888}}
+.totals-row.grand{{font-size:20px;font-weight:900;color:#fff;padding-top:10px;border-top:1px solid var(--border);margin-top:5px}}
+.totals-row.grand span:last-child{{color:var(--green)}}
+.btn-box{{padding:15px;display:flex;flex-direction:column;gap:8px}}
+.btn{{width:100%;padding:14px;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:14px;transition:all 0.15s}}
+.btn:hover{{transform:translateY(-1px)}}
+.btn-green{{background:var(--green);color:#fff}}
+.btn-red{{background:var(--red);color:#fff}}
+.btn-outline{{background:transparent;border:2px solid var(--border);color:#fff}}
+.btn-outline:hover{{border-color:var(--accent)}}
+.modal{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);justify-content:center;align-items:center;z-index:1000}}
+.modal.show{{display:flex}}
+.modal-box{{background:var(--card);padding:25px;border-radius:16px;width:90%;max-width:400px}}
+.modal-title{{font-size:20px;font-weight:900;margin-bottom:20px;text-align:center}}
+.modal-input{{width:100%;padding:15px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:#fff;font-size:16px;margin-bottom:10px}}
+.modal-input:focus{{outline:none;border-color:var(--accent)}}
+.qty-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:15px 0}}
+.qty-btn{{background:var(--bg);border:1px solid var(--border);color:#fff;padding:15px;border-radius:8px;cursor:pointer;font-weight:700;font-size:16px}}
+.qty-btn:hover{{background:var(--accent);border-color:var(--accent)}}
+.customer-list{{max-height:300px;overflow-y:auto;background:var(--bg);border-radius:8px;margin:10px 0}}
+.customer-item{{padding:12px 15px;border-bottom:1px solid var(--border);cursor:pointer}}
+.customer-item:hover{{background:var(--accent)}}
+.customer-item-name{{font-weight:700}}
+.customer-item-info{{font-size:12px;color:#888}}
+.empty-cart{{padding:40px;text-align:center;color:#666}}
+.empty-cart-icon{{font-size:48px;margin-bottom:10px}}
+</style>
+</head>
+<body>
+<div class="header">
+<div style="display:flex;align-items:center">
+<a href="/business/{business_id}" class="back">←</a>
+<div class="logo">{title}</div>
+</div>
+<div class="nav">
+<a href="/business/{business_id}">🏠 Dashboard</a>
+<a href="/business/{business_id}/quotes">📝 Quotes</a>
+<a href="/business/{business_id}/invoices">🧾 Invoices</a>
+</div>
+</div>
+
+<div class="main">
+<div class="left-panel">
+<div class="customer-bar">
+<input type="text" id="customerSearch" placeholder="🔍 Search customer by name or code..." oninput="searchCustomers()">
+<div class="selected-customer" id="selectedCustomerBox">
+<span id="selectedCustomerName"></span>
+<span class="remove" onclick="clearCustomer()">✕</span>
+</div>
+</div>
+<div class="search-box">
+<input type="text" id="searchBox" class="search-input" placeholder="🔍 Search item by code or description..." autofocus>
+</div>
+<div class="categories">{cat_buttons}</div>
+<div id="infoLine" class="info-line">Loading items...</div>
+<div class="stock-scroll">
+<div id="results" class="results"></div>
+</div>
+</div>
+
+<div class="right-panel">
+<div class="cart-header">
+<div class="cart-title">🛒 {"QUOTE" if doc_type == "quote" else "INVOICE"}</div>
+<div class="cart-count" id="cartCount">0 items</div>
+</div>
+<div id="cartScroll" class="cart-scroll">
+<div class="empty-cart">
+<div class="empty-cart-icon">📦</div>
+<div>Click items to add</div>
+</div>
+</div>
+<div class="totals-box">
+<div class="totals-row"><span>Subtotal:</span><span id="subtotal">R 0.00</span></div>
+<div class="totals-row"><span>VAT (15%):</span><span id="vatTotal">R 0.00</span></div>
+<div class="totals-row grand"><span>TOTAL:</span><span id="grandTotal">R 0.00</span></div>
+</div>
+<div class="btn-box">
+<button class="btn btn-green" onclick="saveDocument()">✅ CREATE {"QUOTE" if doc_type == "quote" else "INVOICE"}</button>
+<button class="btn btn-outline" onclick="clearCart()">🗑️ Clear All</button>
+</div>
+</div>
+</div>
+
+<!-- Quantity Modal -->
+<div id="qtyModal" class="modal">
+<div class="modal-box">
+<div class="modal-title" style="color:var(--accent)">How Many?</div>
+<div style="background:var(--bg);padding:15px;border-radius:10px;margin-bottom:15px">
+<div id="qtyItemCode" style="font-weight:900;color:var(--accent)"></div>
+<div id="qtyItemDesc" style="color:#888;font-size:13px;margin-top:5px"></div>
+<div id="qtyItemPrice" style="color:var(--green);font-weight:700;margin-top:5px"></div>
+</div>
+<div class="qty-grid">
+<button class="qty-btn" onclick="setQty(1)">1</button>
+<button class="qty-btn" onclick="setQty(5)">5</button>
+<button class="qty-btn" onclick="setQty(10)">10</button>
+<button class="qty-btn" onclick="setQty(25)">25</button>
+<button class="qty-btn" onclick="setQty(50)">50</button>
+<button class="qty-btn" onclick="setQty(100)">100</button>
+</div>
+<input type="number" id="qtyInput" class="modal-input" placeholder="Or type quantity..." min="1" value="1">
+<div style="display:flex;gap:10px">
+<button class="btn btn-green" style="flex:1" onclick="addToCart()">✅ Add</button>
+<button class="btn btn-red" style="flex:1" onclick="closeQtyModal()">Cancel</button>
+</div>
+</div>
+</div>
+
+<!-- Customer Search Modal -->
+<div id="customerModal" class="modal">
+<div class="modal-box">
+<div class="modal-title">👤 Select Customer</div>
+<input type="text" id="customerModalSearch" class="modal-input" placeholder="Search customer..." oninput="filterCustomerModal()">
+<div class="customer-list" id="customerList"></div>
+<button class="btn btn-red" onclick="closeCustomerModal()">Cancel</button>
+</div>
+</div>
+
+<script>
+var businessId = '{business_id}';
+var docType = '{doc_type}';
+var stock = {json.dumps([{{"code": s.get("code",""), "description": s.get("description",""), "price": float(s.get("price",0)), "qty": int(s.get("qty",0)), "category": s.get("category","General")}} for s in stock])};
+var customers = {json.dumps([{{"code": c.get("code",""), "name": c.get("name",""), "phone": c.get("phone",""), "balance": float(c.get("balance",0))}} for c in customers])};
+var cart = [];
+var selectedItem = null;
+var selectedCustomer = null;
+var currentCat = 'all';
+
+// Initialize
+renderStock();
+document.getElementById('infoLine').textContent = stock.length + ' items loaded';
+
+// Search box
+document.getElementById('searchBox').addEventListener('input', renderStock);
+
+// Category buttons
+document.querySelectorAll('.cat-btn').forEach(function(btn) {{
+    btn.addEventListener('click', function() {{
+        document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        currentCat = this.dataset.cat;
+        renderStock();
+    }});
+}});
+
+function renderStock() {{
+    var search = document.getElementById('searchBox').value.toLowerCase();
+    var filtered = stock.filter(function(item) {{
+        if (currentCat !== 'all' && item.category !== currentCat) return false;
+        if (search && !item.code.toLowerCase().includes(search) && !item.description.toLowerCase().includes(search)) return false;
+        return true;
+    }});
     
-    function updateCustomer() {{
-        var sel = document.getElementById('customerSelect');
-        var opt = sel.options[sel.selectedIndex];
-        document.getElementById('customerName').value = opt.dataset.name || '';
-    }}
+    var html = '';
+    filtered.slice(0, 100).forEach(function(item) {{
+        html += '<div class="item" onclick="pickItem(\\'' + item.code.replace(/'/g, "\\\\'") + '\\')">';
+        html += '<div class="item-code">' + item.code + '</div>';
+        html += '<div class="item-desc">' + item.description.substring(0, 50) + '</div>';
+        html += '<div class="item-price">R ' + item.price.toFixed(2) + '</div>';
+        html += '<div class="item-stock">In stock: ' + item.qty + '</div>';
+        html += '</div>';
+    }});
     
-    function updateLineItem(select) {{
-        var opt = select.options[select.selectedIndex];
-        var row = select.closest('.line-item');
-        row.querySelector('.item-price').value = opt.dataset.price || 0;
-        calculateTotals();
-    }}
+    document.getElementById('results').innerHTML = html || '<div style="padding:40px;text-align:center;color:#666">No items found</div>';
+    document.getElementById('infoLine').textContent = 'Showing ' + Math.min(filtered.length, 100) + ' of ' + filtered.length + ' items';
+}}
+
+function pickItem(code) {{
+    selectedItem = stock.find(s => s.code === code);
+    if (!selectedItem) return;
     
-    function addLine() {{
-        var container = document.getElementById('lineItems');
-        var stockOpts = `{stock_options}`;
-        var html = `
-            <div class="line-item" style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:10px;margin-bottom:10px;align-items:end">
-                <div><select class="form-select item-select" onchange="updateLineItem(this)">${{stockOpts}}</select></div>
-                <div><input type="number" class="form-input item-qty" value="1" min="1" onchange="calculateTotals()"></div>
-                <div><input type="number" class="form-input item-price" step="0.01" value="0" onchange="calculateTotals()"></div>
-                <div><input type="text" class="form-input item-total" readonly value="R 0.00"></div>
-                <button type="button" onclick="removeLine(this)" class="btn btn-danger" style="width:auto;padding:10px 15px">🗑️</button>
-            </div>
-        `;
-        container.insertAdjacentHTML('beforeend', html);
-    }}
+    document.getElementById('qtyItemCode').textContent = selectedItem.code;
+    document.getElementById('qtyItemDesc').textContent = selectedItem.description;
+    document.getElementById('qtyItemPrice').textContent = 'R ' + selectedItem.price.toFixed(2) + ' each';
+    document.getElementById('qtyInput').value = 1;
+    document.getElementById('qtyModal').classList.add('show');
+}}
+
+function setQty(n) {{ document.getElementById('qtyInput').value = n; }}
+
+function closeQtyModal() {{
+    document.getElementById('qtyModal').classList.remove('show');
+    selectedItem = null;
+}}
+
+function addToCart() {{
+    if (!selectedItem) return;
+    var qty = parseInt(document.getElementById('qtyInput').value) || 1;
     
-    function removeLine(btn) {{
-        btn.closest('.line-item').remove();
-        calculateTotals();
-    }}
-    
-    function calculateTotals() {{
-        var lines = document.querySelectorAll('.line-item');
-        var subtotal = 0;
-        
-        lines.forEach(function(line) {{
-            var qty = parseFloat(line.querySelector('.item-qty').value) || 0;
-            var price = parseFloat(line.querySelector('.item-price').value) || 0;
-            var lineTotal = qty * price;
-            line.querySelector('.item-total').value = 'R ' + lineTotal.toFixed(2);
-            subtotal += lineTotal;
+    var existing = cart.find(c => c.code === selectedItem.code);
+    if (existing) {{
+        existing.qty += qty;
+    }} else {{
+        cart.push({{
+            code: selectedItem.code,
+            description: selectedItem.description,
+            price: selectedItem.price,
+            qty: qty
         }});
-        
-        var vat = subtotal * 0.15;
-        var total = subtotal + vat;
-        
-        document.getElementById('subtotal').textContent = 'R ' + subtotal.toFixed(2);
-        document.getElementById('vatTotal').textContent = 'R ' + vat.toFixed(2);
-        document.getElementById('grandTotal').textContent = 'R ' + total.toFixed(2);
     }}
     
-    function saveQuote() {{
-        var custCode = document.getElementById('customerSelect').value;
-        var custName = document.getElementById('customerName').value;
-        
-        if (!custCode) {{
-            alert('Please select a customer');
-            return;
-        }}
-        
-        var lines = [];
-        document.querySelectorAll('.line-item').forEach(function(line) {{
-            var itemSelect = line.querySelector('.item-select');
-            var code = itemSelect.value;
-            var desc = itemSelect.options[itemSelect.selectedIndex].dataset.desc || '';
-            var qty = parseFloat(line.querySelector('.item-qty').value) || 0;
-            var price = parseFloat(line.querySelector('.item-price').value) || 0;
-            
-            if (code && qty > 0) {{
-                lines.push({{code: code, description: desc, qty: qty, price: price, total: qty * price}});
-            }}
-        }});
-        
-        if (lines.length === 0) {{
-            alert('Please add at least one line item');
-            return;
-        }}
-        
-        fetch('/api/business/{business_id}/create-quote', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{
-                customer: {{code: custCode, name: custName}},
-                lines: lines
-            }})
-        }})
-        .then(r => r.json())
-        .then(data => {{
-            if (data.success) {{
-                alert('Quote ' + data.quote_id + ' created!');
-                window.location.href = '/business/{business_id}/quotes';
-            }} else {{
-                alert('Error: ' + (data.error || 'Unknown error'));
-            }}
-        }})
-        .catch(err => alert('Error: ' + err.message));
+    closeQtyModal();
+    renderCart();
+}}
+
+function renderCart() {{
+    if (cart.length === 0) {{
+        document.getElementById('cartScroll').innerHTML = '<div class="empty-cart"><div class="empty-cart-icon">📦</div><div>Click items to add</div></div>';
+        document.getElementById('cartCount').textContent = '0 items';
+        document.getElementById('subtotal').textContent = 'R 0.00';
+        document.getElementById('vatTotal').textContent = 'R 0.00';
+        document.getElementById('grandTotal').textContent = 'R 0.00';
+        return;
     }}
-    </script>
-    '''
-    return render_page(content, "New Quote", back_url=f"/business/{business_id}")
+    
+    var html = '';
+    var subtotal = 0;
+    
+    cart.forEach(function(item, i) {{
+        var lineTotal = item.price * item.qty;
+        subtotal += lineTotal;
+        
+        html += '<div class="cart-item">';
+        html += '<div class="cart-item-top">';
+        html += '<div><div class="cart-item-code">' + item.code + '</div>';
+        html += '<div class="cart-item-desc">' + item.description.substring(0, 30) + '</div></div>';
+        html += '<button class="cart-item-del" onclick="removeFromCart(' + i + ')">🗑️</button>';
+        html += '</div>';
+        html += '<div class="cart-item-bottom">';
+        html += '<div class="cart-item-qty">';
+        html += '<button onclick="changeQty(' + i + ', -1)">−</button>';
+        html += '<span>' + item.qty + '</span>';
+        html += '<button onclick="changeQty(' + i + ', 1)">+</button>';
+        html += '</div>';
+        html += '<div class="cart-item-total">R ' + lineTotal.toFixed(2) + '</div>';
+        html += '</div></div>';
+    }});
+    
+    document.getElementById('cartScroll').innerHTML = html;
+    document.getElementById('cartCount').textContent = cart.length + ' items';
+    
+    var vat = subtotal * 0.15;
+    var total = subtotal + vat;
+    
+    document.getElementById('subtotal').textContent = 'R ' + subtotal.toFixed(2);
+    document.getElementById('vatTotal').textContent = 'R ' + vat.toFixed(2);
+    document.getElementById('grandTotal').textContent = 'R ' + total.toFixed(2);
+}}
+
+function changeQty(index, delta) {{
+    cart[index].qty += delta;
+    if (cart[index].qty <= 0) {{
+        cart.splice(index, 1);
+    }}
+    renderCart();
+}}
+
+function removeFromCart(index) {{
+    cart.splice(index, 1);
+    renderCart();
+}}
+
+function clearCart() {{
+    if (cart.length === 0) return;
+    if (confirm('Clear all items?')) {{
+        cart = [];
+        renderCart();
+    }}
+}}
+
+// Customer search
+function searchCustomers() {{
+    var search = document.getElementById('customerSearch').value.toLowerCase();
+    if (search.length < 1) return;
+    
+    var matches = customers.filter(c => 
+        c.name.toLowerCase().includes(search) || 
+        c.code.toLowerCase().includes(search)
+    );
+    
+    if (matches.length === 1) {{
+        selectCustomer(matches[0]);
+    }} else if (matches.length > 1) {{
+        showCustomerModal(matches);
+    }}
+}}
+
+function showCustomerModal(list) {{
+    var html = '';
+    list.forEach(function(c) {{
+        html += '<div class="customer-item" onclick="selectCustomerFromModal(\\'' + c.code + '\\')">';
+        html += '<div class="customer-item-name">' + c.name + '</div>';
+        html += '<div class="customer-item-info">' + c.code + ' • Balance: R ' + c.balance.toFixed(2) + '</div>';
+        html += '</div>';
+    }});
+    document.getElementById('customerList').innerHTML = html;
+    document.getElementById('customerModal').classList.add('show');
+}}
+
+function selectCustomerFromModal(code) {{
+    var customer = customers.find(c => c.code === code);
+    if (customer) selectCustomer(customer);
+    closeCustomerModal();
+}}
+
+function selectCustomer(customer) {{
+    selectedCustomer = customer;
+    document.getElementById('selectedCustomerName').textContent = customer.name + ' (' + customer.code + ')';
+    document.getElementById('selectedCustomerBox').style.display = 'flex';
+    document.getElementById('customerSearch').style.display = 'none';
+}}
+
+function clearCustomer() {{
+    selectedCustomer = null;
+    document.getElementById('selectedCustomerBox').style.display = 'none';
+    document.getElementById('customerSearch').style.display = 'block';
+    document.getElementById('customerSearch').value = '';
+}}
+
+function closeCustomerModal() {{
+    document.getElementById('customerModal').classList.remove('show');
+}}
+
+function filterCustomerModal() {{
+    var search = document.getElementById('customerModalSearch').value.toLowerCase();
+    var filtered = customers.filter(c => 
+        c.name.toLowerCase().includes(search) || 
+        c.code.toLowerCase().includes(search)
+    );
+    
+    var html = '';
+    filtered.forEach(function(c) {{
+        html += '<div class="customer-item" onclick="selectCustomerFromModal(\\'' + c.code + '\\')">';
+        html += '<div class="customer-item-name">' + c.name + '</div>';
+        html += '<div class="customer-item-info">' + c.code + ' • Balance: R ' + c.balance.toFixed(2) + '</div>';
+        html += '</div>';
+    }});
+    document.getElementById('customerList').innerHTML = html || '<div style="padding:20px;text-align:center;color:#666">No customers found</div>';
+}}
+
+function saveDocument() {{
+    if (!selectedCustomer) {{
+        alert('Please select a customer first');
+        document.getElementById('customerSearch').focus();
+        return;
+    }}
+    
+    if (cart.length === 0) {{
+        alert('Please add at least one item');
+        return;
+    }}
+    
+    var lines = cart.map(function(item) {{
+        return {{
+            code: item.code,
+            description: item.description,
+            qty: item.qty,
+            price: item.price,
+            total: item.qty * item.price
+        }};
+    }});
+    
+    var endpoint = docType === 'quote' ? '/api/business/' + businessId + '/create-quote' : '/api/business/' + businessId + '/create-invoice';
+    
+    fetch(endpoint, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{
+            customer: {{code: selectedCustomer.code, name: selectedCustomer.name}},
+            lines: lines
+        }})
+    }})
+    .then(r => r.json())
+    .then(data => {{
+        if (data.success) {{
+            var docId = data.quote_id || data.invoice_id;
+            alert((docType === 'quote' ? 'Quote ' : 'Invoice ') + docId + ' created successfully!');
+            window.location.href = '/business/' + businessId + '/' + (docType === 'quote' ? 'quotes' : 'invoices');
+        }} else {{
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }}
+    }})
+    .catch(err => alert('Error: ' + err.message));
+}}
+</script>
+</body>
+</html>'''
 
 
 @app.route("/business/<business_id>/quotes")
