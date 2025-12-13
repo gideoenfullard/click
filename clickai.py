@@ -1360,6 +1360,10 @@ def business_dashboard(business_id):
                     <div class="action-card-desc">{len(docs.get("delivery_notes", []))} notes</div>
                 </a>
             </div>
+            <div class="btn-row" style="margin-top:15px">
+                <a href="/business/{business_id}/supplier-invoices" class="btn btn-outline">📋 Supplier Invoices</a>
+                <a href="/business/{business_id}/expenses" class="btn btn-outline">📋 Expenses</a>
+            </div>
         </div>
         
         <div class="card">
@@ -1368,6 +1372,14 @@ def business_dashboard(business_id):
                 <a href="/business/{business_id}/ledger" class="btn btn-secondary">📒 Ledger</a>
                 <a href="/business/{business_id}/trial-balance" class="btn btn-secondary">📊 Trial Balance</a>
             </div>
+            <div class="btn-row">
+                <a href="/business/{business_id}/profit-loss" class="btn btn-success">📈 Profit & Loss</a>
+                <a href="/business/{business_id}/vat-report" class="btn btn-warning">🧾 VAT Report</a>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">📁 MASTER DATA</div>
             <div class="btn-row">
                 <a href="/business/{business_id}/stock" class="btn btn-outline">📦 Stock</a>
                 <a href="/business/{business_id}/suppliers" class="btn btn-outline">👥 Suppliers</a>
