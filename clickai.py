@@ -560,54 +560,122 @@ def api_invoice(bid):
     return jsonify({"success":True,"doc_id":doc_id})
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# IMPORT ALL - One page to import Stock, Customers, Suppliers
+# SMART IMPORT - One file, auto-detect what's inside
 # ═══════════════════════════════════════════════════════════════════════════════
 @app.route("/<bid>/import", methods=["GET","POST"])
 def import_all(bid):
     b = biz(bid)
     msg = ""
     if request.method == "POST":
-        results = []
-        for ftype in ["stock","customers","suppliers"]:
-            f = request.files.get(ftype)
-            if f and f.filename:
-                try:
-                    content = f.read().decode('utf-8-sig')
+        f = request.files.get("file")
+        if f and f.filename:
+            try:
+                content = f.read().decode('utf-8-sig')
+                filename = f.filename.lower()
+                stock_count = cust_count = supp_count = 0
+                
+                # JSON file
+                if filename.endswith('.json'):
+                    data = json.loads(content)
+                    # Could be array or object with arrays
+                    items = data if isinstance(data, list) else []
+                    if isinstance(data, dict):
+                        items = data.get('stock', data.get('items', data.get('products', [])))
+                        if data.get('customers'): 
+                            for c in data['customers']:
+                                b["customers"].append({'code':c.get('code',f"C{len(b['customers'])+1:03d}"),'name':c.get('name',''),'phone':c.get('phone',''),'email':c.get('email',''),'balance':float(c.get('balance',0) or 0)})
+                                cust_count += 1
+                        if data.get('suppliers'):
+                            for s in data['suppliers']:
+                                b["suppliers"].append({'code':s.get('code',f"S{len(b['suppliers'])+1:03d}"),'name':s.get('name',''),'phone':s.get('phone',''),'email':s.get('email',''),'balance':float(s.get('balance',0) or 0)})
+                                supp_count += 1
+                    for item in items:
+                        if item.get('code') or item.get('description') or item.get('name'):
+                            b["stock"].append({'code':str(item.get('code',item.get('sku',''))),'description':item.get('description',item.get('name','')),'category':item.get('category','General'),'qty':int(float(item.get('qty',item.get('quantity',0)) or 0)),'cost':float(item.get('cost',0) or 0),'price':float(item.get('price',item.get('sell',0)) or 0)})
+                            stock_count += 1
+                
+                # CSV file
+                else:
                     delim = ';' if ';' in content.split('\n')[0] else ','
                     reader = csv.DictReader(io.StringIO(content), delimiter=delim)
-                    count = 0
                     for row in reader:
-                        if ftype == "stock":
+                        # Detect row type by columns present
+                        has_price = any(k.lower() in ['price','cost','sell','qty','quantity'] for k in row.keys())
+                        has_balance = any(k.lower() == 'balance' for k in row.keys())
+                        row_type = row.get('type','').lower()
+                        
+                        # Explicit type column
+                        if row_type in ['stock','item','product'] or has_price:
                             code = row.get('code') or row.get('Code') or row.get('sku') or ''
-                            desc = row.get('description') or row.get('Description') or row.get('name') or ''
+                            desc = row.get('description') or row.get('Description') or row.get('name') or row.get('Name') or ''
                             if code or desc:
-                                b["stock"].append({'code':code.strip(),'description':desc.strip(),'category':(row.get('category') or 'General').strip(),'qty':int(float(row.get('qty') or row.get('Qty') or 0)),'cost':float(row.get('cost') or 0),'price':float(row.get('price') or row.get('sell') or 0)})
-                                count += 1
-                        elif ftype == "customers":
+                                b["stock"].append({'code':str(code).strip(),'description':str(desc).strip(),'category':(row.get('category') or 'General').strip(),'qty':int(float(row.get('qty') or row.get('Qty') or row.get('quantity') or 0)),'cost':float(row.get('cost') or row.get('Cost') or 0),'price':float(row.get('price') or row.get('Price') or row.get('sell') or 0)})
+                                stock_count += 1
+                        elif row_type == 'customer':
+                            name = row.get('name') or row.get('Name') or ''
+                            if name:
+                                b["customers"].append({'code':(row.get('code') or f"C{len(b['customers'])+1:03d}").strip(),'name':name.strip(),'phone':(row.get('phone') or '').strip(),'email':(row.get('email') or '').strip(),'balance':float(row.get('balance') or 0)})
+                                cust_count += 1
+                        elif row_type == 'supplier':
+                            name = row.get('name') or row.get('Name') or ''
+                            if name:
+                                b["suppliers"].append({'code':(row.get('code') or f"S{len(b['suppliers'])+1:03d}").strip(),'name':name.strip(),'phone':(row.get('phone') or '').strip(),'email':(row.get('email') or '').strip(),'balance':float(row.get('balance') or 0)})
+                                supp_count += 1
+                        # No type column - guess based on content
+                        elif not has_price and not has_balance:
                             name = row.get('name') or row.get('Name') or ''
                             if name:
                                 b["customers"].append({'code':(row.get('code') or f"C{len(b['customers'])+1:03d}").strip(),'name':name.strip(),'phone':(row.get('phone') or '').strip(),'email':(row.get('email') or '').strip(),'balance':0})
-                                count += 1
-                        elif ftype == "suppliers":
-                            name = row.get('name') or row.get('Name') or ''
-                            if name:
-                                b["suppliers"].append({'code':(row.get('code') or f"S{len(b['suppliers'])+1:03d}").strip(),'name':name.strip(),'phone':(row.get('phone') or '').strip(),'email':(row.get('email') or '').strip(),'balance':0})
-                                count += 1
-                    if count > 0: results.append(f"{count} {ftype}")
-                except Exception as e: results.append(f"{ftype}: Error")
-        save()
-        msg = f'<div style="background:#10b981;color:#fff;padding:15px;border-radius:10px;margin-bottom:20px">✅ Imported: {", ".join(results)}</div>' if results else '<div style="background:#f59e0b;color:#fff;padding:15px;border-radius:10px;margin-bottom:20px">⚠️ No files selected</div>'
+                                cust_count += 1
+                
+                save()
+                results = []
+                if stock_count: results.append(f"{stock_count} stock items")
+                if cust_count: results.append(f"{cust_count} customers")
+                if supp_count: results.append(f"{supp_count} suppliers")
+                msg = f'<div style="background:#10b981;color:#fff;padding:15px;border-radius:10px;margin-bottom:20px">✅ Imported: {", ".join(results) if results else "0 items (check file format)"}</div>'
+            except Exception as e:
+                msg = f'<div style="background:#ef4444;color:#fff;padding:15px;border-radius:10px;margin-bottom:20px">❌ Error: {str(e)}</div>'
+        else:
+            msg = '<div style="background:#f59e0b;color:#fff;padding:15px;border-radius:10px;margin-bottom:20px">⚠️ No file selected</div>'
     
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Import</title>{CSS}</head><body>
 <div class="header"><div class="logo">📤 Import Data</div><a href="/{bid}" class="btn btn-dark">← Back</a></div>
 <div class="container">{msg}
 <form method="POST" enctype="multipart/form-data">
-<div class="card"><div style="font-weight:700;margin-bottom:15px">📦 Stock</div><input type="file" name="stock" accept=".csv" class="input"><div style="font-size:11px;color:#666;margin-top:8px">Columns: code, description, category, qty, cost, price</div><div style="margin-top:8px;color:#8b5cf6;font-size:12px">Current: {len(b.get("stock",[]))} items</div></div>
-<div class="card"><div style="font-weight:700;margin-bottom:15px">👤 Customers</div><input type="file" name="customers" accept=".csv" class="input"><div style="font-size:11px;color:#666;margin-top:8px">Columns: code, name, phone, email</div><div style="margin-top:8px;color:#3b82f6;font-size:12px">Current: {len(b.get("customers",[]))} customers</div></div>
-<div class="card"><div style="font-weight:700;margin-bottom:15px">👥 Suppliers</div><input type="file" name="suppliers" accept=".csv" class="input"><div style="font-size:11px;color:#666;margin-top:8px">Columns: code, name, phone, email</div><div style="margin-top:8px;color:#10b981;font-size:12px">Current: {len(b.get("suppliers",[]))} suppliers</div></div>
-<button type="submit" class="btn btn-purple" style="width:100%;padding:18px;font-size:16px">📤 Import Selected Files</button>
+<div class="card">
+<div style="font-weight:700;margin-bottom:15px;font-size:18px">📁 Upload Your File</div>
+<input type="file" name="file" accept=".csv,.json,.txt" class="input" style="padding:20px;font-size:16px">
+<div style="margin-top:15px;padding:15px;background:rgba(139,92,246,.1);border-radius:10px">
+<div style="font-weight:600;margin-bottom:8px;color:#a78bfa">Supported Formats:</div>
+<div style="color:#888;font-size:13px;line-height:1.8">
+• <strong>CSV</strong> - comma or semicolon separated<br>
+• <strong>JSON</strong> - array or object with stock/customers/suppliers
+</div>
+</div>
+<button type="submit" class="btn btn-purple" style="width:100%;padding:18px;font-size:16px;margin-top:20px">📤 Import File</button>
+</div>
 </form>
-<div class="card" style="margin-top:20px"><div style="font-weight:700;margin-bottom:10px">💡 Tips</div><div style="color:#888;font-size:13px;line-height:1.8">• Select one, two, or all three files<br>• CSV can use comma or semicolon<br>• Imports ADD to existing data</div></div>
+
+<div class="card">
+<div style="font-weight:700;margin-bottom:15px">📊 Current Data</div>
+<div class="grid3">
+<div style="text-align:center;padding:15px;background:rgba(139,92,246,.1);border-radius:8px"><div style="font-size:24px;font-weight:800;color:#8b5cf6">{len(b.get("stock",[]))}</div><div style="font-size:11px;color:#666">Stock Items</div></div>
+<div style="text-align:center;padding:15px;background:rgba(59,130,246,.1);border-radius:8px"><div style="font-size:24px;font-weight:800;color:#3b82f6">{len(b.get("customers",[]))}</div><div style="font-size:11px;color:#666">Customers</div></div>
+<div style="text-align:center;padding:15px;background:rgba(16,185,129,.1);border-radius:8px"><div style="font-size:24px;font-weight:800;color:#10b981">{len(b.get("suppliers",[]))}</div><div style="font-size:11px;color:#666">Suppliers</div></div>
+</div>
+</div>
+
+<div class="card">
+<div style="font-weight:700;margin-bottom:10px">💡 Auto-Detection</div>
+<div style="color:#888;font-size:13px;line-height:1.8">
+The system automatically detects what's in your file:<br>
+• Rows with <strong>price/cost/qty</strong> → Stock<br>
+• Rows with <strong>type: "customer"</strong> → Customers<br>
+• Rows with <strong>type: "supplier"</strong> → Suppliers<br>
+• JSON with <strong>stock/customers/suppliers</strong> keys → All three
+</div>
+</div>
 </div></body></html>'''
 
 # ═══════════════════════════════════════════════════════════════════════════════
