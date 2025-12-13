@@ -47,6 +47,55 @@ except Exception as e:
     print(f"⚠️ Supabase not available: {e}")
     print("   Falling back to local JSON storage")
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# BUSINESS POS CATEGORIES - Your 13 buttons per business
+# ═══════════════════════════════════════════════════════════════════════════════
+
+BUSINESS_POS_CATEGORIES = {
+    # FullTech Hardware - Your 13 categories
+    "fulltech": ["All", "Bearings", "Bolts", "Nuts", "Washers", "Screws", "Workwear", "Oil Seals", "V-Belts", "Freestyle", "Circlips", "Hardware", "Other"],
+    "hardware": ["All", "Bearings", "Bolts", "Nuts", "Washers", "Screws", "Workwear", "Oil Seals", "V-Belts", "Freestyle", "Circlips", "Hardware", "Other"],
+    
+    # Pub & Grill
+    "pub": ["All", "Drinks", "Food", "Spirits", "Beer", "Wine", "Ciders", "Soft Drinks", "Snacks", "Other"],
+    
+    # B&B
+    "bnb": ["All", "Rooms", "Breakfast", "Extras", "Other"],
+    
+    # Stainless
+    "stainless": ["All", "Sheets", "Tubes", "Fittings", "Welding", "Tools", "Other"],
+    
+    # Default for any business
+    "default": ["All", "Category 1", "Category 2", "Category 3", "Category 4", "Category 5", "Other"]
+}
+
+def get_pos_categories(business_id):
+    """Get POS categories for a business - checks business name for matches"""
+    # First check direct match
+    if business_id.lower() in BUSINESS_POS_CATEGORIES:
+        return BUSINESS_POS_CATEGORIES[business_id.lower()]
+    
+    # Check if business name contains key words
+    biz = get_business(business_id)
+    name = biz.get("name", "").lower()
+    
+    if "hardware" in name or "fulltech" in name or "bearing" in name:
+        return BUSINESS_POS_CATEGORIES["hardware"]
+    elif "pub" in name or "grill" in name or "bar" in name or "restaurant" in name:
+        return BUSINESS_POS_CATEGORIES["pub"]
+    elif "b&b" in name or "bnb" in name or "guest" in name or "lodge" in name:
+        return BUSINESS_POS_CATEGORIES["bnb"]
+    elif "stainless" in name or "steel" in name or "metal" in name:
+        return BUSINESS_POS_CATEGORIES["stainless"]
+    
+    # Default: return categories from stock data
+    stock = biz.get("stock", [])
+    categories = list(set(s.get("category", "General") for s in stock if s.get("category")))
+    if categories:
+        return ["All"] + sorted(categories)
+    
+    return BUSINESS_POS_CATEGORIES["default"]
+
 # Fallback to local storage if Supabase not available
 DATA_DIR = os.environ.get("DATA_DIR", ".")
 DATA_FILE = os.path.join(DATA_DIR, "clickai_data.json")
@@ -474,16 +523,21 @@ def get_business(business_id):
 
 CSS = """
 :root {
-    --bg: #0a0a0a;
-    --card: #141414;
-    --border: #222;
+    --bg: #0a0a0f;
+    --card: #12121a;
+    --border: #1e1e2e;
     --text: #fff;
-    --text-muted: #888;
+    --text-muted: #8888aa;
     --primary: #3b82f6;
-    --success: #22c55e;
+    --success: #10b981;
     --warning: #f59e0b;
     --danger: #ef4444;
     --purple: #8b5cf6;
+    --cyan: #06b6d4;
+    --glow-blue: rgba(59, 130, 246, 0.5);
+    --glow-purple: rgba(139, 92, 246, 0.5);
+    --glow-red: rgba(239, 68, 68, 0.4);
+    --glow-cyan: rgba(6, 182, 212, 0.4);
 }
 
 * {
@@ -604,6 +658,10 @@ body {
     font-size: 28px;
     font-weight: 900;
     margin-bottom: 10px;
+    background: linear-gradient(135deg, var(--primary), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
 }
 
 .page-subtitle {
@@ -612,7 +670,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/* CARDS                                                                        */
+/* CARDS WITH SUBTLE GLOW                                                       */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 .card {
@@ -621,6 +679,12 @@ body {
     padding: 25px;
     margin-bottom: 20px;
     border: 1px solid var(--border);
+    transition: all 0.3s ease;
+}
+
+.card:hover {
+    border-color: rgba(139, 92, 246, 0.3);
+    box-shadow: 0 0 30px rgba(139, 92, 246, 0.08);
 }
 
 .card-title {
@@ -633,7 +697,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/* BUTTONS                                                                      */
+/* SEXY GLOWING BUTTONS - NO SOLID BLOCKS!                                      */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 .btn {
@@ -643,38 +707,76 @@ body {
     gap: 8px;
     padding: 15px 30px;
     border-radius: 12px;
-    border: none;
     font-weight: 700;
     font-size: 16px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s ease;
     text-decoration: none;
     width: 100%;
+    background: transparent;
+    border: 2px solid;
 }
 
-.btn-primary { background: var(--primary); color: #fff; }
-.btn-primary:hover { background: #2563eb; }
+.btn-primary { 
+    border-color: var(--primary); 
+    color: var(--primary);
+}
+.btn-primary:hover { 
+    background: rgba(59,130,246,0.15);
+    box-shadow: 0 0 25px var(--glow-blue), inset 0 0 25px rgba(59,130,246,0.1);
+    text-shadow: 0 0 10px var(--primary);
+}
 
-.btn-success { background: var(--success); color: #fff; }
-.btn-success:hover { background: #16a34a; }
+.btn-success { 
+    border-color: var(--success); 
+    color: var(--success);
+}
+.btn-success:hover { 
+    background: rgba(16,185,129,0.15);
+    box-shadow: 0 0 25px rgba(16,185,129,0.5), inset 0 0 25px rgba(16,185,129,0.1);
+    text-shadow: 0 0 10px var(--success);
+}
 
-.btn-warning { background: var(--warning); color: #fff; }
-.btn-warning:hover { background: #d97706; }
+.btn-warning { 
+    border-color: var(--warning); 
+    color: var(--warning);
+}
+.btn-warning:hover { 
+    background: rgba(245,158,11,0.15);
+    box-shadow: 0 0 25px rgba(245,158,11,0.5), inset 0 0 25px rgba(245,158,11,0.1);
+    text-shadow: 0 0 10px var(--warning);
+}
 
-.btn-danger { background: var(--danger); color: #fff; }
-.btn-danger:hover { background: #dc2626; }
+.btn-danger { 
+    border-color: var(--danger); 
+    color: var(--danger);
+}
+.btn-danger:hover { 
+    background: rgba(239,68,68,0.15);
+    box-shadow: 0 0 25px var(--glow-red), inset 0 0 25px rgba(239,68,68,0.1);
+    text-shadow: 0 0 10px var(--danger);
+}
 
-.btn-secondary { background: #333; color: #fff; }
-.btn-secondary:hover { background: #444; }
+.btn-secondary { 
+    border-color: var(--text-muted); 
+    color: var(--text-muted);
+}
+.btn-secondary:hover { 
+    border-color: var(--purple);
+    color: var(--purple);
+    background: rgba(139,92,246,0.1);
+    box-shadow: 0 0 20px var(--glow-purple);
+}
 
 .btn-outline {
-    background: transparent;
-    border: 2px solid var(--border);
+    border-color: var(--border);
     color: var(--text);
 }
 .btn-outline:hover {
-    border-color: var(--primary);
-    background: rgba(59,130,246,0.1);
+    border-color: var(--cyan);
+    color: var(--cyan);
+    background: rgba(6,182,212,0.1);
+    box-shadow: 0 0 20px var(--glow-cyan);
 }
 
 .btn-row {
@@ -703,17 +805,18 @@ body {
 .form-input, .form-select {
     width: 100%;
     padding: 14px 16px;
-    background: #1a1a1a;
+    background: rgba(20,20,30,0.8);
     border: 1px solid var(--border);
     border-radius: 10px;
     color: var(--text);
     font-size: 16px;
-    transition: border-color 0.2s;
+    transition: all 0.3s ease;
 }
 
 .form-input:focus, .form-select:focus {
     outline: none;
     border-color: var(--primary);
+    box-shadow: 0 0 20px var(--glow-blue);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -1405,10 +1508,11 @@ def business_pos(business_id):
     customers = biz.get("customers", [])
     
     # Build JSON data BEFORE f-string to avoid escaping issues
+    # Check both "price" and "sell" fields for price
     stock_json = json.dumps([{
         "code": s.get("code", ""),
         "description": s.get("description", ""),
-        "price": float(s.get("price", 0) or 0),
+        "price": float(s.get("price", 0) or s.get("sell", 0) or 0),
         "qty": int(s.get("qty", 0) or 0),
         "category": s.get("category", "General")
     } for s in stock])
@@ -1420,9 +1524,8 @@ def business_pos(business_id):
         "balance": float(c.get("balance", 0) or 0)
     } for c in customers])
     
-    # Get unique categories
-    categories = list(set(s.get("category", "General") for s in stock))
-    categories = ["All"] + sorted([c for c in categories if c])
+    # Get FIXED categories for this business (your 13 buttons)
+    categories = get_pos_categories(business_id)
     
     cat_buttons = ""
     for i, cat in enumerate(categories):
@@ -3662,15 +3765,18 @@ def expense_manual(business_id):
         if (saved) {{
             try {{
                 var data = JSON.parse(saved);
+                console.log('Loading saved expense data:', data);
                 
-                // Set supplier
-                if (data.supplier && data.supplier.code) {{
-                    if (data.supplier.code === 'NEW') {{
+                // Set supplier - handle both AI scan (name only) and manual entry (code + name)
+                if (data.supplier) {{
+                    if (data.supplier.code && data.supplier.code !== 'NEW') {{
+                        // User selected from dropdown before
+                        document.getElementById('supplierSelect').value = data.supplier.code;
+                    }} else if (data.supplier.name) {{
+                        // AI scanned - has name but no code, use NEW supplier
                         document.getElementById('supplierSelect').value = 'NEW';
                         document.getElementById('newSupplierFields').style.display = 'block';
                         document.getElementById('newSupplierName').value = data.supplier.name || '';
-                    }} else {{
-                        document.getElementById('supplierSelect').value = data.supplier.code;
                     }}
                 }}
                 
@@ -3684,14 +3790,22 @@ def expense_manual(business_id):
                 if (data.invoice_number) document.getElementById('invoiceNumber').value = data.invoice_number;
                 if (data.date) document.getElementById('invoiceDate').value = data.date;
                 if (data.description) document.getElementById('description').value = data.description;
-                if (data.amount_excl) document.getElementById('amountExcl').value = data.amount_excl.toFixed(2);
-                if (data.vat) document.getElementById('vatAmount').value = data.vat.toFixed(2);
-                if (data.amount_incl) document.getElementById('amountIncl').value = data.amount_incl.toFixed(2);
                 
-                // Check if no VAT
-                if (data.vat === 0 && data.amount_excl > 0) {{
+                // Handle amounts - could be numbers or strings
+                var amtExcl = parseFloat(data.amount_excl) || 0;
+                var amtVat = parseFloat(data.vat) || 0;
+                var amtIncl = parseFloat(data.amount_incl) || 0;
+                
+                if (amtExcl > 0) document.getElementById('amountExcl').value = amtExcl.toFixed(2);
+                if (amtVat >= 0) document.getElementById('vatAmount').value = amtVat.toFixed(2);
+                if (amtIncl > 0) document.getElementById('amountIncl').value = amtIncl.toFixed(2);
+                
+                // Check if no VAT (fuel etc)
+                if (amtVat === 0 && amtExcl > 0) {{
                     document.getElementById('noVat').checked = true;
                 }}
+                
+                console.log('Expense data loaded successfully');
             }} catch(e) {{
                 console.log('Could not load saved data:', e);
             }}
@@ -4095,10 +4209,11 @@ def document_creator(business_id, doc_type):
     customers = biz.get("customers", [])
     
     # Build JSON data BEFORE f-string to avoid escaping issues
+    # Check both "price" and "sell" fields for price
     stock_json = json.dumps([{
         "code": s.get("code", ""),
         "description": s.get("description", ""),
-        "price": float(s.get("price", 0) or 0),
+        "price": float(s.get("price", 0) or s.get("sell", 0) or 0),
         "qty": int(s.get("qty", 0) or 0),
         "category": s.get("category", "General")
     } for s in stock])
@@ -4110,9 +4225,8 @@ def document_creator(business_id, doc_type):
         "balance": float(c.get("balance", 0) or 0)
     } for c in customers])
     
-    # Get unique categories
-    categories = list(set(s.get("category", "General") for s in stock))
-    categories = ["All"] + sorted([c for c in categories if c])
+    # Get FIXED categories for this business (your 13 buttons)
+    categories = get_pos_categories(business_id)
     
     cat_buttons = ""
     for i, cat in enumerate(categories):
