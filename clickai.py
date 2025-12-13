@@ -2200,7 +2200,12 @@ document.querySelectorAll('.cat-btn').forEach(function(btn) {{
 function renderStock() {{
     var search = document.getElementById('searchBox').value.toLowerCase();
     var filtered = stock.filter(function(item) {{
-        if (currentCat !== 'all' && item.category !== currentCat) return false;
+        // Category filter - case insensitive, "all" shows everything
+        if (currentCat !== 'all') {{
+            var itemCat = (item.category || '').toLowerCase();
+            if (itemCat !== currentCat.toLowerCase()) return false;
+        }}
+        // Search filter
         if (search && !item.code.toLowerCase().includes(search) && !item.description.toLowerCase().includes(search)) return false;
         return true;
     }});
@@ -2215,7 +2220,7 @@ function renderStock() {{
         html += '</div>';
     }});
     
-    document.getElementById('results').innerHTML = html || '<div style="padding:40px;text-align:center;color:#666">No items found</div>';
+    document.getElementById('results').innerHTML = html || '<div style="padding:40px;text-align:center;color:#666">No items found - try "All" category</div>';
     document.getElementById('infoLine').textContent = 'Showing ' + Math.min(filtered.length, 100) + ' of ' + filtered.length + ' items';
 }}
 
@@ -4906,7 +4911,12 @@ document.querySelectorAll('.cat-btn').forEach(function(btn) {{
 function renderStock() {{
     var search = document.getElementById('searchBox').value.toLowerCase();
     var filtered = stock.filter(function(item) {{
-        if (currentCat !== 'all' && item.category !== currentCat) return false;
+        // Category filter - case insensitive, "all" shows everything
+        if (currentCat !== 'all') {{
+            var itemCat = (item.category || '').toLowerCase();
+            if (itemCat !== currentCat.toLowerCase()) return false;
+        }}
+        // Search filter
         if (search && !item.code.toLowerCase().includes(search) && !item.description.toLowerCase().includes(search)) return false;
         return true;
     }});
@@ -4921,7 +4931,7 @@ function renderStock() {{
         html += '</div>';
     }});
     
-    document.getElementById('results').innerHTML = html || '<div style="padding:40px;text-align:center;color:#666">No items found</div>';
+    document.getElementById('results').innerHTML = html || '<div style="padding:40px;text-align:center;color:#666">No items found - try "All" category</div>';
     document.getElementById('infoLine').textContent = 'Showing ' + Math.min(filtered.length, 100) + ' of ' + filtered.length + ' items';
 }}
 
