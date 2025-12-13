@@ -10,7 +10,7 @@
 ║                                                                               ║
 ║   Fully Automated Accounting System                                           ║
 ║   From Invoice Photo → Trial Balance                                          ║
-║   Complete Audit Trail                                                        ║
+║   Complete Audit Trail + Supabase Storage                                     ║
 ║                                                                               ║
 ║   By: Deon & Claude                                                           ║
 ║                                                                               ║
@@ -30,11 +30,24 @@ import io
 app = Flask(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
+# SUPABASE CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Data file - use /tmp for cloud or local for dev
-import tempfile
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://gvmonstsssdxncfkcjukr.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bW9uc3Rzc2R4bmNma2NqdWtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5NDI5OTQsImV4cCI6MjA4MDUxODk5NH0.v03qjD4I0eZY5MKfkH3ONFimrHnZsy25wZfVk98UuJQ")
+
+# Try to initialize Supabase
+supabase = None
+try:
+    from supabase import create_client, Client
+    if SUPABASE_URL and SUPABASE_KEY:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase connected!")
+except Exception as e:
+    print(f"⚠️ Supabase not available: {e}")
+    print("   Falling back to local JSON storage")
+
+# Fallback to local storage if Supabase not available
 DATA_DIR = os.environ.get("DATA_DIR", ".")
 DATA_FILE = os.path.join(DATA_DIR, "clickai_data.json")
 
@@ -139,7 +152,115 @@ EXPENSE_CATEGORIES = {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def load_data():
-    """Load data from JSON file"""
+    """Load data - from Supabase if available, else JSON file"""
+    if supabase:
+        try:
+            # Load businesses from Supabase
+            result = supabase.table("businesses").select("*").execute()
+            businesses = {}
+            for biz in result.data:
+                biz_id = str(biz['id'])
+                businesses[biz_id] = {
+                    "id": biz_id,
+                    "name": biz['name'],
+                    "suppliers": [],
+                    "customers": [],
+                    "stock": [],
+                    "ledger": [],
+                    "documents": {
+                        "supplier_invoices": [],
+                        "expenses": [],
+                        "quotes": [],
+                        "invoices": [],
+                        "delivery_notes": []
+                    },
+                    "created_at": biz.get('created_at', '')
+                }
+                
+                # Load stock
+                stock_result = supabase.table("stock").select("*").eq("business_id", biz['id']).execute()
+                for s in stock_result.data:
+                    businesses[biz_id]["stock"].append({
+                        "id": str(s['id']),
+                        "code": s.get('code', ''),
+                        "description": s.get('description', ''),
+                        "category": s.get('category', 'General'),
+                        "qty": s.get('qty', 0),
+                        "cost": float(s.get('cost', 0)),
+                        "price": float(s.get('price', 0))
+                    })
+                
+                # Load customers
+                cust_result = supabase.table("customers").select("*").eq("business_id", biz['id']).execute()
+                for c in cust_result.data:
+                    businesses[biz_id]["customers"].append({
+                        "id": str(c['id']),
+                        "code": c.get('code', ''),
+                        "name": c.get('name', ''),
+                        "phone": c.get('phone', ''),
+                        "email": c.get('email', ''),
+                        "balance": float(c.get('balance', 0))
+                    })
+                
+                # Load suppliers
+                sup_result = supabase.table("suppliers").select("*").eq("business_id", biz['id']).execute()
+                for s in sup_result.data:
+                    businesses[biz_id]["suppliers"].append({
+                        "id": str(s['id']),
+                        "code": s.get('code', ''),
+                        "name": s.get('name', ''),
+                        "phone": s.get('phone', ''),
+                        "email": s.get('email', ''),
+                        "balance": float(s.get('balance', 0))
+                    })
+                
+                # Load ledger
+                ledger_result = supabase.table("ledger").select("*").eq("business_id", biz['id']).order("date", desc=True).execute()
+                for l in ledger_result.data:
+                    businesses[biz_id]["ledger"].append({
+                        "id": str(l['id']),
+                        "date": l.get('date', ''),
+                        "doc_id": l.get('doc_id', ''),
+                        "doc_type": l.get('doc_type', ''),
+                        "account": l.get('account', ''),
+                        "account_name": l.get('account_name', ''),
+                        "description": l.get('description', ''),
+                        "debit": float(l.get('debit', 0)),
+                        "credit": float(l.get('credit', 0))
+                    })
+                
+                # Load documents
+                docs_result = supabase.table("documents").select("*").eq("business_id", biz['id']).execute()
+                for d in docs_result.data:
+                    doc_type = d.get('doc_type', 'supplier_invoices')
+                    doc_data = d.get('data', {}) or {}
+                    doc_entry = {
+                        "id": d.get('doc_id', ''),
+                        "date": d.get('date', ''),
+                        "supplier": {"code": d.get('supplier_code', ''), "name": d.get('supplier_name', '')},
+                        "customer": {"code": d.get('customer_code', ''), "name": d.get('customer_name', '')},
+                        "invoice_number": d.get('invoice_number', ''),
+                        "description": d.get('description', ''),
+                        "category": d.get('category', ''),
+                        "category_name": d.get('category_name', ''),
+                        "amount_excl": float(d.get('amount_excl', 0)),
+                        "vat": float(d.get('vat', 0)),
+                        "amount_incl": float(d.get('amount_incl', 0)),
+                        "total": float(d.get('amount_incl', 0)),
+                        "status": d.get('status', 'unpaid'),
+                        **doc_data
+                    }
+                    
+                    if doc_type == 'expense':
+                        businesses[biz_id]["documents"]["expenses"].append(doc_entry)
+                    elif doc_type in businesses[biz_id]["documents"]:
+                        businesses[biz_id]["documents"][doc_type].append(doc_entry)
+            
+            return {"settings": {"api_key": ""}, "businesses": businesses}
+        except Exception as e:
+            print(f"Supabase load error: {e}")
+    
+    # Fallback to JSON file
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, 'r') as f:
@@ -153,34 +274,198 @@ def load_data():
     }
 
 def save_data(data):
-    """Save data to JSON file"""
+    """Save data - to Supabase if available, else JSON file"""
+    if supabase:
+        try:
+            # For full sync we'd update Supabase here
+            # But for now, individual operations handle their own saves
+            pass
+        except Exception as e:
+            print(f"Supabase save error: {e}")
+    
+    # Always save to JSON as backup
     with open(DATA_FILE, 'w') as f:
         json.dump(data, f, indent=2, default=str)
 
+
+def save_business_to_supabase(business_id, biz_data):
+    """Save or update a business in Supabase"""
+    if not supabase:
+        return None
+    try:
+        # Check if exists
+        result = supabase.table("businesses").select("id").eq("id", business_id).execute()
+        if result.data:
+            # Update
+            supabase.table("businesses").update({"name": biz_data.get("name", "Business")}).eq("id", business_id).execute()
+        else:
+            # Insert
+            supabase.table("businesses").insert({"id": business_id, "name": biz_data.get("name", "Business")}).execute()
+        return business_id
+    except Exception as e:
+        print(f"Error saving business to Supabase: {e}")
+        return None
+
+
+def save_stock_to_supabase(business_id, stock_item, stock_id=None):
+    """Save stock item to Supabase"""
+    if not supabase:
+        return None
+    try:
+        data = {
+            "business_id": business_id,
+            "code": stock_item.get("code", ""),
+            "description": stock_item.get("description", ""),
+            "category": stock_item.get("category", "General"),
+            "qty": stock_item.get("qty", 0),
+            "cost": stock_item.get("cost", 0),
+            "price": stock_item.get("price", 0)
+        }
+        if stock_id:
+            supabase.table("stock").update(data).eq("id", stock_id).execute()
+        else:
+            result = supabase.table("stock").insert(data).execute()
+            return result.data[0]['id'] if result.data else None
+    except Exception as e:
+        print(f"Error saving stock: {e}")
+    return None
+
+
+def save_customer_to_supabase(business_id, customer):
+    """Save customer to Supabase"""
+    if not supabase:
+        return None
+    try:
+        data = {
+            "business_id": business_id,
+            "code": customer.get("code", ""),
+            "name": customer.get("name", ""),
+            "phone": customer.get("phone", ""),
+            "email": customer.get("email", ""),
+            "balance": customer.get("balance", 0)
+        }
+        result = supabase.table("customers").insert(data).execute()
+        return result.data[0]['id'] if result.data else None
+    except Exception as e:
+        print(f"Error saving customer: {e}")
+    return None
+
+
+def save_supplier_to_supabase(business_id, supplier):
+    """Save supplier to Supabase"""
+    if not supabase:
+        return None
+    try:
+        data = {
+            "business_id": business_id,
+            "code": supplier.get("code", ""),
+            "name": supplier.get("name", ""),
+            "phone": supplier.get("phone", ""),
+            "email": supplier.get("email", ""),
+            "balance": supplier.get("balance", 0)
+        }
+        result = supabase.table("suppliers").insert(data).execute()
+        return result.data[0]['id'] if result.data else None
+    except Exception as e:
+        print(f"Error saving supplier: {e}")
+    return None
+
+
+def save_ledger_to_supabase(business_id, entry):
+    """Save ledger entry to Supabase"""
+    if not supabase:
+        return None
+    try:
+        data = {
+            "business_id": business_id,
+            "date": entry.get("date", datetime.now().strftime("%Y-%m-%d")),
+            "doc_id": entry.get("doc_id", ""),
+            "doc_type": entry.get("doc_type", ""),
+            "account": entry.get("account", ""),
+            "account_name": entry.get("account_name", ""),
+            "description": entry.get("description", ""),
+            "debit": entry.get("debit", 0),
+            "credit": entry.get("credit", 0)
+        }
+        result = supabase.table("ledger").insert(data).execute()
+        return result.data[0]['id'] if result.data else None
+    except Exception as e:
+        print(f"Error saving ledger: {e}")
+    return None
+
+
+def save_document_to_supabase(business_id, doc, doc_type):
+    """Save document to Supabase"""
+    if not supabase:
+        return None
+    try:
+        data = {
+            "business_id": business_id,
+            "doc_id": doc.get("id", ""),
+            "doc_type": doc_type,
+            "date": doc.get("date", ""),
+            "supplier_code": doc.get("supplier", {}).get("code", ""),
+            "supplier_name": doc.get("supplier", {}).get("name", ""),
+            "customer_code": doc.get("customer", {}).get("code", ""),
+            "customer_name": doc.get("customer", {}).get("name", ""),
+            "invoice_number": doc.get("invoice_number", ""),
+            "description": doc.get("description", ""),
+            "category": doc.get("category", ""),
+            "category_name": doc.get("category_name", ""),
+            "amount_excl": doc.get("amount_excl", 0),
+            "vat": doc.get("vat", 0),
+            "amount_incl": doc.get("amount_incl", doc.get("total", 0)),
+            "status": doc.get("status", "unpaid"),
+            "data": json.dumps(doc)
+        }
+        result = supabase.table("documents").insert(data).execute()
+        return result.data[0]['id'] if result.data else None
+    except Exception as e:
+        print(f"Error saving document: {e}")
+    return None
+
 def get_api_key():
-    """Get API key from data or environment"""
+    """Get API key from environment or data"""
+    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if env_key:
+        return env_key
     data = load_data()
-    return data.get("settings", {}).get("api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    return data.get("settings", {}).get("api_key", "")
+
 
 def get_business(business_id):
     """Get business data, create if not exists"""
     data = load_data()
     if business_id not in data["businesses"]:
-        data["businesses"][business_id] = {
+        # Create new business
+        new_biz = {
             "name": business_id.replace("_", " ").title(),
             "suppliers": [],
             "customers": [],
             "stock": [],
-            "ledger": [],  # All transactions
+            "ledger": [],
             "documents": {
                 "supplier_invoices": [],
+                "expenses": [],
                 "quotes": [],
                 "invoices": [],
                 "delivery_notes": [],
             },
             "created_at": datetime.now().isoformat()
         }
+        data["businesses"][business_id] = new_biz
         save_data(data)
+        
+        # Also save to Supabase
+        if supabase:
+            try:
+                supabase.table("businesses").insert({
+                    "id": business_id,
+                    "name": new_biz["name"]
+                }).execute()
+            except Exception as e:
+                print(f"Error creating business in Supabase: {e}")
+    
     return data["businesses"][business_id]
 
 # ═══════════════════════════════════════════════════════════════════════════════
