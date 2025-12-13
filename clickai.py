@@ -156,7 +156,7 @@ def dashboard(bid):
     b = biz(bid)
     mobile_js = f'<script>if(/iPhone|iPad|Android/i.test(navigator.userAgent)&&!sessionStorage.desktop)window.location.href="/m/{bid}"</script>'
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{b.get("name",bid)}</title>{CSS}</head><body>{mobile_js}
-<div class="header"><div class="logo">⚡ {b.get("name",bid)}</div><div style="display:flex;gap:10px"><a href="/{bid}/pos" class="btn btn-green">🛒 POS</a><a href="/{bid}/settings" class="btn btn-dark">⚙️</a><a href="/" class="btn btn-dark">🏠</a></div></div>
+<div class="header"><div class="logo">⚡ {b.get("name",bid)}</div><div style="display:flex;gap:10px"><a href="/{bid}/pos" class="btn btn-green">🛒 POS</a><a href="/{bid}/import" class="btn btn-blue">📤 Import</a><a href="/{bid}/settings" class="btn btn-dark">⚙️</a><a href="/" class="btn btn-dark">🏠</a></div></div>
 <div class="container">
 <div class="grid2">
 <div class="card"><div style="font-weight:700;margin-bottom:15px">📥 CAPTURE</div><div class="grid2"><a href="/{bid}/capture/stock" class="btn btn-purple">📦 Stock</a><a href="/{bid}/capture/expense" class="btn btn-red">💸 Expense</a></div></div>
@@ -558,6 +558,57 @@ def api_invoice(bid):
         if s: s["qty"]=max(0,int(s.get("qty",0))-i["qty"])
     save()
     return jsonify({"success":True,"doc_id":doc_id})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# IMPORT ALL - One page to import Stock, Customers, Suppliers
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.route("/<bid>/import", methods=["GET","POST"])
+def import_all(bid):
+    b = biz(bid)
+    msg = ""
+    if request.method == "POST":
+        results = []
+        for ftype in ["stock","customers","suppliers"]:
+            f = request.files.get(ftype)
+            if f and f.filename:
+                try:
+                    content = f.read().decode('utf-8-sig')
+                    delim = ';' if ';' in content.split('\n')[0] else ','
+                    reader = csv.DictReader(io.StringIO(content), delimiter=delim)
+                    count = 0
+                    for row in reader:
+                        if ftype == "stock":
+                            code = row.get('code') or row.get('Code') or row.get('sku') or ''
+                            desc = row.get('description') or row.get('Description') or row.get('name') or ''
+                            if code or desc:
+                                b["stock"].append({'code':code.strip(),'description':desc.strip(),'category':(row.get('category') or 'General').strip(),'qty':int(float(row.get('qty') or row.get('Qty') or 0)),'cost':float(row.get('cost') or 0),'price':float(row.get('price') or row.get('sell') or 0)})
+                                count += 1
+                        elif ftype == "customers":
+                            name = row.get('name') or row.get('Name') or ''
+                            if name:
+                                b["customers"].append({'code':(row.get('code') or f"C{len(b['customers'])+1:03d}").strip(),'name':name.strip(),'phone':(row.get('phone') or '').strip(),'email':(row.get('email') or '').strip(),'balance':0})
+                                count += 1
+                        elif ftype == "suppliers":
+                            name = row.get('name') or row.get('Name') or ''
+                            if name:
+                                b["suppliers"].append({'code':(row.get('code') or f"S{len(b['suppliers'])+1:03d}").strip(),'name':name.strip(),'phone':(row.get('phone') or '').strip(),'email':(row.get('email') or '').strip(),'balance':0})
+                                count += 1
+                    if count > 0: results.append(f"{count} {ftype}")
+                except Exception as e: results.append(f"{ftype}: Error")
+        save()
+        msg = f'<div style="background:#10b981;color:#fff;padding:15px;border-radius:10px;margin-bottom:20px">✅ Imported: {", ".join(results)}</div>' if results else '<div style="background:#f59e0b;color:#fff;padding:15px;border-radius:10px;margin-bottom:20px">⚠️ No files selected</div>'
+    
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Import</title>{CSS}</head><body>
+<div class="header"><div class="logo">📤 Import Data</div><a href="/{bid}" class="btn btn-dark">← Back</a></div>
+<div class="container">{msg}
+<form method="POST" enctype="multipart/form-data">
+<div class="card"><div style="font-weight:700;margin-bottom:15px">📦 Stock</div><input type="file" name="stock" accept=".csv" class="input"><div style="font-size:11px;color:#666;margin-top:8px">Columns: code, description, category, qty, cost, price</div><div style="margin-top:8px;color:#8b5cf6;font-size:12px">Current: {len(b.get("stock",[]))} items</div></div>
+<div class="card"><div style="font-weight:700;margin-bottom:15px">👤 Customers</div><input type="file" name="customers" accept=".csv" class="input"><div style="font-size:11px;color:#666;margin-top:8px">Columns: code, name, phone, email</div><div style="margin-top:8px;color:#3b82f6;font-size:12px">Current: {len(b.get("customers",[]))} customers</div></div>
+<div class="card"><div style="font-weight:700;margin-bottom:15px">👥 Suppliers</div><input type="file" name="suppliers" accept=".csv" class="input"><div style="font-size:11px;color:#666;margin-top:8px">Columns: code, name, phone, email</div><div style="margin-top:8px;color:#10b981;font-size:12px">Current: {len(b.get("suppliers",[]))} suppliers</div></div>
+<button type="submit" class="btn btn-purple" style="width:100%;padding:18px;font-size:16px">📤 Import Selected Files</button>
+</form>
+<div class="card" style="margin-top:20px"><div style="font-weight:700;margin-bottom:10px">💡 Tips</div><div style="color:#888;font-size:13px;line-height:1.8">• Select one, two, or all three files<br>• CSV can use comma or semicolon<br>• Imports ADD to existing data</div></div>
+</div></body></html>'''
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # STOCK MANAGEMENT - Add, Edit, Import CSV
