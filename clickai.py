@@ -1404,6 +1404,22 @@ def business_pos(business_id):
     stock = biz.get("stock", [])
     customers = biz.get("customers", [])
     
+    # Build JSON data BEFORE f-string to avoid escaping issues
+    stock_json = json.dumps([{
+        "code": s.get("code", ""),
+        "description": s.get("description", ""),
+        "price": float(s.get("price", 0) or 0),
+        "qty": int(s.get("qty", 0) or 0),
+        "category": s.get("category", "General")
+    } for s in stock])
+    
+    customers_json = json.dumps([{
+        "code": c.get("code", ""),
+        "name": c.get("name", ""),
+        "phone": c.get("phone", ""),
+        "balance": float(c.get("balance", 0) or 0)
+    } for c in customers])
+    
     # Get unique categories
     categories = list(set(s.get("category", "General") for s in stock))
     categories = ["All"] + sorted([c for c in categories if c])
@@ -1585,8 +1601,8 @@ body{{font-family:system-ui;background:var(--bg);color:#fff;height:100vh;overflo
 
 <script>
 var businessId = '{business_id}';
-var stock = {json.dumps([{{"code": s.get("code",""), "description": s.get("description",""), "price": float(s.get("price",0)), "qty": int(s.get("qty",0)), "category": s.get("category","General")}} for s in stock])};
-var customers = {json.dumps([{{"code": c.get("code",""), "name": c.get("name",""), "phone": c.get("phone",""), "balance": float(c.get("balance",0))}} for c in customers])};
+var stock = {stock_json};
+var customers = {customers_json};
 var cart = [];
 var selectedItem = null;
 var selectedCustomer = null;
@@ -3639,6 +3655,51 @@ def expense_manual(business_id):
         sessionStorage.setItem('scannedExpense', JSON.stringify(expenseData));
         window.location.href = '/business/' + businessId + '/expense/confirm';
     }}
+    
+    // Load existing data from sessionStorage if editing
+    function loadExistingData() {{
+        var saved = sessionStorage.getItem('scannedExpense');
+        if (saved) {{
+            try {{
+                var data = JSON.parse(saved);
+                
+                // Set supplier
+                if (data.supplier && data.supplier.code) {{
+                    if (data.supplier.code === 'NEW') {{
+                        document.getElementById('supplierSelect').value = 'NEW';
+                        document.getElementById('newSupplierFields').style.display = 'block';
+                        document.getElementById('newSupplierName').value = data.supplier.name || '';
+                    }} else {{
+                        document.getElementById('supplierSelect').value = data.supplier.code;
+                    }}
+                }}
+                
+                // Set category
+                if (data.category) {{
+                    document.getElementById('expenseCategory').value = data.category;
+                    checkCategoryVat();
+                }}
+                
+                // Set other fields
+                if (data.invoice_number) document.getElementById('invoiceNumber').value = data.invoice_number;
+                if (data.date) document.getElementById('invoiceDate').value = data.date;
+                if (data.description) document.getElementById('description').value = data.description;
+                if (data.amount_excl) document.getElementById('amountExcl').value = data.amount_excl.toFixed(2);
+                if (data.vat) document.getElementById('vatAmount').value = data.vat.toFixed(2);
+                if (data.amount_incl) document.getElementById('amountIncl').value = data.amount_incl.toFixed(2);
+                
+                // Check if no VAT
+                if (data.vat === 0 && data.amount_excl > 0) {{
+                    document.getElementById('noVat').checked = true;
+                }}
+            }} catch(e) {{
+                console.log('Could not load saved data:', e);
+            }}
+        }}
+    }}
+    
+    // Auto-load on page ready
+    loadExistingData();
     </script>
     '''
     
@@ -4033,6 +4094,22 @@ def document_creator(business_id, doc_type):
     stock = biz.get("stock", [])
     customers = biz.get("customers", [])
     
+    # Build JSON data BEFORE f-string to avoid escaping issues
+    stock_json = json.dumps([{
+        "code": s.get("code", ""),
+        "description": s.get("description", ""),
+        "price": float(s.get("price", 0) or 0),
+        "qty": int(s.get("qty", 0) or 0),
+        "category": s.get("category", "General")
+    } for s in stock])
+    
+    customers_json = json.dumps([{
+        "code": c.get("code", ""),
+        "name": c.get("name", ""),
+        "phone": c.get("phone", ""),
+        "balance": float(c.get("balance", 0) or 0)
+    } for c in customers])
+    
     # Get unique categories
     categories = list(set(s.get("category", "General") for s in stock))
     categories = ["All"] + sorted([c for c in categories if c])
@@ -4219,8 +4296,8 @@ body{{font-family:system-ui;background:var(--bg);color:#fff;height:100vh;overflo
 <script>
 var businessId = '{business_id}';
 var docType = '{doc_type}';
-var stock = {json.dumps([{{"code": s.get("code",""), "description": s.get("description",""), "price": float(s.get("price",0)), "qty": int(s.get("qty",0)), "category": s.get("category","General")}} for s in stock])};
-var customers = {json.dumps([{{"code": c.get("code",""), "name": c.get("name",""), "phone": c.get("phone",""), "balance": float(c.get("balance",0))}} for c in customers])};
+var stock = {stock_json};
+var customers = {customers_json};
 var cart = [];
 var selectedItem = null;
 var selectedCustomer = null;
