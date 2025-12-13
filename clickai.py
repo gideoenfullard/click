@@ -670,7 +670,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/* CARDS WITH SUBTLE GLOW                                                       */
+/* CARDS WITH HOVER LIFT                                                        */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 .card {
@@ -679,12 +679,13 @@ body {
     padding: 25px;
     margin-bottom: 20px;
     border: 1px solid var(--border);
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
 }
 
 .card:hover {
-    border-color: rgba(139, 92, 246, 0.3);
-    box-shadow: 0 0 30px rgba(139, 92, 246, 0.08);
+    transform: translateY(-2px);
+    border-color: #333;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.4);
 }
 
 .card-title {
@@ -697,7 +698,7 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/* SEXY GLOWING BUTTONS - NO SOLID BLOCKS!                                      */
+/* CLEAN BUTTONS WITH HOVER LIFT                                                */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 .btn {
@@ -710,73 +711,82 @@ body {
     font-weight: 700;
     font-size: 16px;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     text-decoration: none;
     width: 100%;
-    background: transparent;
-    border: 2px solid;
+    border: 1px solid transparent;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 20px rgba(0,0,0,0.4);
 }
 
 .btn-primary { 
-    border-color: var(--primary); 
-    color: var(--primary);
+    background: var(--primary); 
+    color: #fff;
 }
 .btn-primary:hover { 
-    background: rgba(59,130,246,0.15);
-    box-shadow: 0 0 25px var(--glow-blue), inset 0 0 25px rgba(59,130,246,0.1);
-    text-shadow: 0 0 10px var(--primary);
+    background: #2563eb;
+    box-shadow: 0 5px 25px rgba(59,130,246,0.4);
 }
 
 .btn-success { 
-    border-color: var(--success); 
-    color: var(--success);
+    background: var(--success); 
+    color: #fff;
 }
 .btn-success:hover { 
-    background: rgba(16,185,129,0.15);
-    box-shadow: 0 0 25px rgba(16,185,129,0.5), inset 0 0 25px rgba(16,185,129,0.1);
-    text-shadow: 0 0 10px var(--success);
+    background: #059669;
+    box-shadow: 0 5px 25px rgba(16,185,129,0.4);
 }
 
 .btn-warning { 
-    border-color: var(--warning); 
-    color: var(--warning);
+    background: var(--warning); 
+    color: #fff;
 }
 .btn-warning:hover { 
-    background: rgba(245,158,11,0.15);
-    box-shadow: 0 0 25px rgba(245,158,11,0.5), inset 0 0 25px rgba(245,158,11,0.1);
-    text-shadow: 0 0 10px var(--warning);
+    background: #d97706;
+    box-shadow: 0 5px 25px rgba(245,158,11,0.4);
 }
 
 .btn-danger { 
-    border-color: var(--danger); 
-    color: var(--danger);
+    background: var(--danger); 
+    color: #fff;
 }
 .btn-danger:hover { 
-    background: rgba(239,68,68,0.15);
-    box-shadow: 0 0 25px var(--glow-red), inset 0 0 25px rgba(239,68,68,0.1);
-    text-shadow: 0 0 10px var(--danger);
+    background: #dc2626;
+    box-shadow: 0 5px 25px rgba(239,68,68,0.4);
 }
 
 .btn-secondary { 
-    border-color: var(--text-muted); 
-    color: var(--text-muted);
+    background: #2a2a3a; 
+    color: #fff;
+    border: 1px solid var(--border);
 }
 .btn-secondary:hover { 
+    background: #3a3a4a;
     border-color: var(--purple);
-    color: var(--purple);
-    background: rgba(139,92,246,0.1);
-    box-shadow: 0 0 20px var(--glow-purple);
+    box-shadow: 0 5px 25px rgba(139,92,246,0.3);
 }
 
 .btn-outline {
-    border-color: var(--border);
+    background: transparent;
+    border: 1px solid var(--border);
     color: var(--text);
 }
 .btn-outline:hover {
-    border-color: var(--cyan);
-    color: var(--cyan);
-    background: rgba(6,182,212,0.1);
-    box-shadow: 0 0 20px var(--glow-cyan);
+    border-color: var(--primary);
+    background: rgba(59,130,246,0.1);
+    box-shadow: 0 5px 25px rgba(59,130,246,0.2);
+}
+
+.btn-purple {
+    background: var(--purple);
+    color: #fff;
+}
+.btn-purple:hover {
+    background: #7c3aed;
+    box-shadow: 0 5px 25px rgba(139,92,246,0.4);
 }
 
 .btn-row {
@@ -805,18 +815,18 @@ body {
 .form-input, .form-select {
     width: 100%;
     padding: 14px 16px;
-    background: rgba(20,20,30,0.8);
+    background: #1a1a2a;
     border: 1px solid var(--border);
     border-radius: 10px;
     color: var(--text);
     font-size: 16px;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
 }
 
 .form-input:focus, .form-select:focus {
     outline: none;
     border-color: var(--primary);
-    box-shadow: 0 0 20px var(--glow-blue);
+    background: #1e1e2e;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -1418,7 +1428,20 @@ def business_dashboard(business_id):
     biz = get_business(business_id)
     docs = biz.get("documents", {})
     
+    # Mobile detection script - redirects phones to capture interface
+    mobile_detect = f'''
+    <script>
+    (function() {{
+        var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
+        if (isMobile && !sessionStorage.getItem('forceDesktop')) {{
+            window.location.href = '/business/{business_id}/capture';
+        }}
+    }})();
+    </script>
+    '''
+    
     content = f'''
+    {mobile_detect}
     <div class="container">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:20px">
             <div>
@@ -1498,6 +1521,452 @@ def business_dashboard(business_id):
     '''
     
     return render_page(content, biz.get("name", "Business"), back_url="/")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MOBILE CAPTURE INTERFACE - Dead Simple Photo Capture
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/business/<business_id>/capture")
+def mobile_capture(business_id):
+    """Mobile-only capture interface - just photos, nothing else"""
+    biz = get_business(business_id)
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>📸 {biz.get("name", "Capture")}</title>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ 
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: linear-gradient(135deg, #0a0a12 0%, #1a1a2e 100%);
+    color: #fff;
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    overflow: hidden;
+}}
+html {{ height: -webkit-fill-available; }}
+
+.app {{
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: -webkit-fill-available;
+}}
+
+/* Header */
+.header {{
+    padding: 15px 20px;
+    background: rgba(0,0,0,0.3);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}}
+.biz-name {{
+    font-size: 18px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}}
+.desktop-link {{
+    font-size: 12px;
+    color: #666;
+    text-decoration: none;
+    padding: 8px 12px;
+    border: 1px solid #333;
+    border-radius: 6px;
+}}
+
+/* Main capture area */
+.capture-area {{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}}
+
+/* Mode selector */
+.mode-selector {{
+    display: flex;
+    gap: 10px;
+    margin-bottom: 40px;
+}}
+.mode-btn {{
+    padding: 12px 24px;
+    border-radius: 25px;
+    border: 2px solid #333;
+    background: transparent;
+    color: #888;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+}}
+.mode-btn.active {{
+    border-color: #3b82f6;
+    color: #3b82f6;
+    background: rgba(59,130,246,0.1);
+}}
+.mode-btn.stock.active {{
+    border-color: #8b5cf6;
+    color: #8b5cf6;
+    background: rgba(139,92,246,0.1);
+}}
+.mode-btn.expense.active {{
+    border-color: #ef4444;
+    color: #ef4444;
+    background: rgba(239,68,68,0.1);
+}}
+
+/* Big camera button */
+.camera-btn {{
+    width: 160px;
+    height: 160px;
+    border-radius: 50%;
+    border: 4px solid #3b82f6;
+    background: rgba(59,130,246,0.1);
+    color: #3b82f6;
+    font-size: 60px;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}}
+.camera-btn:hover {{
+    transform: scale(1.05);
+    box-shadow: 0 0 40px rgba(59,130,246,0.4);
+}}
+.camera-btn.stock {{
+    border-color: #8b5cf6;
+    background: rgba(139,92,246,0.1);
+    color: #8b5cf6;
+}}
+.camera-btn.stock:hover {{
+    box-shadow: 0 0 40px rgba(139,92,246,0.4);
+}}
+.camera-btn.expense {{
+    border-color: #ef4444;
+    background: rgba(239,68,68,0.1);
+    color: #ef4444;
+}}
+.camera-btn.expense:hover {{
+    box-shadow: 0 0 40px rgba(239,68,68,0.4);
+}}
+.camera-btn-text {{
+    position: absolute;
+    bottom: -40px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #888;
+}}
+
+/* Hidden file input */
+.file-input {{ display: none; }}
+
+/* Processing overlay */
+.processing {{
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.95);
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    z-index: 100;
+}}
+.processing.show {{ display: flex; }}
+.spinner {{
+    width: 60px;
+    height: 60px;
+    border: 4px solid #333;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}}
+@keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+.processing-text {{
+    margin-top: 20px;
+    font-size: 16px;
+    color: #888;
+}}
+
+/* Success overlay */
+.success {{
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.95);
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    padding: 20px;
+    z-index: 100;
+}}
+.success.show {{ display: flex; }}
+.success-icon {{
+    font-size: 80px;
+    margin-bottom: 20px;
+}}
+.success-title {{
+    font-size: 24px;
+    font-weight: 800;
+    margin-bottom: 10px;
+}}
+.success-subtitle {{
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 30px;
+}}
+
+/* Ledger preview */
+.ledger-preview {{
+    width: 100%;
+    max-width: 350px;
+    background: #141420;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 30px;
+}}
+.ledger-header {{
+    background: rgba(59,130,246,0.2);
+    padding: 10px 15px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #3b82f6;
+    border-bottom: 1px solid #222;
+}}
+.ledger-row {{
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 15px;
+    border-bottom: 1px solid #1a1a2a;
+    font-size: 13px;
+}}
+.ledger-row:last-child {{ border-bottom: none; }}
+.ledger-account {{ color: #aaa; }}
+.ledger-debit {{ color: #22c55e; }}
+.ledger-credit {{ color: #ef4444; }}
+
+.done-btn {{
+    padding: 15px 50px;
+    border-radius: 30px;
+    border: none;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+}}
+
+/* Footer stats */
+.footer {{
+    padding: 15px 20px;
+    background: rgba(0,0,0,0.3);
+    border-top: 1px solid rgba(255,255,255,0.1);
+    display: flex;
+    justify-content: space-around;
+}}
+.stat {{
+    text-align: center;
+}}
+.stat-value {{
+    font-size: 20px;
+    font-weight: 800;
+    color: #3b82f6;
+}}
+.stat-label {{
+    font-size: 10px;
+    color: #666;
+    text-transform: uppercase;
+}}
+</style>
+</head>
+<body>
+<div class="app">
+    <div class="header">
+        <div class="biz-name">📸 {biz.get("name", "Business")}</div>
+        <a href="/business/{business_id}?desktop=1" class="desktop-link" onclick="sessionStorage.setItem('forceDesktop','1')">Desktop →</a>
+    </div>
+    
+    <div class="capture-area">
+        <div class="mode-selector">
+            <button class="mode-btn stock active" onclick="setMode('stock')">📦 Stock</button>
+            <button class="mode-btn expense" onclick="setMode('expense')">💸 Expense</button>
+        </div>
+        
+        <button class="camera-btn stock" onclick="document.getElementById('fileInput').click()">
+            📷
+            <span class="camera-btn-text">Tap to capture</span>
+        </button>
+        <input type="file" id="fileInput" class="file-input" accept="image/*" capture="environment" onchange="handleCapture(this)">
+    </div>
+    
+    <div class="footer">
+        <div class="stat">
+            <div class="stat-value" id="todayCount">0</div>
+            <div class="stat-label">Today</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="stockCount">{len(biz.get("stock", []))}</div>
+            <div class="stat-label">Stock Items</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="expenseCount">{len(biz.get("documents", {{}}).get("supplier_invoices", []))}</div>
+            <div class="stat-label">Invoices</div>
+        </div>
+    </div>
+</div>
+
+<!-- Processing Overlay -->
+<div class="processing" id="processing">
+    <div class="spinner"></div>
+    <div class="processing-text">AI is reading your invoice...</div>
+</div>
+
+<!-- Success Overlay -->
+<div class="success" id="success">
+    <div class="success-icon">✅</div>
+    <div class="success-title" id="successTitle">Posted!</div>
+    <div class="success-subtitle" id="successSubtitle">Document ID: EXP0001</div>
+    <div class="ledger-preview" id="ledgerPreview"></div>
+    <button class="done-btn" onclick="closeSuccess()">📷 Capture Another</button>
+</div>
+
+<script>
+var businessId = "{business_id}";
+var currentMode = 'stock';
+var todayCount = parseInt(localStorage.getItem('todayCount_' + businessId) || '0');
+document.getElementById('todayCount').textContent = todayCount;
+
+function setMode(mode) {{
+    currentMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('.mode-btn.' + mode).classList.add('active');
+    
+    var btn = document.querySelector('.camera-btn');
+    btn.className = 'camera-btn ' + mode;
+}}
+
+function handleCapture(input) {{
+    if (!input.files || !input.files[0]) return;
+    
+    var file = input.files[0];
+    var reader = new FileReader();
+    
+    reader.onload = function(e) {{
+        var base64 = e.target.result.split(',')[1];
+        processImage(base64);
+    }};
+    
+    reader.readAsDataURL(file);
+    input.value = '';
+}}
+
+function processImage(base64) {{
+    document.getElementById('processing').classList.add('show');
+    
+    var endpoint = currentMode === 'stock' 
+        ? '/api/business/' + businessId + '/scan-supplier-invoice'
+        : '/api/business/' + businessId + '/scan-expense';
+    
+    fetch(endpoint, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{image: base64}})
+    }})
+    .then(r => r.json())
+    .then(data => {{
+        document.getElementById('processing').classList.remove('show');
+        
+        if (data.success) {{
+            // Auto-post without confirmation
+            autoPost(data);
+        }} else {{
+            alert('Could not read invoice: ' + (data.error || 'Unknown error'));
+        }}
+    }})
+    .catch(err => {{
+        document.getElementById('processing').classList.remove('show');
+        alert('Error: ' + err.message);
+    }});
+}}
+
+function autoPost(scanData) {{
+    document.getElementById('processing').classList.add('show');
+    document.querySelector('.processing-text').textContent = 'Posting to ledger...';
+    
+    var endpoint = currentMode === 'stock'
+        ? '/api/business/' + businessId + '/post-supplier-invoice'
+        : '/api/business/' + businessId + '/post-expense';
+    
+    fetch(endpoint, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(scanData)
+    }})
+    .then(r => r.json())
+    .then(data => {{
+        document.getElementById('processing').classList.remove('show');
+        document.querySelector('.processing-text').textContent = 'AI is reading your invoice...';
+        
+        if (data.success) {{
+            showSuccess(data, scanData);
+        }} else {{
+            alert('Error posting: ' + (data.error || 'Unknown error'));
+        }}
+    }})
+    .catch(err => {{
+        document.getElementById('processing').classList.remove('show');
+        alert('Error: ' + err.message);
+    }});
+}}
+
+function showSuccess(postData, scanData) {{
+    todayCount++;
+    localStorage.setItem('todayCount_' + businessId, todayCount);
+    document.getElementById('todayCount').textContent = todayCount;
+    
+    document.getElementById('successTitle').textContent = currentMode === 'stock' ? '📦 Stock Posted!' : '💸 Expense Posted!';
+    document.getElementById('successSubtitle').textContent = 'Document: ' + postData.document_id + ' • ' + (scanData.supplier?.name || 'Unknown');
+    
+    // Build ledger preview
+    var amtExcl = parseFloat(scanData.amount_excl || scanData.total_excl || 0).toFixed(2);
+    var amtVat = parseFloat(scanData.vat || 0).toFixed(2);
+    var amtIncl = parseFloat(scanData.amount_incl || scanData.total_incl || 0).toFixed(2);
+    
+    var html = '<div class="ledger-header">📒 LEDGER ENTRIES</div>';
+    
+    if (currentMode === 'stock') {{
+        html += '<div class="ledger-row"><span class="ledger-account">5000 Cost of Sales</span><span class="ledger-debit">R ' + amtExcl + '</span></div>';
+        html += '<div class="ledger-row"><span class="ledger-account">2100 VAT Input</span><span class="ledger-debit">R ' + amtVat + '</span></div>';
+        html += '<div class="ledger-row"><span class="ledger-account">2000 Creditors</span><span class="ledger-credit">R ' + amtIncl + '</span></div>';
+    }} else {{
+        var catName = scanData.category_name || 'Expense';
+        html += '<div class="ledger-row"><span class="ledger-account">' + catName + '</span><span class="ledger-debit">R ' + amtExcl + '</span></div>';
+        html += '<div class="ledger-row"><span class="ledger-account">2100 VAT Input</span><span class="ledger-debit">R ' + amtVat + '</span></div>';
+        html += '<div class="ledger-row"><span class="ledger-account">2000 Creditors</span><span class="ledger-credit">R ' + amtIncl + '</span></div>';
+    }}
+    
+    document.getElementById('ledgerPreview').innerHTML = html;
+    document.getElementById('success').classList.add('show');
+}}
+
+function closeSuccess() {{
+    document.getElementById('success').classList.remove('show');
+}}
+</script>
+</body>
+</html>'''
 
 
 @app.route("/business/<business_id>/pos")
