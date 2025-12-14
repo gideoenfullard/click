@@ -226,17 +226,17 @@ def get_business_data(bid, table):
 
 def save_to_supabase(table, data):
     """Save data to Supabase"""
-    result = sb.table(table).insert(data).execute()
+    result = sb.table(table).insert(data)
     return result
 
 def update_in_supabase(table, id, data):
     """Update data in Supabase"""
-    result = sb.table(table).eq("id", id).update(data).execute()
+    result = sb.table(table).eq("id", id).update(data)
     return result
 
 def delete_from_supabase(table, id):
     """Delete data from Supabase"""
-    result = sb.table(table).eq("id", id).delete().execute()
+    result = sb.table(table).eq("id", id).delete()
     return result
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1438,6 +1438,18 @@ S002,XYZ Wholesalers,0125559876"></textarea>
 <button class="btn" style="margin-top:10px" onclick="importFile()">📁 Import File</button>
 </div>
 
+<div class="card" style="border:2px solid var(--danger)">
+<div class="card-title" style="color:var(--danger)">🗑️ CLEAR DATA (Delete Before Import)</div>
+<p style="color:var(--muted);margin-bottom:15px">Delete existing data before importing fresh data</p>
+<div style="display:flex;flex-wrap:wrap;gap:10px">
+<button class="btn" style="background:var(--danger)" onclick="deleteAllStock()">🗑️ Delete All Stock</button>
+<button class="btn" style="background:var(--danger)" onclick="deleteAllCustomers()">🗑️ Delete All Customers</button>
+<button class="btn" style="background:var(--danger)" onclick="deleteAllSuppliers()">🗑️ Delete All Suppliers</button>
+<button class="btn" style="background:#8b0000" onclick="deleteAllData()">💀 DELETE EVERYTHING</button>
+</div>
+<div id="deleteResult" style="margin-top:10px"></div>
+</div>
+
 <div class="card" style="border:2px solid var(--blue)">
 <div class="card-title">🚀 BULK JSON IMPORT (All Data)</div>
 <p style="color:var(--muted);margin-bottom:15px">Upload or paste your JSON file with stock, customers, suppliers, quotes, invoices</p>
@@ -1449,6 +1461,31 @@ S002,XYZ Wholesalers,0125559876"></textarea>
 </div>
 
 <script>
+function deleteAllStock(){{
+    if(!confirm('DELETE ALL STOCK? This cannot be undone!'))return;
+    fetch('/api/{bid}/delete/stock',{{method:'POST'}}).then(r=>r.json()).then(d=>{{
+        document.getElementById('deleteResult').innerHTML=d.success?'<span style="color:var(--green)">✅ All stock deleted</span>':'<span style="color:var(--danger)">❌ '+d.error+'</span>';
+    }});
+}}
+function deleteAllCustomers(){{
+    if(!confirm('DELETE ALL CUSTOMERS? This cannot be undone!'))return;
+    fetch('/api/{bid}/delete/customers',{{method:'POST'}}).then(r=>r.json()).then(d=>{{
+        document.getElementById('deleteResult').innerHTML=d.success?'<span style="color:var(--green)">✅ All customers deleted</span>':'<span style="color:var(--danger)">❌ '+d.error+'</span>';
+    }});
+}}
+function deleteAllSuppliers(){{
+    if(!confirm('DELETE ALL SUPPLIERS? This cannot be undone!'))return;
+    fetch('/api/{bid}/delete/suppliers',{{method:'POST'}}).then(r=>r.json()).then(d=>{{
+        document.getElementById('deleteResult').innerHTML=d.success?'<span style="color:var(--green)">✅ All suppliers deleted</span>':'<span style="color:var(--danger)">❌ '+d.error+'</span>';
+    }});
+}}
+function deleteAllData(){{
+    if(!confirm('DELETE EVERYTHING? Stock, Customers, Suppliers, Quotes, Invoices, Ledger - ALL GONE!'))return;
+    if(!confirm('ARE YOU SURE? Type business name to confirm: {bid}'))return;
+    fetch('/api/{bid}/delete/all',{{method:'POST'}}).then(r=>r.json()).then(d=>{{
+        document.getElementById('deleteResult').innerHTML=d.success?'<span style="color:var(--green)">✅ Everything deleted - ready for fresh import</span>':'<span style="color:var(--danger)">❌ '+d.error+'</span>';
+    }});
+}}
 function parseCSV(text){{
     var lines=text.trim().split('\\n');
     return lines.map(function(line){{
@@ -1814,6 +1851,51 @@ def api_supplier_import(bid):
     return jsonify({"success":True,"count":count})
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# DELETE ALL DATA - Clear tables for fresh import
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.route("/api/<bid>/delete/stock",methods=["POST"])
+def api_delete_all_stock(bid):
+    """Delete ALL stock for this business"""
+    try:
+        # Delete all stock where business_id matches
+        r = sb.table("stock").eq("business_id", bid).delete()
+        return jsonify({"success": True, "message": "All stock deleted"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route("/api/<bid>/delete/customers",methods=["POST"])
+def api_delete_all_customers(bid):
+    """Delete ALL customers for this business"""
+    try:
+        r = sb.table("customers").eq("business_id", bid).delete()
+        return jsonify({"success": True, "message": "All customers deleted"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route("/api/<bid>/delete/suppliers",methods=["POST"])
+def api_delete_all_suppliers(bid):
+    """Delete ALL suppliers for this business"""
+    try:
+        r = sb.table("suppliers").eq("business_id", bid).delete()
+        return jsonify({"success": True, "message": "All suppliers deleted"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+@app.route("/api/<bid>/delete/all",methods=["POST"])
+def api_delete_all_data(bid):
+    """Delete ALL data for this business (stock, customers, suppliers)"""
+    try:
+        sb.table("stock").eq("business_id", bid).delete()
+        sb.table("customers").eq("business_id", bid).delete()
+        sb.table("suppliers").eq("business_id", bid).delete()
+        sb.table("quotes").eq("business_id", bid).delete()
+        sb.table("invoices").eq("business_id", bid).delete()
+        sb.table("ledger").eq("business_id", bid).delete()
+        return jsonify({"success": True, "message": "All data deleted"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # BULK JSON IMPORT - ALL DATA IN ONE GO
 # ═══════════════════════════════════════════════════════════════════════════════
 @app.route("/api/<bid>/import/all",methods=["POST"])
@@ -1843,19 +1925,19 @@ def api_import_all(bid):
         for item in source.get("stock",[]):
             price = item.get("price", 0) or item.get("sell", 0) or 0
             rec={"id":str(uuid.uuid4()),"business_id":bid,"code":item.get("code",""),"description":item.get("description",""),"category":item.get("category","General"),"qty":int(item.get("qty",0) or 0),"cost":float(item.get("cost",0) or 0),"price":float(price)}
-            r=sb.table("stock").insert(rec).execute()
+            r=sb.table("stock").insert(rec)
             if not r.get("error"):counts["stock"]+=1
         
         # Import Customers
         for item in source.get("customers",[]):
             rec={"id":str(uuid.uuid4()),"business_id":bid,"code":item.get("code",""),"name":item.get("name",""),"phone":item.get("phone",""),"email":item.get("email",""),"address":item.get("address",""),"balance":0}
-            r=sb.table("customers").insert(rec).execute()
+            r=sb.table("customers").insert(rec)
             if not r.get("error"):counts["customers"]+=1
         
         # Import Suppliers
         for item in source.get("suppliers",[]):
             rec={"id":str(uuid.uuid4()),"business_id":bid,"code":item.get("code",""),"name":item.get("name",""),"phone":item.get("phone",""),"balance":0}
-            r=sb.table("suppliers").insert(rec).execute()
+            r=sb.table("suppliers").insert(rec)
             if not r.get("error"):counts["suppliers"]+=1
         
         # Import Quotes
