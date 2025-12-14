@@ -444,3 +444,292 @@ renderStock();
 # ═══════════════════════════════════════════════════════════════════════════════
 # END OF PART 1 - PASTE PART 2 BELOW THIS LINE
 # ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLICK AI v3 - PART 2 of 2 - Paste below Part 1
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/<bid>/stock")
+def stock_page(bid):
+    b = biz(bid)
+    name = gs(b, "company_name") or b.get("name", bid)
+    stock = b.get("stock", [])
+    categories = b.get("stock_categories", DEFAULT_CATEGORIES)
+    cat_btns = '<button class="cat-btn active" onclick="filterCat(\'All\')">All</button>'
+    for cat in categories:
+        if cat != "All": cat_btns += f'<button class="cat-btn" onclick="filterCat(\'{cat}\')">{cat}</button>'
+    rows = ""
+    for idx, s in enumerate(stock):
+        qty = int(s.get("qty", 0) or 0)
+        qty_class = "badge-red" if qty <= 0 else "badge-orange" if qty < 5 else "badge-green"
+        rows += f'<tr data-cat="{s.get("category", "General")}"><td>{s.get("code", "")}</td><td>{s.get("description", "")}</td><td><span class="badge badge-blue">{s.get("category", "General")}</span></td><td><span class="badge {qty_class}">{qty}</span></td><td>R {float(s.get("cost", 0) or 0):,.2f}</td><td>R {float(s.get("price", 0) or 0):,.2f}</td><td><button class="btn btn-sm btn-outline" onclick="editStock({idx})">Edit</button> <button class="btn btn-sm btn-red" onclick="deleteStock({idx})">×</button></td></tr>'
+    if not rows: rows = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:40px">No stock items</td></tr>'
+    cat_options = "".join([f'<option value="{c}">{c}</option>' for c in categories])
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock</title>{CSS}</head><body>
+<div class="header"><a href="/" class="logo" style="text-decoration:none">⚡ Click AI</a><div class="nav"><a href="/{bid}" class="nav-btn">🏠</a><a href="/{bid}/pos" class="nav-btn">💰</a><a href="/{bid}/stock" class="nav-btn active">📦</a><a href="/{bid}/customers" class="nav-btn">👥</a><a href="/{bid}/suppliers" class="nav-btn">🚚</a></div></div>
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">📦 Stock</h1><button class="btn" onclick="showAddModal()">+ Add</button></div>
+<div class="card"><div class="search-box"><span class="search-icon">🔍</span><input type="text" class="search-input" id="search" placeholder="Search..." oninput="filterTable()"></div><div class="cat-filter">{cat_btns}</div><div class="table-container"><table id="stockTable"><thead><tr><th>Code</th><th>Description</th><th>Category</th><th>Qty</th><th>Cost</th><th>Price</th><th>Actions</th></tr></thead><tbody>{rows}</tbody></table></div></div></div>
+<div class="modal" id="stockModal"><div class="modal-content"><div class="modal-header"><div class="modal-title" id="modalTitle">Add Stock</div><button class="modal-close" onclick="closeModal()">×</button></div><input type="hidden" id="editIdx" value="-1"><div class="form-row"><div class="form-group"><label class="form-label">Code</label><input type="text" class="input" id="sCode"></div><div class="form-group"><label class="form-label">Category</label><select class="input" id="sCat">{cat_options}</select></div></div><div class="form-group"><label class="form-label">Description</label><input type="text" class="input" id="sDesc"></div><div class="form-row"><div class="form-group"><label class="form-label">Qty</label><input type="number" class="input" id="sQty" value="0"></div><div class="form-group"><label class="form-label">Cost</label><input type="number" class="input" id="sCost" step="0.01" value="0"></div><div class="form-group"><label class="form-label">Price</label><input type="number" class="input" id="sPrice" step="0.01" value="0"></div></div><button class="btn" style="width:100%" onclick="saveStock()">Save</button></div></div>
+<script>var currentCat='All';var stock={json.dumps([dict(s) for s in stock])};function filterCat(cat){{currentCat=cat;document.querySelectorAll('.cat-btn').forEach(btn=>{{btn.classList.remove('active');if(btn.textContent===cat)btn.classList.add('active')}});filterTable()}}function filterTable(){{var search=document.getElementById('search').value.toLowerCase();document.querySelectorAll('#stockTable tbody tr').forEach(function(row){{var text=row.textContent.toLowerCase();var cat=row.getAttribute('data-cat')||'';var showCat=currentCat==='All'||cat===currentCat;var showSearch=!search||text.includes(search);row.style.display=(showCat&&showSearch)?'':'none'}})}}function showAddModal(){{document.getElementById('modalTitle').textContent='Add Stock';document.getElementById('editIdx').value=-1;document.getElementById('sCode').value='';document.getElementById('sDesc').value='';document.getElementById('sCat').value='General';document.getElementById('sQty').value=0;document.getElementById('sCost').value=0;document.getElementById('sPrice').value=0;document.getElementById('stockModal').classList.add('show')}}function editStock(idx){{var item=stock[idx];document.getElementById('modalTitle').textContent='Edit Stock';document.getElementById('editIdx').value=idx;document.getElementById('sCode').value=item.code||'';document.getElementById('sDesc').value=item.description||'';document.getElementById('sCat').value=item.category||'General';document.getElementById('sQty').value=item.qty||0;document.getElementById('sCost').value=item.cost||0;document.getElementById('sPrice').value=item.price||0;document.getElementById('stockModal').classList.add('show')}}function closeModal(){{document.getElementById('stockModal').classList.remove('show')}}function saveStock(){{var data={{idx:parseInt(document.getElementById('editIdx').value),code:document.getElementById('sCode').value,description:document.getElementById('sDesc').value,category:document.getElementById('sCat').value,qty:parseInt(document.getElementById('sQty').value)||0,cost:parseFloat(document.getElementById('sCost').value)||0,price:parseFloat(document.getElementById('sPrice').value)||0}};fetch('/api/{bid}/stock',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(data)}}).then(r=>r.json()).then(d=>{{if(d.success)location.reload();else alert(d.error||'Error')}})}}function deleteStock(idx){{if(!confirm('Delete?'))return;fetch('/api/{bid}/stock/'+idx,{{method:'DELETE'}}).then(r=>r.json()).then(d=>{{if(d.success)location.reload()}})}}</script></body></html>'''
+
+@app.route("/<bid>/customers")
+def customers_page(bid):
+    b = biz(bid)
+    name = gs(b, "company_name") or b.get("name", bid)
+    customers = b.get("customers", [])
+    rows = ""
+    for idx, c in enumerate(customers):
+        balance = float(c.get("balance", 0) or 0)
+        bal_class = "color:var(--green)" if balance <= 0 else "color:var(--red)"
+        rows += f'<tr><td>{c.get("code", "")}</td><td><strong>{c.get("name", "")}</strong></td><td>{c.get("phone", "")}</td><td>{c.get("email", "")}</td><td style="{bal_class};font-weight:700">R {balance:,.2f}</td><td><button class="btn btn-sm btn-outline" onclick="editCustomer({idx})">Edit</button></td></tr>'
+    if not rows: rows = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">No customers</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Customers</title>{CSS}</head><body>
+<div class="header"><a href="/" class="logo" style="text-decoration:none">⚡ Click AI</a><div class="nav"><a href="/{bid}" class="nav-btn">🏠</a><a href="/{bid}/stock" class="nav-btn">📦</a><a href="/{bid}/customers" class="nav-btn active">👥</a><a href="/{bid}/suppliers" class="nav-btn">🚚</a></div></div>
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">👥 Customers</h1><button class="btn" onclick="showModal()">+ Add</button></div>
+<div class="card"><div class="table-container"><table id="custTable"><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Email</th><th>Balance</th><th>Actions</th></tr></thead><tbody>{rows}</tbody></table></div></div></div>
+<div class="modal" id="custModal"><div class="modal-content"><div class="modal-header"><div class="modal-title" id="modalTitle">Add Customer</div><button class="modal-close" onclick="closeModal()">×</button></div><input type="hidden" id="editIdx" value="-1"><div class="form-row"><div class="form-group"><label class="form-label">Code</label><input type="text" class="input" id="cCode"></div><div class="form-group"><label class="form-label">Name</label><input type="text" class="input" id="cName"></div></div><div class="form-row"><div class="form-group"><label class="form-label">Phone</label><input type="text" class="input" id="cPhone"></div><div class="form-group"><label class="form-label">Email</label><input type="email" class="input" id="cEmail"></div></div><button class="btn" style="width:100%" onclick="saveCustomer()">Save</button></div></div>
+<script>var customers={json.dumps(customers)};function showModal(){{document.getElementById('modalTitle').textContent='Add Customer';document.getElementById('editIdx').value=-1;document.getElementById('cCode').value='CUST'+String(customers.length+1).padStart(3,'0');document.getElementById('cName').value='';document.getElementById('cPhone').value='';document.getElementById('cEmail').value='';document.getElementById('custModal').classList.add('show')}}function editCustomer(idx){{var c=customers[idx];document.getElementById('modalTitle').textContent='Edit';document.getElementById('editIdx').value=idx;document.getElementById('cCode').value=c.code||'';document.getElementById('cName').value=c.name||'';document.getElementById('cPhone').value=c.phone||'';document.getElementById('cEmail').value=c.email||'';document.getElementById('custModal').classList.add('show')}}function closeModal(){{document.getElementById('custModal').classList.remove('show')}}function saveCustomer(){{var data={{idx:parseInt(document.getElementById('editIdx').value),code:document.getElementById('cCode').value,name:document.getElementById('cName').value,phone:document.getElementById('cPhone').value,email:document.getElementById('cEmail').value}};fetch('/api/{bid}/customer',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(data)}}).then(r=>r.json()).then(d=>{{if(d.success)location.reload()}})}}</script></body></html>'''
+
+@app.route("/<bid>/suppliers")
+def suppliers_page(bid):
+    b = biz(bid)
+    suppliers = b.get("suppliers", [])
+    rows = ""
+    for idx, s in enumerate(suppliers):
+        balance = float(s.get("balance", 0) or 0)
+        bal_class = "color:var(--green)" if balance <= 0 else "color:var(--red)"
+        rows += f'<tr><td>{s.get("code", "")}</td><td><strong>{s.get("name", "")}</strong></td><td>{s.get("phone", "")}</td><td style="{bal_class};font-weight:700">R {balance:,.2f}</td><td><button class="btn btn-sm btn-outline" onclick="editSupplier({idx})">Edit</button> <button class="btn btn-sm btn-green" onclick="paySupplier({idx})">Pay</button></td></tr>'
+    if not rows: rows = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:40px">No suppliers</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Suppliers</title>{CSS}</head><body>
+<div class="header"><a href="/" class="logo" style="text-decoration:none">⚡ Click AI</a><div class="nav"><a href="/{bid}" class="nav-btn">🏠</a><a href="/{bid}/stock" class="nav-btn">📦</a><a href="/{bid}/customers" class="nav-btn">👥</a><a href="/{bid}/suppliers" class="nav-btn active">🚚</a></div></div>
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">🚚 Suppliers</h1><button class="btn" onclick="showModal()">+ Add</button></div>
+<div class="card"><div class="table-container"><table><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Balance</th><th>Actions</th></tr></thead><tbody>{rows}</tbody></table></div></div></div>
+<div class="modal" id="suppModal"><div class="modal-content"><div class="modal-header"><div class="modal-title" id="modalTitle">Add Supplier</div><button class="modal-close" onclick="closeModal()">×</button></div><input type="hidden" id="editIdx" value="-1"><div class="form-row"><div class="form-group"><label class="form-label">Code</label><input type="text" class="input" id="sCode"></div><div class="form-group"><label class="form-label">Name</label><input type="text" class="input" id="sName"></div></div><div class="form-group"><label class="form-label">Phone</label><input type="text" class="input" id="sPhone"></div><button class="btn" style="width:100%" onclick="saveSupplier()">Save</button></div></div>
+<script>var suppliers={json.dumps(suppliers)};function showModal(){{document.getElementById('modalTitle').textContent='Add Supplier';document.getElementById('editIdx').value=-1;document.getElementById('sCode').value='SUPP'+String(suppliers.length+1).padStart(3,'0');document.getElementById('sName').value='';document.getElementById('sPhone').value='';document.getElementById('suppModal').classList.add('show')}}function editSupplier(idx){{var s=suppliers[idx];document.getElementById('modalTitle').textContent='Edit';document.getElementById('editIdx').value=idx;document.getElementById('sCode').value=s.code||'';document.getElementById('sName').value=s.name||'';document.getElementById('sPhone').value=s.phone||'';document.getElementById('suppModal').classList.add('show')}}function closeModal(){{document.getElementById('suppModal').classList.remove('show')}}function saveSupplier(){{var data={{idx:parseInt(document.getElementById('editIdx').value),code:document.getElementById('sCode').value,name:document.getElementById('sName').value,phone:document.getElementById('sPhone').value}};fetch('/api/{bid}/supplier',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(data)}}).then(r=>r.json()).then(d=>{{if(d.success)location.reload()}})}}function paySupplier(idx){{var amount=prompt('Payment amount:');if(!amount)return;fetch('/api/{bid}/supplier/'+idx+'/pay',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{amount:parseFloat(amount)}})}}).then(r=>r.json()).then(d=>{{if(d.success)location.reload()}})}}</script></body></html>'''
+
+@app.route("/<bid>/expenses")
+def expenses_page(bid):
+    b = biz(bid)
+    ledger = b.get("ledger", [])
+    expenses = [e for e in ledger if e.get("account", "").startswith(("6", "7"))]
+    rows = ""
+    for e in reversed(expenses[-50:]):
+        acc_name = ACCOUNTS.get(e.get("account", ""), ("Unknown",))[0]
+        rows += f'<tr><td>{e.get("date", "")[:10]}</td><td>{acc_name}</td><td>{e.get("desc", "")}</td><td style="color:var(--red)">R {float(e.get("debit", 0)):,.2f}</td></tr>'
+    if not rows: rows = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:40px">No expenses</td></tr>'
+    expense_cats = b.get("expense_categories", DEFAULT_EXPENSE_CATS)
+    cat_options = "".join([f'<option value="{c["code"]}">{c["name"]}</option>' for c in expense_cats])
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Expenses</title>{CSS}</head><body>
+<div class="header"><a href="/" class="logo" style="text-decoration:none">⚡ Click AI</a><div class="nav"><a href="/{bid}" class="nav-btn">🏠</a><a href="/{bid}/stock" class="nav-btn">📦</a><a href="/{bid}/expenses" class="nav-btn active">💸</a></div></div>
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">💸 Expenses</h1><button class="btn" onclick="showModal()">+ Add</button></div>
+<div class="card"><div class="table-container"><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th></tr></thead><tbody>{rows}</tbody></table></div></div></div>
+<div class="modal" id="expModal"><div class="modal-content"><div class="modal-header"><div class="modal-title">Add Expense</div><button class="modal-close" onclick="closeModal()">×</button></div><div class="form-row"><div class="form-group"><label class="form-label">Category</label><select class="input" id="eCat">{cat_options}</select></div><div class="form-group"><label class="form-label">Date</label><input type="date" class="input" id="eDate"></div></div><div class="form-group"><label class="form-label">Description</label><input type="text" class="input" id="eDesc"></div><div class="form-group"><label class="form-label">Amount (incl VAT)</label><input type="number" class="input" id="eAmount" step="0.01"></div><button class="btn" style="width:100%" onclick="saveExpense()">Save</button></div></div>
+<script>document.getElementById('eDate').value=new Date().toISOString().split('T')[0];function showModal(){{document.getElementById('expModal').classList.add('show')}}function closeModal(){{document.getElementById('expModal').classList.remove('show')}}function saveExpense(){{var data={{category:document.getElementById('eCat').value,date:document.getElementById('eDate').value,description:document.getElementById('eDesc').value,amount:parseFloat(document.getElementById('eAmount').value)||0}};fetch('/api/{bid}/expense',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(data)}}).then(r=>r.json()).then(d=>{{if(d.success)location.reload()}})}}</script></body></html>'''
+
+@app.route("/<bid>/settings")
+def settings_page(bid):
+    b = biz(bid)
+    settings = b.get("settings", DEFAULT_SETTINGS)
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Settings</title>{CSS}</head><body>
+<div class="header"><a href="/" class="logo" style="text-decoration:none">⚡ Click AI</a><div class="nav"><a href="/{bid}" class="nav-btn">🏠</a><a href="/{bid}/settings" class="nav-btn active">⚙️</a></div></div>
+<div class="container"><h1 style="font-size:24px;margin-bottom:20px">⚙️ Settings</h1>
+<div class="card"><div class="card-title">🏢 Company</div><div class="form-row"><div class="form-group"><label class="form-label">Company Name</label><input type="text" class="input" id="company_name" value="{settings.get('company_name', '')}"></div><div class="form-group"><label class="form-label">VAT Number</label><input type="text" class="input" id="vat_number" value="{settings.get('vat_number', '')}"></div></div><div class="form-group"><label class="form-label">Address</label><textarea class="input" id="address" rows="2">{settings.get('address', '')}</textarea></div><div class="form-row"><div class="form-group"><label class="form-label">Phone</label><input type="text" class="input" id="phone" value="{settings.get('phone', '')}"></div><div class="form-group"><label class="form-label">Email</label><input type="email" class="input" id="email" value="{settings.get('email', '')}"></div></div></div>
+<div class="card"><div class="card-title">🏦 Banking</div><div class="form-row"><div class="form-group"><label class="form-label">Bank</label><input type="text" class="input" id="bank_name" value="{settings.get('bank_name', '')}"></div><div class="form-group"><label class="form-label">Account</label><input type="text" class="input" id="bank_account" value="{settings.get('bank_account', '')}"></div><div class="form-group"><label class="form-label">Branch</label><input type="text" class="input" id="bank_branch" value="{settings.get('bank_branch', '')}"></div></div></div>
+<div class="card"><div class="card-title">📋 Defaults</div><div class="form-row"><div class="form-group"><label class="form-label">VAT %</label><input type="number" class="input" id="vat_rate" value="{settings.get('vat_rate', 15)}"></div><div class="form-group"><label class="form-label">Invoice Prefix</label><input type="text" class="input" id="invoice_prefix" value="{settings.get('invoice_prefix', 'INV')}"></div></div></div>
+<button class="btn" style="width:100%" onclick="saveSettings()">💾 Save</button>
+<div class="card" style="margin-top:30px;border-color:var(--red)"><div class="card-title" style="color:var(--red)">⚠️ Danger</div><button class="btn btn-red" onclick="deleteBusiness()">Delete Business</button></div></div>
+<script>function saveSettings(){{var data={{company_name:document.getElementById('company_name').value,vat_number:document.getElementById('vat_number').value,address:document.getElementById('address').value,phone:document.getElementById('phone').value,email:document.getElementById('email').value,bank_name:document.getElementById('bank_name').value,bank_account:document.getElementById('bank_account').value,bank_branch:document.getElementById('bank_branch').value,vat_rate:parseInt(document.getElementById('vat_rate').value)||15,invoice_prefix:document.getElementById('invoice_prefix').value}};fetch('/api/{bid}/settings',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(data)}}).then(r=>r.json()).then(d=>{{if(d.success)alert('Saved!')}})}}function deleteBusiness(){{if(!confirm('DELETE? Cannot undo!'))return;fetch('/api/{bid}',{{method:'DELETE'}}).then(r=>r.json()).then(d=>{{if(d.success)location.href='/'}})}}</script></body></html>'''
+
+@app.route("/<bid>/report/pnl")
+def report_pnl(bid):
+    b = biz(bid)
+    ledger = b.get("ledger", [])
+    income = sum(float(e.get("credit", 0)) for e in ledger if e.get("account", "").startswith("4"))
+    cos = sum(float(e.get("debit", 0)) for e in ledger if e.get("account", "").startswith("5"))
+    expenses = sum(float(e.get("debit", 0)) for e in ledger if e.get("account", "").startswith(("6", "7")))
+    gross = income - cos
+    net = gross - expenses
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>P&L</title>{CSS}</head><body>
+<div class="header"><a href="/" class="logo" style="text-decoration:none">⚡ Click AI</a><div class="nav"><a href="/{bid}" class="nav-btn">🏠</a></div></div>
+<div class="container"><h1 style="font-size:24px;margin-bottom:20px">📈 Profit & Loss</h1><div class="card"><table>
+<tr><td style="font-weight:700">Sales</td><td style="text-align:right;color:var(--green)">R {income:,.2f}</td></tr>
+<tr><td>Cost of Sales</td><td style="text-align:right;color:var(--red)">R {cos:,.2f}</td></tr>
+<tr style="border-top:2px solid var(--purple)"><td style="font-weight:700">Gross Profit</td><td style="text-align:right;font-weight:700">R {gross:,.2f}</td></tr>
+<tr><td>Expenses</td><td style="text-align:right;color:var(--red)">R {expenses:,.2f}</td></tr>
+<tr style="border-top:2px solid var(--purple);background:rgba(139,92,246,0.1)"><td style="font-weight:900;font-size:18px">Net Profit</td><td style="text-align:right;font-weight:900;font-size:18px;color:{'var(--green)' if net >= 0 else 'var(--red)'}">R {net:,.2f}</td></tr>
+</table></div></div></body></html>'''
+
+@app.route("/<bid>/report/vat")
+def report_vat(bid):
+    b = biz(bid)
+    ledger = b.get("ledger", [])
+    vat_out = sum(float(e.get("credit", 0)) for e in ledger if e.get("account") == "2200")
+    vat_in = sum(float(e.get("debit", 0)) for e in ledger if e.get("account") == "2100")
+    net = vat_out - vat_in
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>VAT</title>{CSS}</head><body>
+<div class="header"><a href="/" class="logo" style="text-decoration:none">⚡ Click AI</a><div class="nav"><a href="/{bid}" class="nav-btn">🏠</a></div></div>
+<div class="container"><h1 style="font-size:24px;margin-bottom:20px">🏛️ VAT Report</h1><div class="card"><table>
+<tr><td style="font-weight:700">VAT Output (collected)</td><td style="text-align:right;color:var(--green)">R {vat_out:,.2f}</td></tr>
+<tr><td style="font-weight:700">VAT Input (paid)</td><td style="text-align:right;color:var(--red)">R {vat_in:,.2f}</td></tr>
+<tr style="border-top:2px solid var(--purple);background:rgba(139,92,246,0.1)"><td style="font-weight:900;font-size:18px">{'Payable' if net > 0 else 'Refund'}</td><td style="text-align:right;font-weight:900;font-size:18px;color:{'var(--red)' if net > 0 else 'var(--green)'}">R {abs(net):,.2f}</td></tr>
+</table></div></div></body></html>'''
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# API ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/business", methods=["POST"])
+def api_create_business():
+    data = request.get_json()
+    name = data.get("name", "").strip()
+    if not name: return jsonify({"success": False, "error": "Name required"})
+    bid = re.sub(r'[^a-z0-9]', '', name.lower())[:20] or "business"
+    if bid in DATA["businesses"]: bid = bid + str(len(DATA["businesses"]))
+    biz(bid)
+    DATA["businesses"][bid]["name"] = name
+    save_data()
+    return jsonify({"success": True, "id": bid})
+
+@app.route("/api/settings/apikey", methods=["POST"])
+def api_save_apikey():
+    DATA["api_key"] = request.get_json().get("key", "")
+    save_data()
+    return jsonify({"success": True})
+
+@app.route("/api/<bid>/settings", methods=["POST"])
+def api_save_settings(bid):
+    b = biz(bid)
+    data = request.get_json()
+    if "settings" not in b: b["settings"] = DEFAULT_SETTINGS.copy()
+    for key in data: b["settings"][key] = data[key]
+    save_data()
+    return jsonify({"success": True})
+
+@app.route("/api/<bid>", methods=["DELETE"])
+def api_delete_business(bid):
+    if bid in DATA["businesses"]: del DATA["businesses"][bid]
+    save_data()
+    return jsonify({"success": True})
+
+@app.route("/api/<bid>/stock", methods=["POST"])
+def api_save_stock(bid):
+    b = biz(bid)
+    data = request.get_json()
+    idx = data.get("idx", -1)
+    item = {"code": data.get("code", ""), "description": data.get("description", ""), "category": data.get("category", "General"), "qty": data.get("qty", 0), "cost": data.get("cost", 0), "price": data.get("price", 0)}
+    if 0 <= idx < len(b["stock"]): b["stock"][idx] = item
+    else: b["stock"].append(item)
+    save_data()
+    return jsonify({"success": True})
+
+@app.route("/api/<bid>/stock/<int:idx>", methods=["DELETE"])
+def api_delete_stock(bid, idx):
+    b = biz(bid)
+    if 0 <= idx < len(b["stock"]): b["stock"].pop(idx)
+    save_data()
+    return jsonify({"success": True})
+
+@app.route("/api/<bid>/customer", methods=["POST"])
+def api_save_customer(bid):
+    b = biz(bid)
+    data = request.get_json()
+    idx = data.get("idx", -1)
+    item = {"code": data.get("code", ""), "name": data.get("name", ""), "phone": data.get("phone", ""), "email": data.get("email", ""), "balance": 0}
+    if 0 <= idx < len(b["customers"]): item["balance"] = b["customers"][idx].get("balance", 0); b["customers"][idx] = item
+    else: b["customers"].append(item)
+    save_data()
+    return jsonify({"success": True})
+
+@app.route("/api/<bid>/supplier", methods=["POST"])
+def api_save_supplier(bid):
+    b = biz(bid)
+    data = request.get_json()
+    idx = data.get("idx", -1)
+    item = {"code": data.get("code", ""), "name": data.get("name", ""), "phone": data.get("phone", ""), "balance": 0}
+    if 0 <= idx < len(b["suppliers"]): item["balance"] = b["suppliers"][idx].get("balance", 0); b["suppliers"][idx] = item
+    else: b["suppliers"].append(item)
+    save_data()
+    return jsonify({"success": True})
+
+@app.route("/api/<bid>/supplier/<int:idx>/pay", methods=["POST"])
+def api_pay_supplier(bid, idx):
+    b = biz(bid)
+    amount = float(request.get_json().get("amount", 0))
+    if 0 <= idx < len(b["suppliers"]) and amount > 0:
+        b["suppliers"][idx]["balance"] = float(b["suppliers"][idx].get("balance", 0)) - amount
+        now = datetime.now().isoformat()
+        ref = f"PAY{len(b.get('ledger', []))+1:04d}"
+        b.setdefault("ledger", []).append({"date": now, "ref": ref, "account": "2000", "desc": f"Payment to {b['suppliers'][idx].get('name', '')}", "debit": amount, "credit": 0})
+        b["ledger"].append({"date": now, "ref": ref, "account": "1000", "desc": f"Payment to {b['suppliers'][idx].get('name', '')}", "debit": 0, "credit": amount})
+        save_data()
+    return jsonify({"success": True})
+
+@app.route("/api/<bid>/expense", methods=["POST"])
+def api_add_expense(bid):
+    b = biz(bid)
+    data = request.get_json()
+    vat_rate = gs(b, "vat_rate") or 15
+    amount_incl = float(data.get("amount", 0))
+    category = data.get("category", "6999")
+    has_vat = category not in NO_VAT_ACCOUNTS
+    amount_excl = amount_incl / (1 + vat_rate / 100) if has_vat else amount_incl
+    vat = amount_incl - amount_excl if has_vat else 0
+    now = data.get("date", datetime.now().isoformat()[:10])
+    ref = f"EXP{len(b.get('ledger', []))+1:04d}"
+    b.setdefault("ledger", []).append({"date": now, "ref": ref, "account": category, "desc": data.get("description", ""), "debit": amount_excl, "credit": 0})
+    if vat > 0: b["ledger"].append({"date": now, "ref": ref, "account": "2100", "desc": "VAT Input", "debit": vat, "credit": 0})
+    b["ledger"].append({"date": now, "ref": ref, "account": "1000", "desc": data.get("description", ""), "debit": 0, "credit": amount_incl})
+    save_data()
+    return jsonify({"success": True, "ref": ref})
+
+@app.route("/api/<bid>/pos", methods=["POST"])
+def api_pos_sale(bid):
+    b = biz(bid)
+    data = request.get_json()
+    items = data.get("items", [])
+    method = data.get("method", "cash")
+    vat_rate = gs(b, "vat_rate") or 15
+    total = sum(i["price"] * i["qty"] for i in items)
+    vat = total * vat_rate / (100 + vat_rate)
+    excl = total - vat
+    now = datetime.now().isoformat()
+    ref = f"POS{len(b.get('ledger', []))+1:04d}"
+    for item in items:
+        for s in b.get("stock", []):
+            if s.get("code") == item["code"]: s["qty"] = int(s.get("qty", 0)) - item["qty"]; break
+    b.setdefault("ledger", [])
+    b["ledger"].append({"date": now, "ref": ref, "account": "1000", "desc": f"POS Sale ({method})", "debit": total, "credit": 0})
+    b["ledger"].append({"date": now, "ref": ref, "account": "4000", "desc": "Sales", "debit": 0, "credit": excl})
+    b["ledger"].append({"date": now, "ref": ref, "account": "2200", "desc": "VAT Output", "debit": 0, "credit": vat})
+    save_data()
+    return jsonify({"success": True, "ref": ref, "total": total})
+
+@app.route("/api/<bid>/mobile/<mode>", methods=["POST"])
+def api_mobile_capture(bid, mode):
+    b = biz(bid)
+    data = request.get_json()
+    now = datetime.now().isoformat()
+    ref = f"MOB{len(b.get('ledger', []))+1:04d}"
+    # For now, create a placeholder - AI processing would go here
+    amount_incl = 100.00  # Placeholder
+    vat_rate = gs(b, "vat_rate") or 15
+    amount_excl = amount_incl / (1 + vat_rate / 100)
+    vat = amount_incl - amount_excl
+    account = "5000" if mode == "stock" else "6999"
+    b.setdefault("ledger", []).append({"date": now, "ref": ref, "account": account, "desc": f"Mobile {mode} capture", "debit": amount_excl, "credit": 0})
+    b["ledger"].append({"date": now, "ref": ref, "account": "2100", "desc": "VAT Input", "debit": vat, "credit": 0})
+    b["ledger"].append({"date": now, "ref": ref, "account": "2000", "desc": f"Mobile {mode} capture", "debit": 0, "credit": amount_incl})
+    save_data()
+    return jsonify({"success": True, "doc_id": ref, "supplier": "Mobile Capture", "amount_incl": amount_incl, "vat": vat})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RUN
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    print("\n" + "="*60)
+    print("⚡ CLICK AI v3 - Fully Automated Accounting")
+    print("="*60)
+    print("📍 Open: http://127.0.0.1:5000/")
+    print("📱 Mobile: http://[YOUR-IP]:5000/m/[business]")
+    print("="*60 + "\n")
+    app.run(host="0.0.0.0", port=5000, debug=True)
