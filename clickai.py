@@ -1394,3 +1394,381 @@ def settings_page(bid):
 # ═══════════════════════════════════════════════════════════════════════════════
 # END OF PART 3 - Paste Part 4 below this line
 # ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLICK AI v5 - PART 4 of 4 (FINAL)
+# Mobile | Reports | Statements | ALL APIs | Export | Run
+# Paste below Part 3
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/m/<bid>")
+def mobile(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    business = result["data"][0]
+    s = business.get("settings", {})
+    if isinstance(s, str):
+        try: s = json.loads(s)
+        except: s = {}
+    name = s.get("company_name") or business.get("name", "Business")
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>Click AI</title>
+<style>*{{margin:0;padding:0;box-sizing:border-box}}body{{font-family:-apple-system,sans-serif;background:#050508;color:#fff;min-height:100vh;display:flex;flex-direction:column}}.top{{padding:20px;text-align:center;border-bottom:1px solid #1a1a2f}}.logo{{font-size:28px;font-weight:900;background:linear-gradient(135deg,#3b82f6,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}}.bn{{color:#6b7280;font-size:16px;margin-top:8px}}.main{{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:18px;padding:20px}}.big{{width:85%;max-width:300px;padding:30px 20px;border-radius:20px;display:flex;flex-direction:column;align-items:center;gap:10px;cursor:pointer;font-weight:800;font-size:20px;transition:all 0.2s}}.stock{{background:rgba(59,130,246,0.15);border:3px solid rgba(59,130,246,0.5);color:#3b82f6}}.expense{{background:rgba(239,68,68,0.15);border:3px solid rgba(239,68,68,0.5);color:#ef4444}}.cos{{background:rgba(245,158,11,0.15);border:3px solid rgba(245,158,11,0.5);color:#f59e0b}}.big:active{{transform:scale(0.95)}}.icon{{font-size:50px}}.sub{{font-size:13px;font-weight:400;color:#6b7280}}input[type=file]{{display:none}}.ov{{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:100;flex-direction:column;align-items:center;justify-content:center;padding:25px}}.ov.show{{display:flex}}.spin{{width:50px;height:50px;border:4px solid #333;border-top-color:#3b82f6;border-radius:50%;animation:spin 1s linear infinite}}@keyframes spin{{to{{transform:rotate(360deg)}}}}.rbox{{background:#0d0d14;border:1px solid #1a1a2f;border-radius:16px;padding:20px;width:100%;max-width:340px}}.rrow{{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #1a1a2f;font-size:15px}}.rrow:last-child{{border:none}}.inp{{width:100%;padding:14px;background:rgba(255,255,255,0.05);border:2px solid #1a1a2f;border-radius:10px;color:#fff;font-size:16px;margin-bottom:12px}}.btnr{{display:flex;gap:12px;margin-top:20px;width:100%;max-width:340px}}.abtn{{flex:1;padding:16px;border-radius:12px;font-size:17px;font-weight:700;cursor:pointer;border:none}}.ebtn{{background:#3b82f6;color:#fff}}.sbtn{{background:#10b981;color:#fff}}.cbtn{{background:#6b7280;color:#fff}}.vmod{{background:#0d0d14;border:1px solid #1a1a2f;border-radius:20px;padding:25px;width:90%;max-width:340px;text-align:center}}.vbtn{{width:100%;padding:18px;margin:8px 0;border-radius:12px;font-size:18px;font-weight:700;cursor:pointer;border:none}}.vy{{background:#10b981;color:#fff}}.vn{{background:#ef4444;color:#fff}}.dlink{{position:fixed;bottom:15px;color:#6b7280;font-size:13px;text-decoration:none}}</style></head><body>
+<div class="top"><div class="logo">⚡ Click AI</div><div class="bn">{name}</div></div>
+<div class="main"><div class="big stock" onclick="cap('stock')"><div class="icon">📦</div><div>STOCK</div><div class="sub">Supplier Invoice</div></div><div class="big expense" onclick="cap('expense')"><div class="icon">💸</div><div>EXPENSE</div><div class="sub">Receipt</div></div><div class="big cos" onclick="cap('cos')"><div class="icon">🏷️</div><div>COS</div><div class="sub">Cost of Sales</div></div></div>
+<input type="file" id="cam" accept="image/*" capture="environment" onchange="proc(this)">
+<div class="ov" id="load"><div class="spin"></div><div style="margin-top:20px;color:#6b7280">AI Processing...</div></div>
+<div class="ov" id="vat"><div class="vmod"><div style="font-size:22px;margin-bottom:15px">🏛️ VAT?</div><div style="color:#6b7280;margin-bottom:20px">Does this include VAT?</div><button class="vbtn vy" onclick="setVat(true)">✓ YES</button><button class="vbtn vn" onclick="setVat(false)">✗ NO</button></div></div>
+<div class="ov" id="result"><div style="font-size:50px;margin-bottom:15px" id="ricon">✅</div><div style="font-size:24px;font-weight:700;margin-bottom:20px">Captured!</div><div class="rbox" id="rbox"></div><div class="btnr"><button class="abtn ebtn" onclick="showEdit()">✏️ Edit</button><button class="abtn sbtn" onclick="submit()">✓ Submit</button></div></div>
+<div class="ov" id="edit"><div class="vmod" style="text-align:left"><div style="font-size:20px;font-weight:700;margin-bottom:20px;text-align:center">✏️ Edit</div><label style="color:#6b7280;font-size:13px">Supplier</label><input class="inp" id="eSupp"><label style="color:#6b7280;font-size:13px">Description</label><input class="inp" id="eDesc"><label style="color:#6b7280;font-size:13px">Amount</label><input class="inp" type="number" step="0.01" id="eAmt"><div class="btnr"><button class="abtn cbtn" onclick="hideEdit()">Cancel</button><button class="abtn sbtn" onclick="saveEdit()">Save</button></div></div></div>
+<div class="ov" id="done"><div style="font-size:60px">✅</div><div style="font-size:24px;font-weight:700;margin:20px 0">Posted!</div><button class="abtn sbtn" style="width:200px" onclick="reset()">Done</button></div>
+<a href="/{bid}?desktop=1" class="dlink">Desktop →</a>
+<script>var mode='',pending=null,hasVat=true;function cap(m){{mode=m;document.getElementById('cam').click()}}function proc(inp){{if(!inp.files[0])return;show('load');var r=new FileReader();r.onload=function(e){{var b64=e.target.result.split(',')[1];fetch('/api/{bid}/mobile/scan',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{image:b64,mode:mode}})}}).then(x=>x.json()).then(d=>{{hide('load');if(d.success){{pending=d;showResult()}}else alert(d.error||'Error')}}).catch(()=>{{hide('load');alert('Error')}})}};r.readAsDataURL(inp.files[0])}}function showResult(){{document.getElementById('ricon').textContent=mode==='stock'?'📦':mode==='cos'?'🏷️':'💸';var h='<div class="rrow"><span>Supplier</span><span>'+(pending.supplier||'—')+'</span></div><div class="rrow"><span>Description</span><span>'+(pending.description||'—')+'</span></div><div class="rrow"><span>Amount</span><span>R '+(pending.amount||0).toFixed(2)+'</span></div>';document.getElementById('rbox').innerHTML=h;if(pending.ask_vat)show('vat');else show('result')}}function setVat(v){{hasVat=v;hide('vat');show('result')}}function showEdit(){{document.getElementById('eSupp').value=pending.supplier||'';document.getElementById('eDesc').value=pending.description||'';document.getElementById('eAmt').value=pending.amount||0;show('edit')}}function hideEdit(){{hide('edit')}}function saveEdit(){{pending.supplier=document.getElementById('eSupp').value;pending.description=document.getElementById('eDesc').value;pending.amount=parseFloat(document.getElementById('eAmt').value)||0;hide('edit');showResult()}}function submit(){{hide('result');show('load');fetch('/api/{bid}/mobile/post',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{mode:mode,supplier:pending.supplier,description:pending.description,amount:pending.amount,has_vat:hasVat}})}}).then(x=>x.json()).then(d=>{{hide('load');if(d.success)show('done');else alert(d.error||'Error')}})}}function reset(){{hide('done');pending=null;hasVat=true;document.getElementById('cam').value=''}}function show(id){{document.getElementById(id).classList.add('show')}}function hide(id){{document.getElementById(id).classList.remove('show')}}</script></body></html>'''
+
+@app.route("/<bid>/report/pnl")
+def report_pnl(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    ledger = sb.table("ledger").select("*").eq("business_id", bid).execute()["data"] or []
+    income = sum(float(e.get("credit", 0)) for e in ledger if e.get("account", "").startswith("4"))
+    cos = sum(float(e.get("debit", 0)) for e in ledger if e.get("account", "").startswith("5"))
+    exp = sum(float(e.get("debit", 0)) for e in ledger if e.get("account", "").startswith(("6", "7")))
+    gross = income - cos
+    net = gross - exp
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>P&L</title>{CSS}</head><body>{get_header(bid, "reports")}<div class="container"><h1 style="font-size:24px;margin-bottom:20px">📈 Profit & Loss</h1><div class="card"><table><tr><td style="font-weight:700;font-size:16px">Sales</td><td style="text-align:right;color:var(--green);font-size:16px">R {income:,.2f}</td></tr><tr><td>Cost of Sales</td><td style="text-align:right;color:var(--red)">R {cos:,.2f}</td></tr><tr style="border-top:2px solid var(--blue)"><td style="font-weight:700">Gross Profit</td><td style="text-align:right;font-weight:700">R {gross:,.2f}</td></tr><tr><td>Expenses</td><td style="text-align:right;color:var(--red)">R {exp:,.2f}</td></tr><tr style="border-top:2px solid var(--blue);background:rgba(59,130,246,0.1)"><td style="font-weight:900;font-size:20px">Net Profit</td><td style="text-align:right;font-weight:900;font-size:20px;color:{'var(--green)' if net>=0 else 'var(--red)'}">R {net:,.2f}</td></tr></table></div></div></body></html>'''
+
+@app.route("/<bid>/report/vat")
+def report_vat(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    ledger = sb.table("ledger").select("*").eq("business_id", bid).execute()["data"] or []
+    vo = sum(float(e.get("credit", 0)) for e in ledger if e.get("account") == "2200")
+    vi = sum(float(e.get("debit", 0)) for e in ledger if e.get("account") == "2100")
+    net = vo - vi
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>VAT</title>{CSS}</head><body>{get_header(bid, "reports")}<div class="container"><h1 style="font-size:24px;margin-bottom:20px">🏛️ VAT Report</h1><div class="card"><table><tr><td style="font-weight:700">VAT Output (Sales)</td><td style="text-align:right;color:var(--green);font-size:16px">R {vo:,.2f}</td></tr><tr><td style="font-weight:700">VAT Input (Purchases)</td><td style="text-align:right;color:var(--red);font-size:16px">R {vi:,.2f}</td></tr><tr style="border-top:2px solid var(--blue);background:rgba(59,130,246,0.1)"><td style="font-weight:900;font-size:18px">{'Payable to SARS' if net>0 else 'Refund'}</td><td style="text-align:right;font-weight:900;font-size:20px;color:{'var(--red)' if net>0 else 'var(--green)'}">R {abs(net):,.2f}</td></tr></table></div></div></body></html>'''
+
+@app.route("/<bid>/report/ledger")
+def report_ledger(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    ledger = sb.table("ledger").select("*").eq("business_id", bid).order("created_at", desc=True).limit(200).execute()["data"] or []
+    rows = ""
+    for e in ledger:
+        acc = e.get("account", "")
+        rows += f'<tr><td>{e.get("date", "")[:10]}</td><td><span class="badge badge-blue">{e.get("ref", "")}</span></td><td><span class="badge badge-purple">{acc}</span> {ACCOUNTS.get(acc, ("",))[0]}</td><td>{e.get("description", "")[:35]}</td><td style="color:var(--green)">R {float(e.get("debit", 0)):,.2f}</td><td style="color:var(--red)">R {float(e.get("credit", 0)):,.2f}</td></tr>'
+    if not rows: rows = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">No transactions</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ledger</title>{CSS}</head><body>{get_header(bid, "reports")}<div class="container"><h1 style="font-size:24px;margin-bottom:20px">📒 General Ledger</h1><div class="card"><div class="table-container"><table><thead><tr><th>Date</th><th>Ref</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead><tbody>{rows}</tbody></table></div></div></div></body></html>'''
+
+@app.route("/<bid>/report/debtors")
+def report_debtors(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    customers = sb.table("customers").select("*").eq("business_id", bid).execute()["data"] or []
+    rows = ""
+    total = 0
+    for c in customers:
+        bal = float(c.get("balance", 0) or 0)
+        if bal > 0:
+            total += bal
+            rows += f'<tr><td>{c.get("code","")}</td><td><strong>{c.get("name","")}</strong></td><td>{c.get("phone","")}</td><td style="color:var(--red);font-weight:700">R {bal:,.2f}</td><td><a href="/{bid}/customer/{c.get("id","")}/statement" class="btn btn-xs btn-blue">Statement</a></td></tr>'
+    if not rows: rows = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:40px">No debtors</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Debtors</title>{CSS}</head><body>{get_header(bid, "reports")}<div class="container"><h1 style="font-size:24px;margin-bottom:20px">💰 Debtors Age</h1><div class="stats-grid"><div class="stat-card alert"><div class="stat-value">R {total:,.2f}</div><div class="stat-label">Total Owing</div></div></div><div class="card"><div class="table-container"><table><thead><tr><th>Code</th><th>Customer</th><th>Phone</th><th>Balance</th><th></th></tr></thead><tbody>{rows}</tbody></table></div></div></div></body></html>'''
+
+@app.route("/<bid>/report/creditors")
+def report_creditors(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    suppliers = sb.table("suppliers").select("*").eq("business_id", bid).execute()["data"] or []
+    rows = ""
+    total = 0
+    for s in suppliers:
+        bal = float(s.get("balance", 0) or 0)
+        if bal > 0:
+            total += bal
+            rows += f'<tr><td>{s.get("code","")}</td><td><strong>{s.get("name","")}</strong></td><td>{s.get("phone","")}</td><td style="color:var(--red);font-weight:700">R {bal:,.2f}</td><td><a href="/{bid}/supplier/{s.get("id","")}/statement" class="btn btn-xs btn-blue">Statement</a></td></tr>'
+    if not rows: rows = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:40px">No creditors</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Creditors</title>{CSS}</head><body>{get_header(bid, "reports")}<div class="container"><h1 style="font-size:24px;margin-bottom:20px">💸 Creditors Age</h1><div class="stats-grid"><div class="stat-card alert"><div class="stat-value">R {total:,.2f}</div><div class="stat-label">You Owe</div></div></div><div class="card"><div class="table-container"><table><thead><tr><th>Code</th><th>Supplier</th><th>Phone</th><th>Balance</th><th></th></tr></thead><tbody>{rows}</tbody></table></div></div></div></body></html>'''
+
+@app.route("/<bid>/customer/<cid>/statement")
+def customer_statement(bid, cid):
+    cust = sb.table("customers").select("*").eq("id", cid).execute()["data"]
+    if not cust: return redirect(f"/{bid}/customers")
+    c = cust[0]
+    invoices = sb.table("invoices").select("*").eq("business_id", bid).eq("customer_id", cid).order("created_at").execute()["data"] or []
+    ledger = sb.table("ledger").select("*").eq("business_id", bid).order("created_at").execute()["data"] or []
+    rows = ""
+    bal = 0
+    for inv in invoices:
+        amt = float(inv.get("total", 0))
+        bal += amt
+        rows += f'<tr><td>{inv.get("date","")[:10]}</td><td>{inv.get("number","")}</td><td>Invoice</td><td style="color:var(--red)">R {amt:,.2f}</td><td></td><td>R {bal:,.2f}</td></tr>'
+    for e in ledger:
+        if c.get("name","") in e.get("description","") and e.get("account")=="1000" and float(e.get("debit",0))>0:
+            amt = float(e.get("debit", 0))
+            bal -= amt
+            rows += f'<tr><td>{e.get("date","")[:10]}</td><td>{e.get("ref","")}</td><td>Payment</td><td></td><td style="color:var(--green)">R {amt:,.2f}</td><td>R {bal:,.2f}</td></tr>'
+    if not rows: rows = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">No transactions</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Statement</title>{CSS}</head><body>{get_header(bid, "customers")}<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px"><div><h1 style="font-size:24px">📄 Statement</h1><div style="color:var(--muted)">{c.get("name","")} ({c.get("code","")})</div></div><div class="stat-card" style="margin:0"><div class="stat-value">R {float(c.get("balance",0)):,.2f}</div><div class="stat-label">Balance</div></div></div><div class="card"><div class="table-container"><table><thead><tr><th>Date</th><th>Ref</th><th>Type</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>{rows}</tbody></table></div></div></div></body></html>'''
+
+@app.route("/<bid>/supplier/<sid>/statement")
+def supplier_statement(bid, sid):
+    supp = sb.table("suppliers").select("*").eq("id", sid).execute()["data"]
+    if not supp: return redirect(f"/{bid}/suppliers")
+    s = supp[0]
+    ledger = sb.table("ledger").select("*").eq("business_id", bid).order("created_at").execute()["data"] or []
+    rows = ""
+    bal = 0
+    for e in ledger:
+        if s.get("name","").lower() in e.get("description","").lower() and e.get("account")=="2000":
+            if float(e.get("credit",0))>0:
+                amt = float(e.get("credit",0))
+                bal += amt
+                rows += f'<tr><td>{e.get("date","")[:10]}</td><td>{e.get("ref","")}</td><td>Purchase</td><td style="color:var(--red)">R {amt:,.2f}</td><td></td><td>R {bal:,.2f}</td></tr>'
+            elif float(e.get("debit",0))>0:
+                amt = float(e.get("debit",0))
+                bal -= amt
+                rows += f'<tr><td>{e.get("date","")[:10]}</td><td>{e.get("ref","")}</td><td>Payment</td><td></td><td style="color:var(--green)">R {amt:,.2f}</td><td>R {bal:,.2f}</td></tr>'
+    if not rows: rows = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">No transactions</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Statement</title>{CSS}</head><body>{get_header(bid, "suppliers")}<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px"><div><h1 style="font-size:24px">📄 Statement</h1><div style="color:var(--muted)">{s.get("name","")} ({s.get("code","")})</div></div><div class="stat-card" style="margin:0"><div class="stat-value">R {float(s.get("balance",0)):,.2f}</div><div class="stat-label">Balance</div></div></div><div class="card"><div class="table-container"><table><thead><tr><th>Date</th><th>Ref</th><th>Type</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody>{rows}</tbody></table></div></div></div></body></html>'''
+
+@app.route("/<bid>/export/csv")
+def export_csv(bid):
+    ledger = sb.table("ledger").select("*").eq("business_id", bid).order("created_at").execute()["data"] or []
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date","Ref","Account","Description","Debit","Credit"])
+    for e in ledger:
+        writer.writerow([e.get("date","")[:10],e.get("ref",""),e.get("account",""),e.get("description",""),e.get("debit",0),e.get("credit",0)])
+    return Response(output.getvalue(),mimetype="text/csv",headers={"Content-Disposition":f"attachment;filename=ledger_{bid}.csv"})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ALL APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/status")
+def api_status():
+    sb_ok=False
+    try:
+        r=sb.table("businesses").select("id").limit(1).execute()
+        sb_ok=r["error"]is None
+    except:pass
+    return jsonify({"supabase":sb_ok,"anthropic":bool(ANTHROPIC_API_KEY)})
+
+@app.route("/api/business",methods=["POST"])
+def api_create_business():
+    d=request.get_json();name=d.get("name","").strip()
+    if not name:return jsonify({"success":False,"error":"Name required"})
+    bid=str(uuid.uuid4())
+    sb.table("businesses").insert({"id":bid,"name":name,"settings":json.dumps({"company_name":name})}).execute()
+    return jsonify({"success":True,"id":bid})
+
+@app.route("/api/<bid>/settings",methods=["POST"])
+def api_settings(bid):
+    sb.table("businesses").eq("id",bid).update({"settings":json.dumps(request.get_json())}).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>",methods=["DELETE"])
+def api_del_biz(bid):
+    for t in["ledger","stock","customers","suppliers","invoices","quotes"]:sb.table(t).eq("business_id",bid).delete().execute()
+    sb.table("businesses").eq("id",bid).delete().execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/stock",methods=["POST"])
+def api_stock(bid):
+    d=request.get_json()
+    item={"business_id":bid,"code":d.get("code",""),"description":d.get("description",""),"category":d.get("category","General"),"qty":d.get("qty",0),"cost":d.get("cost",0),"price":d.get("price",0)}
+    if d.get("id"):sb.table("stock").eq("id",d["id"]).update(item).execute()
+    else:item["id"]=str(uuid.uuid4());sb.table("stock").insert(item).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/stock/adjust",methods=["POST"])
+def api_stock_adj(bid):
+    d=request.get_json();stock=sb.table("stock").select("*").eq("id",d["id"]).execute()["data"]
+    if stock:
+        nq=int(stock[0].get("qty",0))+int(d.get("adjustment",0))
+        sb.table("stock").eq("id",d["id"]).update({"qty":nq}).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/customer",methods=["POST"])
+def api_cust(bid):
+    d=request.get_json()
+    item={"business_id":bid,"code":d.get("code",""),"name":d.get("name",""),"phone":d.get("phone",""),"email":d.get("email",""),"address":d.get("address","")}
+    if d.get("id"):sb.table("customers").eq("id",d["id"]).update(item).execute()
+    else:item["id"]=str(uuid.uuid4());item["balance"]=0;sb.table("customers").insert(item).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/customer/receive",methods=["POST"])
+def api_cust_rec(bid):
+    d=request.get_json();cust=sb.table("customers").select("*").eq("id",d["id"]).execute()["data"]
+    if cust:
+        c=cust[0];amt=float(d.get("amount",0));nb=float(c.get("balance",0))-amt
+        sb.table("customers").eq("id",d["id"]).update({"balance":nb}).execute()
+        ref=f"REC{uuid.uuid4().hex[:6].upper()}"
+        sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"1000","description":f"Payment from {c.get('name','')}","debit":amt,"credit":0}).execute()
+        sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"1200","description":f"Payment from {c.get('name','')}","debit":0,"credit":amt}).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/supplier",methods=["POST"])
+def api_supp(bid):
+    d=request.get_json()
+    item={"business_id":bid,"code":d.get("code",""),"name":d.get("name",""),"phone":d.get("phone","")}
+    if d.get("id"):sb.table("suppliers").eq("id",d["id"]).update(item).execute()
+    else:item["id"]=str(uuid.uuid4());item["balance"]=0;sb.table("suppliers").insert(item).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/supplier/pay",methods=["POST"])
+def api_supp_pay(bid):
+    d=request.get_json();supp=sb.table("suppliers").select("*").eq("id",d["id"]).execute()["data"]
+    if supp:
+        s=supp[0];amt=float(d.get("amount",0));nb=float(s.get("balance",0))-amt
+        sb.table("suppliers").eq("id",d["id"]).update({"balance":nb}).execute()
+        ref=f"PAY{uuid.uuid4().hex[:6].upper()}"
+        sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"2000","description":f"Payment to {s.get('name','')}","debit":amt,"credit":0}).execute()
+        sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"1000","description":f"Payment to {s.get('name','')}","debit":0,"credit":amt}).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/expense",methods=["POST"])
+def api_exp(bid):
+    d=request.get_json();biz=sb.table("businesses").select("settings").eq("id",bid).execute()["data"]
+    settings={};
+    if biz:
+        settings=biz[0].get("settings",{})
+        if isinstance(settings,str):
+            try:settings=json.loads(settings)
+            except:settings={}
+    vr=settings.get("vat_rate",15);amt=float(d.get("amount",0));cat=d.get("category","6999")
+    hv=cat not in NO_VAT_ACCOUNTS;v=calc_vat(amt,vr,hv);ref=f"EXP{uuid.uuid4().hex[:6].upper()}"
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":d.get("date",today_iso()),"ref":ref,"account":cat,"description":d.get("description",""),"debit":v["excl"],"credit":0}).execute()
+    if v["vat"]>0:sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":d.get("date",today_iso()),"ref":ref,"account":"2100","description":"VAT Input","debit":v["vat"],"credit":0}).execute()
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":d.get("date",today_iso()),"ref":ref,"account":"1000","description":d.get("description",""),"debit":0,"credit":amt}).execute()
+    return jsonify({"success":True,"ref":ref})
+
+@app.route("/api/<bid>/pos",methods=["POST"])
+def api_pos(bid):
+    d=request.get_json();biz=sb.table("businesses").select("settings").eq("id",bid).execute()["data"]
+    settings={};
+    if biz:
+        settings=biz[0].get("settings",{})
+        if isinstance(settings,str):
+            try:settings=json.loads(settings)
+            except:settings={}
+    vr=settings.get("vat_rate",15);items=d.get("items",[]);method=d.get("method","cash");cid=d.get("customer_id","")
+    total=sum(i["price"]*i["qty"]for i in items);v=calc_vat(total,vr,True);ref=f"POS{uuid.uuid4().hex[:6].upper()}"
+    for i in items:
+        st=sb.table("stock").select("*").eq("id",i["id"]).execute()["data"]
+        if st:sb.table("stock").eq("id",i["id"]).update({"qty":int(st[0].get("qty",0))-i["qty"]}).execute()
+    if method=="account"and cid:
+        sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"1200","description":"Sale on account","debit":total,"credit":0}).execute()
+        cu=sb.table("customers").select("*").eq("id",cid).execute()["data"]
+        if cu:sb.table("customers").eq("id",cid).update({"balance":float(cu[0].get("balance",0))+total}).execute()
+    else:sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"1000","description":f"POS ({method})","debit":total,"credit":0}).execute()
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"4000","description":"Sales","debit":0,"credit":v["excl"]}).execute()
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"2200","description":"VAT Output","debit":0,"credit":v["vat"]}).execute()
+    return jsonify({"success":True,"ref":ref,"total":total})
+
+@app.route("/api/<bid>/quote",methods=["POST"])
+def api_quote(bid):
+    d=request.get_json();lines=d.get("lines",[]);sub=sum(l.get("qty",0)*l.get("price",0)for l in lines)
+    vat=sub*d.get("vat_rate",15)/100;total=sub+vat
+    q={"id":str(uuid.uuid4()),"business_id":bid,"number":d.get("number",""),"date":d.get("date",today_iso()),"customer_id":d.get("customer_id",""),"customer_name":d.get("customer_name",""),"customer_code":d.get("customer_code",""),"lines":json.dumps(lines),"subtotal":sub,"vat":vat,"total":total,"status":"Pending"}
+    sb.table("quotes").insert(q).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/quote/<qid>/convert",methods=["POST"])
+def api_quote_conv(bid,qid):
+    qt=sb.table("quotes").select("*").eq("id",qid).execute()["data"]
+    if not qt:return jsonify({"success":False})
+    q=qt[0];sb.table("quotes").eq("id",qid).update({"status":"Accepted"}).execute()
+    biz=sb.table("businesses").select("settings").eq("id",bid).execute()["data"]
+    settings={};
+    if biz:
+        settings=biz[0].get("settings",{})
+        if isinstance(settings,str):
+            try:settings=json.loads(settings)
+            except:settings={}
+    pfx=settings.get("invoice_prefix","INV");ex=sb.table("invoices").select("id").eq("business_id",bid).execute()["data"]or[]
+    inum=f"{pfx}{len(ex)+1:04d}"
+    inv={"id":str(uuid.uuid4()),"business_id":bid,"number":inum,"date":today_iso(),"customer_id":q.get("customer_id",""),"customer_name":q.get("customer_name",""),"customer_code":q.get("customer_code",""),"lines":q.get("lines","[]"),"subtotal":q.get("subtotal",0),"vat":q.get("vat",0),"total":q.get("total",0),"paid":0,"from_quote":q.get("number","")}
+    sb.table("invoices").insert(inv).execute()
+    if q.get("customer_id"):
+        cu=sb.table("customers").select("*").eq("id",q["customer_id"]).execute()["data"]
+        if cu:sb.table("customers").eq("id",q["customer_id"]).update({"balance":float(cu[0].get("balance",0))+float(q.get("total",0))}).execute()
+    ref=inum
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"1200","description":f"Invoice {q.get('customer_name','')}","debit":q.get("total",0),"credit":0}).execute()
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"4000","description":"Sales","debit":0,"credit":q.get("subtotal",0)}).execute()
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"2200","description":"VAT Output","debit":0,"credit":q.get("vat",0)}).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/invoice",methods=["POST"])
+def api_invoice(bid):
+    d=request.get_json();lines=d.get("lines",[]);sub=sum(l.get("qty",0)*l.get("price",0)for l in lines)
+    vat=sub*d.get("vat_rate",15)/100;total=sub+vat
+    inv={"id":str(uuid.uuid4()),"business_id":bid,"number":d.get("number",""),"date":d.get("date",today_iso()),"customer_id":d.get("customer_id",""),"customer_name":d.get("customer_name",""),"customer_code":d.get("customer_code",""),"lines":json.dumps(lines),"subtotal":sub,"vat":vat,"total":total,"paid":0}
+    sb.table("invoices").insert(inv).execute()
+    if d.get("customer_id"):
+        cu=sb.table("customers").select("*").eq("id",d["customer_id"]).execute()["data"]
+        if cu:sb.table("customers").eq("id",d["customer_id"]).update({"balance":float(cu[0].get("balance",0))+total}).execute()
+    ref=d.get("number","")
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"1200","description":f"Invoice {d.get('customer_name','')}","debit":total,"credit":0}).execute()
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"4000","description":"Sales","debit":0,"credit":sub}).execute()
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"2200","description":"VAT Output","debit":0,"credit":vat}).execute()
+    return jsonify({"success":True})
+
+@app.route("/api/<bid>/mobile/scan",methods=["POST"])
+def api_mob_scan(bid):
+    d=request.get_json();mode=d.get("mode","expense");img=d.get("image","")
+    if ANTHROPIC_API_KEY and img:
+        try:
+            r=requests.post("https://api.anthropic.com/v1/messages",headers={"x-api-key":ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01","content-type":"application/json"},json={"model":"claude-sonnet-4-20250514","max_tokens":500,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":img}},{"type":"text","text":f'Extract: supplier name, total amount (Rands), description. Reply JSON only: {{"supplier":"name","amount":123.45,"description":"desc","has_vat":true}}'}]}]},timeout=30)
+            if r.status_code==200:
+                txt=r.json().get("content",[{}])[0].get("text","{}");m=re.search(r'\{[^}]+\}',txt)
+                if m:
+                    p=json.loads(m.group())
+                    return jsonify({"success":True,"supplier":p.get("supplier",""),"amount":float(p.get("amount",0)),"description":p.get("description",""),"ask_vat":p.get("has_vat")is None})
+        except:pass
+    return jsonify({"success":True,"supplier":"","amount":0,"description":"","ask_vat":True})
+
+@app.route("/api/<bid>/mobile/post",methods=["POST"])
+def api_mob_post(bid):
+    d=request.get_json();mode=d.get("mode","expense");amt=float(d.get("amount",0));hv=d.get("has_vat",True)
+    biz=sb.table("businesses").select("settings").eq("id",bid).execute()["data"]
+    settings={};
+    if biz:
+        settings=biz[0].get("settings",{})
+        if isinstance(settings,str):
+            try:settings=json.loads(settings)
+            except:settings={}
+    vr=settings.get("vat_rate",15);v=calc_vat(amt,vr,hv);acc="5000"if mode in["stock","cos"]else"6999"
+    ref=f"MOB{uuid.uuid4().hex[:6].upper()}"
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":acc,"description":d.get("description",""),"debit":v["excl"],"credit":0}).execute()
+    if v["vat"]>0:sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"2100","description":"VAT Input","debit":v["vat"],"credit":0}).execute()
+    sb.table("ledger").insert({"id":str(uuid.uuid4()),"business_id":bid,"date":today_iso(),"ref":ref,"account":"2000","description":d.get("supplier",""),"debit":0,"credit":amt}).execute()
+    supps=sb.table("suppliers").select("*").eq("business_id",bid).execute()["data"]or[]
+    for s in supps:
+        if d.get("supplier","").lower()in s.get("name","").lower():
+            sb.table("suppliers").eq("id",s["id"]).update({"balance":float(s.get("balance",0))+amt}).execute();break
+    return jsonify({"success":True,"ref":ref})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RUN - First run the SQL below in Supabase!
+# ═══════════════════════════════════════════════════════════════════════════════
+"""
+-- RUN THIS SQL IN SUPABASE SQL EDITOR FIRST!
+CREATE TABLE IF NOT EXISTS businesses(id TEXT PRIMARY KEY,name TEXT,settings JSONB,created_at TIMESTAMP DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS stock(id TEXT PRIMARY KEY,business_id TEXT,code TEXT,description TEXT,category TEXT,qty INT DEFAULT 0,cost DECIMAL,price DECIMAL,created_at TIMESTAMP DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS customers(id TEXT PRIMARY KEY,business_id TEXT,code TEXT,name TEXT,phone TEXT,email TEXT,address TEXT,balance DECIMAL DEFAULT 0,created_at TIMESTAMP DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS suppliers(id TEXT PRIMARY KEY,business_id TEXT,code TEXT,name TEXT,phone TEXT,balance DECIMAL DEFAULT 0,created_at TIMESTAMP DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS ledger(id TEXT PRIMARY KEY,business_id TEXT,date TEXT,ref TEXT,account TEXT,description TEXT,debit DECIMAL DEFAULT 0,credit DECIMAL DEFAULT 0,created_at TIMESTAMP DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS quotes(id TEXT PRIMARY KEY,business_id TEXT,number TEXT,date TEXT,customer_id TEXT,customer_name TEXT,customer_code TEXT,lines JSONB,subtotal DECIMAL,vat DECIMAL,total DECIMAL,status TEXT,created_at TIMESTAMP DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS invoices(id TEXT PRIMARY KEY,business_id TEXT,number TEXT,date TEXT,customer_id TEXT,customer_name TEXT,customer_code TEXT,lines JSONB,subtotal DECIMAL,vat DECIMAL,total DECIMAL,paid DECIMAL DEFAULT 0,from_quote TEXT,created_at TIMESTAMP DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS credit_notes(id TEXT PRIMARY KEY,business_id TEXT,number TEXT,date TEXT,invoice_number TEXT,customer_name TEXT,total DECIMAL,reason TEXT,created_at TIMESTAMP DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS delivery_notes(id TEXT PRIMARY KEY,business_id TEXT,number TEXT,date TEXT,invoice_number TEXT,customer_name TEXT,delivery_address TEXT,delivered BOOLEAN DEFAULT FALSE,created_at TIMESTAMP DEFAULT NOW());
+"""
+
+if __name__=="__main__":
+    print("\n"+"="*60)
+    print("  ⚡ CLICK AI v5 - Production Ready")
+    print("="*60)
+    print(f"  📍 http://127.0.0.1:5000/")
+    print(f"  🔌 Supabase: {'✅' if SUPABASE_URL else '❌'}")
+    print(f"  🤖 Claude: {'✅' if ANTHROPIC_API_KEY else '⚠️'}")
+    print("="*60+"\n")
+    app.run(host="0.0.0.0",port=5000,debug=True)
