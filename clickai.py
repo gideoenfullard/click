@@ -746,6 +746,9 @@ def pos_page(bid):
     stock = sb.table("stock").select("*").eq("business_id", bid).execute()["data"] or []
     customers = sb.table("customers").select("*").eq("business_id", bid).execute()["data"] or []
     
+    # Debug: print stock count
+    print(f"POS Loading - Business: {bid}, Stock items: {len(stock)}, Customers: {len(customers)}")
+    
     # Get unique categories and build BIG buttons
     categories = sorted(list(set([s.get("category", "General") for s in stock])))
     cat_icons={"Bearings":"⚙️","Seals":"🔘","Circlips":"⭕","Bolts":"🔩","Cap Screws":"🔩","Nuts":"🔩","Washers":"⚙️","Imp Bolts":"🔩","Shoes":"👞","PPE":"🦺","Welding":"🔥","Shirts":"👕","Hardware":"🔧","General":"📦"}
@@ -772,9 +775,11 @@ def pos_page(bid):
 .cat-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:10px;margin-bottom:20px}}
 .cat-btn-big{{background:rgba(59,130,246,0.1);border:2px solid rgba(59,130,246,0.3);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;font-size:11px;font-weight:600;transition:all 0.2s;line-height:1.3}}
 .cat-btn-big:hover,.cat-btn-big.active{{background:var(--blue);border-color:var(--blue);color:white;transform:scale(1.05);box-shadow:0 0 20px rgba(59,130,246,0.4)}}
+.debug-info{{background:rgba(255,193,7,0.2);border:1px solid #ffc107;padding:10px;border-radius:8px;margin-bottom:15px;font-size:12px}}
 </style></head><body>
 {get_header(bid, "pos")}
 <div class="container">
+    <div class="debug-info">📊 Debug: {len(stock)} stock items loaded, {len(customers)} customers | Business ID: {bid}</div>
     <div class="pos-grid">
         <!-- Stock Selection -->
         <div>
@@ -2007,15 +2012,17 @@ def api_import_all(bid):
             r=sb.table("stock").insert(rec)
             if not r.get("error"):counts["stock"]+=1
         
-        # Import Customers
+        # Import Customers (handle both 'code' and 'account' field names)
         for item in source.get("customers",[]):
-            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":item.get("code",""),"name":item.get("name",""),"phone":item.get("phone",""),"email":item.get("email",""),"address":item.get("address",""),"balance":0}
+            code = item.get("code","") or item.get("account","")
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":code,"name":item.get("name",""),"phone":item.get("phone",""),"email":item.get("email",""),"address":item.get("address",""),"balance":0}
             r=sb.table("customers").insert(rec)
             if not r.get("error"):counts["customers"]+=1
         
-        # Import Suppliers
+        # Import Suppliers (handle both 'code' and 'account' field names)
         for item in source.get("suppliers",[]):
-            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":item.get("code",""),"name":item.get("name",""),"phone":item.get("phone",""),"balance":0}
+            code = item.get("code","") or item.get("account","")
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":code,"name":item.get("name",""),"phone":item.get("phone",""),"balance":0}
             r=sb.table("suppliers").insert(rec)
             if not r.get("error"):counts["suppliers"]+=1
         
