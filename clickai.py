@@ -24,7 +24,7 @@ app = Flask(__name__)
 # CONFIGURATION & CREDENTIALS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://gvmonstsssdxncfkcjukr.supabase.co")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://gvmonstssdxncfkcjukr.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bW9uc3Rzc2R4bmNma2NqdWtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5NDI5OTQsImV4cCI6MjA4MDUxODk5NH0.v03qjD4I0eZY5MKfkH3ONFimrHnZsy25wZfVk98UuJQ")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "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")
 
