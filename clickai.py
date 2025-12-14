@@ -1560,11 +1560,14 @@ function importFile(){{
     else{{document.getElementById('suppCsv').value=fileContent;importSupp();}}
 }}
 
+var jsonFileData = null;  // Store file data globally
+
 function importBulkJSON(){{
-    var json=document.getElementById('jsonBulk').value;
-    if(!json)return alert('Paste JSON data first');
+    // Try file first, then textarea
+    var json = jsonFileData || document.getElementById('jsonBulk').value;
+    if(!json)return alert('Select a JSON file or paste JSON data first');
     try{{JSON.parse(json);}}catch(e){{return alert('Invalid JSON: '+e.message);}}
-    document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Importing all data...</span>';
+    document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Importing all data... This may take a minute for large files...</span>';
     fetch('/api/{bid}/import/all',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:json}})
     .then(r=>r.json()).then(d=>{{
         if(d.error){{document.getElementById('bulkResult').innerHTML='<span style="color:var(--red)">❌ '+d.error+'</span>';return;}}
@@ -1575,16 +1578,35 @@ function importBulkJSON(){{
         msg+='📋 Quotes: '+d.quotes+'<br>';
         msg+='🧾 Invoices: '+d.invoices+'</span>';
         document.getElementById('bulkResult').innerHTML=msg;
+        jsonFileData = null;  // Clear after successful import
     }}).catch(e=>{{document.getElementById('bulkResult').innerHTML='<span style="color:var(--red)">❌ Error: '+e+'</span>';}});
 }}
 
 function loadJSONFile(){{
     var file=document.getElementById('jsonFile').files[0];
     if(!file)return;
+    document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Loading file...</span>';
     var reader=new FileReader();
     reader.onload=function(e){{
-        document.getElementById('jsonBulk').value=e.target.result;
-        document.getElementById('bulkResult').innerHTML='<span style="color:var(--green)">✅ File loaded - click Import All Data</span>';
+        jsonFileData = e.target.result;  // Store in global variable
+        // Show preview (first 500 chars only)
+        var preview = jsonFileData.substring(0, 500);
+        if(jsonFileData.length > 500) preview += '\\n... (truncated for preview)';
+        document.getElementById('jsonBulk').value = preview;
+        try{{
+            var parsed = JSON.parse(jsonFileData);
+            var info = 'File loaded: ' + file.name + ' (' + Math.round(file.size/1024) + ' KB)\\n';
+            // Try to count items
+            var source = parsed;
+            if(parsed.fulltech) source = parsed.fulltech;
+            else if(parsed.hardware) source = parsed.hardware;
+            if(source.stock) info += '📦 Stock: ' + source.stock.length + ' items\\n';
+            if(source.customers) info += '👥 Customers: ' + source.customers.length + '\\n';
+            if(source.suppliers) info += '🚚 Suppliers: ' + source.suppliers.length + '\\n';
+            document.getElementById('bulkResult').innerHTML='<span style="color:var(--green)">✅ '+info.replace(/\\n/g,'<br>')+'Ready to import!</span>';
+        }}catch(e){{
+            document.getElementById('bulkResult').innerHTML='<span style="color:var(--red)">❌ Invalid JSON: '+e.message+'</span>';
+        }}
     }};
     reader.readAsText(file);
 }}
