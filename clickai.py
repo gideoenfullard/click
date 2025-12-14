@@ -1440,7 +1440,8 @@ S002,XYZ Wholesalers,0125559876"></textarea>
 
 <div class="card" style="border:2px solid var(--blue)">
 <div class="card-title">🚀 BULK JSON IMPORT (All Data)</div>
-<p style="color:var(--muted);margin-bottom:15px">Paste complete JSON with stock, customers, suppliers, quotes, invoices</p>
+<p style="color:var(--muted);margin-bottom:15px">Upload or paste your JSON file with stock, customers, suppliers, quotes, invoices</p>
+<input type="file" id="jsonFile" accept=".json,.txt" class="input" onchange="loadJSONFile()" style="margin-bottom:10px">
 <textarea id="jsonBulk" class="input" rows="10" placeholder='{{"stock":[...],"customers":[...],"suppliers":[...],"quotes":[...],"invoices":[...]}}'></textarea>
 <button class="btn btn-primary" style="margin-top:10px;background:var(--blue)" onclick="importBulkJSON()">🚀 Import All Data</button>
 <div id="bulkResult" style="margin-top:10px"></div>
@@ -1538,6 +1539,17 @@ function importBulkJSON(){{
         msg+='🧾 Invoices: '+d.invoices+'</span>';
         document.getElementById('bulkResult').innerHTML=msg;
     }}).catch(e=>{{document.getElementById('bulkResult').innerHTML='<span style="color:var(--red)">❌ Error: '+e+'</span>';}});
+}}
+
+function loadJSONFile(){{
+    var file=document.getElementById('jsonFile').files[0];
+    if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(e){{
+        document.getElementById('jsonBulk').value=e.target.result;
+        document.getElementById('bulkResult').innerHTML='<span style="color:var(--green)">✅ File loaded - click Import All Data</span>';
+    }};
+    reader.readAsText(file);
 }}
 </script>
 </body></html>'''
