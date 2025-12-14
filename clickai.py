@@ -1187,3 +1187,210 @@ function showBulkModal(){{alert('Bulk import coming soon!')}}
 # ═══════════════════════════════════════════════════════════════════════════════
 # END OF PART 2 - Paste Part 3 below this line
 # ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLICK AI v5 - PART 3 of 4
+# Customers | Suppliers | Expenses | Quotes | Invoices | Credit Notes | Delivery Notes
+# Paste below Part 2
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/<bid>/customers")
+def customers_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    business = result["data"][0]
+    settings = business.get("settings", {})
+    if isinstance(settings, str):
+        try: settings = json.loads(settings)
+        except: settings = {}
+    name = settings.get("company_name") or business.get("name", "Business")
+    customers = sb.table("customers").select("*").eq("business_id", bid).order("name").execute()["data"] or []
+    rows = ""
+    total_debtors = 0
+    for c in customers:
+        bal = float(c.get("balance", 0) or 0)
+        if bal > 0: total_debtors += bal
+        bal_class = "color:var(--green)" if bal <= 0 else "color:var(--red)"
+        rows += f'<tr><td>{c.get("code", "")}</td><td><strong>{c.get("name", "")}</strong></td><td>{c.get("phone", "")}</td><td>{c.get("email", "")}</td><td style="{bal_class};font-weight:700">R {bal:,.2f}</td><td><button class="btn btn-xs btn-outline" onclick="editCust(\'{c.get("id", "")}\')">Edit</button> <a href="/{bid}/customer/{c.get("id", "")}/statement" class="btn btn-xs btn-blue">Statement</a> <button class="btn btn-xs btn-green" onclick="receivePay(\'{c.get("id", "")}\',\'{c.get("name", "")}\',{bal})">Receive</button></td></tr>'
+    if not rows: rows = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">No customers</td></tr>'
+    cust_json = json.dumps([{"id":c.get("id",""),"code":c.get("code",""),"name":c.get("name",""),"phone":c.get("phone",""),"email":c.get("email",""),"address":c.get("address","")} for c in customers])
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Customers</title>{CSS}</head><body>
+{get_header(bid, "customers")}
+<div class="container">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px"><div><h1 style="font-size:24px">👥 Customers</h1><div style="color:var(--muted)">Total Owing: <strong style="color:var(--red)">R {total_debtors:,.2f}</strong></div></div><button class="btn" onclick="showAdd()">+ Add</button></div>
+<div class="card"><div class="search-box"><span class="search-icon">🔍</span><input type="text" class="search-input" placeholder="Search..." oninput="filter(this.value)"></div><div class="table-container"><table id="tbl"><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Email</th><th>Balance</th><th>Actions</th></tr></thead><tbody>{rows}</tbody></table></div></div></div>
+<div class="modal" id="modal"><div class="modal-content"><div class="modal-header"><div class="modal-title" id="mtitle">Add Customer</div><button class="modal-close" onclick="closeM()">×</button></div><input type="hidden" id="eid"><div class="form-row"><div class="form-group"><label class="form-label">Code</label><input type="text" class="input" id="fcode"></div><div class="form-group"><label class="form-label">Name *</label><input type="text" class="input" id="fname"></div></div><div class="form-row"><div class="form-group"><label class="form-label">Phone</label><input type="text" class="input" id="fphone"></div><div class="form-group"><label class="form-label">Email</label><input type="email" class="input" id="femail"></div></div><div class="form-group"><label class="form-label">Address</label><textarea class="input" id="faddr" rows="2"></textarea></div><button class="btn" style="width:100%" onclick="save()">💾 Save</button></div></div>
+<div class="modal" id="payM"><div class="modal-content" style="max-width:400px"><div class="modal-header"><div class="modal-title">Receive Payment</div><button class="modal-close" onclick="closePay()">×</button></div><input type="hidden" id="payId"><div style="text-align:center;margin-bottom:20px"><div id="payN" style="font-size:18px;font-weight:600"></div><div style="color:var(--muted)">Balance: R <span id="payB">0</span></div></div><div class="form-group"><label class="form-label">Amount</label><input type="number" class="input" id="payA" step="0.01" style="font-size:24px;text-align:center"></div><button class="btn btn-green" style="width:100%" onclick="savePay()">💰 Record</button></div></div>
+<script>var cust={cust_json};function filter(s){{s=s.toLowerCase();document.querySelectorAll('#tbl tbody tr').forEach(r=>r.style.display=r.textContent.toLowerCase().includes(s)?'':'none')}}function showAdd(){{document.getElementById('mtitle').textContent='Add Customer';document.getElementById('eid').value='';document.getElementById('fcode').value='C'+String(cust.length+1).padStart(3,'0');document.getElementById('fname').value='';document.getElementById('fphone').value='';document.getElementById('femail').value='';document.getElementById('faddr').value='';document.getElementById('modal').classList.add('show')}}function editCust(id){{var c=cust.find(x=>x.id===id);if(!c)return;document.getElementById('mtitle').textContent='Edit';document.getElementById('eid').value=id;document.getElementById('fcode').value=c.code;document.getElementById('fname').value=c.name;document.getElementById('fphone').value=c.phone;document.getElementById('femail').value=c.email;document.getElementById('faddr').value=c.address||'';document.getElementById('modal').classList.add('show')}}function closeM(){{document.getElementById('modal').classList.remove('show')}}function save(){{var d={{id:document.getElementById('eid').value||null,code:document.getElementById('fcode').value,name:document.getElementById('fname').value,phone:document.getElementById('fphone').value,email:document.getElementById('femail').value,address:document.getElementById('faddr').value}};if(!d.name)return alert('Name required');fetch('/api/{bid}/customer',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}}).then(r=>r.json()).then(x=>{{if(x.success)location.reload()}})}}function receivePay(id,n,b){{document.getElementById('payId').value=id;document.getElementById('payN').textContent=n;document.getElementById('payB').textContent=b.toFixed(2);document.getElementById('payA').value=b>0?b.toFixed(2):'';document.getElementById('payM').classList.add('show')}}function closePay(){{document.getElementById('payM').classList.remove('show')}}function savePay(){{var d={{id:document.getElementById('payId').value,amount:parseFloat(document.getElementById('payA').value)||0}};if(d.amount<=0)return alert('Enter amount');fetch('/api/{bid}/customer/receive',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}}).then(r=>r.json()).then(x=>{{if(x.success)location.reload()}})}}</script></body></html>'''
+
+@app.route("/<bid>/suppliers")
+def suppliers_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    business = result["data"][0]
+    suppliers = sb.table("suppliers").select("*").eq("business_id", bid).order("name").execute()["data"] or []
+    rows = ""
+    total = 0
+    for s in suppliers:
+        bal = float(s.get("balance", 0) or 0)
+        if bal > 0: total += bal
+        bc = "color:var(--green)" if bal <= 0 else "color:var(--red)"
+        rows += f'<tr><td>{s.get("code", "")}</td><td><strong>{s.get("name", "")}</strong></td><td>{s.get("phone", "")}</td><td style="{bc};font-weight:700">R {bal:,.2f}</td><td><button class="btn btn-xs btn-outline" onclick="edit(\'{s.get("id", "")}\')">Edit</button> <a href="/{bid}/supplier/{s.get("id", "")}/statement" class="btn btn-xs btn-blue">Statement</a> <button class="btn btn-xs btn-green" onclick="pay(\'{s.get("id", "")}\',\'{s.get("name", "")}\',{bal})">Pay</button></td></tr>'
+    if not rows: rows = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:40px">No suppliers</td></tr>'
+    supp_json = json.dumps([{"id":s.get("id",""),"code":s.get("code",""),"name":s.get("name",""),"phone":s.get("phone","")} for s in suppliers])
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Suppliers</title>{CSS}</head><body>
+{get_header(bid, "suppliers")}
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px"><div><h1 style="font-size:24px">🚚 Suppliers</h1><div style="color:var(--muted)">You Owe: <strong style="color:var(--red)">R {total:,.2f}</strong></div></div><button class="btn" onclick="showAdd()">+ Add</button></div>
+<div class="card"><div class="table-container"><table><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Balance</th><th>Actions</th></tr></thead><tbody>{rows}</tbody></table></div></div></div>
+<div class="modal" id="modal"><div class="modal-content"><div class="modal-header"><div class="modal-title" id="mt">Add Supplier</div><button class="modal-close" onclick="closeM()">×</button></div><input type="hidden" id="eid"><div class="form-row"><div class="form-group"><label class="form-label">Code</label><input type="text" class="input" id="fc"></div><div class="form-group"><label class="form-label">Name *</label><input type="text" class="input" id="fn"></div></div><div class="form-group"><label class="form-label">Phone</label><input type="text" class="input" id="fp"></div><button class="btn" style="width:100%" onclick="save()">💾 Save</button></div></div>
+<div class="modal" id="payM"><div class="modal-content" style="max-width:400px"><div class="modal-header"><div class="modal-title">Pay Supplier</div><button class="modal-close" onclick="closePay()">×</button></div><input type="hidden" id="payId"><div style="text-align:center;margin-bottom:20px"><div id="payN" style="font-size:18px;font-weight:600"></div><div style="color:var(--muted)">Balance: R <span id="payB">0</span></div></div><div class="form-group"><label class="form-label">Amount</label><input type="number" class="input" id="payA" step="0.01" style="font-size:24px;text-align:center"></div><button class="btn btn-green" style="width:100%" onclick="savePay()">💸 Pay</button></div></div>
+<script>var supp={supp_json};function showAdd(){{document.getElementById('mt').textContent='Add Supplier';document.getElementById('eid').value='';document.getElementById('fc').value='S'+String(supp.length+1).padStart(3,'0');document.getElementById('fn').value='';document.getElementById('fp').value='';document.getElementById('modal').classList.add('show')}}function edit(id){{var s=supp.find(x=>x.id===id);if(!s)return;document.getElementById('mt').textContent='Edit';document.getElementById('eid').value=id;document.getElementById('fc').value=s.code;document.getElementById('fn').value=s.name;document.getElementById('fp').value=s.phone;document.getElementById('modal').classList.add('show')}}function closeM(){{document.getElementById('modal').classList.remove('show')}}function save(){{var d={{id:document.getElementById('eid').value||null,code:document.getElementById('fc').value,name:document.getElementById('fn').value,phone:document.getElementById('fp').value}};if(!d.name)return alert('Name required');fetch('/api/{bid}/supplier',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}}).then(r=>r.json()).then(x=>{{if(x.success)location.reload()}})}}function pay(id,n,b){{document.getElementById('payId').value=id;document.getElementById('payN').textContent=n;document.getElementById('payB').textContent=b.toFixed(2);document.getElementById('payA').value=b>0?b.toFixed(2):'';document.getElementById('payM').classList.add('show')}}function closePay(){{document.getElementById('payM').classList.remove('show')}}function savePay(){{var d={{id:document.getElementById('payId').value,amount:parseFloat(document.getElementById('payA').value)||0}};if(d.amount<=0)return alert('Enter amount');fetch('/api/{bid}/supplier/pay',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}}).then(r=>r.json()).then(x=>{{if(x.success)location.reload()}})}}</script></body></html>'''
+
+@app.route("/<bid>/expenses")
+def expenses_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    ledger = sb.table("ledger").select("*").eq("business_id", bid).order("created_at", desc=True).limit(100).execute()["data"] or []
+    expenses = [e for e in ledger if e.get("account", "").startswith(("5", "6", "7")) and float(e.get("debit", 0)) > 0]
+    rows = ""
+    for e in expenses[:50]:
+        acc = e.get("account", "")
+        acc_name = ACCOUNTS.get(acc, ("Other",))[0]
+        rows += f'<tr><td>{e.get("date", "")[:10]}</td><td><span class="badge badge-blue">{e.get("ref", "")}</span></td><td><span class="badge badge-purple">{acc_name}</span></td><td>{e.get("description", "")[:40]}</td><td style="color:var(--red);font-weight:600">R {float(e.get("debit", 0)):,.2f}</td></tr>'
+    if not rows: rows = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:40px">No expenses</td></tr>'
+    cat_opts = "".join([f'<option value="{c["code"]}">{c["name"]}</option>' for c in DEFAULT_EXPENSE_CATS])
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Expenses</title>{CSS}</head><body>
+{get_header(bid, "expenses")}
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">💸 Expenses</h1><button class="btn" onclick="showAdd()">+ Add Expense</button></div>
+<div class="card"><div class="table-container"><table><thead><tr><th>Date</th><th>Ref</th><th>Category</th><th>Description</th><th>Amount</th></tr></thead><tbody>{rows}</tbody></table></div></div></div>
+<div class="modal" id="modal"><div class="modal-content"><div class="modal-header"><div class="modal-title">Add Expense</div><button class="modal-close" onclick="closeM()">×</button></div><div class="form-row"><div class="form-group"><label class="form-label">Category</label><select class="input" id="fcat">{cat_opts}</select></div><div class="form-group"><label class="form-label">Date</label><input type="date" class="input" id="fdate"></div></div><div class="form-group"><label class="form-label">Description</label><input type="text" class="input" id="fdesc"></div><div class="form-row"><div class="form-group"><label class="form-label">Amount (incl VAT)</label><input type="number" class="input" id="famt" step="0.01"></div><div class="form-group"><label class="form-label">Supplier</label><input type="text" class="input" id="fsupp"></div></div><button class="btn" style="width:100%" onclick="save()">💾 Save</button></div></div>
+<script>document.getElementById('fdate').value=new Date().toISOString().split('T')[0];function showAdd(){{document.getElementById('modal').classList.add('show')}}function closeM(){{document.getElementById('modal').classList.remove('show')}}function save(){{var d={{category:document.getElementById('fcat').value,date:document.getElementById('fdate').value,description:document.getElementById('fdesc').value,amount:parseFloat(document.getElementById('famt').value)||0,supplier:document.getElementById('fsupp').value}};if(d.amount<=0)return alert('Enter amount');fetch('/api/{bid}/expense',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}}).then(r=>r.json()).then(x=>{{if(x.success)location.reload()}})}}</script></body></html>'''
+
+@app.route("/<bid>/quotes")
+def quotes_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    quotes = sb.table("quotes").select("*").eq("business_id", bid).order("created_at", desc=True).limit(50).execute()["data"] or []
+    rows = ""
+    for q in quotes:
+        st = q.get("status", "Pending")
+        sc = "badge-green" if st == "Accepted" else "badge-orange" if st == "Pending" else "badge-red"
+        rows += f'<tr><td><span class="badge badge-blue">{q.get("number", "")}</span></td><td>{q.get("date", "")[:10]}</td><td>{q.get("customer_name", "")}</td><td style="font-weight:600">R {float(q.get("total", 0)):,.2f}</td><td><span class="badge {sc}">{st}</span></td><td><a href="/{bid}/quotes/{q.get("id", "")}" class="btn btn-xs btn-outline">View</a> <button class="btn btn-xs btn-green" onclick="convert(\'{q.get("id", "")}\')">→ Invoice</button></td></tr>'
+    if not rows: rows = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">No quotes</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Quotes</title>{CSS}</head><body>
+{get_header(bid, "docs")}
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">📝 Quotes</h1><a href="/{bid}/quotes/new" class="btn">+ New Quote</a></div>
+<div class="card"><div class="table-container"><table><thead><tr><th>Number</th><th>Date</th><th>Customer</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows}</tbody></table></div></div></div>
+<script>function convert(id){{if(!confirm('Convert to invoice?'))return;fetch('/api/{bid}/quote/'+id+'/convert',{{method:'POST'}}).then(r=>r.json()).then(x=>{{if(x.success)location.href='/{bid}/invoices'}})}}</script></body></html>'''
+
+@app.route("/<bid>/invoices")
+def invoices_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    invoices = sb.table("invoices").select("*").eq("business_id", bid).order("created_at", desc=True).limit(50).execute()["data"] or []
+    rows = ""
+    for inv in invoices:
+        paid = float(inv.get("paid", 0) or 0)
+        total = float(inv.get("total", 0) or 0)
+        st = "Paid" if paid >= total else "Partial" if paid > 0 else "Unpaid"
+        sc = "badge-green" if st == "Paid" else "badge-orange" if st == "Partial" else "badge-red"
+        rows += f'<tr><td><span class="badge badge-blue">{inv.get("number", "")}</span></td><td>{inv.get("date", "")[:10]}</td><td>{inv.get("customer_name", "")}</td><td style="font-weight:600">R {total:,.2f}</td><td>R {paid:,.2f}</td><td><span class="badge {sc}">{st}</span></td><td><a href="/{bid}/invoices/{inv.get("id", "")}" class="btn btn-xs btn-outline">View</a></td></tr>'
+    if not rows: rows = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:40px">No invoices</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invoices</title>{CSS}</head><body>
+{get_header(bid, "docs")}
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">📃 Invoices</h1><a href="/{bid}/invoices/new" class="btn">+ New Invoice</a></div>
+<div class="card"><div class="table-container"><table><thead><tr><th>Number</th><th>Date</th><th>Customer</th><th>Total</th><th>Paid</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows}</tbody></table></div></div></div></body></html>'''
+
+@app.route("/<bid>/quotes/new")
+@app.route("/<bid>/invoices/new")
+def new_doc_page(bid):
+    is_quote = "quotes" in request.path
+    doc_type = "Quote" if is_quote else "Invoice"
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    business = result["data"][0]
+    settings = business.get("settings", {})
+    if isinstance(settings, str):
+        try: settings = json.loads(settings)
+        except: settings = {}
+    vat_rate = settings.get("vat_rate", 15)
+    prefix = settings.get("quote_prefix", "QT") if is_quote else settings.get("invoice_prefix", "INV")
+    existing = sb.table("quotes" if is_quote else "invoices").select("id").eq("business_id", bid).execute()["data"] or []
+    doc_num = f"{prefix}{len(existing)+1:04d}"
+    customers = sb.table("customers").select("*").eq("business_id", bid).execute()["data"] or []
+    stock = sb.table("stock").select("*").eq("business_id", bid).execute()["data"] or []
+    cust_opts = '<option value="">-- Select Customer --</option>'+"".join([f'<option value="{c.get("id","")}" data-name="{c.get("name","")}" data-code="{c.get("code","")}">{c.get("name","")} ({c.get("code","")})</option>' for c in customers])
+    stock_json = json.dumps([{"id":s.get("id",""),"code":s.get("code",""),"desc":s.get("description",""),"price":float(s.get("price",0)or 0),"qty":int(s.get("qty",0)or 0),"cat":s.get("category","General")} for s in stock])
+    cats = sorted(list(set([s.get("category","General") for s in stock])))
+    cat_btns = '<button class="cat-btn active" onclick="filterCat(\'All\')">All</button>'+"".join([f'<button class="cat-btn" onclick="filterCat(\'{c}\')">{c}</button>' for c in cats])
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>New {doc_type}</title>{CSS}</head><body>
+{get_header(bid, "docs")}
+<div class="container"><h1 style="font-size:24px;margin-bottom:20px">📝 New {doc_type}</h1>
+<div class="form-row" style="margin-bottom:20px"><div class="form-group" style="margin:0"><label class="form-label">{doc_type} #</label><input type="text" class="input" id="docNum" value="{doc_num}"></div><div class="form-group" style="margin:0"><label class="form-label">Date</label><input type="date" class="input" id="docDate"></div><div class="form-group" style="margin:0;flex:2"><label class="form-label">Customer *</label><select class="input" id="custSel">{cust_opts}</select></div></div>
+<div class="card"><div class="card-title">📦 Select Items</div><div class="search-box"><span class="search-icon">🔍</span><input type="text" class="search-input" id="search" placeholder="Search..." oninput="filterStock()"></div><div class="cat-filter">{cat_btns}</div><div class="stock-grid" id="stockGrid"></div></div>
+<div class="card"><div class="card-title">📋 Line Items</div><div id="lines"><div style="text-align:center;color:var(--muted);padding:20px">Click items above to add</div></div></div>
+<div class="card"><div style="text-align:right"><div class="cart-row"><span>Subtotal</span><span id="subtot">R 0.00</span></div><div class="cart-row"><span>VAT ({vat_rate}%)</span><span id="vatamt">R 0.00</span></div><div class="cart-row total"><span>TOTAL</span><span id="total">R 0.00</span></div></div></div>
+<button class="btn" style="width:100%" onclick="saveDoc()">💾 Save {doc_type}</button></div>
+<script>
+var stock={stock_json};var lines=[];var vatRate={vat_rate};var isQuote={'true' if is_quote else 'false'};var curCat='All';
+document.getElementById('docDate').value=new Date().toISOString().split('T')[0];
+function filterCat(c){{curCat=c;document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('active'));event.target.classList.add('active');renderStock()}}
+function filterStock(){{renderStock()}}
+function renderStock(){{var s=document.getElementById('search').value.toLowerCase();var h='';stock.forEach(function(i){{if(curCat!=='All'&&i.cat!==curCat)return;if(s&&!i.desc.toLowerCase().includes(s)&&!i.code.toLowerCase().includes(s))return;h+='<div class="stock-block" onclick="addLine(\''+i.id+'\')"><div class="stock-name">'+i.desc+'</div><div class="stock-price">R '+i.price.toFixed(2)+'</div><div class="stock-qty">'+i.qty+' avail</div></div>'}});document.getElementById('stockGrid').innerHTML=h||'<div style="text-align:center;color:var(--muted);padding:30px;grid-column:1/-1">No items</div>'}}
+function addLine(id){{var i=stock.find(x=>x.id===id);if(!i)return;var ex=lines.find(x=>x.id===id);if(ex)ex.qty++;else lines.push({{id:i.id,code:i.code,desc:i.desc,price:i.price,qty:1}});renderLines()}}
+function updQty(id,d){{var l=lines.find(x=>x.id===id);if(!l)return;l.qty+=d;if(l.qty<=0)lines=lines.filter(x=>x.id!==id);renderLines()}}
+function renderLines(){{if(!lines.length){{document.getElementById('lines').innerHTML='<div style="text-align:center;color:var(--muted);padding:20px">Click items above to add</div>';calc();return}}var h='<table style="width:100%"><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead><tbody>';lines.forEach(function(l){{h+='<tr><td>'+l.desc+'</td><td style="width:100px"><div style="display:flex;align-items:center;gap:5px"><button class="qty-btn minus" onclick="updQty(\''+l.id+'\',-1)">−</button><span>'+l.qty+'</span><button class="qty-btn plus" onclick="updQty(\''+l.id+'\',1)">+</button></div></td><td>R '+l.price.toFixed(2)+'</td><td style="font-weight:600">R '+(l.price*l.qty).toFixed(2)+'</td><td><button class="btn btn-xs btn-red" onclick="lines=lines.filter(x=>x.id!==\''+l.id+'\');renderLines()">×</button></td></tr>'}});h+='</tbody></table>';document.getElementById('lines').innerHTML=h;calc()}}
+function calc(){{var sub=lines.reduce((s,l)=>s+l.price*l.qty,0);var vat=sub*vatRate/100;document.getElementById('subtot').textContent='R '+sub.toFixed(2);document.getElementById('vatamt').textContent='R '+vat.toFixed(2);document.getElementById('total').textContent='R '+(sub+vat).toFixed(2)}}
+function saveDoc(){{var cs=document.getElementById('custSel');if(!cs.value)return alert('Select customer');if(!lines.length)return alert('Add items');var d={{number:document.getElementById('docNum').value,date:document.getElementById('docDate').value,customer_id:cs.value,customer_name:cs.options[cs.selectedIndex].dataset.name,customer_code:cs.options[cs.selectedIndex].dataset.code,lines:lines,vat_rate:vatRate}};fetch('/api/{bid}/'+(isQuote?'quote':'invoice'),{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}}).then(r=>r.json()).then(x=>{{if(x.success)location.href='/{bid}/'+(isQuote?'quotes':'invoices');else alert(x.error||'Error')}})}}
+renderStock();
+</script></body></html>'''
+
+@app.route("/<bid>/credit-notes")
+def credit_notes_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    notes = sb.table("credit_notes").select("*").eq("business_id", bid).order("created_at", desc=True).execute()["data"] or []
+    rows = ""
+    for n in notes:
+        rows += f'<tr><td><span class="badge badge-purple">{n.get("number", "")}</span></td><td>{n.get("date", "")[:10]}</td><td>{n.get("invoice_number", "")}</td><td>{n.get("customer_name", "")}</td><td style="color:var(--green);font-weight:600">R {float(n.get("total", 0)):,.2f}</td><td>{n.get("reason", "")[:30]}</td></tr>'
+    if not rows: rows = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">No credit notes</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Credit Notes</title>{CSS}</head><body>
+{get_header(bid, "docs")}
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">↩️ Credit Notes</h1><a href="/{bid}/credit-notes/new" class="btn">+ New Credit Note</a></div>
+<div class="card"><div class="table-container"><table><thead><tr><th>Number</th><th>Date</th><th>Invoice</th><th>Customer</th><th>Amount</th><th>Reason</th></tr></thead><tbody>{rows}</tbody></table></div></div></div></body></html>'''
+
+@app.route("/<bid>/delivery-notes")
+def delivery_notes_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    notes = sb.table("delivery_notes").select("*").eq("business_id", bid).order("created_at", desc=True).execute()["data"] or []
+    rows = ""
+    for n in notes:
+        rows += f'<tr><td><span class="badge badge-orange">{n.get("number", "")}</span></td><td>{n.get("date", "")[:10]}</td><td>{n.get("invoice_number", "")}</td><td>{n.get("customer_name", "")}</td><td>{n.get("delivery_address", "")[:40]}</td><td><span class="badge {"badge-green" if n.get("delivered") else "badge-orange"}">{"Delivered" if n.get("delivered") else "Pending"}</span></td></tr>'
+    if not rows: rows = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px">No delivery notes</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Delivery Notes</title>{CSS}</head><body>
+{get_header(bid, "docs")}
+<div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">🚚 Delivery Notes</h1></div>
+<div class="card"><div class="table-container"><table><thead><tr><th>Number</th><th>Date</th><th>Invoice</th><th>Customer</th><th>Address</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div></div></div></body></html>'''
+
+@app.route("/<bid>/settings")
+def settings_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    business = result["data"][0]
+    s = business.get("settings", {})
+    if isinstance(s, str):
+        try: s = json.loads(s)
+        except: s = {}
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Settings</title>{CSS}</head><body>
+{get_header(bid, "settings")}
+<div class="container"><h1 style="font-size:24px;margin-bottom:20px">⚙️ Settings</h1>
+<div class="card"><div class="card-title">🏢 Company</div><div class="form-row"><div class="form-group"><label class="form-label">Company Name</label><input type="text" class="input" id="company_name" value="{s.get('company_name','')}"></div><div class="form-group"><label class="form-label">Trading As</label><input type="text" class="input" id="trading_as" value="{s.get('trading_as','')}"></div></div><div class="form-row"><div class="form-group"><label class="form-label">Reg Number</label><input type="text" class="input" id="reg_number" value="{s.get('reg_number','')}"></div><div class="form-group"><label class="form-label">VAT Number</label><input type="text" class="input" id="vat_number" value="{s.get('vat_number','')}"></div></div><div class="form-group"><label class="form-label">Address</label><textarea class="input" id="address" rows="2">{s.get('address','')}</textarea></div><div class="form-row"><div class="form-group"><label class="form-label">Phone</label><input type="text" class="input" id="phone" value="{s.get('phone','')}"></div><div class="form-group"><label class="form-label">Email</label><input type="email" class="input" id="email" value="{s.get('email','')}"></div></div></div>
+<div class="card"><div class="card-title">🏦 Banking</div><div class="form-row"><div class="form-group"><label class="form-label">Bank</label><input type="text" class="input" id="bank_name" value="{s.get('bank_name','')}"></div><div class="form-group"><label class="form-label">Account</label><input type="text" class="input" id="bank_account" value="{s.get('bank_account','')}"></div><div class="form-group"><label class="form-label">Branch</label><input type="text" class="input" id="bank_branch" value="{s.get('bank_branch','')}"></div></div></div>
+<div class="card"><div class="card-title">📋 Defaults</div><div class="form-row-4"><div class="form-group"><label class="form-label">VAT %</label><input type="number" class="input" id="vat_rate" value="{s.get('vat_rate',15)}"></div><div class="form-group"><label class="form-label">Markup %</label><input type="number" class="input" id="default_markup" value="{s.get('default_markup',50)}"></div><div class="form-group"><label class="form-label">Low Stock</label><input type="number" class="input" id="low_stock_threshold" value="{s.get('low_stock_threshold',5)}"></div><div class="form-group"><label class="form-label">Currency</label><input type="text" class="input" id="currency" value="{s.get('currency','R')}"></div></div><div class="form-row-4"><div class="form-group"><label class="form-label">Invoice Prefix</label><input type="text" class="input" id="invoice_prefix" value="{s.get('invoice_prefix','INV')}"></div><div class="form-group"><label class="form-label">Quote Prefix</label><input type="text" class="input" id="quote_prefix" value="{s.get('quote_prefix','QT')}"></div><div class="form-group"><label class="form-label">CN Prefix</label><input type="text" class="input" id="credit_note_prefix" value="{s.get('credit_note_prefix','CN')}"></div><div class="form-group"><label class="form-label">DN Prefix</label><input type="text" class="input" id="delivery_note_prefix" value="{s.get('delivery_note_prefix','DN')}"></div></div></div>
+<button class="btn" style="width:100%;margin-bottom:20px" onclick="save()">💾 Save Settings</button>
+<div class="card" style="border-color:var(--red)"><div class="card-title" style="color:var(--red)">⚠️ Danger</div><button class="btn btn-red" onclick="del()">Delete Business</button></div></div>
+<script>function save(){{var d={{company_name:document.getElementById('company_name').value,trading_as:document.getElementById('trading_as').value,reg_number:document.getElementById('reg_number').value,vat_number:document.getElementById('vat_number').value,address:document.getElementById('address').value,phone:document.getElementById('phone').value,email:document.getElementById('email').value,bank_name:document.getElementById('bank_name').value,bank_account:document.getElementById('bank_account').value,bank_branch:document.getElementById('bank_branch').value,vat_rate:parseInt(document.getElementById('vat_rate').value)||15,default_markup:parseInt(document.getElementById('default_markup').value)||50,low_stock_threshold:parseInt(document.getElementById('low_stock_threshold').value)||5,currency:document.getElementById('currency').value||'R',invoice_prefix:document.getElementById('invoice_prefix').value,quote_prefix:document.getElementById('quote_prefix').value,credit_note_prefix:document.getElementById('credit_note_prefix').value,delivery_note_prefix:document.getElementById('delivery_note_prefix').value}};fetch('/api/{bid}/settings',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}}).then(r=>r.json()).then(x=>{{if(x.success)alert('Saved!')}})}}function del(){{if(!confirm('DELETE BUSINESS?'))return;fetch('/api/{bid}',{{method:'DELETE'}}).then(r=>r.json()).then(x=>{{if(x.success)location.href='/'}})}}</script></body></html>'''
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# END OF PART 3 - Paste Part 4 below this line
+# ═══════════════════════════════════════════════════════════════════════════════
