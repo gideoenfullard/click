@@ -556,3 +556,634 @@ def get_header(bid, active=""):
 # ═══════════════════════════════════════════════════════════════════════════════
 # END OF PART 1 - Paste Part 2 below this line
 # ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLICK AI v5 - PART 2 of 4
+# Home | Dashboard | POS | Stock
+# Paste below Part 1
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HOME PAGE - Business Selection with Glowing Logo
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/")
+def home():
+    # Get all businesses from Supabase
+    result = sb.table("businesses").select("*").order("created_at", desc=True).execute()
+    businesses = result["data"] if result["data"] else []
+    
+    cards = ""
+    for b in businesses:
+        bid = b.get("id", "")
+        settings = b.get("settings", {})
+        if isinstance(settings, str):
+            try: settings = json.loads(settings)
+            except: settings = {}
+        name = settings.get("company_name") or b.get("name", "Business")
+        cards += f'''<a href="/{bid}" class="quick-btn">
+            <div class="quick-icon">🏢</div>
+            <div class="quick-label">{name}</div>
+        </a>'''
+    
+    if not cards:
+        cards = '<div style="text-align:center;padding:40px;color:var(--muted)">No businesses yet. Create one below!</div>'
+    
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Click AI</title>{CSS}</head><body>
+<div class="container" style="padding-top:30px">
+    <div style="text-align:center;margin-bottom:40px">
+        <div class="glow-logo">⚡ Click AI</div>
+        <div class="cheeky-text">Come on... I can see you want to Click me 😏</div>
+    </div>
+    <div class="card">
+        <div class="card-title">🏢 Your Businesses</div>
+        <div class="quick-actions" style="margin-bottom:20px">{cards}</div>
+        <div style="border-top:1px solid var(--border);padding-top:20px;margin-top:10px">
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <input type="text" id="newBiz" class="input" placeholder="New business name..." style="flex:1;min-width:200px">
+                <button class="btn" onclick="createBiz()">+ Create Business</button>
+            </div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-title">🔌 System Status</div>
+        <div id="status" style="color:var(--muted)">Checking connections...</div>
+    </div>
+</div>
+<script>
+function createBiz(){{
+    var name=document.getElementById('newBiz').value.trim();
+    if(!name)return alert('Enter a business name');
+    fetch('/api/business',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{name:name}})}})
+    .then(r=>r.json()).then(d=>{{if(d.success)location.href='/'+d.id;else alert(d.error||'Error')}});
+}}
+// Check system status
+fetch('/api/status').then(r=>r.json()).then(d=>{{
+    var html='<div style="display:grid;gap:10px">';
+    html+='<div>✅ Flask Backend: Running</div>';
+    html+=d.supabase?'<div>✅ Supabase: Connected</div>':'<div>❌ Supabase: Not connected</div>';
+    html+=d.anthropic?'<div>✅ Claude AI: Ready</div>':'<div>⚠️ Claude AI: No API key</div>';
+    html+='</div>';
+    document.getElementById('status').innerHTML=html;
+}});
+</script></body></html>'''
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DASHBOARD - Stats, Alerts, Quick Actions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/<bid>")
+def dashboard(bid):
+    if bid in ["api", "favicon.ico", "m"]: return "", 404
+    
+    # Get business
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]:
+        return redirect("/")
+    business = result["data"][0]
+    settings = business.get("settings", {})
+    if isinstance(settings, str):
+        try: settings = json.loads(settings)
+        except: settings = {}
+    name = settings.get("company_name") or business.get("name", "Business")
+    
+    # Mobile redirect
+    mobile_check = f'<script>if(/iPhone|iPad|Android/i.test(navigator.userAgent)&&!sessionStorage.getItem("desktop"))location.href="/m/{bid}"</script>'
+    
+    # Get data
+    stock = sb.table("stock").select("*").eq("business_id", bid).execute()["data"] or []
+    customers = sb.table("customers").select("*").eq("business_id", bid).execute()["data"] or []
+    suppliers = sb.table("suppliers").select("*").eq("business_id", bid).execute()["data"] or []
+    ledger = sb.table("ledger").select("*").eq("business_id", bid).order("created_at", desc=True).limit(10).execute()["data"] or []
+    
+    # Calculate stats
+    stock_count = len(stock)
+    stock_value = sum(float(s.get("cost", 0) or 0) * int(s.get("qty", 0) or 0) for s in stock)
+    low_stock_threshold = settings.get("low_stock_threshold", 5)
+    low_stock = [s for s in stock if int(s.get("qty", 0) or 0) <= low_stock_threshold and int(s.get("qty", 0) or 0) > 0]
+    out_of_stock = [s for s in stock if int(s.get("qty", 0) or 0) <= 0]
+    
+    debtors = sum(float(c.get("balance", 0) or 0) for c in customers if float(c.get("balance", 0) or 0) > 0)
+    creditors = sum(float(s.get("balance", 0) or 0) for s in suppliers if float(s.get("balance", 0) or 0) > 0)
+    
+    # Low stock alerts
+    alerts_html = ""
+    if out_of_stock:
+        items = ", ".join([s.get("description", s.get("code", ""))[:20] for s in out_of_stock[:5]])
+        alerts_html += f'<div class="alert alert-danger">⚠️ <strong>Out of Stock:</strong> {items}{"..." if len(out_of_stock)>5 else ""}</div>'
+    if low_stock:
+        items = ", ".join([f'{s.get("description", s.get("code", ""))[:15]} ({s.get("qty")})' for s in low_stock[:5]])
+        alerts_html += f'<div class="alert alert-warning">📦 <strong>Low Stock:</strong> {items}{"..." if len(low_stock)>5 else ""}</div>'
+    
+    # Recent transactions
+    ledger_rows = ""
+    for e in ledger:
+        acc = e.get("account", "")
+        acc_name = ACCOUNTS.get(acc, ("",))[0]
+        ledger_rows += f'<tr><td>{e.get("date", "")[:10]}</td><td><span class="badge badge-blue">{e.get("ref", "")}</span></td><td>{e.get("description", "")[:35]}</td><td style="color:var(--green)">R {float(e.get("debit", 0)):,.2f}</td><td style="color:var(--red)">R {float(e.get("credit", 0)):,.2f}</td></tr>'
+    if not ledger_rows:
+        ledger_rows = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px">No transactions yet - make a sale!</td></tr>'
+    
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{name} - Click AI</title>{CSS}{mobile_check}</head><body>
+{get_header(bid, "home")}
+<div class="container">
+    <!-- Glowing Logo -->
+    <div style="text-align:center;padding:25px 0">
+        <div class="glow-logo" onclick="document.getElementById('actions').scrollIntoView({{behavior:'smooth'}})">⚡</div>
+        <div style="font-size:26px;font-weight:700;margin-top:10px">{name}</div>
+        <div class="cheeky-text">Come on... I can see you want to Click me 😏</div>
+    </div>
+    
+    <!-- Alerts -->
+    {alerts_html}
+    
+    <!-- Stats -->
+    <div class="stats-grid">
+        <div class="stat-card"><div class="stat-value">{stock_count}</div><div class="stat-label">Stock Items</div></div>
+        <div class="stat-card"><div class="stat-value">R {stock_value:,.0f}</div><div class="stat-label">Stock Value</div></div>
+        <div class="stat-card {"alert" if debtors > 0 else ""}"><div class="stat-value">R {debtors:,.0f}</div><div class="stat-label">Debtors Owe You</div></div>
+        <div class="stat-card {"alert" if creditors > 0 else ""}"><div class="stat-value">R {creditors:,.0f}</div><div class="stat-label">You Owe Suppliers</div></div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div class="card" id="actions">
+        <div class="card-title">⚡ Quick Actions</div>
+        <div class="quick-actions">
+            <a href="/{bid}/pos" class="quick-btn"><div class="quick-icon">💰</div><div class="quick-label">New Sale</div></a>
+            <a href="/{bid}/quotes/new" class="quick-btn"><div class="quick-icon">📝</div><div class="quick-label">New Quote</div></a>
+            <a href="/{bid}/invoices/new" class="quick-btn"><div class="quick-icon">📃</div><div class="quick-label">New Invoice</div></a>
+            <a href="/{bid}/stock" class="quick-btn"><div class="quick-icon">📦</div><div class="quick-label">Stock</div></a>
+            <a href="/{bid}/expenses" class="quick-btn"><div class="quick-icon">💸</div><div class="quick-label">Expenses</div></a>
+            <a href="/m/{bid}" class="quick-btn"><div class="quick-icon">📱</div><div class="quick-label">Mobile Scan</div></a>
+        </div>
+    </div>
+    
+    <!-- Recent Transactions -->
+    <div class="card">
+        <div class="card-title">📒 Recent Transactions</div>
+        <div class="table-container"><table><thead><tr><th>Date</th><th>Ref</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead><tbody>{ledger_rows}</tbody></table></div>
+    </div>
+</div></body></html>'''
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POS - Full Point of Sale with Blue Stock Blocks
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/<bid>/pos")
+def pos_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    business = result["data"][0]
+    settings = business.get("settings", {})
+    if isinstance(settings, str):
+        try: settings = json.loads(settings)
+        except: settings = {}
+    name = settings.get("company_name") or business.get("name", "Business")
+    vat_rate = settings.get("vat_rate", 15)
+    currency = settings.get("currency", "R")
+    
+    # Get stock and customers
+    stock = sb.table("stock").select("*").eq("business_id", bid).execute()["data"] or []
+    customers = sb.table("customers").select("*").eq("business_id", bid).execute()["data"] or []
+    
+    # Get unique categories
+    categories = list(set([s.get("category", "General") for s in stock]))
+    categories.sort()
+    cat_btns = '<button class="cat-btn active" onclick="filterCat(\'All\')">All</button>'
+    for cat in categories:
+        cat_btns += f'<button class="cat-btn" onclick="filterCat(\'{cat}\')">{cat}</button>'
+    
+    stock_json = json.dumps([{
+        "id": s.get("id", ""),
+        "code": s.get("code", ""),
+        "desc": s.get("description", ""),
+        "cat": s.get("category", "General"),
+        "price": float(s.get("price", 0) or 0),
+        "qty": int(s.get("qty", 0) or 0)
+    } for s in stock])
+    
+    cust_options = '<option value="">Walk-in Customer</option>'
+    for c in customers:
+        cust_options += f'<option value="{c.get("id", "")}" data-name="{c.get("name", "")}">{c.get("name", "")} ({c.get("code", "")})</option>'
+    
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>POS - {name}</title>{CSS}</head><body>
+{get_header(bid, "pos")}
+<div class="container">
+    <div class="pos-grid">
+        <!-- Stock Selection -->
+        <div>
+            <div class="card">
+                <div class="search-box"><span class="search-icon">🔍</span><input type="text" class="search-input" id="search" placeholder="Search stock..." oninput="filterStock()"></div>
+                <div class="cat-filter">{cat_btns}</div>
+                <div class="stock-grid" id="stockGrid"></div>
+            </div>
+        </div>
+        
+        <!-- Cart -->
+        <div class="cart">
+            <div class="cart-header">
+                <div class="card-title" style="margin:0">🛒 Cart</div>
+                <button class="btn btn-sm btn-outline" onclick="clearCart()">Clear</button>
+            </div>
+            <div class="form-group" style="margin-bottom:15px">
+                <select class="input" id="custSelect">{cust_options}</select>
+            </div>
+            <div class="cart-items" id="cartItems">
+                <div style="text-align:center;color:var(--muted);padding:40px">Tap items to add to cart</div>
+            </div>
+            <div class="cart-totals">
+                <div class="cart-row"><span>Subtotal</span><span id="subtotal">{currency} 0.00</span></div>
+                <div class="cart-row"><span>VAT ({vat_rate}%)</span><span id="vatAmt">{currency} 0.00</span></div>
+                <div class="cart-row total"><span>TOTAL</span><span id="cartTotal">{currency} 0.00</span></div>
+            </div>
+            <div class="cart-buttons">
+                <button class="btn btn-green" onclick="checkout('cash')">💵 Cash</button>
+                <button class="btn btn-blue" onclick="checkout('card')">💳 Card</button>
+            </div>
+            <button class="btn btn-purple" style="width:100%;margin-top:10px" onclick="checkout('account')">📋 On Account</button>
+        </div>
+    </div>
+</div>
+<script>
+var stock={stock_json};
+var cart=[];
+var currentCat='All';
+var currency='{currency}';
+var vatRate={vat_rate};
+
+function renderStock(){{
+    var search=document.getElementById('search').value.toLowerCase();
+    var html='';
+    stock.forEach(function(item){{
+        if(currentCat!=='All'&&item.cat!==currentCat)return;
+        if(search&&!item.desc.toLowerCase().includes(search)&&!item.code.toLowerCase().includes(search))return;
+        var qtyClass=item.qty<=0?'stock-low':item.qty<=5?'stock-low':'';
+        var qtyText=item.qty<=0?'OUT OF STOCK':item.qty+' avail';
+        if(item.qty<=0)return; // Hide out of stock in POS
+        html+='<div class="stock-block" onclick="addToCart(\''+item.id+'\')">';
+        html+='<div class="stock-name">'+item.desc+'</div>';
+        html+='<div class="stock-price">'+currency+' '+item.price.toFixed(2)+'</div>';
+        html+='<div class="stock-qty '+qtyClass+'">'+qtyText+'</div>';
+        html+='</div>';
+    }});
+    document.getElementById('stockGrid').innerHTML=html||'<div style="text-align:center;padding:40px;color:var(--muted);grid-column:1/-1">No items found</div>';
+}}
+
+function filterCat(cat){{
+    currentCat=cat;
+    document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('active'));
+    event.target.classList.add('active');
+    renderStock();
+}}
+
+function filterStock(){{renderStock()}}
+
+function addToCart(id){{
+    var item=stock.find(s=>s.id===id);
+    if(!item||item.qty<=0)return;
+    var existing=cart.find(c=>c.id===id);
+    if(existing){{
+        if(existing.qty>=item.qty)return alert('Not enough stock!');
+        existing.qty++;
+    }}else{{
+        cart.push({{id:item.id,code:item.code,desc:item.desc,price:item.price,qty:1,maxQty:item.qty}});
+    }}
+    renderCart();
+}}
+
+function updateQty(id,delta){{
+    var item=cart.find(c=>c.id===id);
+    if(!item)return;
+    item.qty+=delta;
+    if(item.qty<=0)cart=cart.filter(c=>c.id!==id);
+    else if(item.qty>item.maxQty)item.qty=item.maxQty;
+    renderCart();
+}}
+
+function renderCart(){{
+    if(cart.length===0){{
+        document.getElementById('cartItems').innerHTML='<div style="text-align:center;color:var(--muted);padding:40px">Tap items to add to cart</div>';
+        document.getElementById('subtotal').textContent=currency+' 0.00';
+        document.getElementById('vatAmt').textContent=currency+' 0.00';
+        document.getElementById('cartTotal').textContent=currency+' 0.00';
+        return;
+    }}
+    var html='';
+    var total=0;
+    cart.forEach(function(item){{
+        var lineTotal=item.price*item.qty;
+        total+=lineTotal;
+        html+='<div class="cart-item">';
+        html+='<div class="cart-item-info"><div class="cart-item-name">'+item.desc+'</div><div class="cart-item-price">'+currency+' '+item.price.toFixed(2)+' × '+item.qty+' = '+currency+' '+lineTotal.toFixed(2)+'</div></div>';
+        html+='<div class="cart-item-controls"><button class="qty-btn minus" onclick="updateQty(\''+item.id+'\',-1)">−</button><span style="min-width:25px;text-align:center">'+item.qty+'</span><button class="qty-btn plus" onclick="updateQty(\''+item.id+'\',1)">+</button></div>';
+        html+='</div>';
+    }});
+    document.getElementById('cartItems').innerHTML=html;
+    var vat=total*vatRate/(100+vatRate);
+    var excl=total-vat;
+    document.getElementById('subtotal').textContent=currency+' '+excl.toFixed(2);
+    document.getElementById('vatAmt').textContent=currency+' '+vat.toFixed(2);
+    document.getElementById('cartTotal').textContent=currency+' '+total.toFixed(2);
+}}
+
+function clearCart(){{cart=[];renderCart()}}
+
+function checkout(method){{
+    if(cart.length===0)return alert('Cart is empty!');
+    var custId=document.getElementById('custSelect').value;
+    if(method==='account'&&!custId)return alert('Select a customer for account sales');
+    fetch('/api/{bid}/pos',{{
+        method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body:JSON.stringify({{items:cart,method:method,customer_id:custId}})
+    }}).then(r=>r.json()).then(d=>{{
+        if(d.success){{
+            alert('✅ Sale Complete!\\nRef: '+d.ref+'\\nTotal: '+currency+' '+d.total.toFixed(2));
+            cart=[];
+            location.reload();
+        }}else alert(d.error||'Error');
+    }});
+}}
+
+renderStock();
+</script></body></html>'''
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STOCK - Full Management with Markup Calculator
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/<bid>/stock")
+def stock_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    business = result["data"][0]
+    settings = business.get("settings", {})
+    if isinstance(settings, str):
+        try: settings = json.loads(settings)
+        except: settings = {}
+    name = settings.get("company_name") or business.get("name", "Business")
+    default_markup = settings.get("default_markup", 50)
+    low_stock_threshold = settings.get("low_stock_threshold", 5)
+    
+    stock = sb.table("stock").select("*").eq("business_id", bid).order("description").execute()["data"] or []
+    
+    # Categories
+    categories = list(set([s.get("category", "General") for s in stock] + DEFAULT_STOCK_CATS))
+    categories = sorted(list(set(categories)))
+    cat_btns = '<button class="cat-btn active" onclick="filterCat(\'All\')">All</button>'
+    for cat in categories:
+        cat_btns += f'<button class="cat-btn" onclick="filterCat(\'{cat}\')">{cat}</button>'
+    cat_options = "".join([f'<option value="{c}">{c}</option>' for c in categories])
+    
+    # Build rows
+    rows = ""
+    for s in stock:
+        qty = int(s.get("qty", 0) or 0)
+        cost = float(s.get("cost", 0) or 0)
+        price = float(s.get("price", 0) or 0)
+        markup = ((price - cost) / cost * 100) if cost > 0 else 0
+        qty_class = "badge-red" if qty <= 0 else "badge-orange" if qty <= low_stock_threshold else "badge-green"
+        qty_text = "OUT" if qty <= 0 else str(qty)
+        rows += f'''<tr data-cat="{s.get("category", "General")}" data-id="{s.get("id", "")}">
+            <td>{s.get("code", "")}</td>
+            <td><strong>{s.get("description", "")}</strong></td>
+            <td><span class="badge badge-blue">{s.get("category", "General")}</span></td>
+            <td><span class="badge {qty_class}">{qty_text}</span></td>
+            <td>R {cost:,.2f}</td>
+            <td>R {price:,.2f}</td>
+            <td><span class="badge badge-purple">{markup:.0f}%</span></td>
+            <td>
+                <button class="btn btn-xs btn-outline" onclick="editStock('{s.get("id", "")}')">Edit</button>
+                <button class="btn btn-xs btn-green" onclick="adjustQty('{s.get("id", "")}','{s.get("description", "")}',{qty})">±Qty</button>
+            </td>
+        </tr>'''
+    if not rows:
+        rows = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:40px">No stock items - add your first item!</td></tr>'
+    
+    stock_json = json.dumps([{
+        "id": s.get("id", ""),
+        "code": s.get("code", ""),
+        "description": s.get("description", ""),
+        "category": s.get("category", "General"),
+        "qty": int(s.get("qty", 0) or 0),
+        "cost": float(s.get("cost", 0) or 0),
+        "price": float(s.get("price", 0) or 0)
+    } for s in stock])
+    
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock - {name}</title>{CSS}</head><body>
+{get_header(bid, "stock")}
+<div class="container">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+        <h1 style="font-size:24px">📦 Stock Management</h1>
+        <div style="display:flex;gap:10px">
+            <button class="btn btn-outline" onclick="showBulkModal()">📥 Bulk Import</button>
+            <button class="btn" onclick="showAddModal()">+ Add Item</button>
+        </div>
+    </div>
+    <div class="card">
+        <div class="search-box"><span class="search-icon">🔍</span><input type="text" class="search-input" id="search" placeholder="Search stock..." oninput="filterTable()"></div>
+        <div class="cat-filter">{cat_btns}</div>
+        <div class="table-container">
+            <table id="stockTable">
+                <thead><tr><th>Code</th><th>Description</th><th>Category</th><th>Qty</th><th>Cost</th><th>Price</th><th>Markup</th><th>Actions</th></tr></thead>
+                <tbody>{rows}</tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Stock Modal -->
+<div class="modal" id="stockModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <div class="modal-title" id="modalTitle">Add Stock Item</div>
+            <button class="modal-close" onclick="closeModal('stockModal')">×</button>
+        </div>
+        <input type="hidden" id="editId" value="">
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Code / SKU</label>
+                <input type="text" class="input" id="sCode" placeholder="e.g. BRG001">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Category</label>
+                <select class="input" id="sCat">{cat_options}</select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Description</label>
+            <input type="text" class="input" id="sDesc" placeholder="Product name">
+        </div>
+        <div class="form-row-3">
+            <div class="form-group">
+                <label class="form-label">Quantity</label>
+                <input type="number" class="input" id="sQty" value="0" min="0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Cost Price (excl VAT)</label>
+                <input type="number" class="input" id="sCost" step="0.01" value="0" oninput="calcPrice()">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Markup %</label>
+                <input type="number" class="input" id="sMarkup" value="{default_markup}" oninput="calcPrice()">
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Sell Price (incl VAT)</label>
+            <input type="number" class="input" id="sPrice" step="0.01" value="0" style="font-size:18px;font-weight:700;color:var(--blue)">
+            <div style="color:var(--muted);font-size:12px;margin-top:5px">Calculated from cost + markup + 15% VAT</div>
+        </div>
+        <button class="btn" style="width:100%" onclick="saveStock()">💾 Save Item</button>
+    </div>
+</div>
+
+<!-- Qty Adjust Modal -->
+<div class="modal" id="qtyModal">
+    <div class="modal-content" style="max-width:400px">
+        <div class="modal-header">
+            <div class="modal-title">Adjust Quantity</div>
+            <button class="modal-close" onclick="closeModal('qtyModal')">×</button>
+        </div>
+        <input type="hidden" id="qtyId" value="">
+        <div style="text-align:center;margin-bottom:20px">
+            <div id="qtyItemName" style="font-size:18px;font-weight:600"></div>
+            <div style="color:var(--muted)">Current: <span id="qtyCurrent">0</span></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Adjustment (+/-)</label>
+            <input type="number" class="input" id="qtyAdj" value="0" style="text-align:center;font-size:24px">
+            <div style="display:flex;gap:10px;margin-top:10px">
+                <button class="btn btn-sm btn-red" style="flex:1" onclick="document.getElementById('qtyAdj').value=parseInt(document.getElementById('qtyAdj').value||0)-10">-10</button>
+                <button class="btn btn-sm btn-red" style="flex:1" onclick="document.getElementById('qtyAdj').value=parseInt(document.getElementById('qtyAdj').value||0)-1">-1</button>
+                <button class="btn btn-sm btn-green" style="flex:1" onclick="document.getElementById('qtyAdj').value=parseInt(document.getElementById('qtyAdj').value||0)+1">+1</button>
+                <button class="btn btn-sm btn-green" style="flex:1" onclick="document.getElementById('qtyAdj').value=parseInt(document.getElementById('qtyAdj').value||0)+10">+10</button>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Reason</label>
+            <select class="input" id="qtyReason">
+                <option value="count">Stock Count</option>
+                <option value="received">Received Stock</option>
+                <option value="damaged">Damaged/Write-off</option>
+                <option value="return">Customer Return</option>
+                <option value="other">Other</option>
+            </select>
+        </div>
+        <button class="btn" style="width:100%" onclick="saveQtyAdj()">💾 Save Adjustment</button>
+    </div>
+</div>
+
+<script>
+var stock={stock_json};
+var currentCat='All';
+var defaultMarkup={default_markup};
+
+function filterCat(cat){{
+    currentCat=cat;
+    document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('active'));
+    event.target.classList.add('active');
+    filterTable();
+}}
+
+function filterTable(){{
+    var search=document.getElementById('search').value.toLowerCase();
+    document.querySelectorAll('#stockTable tbody tr').forEach(function(row){{
+        var text=row.textContent.toLowerCase();
+        var cat=row.getAttribute('data-cat')||'';
+        var showCat=currentCat==='All'||cat===currentCat;
+        var showSearch=!search||text.includes(search);
+        row.style.display=(showCat&&showSearch)?'':'none';
+    }});
+}}
+
+function showAddModal(){{
+    document.getElementById('modalTitle').textContent='Add Stock Item';
+    document.getElementById('editId').value='';
+    document.getElementById('sCode').value='';
+    document.getElementById('sDesc').value='';
+    document.getElementById('sCat').value='General';
+    document.getElementById('sQty').value=0;
+    document.getElementById('sCost').value=0;
+    document.getElementById('sMarkup').value=defaultMarkup;
+    document.getElementById('sPrice').value=0;
+    document.getElementById('stockModal').classList.add('show');
+}}
+
+function editStock(id){{
+    var item=stock.find(s=>s.id===id);
+    if(!item)return;
+    document.getElementById('modalTitle').textContent='Edit Stock Item';
+    document.getElementById('editId').value=id;
+    document.getElementById('sCode').value=item.code;
+    document.getElementById('sDesc').value=item.description;
+    document.getElementById('sCat').value=item.category;
+    document.getElementById('sQty').value=item.qty;
+    document.getElementById('sCost').value=item.cost;
+    var markup=item.cost>0?((item.price/1.15-item.cost)/item.cost*100):defaultMarkup;
+    document.getElementById('sMarkup').value=Math.round(markup);
+    document.getElementById('sPrice').value=item.price;
+    document.getElementById('stockModal').classList.add('show');
+}}
+
+function calcPrice(){{
+    var cost=parseFloat(document.getElementById('sCost').value)||0;
+    var markup=parseFloat(document.getElementById('sMarkup').value)||0;
+    var priceExcl=cost*(1+markup/100);
+    var priceIncl=priceExcl*1.15;
+    document.getElementById('sPrice').value=priceIncl.toFixed(2);
+}}
+
+function closeModal(id){{document.getElementById(id).classList.remove('show')}}
+
+function saveStock(){{
+    var data={{
+        id:document.getElementById('editId').value||null,
+        code:document.getElementById('sCode').value,
+        description:document.getElementById('sDesc').value,
+        category:document.getElementById('sCat').value,
+        qty:parseInt(document.getElementById('sQty').value)||0,
+        cost:parseFloat(document.getElementById('sCost').value)||0,
+        price:parseFloat(document.getElementById('sPrice').value)||0
+    }};
+    if(!data.description)return alert('Enter a description');
+    fetch('/api/{bid}/stock',{{
+        method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body:JSON.stringify(data)
+    }}).then(r=>r.json()).then(d=>{{
+        if(d.success)location.reload();
+        else alert(d.error||'Error');
+    }});
+}}
+
+function adjustQty(id,name,current){{
+    document.getElementById('qtyId').value=id;
+    document.getElementById('qtyItemName').textContent=name;
+    document.getElementById('qtyCurrent').textContent=current;
+    document.getElementById('qtyAdj').value=0;
+    document.getElementById('qtyModal').classList.add('show');
+}}
+
+function saveQtyAdj(){{
+    var data={{
+        id:document.getElementById('qtyId').value,
+        adjustment:parseInt(document.getElementById('qtyAdj').value)||0,
+        reason:document.getElementById('qtyReason').value
+    }};
+    if(data.adjustment===0)return alert('Enter an adjustment');
+    fetch('/api/{bid}/stock/adjust',{{
+        method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body:JSON.stringify(data)
+    }}).then(r=>r.json()).then(d=>{{
+        if(d.success)location.reload();
+        else alert(d.error||'Error');
+    }});
+}}
+
+function showBulkModal(){{alert('Bulk import coming soon!')}}
+</script></body></html>'''
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# END OF PART 2 - Paste Part 3 below this line
+# ═══════════════════════════════════════════════════════════════════════════════
