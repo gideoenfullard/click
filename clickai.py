@@ -1546,11 +1546,14 @@ def export_csv(bid):
 @app.route("/api/status")
 def api_status():
     sb_ok=False
+    err=""
     try:
         r=sb.table("businesses").select("id").limit(1).execute()
         sb_ok=r["error"]is None
-    except:pass
-    return jsonify({"supabase":sb_ok,"anthropic":bool(ANTHROPIC_API_KEY)})
+        if r["error"]:err=str(r["error"])[:100]
+    except Exception as e:
+        err=str(e)[:100]
+    return jsonify({"supabase":sb_ok,"url":SUPABASE_URL,"error":err,"anthropic":bool(ANTHROPIC_API_KEY)})
 
 @app.route("/api/business",methods=["POST"])
 def api_create_business():
