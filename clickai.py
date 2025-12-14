@@ -526,6 +526,7 @@ def get_header(bid, active=""):
         <a href="/{bid}/customers" class="nav-btn {"active" if active=="customers" else ""}">👥 Customers</a>
         <a href="/{bid}/suppliers" class="nav-btn {"active" if active=="suppliers" else ""}">🚚 Suppliers</a>
         <a href="/{bid}/expenses" class="nav-btn {"active" if active=="expenses" else ""}">💸 Expenses</a>
+        <a href="/{bid}/import" class="nav-btn {"active" if active=="import" else ""}">📥 Import</a>
         <div class="nav-sep"></div>
         <div class="dropdown">
             <button class="nav-btn {"active" if active=="docs" else ""}">📄 Documents ▾</button>
@@ -745,12 +746,13 @@ def pos_page(bid):
     stock = sb.table("stock").select("*").eq("business_id", bid).execute()["data"] or []
     customers = sb.table("customers").select("*").eq("business_id", bid).execute()["data"] or []
     
-    # Get unique categories
-    categories = list(set([s.get("category", "General") for s in stock]))
-    categories.sort()
-    cat_btns = '<button class="cat-btn active" onclick="filterCat(\'All\')">All</button>'
+    # Get unique categories and build BIG buttons
+    categories = sorted(list(set([s.get("category", "General") for s in stock])))
+    cat_icons={"Bearings":"⚙️","Seals":"🔘","Circlips":"⭕","Bolts":"🔩","Cap Screws":"🔩","Nuts":"🔩","Washers":"⚙️","Imp Bolts":"🔩","Shoes":"👞","PPE":"🦺","Welding":"🔥","Shirts":"👕","Hardware":"🔧","General":"📦"}
+    cat_btns = '<div class="cat-btn-big active" onclick="filterCat(\'All\')">🏪<br>All</div>'
     for cat in categories:
-        cat_btns += f'<button class="cat-btn" onclick="filterCat(\'{cat}\')">{cat}</button>'
+        icon = cat_icons.get(cat, "📦")
+        cat_btns += f'<div class="cat-btn-big" onclick="filterCat(\'{cat}\')">{icon}<br>{cat}</div>'
     
     stock_json = json.dumps([{
         "id": s.get("id", ""),
@@ -765,15 +767,20 @@ def pos_page(bid):
     for c in customers:
         cust_options += f'<option value="{c.get("id", "")}" data-name="{c.get("name", "")}">{c.get("name", "")} ({c.get("code", "")})</option>'
     
-    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>POS - {name}</title>{CSS}</head><body>
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>POS - {name}</title>{CSS}
+<style>
+.cat-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:10px;margin-bottom:20px}}
+.cat-btn-big{{background:rgba(59,130,246,0.1);border:2px solid rgba(59,130,246,0.3);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;font-size:11px;font-weight:600;transition:all 0.2s;line-height:1.3}}
+.cat-btn-big:hover,.cat-btn-big.active{{background:var(--blue);border-color:var(--blue);color:white;transform:scale(1.05);box-shadow:0 0 20px rgba(59,130,246,0.4)}}
+</style></head><body>
 {get_header(bid, "pos")}
 <div class="container">
     <div class="pos-grid">
         <!-- Stock Selection -->
         <div>
             <div class="card">
+                <div class="cat-grid">{cat_btns}</div>
                 <div class="search-box"><span class="search-icon">🔍</span><input type="text" class="search-input" id="search" placeholder="Search stock..." oninput="filterStock()"></div>
-                <div class="cat-filter">{cat_btns}</div>
                 <div class="stock-grid" id="stockGrid"></div>
             </div>
         </div>
@@ -830,8 +837,8 @@ function renderStock(){{
 
 function filterCat(cat){{
     currentCat=cat;
-    document.querySelectorAll('.cat-btn').forEach(b=>b.classList.remove('active'));
-    event.target.classList.add('active');
+    document.querySelectorAll('.cat-btn-big').forEach(b=>b.classList.remove('active'));
+    event.target.closest('.cat-btn-big').classList.add('active');
     renderStock();
 }}
 
@@ -1372,6 +1379,143 @@ def delivery_notes_page(bid):
 <div class="container"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h1 style="font-size:24px">🚚 Delivery Notes</h1></div>
 <div class="card"><div class="table-container"><table><thead><tr><th>Number</th><th>Date</th><th>Invoice</th><th>Customer</th><th>Address</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div></div></div></body></html>'''
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# IMPORT PAGE - CSV Import for Stock, Customers, Suppliers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/<bid>/import")
+def import_page(bid):
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]: return redirect("/")
+    business = result["data"][0]
+    s = business.get("settings", {})
+    if isinstance(s, str):
+        try: s = json.loads(s)
+        except: s = {}
+    name = s.get("company_name") or business.get("name", "Business")
+    
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Import - {name}</title>{CSS}</head><body>
+{get_header(bid, "import")}
+<div class="container">
+<h1 style="font-size:24px;margin-bottom:20px">📥 Import Data</h1>
+
+<div class="card">
+<div class="card-title">📦 Import Stock</div>
+<p style="color:var(--muted);margin-bottom:15px">CSV format: code, description, category, qty, cost, price<br>Use comma or semicolon as separator</p>
+<textarea id="stockCsv" class="input" rows="6" placeholder="SKU001,Castle Lager,Alcohol,24,15.00,25.00
+SKU002,Coke 500ml,Beverages,48,8.00,15.00
+SKU003,Chicken Burger,Food,0,25.00,55.00"></textarea>
+<button class="btn" style="margin-top:10px" onclick="importStock()">📦 Import Stock</button>
+<div id="stockResult" style="margin-top:10px"></div>
+</div>
+
+<div class="card">
+<div class="card-title">👥 Import Customers</div>
+<p style="color:var(--muted);margin-bottom:15px">CSV format: code, name, phone, email, address</p>
+<textarea id="custCsv" class="input" rows="6" placeholder="C001,John Smith,0821234567,john@email.com,123 Main St
+C002,Jane Doe,0839876543,jane@email.com,456 Oak Ave"></textarea>
+<button class="btn" style="margin-top:10px" onclick="importCust()">👥 Import Customers</button>
+<div id="custResult" style="margin-top:10px"></div>
+</div>
+
+<div class="card">
+<div class="card-title">🚚 Import Suppliers</div>
+<p style="color:var(--muted);margin-bottom:15px">CSV format: code, name, phone</p>
+<textarea id="suppCsv" class="input" rows="6" placeholder="S001,ABC Distributors,0115551234
+S002,XYZ Wholesalers,0125559876"></textarea>
+<button class="btn" style="margin-top:10px" onclick="importSupp()">🚚 Import Suppliers</button>
+<div id="suppResult" style="margin-top:10px"></div>
+</div>
+
+<div class="card">
+<div class="card-title">📁 Upload CSV File</div>
+<input type="file" id="csvFile" accept=".csv,.txt" class="input" onchange="loadFile()">
+<select id="fileType" class="input" style="margin-top:10px">
+<option value="stock">Stock</option>
+<option value="customers">Customers</option>
+<option value="suppliers">Suppliers</option>
+</select>
+<button class="btn" style="margin-top:10px" onclick="importFile()">📁 Import File</button>
+</div>
+</div>
+
+<script>
+function parseCSV(text){{
+    var lines=text.trim().split('\\n');
+    return lines.map(function(line){{
+        var result=[];var cell='';var inQuotes=false;
+        for(var i=0;i<line.length;i++){{
+            var c=line[i];
+            if(c==='"')inQuotes=!inQuotes;
+            else if((c===','||c===';')&&!inQuotes){{result.push(cell.trim());cell='';}}
+            else cell+=c;
+        }}
+        result.push(cell.trim());
+        return result;
+    }});
+}}
+
+function importStock(){{
+    var csv=document.getElementById('stockCsv').value;
+    var rows=parseCSV(csv);
+    var items=rows.filter(r=>r.length>=6&&r[0]).map(function(r){{
+        return {{code:r[0],description:r[1],category:r[2]||'General',qty:parseInt(r[3])||0,cost:parseFloat(r[4])||0,price:parseFloat(r[5])||0}};
+    }});
+    if(!items.length)return alert('No valid rows found');
+    document.getElementById('stockResult').innerHTML='<span style="color:var(--blue)">⏳ Importing...</span>';
+    fetch('/api/{bid}/stock/import',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{items:items}})}})
+    .then(r=>r.json()).then(d=>{{
+        document.getElementById('stockResult').innerHTML='<span style="color:var(--green)">✅ Imported '+d.count+' items</span>';
+    }});
+}}
+
+function importCust(){{
+    var csv=document.getElementById('custCsv').value;
+    var rows=parseCSV(csv);
+    var items=rows.filter(r=>r.length>=2&&r[1]).map(function(r){{
+        return {{code:r[0]||'',name:r[1]||'',phone:r[2]||'',email:r[3]||'',address:r[4]||''}};
+    }});
+    if(!items.length)return alert('No valid rows');
+    document.getElementById('custResult').innerHTML='<span style="color:var(--blue)">⏳ Importing...</span>';
+    fetch('/api/{bid}/customer/import',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{items:items}})}})
+    .then(r=>r.json()).then(d=>{{
+        document.getElementById('custResult').innerHTML='<span style="color:var(--green)">✅ Imported '+d.count+' customers</span>';
+    }});
+}}
+
+function importSupp(){{
+    var csv=document.getElementById('suppCsv').value;
+    var rows=parseCSV(csv);
+    var items=rows.filter(r=>r.length>=2&&r[1]).map(function(r){{
+        return {{code:r[0]||'',name:r[1]||'',phone:r[2]||''}};
+    }});
+    if(!items.length)return alert('No valid rows');
+    document.getElementById('suppResult').innerHTML='<span style="color:var(--blue)">⏳ Importing...</span>';
+    fetch('/api/{bid}/supplier/import',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{items:items}})}})
+    .then(r=>r.json()).then(d=>{{
+        document.getElementById('suppResult').innerHTML='<span style="color:var(--green)">✅ Imported '+d.count+' suppliers</span>';
+    }});
+}}
+
+var fileContent='';
+function loadFile(){{
+    var file=document.getElementById('csvFile').files[0];
+    if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(e){{fileContent=e.target.result;}};
+    reader.readAsText(file);
+}}
+
+function importFile(){{
+    if(!fileContent)return alert('Select a file first');
+    var type=document.getElementById('fileType').value;
+    if(type==='stock'){{document.getElementById('stockCsv').value=fileContent;importStock();}}
+    else if(type==='customers'){{document.getElementById('custCsv').value=fileContent;importCust();}}
+    else{{document.getElementById('suppCsv').value=fileContent;importSupp();}}
+}}
+</script>
+</body></html>'''
+
 @app.route("/<bid>/settings")
 def settings_page(bid):
     result = sb.table("businesses").select("*").eq("id", bid).execute()
@@ -1589,6 +1733,47 @@ def api_stock_adj(bid):
         nq=int(stock[0].get("qty",0))+int(d.get("adjustment",0))
         sb.table("stock").eq("id",d["id"]).update({"qty":nq}).execute()
     return jsonify({"success":True})
+
+@app.route("/api/<bid>/stock/import",methods=["POST"])
+def api_stock_import(bid):
+    d=request.get_json()
+    items=d.get("items",[])
+    count=0
+    for item in items:
+        item["id"]=str(uuid.uuid4())
+        item["business_id"]=bid
+        item["qty"]=int(item.get("qty",0))
+        item["cost"]=float(item.get("cost",0))
+        item["price"]=float(item.get("price",0))
+        r=sb.table("stock").insert(item).execute()
+        if not r.get("error"):count+=1
+    return jsonify({"success":True,"count":count})
+
+@app.route("/api/<bid>/customer/import",methods=["POST"])
+def api_customer_import(bid):
+    d=request.get_json()
+    items=d.get("items",[])
+    count=0
+    for item in items:
+        item["id"]=str(uuid.uuid4())
+        item["business_id"]=bid
+        item["balance"]=0
+        r=sb.table("customers").insert(item).execute()
+        if not r.get("error"):count+=1
+    return jsonify({"success":True,"count":count})
+
+@app.route("/api/<bid>/supplier/import",methods=["POST"])
+def api_supplier_import(bid):
+    d=request.get_json()
+    items=d.get("items",[])
+    count=0
+    for item in items:
+        item["id"]=str(uuid.uuid4())
+        item["business_id"]=bid
+        item["balance"]=0
+        r=sb.table("suppliers").insert(item).execute()
+        if not r.get("error"):count+=1
+    return jsonify({"success":True,"count":count})
 
 @app.route("/api/<bid>/customer",methods=["POST"])
 def api_cust(bid):
