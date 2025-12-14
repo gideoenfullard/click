@@ -1437,6 +1437,14 @@ S002,XYZ Wholesalers,0125559876"></textarea>
 </select>
 <button class="btn" style="margin-top:10px" onclick="importFile()">📁 Import File</button>
 </div>
+
+<div class="card" style="border:2px solid var(--blue)">
+<div class="card-title">🚀 BULK JSON IMPORT (All Data)</div>
+<p style="color:var(--muted);margin-bottom:15px">Paste complete JSON with stock, customers, suppliers, quotes, invoices</p>
+<textarea id="jsonBulk" class="input" rows="10" placeholder='{{"stock":[...],"customers":[...],"suppliers":[...],"quotes":[...],"invoices":[...]}}'></textarea>
+<button class="btn btn-primary" style="margin-top:10px;background:var(--blue)" onclick="importBulkJSON()">🚀 Import All Data</button>
+<div id="bulkResult" style="margin-top:10px"></div>
+</div>
 </div>
 
 <script>
@@ -1512,6 +1520,24 @@ function importFile(){{
     if(type==='stock'){{document.getElementById('stockCsv').value=fileContent;importStock();}}
     else if(type==='customers'){{document.getElementById('custCsv').value=fileContent;importCust();}}
     else{{document.getElementById('suppCsv').value=fileContent;importSupp();}}
+}}
+
+function importBulkJSON(){{
+    var json=document.getElementById('jsonBulk').value;
+    if(!json)return alert('Paste JSON data first');
+    try{{JSON.parse(json);}}catch(e){{return alert('Invalid JSON: '+e.message);}}
+    document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Importing all data...</span>';
+    fetch('/api/{bid}/import/all',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:json}})
+    .then(r=>r.json()).then(d=>{{
+        if(d.error){{document.getElementById('bulkResult').innerHTML='<span style="color:var(--red)">❌ '+d.error+'</span>';return;}}
+        var msg='<span style="color:var(--green)">✅ Import Complete:<br>';
+        msg+='📦 Stock: '+d.stock+'<br>';
+        msg+='👥 Customers: '+d.customers+'<br>';
+        msg+='🚚 Suppliers: '+d.suppliers+'<br>';
+        msg+='📋 Quotes: '+d.quotes+'<br>';
+        msg+='🧾 Invoices: '+d.invoices+'</span>';
+        document.getElementById('bulkResult').innerHTML=msg;
+    }}).catch(e=>{{document.getElementById('bulkResult').innerHTML='<span style="color:var(--red)">❌ Error: '+e+'</span>';}});
 }}
 </script>
 </body></html>'''
@@ -1774,6 +1800,49 @@ def api_supplier_import(bid):
         r=sb.table("suppliers").insert(item).execute()
         if not r.get("error"):count+=1
     return jsonify({"success":True,"count":count})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BULK JSON IMPORT - ALL DATA IN ONE GO
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.route("/api/<bid>/import/all",methods=["POST"])
+def api_import_all(bid):
+    try:
+        d=request.get_json()
+        counts={"stock":0,"customers":0,"suppliers":0,"quotes":0,"invoices":0}
+        
+        # Import Stock
+        for item in d.get("stock",[]):
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":item.get("code",""),"description":item.get("description",""),"category":item.get("category","General"),"qty":int(item.get("qty",0)),"cost":float(item.get("cost",0)),"price":float(item.get("price",0))}
+            r=sb.table("stock").insert(rec).execute()
+            if not r.get("error"):counts["stock"]+=1
+        
+        # Import Customers
+        for item in d.get("customers",[]):
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":item.get("code",""),"name":item.get("name",""),"phone":item.get("phone",""),"email":item.get("email",""),"address":item.get("address",""),"balance":0}
+            r=sb.table("customers").insert(rec).execute()
+            if not r.get("error"):counts["customers"]+=1
+        
+        # Import Suppliers
+        for item in d.get("suppliers",[]):
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":item.get("code",""),"name":item.get("name",""),"phone":item.get("phone",""),"balance":0}
+            r=sb.table("suppliers").insert(rec).execute()
+            if not r.get("error"):counts["suppliers"]+=1
+        
+        # Import Quotes
+        for item in d.get("quotes",[]):
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"number":item.get("number",""),"customer_code":item.get("customer_code",""),"customer_name":item.get("customer_name",""),"customer_phone":item.get("customer_phone",""),"items":item.get("items",[]),"subtotal":float(item.get("subtotal",0)),"vat":float(item.get("vat",0)),"total":float(item.get("total",0)),"date":item.get("date",today_iso()),"status":item.get("status","draft"),"converted_to":item.get("converted_to",""),"created_at":item.get("created_at",datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}
+            r=sb.table("quotes").insert(rec).execute()
+            if not r.get("error"):counts["quotes"]+=1
+        
+        # Import Invoices
+        for item in d.get("invoices",[]):
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"number":item.get("number",""),"customer_code":item.get("customer_code",""),"customer_name":item.get("customer_name",""),"customer_phone":item.get("customer_phone",""),"items":item.get("items",[]),"subtotal":float(item.get("subtotal",0)),"vat":float(item.get("vat",0)),"total":float(item.get("total",0)),"date":item.get("date",today_iso()),"status":item.get("status","unpaid"),"from_quote":item.get("from_quote",""),"paid_date":item.get("paid_date",""),"created_at":item.get("created_at",datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}
+            r=sb.table("invoices").insert(rec).execute()
+            if not r.get("error"):counts["invoices"]+=1
+        
+        return jsonify(counts)
+    except Exception as e:
+        return jsonify({"error":str(e)})
 
 @app.route("/api/<bid>/customer",methods=["POST"])
 def api_cust(bid):
