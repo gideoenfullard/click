@@ -1561,25 +1561,82 @@ function importFile(){{
 }}
 
 var jsonFileData = null;  // Store file data globally
+var importRunning = false;
 
-function importBulkJSON(){{
-    // Try file first, then textarea
+async function importBulkJSON(){{
+    if(importRunning)return alert('Import already running');
     var json = jsonFileData || document.getElementById('jsonBulk').value;
     if(!json)return alert('Select a JSON file or paste JSON data first');
-    try{{JSON.parse(json);}}catch(e){{return alert('Invalid JSON: '+e.message);}}
-    document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Importing all data... This may take a minute for large files...</span>';
-    fetch('/api/{bid}/import/all',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:json}})
-    .then(r=>r.json()).then(d=>{{
-        if(d.error){{document.getElementById('bulkResult').innerHTML='<span style="color:var(--red)">❌ '+d.error+'</span>';return;}}
-        var msg='<span style="color:var(--green)">✅ Import Complete:<br>';
-        msg+='📦 Stock: '+d.stock+'<br>';
-        msg+='👥 Customers: '+d.customers+'<br>';
-        msg+='🚚 Suppliers: '+d.suppliers+'<br>';
-        msg+='📋 Quotes: '+d.quotes+'<br>';
-        msg+='🧾 Invoices: '+d.invoices+'</span>';
-        document.getElementById('bulkResult').innerHTML=msg;
-        jsonFileData = null;  // Clear after successful import
-    }}).catch(e=>{{document.getElementById('bulkResult').innerHTML='<span style="color:var(--red)">❌ Error: '+e+'</span>';}});
+    
+    var parsed;
+    try{{parsed=JSON.parse(json);}}catch(e){{return alert('Invalid JSON: '+e.message);}}
+    
+    // Find source data (handle nested format)
+    var source = parsed;
+    if(parsed.fulltech) source = parsed.fulltech;
+    else if(parsed.hardware) source = parsed.hardware;
+    else if(parsed.pub) source = parsed.pub;
+    for(var k in parsed){{ if(parsed[k] && parsed[k].stock){{ source=parsed[k]; break; }} }}
+    
+    var stock = source.stock || [];
+    var customers = source.customers || [];
+    var suppliers = source.suppliers || [];
+    
+    importRunning = true;
+    var results = {{stock:0, customers:0, suppliers:0}};
+    var BATCH = 100;  // Send 100 at a time
+    
+    // Import Stock in batches
+    document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Importing '+stock.length+' stock items...</span>';
+    for(var i=0; i<stock.length; i+=BATCH){{
+        var batch = stock.slice(i, i+BATCH);
+        try{{
+            var r = await fetch('/api/{bid}/import/all',{{
+                method:'POST',
+                headers:{{'Content-Type':'application/json'}},
+                body:JSON.stringify({{stock:batch}})
+            }});
+            var d = await r.json();
+            results.stock += d.stock || 0;
+            document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Stock: '+results.stock+'/'+stock.length+'</span>';
+        }}catch(e){{console.log('Stock batch error:',e);}}
+    }}
+    
+    // Import Customers in batches
+    document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Importing '+customers.length+' customers...</span>';
+    for(var i=0; i<customers.length; i+=BATCH){{
+        var batch = customers.slice(i, i+BATCH);
+        try{{
+            var r = await fetch('/api/{bid}/import/all',{{
+                method:'POST',
+                headers:{{'Content-Type':'application/json'}},
+                body:JSON.stringify({{customers:batch}})
+            }});
+            var d = await r.json();
+            results.customers += d.customers || 0;
+            document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Customers: '+results.customers+'/'+customers.length+'</span>';
+        }}catch(e){{console.log('Customer batch error:',e);}}
+    }}
+    
+    // Import Suppliers in batches
+    document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Importing '+suppliers.length+' suppliers...</span>';
+    for(var i=0; i<suppliers.length; i+=BATCH){{
+        var batch = suppliers.slice(i, i+BATCH);
+        try{{
+            var r = await fetch('/api/{bid}/import/all',{{
+                method:'POST',
+                headers:{{'Content-Type':'application/json'}},
+                body:JSON.stringify({{suppliers:batch}})
+            }});
+            var d = await r.json();
+            results.suppliers += d.suppliers || 0;
+            document.getElementById('bulkResult').innerHTML='<span style="color:var(--blue)">⏳ Suppliers: '+results.suppliers+'/'+suppliers.length+'</span>';
+        }}catch(e){{console.log('Supplier batch error:',e);}}
+    }}
+    
+    importRunning = false;
+    jsonFileData = null;
+    document.getElementById('bulkResult').innerHTML='<span style="color:var(--green)">✅ Import Complete!<br>📦 Stock: '+results.stock+'<br>👥 Customers: '+results.customers+'<br>🚚 Suppliers: '+results.suppliers+'</span>';
 }}
 
 function loadJSONFile(){{
