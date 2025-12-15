@@ -175,6 +175,7 @@ def header(bid, active=""):
         ("quotes", "📝 Quotes", f"/{bid}/quotes"),
         ("expenses", "💸 Expenses", f"/{bid}/expenses"),
         ("reports", "📊 Reports", f"/{bid}/reports"),
+        ("import", "📥 Import", f"/{bid}/import"),
     ]
     nav = "".join([f'<a href="{url}" class="nav-link {"active" if k==active else ""}">{label}</a>' for k,label,url in links])
     return f'<nav class="nav"><div class="nav-brand">📱 Click AI</div><div class="nav-links">{nav}</div></nav>'
@@ -897,11 +898,19 @@ def reports_page(bid):
 <div class="grid-2">
 <div class="card" style="cursor:pointer" onclick="location.href='/{bid}/reports/sales'">
 <div class="card-title">💰 Sales Report</div>
-<p style="color:var(--muted)">Daily, weekly, monthly sales summary</p>
+<p style="color:var(--muted)">Invoices, totals, paid vs outstanding</p>
 </div>
 <div class="card" style="cursor:pointer" onclick="location.href='/{bid}/reports/stock'">
 <div class="card-title">📦 Stock Report</div>
-<p style="color:var(--muted)">Stock levels, value, low stock alerts</p>
+<p style="color:var(--muted)">Levels, value, low stock alerts</p>
+</div>
+<div class="card" style="cursor:pointer" onclick="location.href='/{bid}/reports/customers'">
+<div class="card-title">👥 Customer Report</div>
+<p style="color:var(--muted)">Balances, outstanding amounts</p>
+</div>
+<div class="card" style="cursor:pointer" onclick="location.href='/{bid}/reports/suppliers'">
+<div class="card-title">🚚 Supplier Report</div>
+<p style="color:var(--muted)">All suppliers, contact info</p>
 </div>
 <div class="card" style="cursor:pointer" onclick="location.href='/{bid}/reports/profit'">
 <div class="card-title">📈 Profit & Loss</div>
@@ -1118,6 +1127,246 @@ def api_sale(bid):
             db.update("stock", item["id"], {"qty": max(0, new_qty)})
     
     return jsonify({"success": True})
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ALL REPORTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/<bid>/reports/sales")
+def report_sales(bid):
+    invoices = db.select("invoices", {"business_id": bid})
+    total = sum(float(i.get("total", 0) or 0) for i in invoices)
+    paid = sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") == "paid")
+    count = len(invoices)
+    rows = "".join([f'<tr><td>{js_safe(i.get("number",""))}</td><td>{str(i.get("date",""))[:10]}</td><td>{js_safe(i.get("customer_name",""))}</td><td>R {float(i.get("total",0) or 0):.2f}</td><td>{i.get("status","draft")}</td></tr>' for i in invoices[:20]])
+    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sales Report</title>{CSS}</head><body>
+{header(bid, "reports")}
+<div class="container">
+<h1 style="margin-bottom:30px">💰 Sales Report</h1>
+<div class="grid-2">
+<div class="stat-card"><div class="stat-value">{count}</div><div class="stat-label">Total Invoices</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--green)">R {total:,.2f}</div><div class="stat-label">Total Sales</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--blue)">R {paid:,.2f}</div><div class="stat-label">Paid</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--red)">R {total-paid:,.2f}</div><div class="stat-label">Outstanding</div></div>
+</div>
+<div class="card" style="margin-top:20px"><div class="card-title">Recent Sales</div>
+<table class="table"><thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Total</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div>
+<a href="/{bid}/reports" class="btn btn-outline" style="margin-top:20px">← Back</a>
+</div></body></html>"""
+
+@app.route("/<bid>/reports/stock")
+def report_stock(bid):
+    stock = db.select("stock", {"business_id": bid})
+    total = len(stock)
+    value = sum(float(s.get("cost", 0) or 0) * int(s.get("qty", 0) or 0) for s in stock)
+    low = [s for s in stock if 0 < int(s.get("qty", 0) or 0) <= 5]
+    out = [s for s in stock if int(s.get("qty", 0) or 0) <= 0]
+    low_rows = "".join([f'<tr><td>{js_safe(s.get("code",""))}</td><td>{js_safe(s.get("description",""))}</td><td style="color:var(--orange)">{s.get("qty",0)}</td></tr>' for s in low[:15]])
+    out_rows = "".join([f'<tr><td>{js_safe(s.get("code",""))}</td><td>{js_safe(s.get("description",""))}</td></tr>' for s in out[:15]])
+    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stock Report</title>{CSS}</head><body>
+{header(bid, "reports")}
+<div class="container">
+<h1 style="margin-bottom:30px">📦 Stock Report</h1>
+<div class="grid-2">
+<div class="stat-card"><div class="stat-value">{total}</div><div class="stat-label">Total Items</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--green)">R {value:,.2f}</div><div class="stat-label">Total Value</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--orange)">{len(low)}</div><div class="stat-label">Low Stock</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--red)">{len(out)}</div><div class="stat-label">Out of Stock</div></div>
+</div>
+<div class="card" style="margin-top:20px"><div class="card-title" style="color:var(--orange)">⚠️ Low Stock Items</div>
+<table class="table"><thead><tr><th>Code</th><th>Description</th><th>Qty</th></tr></thead><tbody>{low_rows or "<tr><td colspan='3' style='text-align:center;color:var(--muted)'>None</td></tr>"}</tbody></table></div>
+<div class="card"><div class="card-title" style="color:var(--red)">❌ Out of Stock</div>
+<table class="table"><thead><tr><th>Code</th><th>Description</th></tr></thead><tbody>{out_rows or "<tr><td colspan='2' style='text-align:center;color:var(--muted)'>None</td></tr>"}</tbody></table></div>
+<a href="/{bid}/reports" class="btn btn-outline" style="margin-top:20px">← Back</a>
+</div></body></html>"""
+
+@app.route("/<bid>/reports/customers")
+def report_customers(bid):
+    customers = db.select("customers", {"business_id": bid})
+    total = len(customers)
+    total_bal = sum(float(c.get("balance", 0) or 0) for c in customers)
+    owing = sorted([c for c in customers if float(c.get("balance", 0) or 0) > 0], key=lambda x: float(x.get("balance",0) or 0), reverse=True)
+    rows = "".join([f'<tr><td>{js_safe(c.get("code",""))}</td><td>{js_safe(c.get("name",""))}</td><td>{js_safe(c.get("phone",""))}</td><td style="color:var(--red)">R {float(c.get("balance",0) or 0):.2f}</td></tr>' for c in owing[:20]])
+    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Customer Report</title>{CSS}</head><body>
+{header(bid, "reports")}
+<div class="container">
+<h1 style="margin-bottom:30px">👥 Customer Report</h1>
+<div class="grid-2">
+<div class="stat-card"><div class="stat-value">{total}</div><div class="stat-label">Total Customers</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--red)">R {total_bal:,.2f}</div><div class="stat-label">Total Owing</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--orange)">{len(owing)}</div><div class="stat-label">With Balance</div></div>
+</div>
+<div class="card" style="margin-top:20px"><div class="card-title">Customers with Outstanding Balances</div>
+<table class="table"><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Balance</th></tr></thead><tbody>{rows or "<tr><td colspan='4' style='text-align:center;color:var(--muted)'>None</td></tr>"}</tbody></table></div>
+<a href="/{bid}/reports" class="btn btn-outline" style="margin-top:20px">← Back</a>
+</div></body></html>"""
+
+@app.route("/<bid>/reports/suppliers")
+def report_suppliers(bid):
+    suppliers = db.select("suppliers", {"business_id": bid})
+    expenses = db.select("expenses", {"business_id": bid})
+    total = len(suppliers)
+    total_exp = sum(float(e.get("amount", 0) or 0) for e in expenses)
+    rows = "".join([f'<tr><td>{js_safe(s.get("code",""))}</td><td>{js_safe(s.get("name",""))}</td><td>{js_safe(s.get("phone",""))}</td><td>{js_safe(s.get("email",""))}</td></tr>' for s in suppliers[:25]])
+    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Supplier Report</title>{CSS}</head><body>
+{header(bid, "reports")}
+<div class="container">
+<h1 style="margin-bottom:30px">🚚 Supplier Report</h1>
+<div class="grid-2">
+<div class="stat-card"><div class="stat-value">{total}</div><div class="stat-label">Total Suppliers</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--red)">R {total_exp:,.2f}</div><div class="stat-label">Total Expenses</div></div>
+</div>
+<div class="card" style="margin-top:20px"><div class="card-title">All Suppliers</div>
+<table class="table"><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Email</th></tr></thead><tbody>{rows or "<tr><td colspan='4' style='text-align:center;color:var(--muted)'>No suppliers</td></tr>"}</tbody></table></div>
+<a href="/{bid}/reports" class="btn btn-outline" style="margin-top:20px">← Back</a>
+</div></body></html>"""
+
+@app.route("/<bid>/reports/profit")
+def report_profit(bid):
+    invoices = db.select("invoices", {"business_id": bid})
+    expenses = db.select("expenses", {"business_id": bid})
+    income = sum(float(i.get("total", 0) or 0) for i in invoices)
+    expense = sum(float(e.get("amount", 0) or 0) for e in expenses)
+    profit = income - expense
+    margin = (profit / income * 100) if income > 0 else 0
+    profit_color = "var(--green)" if profit >= 0 else "var(--red)"
+    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Profit & Loss</title>{CSS}</head><body>
+{header(bid, "reports")}
+<div class="container">
+<h1 style="margin-bottom:30px">📈 Profit & Loss</h1>
+<div class="grid-2">
+<div class="stat-card"><div class="stat-value" style="color:var(--green)">R {income:,.2f}</div><div class="stat-label">Total Income</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--red)">R {expense:,.2f}</div><div class="stat-label">Total Expenses</div></div>
+<div class="stat-card"><div class="stat-value" style="color:{profit_color}">R {profit:,.2f}</div><div class="stat-label">Net Profit</div></div>
+<div class="stat-card"><div class="stat-value">{margin:.1f}%</div><div class="stat-label">Profit Margin</div></div>
+</div>
+<div class="card" style="margin-top:20px"><div class="card-title">Summary</div>
+<table class="table">
+<tr><td>Sales Revenue</td><td style="text-align:right;color:var(--green)">R {income:,.2f}</td></tr>
+<tr><td>Less: Operating Expenses</td><td style="text-align:right;color:var(--red)">(R {expense:,.2f})</td></tr>
+<tr style="font-weight:700;font-size:18px"><td>Net Profit/(Loss)</td><td style="text-align:right;color:{profit_color}">R {profit:,.2f}</td></tr>
+</table></div>
+<a href="/{bid}/reports" class="btn btn-outline" style="margin-top:20px">← Back</a>
+</div></body></html>"""
+
+@app.route("/<bid>/reports/vat")
+def report_vat(bid):
+    invoices = db.select("invoices", {"business_id": bid})
+    expenses = db.select("expenses", {"business_id": bid})
+    sales_total = sum(float(i.get("total", 0) or 0) for i in invoices)
+    vat_out = sales_total * 15 / 115
+    vat_in = sum(float(e.get("vat", 0) or 0) for e in expenses)
+    vat_due = vat_out - vat_in
+    due_color = "var(--red)" if vat_due > 0 else "var(--green)"
+    due_label = "VAT Payable" if vat_due > 0 else "VAT Refund"
+    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VAT Report</title>{CSS}</head><body>
+{header(bid, "reports")}
+<div class="container">
+<h1 style="margin-bottom:30px">🧾 VAT Report</h1>
+<div class="grid-2">
+<div class="stat-card"><div class="stat-value" style="color:var(--blue)">R {vat_out:,.2f}</div><div class="stat-label">Output VAT (Sales)</div></div>
+<div class="stat-card"><div class="stat-value" style="color:var(--green)">R {vat_in:,.2f}</div><div class="stat-label">Input VAT (Purchases)</div></div>
+<div class="stat-card"><div class="stat-value" style="color:{due_color}">R {abs(vat_due):,.2f}</div><div class="stat-label">{due_label}</div></div>
+</div>
+<div class="card" style="margin-top:20px"><div class="card-title">VAT Calculation</div>
+<table class="table">
+<tr><td>Total Sales (incl VAT)</td><td style="text-align:right">R {sales_total:,.2f}</td></tr>
+<tr><td>Output VAT @ 15%</td><td style="text-align:right">R {vat_out:,.2f}</td></tr>
+<tr><td>Input VAT (from expenses)</td><td style="text-align:right">(R {vat_in:,.2f})</td></tr>
+<tr style="font-weight:700"><td>{due_label} to SARS</td><td style="text-align:right;color:{due_color}">R {abs(vat_due):,.2f}</td></tr>
+</table></div>
+<a href="/{bid}/reports" class="btn btn-outline" style="margin-top:20px">← Back</a>
+</div></body></html>"""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# IMPORT PAGE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/<bid>/import")
+def import_page(bid):
+    return f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Import</title>{CSS}</head><body>
+{header(bid, "import")}
+<div class="container">
+<h1 style="margin-bottom:30px">📥 Import Data</h1>
+<div class="card">
+<div class="card-title">Upload JSON File</div>
+<p style="color:var(--muted);margin-bottom:15px">Upload your fulltech.json or export file</p>
+<input type="file" id="file" accept=".json" class="input" style="margin-bottom:15px">
+<button class="btn" onclick="importData()">📤 Import</button>
+<div id="status" style="margin-top:15px"></div>
+</div>
+<div class="card">
+<div class="card-title" style="color:var(--red)">⚠️ Danger Zone</div>
+<p style="color:var(--muted);margin-bottom:15px">Delete all data</p>
+<div style="display:flex;gap:10px;flex-wrap:wrap">
+<button class="btn btn-red" onclick="del('stock')">🗑️ Delete Stock</button>
+<button class="btn btn-red" onclick="del('customers')">🗑️ Delete Customers</button>
+<button class="btn btn-red" onclick="del('suppliers')">🗑️ Delete Suppliers</button>
+</div>
+</div>
+</div>
+<script>
+var bid='{bid}';
+function importData(){{
+    var f=document.getElementById('file').files[0];
+    if(!f)return alert('Select file');
+    var r=new FileReader();
+    r.onload=function(e){{
+        try{{
+            var d=JSON.parse(e.target.result);
+            document.getElementById('status').innerHTML='<div class="alert alert-info">⏳ Importing...</div>';
+            fetch('/api/'+bid+'/import',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(d)}})
+            .then(x=>x.json()).then(res=>{{
+                document.getElementById('status').innerHTML=res.success?
+                    '<div class="alert alert-success">✅ Imported: '+res.stock+' stock, '+res.customers+' customers, '+res.suppliers+' suppliers</div>':
+                    '<div class="alert alert-error">❌ '+res.error+'</div>';
+            }});
+        }}catch(err){{document.getElementById('status').innerHTML='<div class="alert alert-error">❌ Invalid JSON</div>';}}
+    }};
+    r.readAsText(f);
+}}
+function del(t){{
+    if(!confirm('Delete ALL '+t+'?'))return;
+    fetch('/api/'+bid+'/delete/'+t,{{method:'POST'}}).then(x=>x.json()).then(d=>alert(d.success?'✅ Deleted':'Error'));
+}}
+</script></body></html>"""
+
+@app.route("/api/<bid>/import", methods=["POST"])
+def api_import(bid):
+    try:
+        data = request.get_json()
+        source = data.get("fulltech", data.get("hardware", data))
+        if not source: source = data
+        sc,cc,spc = 0,0,0
+        for item in source.get("stock", []):
+            rec = {"id":str(uuid.uuid4()),"business_id":bid,"code":str(item.get("code",""))[:50],"description":str(item.get("description",item.get("name","")))[:200],
+                "category":str(item.get("category","General"))[:50],"qty":int(item.get("qty",0)or 0),"cost":float(item.get("cost",0)or 0),"price":float(item.get("price",item.get("sell",0))or 0)}
+            if db.insert("stock",rec): sc+=1
+        for item in source.get("customers", []):
+            name=str(item.get("name","")).strip()
+            if not name or "Address:" in name or len(name)<3: continue
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":str(item.get("code",item.get("account","")))[:50],"name":name[:100],
+                "phone":str(item.get("phone",""))[:20],"email":str(item.get("email",""))[:100],"balance":float(item.get("balance",0)or 0)}
+            if db.insert("customers",rec): cc+=1
+        for item in source.get("suppliers", []):
+            name=str(item.get("name","")).strip()
+            if not name or "Address:" in name or len(name)<3: continue
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":str(item.get("code",item.get("account","")))[:50],"name":name[:100],
+                "phone":str(item.get("phone",""))[:20],"email":str(item.get("email",""))[:100],"balance":float(item.get("balance",0)or 0)}
+            if db.insert("suppliers",rec): spc+=1
+        return jsonify({"success":True,"stock":sc,"customers":cc,"suppliers":spc})
+    except Exception as e:
+        return jsonify({"success":False,"error":str(e)})
+
+@app.route("/api/<bid>/delete/<table>", methods=["POST"])
+def api_delete_table(bid, table):
+    if table in ["stock","customers","suppliers","invoices","quotes","expenses"]:
+        # Delete all records for this business
+        items = db.select(table, {"business_id": bid})
+        for item in items:
+            db.delete(table, {"id": item["id"]})
+        return jsonify({"success": True})
+    return jsonify({"success": False})
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HEALTH CHECK
