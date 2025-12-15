@@ -564,6 +564,48 @@ def get_header(bid, active=""):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SETUP ROUTE - Create Fulltech and migrate any orphan data
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/setup/fulltech")
+def setup_fulltech():
+    """One-time setup: Create Fulltech business and migrate orphan data"""
+    bid = "fulltech"
+    
+    # Check if Fulltech already exists
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]:
+        # Create Fulltech business
+        new_biz = {
+            "id": bid,
+            "name": "Fulltech",
+            "settings": json.dumps({
+                "company_name": "Fulltech",
+                "vat_rate": 15,
+                "currency": "R"
+            })
+        }
+        sb.table("businesses").insert(new_biz)
+    
+    # Count what we have
+    stock = sb.table("stock").select("id").eq("business_id", bid).execute()["data"] or []
+    customers = sb.table("customers").select("id").eq("business_id", bid).execute()["data"] or []
+    suppliers = sb.table("suppliers").select("id").eq("business_id", bid).execute()["data"] or []
+    
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Setup Complete</title>{CSS}</head><body>
+<div class="container" style="text-align:center;padding-top:50px">
+<h1 style="color:var(--green)">✅ Fulltech Business Created!</h1>
+<div class="card" style="max-width:400px;margin:30px auto">
+<p>📦 Stock: {len(stock)} items</p>
+<p>👥 Customers: {len(customers)}</p>
+<p>🚚 Suppliers: {len(suppliers)}</p>
+</div>
+<a href="/fulltech" class="btn btn-primary" style="font-size:18px;padding:15px 40px">🚀 Go to Fulltech</a>
+<br><br>
+<a href="/fulltech/import" class="btn" style="margin-top:20px">📥 Import Data</a>
+</div></body></html>'''
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # HOME PAGE - Business Selection with Glowing Logo
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1391,7 +1433,18 @@ def delivery_notes_page(bid):
 @app.route("/<bid>/import")
 def import_page(bid):
     result = sb.table("businesses").select("*").eq("id", bid).execute()
-    if not result["data"]: return redirect("/")
+    if not result["data"]:
+        # Auto-create business if it doesn't exist
+        if bid.lower() in ["fulltech", "hardware", "pub", "bnb", "stainless"]:
+            new_biz = {
+                "id": bid.lower(),
+                "name": bid.title(),
+                "settings": json.dumps({"company_name": bid.title()})
+            }
+            sb.table("businesses").insert(new_biz)
+            result = {"data": [new_biz]}
+        else:
+            return redirect("/")
     business = result["data"][0]
     s = business.get("settings", {})
     if isinstance(s, str):
@@ -2013,16 +2066,28 @@ def api_import_all(bid):
             if not r.get("error"):counts["stock"]+=1
         
         # Import Customers (handle both 'code' and 'account' field names)
+        # Skip junk records (addresses, blank names, etc)
         for item in source.get("customers",[]):
+            name = item.get("name","").strip()
+            # Skip if name looks like address or junk
+            if not name or "Address:" in name or name.startswith("P.O") or name.startswith("PO ") or len(name) < 3:
+                continue
             code = item.get("code","") or item.get("account","")
-            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":code,"name":item.get("name",""),"phone":item.get("phone",""),"email":item.get("email",""),"address":item.get("address",""),"balance":0}
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":code,"name":name,"phone":item.get("phone",""),"email":item.get("email",""),"address":item.get("address",""),"balance":float(item.get("balance",0) or 0)}
             r=sb.table("customers").insert(rec)
             if not r.get("error"):counts["customers"]+=1
         
         # Import Suppliers (handle both 'code' and 'account' field names)
+        # Skip junk records (addresses, blank names, etc)
         for item in source.get("suppliers",[]):
+            name = item.get("name","").strip()
+            # Skip if name looks like address or junk
+            if not name or "Address:" in name or name.startswith("P.O") or name.startswith("PO ") or len(name) < 3:
+                continue
             code = item.get("code","") or item.get("account","")
-            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":code,"name":item.get("name",""),"phone":item.get("phone",""),"balance":0}
+            rec={"id":str(uuid.uuid4()),"business_id":bid,"code":code,"name":name,"phone":item.get("phone",""),"balance":float(item.get("balance",0) or 0)}
+            r=sb.table("suppliers").insert(rec)
+            if not r.get("error"):counts["suppliers"]+=1
             r=sb.table("suppliers").insert(rec)
             if not r.get("error"):counts["suppliers"]+=1
         
