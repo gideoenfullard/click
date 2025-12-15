@@ -81,7 +81,7 @@ class SupabaseTable:
             params.append(f"limit={self._limit}")
         url = f"{self.url}?{'&'.join(params)}"
         try:
-            r = requests.get(url, headers=self.client.headers, timeout=10)
+            r = requests.get(url, headers=self.client.headers, timeout=60)
             return {"data": r.json() if r.status_code == 200 else [], "error": None if r.status_code == 200 else r.text}
         except Exception as e:
             return {"data": [], "error": str(e)}
@@ -931,14 +931,18 @@ def pos_page(bid):
         icon = cat_icons.get(cat, "📦")
         cat_btns += f'<div class="cat-btn-big" onclick="filterCat(\'{cat}\')">{icon}<br>{cat}</div>'
     
-    stock_json = json.dumps([{
-        "id": s.get("id", ""),
-        "code": s.get("code", ""),
-        "desc": s.get("description", ""),
-        "cat": s.get("category", "General"),
-        "price": float(s.get("price", 0) or 0),
-        "qty": int(s.get("qty", 0) or 0)
-    } for s in stock])
+    # Sanitize stock data for JavaScript - remove problematic characters
+    safe_stock = []
+    for s in stock:
+        safe_stock.append({
+            "id": str(s.get("id", "")),
+            "code": str(s.get("code", "")).replace("'", "").replace('"', ''),
+            "desc": str(s.get("description", "")).replace("'", "").replace('"', '').replace("\\", ""),
+            "cat": str(s.get("category", "General")).replace("'", "").replace('"', ''),
+            "price": float(s.get("price", 0) or 0),
+            "qty": int(s.get("qty", 0) or 0)
+        })
+    stock_json = json.dumps(safe_stock)
     
     cust_options = '<option value="">Walk-in Customer</option>'
     for c in customers:
@@ -999,19 +1003,21 @@ var vatRate={vat_rate};
 function renderStock(){{
     var search=document.getElementById('search').value.toLowerCase();
     var html='';
+    var count=0;
     stock.forEach(function(item){{
         if(currentCat!=='All'&&item.cat!==currentCat)return;
         if(search&&!item.desc.toLowerCase().includes(search)&&!item.code.toLowerCase().includes(search))return;
         var qtyClass=item.qty<=0?'stock-low':item.qty<=5?'stock-low':'';
         var qtyText=item.qty<=0?'OUT OF STOCK':item.qty+' avail';
         if(item.qty<=0)return; // Hide out of stock in POS
+        count++;
         html+='<div class="stock-block" onclick="addToCart(\''+item.id+'\')">';
         html+='<div class="stock-name">'+item.desc+'</div>';
-        html+='<div class="stock-price">'+currency+' '+item.price.toFixed(2)+'</div>';
+        html+='<div class="stock-price">'+currency+' '+(item.price||0).toFixed(2)+'</div>';
         html+='<div class="stock-qty '+qtyClass+'">'+qtyText+'</div>';
         html+='</div>';
     }});
-    document.getElementById('stockGrid').innerHTML=html||'<div style="text-align:center;padding:40px;color:var(--muted);grid-column:1/-1">No items found</div>';
+    document.getElementById('stockGrid').innerHTML=html||'<div style="text-align:center;padding:40px;color:var(--muted);grid-column:1/-1">No items found ('+stock.length+' total, '+count+' with qty)</div>';
 }}
 
 function filterCat(cat){{
