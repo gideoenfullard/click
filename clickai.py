@@ -931,14 +931,22 @@ def pos_page(bid):
         icon = cat_icons.get(cat, "📦")
         cat_btns += f'<div class="cat-btn-big" onclick="filterCat(\'{cat}\')">{icon}<br>{cat}</div>'
     
-    # Sanitize stock data for JavaScript - remove problematic characters
+    # Sanitize stock data for JavaScript - remove ALL problematic characters
+    import re
+    def clean(s):
+        if s is None: return ""
+        s = str(s)
+        s = re.sub(r'["\'\\\n\r\t]', ' ', s)  # Remove quotes, backslash, newlines, tabs
+        s = re.sub(r'[^\x20-\x7E]', '', s)  # Remove non-printable characters
+        return s.strip()
+    
     safe_stock = []
     for s in stock:
         safe_stock.append({
             "id": str(s.get("id", "")),
-            "code": str(s.get("code", "")).replace("'", "").replace('"', ''),
-            "desc": str(s.get("description", "")).replace("'", "").replace('"', '').replace("\\", ""),
-            "cat": str(s.get("category", "General")).replace("'", "").replace('"', ''),
+            "code": clean(s.get("code", "")),
+            "desc": clean(s.get("description", "")),
+            "cat": clean(s.get("category", "")) or "General",
             "price": float(s.get("price", 0) or 0),
             "qty": int(s.get("qty", 0) or 0)
         })
