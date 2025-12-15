@@ -1002,7 +1002,23 @@ def pos_page(bid):
     </div>
 </div>
 <script>
-var stock={stock_json};
+var stock=[];
+var cart=[];
+var currentCat='All';
+var currency='{currency}';
+var vatRate={vat_rate};
+
+// Load stock via API to avoid JSON embedding issues
+fetch('/api/{bid}/stock/list')
+.then(r=>r.json())
+.then(data=>{{
+    stock=data;
+    document.querySelector('.debug-info').innerHTML='📊 Debug: '+stock.length+' stock items loaded via API | Business ID: {bid}';
+    renderStock();
+}})
+.catch(e=>{{
+    document.querySelector('.debug-info').innerHTML='❌ Error loading stock: '+e;
+}});
 var cart=[];
 var currentCat='All';
 var currency='{currency}';
@@ -2076,6 +2092,31 @@ def api_del_biz(bid):
     sb.table("businesses").eq("id",bid).delete().execute()
     return jsonify({"success":True})
 
+@app.route("/api/<bid>/stock/list",methods=["GET"])
+def api_stock_list(bid):
+    """Return stock as JSON for POS - sanitized for JavaScript"""
+    import re
+    def clean(s):
+        if s is None: return ""
+        s = str(s)
+        s = re.sub(r'["\'\\\n\r\t]', ' ', s)
+        s = re.sub(r'[^\x20-\x7E]', '', s)
+        return s.strip()
+    
+    stock = sb.table("stock").select("*").eq("business_id", bid).limit(10000).execute()["data"] or []
+    safe_stock = []
+    for s in stock:
+        if int(s.get("qty", 0) or 0) > 0:  # Only items with stock
+            safe_stock.append({
+                "id": str(s.get("id", "")),
+                "code": clean(s.get("code", "")),
+                "desc": clean(s.get("description", "")),
+                "cat": clean(s.get("category", "")) or "General",
+                "price": float(s.get("price", 0) or 0),
+                "qty": int(s.get("qty", 0) or 0)
+            })
+    return jsonify(safe_stock)
+
 @app.route("/api/<bid>/stock",methods=["POST"])
 def api_stock(bid):
     d=request.get_json()
@@ -2438,4 +2479,3 @@ if __name__=="__main__":
     print(f"  🤖 Claude: {'✅' if ANTHROPIC_API_KEY else '⚠️'}")
     print("="*60+"\n")
     app.run(host="0.0.0.0",port=5000,debug=True)
-
