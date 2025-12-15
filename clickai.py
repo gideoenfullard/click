@@ -940,33 +940,15 @@ def pos_page(bid):
     cat_icons={"Bearings":"⚙️","Seals":"🔘","Circlips":"⭕","Bolts":"🔩","Cap Screws":"🔩","Nuts":"🔩","Washers":"⚙️","Imp Bolts":"🔩","Shoes":"👞","PPE":"🦺","Welding":"🔥","Shirts":"👕","Hardware":"🔧","General":"📦"}
     cat_btns = '<div class="cat-btn-big active" onclick="filterCat(\'All\')">🏪<br>All</div>'
     for cat in categories:
+        safe_cat = js_safe(cat)
         icon = cat_icons.get(cat, "📦")
-        cat_btns += f'<div class="cat-btn-big" onclick="filterCat(\'{cat}\')">{icon}<br>{cat}</div>'
-    
-    # Sanitize stock data for JavaScript - remove ALL problematic characters
-    import re
-    def clean(s):
-        if s is None: return ""
-        s = str(s)
-        s = re.sub(r'["\'\\\n\r\t]', ' ', s)  # Remove quotes, backslash, newlines, tabs
-        s = re.sub(r'[^\x20-\x7E]', '', s)  # Remove non-printable characters
-        return s.strip()
-    
-    safe_stock = []
-    for s in stock:
-        safe_stock.append({
-            "id": str(s.get("id", "")),
-            "code": clean(s.get("code", "")),
-            "desc": clean(s.get("description", "")),
-            "cat": clean(s.get("category", "")) or "General",
-            "price": float(s.get("price", 0) or 0),
-            "qty": int(s.get("qty", 0) or 0)
-        })
-    stock_json = json.dumps(safe_stock)
+        cat_btns += f'<div class="cat-btn-big" onclick="filterCat(\'{safe_cat}\')">{icon}<br>{safe_cat}</div>'
     
     cust_options = '<option value="">Walk-in Customer</option>'
     for c in customers:
-        cust_options += f'<option value="{c.get("id", "")}" data-name="{c.get("name", "")}">{c.get("name", "")} ({c.get("code", "")})</option>'
+        safe_name = js_safe(c.get("name", ""))
+        safe_code = js_safe(c.get("code", ""))
+        cust_options += f'<option value="{c.get("id", "")}" data-name="{safe_name}">{safe_name} ({safe_code})</option>'
     
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>POS - {name}</title>{CSS}
 <style>
