@@ -677,8 +677,9 @@ def scan_receipt(bid):
 <h1 style="margin-bottom:20px">Scan Receipt</h1>
 <div class="card">
 <h3 style="margin-bottom:15px">Take Photo or Upload</h3>
+<p style="color:#888;margin-bottom:15px">AI will automatically extract supplier, description and amount</p>
 <div style="margin-bottom:15px">
-<button class="btn" onclick="startCamera()">Open Camera</button>
+<button class="btn btn-orange" onclick="startCamera()">Open Camera</button>
 <span style="margin:0 10px;color:#888">or</span>
 <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)" style="display:inline-block;width:auto">
 </div>
@@ -686,12 +687,15 @@ def scan_receipt(bid):
 <button id="captureBtn" class="btn btn-green" style="display:none;margin-top:10px" onclick="capture()">Take Photo</button>
 <canvas id="canvas" style="display:none"></canvas>
 <img id="preview" style="display:none;max-width:100%;border-radius:8px;margin-top:10px">
-<div id="processing" style="display:none;margin-top:15px" class="msg">Processing image...</div>
+<div id="processing" style="display:none;margin-top:15px" class="msg">AI is reading your receipt... please wait</div>
 </div>
 <div class="card" id="resultCard" style="display:none">
-<h3 style="margin-bottom:15px">Enter Details</h3>
+<h3 style="margin-bottom:15px">Extracted Details (edit if needed)</h3>
+<label style="color:#888;font-size:12px">Supplier</label>
 <input type="text" id="rSupplier" placeholder="Supplier">
+<label style="color:#888;font-size:12px">Description</label>
 <input type="text" id="rDesc" placeholder="Description">
+<label style="color:#888;font-size:12px">Amount (incl VAT)</label>
 <input type="number" id="rAmount" placeholder="Total Amount" step="0.01">
 <label style="display:block;margin:10px 0"><input type="checkbox" id="rVat" checked> Includes 15% VAT</label>
 <button class="btn btn-green" onclick="saveExpense()">Save Expense</button>
@@ -705,7 +709,7 @@ stream=s;
 document.getElementById("video").srcObject=s;
 document.getElementById("video").style.display="block";
 document.getElementById("captureBtn").style.display="inline-block";
-}}).catch(function(e){{alert("Camera error: "+e.message);document.getElementById("resultCard").style.display="block";}});
+}}).catch(function(e){{alert("Camera error: "+e.message);}});
 }}
 function capture(){{
 var video=document.getElementById("video");
@@ -713,12 +717,13 @@ var canvas=document.getElementById("canvas");
 canvas.width=video.videoWidth;
 canvas.height=video.videoHeight;
 canvas.getContext("2d").drawImage(video,0,0);
+var dataUrl=canvas.toDataURL("image/jpeg",0.8);
 if(stream){{stream.getTracks().forEach(function(t){{t.stop();}});}}
 document.getElementById("video").style.display="none";
 document.getElementById("captureBtn").style.display="none";
-document.getElementById("preview").src=canvas.toDataURL("image/jpeg",0.8);
+document.getElementById("preview").src=dataUrl;
 document.getElementById("preview").style.display="block";
-document.getElementById("resultCard").style.display="block";
+processWithAI(dataUrl);
 }}
 function handleFile(input){{
 if(input.files&&input.files[0]){{
@@ -726,10 +731,28 @@ var reader=new FileReader();
 reader.onload=function(e){{
 document.getElementById("preview").src=e.target.result;
 document.getElementById("preview").style.display="block";
-document.getElementById("resultCard").style.display="block";
+processWithAI(e.target.result);
 }};
 reader.readAsDataURL(input.files[0]);
 }}
+}}
+function processWithAI(dataUrl){{
+document.getElementById("processing").style.display="block";
+document.getElementById("resultCard").style.display="none";
+fetch("/api/"+BID+"/scan-receipt",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{image:dataUrl}})}})
+.then(function(r){{return r.json()}})
+.then(function(d){{
+document.getElementById("processing").style.display="none";
+document.getElementById("resultCard").style.display="block";
+if(d.supplier)document.getElementById("rSupplier").value=d.supplier;
+if(d.description)document.getElementById("rDesc").value=d.description;
+if(d.amount)document.getElementById("rAmount").value=d.amount;
+if(d.error)alert("AI could not read receipt: "+d.error);
+}}).catch(function(e){{
+document.getElementById("processing").style.display="none";
+document.getElementById("resultCard").style.display="block";
+alert("Error processing: "+e);
+}});
 }}
 function saveExpense(){{
 var amt=parseFloat(document.getElementById("rAmount").value)||0;
@@ -1045,6 +1068,72 @@ def api_expenses_save(bid):
     item = {"id":str(uuid.uuid4()),"business_id":bid,"supplier":d.get("supplier",""),"description":d.get("description",""),"amount":d.get("amount",0),"vat":d.get("vat",0)}
     db.insert("expenses", item)
     return jsonify({"success":True})
+
+@app.route("/api/<bid>/scan-receipt", methods=["POST"])
+def api_scan_receipt(bid):
+    try:
+        d = request.get_json()
+        image_data = d.get("image", "")
+        if not image_data:
+            return jsonify({"error": "No image provided"})
+        
+        # Remove data URL prefix if present
+        if "," in image_data:
+            image_data = image_data.split(",")[1]
+        
+        # Call Claude API with vision
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return jsonify({"error": "API key not configured", "supplier": "", "description": "", "amount": ""})
+        
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "content-type": "application/json",
+                "anthropic-version": "2023-06-01"
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 500,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": image_data
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": "Extract from this receipt/invoice: 1) Supplier/store name, 2) Brief description of purchase, 3) Total amount in Rands. Reply ONLY in this exact JSON format, nothing else: {\"supplier\": \"name\", \"description\": \"what was bought\", \"amount\": 123.45}"
+                        }
+                    ]
+                }]
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            text = result.get("content", [{}])[0].get("text", "{}")
+            # Extract JSON from response
+            import re
+            json_match = re.search(r'\{[^}]+\}', text)
+            if json_match:
+                data = json.loads(json_match.group())
+                return jsonify({
+                    "supplier": data.get("supplier", ""),
+                    "description": data.get("description", ""),
+                    "amount": float(data.get("amount", 0))
+                })
+        
+        return jsonify({"error": "Could not parse receipt", "supplier": "", "description": "", "amount": ""})
+    except Exception as e:
+        return jsonify({"error": str(e), "supplier": "", "description": "", "amount": ""})
 
 @app.route("/api/<bid>/sale", methods=["POST"])
 def api_sale(bid):
