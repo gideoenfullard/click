@@ -21,6 +21,18 @@ import requests
 app = Flask(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# HELPER: Sanitize strings for JavaScript embedding
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def js_safe(s):
+    """Remove characters that break JavaScript JSON embedding"""
+    if s is None: return ""
+    s = str(s)
+    s = re.sub(r'["\'\\\n\r\t]', ' ', s)  # Remove quotes, backslash, newlines, tabs
+    s = re.sub(r'[^\x20-\x7E]', '', s)  # Remove non-printable characters
+    return s.strip()
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION & CREDENTIALS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1177,9 +1189,9 @@ def stock_page(bid):
     
     stock_json = json.dumps([{
         "id": s.get("id", ""),
-        "code": s.get("code", ""),
-        "description": s.get("description", ""),
-        "category": s.get("category", "General"),
+        "code": js_safe(s.get("code", "")),
+        "description": js_safe(s.get("description", "")),
+        "category": js_safe(s.get("category", "General")),
         "qty": int(s.get("qty", 0) or 0),
         "cost": float(s.get("cost", 0) or 0),
         "price": float(s.get("price", 0) or 0)
@@ -1534,9 +1546,9 @@ def new_doc_page(bid):
     doc_num = f"{prefix}{len(existing)+1:04d}"
     customers = sb.table("customers").select("*").eq("business_id", bid).execute()["data"] or []
     stock = sb.table("stock").select("*").eq("business_id", bid).execute()["data"] or []
-    cust_opts = '<option value="">-- Select Customer --</option>'+"".join([f'<option value="{c.get("id","")}" data-name="{c.get("name","")}" data-code="{c.get("code","")}">{c.get("name","")} ({c.get("code","")})</option>' for c in customers])
-    stock_json = json.dumps([{"id":s.get("id",""),"code":s.get("code",""),"desc":s.get("description",""),"price":float(s.get("price",0)or 0),"qty":int(s.get("qty",0)or 0),"cat":s.get("category","General")} for s in stock])
-    cats = sorted(list(set([s.get("category","General") for s in stock])))
+    cust_opts = '<option value="">-- Select Customer --</option>'+"".join([f'<option value="{c.get("id","")}" data-name="{js_safe(c.get("name",""))}" data-code="{js_safe(c.get("code",""))}">{js_safe(c.get("name",""))} ({js_safe(c.get("code",""))})</option>' for c in customers])
+    stock_json = json.dumps([{"id":s.get("id",""),"code":js_safe(s.get("code","")),"desc":js_safe(s.get("description","")),"price":float(s.get("price",0)or 0),"qty":int(s.get("qty",0)or 0),"cat":js_safe(s.get("category","General"))} for s in stock])
+    cats = sorted(list(set([js_safe(s.get("category","General")) for s in stock])))
     cat_btns = '<button class="cat-btn active" onclick="filterCat(\'All\')">All</button>'+"".join([f'<button class="cat-btn" onclick="filterCat(\'{c}\')">{c}</button>' for c in cats])
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>New {doc_type}</title>{CSS}</head><body>
 {get_header(bid, "docs")}
