@@ -339,6 +339,7 @@ def customers_page(bid):
 <div id="msg" class="msg">Loading...</div>
 <div class="card">
 <input type="text" id="q" placeholder="Search..." onkeyup="render()">
+<p style="color:#888;font-size:12px;margin-bottom:10px">Click a customer row to view transaction history</p>
 <table><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Email</th><th>Balance</th><th></th></tr></thead><tbody id="tbl"></tbody></table>
 </div>
 </div>
@@ -359,7 +360,7 @@ function render(){{
 var q=document.getElementById("q").value.toLowerCase();var h="";
 for(var i=0;i<items.length;i++){{var c=items[i];if(q&&c.name.toLowerCase().indexOf(q)<0&&c.code.toLowerCase().indexOf(q)<0)continue;
 var balStyle=c.balance>0?"color:#ef4444":"";
-h+="<tr><td>"+c.code+"</td><td>"+c.name+"</td><td>"+(c.phone||"-")+"</td><td>"+(c.email||"-")+"</td><td style='"+balStyle+"'>R "+c.balance.toFixed(2)+"</td><td><button class='btn btn-sm' onclick='edit("+i+")'>Edit</button></td></tr>";
+h+="<tr style='cursor:pointer' onclick='viewHist(\""+c.id+"\")'><td>"+c.code+"</td><td>"+c.name+"</td><td>"+(c.phone||"-")+"</td><td>"+(c.email||"-")+"</td><td style='"+balStyle+"'>R "+c.balance.toFixed(2)+"</td><td><button class='btn btn-sm' onclick='event.stopPropagation();edit("+i+")'>Edit</button></td></tr>";
 }}
 document.getElementById("tbl").innerHTML=h||"<tr><td colspan='6' style='text-align:center;padding:40px;color:#888'>No customers</td></tr>";
 }}
@@ -367,9 +368,41 @@ function showAdd(){{document.getElementById("mtitle").innerHTML="Add Customer";d
 function edit(i){{var c=items[i];document.getElementById("mtitle").innerHTML="Edit Customer";document.getElementById("eid").value=c.id;document.getElementById("fcode").value=c.code;document.getElementById("fname").value=c.name;document.getElementById("fphone").value=c.phone||"";document.getElementById("femail").value=c.email||"";document.getElementById("modal").classList.add("show");}}
 function save(){{var data={{id:document.getElementById("eid").value||null,code:document.getElementById("fcode").value,name:document.getElementById("fname").value,phone:document.getElementById("fphone").value,email:document.getElementById("femail").value}};
 fetch("/api/"+BID+"/customers",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify(data)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.success){{document.getElementById("modal").classList.remove("show");load();}}}});}}
+function viewHist(id){{window.location.href="/"+BID+"/customers/"+id+"/history";}}
 load();
 </script>
 </body></html>'''
+
+@app.route("/<bid>/customers/<cid>/history")
+def customer_history(bid, cid):
+    customers = db.select("customers", {"id": cid})
+    if not customers:
+        return redirect(f"/{bid}/customers")
+    cust = customers[0]
+    invoices = db.select("invoices", {"business_id": bid})
+    cust_invoices = [i for i in invoices if i.get("customer_id") == cid]
+    total_sales = sum(float(i.get("total",0) or 0) for i in cust_invoices)
+    total_paid = sum(float(i.get("total",0) or 0) for i in cust_invoices if i.get("status") == "paid")
+    outstanding = total_sales - total_paid
+    rows = ""
+    for inv in sorted(cust_invoices, key=lambda x: x.get("date",""), reverse=True):
+        status_class = "msg-ok" if inv.get("status") == "paid" else "msg"
+        rows += f'<tr><td>{js_safe(inv.get("number",""))}</td><td>{str(inv.get("date",""))[:10]}</td><td>R {float(inv.get("total",0) or 0):,.2f}</td><td><span style="padding:4px 10px;border-radius:20px;font-size:11px" class="{status_class}">{inv.get("status","draft")}</span></td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Customer History</title>{CSS}</head><body>
+{nav(bid,"customers")}
+<div class="box">
+<a href="/{bid}/customers" class="btn" style="background:#333;margin-bottom:20px">Back to Customers</a>
+<h1 style="margin-bottom:10px">{js_safe(cust.get("name",""))}</h1>
+<p style="color:#888;margin-bottom:20px">Code: {js_safe(cust.get("code",""))} | Phone: {js_safe(cust.get("phone",""))} | Email: {js_safe(cust.get("email",""))}</p>
+<div class="row">
+<div class="stat"><div class="stat-num">{len(cust_invoices)}</div><div class="stat-label">Total Invoices</div></div>
+<div class="stat"><div class="stat-num" style="color:#10b981">R {total_sales:,.0f}</div><div class="stat-label">Total Sales</div></div>
+<div class="stat"><div class="stat-num" style="color:#3b82f6">R {total_paid:,.0f}</div><div class="stat-label">Total Paid</div></div>
+<div class="stat"><div class="stat-num" style="color:#ef4444">R {outstanding:,.0f}</div><div class="stat-label">Outstanding</div></div>
+</div>
+<div class="card" style="margin-top:20px"><h3 style="margin-bottom:15px">Transaction History</h3>
+<table><thead><tr><th>Invoice #</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody>{rows or "<tr><td colspan='4' style='text-align:center;color:#888'>No transactions</td></tr>"}</tbody></table></div>
+</div></body></html>'''
 
 # ============================================================================
 # SUPPLIERS
@@ -384,6 +417,7 @@ def suppliers_page(bid):
 <div id="msg" class="msg">Loading...</div>
 <div class="card">
 <input type="text" id="q" placeholder="Search..." onkeyup="render()">
+<p style="color:#888;font-size:12px;margin-bottom:10px">Click a supplier row to view purchase history</p>
 <table><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Email</th><th></th></tr></thead><tbody id="tbl"></tbody></table>
 </div>
 </div>
@@ -400,15 +434,45 @@ def suppliers_page(bid):
 <script>
 var items=[],BID="{bid}";
 function load(){{fetch("/api/"+BID+"/suppliers").then(function(r){{return r.json()}}).then(function(d){{items=d||[];document.getElementById("msg").innerHTML="Loaded "+items.length+" suppliers";document.getElementById("msg").className="msg msg-ok";render();}});}}
-function render(){{var h="";for(var i=0;i<items.length;i++){{var c=items[i];h+="<tr><td>"+c.code+"</td><td>"+c.name+"</td><td>"+(c.phone||"-")+"</td><td>"+(c.email||"-")+"</td><td><button class='btn btn-sm' onclick='edit("+i+")'>Edit</button></td></tr>";}}
+function render(){{var h="";for(var i=0;i<items.length;i++){{var c=items[i];h+="<tr style='cursor:pointer' onclick='viewHist(\""+c.id+"\")'><td>"+c.code+"</td><td>"+c.name+"</td><td>"+(c.phone||"-")+"</td><td>"+(c.email||"-")+"</td><td><button class='btn btn-sm' onclick='event.stopPropagation();edit("+i+")'>Edit</button></td></tr>";}}
 document.getElementById("tbl").innerHTML=h||"<tr><td colspan='5' style='text-align:center;padding:40px;color:#888'>No suppliers</td></tr>";}}
 function showAdd(){{document.getElementById("mtitle").innerHTML="Add Supplier";document.getElementById("eid").value="";document.getElementById("fcode").value="";document.getElementById("fname").value="";document.getElementById("fphone").value="";document.getElementById("femail").value="";document.getElementById("modal").classList.add("show");}}
 function edit(i){{var c=items[i];document.getElementById("mtitle").innerHTML="Edit Supplier";document.getElementById("eid").value=c.id;document.getElementById("fcode").value=c.code;document.getElementById("fname").value=c.name;document.getElementById("fphone").value=c.phone||"";document.getElementById("femail").value=c.email||"";document.getElementById("modal").classList.add("show");}}
 function save(){{var data={{id:document.getElementById("eid").value||null,code:document.getElementById("fcode").value,name:document.getElementById("fname").value,phone:document.getElementById("fphone").value,email:document.getElementById("femail").value}};
 fetch("/api/"+BID+"/suppliers",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify(data)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.success){{document.getElementById("modal").classList.remove("show");load();}}}});}}
+function viewHist(id){{window.location.href="/"+BID+"/suppliers/"+id+"/history";}}
 load();
 </script>
 </body></html>'''
+
+@app.route("/<bid>/suppliers/<sid>/history")
+def supplier_history(bid, sid):
+    suppliers = db.select("suppliers", {"id": sid})
+    if not suppliers:
+        return redirect(f"/{bid}/suppliers")
+    supp = suppliers[0]
+    expenses = db.select("expenses", {"business_id": bid})
+    supp_name = js_safe(supp.get("name","")).lower()
+    supp_expenses = [e for e in expenses if js_safe(e.get("supplier","")).lower() == supp_name]
+    total_spent = sum(float(e.get("amount",0) or 0) for e in supp_expenses)
+    total_vat = sum(float(e.get("vat",0) or 0) for e in supp_expenses)
+    rows = ""
+    for exp in sorted(supp_expenses, key=lambda x: x.get("created_at",""), reverse=True):
+        rows += f'<tr><td>{str(exp.get("created_at",""))[:10]}</td><td>{js_safe(exp.get("description",""))}</td><td>R {float(exp.get("amount",0) or 0):,.2f}</td><td>R {float(exp.get("vat",0) or 0):,.2f}</td></tr>'
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Supplier History</title>{CSS}</head><body>
+{nav(bid,"suppliers")}
+<div class="box">
+<a href="/{bid}/suppliers" class="btn" style="background:#333;margin-bottom:20px">Back to Suppliers</a>
+<h1 style="margin-bottom:10px">{js_safe(supp.get("name",""))}</h1>
+<p style="color:#888;margin-bottom:20px">Code: {js_safe(supp.get("code",""))} | Phone: {js_safe(supp.get("phone",""))} | Email: {js_safe(supp.get("email",""))}</p>
+<div class="row">
+<div class="stat"><div class="stat-num">{len(supp_expenses)}</div><div class="stat-label">Total Purchases</div></div>
+<div class="stat"><div class="stat-num" style="color:#ef4444">R {total_spent:,.0f}</div><div class="stat-label">Total Spent</div></div>
+<div class="stat"><div class="stat-num" style="color:#10b981">R {total_vat:,.0f}</div><div class="stat-label">VAT Claimed</div></div>
+</div>
+<div class="card" style="margin-top:20px"><h3 style="margin-bottom:15px">Purchase History</h3>
+<table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>VAT</th></tr></thead><tbody>{rows or "<tr><td colspan='4' style='text-align:center;color:#888'>No purchases recorded</td></tr>"}</tbody></table></div>
+</div></body></html>'''
 
 # ============================================================================
 # INVOICES
@@ -556,7 +620,7 @@ def expenses_page(bid):
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Expenses</title>{CSS}</head><body>
 {nav(bid,"expenses")}
 <div class="box">
-<div style="display:flex;justify-content:space-between;margin-bottom:20px"><h1>Expenses</h1><button class="btn btn-red" onclick="showAdd()">+ Add Expense</button></div>
+<div style="display:flex;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px"><h1>Expenses</h1><div><a href="/{bid}/expenses/scan" class="btn btn-orange">Scan Receipt</a> <button class="btn btn-red" onclick="showAdd()">+ Add Expense</button></div></div>
 <div id="msg" class="msg">Loading...</div>
 <div class="card">
 <table><thead><tr><th>Date</th><th>Supplier</th><th>Description</th><th>Amount</th><th>VAT</th></tr></thead><tbody id="tbl"></tbody></table>
@@ -601,6 +665,84 @@ supplier:document.getElementById("fsupplier").value,description:document.getElem
 }})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.success){{document.getElementById("modal").classList.remove("show");load();}}}});
 }}
 load();
+</script>
+</body></html>'''
+
+@app.route("/<bid>/expenses/scan")
+def scan_receipt(bid):
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Scan Receipt</title>{CSS}</head><body>
+{nav(bid,"expenses")}
+<div class="box">
+<a href="/{bid}/expenses" class="btn" style="background:#333;margin-bottom:20px">Back to Expenses</a>
+<h1 style="margin-bottom:20px">Scan Receipt</h1>
+<div class="card">
+<h3 style="margin-bottom:15px">Take Photo or Upload</h3>
+<div style="margin-bottom:15px">
+<button class="btn" onclick="startCamera()">Open Camera</button>
+<span style="margin:0 10px;color:#888">or</span>
+<input type="file" id="fileInput" accept="image/*" onchange="handleFile(this)" style="display:inline-block;width:auto">
+</div>
+<video id="video" autoplay playsinline style="display:none;width:100%;max-width:400px;border-radius:8px;background:#000"></video>
+<button id="captureBtn" class="btn btn-green" style="display:none;margin-top:10px" onclick="capture()">Take Photo</button>
+<canvas id="canvas" style="display:none"></canvas>
+<img id="preview" style="display:none;max-width:100%;border-radius:8px;margin-top:10px">
+<div id="processing" style="display:none;margin-top:15px" class="msg">Processing image...</div>
+</div>
+<div class="card" id="resultCard" style="display:none">
+<h3 style="margin-bottom:15px">Enter Details</h3>
+<input type="text" id="rSupplier" placeholder="Supplier">
+<input type="text" id="rDesc" placeholder="Description">
+<input type="number" id="rAmount" placeholder="Total Amount" step="0.01">
+<label style="display:block;margin:10px 0"><input type="checkbox" id="rVat" checked> Includes 15% VAT</label>
+<button class="btn btn-green" onclick="saveExpense()">Save Expense</button>
+</div>
+</div>
+<script>
+var BID="{bid}",stream=null;
+function startCamera(){{
+navigator.mediaDevices.getUserMedia({{video:{{facingMode:"environment"}}}}).then(function(s){{
+stream=s;
+document.getElementById("video").srcObject=s;
+document.getElementById("video").style.display="block";
+document.getElementById("captureBtn").style.display="inline-block";
+}}).catch(function(e){{alert("Camera error: "+e.message);document.getElementById("resultCard").style.display="block";}});
+}}
+function capture(){{
+var video=document.getElementById("video");
+var canvas=document.getElementById("canvas");
+canvas.width=video.videoWidth;
+canvas.height=video.videoHeight;
+canvas.getContext("2d").drawImage(video,0,0);
+if(stream){{stream.getTracks().forEach(function(t){{t.stop();}});}}
+document.getElementById("video").style.display="none";
+document.getElementById("captureBtn").style.display="none";
+document.getElementById("preview").src=canvas.toDataURL("image/jpeg",0.8);
+document.getElementById("preview").style.display="block";
+document.getElementById("resultCard").style.display="block";
+}}
+function handleFile(input){{
+if(input.files&&input.files[0]){{
+var reader=new FileReader();
+reader.onload=function(e){{
+document.getElementById("preview").src=e.target.result;
+document.getElementById("preview").style.display="block";
+document.getElementById("resultCard").style.display="block";
+}};
+reader.readAsDataURL(input.files[0]);
+}}
+}}
+function saveExpense(){{
+var amt=parseFloat(document.getElementById("rAmount").value)||0;
+var hasVat=document.getElementById("rVat").checked;
+var vat=hasVat?amt*15/115:0;
+if(!document.getElementById("rSupplier").value)return alert("Enter supplier name");
+if(!amt)return alert("Enter amount");
+fetch("/api/"+BID+"/expenses",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{
+supplier:document.getElementById("rSupplier").value,description:document.getElementById("rDesc").value||"Receipt",amount:amt,vat:vat
+}})}}).then(function(r){{return r.json()}}).then(function(d){{
+if(d.success){{alert("Expense saved!");location.href="/"+BID+"/expenses";}}else alert("Error saving");
+}});
+}}
 </script>
 </body></html>'''
 
