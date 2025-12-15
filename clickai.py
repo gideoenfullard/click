@@ -25,7 +25,7 @@ app = Flask(__name__)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://gvmonstssdxncfkcjukr.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "sb_secret_OVe46_dst6_bDhSlkHF6tw_Qr6sgAoK")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2bW9uc3Rzc2R4bmNma2NqdWtyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5NDI5OTQsImV4cCI6MjA4MDUxODk5NH0.v03qjD4I0eZY5MKfkH3ONFimrHnZsy25wZfVk98UuJQ")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "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")
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -603,6 +603,138 @@ def setup_fulltech():
 <a href="/fulltech" class="btn btn-primary" style="font-size:18px;padding:15px 40px">🚀 Go to Fulltech</a>
 <br><br>
 <a href="/fulltech/import" class="btn" style="margin-top:20px">📥 Import Data</a>
+</div></body></html>'''
+
+@app.route("/debug/all")
+def debug_all():
+    """Debug: Show all businesses and stock counts"""
+    # Get all businesses
+    businesses = sb.table("businesses").select("*").execute()["data"] or []
+    
+    # Get stock counts per business_id
+    all_stock = sb.table("stock").select("business_id").execute()["data"] or []
+    stock_counts = {}
+    for s in all_stock:
+        bid = s.get("business_id", "unknown")
+        stock_counts[bid] = stock_counts.get(bid, 0) + 1
+    
+    # Get customer counts per business_id
+    all_customers = sb.table("customers").select("business_id").execute()["data"] or []
+    cust_counts = {}
+    for c in all_customers:
+        bid = c.get("business_id", "unknown")
+        cust_counts[bid] = cust_counts.get(bid, 0) + 1
+    
+    # Get supplier counts per business_id
+    all_suppliers = sb.table("suppliers").select("business_id").execute()["data"] or []
+    supp_counts = {}
+    for s in all_suppliers:
+        bid = s.get("business_id", "unknown")
+        supp_counts[bid] = supp_counts.get(bid, 0) + 1
+    
+    html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Debug</title>{CSS}</head><body>
+<div class="container">
+<h1>🔍 Debug - All Data</h1>
+
+<div class="card">
+<div class="card-title">📋 Businesses in Database</div>
+<table class="table">
+<tr><th>ID</th><th>Name</th><th>Stock</th><th>Customers</th><th>Suppliers</th></tr>'''
+    
+    for b in businesses:
+        bid = b.get("id", "")
+        name = b.get("name", "")
+        html += f'<tr><td><code>{bid}</code></td><td>{name}</td><td>{stock_counts.get(bid, 0)}</td><td>{cust_counts.get(bid, 0)}</td><td>{supp_counts.get(bid, 0)}</td></tr>'
+    
+    html += '</table></div>'
+    
+    # Show orphan data (stock with business_id not in businesses table)
+    biz_ids = [b.get("id") for b in businesses]
+    orphan_stock = {k: v for k, v in stock_counts.items() if k not in biz_ids}
+    orphan_cust = {k: v for k, v in cust_counts.items() if k not in biz_ids}
+    orphan_supp = {k: v for k, v in supp_counts.items() if k not in biz_ids}
+    
+    if orphan_stock or orphan_cust or orphan_supp:
+        html += '''<div class="card" style="border-color:var(--red)">
+<div class="card-title" style="color:var(--red)">⚠️ Orphan Data (no matching business)</div>
+<table class="table">
+<tr><th>Business ID</th><th>Stock</th><th>Customers</th><th>Suppliers</th></tr>'''
+        all_orphan_ids = set(orphan_stock.keys()) | set(orphan_cust.keys()) | set(orphan_supp.keys())
+        for bid in all_orphan_ids:
+            html += f'<tr><td><code>{bid}</code></td><td>{orphan_stock.get(bid, 0)}</td><td>{orphan_cust.get(bid, 0)}</td><td>{orphan_supp.get(bid, 0)}</td></tr>'
+        html += '</table></div>'
+    
+    html += '''
+<div class="card">
+<div class="card-title">🛠️ Fix Actions</div>
+<a href="/setup/fulltech" class="btn btn-primary">Create Fulltech Business</a>
+<a href="/debug/migrate-to-fulltech" class="btn btn-green" style="margin-left:10px">Migrate All Data to Fulltech</a>
+</div>
+</div></body></html>'''
+    
+    return html
+
+@app.route("/debug/migrate-to-fulltech")
+def migrate_to_fulltech():
+    """Migrate ALL stock, customers, suppliers to fulltech business_id"""
+    bid = "fulltech"
+    
+    # First ensure fulltech business exists
+    result = sb.table("businesses").select("*").eq("id", bid).execute()
+    if not result["data"]:
+        new_biz = {"id": bid, "name": "Fulltech", "settings": json.dumps({"company_name": "Fulltech", "vat_rate": 15, "currency": "R"})}
+        sb.table("businesses").insert(new_biz)
+    
+    # Get all stock and update business_id
+    # Note: Supabase doesn't support UPDATE all easily, so we do it differently
+    # We'll update where business_id != 'fulltech'
+    
+    # Count before
+    stock_before = len(sb.table("stock").select("id").eq("business_id", bid).execute()["data"] or [])
+    cust_before = len(sb.table("customers").select("id").eq("business_id", bid).execute()["data"] or [])
+    supp_before = len(sb.table("suppliers").select("id").eq("business_id", bid).execute()["data"] or [])
+    
+    # Get all unique business_ids that aren't fulltech
+    all_stock = sb.table("stock").select("id,business_id").execute()["data"] or []
+    all_cust = sb.table("customers").select("id,business_id").execute()["data"] or []
+    all_supp = sb.table("suppliers").select("id,business_id").execute()["data"] or []
+    
+    # Update each record
+    stock_updated = 0
+    for s in all_stock:
+        if s.get("business_id") != bid:
+            sb.table("stock").eq("id", s["id"]).update({"business_id": bid})
+            stock_updated += 1
+    
+    cust_updated = 0
+    for c in all_cust:
+        if c.get("business_id") != bid:
+            sb.table("customers").eq("id", c["id"]).update({"business_id": bid})
+            cust_updated += 1
+    
+    supp_updated = 0
+    for s in all_supp:
+        if s.get("business_id") != bid:
+            sb.table("suppliers").eq("id", s["id"]).update({"business_id": bid})
+            supp_updated += 1
+    
+    # Count after
+    stock_after = len(sb.table("stock").select("id").eq("business_id", bid).execute()["data"] or [])
+    cust_after = len(sb.table("customers").select("id").eq("business_id", bid).execute()["data"] or [])
+    supp_after = len(sb.table("suppliers").select("id").eq("business_id", bid).execute()["data"] or [])
+    
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Migration Complete</title>{CSS}</head><body>
+<div class="container" style="text-align:center;padding-top:50px">
+<h1 style="color:var(--green)">✅ Migration Complete!</h1>
+<div class="card" style="max-width:500px;margin:30px auto">
+<h3>Migrated to Fulltech:</h3>
+<p>📦 Stock: {stock_updated} records migrated (now {stock_after} total)</p>
+<p>👥 Customers: {cust_updated} records migrated (now {cust_after} total)</p>
+<p>🚚 Suppliers: {supp_updated} records migrated (now {supp_after} total)</p>
+</div>
+<a href="/fulltech" class="btn btn-primary" style="font-size:18px;padding:15px 40px">🚀 Go to Fulltech</a>
+<br><br>
+<a href="/fulltech/pos" class="btn btn-green" style="margin-top:20px">💰 Go to POS</a>
 </div></body></html>'''
 
 # ═══════════════════════════════════════════════════════════════════════════════
