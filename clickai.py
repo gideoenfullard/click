@@ -924,60 +924,42 @@ def pos_page(bid):
     if isinstance(settings, str):
         try: settings = json.loads(settings)
         except: settings = {}
-    name = settings.get("company_name") or business.get("name", "Business")
+    name = js_safe(settings.get("company_name") or business.get("name", "Business"))
     vat_rate = settings.get("vat_rate", 15)
     currency = settings.get("currency", "R")
     
-    # Get stock and customers
-    stock = sb.table("stock").select("*").eq("business_id", bid).limit(10000).execute()["data"] or []
-    customers = sb.table("customers").select("*").eq("business_id", bid).limit(5000).execute()["data"] or []
-    
-    # Debug: print stock count
-    print(f"POS Loading - Business: {bid}, Stock items: {len(stock)}, Customers: {len(customers)}")
-    
-    # Get unique categories and build BIG buttons
-    categories = sorted(list(set([s.get("category", "General") for s in stock])))
-    cat_icons={"Bearings":"⚙️","Seals":"🔘","Circlips":"⭕","Bolts":"🔩","Cap Screws":"🔩","Nuts":"🔩","Washers":"⚙️","Imp Bolts":"🔩","Shoes":"👞","PPE":"🦺","Welding":"🔥","Shirts":"👕","Hardware":"🔧","General":"📦"}
-    cat_btns = '<div class="cat-btn-big active" onclick="filterCat(\'All\')">🏪<br>All</div>'
-    for cat in categories:
-        safe_cat = js_safe(cat)
-        icon = cat_icons.get(cat, "📦")
-        cat_btns += f'<div class="cat-btn-big" onclick="filterCat(\'{safe_cat}\')">{icon}<br>{safe_cat}</div>'
-    
-    cust_options = '<option value="">Walk-in Customer</option>'
-    for c in customers:
-        safe_name = js_safe(c.get("name", ""))
-        safe_code = js_safe(c.get("code", ""))
-        cust_options += f'<option value="{c.get("id", "")}" data-name="{safe_name}">{safe_name} ({safe_code})</option>'
-    
+    # Don't load any data here - let JavaScript load it via API
     return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>POS - {name}</title>{CSS}
 <style>
 .cat-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:10px;margin-bottom:20px}}
 .cat-btn-big{{background:rgba(59,130,246,0.1);border:2px solid rgba(59,130,246,0.3);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;font-size:11px;font-weight:600;transition:all 0.2s;line-height:1.3}}
 .cat-btn-big:hover,.cat-btn-big.active{{background:var(--blue);border-color:var(--blue);color:white;transform:scale(1.05);box-shadow:0 0 20px rgba(59,130,246,0.4)}}
 .debug-info{{background:rgba(255,193,7,0.2);border:1px solid #ffc107;padding:10px;border-radius:8px;margin-bottom:15px;font-size:12px}}
+.stock-block{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;cursor:pointer;transition:all 0.2s}}
+.stock-block:hover{{border-color:var(--blue);transform:translateY(-2px)}}
+.stock-name{{font-weight:600;font-size:13px;margin-bottom:5px}}
+.stock-price{{color:var(--green);font-weight:600}}
+.stock-qty{{font-size:11px;color:var(--muted)}}
+.stock-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;max-height:500px;overflow-y:auto}}
 </style></head><body>
 {get_header(bid, "pos")}
 <div class="container">
-    <div class="debug-info">📊 Debug: {len(stock)} stock items loaded, {len(customers)} customers | Business ID: {bid}</div>
+    <div class="debug-info" id="debug">📊 Loading...</div>
     <div class="pos-grid">
-        <!-- Stock Selection -->
         <div>
             <div class="card">
-                <div class="cat-grid">{cat_btns}</div>
+                <div class="cat-grid" id="catGrid"><div class="cat-btn-big active" onclick="filterCat('All')">🏪<br>All</div></div>
                 <div class="search-box"><span class="search-icon">🔍</span><input type="text" class="search-input" id="search" placeholder="Search stock..." oninput="filterStock()"></div>
-                <div class="stock-grid" id="stockGrid"></div>
+                <div class="stock-grid" id="stockGrid"><div style="text-align:center;padding:40px;color:var(--muted)">Loading stock...</div></div>
             </div>
         </div>
-        
-        <!-- Cart -->
         <div class="cart">
             <div class="cart-header">
                 <div class="card-title" style="margin:0">🛒 Cart</div>
                 <button class="btn btn-sm btn-outline" onclick="clearCart()">Clear</button>
             </div>
             <div class="form-group" style="margin-bottom:15px">
-                <select class="input" id="custSelect">{cust_options}</select>
+                <select class="input" id="custSelect"><option value="">Walk-in Customer</option></select>
             </div>
             <div class="cart-items" id="cartItems">
                 <div style="text-align:center;color:var(--muted);padding:40px">Tap items to add to cart</div>
@@ -1001,22 +983,37 @@ var cart=[];
 var currentCat='All';
 var currency='{currency}';
 var vatRate={vat_rate};
+var bid='{bid}';
 
-// Load stock via API to avoid JSON embedding issues
-fetch('/api/{bid}/stock/list')
-.then(r=>r.json())
-.then(data=>{{
-    stock=data;
-    document.querySelector('.debug-info').innerHTML='📊 Debug: '+stock.length+' stock items loaded via API | Business ID: {bid}';
+// Load everything via API
+Promise.all([
+    fetch('/api/'+bid+'/stock/list').then(r=>r.json()),
+    fetch('/api/'+bid+'/customers/list').then(r=>r.json())
+]).then(function(results){{
+    stock=results[0];
+    var customers=results[1];
+    
+    // Build category buttons
+    var cats={{}};
+    stock.forEach(function(s){{cats[s.cat]=true}});
+    var catHtml='<div class="cat-btn-big active" onclick="filterCat(\'All\')">🏪<br>All</div>';
+    Object.keys(cats).sort().forEach(function(c){{
+        catHtml+='<div class="cat-btn-big" onclick="filterCat(\''+c+'\')">📦<br>'+c+'</div>';
+    }});
+    document.getElementById('catGrid').innerHTML=catHtml;
+    
+    // Build customer dropdown
+    var custHtml='<option value="">Walk-in Customer</option>';
+    customers.forEach(function(c){{
+        custHtml+='<option value="'+c.id+'" data-name="'+c.name+'">'+c.name+' ('+c.code+')</option>';
+    }});
+    document.getElementById('custSelect').innerHTML=custHtml;
+    
+    document.getElementById('debug').innerHTML='📊 '+stock.length+' stock, '+customers.length+' customers | Business: '+bid;
     renderStock();
-}})
-.catch(e=>{{
-    document.querySelector('.debug-info').innerHTML='❌ Error loading stock: '+e;
+}}).catch(function(e){{
+    document.getElementById('debug').innerHTML='❌ Error: '+e;
 }});
-var cart=[];
-var currentCat='All';
-var currency='{currency}';
-var vatRate={vat_rate};
 
 function renderStock(){{
     var search=document.getElementById('search').value.toLowerCase();
@@ -2089,27 +2086,32 @@ def api_del_biz(bid):
 @app.route("/api/<bid>/stock/list",methods=["GET"])
 def api_stock_list(bid):
     """Return stock as JSON for POS - sanitized for JavaScript"""
-    import re
-    def clean(s):
-        if s is None: return ""
-        s = str(s)
-        s = re.sub(r'["\'\\\n\r\t]', ' ', s)
-        s = re.sub(r'[^\x20-\x7E]', '', s)
-        return s.strip()
-    
     stock = sb.table("stock").select("*").eq("business_id", bid).limit(10000).execute()["data"] or []
     safe_stock = []
     for s in stock:
         if int(s.get("qty", 0) or 0) > 0:  # Only items with stock
             safe_stock.append({
                 "id": str(s.get("id", "")),
-                "code": clean(s.get("code", "")),
-                "desc": clean(s.get("description", "")),
-                "cat": clean(s.get("category", "")) or "General",
+                "code": js_safe(s.get("code", "")),
+                "desc": js_safe(s.get("description", "")),
+                "cat": js_safe(s.get("category", "")) or "General",
                 "price": float(s.get("price", 0) or 0),
                 "qty": int(s.get("qty", 0) or 0)
             })
     return jsonify(safe_stock)
+
+@app.route("/api/<bid>/customers/list",methods=["GET"])
+def api_customers_list(bid):
+    """Return customers as JSON - sanitized for JavaScript"""
+    customers = sb.table("customers").select("*").eq("business_id", bid).limit(5000).execute()["data"] or []
+    safe_customers = []
+    for c in customers:
+        safe_customers.append({
+            "id": str(c.get("id", "")),
+            "code": js_safe(c.get("code", "")),
+            "name": js_safe(c.get("name", ""))
+        })
+    return jsonify(safe_customers)
 
 @app.route("/api/<bid>/stock",methods=["POST"])
 def api_stock(bid):
