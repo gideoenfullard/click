@@ -825,9 +825,9 @@ def dashboard(bid):
     mobile_check = f'<script>if(/iPhone|iPad|Android/i.test(navigator.userAgent)&&!sessionStorage.getItem("desktop"))location.href="/m/{bid}"</script>'
     
     # Get data
-    stock = sb.table("stock").select("*").eq("business_id", bid).execute()["data"] or []
-    customers = sb.table("customers").select("*").eq("business_id", bid).execute()["data"] or []
-    suppliers = sb.table("suppliers").select("*").eq("business_id", bid).execute()["data"] or []
+    stock = sb.table("stock").select("*").eq("business_id", bid).limit(10000).execute()["data"] or []
+    customers = sb.table("customers").select("*").eq("business_id", bid).limit(5000).execute()["data"] or []
+    suppliers = sb.table("suppliers").select("*").eq("business_id", bid).limit(2000).execute()["data"] or []
     ledger = sb.table("ledger").select("*").eq("business_id", bid).order("created_at", desc=True).limit(10).execute()["data"] or []
     
     # Calculate stats
@@ -917,8 +917,8 @@ def pos_page(bid):
     currency = settings.get("currency", "R")
     
     # Get stock and customers
-    stock = sb.table("stock").select("*").eq("business_id", bid).execute()["data"] or []
-    customers = sb.table("customers").select("*").eq("business_id", bid).execute()["data"] or []
+    stock = sb.table("stock").select("*").eq("business_id", bid).limit(10000).execute()["data"] or []
+    customers = sb.table("customers").select("*").eq("business_id", bid).limit(5000).execute()["data"] or []
     
     # Debug: print stock count
     print(f"POS Loading - Business: {bid}, Stock items: {len(stock)}, Customers: {len(customers)}")
