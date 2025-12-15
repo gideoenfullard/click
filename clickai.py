@@ -171,8 +171,7 @@ def pos(bid):
 <div id="msg" class="msg">Loading...</div>
 <div style="display:grid;grid-template-columns:1fr 350px;gap:20px">
 <div class="card">
-<input type="text" id="q" placeholder="Search products..." onkeyup="render()">
-<div id="cats" style="margin-bottom:15px"></div>
+<input type="text" id="q" placeholder="Search products... (showing first 100)" onkeyup="render()">
 <div class="grid" id="items"></div>
 </div>
 <div class="cart">
@@ -192,38 +191,35 @@ def pos(bid):
 </div>
 </div>
 <script>
-var stock=[],cart=[],customers=[],curCat="All",BID="{bid}";
+var stock=[],cart=[],customers=[],BID="{bid}";
 function load(){{
+document.getElementById("msg").innerHTML="Loading stock...";
 fetch("/api/"+BID+"/stock").then(function(r){{return r.json()}}).then(function(d){{
 stock=d||[];
-var cats={{}};
-for(var i=0;i<stock.length;i++)if(stock[i].qty>0)cats[stock[i].cat]=1;
-var h="<button class='btn btn-sm' onclick='filterCat(\"All\")'>All</button> ";
-for(var c in cats)h+="<button class='btn btn-sm' style='background:#333' onclick='filterCat(\""+c+"\")'>"+c+"</button> ";
-document.getElementById("cats").innerHTML=h;
+document.getElementById("msg").innerHTML="Loading customers...";
 fetch("/api/"+BID+"/customers").then(function(r){{return r.json()}}).then(function(c){{
 customers=c||[];
 var sel="<option value=''>Walk-in Customer</option>";
 for(var i=0;i<customers.length;i++)sel+="<option value='"+customers[i].id+"'>"+customers[i].name+"</option>";
 document.getElementById("custSel").innerHTML=sel;
-document.getElementById("msg").innerHTML="Loaded "+stock.length+" items";
+document.getElementById("msg").innerHTML="Loaded "+stock.length+" items, "+customers.length+" customers";
 document.getElementById("msg").className="msg msg-ok";
 render();
-}});
-}});
+}}).catch(function(e){{document.getElementById("msg").innerHTML="Error loading customers: "+e;document.getElementById("msg").className="msg msg-err";}});
+}}).catch(function(e){{document.getElementById("msg").innerHTML="Error loading stock: "+e;document.getElementById("msg").className="msg msg-err";}});
 }}
-function filterCat(c){{curCat=c;render();}}
 function render(){{
 var q=document.getElementById("q").value.toLowerCase();
-var h="";
+var h="";var count=0;
 for(var i=0;i<stock.length;i++){{
 var s=stock[i];
 if(s.qty<=0)continue;
-if(curCat!="All"&&s.cat!=curCat)continue;
 if(q&&s.desc.toLowerCase().indexOf(q)<0&&s.code.toLowerCase().indexOf(q)<0)continue;
 h+="<div class='item' onclick='add("+i+")'><div style='font-weight:600;font-size:12px'>"+s.desc+"</div><div style='color:#10b981'>R "+s.price.toFixed(2)+"</div><div style='color:#888;font-size:11px'>"+s.qty+" in stock</div></div>";
+count++;
+if(count>=100)break;
 }}
-document.getElementById("items").innerHTML=h||"<div style='padding:40px;text-align:center;color:#888'>No items</div>";
+document.getElementById("items").innerHTML=h||"<div style='padding:40px;text-align:center;color:#888'>No items found</div>";
 }}
 function add(i){{
 var s=stock[i];
