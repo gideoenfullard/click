@@ -254,10 +254,19 @@ function pay(method){{
 if(cart.length==0)return alert("Cart empty");
 var tot=0;for(var i=0;i<cart.length;i++)tot+=cart[i].price*cart[i].qty;
 var custId=document.getElementById("custSel").value;
-fetch("/api/"+BID+"/sale",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{items:cart,total:tot,method:method,customer_id:custId}})}})
-.then(function(r){{return r.json()}}).then(function(d){{
+var body={{}};
+body.items=cart;
+body.total=tot;
+body.method=method;
+body.customer_id=custId;
+var opts={{}};
+opts.method="POST";
+opts.headers={{}};
+opts.headers["Content-Type"]="application/json";
+opts.body=JSON.stringify(body);
+fetch("/api/"+BID+"/sale",opts).then(function(r){{return r.json();}}).then(function(d){{
 if(d.success){{alert("Sale complete! R "+tot.toFixed(2));cart=[];renderCart();load();}}
-else alert("Error");
+else{{alert("Error");}}
 }});
 }}
 load();
@@ -332,8 +341,23 @@ document.getElementById("eid").value=s.id;document.getElementById("fcode").value
 document.getElementById("modal").classList.add("show");
 }}
 function save(){{
-var data={{id:document.getElementById("eid").value||null,code:document.getElementById("fcode").value,description:document.getElementById("fdesc").value,category:document.getElementById("fcat").value||"General",qty:parseInt(document.getElementById("fqty").value)||0,cost:parseFloat(document.getElementById("fcost").value)||0,price:parseFloat(document.getElementById("fprice").value)||0}};
-fetch("/api/"+BID+"/stock",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify(data)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.success){{document.getElementById("modal").classList.remove("show");load();}}else alert("Error");}});
+var data={{}};
+data.id=document.getElementById("eid").value||null;
+data.code=document.getElementById("fcode").value;
+data.description=document.getElementById("fdesc").value;
+data.category=document.getElementById("fcat").value||"General";
+data.qty=parseInt(document.getElementById("fqty").value)||0;
+data.cost=parseFloat(document.getElementById("fcost").value)||0;
+data.price=parseFloat(document.getElementById("fprice").value)||0;
+var opts={{}};
+opts.method="POST";
+opts.headers={{}};
+opts.headers["Content-Type"]="application/json";
+opts.body=JSON.stringify(data);
+fetch("/api/"+BID+"/stock",opts).then(function(r){{return r.json();}}).then(function(d){{
+if(d.success){{document.getElementById("modal").classList.remove("show");load();}}
+else{{alert("Error");}}
+}});
 }}
 load();
 </script>
@@ -683,10 +707,21 @@ var sel=document.getElementById("custSel");
 var custName=sel.options[sel.selectedIndex]?sel.options[sel.selectedIndex].text:"Walk-in";
 if(lines.length==0)return alert("Add at least one item");
 var tot=0;for(var i=0;i<lines.length;i++)tot+=lines[i].price*lines[i].qty;
-fetch("/api/"+BID+"/"+docType,{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{
-number:document.getElementById("docNum").value,date:document.getElementById("docDate").value,customer_id:sel.value,customer_name:custName,items:lines,total:tot
-}})}}).then(function(r){{return r.json()}}).then(function(d){{
-if(d.success){{alert("Saved!");location.href="/"+BID+"/"+docType;}}else alert("Error");
+var body={{}};
+body.number=document.getElementById("docNum").value;
+body.date=document.getElementById("docDate").value;
+body.customer_id=sel.value;
+body.customer_name=custName;
+body.items=lines;
+body.total=tot;
+var opts={{}};
+opts.method="POST";
+opts.headers={{}};
+opts.headers["Content-Type"]="application/json";
+opts.body=JSON.stringify(body);
+fetch("/api/"+BID+"/"+docType,opts).then(function(r){{return r.json();}}).then(function(d){{
+if(d.success){{alert("Saved!");location.href="/"+BID+"/"+docType;}}
+else{{alert("Error");}}
 }});
 }}
 </script>
@@ -741,9 +776,19 @@ function save(){{
 var amt=parseFloat(document.getElementById("famount").value)||0;
 var hasVat=document.getElementById("fvat").checked;
 var vat=hasVat?amt*15/115:0;
-fetch("/api/"+BID+"/expenses",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{
-supplier:document.getElementById("fsupplier").value,description:document.getElementById("fdesc").value,amount:amt,vat:vat
-}})}}).then(function(r){{return r.json()}}).then(function(d){{if(d.success){{document.getElementById("modal").classList.remove("show");load();}}}});
+var body={{}};
+body.supplier=document.getElementById("fsupplier").value;
+body.description=document.getElementById("fdesc").value;
+body.amount=amt;
+body.vat=vat;
+var opts={{}};
+opts.method="POST";
+opts.headers={{}};
+opts.headers["Content-Type"]="application/json";
+opts.body=JSON.stringify(body);
+fetch("/api/"+BID+"/expenses",opts).then(function(r){{return r.json();}}).then(function(d){{
+if(d.success){{document.getElementById("modal").classList.remove("show");load();}}
+}});
 }}
 load();
 </script>
@@ -820,8 +865,14 @@ reader.readAsDataURL(input.files[0]);
 function processWithAI(dataUrl){{
 document.getElementById("processing").style.display="block";
 document.getElementById("resultCard").style.display="none";
-fetch("/api/"+BID+"/scan-receipt",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{image:dataUrl}})}})
-.then(function(r){{return r.json()}})
+var body={{}};
+body.image=dataUrl;
+var opts={{}};
+opts.method="POST";
+opts.headers={{}};
+opts.headers["Content-Type"]="application/json";
+opts.body=JSON.stringify(body);
+fetch("/api/"+BID+"/scan-receipt",opts).then(function(r){{return r.json();}})
 .then(function(d){{
 document.getElementById("processing").style.display="none";
 document.getElementById("resultCard").style.display="block";
@@ -841,10 +892,19 @@ var hasVat=document.getElementById("rVat").checked;
 var vat=hasVat?amt*15/115:0;
 if(!document.getElementById("rSupplier").value)return alert("Enter supplier name");
 if(!amt)return alert("Enter amount");
-fetch("/api/"+BID+"/expenses",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{
-supplier:document.getElementById("rSupplier").value,description:document.getElementById("rDesc").value||"Receipt",amount:amt,vat:vat
-}})}}).then(function(r){{return r.json()}}).then(function(d){{
-if(d.success){{alert("Expense saved!");location.href="/"+BID+"/expenses";}}else alert("Error saving");
+var body={{}};
+body.supplier=document.getElementById("rSupplier").value;
+body.description=document.getElementById("rDesc").value||"Receipt";
+body.amount=amt;
+body.vat=vat;
+var opts={{}};
+opts.method="POST";
+opts.headers={{}};
+opts.headers["Content-Type"]="application/json";
+opts.body=JSON.stringify(body);
+fetch("/api/"+BID+"/expenses",opts).then(function(r){{return r.json();}}).then(function(d){{
+if(d.success){{alert("Expense saved!");location.href="/"+BID+"/expenses";}}
+else{{alert("Error saving");}}
 }});
 }}
 </script>
@@ -1093,8 +1153,12 @@ r.onload=function(e){{
 try{{
 var d=JSON.parse(e.target.result);
 document.getElementById("msg").innerHTML="<div class='msg'>Importing...</div>";
-fetch("/api/"+BID+"/import",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify(d)}})
-.then(function(x){{return x.json()}})
+var opts={{}};
+opts.method="POST";
+opts.headers={{}};
+opts.headers["Content-Type"]="application/json";
+opts.body=JSON.stringify(d);
+fetch("/api/"+BID+"/import",opts).then(function(x){{return x.json();}})
 .then(function(res){{
 if(res.success)document.getElementById("msg").innerHTML="<div class='msg msg-ok'>Imported "+res.stock+" stock, "+res.customers+" customers, "+res.suppliers+" suppliers</div>";
 else document.getElementById("msg").innerHTML="<div class='msg msg-err'>Error: "+res.error+"</div>";
@@ -1104,8 +1168,13 @@ else document.getElementById("msg").innerHTML="<div class='msg msg-err'>Error: "
 r.readAsText(f);
 }}
 function del(t){{
-if(!confirm("Delete ALL "+t+"? This cannot be undone!"))return;
-fetch("/api/"+BID+"/delete/"+t,{{method:"POST"}}).then(function(x){{return x.json()}}).then(function(d){{alert(d.success?"Deleted!":"Error");location.reload();}});
+if(!confirm("Delete ALL "+t+"?"))return;
+var opts={{}};
+opts.method="POST";
+fetch("/api/"+BID+"/delete/"+t,opts).then(function(x){{return x.json();}}).then(function(d){{
+alert(d.success?"Deleted!":"Error");
+location.reload();
+}});
 }}
 </script>
 </body></html>'''
