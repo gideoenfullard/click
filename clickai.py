@@ -356,7 +356,8 @@ def customers_page(bid):
 <script>
 var items=[],BID="{bid}";
 function load(){{
-fetch("/api/"+BID+"/customers").then(function(r){{return r.json()}}).then(function(d){{
+var url="/api/"+BID+"/customers";
+fetch(url).then(function(r){{return r.json();}}).then(function(d){{
 items=d||[];
 document.getElementById("msg").innerHTML="Loaded "+items.length+" customers";
 document.getElementById("msg").className="msg msg-ok";
@@ -371,19 +372,35 @@ var q=document.getElementById("q").value.toLowerCase();
 var h="";
 for(var i=0;i<items.length;i++){{
 var c=items[i];
-var name=c.name||"";
-var code=c.code||"";
-if(q&&name.toLowerCase().indexOf(q)<0&&code.toLowerCase().indexOf(q)<0)continue;
-var balStyle=c.balance>0?"color:#ef4444":"";
-h+="<tr style='cursor:pointer' onclick='viewHist(\""+c.id+"\")'><td>"+code+"</td><td>"+name+"</td><td>"+(c.phone||"-")+"</td><td>"+(c.email||"-")+"</td><td style='"+balStyle+"'>R "+(c.balance||0).toFixed(2)+"</td><td><button class='btn btn-sm' onclick='event.stopPropagation();edit("+i+")'>Edit</button></td></tr>";
+var nm=c.name||"";
+var cd=c.code||"";
+if(q&&nm.toLowerCase().indexOf(q)<0&&cd.toLowerCase().indexOf(q)<0)continue;
+var bal=c.balance||0;
+var sty=bal>0?"color:#ef4444":"";
+h+="<tr style=cursor:pointer onclick=viewHist(this) data-id="+c.id+"><td>"+cd+"</td><td>"+nm+"</td><td>"+(c.phone||"-")+"</td><td>"+(c.email||"-")+"</td><td style="+sty+">R "+bal.toFixed(2)+"</td><td><button class=btn onclick=doEdit(event,"+i+")>Edit</button></td></tr>";
 }}
-document.getElementById("tbl").innerHTML=h||"<tr><td colspan='6' style='text-align:center;padding:40px;color:#888'>No customers</td></tr>";
+document.getElementById("tbl").innerHTML=h||"<tr><td colspan=6>No customers</td></tr>";
 }}
-function showAdd(){{document.getElementById("mtitle").innerHTML="Add Customer";document.getElementById("eid").value="";document.getElementById("fcode").value="";document.getElementById("fname").value="";document.getElementById("fphone").value="";document.getElementById("femail").value="";document.getElementById("modal").classList.add("show");}}
-function edit(i){{var c=items[i];document.getElementById("mtitle").innerHTML="Edit Customer";document.getElementById("eid").value=c.id;document.getElementById("fcode").value=c.code||"";document.getElementById("fname").value=c.name||"";document.getElementById("fphone").value=c.phone||"";document.getElementById("femail").value=c.email||"";document.getElementById("modal").classList.add("show");}}
-function save(){{var data={{id:document.getElementById("eid").value||null,code:document.getElementById("fcode").value,name:document.getElementById("fname").value,phone:document.getElementById("fphone").value,email:document.getElementById("femail").value}};
-fetch("/api/"+BID+"/customers",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify(data)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.success){{document.getElementById("modal").classList.remove("show");load();}}}});}}
-function viewHist(id){{window.location.href="/"+BID+"/customers/"+id+"/history";}}
+function viewHist(el){{window.location.href="/"+BID+"/customers/"+el.dataset.id+"/history";}}
+function doEdit(ev,i){{ev.stopPropagation();edit(i);}}
+function showAdd(){{document.getElementById("mtitle").innerHTML="Add";document.getElementById("eid").value="";document.getElementById("fcode").value="";document.getElementById("fname").value="";document.getElementById("fphone").value="";document.getElementById("femail").value="";document.getElementById("modal").classList.add("show");}}
+function edit(i){{var c=items[i];document.getElementById("mtitle").innerHTML="Edit";document.getElementById("eid").value=c.id;document.getElementById("fcode").value=c.code||"";document.getElementById("fname").value=c.name||"";document.getElementById("fphone").value=c.phone||"";document.getElementById("femail").value=c.email||"";document.getElementById("modal").classList.add("show");}}
+function save(){{
+var obj={{}};
+obj.id=document.getElementById("eid").value||null;
+obj.code=document.getElementById("fcode").value;
+obj.name=document.getElementById("fname").value;
+obj.phone=document.getElementById("fphone").value;
+obj.email=document.getElementById("femail").value;
+var opts={{}};
+opts.method="POST";
+opts.headers={{}};
+opts.headers["Content-Type"]="application/json";
+opts.body=JSON.stringify(obj);
+fetch("/api/"+BID+"/customers",opts).then(function(r){{return r.json();}}).then(function(d){{
+if(d.success){{document.getElementById("modal").classList.remove("show");load();}}
+}});
+}}
 load();
 </script>
 </body></html>'''
@@ -449,7 +466,8 @@ def suppliers_page(bid):
 <script>
 var items=[],BID="{bid}";
 function load(){{
-fetch("/api/"+BID+"/suppliers").then(function(r){{return r.json()}}).then(function(d){{
+var url="/api/"+BID+"/suppliers";
+fetch(url).then(function(r){{return r.json();}}).then(function(d){{
 items=d||[];
 document.getElementById("msg").innerHTML="Loaded "+items.length+" suppliers";
 document.getElementById("msg").className="msg msg-ok";
@@ -464,18 +482,33 @@ var q=document.getElementById("q").value.toLowerCase();
 var h="";
 for(var i=0;i<items.length;i++){{
 var c=items[i];
-var name=c.name||"";
-var code=c.code||"";
-if(q&&name.toLowerCase().indexOf(q)<0&&code.toLowerCase().indexOf(q)<0)continue;
-h+="<tr style='cursor:pointer' onclick='viewHist(\""+c.id+"\")'><td>"+code+"</td><td>"+name+"</td><td>"+(c.phone||"-")+"</td><td>"+(c.email||"-")+"</td><td><button class='btn btn-sm' onclick='event.stopPropagation();edit("+i+")'>Edit</button></td></tr>";
+var nm=c.name||"";
+var cd=c.code||"";
+if(q&&nm.toLowerCase().indexOf(q)<0&&cd.toLowerCase().indexOf(q)<0)continue;
+h+="<tr style=cursor:pointer onclick=viewHist(this) data-id="+c.id+"><td>"+cd+"</td><td>"+nm+"</td><td>"+(c.phone||"-")+"</td><td>"+(c.email||"-")+"</td><td><button class=btn onclick=doEdit(event,"+i+")>Edit</button></td></tr>";
 }}
-document.getElementById("tbl").innerHTML=h||"<tr><td colspan='5' style='text-align:center;padding:40px;color:#888'>No suppliers</td></tr>";
+document.getElementById("tbl").innerHTML=h||"<tr><td colspan=5>No suppliers</td></tr>";
 }}
-function showAdd(){{document.getElementById("mtitle").innerHTML="Add Supplier";document.getElementById("eid").value="";document.getElementById("fcode").value="";document.getElementById("fname").value="";document.getElementById("fphone").value="";document.getElementById("femail").value="";document.getElementById("modal").classList.add("show");}}
-function edit(i){{var c=items[i];document.getElementById("mtitle").innerHTML="Edit Supplier";document.getElementById("eid").value=c.id;document.getElementById("fcode").value=c.code||"";document.getElementById("fname").value=c.name||"";document.getElementById("fphone").value=c.phone||"";document.getElementById("femail").value=c.email||"";document.getElementById("modal").classList.add("show");}}
-function save(){{var data={{id:document.getElementById("eid").value||null,code:document.getElementById("fcode").value,name:document.getElementById("fname").value,phone:document.getElementById("fphone").value,email:document.getElementById("femail").value}};
-fetch("/api/"+BID+"/suppliers",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify(data)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.success){{document.getElementById("modal").classList.remove("show");load();}}}});}}
-function viewHist(id){{window.location.href="/"+BID+"/suppliers/"+id+"/history";}}
+function viewHist(el){{window.location.href="/"+BID+"/suppliers/"+el.dataset.id+"/history";}}
+function doEdit(ev,i){{ev.stopPropagation();edit(i);}}
+function showAdd(){{document.getElementById("mtitle").innerHTML="Add";document.getElementById("eid").value="";document.getElementById("fcode").value="";document.getElementById("fname").value="";document.getElementById("fphone").value="";document.getElementById("femail").value="";document.getElementById("modal").classList.add("show");}}
+function edit(i){{var c=items[i];document.getElementById("mtitle").innerHTML="Edit";document.getElementById("eid").value=c.id;document.getElementById("fcode").value=c.code||"";document.getElementById("fname").value=c.name||"";document.getElementById("fphone").value=c.phone||"";document.getElementById("femail").value=c.email||"";document.getElementById("modal").classList.add("show");}}
+function save(){{
+var obj={{}};
+obj.id=document.getElementById("eid").value||null;
+obj.code=document.getElementById("fcode").value;
+obj.name=document.getElementById("fname").value;
+obj.phone=document.getElementById("fphone").value;
+obj.email=document.getElementById("femail").value;
+var opts={{}};
+opts.method="POST";
+opts.headers={{}};
+opts.headers["Content-Type"]="application/json";
+opts.body=JSON.stringify(obj);
+fetch("/api/"+BID+"/suppliers",opts).then(function(r){{return r.json();}}).then(function(d){{
+if(d.success){{document.getElementById("modal").classList.remove("show");load();}}
+}});
+}}
 load();
 </script>
 </body></html>'''
