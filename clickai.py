@@ -1,3 +1,64 @@
+#!/usr/bin/env python3
+"""
+Click AI - Complete Business Management System v2.0
+For Render: gunicorn app:app
+Local: python app.py
+"""
+
+# Import the core app
+from piece1_core import app, db, generate_id, now
+
+# Import all pieces to register routes
+import piece5_dashboard
+import piece6_pos
+import piece7_stock
+import piece8_customers
+import piece9_invoices
+import piece10_expenses
+import piece11_reports
+
+# Import for init
+from piece2_accounts import Account
+
+def init_db():
+    """Initialize database with chart of accounts and admin user"""
+    print("Initializing Click AI database...")
+    
+    result = Account.initialize_chart()
+    print(f"  Accounts: {result['created']} created, {result['skipped']} skipped")
+    
+    users = db.select("users", limit=1)
+    if not users:
+        admin = {
+            "id": generate_id(),
+            "username": "admin", 
+            "password": "admin",
+            "role": "admin",
+            "active": True,
+            "created_at": now()
+        }
+        db.insert("users", admin)
+        print("  Admin user created (username: admin, password: admin)")
+    
+    print("Done!")
+
+# Auto-initialize on import (for gunicorn)
+try:
+    accounts = db.select("accounts", limit=1)
+    if not accounts:
+        print("First run - initializing database...")
+        init_db()
+except Exception as e:
+    print(f"DB init check skipped: {e}")
+
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "init":
+        init_db()
+    else:
+        print("Starting Click AI on http://0.0.0.0:5000")
+        app.run(host="0.0.0.0", port=5000, debug=False)
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
