@@ -5327,94 +5327,39 @@ def demo():
 
 @app.route("/dashboard")
 def dashboard():
-    """Main dashboard with real-time stats - optimized for speed"""
+    """Dashboard - memory efficient version"""
     
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
-    # Initialize with defaults
-    bank_balance = Decimal("0")
-    debtors_balance = Decimal("0")
-    creditors_balance = Decimal("0")
-    stock_balance = Decimal("0")
-    total_revenue = Decimal("0")
-    gross_profit = Decimal("0")
-    total_expenses = Decimal("0")
-    net_profit = Decimal("0")
-    vat_payable = Decimal("0")
-    stock_count = customer_count = supplier_count = invoice_count = 0
-    recent_rows = ""
+    # Simple counts only - these are fast and low memory
+    stock_count = 0
+    customer_count = 0
+    supplier_count = 0
+    invoice_count = 0
+    expense_count = 0
     
-    year_start = FinancialPeriod.get_current_year_start()
-    
-    # Load balances with error handling
-    try:
-        bank_balance = Journal.get_account_balance(AccountCodes.BANK)
-    except:
-        pass
-    
-    try:
-        debtors_balance = Journal.get_account_balance(AccountCodes.DEBTORS)
-    except:
-        pass
-    
-    try:
-        creditors_balance = Journal.get_account_balance(AccountCodes.CREDITORS)
-    except:
-        pass
-        
-    try:
-        stock_balance = Journal.get_account_balance(AccountCodes.STOCK)
-    except:
-        pass
-    
-    # P&L Summary
-    try:
-        income_statement = Journal.get_income_statement(year_start, today())
-        total_revenue = income_statement.get("total_revenue", Decimal("0"))
-        total_expenses = income_statement.get("total_expenses", Decimal("0"))
-        net_profit = income_statement.get("net_profit", Decimal("0"))
-        gross_profit = income_statement.get("gross_profit", Decimal("0"))
-    except:
-        pass
-    
-    # VAT
-    try:
-        vat_report = Journal.get_vat_report(year_start, today())
-        vat_payable = vat_report.get("net_vat", Decimal("0"))
-    except:
-        pass
-    
-    # Counts - fast
     try:
         stock_count = db.count("stock_items")
+    except:
+        pass
+    try:
         customer_count = db.count("customers")
+    except:
+        pass
+    try:
         supplier_count = db.count("suppliers")
+    except:
+        pass
+    try:
         invoice_count = db.count("invoices")
     except:
         pass
-    
-    # Recent transactions
     try:
-        recent_journal = Journal.get_entries(limit=5)
-        for entry in recent_journal[:5]:
-            dr = Money.format(Decimal(str(entry.get("debit", 0)))) if entry.get("debit") else "-"
-            cr = Money.format(Decimal(str(entry.get("credit", 0)))) if entry.get("credit") else "-"
-            recent_rows += f'''
-            <tr>
-                <td>{format_date(entry.get("date", ""))}</td>
-                <td>{entry.get("account_code", "")}</td>
-                <td>{entry.get("description", "")[:40]}</td>
-                <td class="number">{dr}</td>
-                <td class="number">{cr}</td>
-            </tr>
-            '''
+        expense_count = db.count("expenses")
     except:
         pass
-    
-    if not recent_rows:
-        recent_rows = '<tr><td colspan="5" class="text-center text-muted" style="padding:40px">No transactions yet</td></tr>'
     
     content = f'''
     <div class="flex-between mb-lg">
@@ -5423,57 +5368,13 @@ def dashboard():
             <p class="text-muted">Welcome back, {user.get("username", "User")}</p>
         </div>
         <div class="btn-group">
-            <a href="/pos" class="btn btn-primary">New Sale</a>
-            <a href="/expenses/new" class="btn btn-orange">Add Expense</a>
+            <a href="/pos" class="btn btn-primary">💰 New Sale</a>
+            <a href="/expenses/new" class="btn btn-green">💸 Add Expense</a>
         </div>
     </div>
     
-    <!-- Financial Summary -->
+    <!-- Quick Stats -->
     <div class="stats">
-        <div class="stat">
-            <div class="stat-value{' green' if bank_balance >= 0 else ' red'}">{Money.format(bank_balance)}</div>
-            <div class="stat-label">Bank Balance</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value purple">{Money.format(debtors_balance)}</div>
-            <div class="stat-label">Debtors Owe You</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value orange">{Money.format(creditors_balance)}</div>
-            <div class="stat-label">You Owe Suppliers</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">{Money.format(stock_balance)}</div>
-            <div class="stat-label">Stock Value</div>
-        </div>
-    </div>
-    
-    <!-- Profit Summary -->
-    <div class="stats">
-        <div class="stat">
-            <div class="stat-value green">{Money.format(total_revenue)}</div>
-            <div class="stat-label">Revenue (YTD)</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">{Money.format(gross_profit)}</div>
-            <div class="stat-label">Gross Profit</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value red">{Money.format(total_expenses)}</div>
-            <div class="stat-label">Expenses (YTD)</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value{' green' if net_profit >= 0 else ' red'}">{Money.format(net_profit)}</div>
-            <div class="stat-label">Net Profit</div>
-        </div>
-    </div>
-    
-    <!-- VAT & Counts -->
-    <div class="stats">
-        <div class="stat">
-            <div class="stat-value{' red' if vat_payable > 0 else ' green'}">{Money.format(abs(vat_payable))}</div>
-            <div class="stat-label">{'VAT Payable' if vat_payable > 0 else 'VAT Refund'}</div>
-        </div>
         <div class="stat">
             <div class="stat-value">{stock_count}</div>
             <div class="stat-label">Stock Items</div>
@@ -5483,45 +5384,51 @@ def dashboard():
             <div class="stat-label">Customers</div>
         </div>
         <div class="stat">
+            <div class="stat-value">{supplier_count}</div>
+            <div class="stat-label">Suppliers</div>
+        </div>
+        <div class="stat">
             <div class="stat-value">{invoice_count}</div>
             <div class="stat-label">Invoices</div>
         </div>
+        <div class="stat">
+            <div class="stat-value">{expense_count}</div>
+            <div class="stat-label">Expenses</div>
+        </div>
     </div>
     
-    <!-- Recent Transactions -->
+    <!-- Financial Reports -->
     <div class="card">
-        <div class="flex-between mb-md">
-            <h3>Recent Transactions</h3>
-            <a href="/reports/ledger" class="btn btn-ghost">View All</a>
+        <h3 style="margin-bottom: 16px;">📊 Financial Reports</h3>
+        <p class="text-muted" style="margin-bottom: 16px;">View detailed financial data</p>
+        <div class="btn-group" style="flex-wrap: wrap; gap: 12px;">
+            <a href="/reports/trial-balance" class="btn btn-primary">Trial Balance</a>
+            <a href="/reports/income-statement" class="btn btn-green">Income Statement</a>
+            <a href="/reports/balance-sheet" class="btn btn-purple">Balance Sheet</a>
+            <a href="/reports/vat" class="btn btn-orange">VAT Report</a>
         </div>
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Account</th>
-                    <th>Description</th>
-                    <th class="number">Debit</th>
-                    <th class="number">Credit</th>
-                </tr>
-            </thead>
-            <tbody>
-                {recent_rows}
-            </tbody>
-        </table>
     </div>
     
     <!-- Quick Actions -->
     <div class="card">
-        <h3 style="margin-bottom: 16px;">Quick Actions</h3>
+        <h3 style="margin-bottom: 16px;">⚡ Quick Actions</h3>
         <div class="btn-group" style="flex-wrap: wrap; gap: 12px;">
             <a href="/pos" class="btn btn-primary">Point of Sale</a>
             <a href="/stock" class="btn btn-ghost">Stock</a>
             <a href="/customers" class="btn btn-ghost">Customers</a>
             <a href="/suppliers" class="btn btn-ghost">Suppliers</a>
             <a href="/invoices" class="btn btn-ghost">Invoices</a>
+            <a href="/quotes" class="btn btn-ghost">Quotes</a>
             <a href="/expenses" class="btn btn-ghost">Expenses</a>
-            <a href="/reports" class="btn btn-ghost">Reports</a>
+            <a href="/reports" class="btn btn-ghost">All Reports</a>
         </div>
+    </div>
+    
+    <!-- System Info -->
+    <div class="card">
+        <h3 style="margin-bottom: 16px;">ℹ️ System</h3>
+        <p class="text-muted">Click AI Business Accounting v2.0</p>
+        <p class="text-muted">Full SA Chart of Accounts • Double-Entry Bookkeeping • VAT Ready</p>
     </div>
     '''
     
