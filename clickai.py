@@ -1,64 +1,24 @@
 #!/usr/bin/env python3
 """
 Click AI - Complete Business Management System v2.0
-For Render: gunicorn app:app
-Local: python app.py
+SINGLE FILE - 9000+ lines - Full SA Accounting
 """
 
-# Import the core app
-from piece1_core import app, db, generate_id, now
+from flask import Flask, jsonify, request, redirect, session, g
+import json
+import os
+import re
+import uuid
+import requests
+from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from functools import wraps
 
-# Import all pieces to register routes
-import piece5_dashboard
-import piece6_pos
-import piece7_stock
-import piece8_customers
-import piece9_invoices
-import piece10_expenses
-import piece11_reports
 
-# Import for init
-from piece2_accounts import Account
+# =============================================================================
+# PIECE1_CORE.PY
+# =============================================================================
 
-def init_db():
-    """Initialize database with chart of accounts and admin user"""
-    print("Initializing Click AI database...")
-    
-    result = Account.initialize_chart()
-    print(f"  Accounts: {result['created']} created, {result['skipped']} skipped")
-    
-    users = db.select("users", limit=1)
-    if not users:
-        admin = {
-            "id": generate_id(),
-            "username": "admin", 
-            "password": "admin",
-            "role": "admin",
-            "active": True,
-            "created_at": now()
-        }
-        db.insert("users", admin)
-        print("  Admin user created (username: admin, password: admin)")
-    
-    print("Done!")
-
-# Auto-initialize on import (for gunicorn)
-try:
-    accounts = db.select("accounts", limit=1)
-    if not accounts:
-        print("First run - initializing database...")
-        init_db()
-except Exception as e:
-    print(f"DB init check skipped: {e}")
-
-if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) > 1 and sys.argv[1] == "init":
-        init_db()
-    else:
-        print("Starting Click AI on http://0.0.0.0:5000")
-        app.run(host="0.0.0.0", port=5000, debug=False)
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -79,15 +39,6 @@ if __name__ == "__main__":
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from flask import Flask, jsonify, request, redirect, session, g
-import json
-import os
-import re
-import uuid
-import requests
-from datetime import datetime, timedelta
-from decimal import Decimal, ROUND_HALF_UP
-from functools import wraps
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FLASK APPLICATION SETUP
@@ -1052,6 +1003,11 @@ Contains:
 
 Next: Piece 2 - Chart of Accounts
 """
+
+# =============================================================================
+# PIECE2_ACCOUNTS.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -1075,10 +1031,8 @@ Next: Piece 2 - Chart of Accounts
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from decimal import Decimal
 from enum import Enum
 from typing import List, Dict, Optional
-from piece1_core import db, generate_id, now, Money
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2447,6 +2401,11 @@ Account Ranges:
 
 Next: Piece 3 - Journal Engine (double-entry posting)
 """
+
+# =============================================================================
+# PIECE3_JOURNAL.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -2466,13 +2425,9 @@ Next: Piece 3 - Journal Engine (double-entry posting)
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime
 from enum import Enum
 
-from piece1_core import db, generate_id, now, today, Money, VAT, safe_string
-from piece2_accounts import Account, AccountCodes, AccountType, get_account_code
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3443,6 +3398,11 @@ Every entry validates that debits = credits before posting.
 
 Next: Piece 4 - CSS and UI Framework
 """
+
+# =============================================================================
+# PIECE4_UI.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -3465,7 +3425,6 @@ Next: Piece 4 - CSS and UI Framework
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from piece1_core import Config, Money, safe_string, today
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -4729,7 +4688,6 @@ def stat_card(value: str, label: str, color: str = "") -> str:
 
 def money_stat(amount, label: str, positive_is_green: bool = True) -> str:
     """Generate a money stat card with automatic color"""
-    from decimal import Decimal
     amount = Decimal(str(amount))
     color = ""
     if amount > 0:
@@ -5003,6 +4961,11 @@ Design Principles Applied:
 
 Next: Piece 5 - Dashboard
 """
+
+# =============================================================================
+# PIECE5_DASHBOARD.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -5019,17 +4982,7 @@ Next: Piece 5 - Dashboard
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from flask import request, redirect, session
-from decimal import Decimal
 
-from piece1_core import app, db, Money, today, format_date, UserSession, FinancialPeriod
-from piece2_accounts import Account, AccountCodes
-from piece3_journal import Journal
-from piece4_ui import (
-    page_wrapper, CSS, get_header_html, 
-    stat_card, money_stat, badge, empty_state,
-    success_message, error_message
-)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -5750,6 +5703,11 @@ All stats pulled from Journal class - real accounting data!
 
 Next: Piece 6 - POS (Point of Sale)
 """
+
+# =============================================================================
+# PIECE6_POS.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -5770,18 +5728,7 @@ Next: Piece 6 - POS (Point of Sale)
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from flask import request, redirect, jsonify, session
-from decimal import Decimal, ROUND_HALF_UP
-import json
 
-from piece1_core import (
-    app, db, generate_id, now, today, 
-    Money, VAT, safe_string, safe_json_string,
-    DocumentNumbers
-)
-from piece2_accounts import AccountCodes
-from piece3_journal import JournalEntry, Transactions, TransactionType
-from piece4_ui import page_wrapper, COMMON_JS
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -6048,7 +5995,6 @@ def api_pos_sale():
 def pos_page():
     """POS page"""
     
-    from piece1_core import UserSession
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
@@ -6383,6 +6329,11 @@ JavaScript only handles UI interactions.
 
 Next: Piece 7 - Stock Management
 """
+
+# =============================================================================
+# PIECE7_STOCK.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -6401,23 +6352,9 @@ Next: Piece 7 - Stock Management
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from flask import request, redirect, jsonify
-from decimal import Decimal
-import json
 import csv
 import io
 
-from piece1_core import (
-    app, db, generate_id, now, today,
-    Money, VAT, safe_string, UserSession
-)
-from piece2_accounts import AccountCodes
-from piece3_journal import JournalEntry, TransactionType
-from piece4_ui import (
-    page_wrapper, success_message, error_message, info_message,
-    badge, empty_state, table_html, form_input, form_select,
-    modal_template
-)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -7050,6 +6987,11 @@ Fields tracked:
 
 Next: Piece 8 - Customers & Suppliers
 """
+
+# =============================================================================
+# PIECE8_CUSTOMERS.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -7067,19 +7009,7 @@ Next: Piece 8 - Customers & Suppliers
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from flask import request, redirect, jsonify
-from decimal import Decimal
 
-from piece1_core import (
-    app, db, generate_id, now, today,
-    Money, safe_string, UserSession
-)
-from piece2_accounts import AccountCodes
-from piece3_journal import JournalEntry, Journal, TransactionType
-from piece4_ui import (
-    page_wrapper, success_message, error_message,
-    badge, empty_state, table_html
-)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -7960,6 +7890,11 @@ All payments properly posted to General Ledger!
 
 Next: Piece 9 - Invoices & Quotes
 """
+
+# =============================================================================
+# PIECE9_INVOICES.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -7969,17 +7904,7 @@ Next: Piece 9 - Invoices & Quotes
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from flask import request, redirect, jsonify
-from decimal import Decimal
-import json
 
-from piece1_core import (
-    app, db, generate_id, now, today,
-    Money, VAT, safe_string, UserSession, DocumentNumbers
-)
-from piece2_accounts import AccountCodes
-from piece3_journal import JournalEntry, TransactionType
-from piece4_ui import page_wrapper, success_message, error_message, badge, table_html
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -8710,6 +8635,11 @@ All calculations done in Flask!
 
 Next: Piece 10 - Expenses
 """
+
+# =============================================================================
+# PIECE10_EXPENSES.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -8727,17 +8657,7 @@ Next: Piece 10 - Expenses
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from flask import request, redirect, jsonify
-from decimal import Decimal
-import json
 
-from piece1_core import (
-    app, db, generate_id, now, today,
-    Money, VAT, safe_string, UserSession, OpusAI
-)
-from piece2_accounts import AccountCodes, Account, get_account_code
-from piece3_journal import JournalEntry, TransactionType
-from piece4_ui import page_wrapper, success_message, error_message, badge, table_html
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -9305,6 +9225,11 @@ All calculations done in Flask!
 
 Next: Piece 11 - Reports
 """
+
+# =============================================================================
+# PIECE11_REPORTS.PY
+# =============================================================================
+
 """
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║   CLICK AI - Piece 11: Reports                                                ║
@@ -9312,13 +9237,7 @@ Next: Piece 11 - Reports
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
 
-from flask import request, redirect
-from decimal import Decimal
 
-from piece1_core import app, db, today, format_date, Money, UserSession, FinancialPeriod
-from piece2_accounts import Account
-from piece3_journal import Journal
-from piece4_ui import page_wrapper, table_html, badge
 
 
 @app.route("/reports")
@@ -9661,3 +9580,38 @@ Contains:
 
 All financial reports pull from Journal class - real double-entry data!
 """
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def init_database():
+    print("Initializing Click AI...")
+    try:
+        result = Account.initialize_chart()
+        print(f"  Accounts: {result['created']} created")
+    except Exception as e:
+        print(f"  Account init: {e}")
+    
+    try:
+        users = db.select("users", limit=1)
+        if not users:
+            admin = {"id": generate_id(), "username": "admin", "password": "admin", 
+                    "role": "admin", "active": True, "created_at": now()}
+            db.insert("users", admin)
+            print("  Admin created (admin/admin)")
+    except Exception as e:
+        print(f"  User init: {e}")
+
+# Auto-init
+try:
+    accts = db.select("accounts", limit=1)
+    if not accts:
+        init_database()
+except:
+    pass
+
+if __name__ == "__main__":
+    print("Click AI starting on http://0.0.0.0:5000")
+    app.run(host="0.0.0.0", port=5000, debug=False)
