@@ -9203,38 +9203,72 @@ def report_trial_balance():
     if not user:
         return redirect("/login")
     
-    tb = Journal.get_trial_balance()
+    # Use fast database function
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_trial_balance"
+        headers = {
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, headers=headers, json={}, timeout=30)
+        tb_data = resp.json() if resp.status_code == 200 else []
+    except:
+        tb_data = []
     
-    rows = []
-    for entry in tb:
-        if entry.get("is_total"):
-            dr = Money.format(entry["debit"]) if entry["debit"] else ""
-            cr = Money.format(entry["credit"]) if entry["credit"] else ""
-            balanced = abs(entry["balance"]) < Decimal("0.01")
-            rows.append([f'<strong>{entry["name"]}</strong>', "", {"value": f'<strong>{dr}</strong>', "class": "number"}, {"value": f'<strong>{cr}</strong>', "class": "number"}, badge("✓ Balanced", "green") if balanced else badge("✗ Unbalanced", "red")])
-        else:
-            dr = Money.format(entry["debit"]) if entry["debit"] > 0 else "-"
-            cr = Money.format(entry["credit"]) if entry["credit"] > 0 else "-"
-            rows.append([entry["code"], entry["name"], {"value": dr, "class": "number"}, {"value": cr, "class": "number"}, ""])
+    rows = ""
+    total_dr = Decimal("0")
+    total_cr = Decimal("0")
     
-    table = table_html(headers=["Code", "Account", {"label": "Debit", "class": "number"}, {"label": "Credit", "class": "number"}, ""], rows=rows, empty_message="No transactions")
+    for entry in tb_data:
+        dr = Decimal(str(entry.get("total_debit", 0) or 0))
+        cr = Decimal(str(entry.get("total_credit", 0) or 0))
+        total_dr += dr
+        total_cr += cr
+        
+        dr_fmt = Money.format(dr) if dr > 0 else "-"
+        cr_fmt = Money.format(cr) if cr > 0 else "-"
+        
+        rows += f'''<tr>
+            <td>{entry.get("account_code", "")}</td>
+            <td>{entry.get("account_name", "")}</td>
+            <td class="number">{dr_fmt}</td>
+            <td class="number">{cr_fmt}</td>
+        </tr>'''
     
-    total_row = next((e for e in tb if e.get("is_total")), None)
-    total_dr = total_row["debit"] if total_row else Decimal("0")
-    total_cr = total_row["credit"] if total_row else Decimal("0")
+    if not rows:
+        rows = '<tr><td colspan="4" class="text-muted" style="text-align:center;padding:40px;">No transactions yet</td></tr>'
+    
+    balanced = abs(total_dr - total_cr) < Decimal("0.01")
+    balance_badge = '<span class="badge badge-green">✓ Balanced</span>' if balanced else '<span class="badge badge-red">✗ Unbalanced</span>'
     
     content = f'''
     <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
-    <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;">Trial Balance</h1>
-    <p class="text-muted mb-lg">As at {format_date(today())}</p>
-    <div class="stats">
-        <div class="stat"><div class="stat-value">{len([e for e in tb if not e.get("is_total")])}</div><div class="stat-label">Accounts</div></div>
-        <div class="stat"><div class="stat-value">{Money.format(total_dr)}</div><div class="stat-label">Total Debits</div></div>
-        <div class="stat"><div class="stat-value">{Money.format(total_cr)}</div><div class="stat-label">Total Credits</div></div>
+    <div class="flex-between mb-lg">
+        <div>
+            <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;">Trial Balance</h1>
+            <p class="text-muted">As at {today()}</p>
+        </div>
+        {balance_badge}
     </div>
-    <div class="card">{table}</div>
+    <div class="stats">
+        <div class="stat"><div class="stat-value">{len(tb_data)}</div><div class="stat-label">Accounts</div></div>
+        <div class="stat"><div class="stat-value green">{Money.format(total_dr)}</div><div class="stat-label">Total Debits</div></div>
+        <div class="stat"><div class="stat-value green">{Money.format(total_cr)}</div><div class="stat-label">Total Credits</div></div>
+    </div>
+    <div class="card">
+        <table class="table">
+            <thead><tr><th>Code</th><th>Account</th><th class="number">Debit</th><th class="number">Credit</th></tr></thead>
+            <tbody>{rows}</tbody>
+            <tfoot><tr style="font-weight:bold;background:#0a0a10;">
+                <td colspan="2">TOTAL</td>
+                <td class="number">{Money.format(total_dr)}</td>
+                <td class="number">{Money.format(total_cr)}</td>
+            </tr></tfoot>
+        </table>
+    </div>
     '''
-    return page_wrapper("Trial Balance", content, active="reports", user=user)
+    return page_wrapper("Trial Balance", content, "reports", user)
 
 
 @app.route("/reports/income-statement")
@@ -9243,43 +9277,84 @@ def report_income_statement():
     if not user:
         return redirect("/login")
     
-    date_from = FinancialPeriod.get_current_year_start()
-    date_to = today()
-    pnl = Journal.get_income_statement(date_from, date_to)
+    year_start = FinancialPeriod.get_current_year_start()
     
-    def make_rows(items):
-        return "".join([f'<tr><td style="padding-left:20px;">{i["name"]}</td><td class="number">{Money.format(i["amount"])}</td></tr>' for i in items])
+    # Use fast database function
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_income_statement"
+        headers = {
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, headers=headers, json={"date_from": year_start, "date_to": today()}, timeout=30)
+        is_data = resp.json() if resp.status_code == 200 else []
+    except:
+        is_data = []
     
-    profit_color = "green" if pnl["net_profit"] >= 0 else "red"
-    profit_label = "Net Profit" if pnl["net_profit"] >= 0 else "Net Loss"
+    revenue = Decimal("0")
+    cogs = Decimal("0")
+    expenses = Decimal("0")
+    
+    revenue_rows = ""
+    cogs_rows = ""
+    expense_rows = ""
+    
+    for entry in is_data:
+        amt = Decimal(str(entry.get("amount", 0) or 0))
+        cat = entry.get("category", "")
+        
+        if cat == "revenue":
+            revenue += amt
+            revenue_rows += f'<tr><td>{entry.get("account_code","")}</td><td>{entry.get("account_name","")}</td><td class="number">{Money.format(amt)}</td></tr>'
+        elif cat == "cost_of_sales":
+            cogs += amt
+            cogs_rows += f'<tr><td>{entry.get("account_code","")}</td><td>{entry.get("account_name","")}</td><td class="number">{Money.format(amt)}</td></tr>'
+        elif cat == "expense":
+            expenses += amt
+            expense_rows += f'<tr><td>{entry.get("account_code","")}</td><td>{entry.get("account_name","")}</td><td class="number">{Money.format(amt)}</td></tr>'
+    
+    gross_profit = revenue - cogs
+    net_profit = gross_profit - expenses
     
     content = f'''
     <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
     <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;">Income Statement</h1>
-    <p class="text-muted mb-lg">{format_date(date_from)} to {format_date(date_to)}</p>
+    <p class="text-muted mb-lg">{year_start} to {today()}</p>
+    
     <div class="stats">
-        <div class="stat"><div class="stat-value green">{Money.format(pnl["total_revenue"])}</div><div class="stat-label">Revenue</div></div>
-        <div class="stat"><div class="stat-value">{Money.format(pnl["gross_profit"])}</div><div class="stat-label">Gross Profit</div></div>
-        <div class="stat"><div class="stat-value red">{Money.format(pnl["total_expenses"])}</div><div class="stat-label">Expenses</div></div>
-        <div class="stat"><div class="stat-value {profit_color}">{Money.format(pnl["net_profit"])}</div><div class="stat-label">{profit_label}</div></div>
+        <div class="stat"><div class="stat-value green">{Money.format(revenue)}</div><div class="stat-label">Revenue</div></div>
+        <div class="stat"><div class="stat-value">{Money.format(gross_profit)}</div><div class="stat-label">Gross Profit</div></div>
+        <div class="stat"><div class="stat-value red">{Money.format(expenses)}</div><div class="stat-label">Expenses</div></div>
+        <div class="stat"><div class="stat-value{' green' if net_profit >= 0 else ' red'}">{Money.format(net_profit)}</div><div class="stat-label">Net Profit</div></div>
     </div>
+    
     <div class="card">
-        <table class="table"><tbody>
-            <tr style="background:var(--bg-secondary);"><td><strong>REVENUE</strong></td><td></td></tr>
-            {make_rows(pnl["revenue"]) or '<tr><td colspan="2" class="text-muted" style="padding-left:20px;">None</td></tr>'}
-            <tr style="border-top:2px solid var(--border);"><td><strong>Total Revenue</strong></td><td class="number"><strong>{Money.format(pnl["total_revenue"])}</strong></td></tr>
-            <tr style="background:var(--bg-secondary);"><td><strong>COST OF SALES</strong></td><td></td></tr>
-            {make_rows(pnl["cost_of_sales"]) or '<tr><td colspan="2" class="text-muted" style="padding-left:20px;">None</td></tr>'}
-            <tr style="border-top:2px solid var(--border);"><td><strong>Gross Profit</strong></td><td class="number"><strong>{Money.format(pnl["gross_profit"])}</strong></td></tr>
-            <tr style="background:var(--bg-secondary);"><td><strong>EXPENSES</strong></td><td></td></tr>
-            {make_rows(pnl["expenses"]) or '<tr><td colspan="2" class="text-muted" style="padding-left:20px;">None</td></tr>'}
-            <tr style="border-top:2px solid var(--border);"><td><strong>Total Expenses</strong></td><td class="number"><strong>{Money.format(pnl["total_expenses"])}</strong></td></tr>
-            <tr style="background:linear-gradient(135deg,rgba(139,92,246,0.1),rgba(59,130,246,0.1));font-size:18px;"><td><strong>{profit_label.upper()}</strong></td><td class="number" style="color:var(--{profit_color});"><strong>{Money.format(abs(pnl["net_profit"]))}</strong></td></tr>
-        </tbody></table>
+        <h3>Revenue</h3>
+        <table class="table"><thead><tr><th>Code</th><th>Account</th><th class="number">Amount</th></tr></thead>
+        <tbody>{revenue_rows or '<tr><td colspan="3" class="text-muted">No revenue yet</td></tr>'}</tbody>
+        <tfoot><tr style="font-weight:bold;"><td colspan="2">Total Revenue</td><td class="number">{Money.format(revenue)}</td></tr></tfoot></table>
+    </div>
+    
+    <div class="card">
+        <h3>Cost of Sales</h3>
+        <table class="table"><thead><tr><th>Code</th><th>Account</th><th class="number">Amount</th></tr></thead>
+        <tbody>{cogs_rows or '<tr><td colspan="3" class="text-muted">No cost of sales</td></tr>'}</tbody>
+        <tfoot><tr style="font-weight:bold;"><td colspan="2">Gross Profit</td><td class="number">{Money.format(gross_profit)}</td></tr></tfoot></table>
+    </div>
+    
+    <div class="card">
+        <h3>Expenses</h3>
+        <table class="table"><thead><tr><th>Code</th><th>Account</th><th class="number">Amount</th></tr></thead>
+        <tbody>{expense_rows or '<tr><td colspan="3" class="text-muted">No expenses yet</td></tr>'}</tbody>
+        <tfoot><tr style="font-weight:bold;"><td colspan="2">Total Expenses</td><td class="number">{Money.format(expenses)}</td></tr></tfoot></table>
+    </div>
+    
+    <div class="card" style="background:{'#0a2010' if net_profit >= 0 else '#200a0a'};">
+        <h2 style="text-align:center;">Net Profit: {Money.format(net_profit)}</h2>
     </div>
     '''
-    return page_wrapper("Income Statement", content, active="reports", user=user)
-
+    return page_wrapper("Income Statement", content, "reports", user)
 
 @app.route("/reports/balance-sheet")
 def report_balance_sheet():
@@ -9441,37 +9516,54 @@ def report_creditors():
     return page_wrapper("Creditors Report", content, active="reports", user=user)
 
 
+
 @app.route("/reports/stock")
 def report_stock():
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
-    items = [i for i in db.select("stock_items", order="description") if i.get("active", True)]
-    total_qty = sum(int(i.get("quantity", 0) or 0) for i in items)
-    total_cost = sum(Decimal(str(i.get("cost_price", 0) or 0)) * int(i.get("quantity", 0) or 0) for i in items)
-    total_retail = sum(Decimal(str(i.get("selling_price", 0) or 0)) * int(i.get("quantity", 0) or 0) for i in items)
-    low = len([i for i in items if 0 < int(i.get("quantity", 0) or 0) <= 5])
-    out = len([i for i in items if int(i.get("quantity", 0) or 0) <= 0])
+    # Fast stock summary using database function
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_stock_summary"
+        headers = {
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, headers=headers, json={}, timeout=30)
+        data = resp.json()
+        summary = data[0] if resp.status_code == 200 and data else {}
+    except:
+        summary = {}
+    
+    total_items = int(summary.get("total_items", 0) or 0)
+    total_units = int(float(summary.get("total_units", 0) or 0))
+    cost_value = Decimal(str(summary.get("cost_value", 0) or 0))
+    retail_value = Decimal(str(summary.get("retail_value", 0) or 0))
+    profit_margin = retail_value - cost_value
     
     content = f'''
     <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
-    <h1 style="font-size:24px;font-weight:700;margin-bottom:20px;">Stock Report</h1>
+    <h1 style="font-size:24px;font-weight:700;margin-bottom:20px;">Stock Valuation Report</h1>
+    
     <div class="stats">
-        <div class="stat"><div class="stat-value">{len(items)}</div><div class="stat-label">Items</div></div>
-        <div class="stat"><div class="stat-value">{total_qty}</div><div class="stat-label">Units</div></div>
-        <div class="stat"><div class="stat-value">{Money.format(total_cost)}</div><div class="stat-label">Cost Value</div></div>
-        <div class="stat"><div class="stat-value green">{Money.format(total_retail)}</div><div class="stat-label">Retail Value</div></div>
+        <div class="stat"><div class="stat-value">{total_items:,}</div><div class="stat-label">Stock Items</div></div>
+        <div class="stat"><div class="stat-value">{total_units:,}</div><div class="stat-label">Total Units</div></div>
+        <div class="stat"><div class="stat-value">{Money.format(cost_value)}</div><div class="stat-label">Cost Value</div></div>
+        <div class="stat"><div class="stat-value green">{Money.format(retail_value)}</div><div class="stat-label">Retail Value</div></div>
+        <div class="stat"><div class="stat-value green">{Money.format(profit_margin)}</div><div class="stat-label">Potential Profit</div></div>
     </div>
-    <div class="stats">
-        <div class="stat"><div class="stat-value orange">{low}</div><div class="stat-label">Low Stock</div></div>
-        <div class="stat"><div class="stat-value red">{out}</div><div class="stat-label">Out of Stock</div></div>
-        <div class="stat"><div class="stat-value green">{Money.format(total_retail - total_cost)}</div><div class="stat-label">Potential Profit</div></div>
+    
+    <div class="card">
+        <h3 style="margin-bottom:16px;">Stock Actions</h3>
+        <div class="btn-group">
+            <a href="/stock" class="btn btn-primary">View All Stock</a>
+            <a href="/stock/new" class="btn btn-green">Add Stock Item</a>
+        </div>
     </div>
-    <div class="card"><a href="/stock" class="btn btn-primary">Manage Stock</a></div>
     '''
-    return page_wrapper("Stock Report", content, active="reports", user=user)
-
+    return page_wrapper("Stock Report", content, "reports", user)
 
 @app.route("/reports/ledger")
 def report_ledger():
