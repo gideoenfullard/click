@@ -55,6 +55,19 @@ class DB:
 
 db = DB(SUPABASE_URL, SUPABASE_KEY)
 
+def post_journal(bid, date, description, account, debit, credit):
+    """Post a journal entry"""
+    entry = {
+        "id": str(uuid.uuid4()),
+        "business_id": bid,
+        "date": date,
+        "description": description,
+        "account": account,
+        "debit": debit,
+        "credit": credit
+    }
+    return db.insert("journal", entry)
+
 CSS = """<style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:system-ui,sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh}
@@ -171,7 +184,7 @@ def pos(bid):
 <div id="msg" class="msg">Loading...</div>
 <div style="display:grid;grid-template-columns:1fr 350px;gap:20px">
 <div class="card">
-<input type="text" id="q" placeholder="Search products... (showing first 100)" onkeyup="render()">
+<input type="text" id="q" placeholder="Search products... (showing first 100)" oninput="render()">
 <div class="grid" id="items"></div>
 </div>
 <div class="cart">
@@ -266,7 +279,7 @@ def stock_page(bid):
 </div>
 <div id="msg" class="msg">Loading...</div>
 <div class="card">
-<input type="text" id="q" placeholder="Search stock..." onkeyup="render()">
+<input type="text" id="q" placeholder="Search stock..." oninput="render()">
 <div style="overflow-x:auto">
 <table><thead><tr><th>Code</th><th>Description</th><th>Category</th><th>Qty</th><th>Cost</th><th>Price</th><th></th></tr></thead><tbody id="tbl"></tbody></table>
 </div></div>
@@ -338,7 +351,7 @@ def customers_page(bid):
 <div style="display:flex;justify-content:space-between;margin-bottom:20px"><h1>Customers</h1><button class="btn" onclick="showAdd()">+ Add Customer</button></div>
 <div id="msg" class="msg">Loading...</div>
 <div class="card">
-<input type="text" id="q" placeholder="Search..." onkeyup="render()">
+<input type="text" id="q" placeholder="Search..." oninput="render()">
 <p style="color:#888;font-size:12px;margin-bottom:10px">Click a customer row to view transaction history</p>
 <table><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Email</th><th>Balance</th><th></th></tr></thead><tbody id="tbl"></tbody></table>
 </div>
@@ -448,7 +461,7 @@ def suppliers_page(bid):
 <div style="display:flex;justify-content:space-between;margin-bottom:20px"><h1>Suppliers</h1><button class="btn" onclick="showAdd()">+ Add Supplier</button></div>
 <div id="msg" class="msg">Loading...</div>
 <div class="card">
-<input type="text" id="q" placeholder="Search..." onkeyup="render()">
+<input type="text" id="q" placeholder="Search..." oninput="render()">
 <p style="color:#888;font-size:12px;margin-bottom:10px">Click a supplier row to view purchase history</p>
 <table><thead><tr><th>Code</th><th>Name</th><th>Phone</th><th>Email</th><th></th></tr></thead><tbody id="tbl"></tbody></table>
 </div>
@@ -621,7 +634,7 @@ def create_doc_page(bid, doc_type, prefix, table):
 </div>
 <div class="card">
 <h3 style="margin-bottom:15px">Add Items</h3>
-<input type="text" id="q" placeholder="Search stock..." onkeyup="renderStock()">
+<input type="text" id="q" placeholder="Search stock..." oninput="renderStock()">
 <div class="grid" id="stockGrid" style="max-height:250px"></div>
 </div>
 <div class="card">
@@ -854,6 +867,7 @@ def reports_page(bid):
 <a href="/{bid}/reports/suppliers" class="report-card"><h3>Supplier Report</h3><p style="color:#888;margin-top:5px">All suppliers, contact info</p></a>
 <a href="/{bid}/reports/profit" class="report-card"><h3>Profit and Loss</h3><p style="color:#888;margin-top:5px">Income vs expenses</p></a>
 <a href="/{bid}/reports/vat" class="report-card"><h3>VAT Report</h3><p style="color:#888;margin-top:5px">VAT collected vs paid</p></a>
+<a href="/{bid}/reports/tb" class="report-card"><h3>Trial Balance</h3><p style="color:#888;margin-top:5px">All accounts summary</p></a>
 </div>
 </div></body></html>'''
 
@@ -996,6 +1010,53 @@ def report_vat(bid):
 <a href="/{bid}/reports" class="btn" style="margin-top:20px;background:#333">Back to Reports</a>
 </div></body></html>'''
 
+@app.route("/<bid>/reports/tb")
+def report_tb(bid):
+    journal = db.select("journal", {"business_id": bid})
+    
+    # Aggregate by account
+    accounts = {}
+    for j in journal:
+        acc = j.get("account", "Unknown")
+        if acc not in accounts:
+            accounts[acc] = {"debit": 0, "credit": 0}
+        accounts[acc]["debit"] += float(j.get("debit", 0) or 0)
+        accounts[acc]["credit"] += float(j.get("credit", 0) or 0)
+    
+    total_dr = sum(a["debit"] for a in accounts.values())
+    total_cr = sum(a["credit"] for a in accounts.values())
+    
+    rows = ""
+    for acc, vals in sorted(accounts.items()):
+        dr = f'R {vals["debit"]:,.2f}' if vals["debit"] else "-"
+        cr = f'R {vals["credit"]:,.2f}' if vals["credit"] else "-"
+        rows += f'<tr><td>{acc}</td><td style="text-align:right">{dr}</td><td style="text-align:right">{cr}</td></tr>'
+    
+    balanced = abs(total_dr - total_cr) < 0.01
+    status = "Balanced" if balanced else f"Difference: R {abs(total_dr - total_cr):,.2f}"
+    scolor = "#10b981" if balanced else "#ef4444"
+    
+    return f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Trial Balance</title>{CSS}</head><body>
+{nav(bid,"reports")}
+<div class="box">
+<h1 style="margin-bottom:30px">Trial Balance</h1>
+<div class="card">
+<table>
+<thead><tr><th>Account</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th></tr></thead>
+<tbody>
+{rows or "<tr><td colspan='3' style='text-align:center;color:#888'>No journal entries yet</td></tr>"}
+<tr style="font-weight:700;border-top:2px solid #3b82f6">
+<td>TOTAL</td>
+<td style="text-align:right">R {total_dr:,.2f}</td>
+<td style="text-align:right">R {total_cr:,.2f}</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p style="text-align:center;margin-top:15px;color:{scolor}">{status}</p>
+<a href="/{bid}/reports" class="btn" style="margin-top:20px;background:#333">Back to Reports</a>
+</div></body></html>'''
+
 # ============================================================================
 # IMPORT
 # ============================================================================
@@ -1133,8 +1194,20 @@ def api_expenses(bid):
 @app.route("/api/<bid>/expenses", methods=["POST"])
 def api_expenses_save(bid):
     d = request.get_json()
-    item = {"id":str(uuid.uuid4()),"business_id":bid,"supplier":d.get("supplier",""),"description":d.get("description",""),"amount":d.get("amount",0),"vat":d.get("vat",0)}
+    item = {"id":str(uuid.uuid4()),"business_id":bid,"supplier":d.get("supplier",""),"category":d.get("category","General"),"description":d.get("description",""),"amount":d.get("amount",0),"vat":d.get("vat",0)}
     db.insert("expenses", item)
+    
+    # Post to journal
+    today = datetime.now().isoformat()[:10]
+    amt = float(item["amount"])
+    vat = float(item["vat"])
+    net = amt - vat
+    cat = item["category"] or "Expenses"
+    desc = f"Expense: {item['supplier']} - {item['description']}"
+    
+    post_journal(bid, today, desc, cat, net, 0)
+    post_journal(bid, today, desc, "VAT Input", vat, 0)
+    post_journal(bid, today, desc, "Cash/Bank", 0, amt)
     return jsonify({"success":True})
 
 @app.route("/api/<bid>/scan-receipt", methods=["POST"])
@@ -1208,22 +1281,46 @@ def api_sale(bid):
     d = request.get_json()
     items = d.get("items", [])
     total = d.get("total", 0)
+    method = d.get("method", "cash")
     inv_count = len(db.select("invoices", {"business_id": bid}))
     
     cust_name = "Walk-in"
-    if d.get("customer_id"):
-        custs = db.select("customers", {"id": d["customer_id"]})
+    cust_id = d.get("customer_id", "")
+    if cust_id:
+        custs = db.select("customers", {"id": cust_id})
         if custs:
             cust_name = custs[0].get("name", "Unknown")
     
-    inv = {"id":str(uuid.uuid4()),"business_id":bid,"number":f"INV{inv_count+1:04d}","date":datetime.now().isoformat(),"customer_id":d.get("customer_id",""),"customer_name":cust_name,"items":json.dumps(items),"total":total,"status":"paid","payment_method":d.get("method","cash")}
+    inv = {"id":str(uuid.uuid4()),"business_id":bid,"number":f"INV{inv_count+1:04d}","date":datetime.now().isoformat(),"customer_id":cust_id,"customer_name":cust_name,"items":json.dumps(items),"total":total,"status":"paid","payment_method":method}
     db.insert("invoices", inv)
     
+    # Update stock
     for item in items:
         sl = db.select("stock", {"id": item["id"]})
         if sl:
             new_qty = int(sl[0].get("qty", 0)) - int(item.get("qty", 1))
             db.update("stock", item["id"], {"qty": max(0, new_qty)})
+    
+    # Update customer balance if on account
+    if method == "account" and cust_id:
+        custs = db.select("customers", {"id": cust_id})
+        if custs:
+            new_bal = float(custs[0].get("balance", 0)) + total
+            db.update("customers", cust_id, {"balance": new_bal})
+    
+    # Post to journal
+    today = datetime.now().isoformat()[:10]
+    vat = total * 15 / 115
+    net = total - vat
+    desc = f"Sale {inv['number']} - {cust_name}"
+    
+    if method == "account":
+        post_journal(bid, today, desc, "Debtors", total, 0)
+    else:
+        post_journal(bid, today, desc, "Cash/Bank", total, 0)
+    post_journal(bid, today, desc, "Sales", 0, net)
+    post_journal(bid, today, desc, "VAT Output", 0, vat)
+    
     return jsonify({"success": True})
 
 @app.route("/api/<bid>/import", methods=["POST"])
