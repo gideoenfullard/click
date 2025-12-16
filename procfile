@@ -1,2 +1,2 @@
-web: gunicorn app:app
+
 web: gunicorn clickai:app --timeout 120 --workers 2
