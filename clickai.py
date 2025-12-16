@@ -3518,6 +3518,7 @@ a:hover {
    GLOWING HEADER
    ═══════════════════════════════════════════════════════════════════════════ */
 .header {
+    flex-wrap: nowrap;
     position: sticky;
     top: 0;
     z-index: 1000;
@@ -3578,6 +3579,8 @@ a:hover {
 
 /* Navigation Items */
 .nav {
+    flex-shrink: 0;
+    white-space: nowrap;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -4418,6 +4421,7 @@ a:hover {
     }
     
     .header {
+    flex-wrap: nowrap;
         padding: 0 12px;
         gap: 4px;
     }
