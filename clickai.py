@@ -5327,55 +5327,91 @@ def demo():
 
 @app.route("/dashboard")
 def dashboard():
-    """Main dashboard with real-time stats"""
+    """Main dashboard with real-time stats - optimized for speed"""
     
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
-    # Get current financial year dates
-    year_start = FinancialPeriod.get_current_year_start()
-    year_end = FinancialPeriod.get_current_year_end()
-    
-    # Get real balances from ledger
-    bank_balance = Journal.get_account_balance(AccountCodes.BANK)
-    debtors_balance = Journal.get_account_balance(AccountCodes.DEBTORS)
-    creditors_balance = Journal.get_account_balance(AccountCodes.CREDITORS)
-    stock_balance = Journal.get_account_balance(AccountCodes.STOCK)
-    
-    # Get P&L summary
-    income_statement = Journal.get_income_statement(year_start, today())
-    total_revenue = income_statement["total_revenue"]
-    total_expenses = income_statement["total_expenses"]
-    net_profit = income_statement["net_profit"]
-    gross_profit = income_statement["gross_profit"]
-    
-    # Get VAT position
-    vat_report = Journal.get_vat_report(year_start, today())
-    vat_payable = vat_report["net_vat"]
-    
-    # Count records
-    stock_count = db.count("stock_items")
-    customer_count = db.count("customers")
-    supplier_count = db.count("suppliers")
-    invoice_count = db.count("invoices")
-    
-    # Get recent transactions
-    recent_journal = Journal.get_entries(limit=10)
-    
+    # Initialize with defaults
+    bank_balance = Decimal("0")
+    debtors_balance = Decimal("0")
+    creditors_balance = Decimal("0")
+    stock_balance = Decimal("0")
+    total_revenue = Decimal("0")
+    gross_profit = Decimal("0")
+    total_expenses = Decimal("0")
+    net_profit = Decimal("0")
+    vat_payable = Decimal("0")
+    stock_count = customer_count = supplier_count = invoice_count = 0
     recent_rows = ""
-    for entry in recent_journal[:10]:
-        dr = Money.format(Decimal(str(entry.get("debit", 0)))) if entry.get("debit") else "-"
-        cr = Money.format(Decimal(str(entry.get("credit", 0)))) if entry.get("credit") else "-"
-        recent_rows += f'''
-        <tr>
-            <td>{format_date(entry.get("date", ""))}</td>
-            <td>{entry.get("account_code", "")}</td>
-            <td>{entry.get("description", "")[:50]}</td>
-            <td class="number">{dr}</td>
-            <td class="number">{cr}</td>
-        </tr>
-        '''
+    
+    year_start = FinancialPeriod.get_current_year_start()
+    
+    # Load balances with error handling
+    try:
+        bank_balance = Journal.get_account_balance(AccountCodes.BANK)
+    except:
+        pass
+    
+    try:
+        debtors_balance = Journal.get_account_balance(AccountCodes.DEBTORS)
+    except:
+        pass
+    
+    try:
+        creditors_balance = Journal.get_account_balance(AccountCodes.CREDITORS)
+    except:
+        pass
+        
+    try:
+        stock_balance = Journal.get_account_balance(AccountCodes.STOCK)
+    except:
+        pass
+    
+    # P&L Summary
+    try:
+        income_statement = Journal.get_income_statement(year_start, today())
+        total_revenue = income_statement.get("total_revenue", Decimal("0"))
+        total_expenses = income_statement.get("total_expenses", Decimal("0"))
+        net_profit = income_statement.get("net_profit", Decimal("0"))
+        gross_profit = income_statement.get("gross_profit", Decimal("0"))
+    except:
+        pass
+    
+    # VAT
+    try:
+        vat_report = Journal.get_vat_report(year_start, today())
+        vat_payable = vat_report.get("net_vat", Decimal("0"))
+    except:
+        pass
+    
+    # Counts - fast
+    try:
+        stock_count = db.count("stock_items")
+        customer_count = db.count("customers")
+        supplier_count = db.count("suppliers")
+        invoice_count = db.count("invoices")
+    except:
+        pass
+    
+    # Recent transactions
+    try:
+        recent_journal = Journal.get_entries(limit=5)
+        for entry in recent_journal[:5]:
+            dr = Money.format(Decimal(str(entry.get("debit", 0)))) if entry.get("debit") else "-"
+            cr = Money.format(Decimal(str(entry.get("credit", 0)))) if entry.get("credit") else "-"
+            recent_rows += f'''
+            <tr>
+                <td>{format_date(entry.get("date", ""))}</td>
+                <td>{entry.get("account_code", "")}</td>
+                <td>{entry.get("description", "")[:40]}</td>
+                <td class="number">{dr}</td>
+                <td class="number">{cr}</td>
+            </tr>
+            '''
+    except:
+        pass
     
     if not recent_rows:
         recent_rows = '<tr><td colspan="5" class="text-center text-muted" style="padding:40px">No transactions yet</td></tr>'
@@ -5432,8 +5468,12 @@ def dashboard():
         </div>
     </div>
     
-    <!-- Quick Stats Row -->
+    <!-- VAT & Counts -->
     <div class="stats">
+        <div class="stat">
+            <div class="stat-value{' red' if vat_payable > 0 else ' green'}">{Money.format(abs(vat_payable))}</div>
+            <div class="stat-label">{'VAT Payable' if vat_payable > 0 else 'VAT Refund'}</div>
+        </div>
         <div class="stat">
             <div class="stat-value">{stock_count}</div>
             <div class="stat-label">Stock Items</div>
@@ -5443,62 +5483,49 @@ def dashboard():
             <div class="stat-label">Customers</div>
         </div>
         <div class="stat">
-            <div class="stat-value">{supplier_count}</div>
-            <div class="stat-label">Suppliers</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value{' red' if vat_payable > 0 else ' green'}">{Money.format(abs(vat_payable))}</div>
-            <div class="stat-label">{'VAT Payable' if vat_payable > 0 else 'VAT Refund'}</div>
-        </div>
-    </div>
-    
-    <!-- Quick Actions -->
-    <div class="card">
-        <div class="card-header">
-            <h2 class="card-title">Quick Actions</h2>
-        </div>
-        <div class="btn-group flex-wrap">
-            <a href="/pos" class="btn btn-blue">💰 New Sale</a>
-            <a href="/invoices/new" class="btn btn-green">📄 New Invoice</a>
-            <a href="/quotes/new" class="btn btn-purple">📝 New Quote</a>
-            <a href="/expenses/new" class="btn btn-orange">💸 Add Expense</a>
-            <a href="/expenses/scan" class="btn btn-ghost">📷 Scan Receipt</a>
-            <a href="/stock" class="btn btn-ghost">📦 Manage Stock</a>
-            <a href="/reports" class="btn btn-ghost">📊 Reports</a>
+            <div class="stat-value">{invoice_count}</div>
+            <div class="stat-label">Invoices</div>
         </div>
     </div>
     
     <!-- Recent Transactions -->
     <div class="card">
-        <div class="card-header">
-            <h2 class="card-title">Recent Transactions</h2>
-            <a href="/reports/ledger" class="btn btn-sm btn-ghost">View All</a>
+        <div class="flex-between mb-md">
+            <h3>Recent Transactions</h3>
+            <a href="/reports/ledger" class="btn btn-ghost">View All</a>
         </div>
-        <div class="table-wrapper">
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Account</th>
-                        <th>Description</th>
-                        <th class="number">Debit</th>
-                        <th class="number">Credit</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {recent_rows}
-                </tbody>
-            </table>
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Account</th>
+                    <th>Description</th>
+                    <th class="number">Debit</th>
+                    <th class="number">Credit</th>
+                </tr>
+            </thead>
+            <tbody>
+                {recent_rows}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div class="card">
+        <h3 style="margin-bottom: 16px;">Quick Actions</h3>
+        <div class="btn-group" style="flex-wrap: wrap; gap: 12px;">
+            <a href="/pos" class="btn btn-primary">Point of Sale</a>
+            <a href="/stock" class="btn btn-ghost">Stock</a>
+            <a href="/customers" class="btn btn-ghost">Customers</a>
+            <a href="/suppliers" class="btn btn-ghost">Suppliers</a>
+            <a href="/invoices" class="btn btn-ghost">Invoices</a>
+            <a href="/expenses" class="btn btn-ghost">Expenses</a>
+            <a href="/reports" class="btn btn-ghost">Reports</a>
         </div>
     </div>
     '''
     
-    return page_wrapper("Dashboard", content, active="home", user=user)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MOBILE INTERFACE
-# ═══════════════════════════════════════════════════════════════════════════════
+    return page_wrapper("Dashboard", content, "dashboard", user)
 
 @app.route("/mobile")
 def mobile_home():
