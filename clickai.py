@@ -4599,7 +4599,6 @@ def get_header_html(active: str = "", user: dict = None) -> str:
         user_html = f'''
         <div class="header-user">
             <span class="header-user-name">{safe_string(user.get("username", ""))}</span>
-            <a href="/settings/printers" class="btn btn-sm btn-ghost">🖨️</a>
             <a href="/logout" class="btn btn-sm btn-ghost">Logout</a>
         </div>
         '''
@@ -7996,6 +7995,21 @@ def invoice_new():
                 </div>
             </div>
             
+            <div id="new-customer-fields" style="display:none;" class="form-row">
+                <div class="form-group">
+                    <label class="form-label">New Customer Name *</label>
+                    <input type="text" name="new_customer_name" class="form-input" placeholder="Customer name">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Phone</label>
+                    <input type="text" name="new_customer_phone" class="form-input" placeholder="Phone">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Email</label>
+                    <input type="email" name="new_customer_email" class="form-input" placeholder="Email">
+                </div>
+            </div>
+            
             <h3 style="margin: 20px 0 10px;">Line Items</h3>
             <input type="text" id="search-stock" class="form-input" placeholder="Search products to add..." onkeyup="searchStock(this.value)">
             <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
@@ -8041,13 +8055,13 @@ def process_invoice_creation(req):
             return redirect("/invoices/new")
         
         customer_id = req.form.get("customer_id", "")
-        customer_name = ""
+        customer_name = "Walk-in Customer"
         
         # Handle new customer creation
         if customer_id == "NEW":
             new_name = req.form.get("new_customer_name", "").strip()
             if new_name:
-                new_customer = {
+                new_cust = {
                     "id": generate_id(),
                     "name": new_name,
                     "phone": req.form.get("new_customer_phone", ""),
@@ -8056,8 +8070,451 @@ def process_invoice_creation(req):
                     "active": True,
                     "created_at": now()
                 }
-                db.insert("customers", new_customer)
-                customer_id = new_customer["id"]
+                db.insert("customers", new_cust)
+                customer_id = new_cust["id"]
+                customer_name = new_name
+            else:
+                customer_id = ""
+        elif customer_id:
+            cust = db.select_one("customers", customer_id)
+            if cust:
+                customer_name = cust.get("name", "Customer")
+        
+        # Calculate totals in Flask
+        subtotal = Decimal("0")
+        total_vat = Decimal("0")
+        total_cost = Decimal("0")
+        
+        for item in items:
+            price = Decimal(str(item.get("price", 0)))
+            qty = int(item.get("quantity", 1))
+            is_zero = item.get("is_zero_rated", False)
+            
+            line_total = price * qty
+            
+            if is_zero:
+                vat_info = VAT.calculate_from_inclusive(line_total, VAT.ZERO_RATE)
+            else:
+                vat_info = VAT.calculate_from_inclusive(line_total)
+            
+            subtotal += vat_info["exclusive"]
+            total_vat += vat_info["vat"]
+            total_cost += Decimal(str(item.get("cost", 0))) * qty
+        
+        total = subtotal + total_vat
+        
+        invoice_id = generate_id()
+        invoice_number = req.form.get("doc_number", DocumentNumbers.get_next("INV", "invoices", "invoice_number"))
+        
+        invoice = {
+            "id": invoice_id,
+            "invoice_number": invoice_number,
+            "date": req.form.get("date", today()),
+            "customer_id": customer_id or None,
+            "customer_name": customer_name,
+            "items": items_json,
+            "subtotal": float(subtotal),
+            "vat": float(total_vat),
+            "total": float(total),
+            "status": "outstanding",
+            "created_at": now()
+        }
+        
+        db.insert("invoices", invoice)
+        
+        # Post to GL
+        entry = JournalEntry(
+            date=today(),
+            reference=invoice_number,
+            description=f"Invoice {invoice_number} - {customer_name}",
+            trans_type=TransactionType.SALE,
+            source_type="invoice",
+            source_id=invoice_id
+        )
+        
+        if customer_id:
+            entry.debit(AccountCodes.DEBTORS, total)
+            # Update customer balance
+            cust = db.select_one("customers", customer_id)
+            if cust:
+                new_bal = Decimal(str(cust.get("balance", 0) or 0)) + total
+                db.update("customers", customer_id, {"balance": float(new_bal)})
+        else:
+            entry.debit(AccountCodes.BANK, total)
+        
+        entry.credit(AccountCodes.SALES, subtotal)
+        if total_vat > 0:
+            entry.credit(AccountCodes.VAT_OUTPUT, total_vat)
+        
+        entry.post()
+        
+        # Post COGS
+        if total_cost > 0:
+            cogs = JournalEntry(
+                date=today(),
+                reference=invoice_number,
+                description=f"COGS - {invoice_number}",
+                trans_type=TransactionType.SALE
+            )
+            cogs.debit(AccountCodes.COGS, total_cost)
+            cogs.credit(AccountCodes.STOCK, total_cost)
+            cogs.post()
+        
+        return redirect("/invoices")
+        
+    except Exception as e:
+        return redirect("/invoices/new")
+
+
+@app.route("/invoices/<invoice_id>")
+def invoice_view(invoice_id):
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    inv = get_invoice(invoice_id)
+    if not inv:
+        return redirect("/invoices")
+    
+    items = json.loads(inv.get("items", "[]"))
+    
+    item_rows = ""
+    for item in items:
+        line_total = Decimal(str(item.get("price", 0))) * int(item.get("quantity", 1))
+        item_rows += f'''
+        <tr>
+            <td>{safe_string(item.get("description", ""))}</td>
+            <td class="number">{item.get("quantity", 1)}</td>
+            <td class="number">{Money.format(Decimal(str(item.get("price", 0))))}</td>
+            <td class="number">{Money.format(line_total)}</td>
+        </tr>
+        '''
+    
+    status = inv.get("status", "draft")
+    if status == "paid":
+        sb = badge("Paid", "green")
+    elif status == "outstanding":
+        sb = badge("Outstanding", "orange")
+    else:
+        sb = badge(status.title(), "blue")
+    
+    content = f'''
+    
+    
+    <div class="card">
+        <div class="flex-between mb-lg">
+            <div>
+                <h1 style="font-size:24px;font-weight:700;">Invoice {safe_string(inv.get("invoice_number", ""))}</h1>
+                <p class="text-muted">{inv.get("date", "")[:10]} • {safe_string(inv.get("customer_name", "Walk-in"))}</p>
+            </div>
+            <div class="btn-group">
+                <a href="/print/office/{invoice_id}" target="_blank" class="btn btn-sm btn-ghost">📄 Print</a>
+                <a href="/invoices/{invoice_id}/edit" class="btn btn-sm btn-ghost">✏️ Edit</a>
+                {sb}
+            </div>
+        </div>
+        
+        <table class="table">
+            <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th></tr></thead>
+            <tbody>{item_rows}</tbody>
+            <tfoot>
+                <tr><td colspan="3" style="text-align:right;">Subtotal:</td><td class="number">{Money.format(Decimal(str(inv.get("subtotal", 0))))}</td></tr>
+                <tr><td colspan="3" style="text-align:right;">VAT:</td><td class="number">{Money.format(Decimal(str(inv.get("vat", 0))))}</td></tr>
+                <tr><td colspan="3" style="text-align:right;font-weight:700;">Total:</td><td class="number" style="font-weight:700;color:var(--green);">{Money.format(Decimal(str(inv.get("total", 0))))}</td></tr>
+            </tfoot>
+        </table>
+    </div>
+    '''
+    
+    return page_wrapper(f"Invoice {inv.get('invoice_number', '')}", content, active="invoices", user=user)
+
+
+
+@app.route("/invoices/<invoice_id>/edit", methods=["GET", "POST"])
+def invoice_edit(invoice_id):
+    """Edit invoice with warning if already printed/emailed"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    inv = get_invoice(invoice_id)
+    if not inv:
+        return redirect("/invoices")
+    
+    # Handle confirmation
+    confirmed = request.args.get("confirmed") == "yes"
+    
+    if request.method == "GET" and not confirmed:
+        # Show warning page first
+        content = f'''
+        <div class="card" style="max-width:500px; margin: 40px auto; text-align:center;">
+            <div style="font-size:48px; margin-bottom:20px;">⚠️</div>
+            <h2 style="margin-bottom:12px;">Edit Invoice?</h2>
+            <p class="text-muted" style="margin-bottom:24px;">
+                This invoice may have already been printed or emailed to the customer.<br>
+                Are you sure you want to edit it?
+            </p>
+            <div class="btn-group" style="justify-content:center;">
+                <a href="/invoices/{invoice_id}/edit?confirmed=yes" class="btn btn-orange">Yes, Edit Invoice</a>
+                <a href="/invoices/{invoice_id}" class="btn btn-ghost">Cancel</a>
+            </div>
+        </div>
+        '''
+        return page_wrapper("Edit Invoice", content, "invoices", user)
+    
+    if request.method == "POST":
+        # Save changes
+        try:
+            items = json.loads(request.form.get("items_json", "[]"))
+            
+            subtotal = Decimal("0")
+            total_vat = Decimal("0")
+            for item in items:
+                price = Decimal(str(item.get("price", 0)))
+                qty = int(item.get("quantity", 1))
+                line_total = price * qty
+                vat_info = VAT.calculate_from_inclusive(line_total)
+                subtotal += vat_info["exclusive"]
+                total_vat += vat_info["vat"]
+            
+            total = subtotal + total_vat
+            
+            updates = {
+                "items": request.form.get("items_json", "[]"),
+                "subtotal": float(subtotal),
+                "vat": float(total_vat),
+                "total": float(total),
+                "date": request.form.get("date", inv.get("date")),
+                "updated_at": now()
+            }
+            
+            db.update("invoices", invoice_id, updates)
+            return redirect(f"/invoices/{invoice_id}")
+            
+        except Exception:
+            return redirect(f"/invoices/{invoice_id}/edit?confirmed=yes")
+    
+    # Show edit form
+    stock = get_stock_for_selection()
+    items = json.loads(inv.get("items", "[]"))
+    js = create_document_js("invoice")
+    
+    # Pre-populate items
+    items_js = json.dumps(items)
+    
+    content = f'''
+    <div class="card">
+        <h2 class="card-title mb-md">Edit Invoice {safe_string(inv.get("invoice_number", ""))}</h2>
+        
+        <form method="POST" id="doc-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Invoice Number</label>
+                    <input type="text" class="form-input" value="{safe_string(inv.get('invoice_number', ''))}" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" name="date" class="form-input" value="{inv.get('date', today())[:10]}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Customer</label>
+                    <input type="text" class="form-input" value="{safe_string(inv.get('customer_name', 'Walk-in'))}" readonly>
+                </div>
+            </div>
+            
+            <h3 style="margin: 20px 0 10px;">Line Items</h3>
+            <input type="text" id="search-stock" class="form-input" placeholder="Search products..." onkeyup="searchStock(this.value)">
+            <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
+            
+            <table class="table" id="lines-table">
+                <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th><th></th></tr></thead>
+                <tbody id="lines-body"></tbody>
+                <tfoot>
+                    <tr><td colspan="3" style="text-align:right;font-weight:600;">Total:</td><td id="grand-total" style="text-align:right;font-weight:700;font-size:18px;color:var(--green);">R 0.00</td><td></td></tr>
+                </tfoot>
+            </table>
+            
+            <input type="hidden" name="items_json" id="items-json">
+            <input type="hidden" name="total" id="total-input">
+            
+            <div class="btn-group mt-lg">
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <a href="/invoices/{invoice_id}" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+    const stockItems = {json.dumps(stock)};
+    {js}
+    
+    // Pre-populate existing items
+    const existingItems = {items_js};
+    lines = existingItems.map(item => ({{
+        id: item.stock_id || '',
+        code: item.code || '',
+        description: item.description,
+        price: item.price,
+        quantity: item.quantity
+    }}));
+    renderLines();
+    </script>
+    '''
+    
+    return page_wrapper("Edit Invoice", content, "invoices", user)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# QUOTES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/quotes")
+def quote_list():
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    quotes = get_all_quotes()
+    
+    rows = []
+    for q in quotes[:50]:
+        rows.append([
+            f'<a href="/quotes/{q["id"]}">{q.get("quote_number", "-")}</a>',
+            q.get("date", "")[:10],
+            safe_string(q.get("customer_name", "")),
+            {"value": Money.format(Decimal(str(q.get("total", 0)))), "class": "number"},
+            f'<a href="/quotes/{q["id"]}/convert" class="btn btn-sm btn-green">→ Invoice</a>'
+        ])
+    
+    table = table_html(
+        headers=["Quote #", "Date", "Customer", {"label": "Total", "class": "number"}, ""],
+        rows=rows,
+        empty_message="No quotes yet"
+    )
+    
+    content = f'''
+    <div class="flex-between mb-lg">
+        <p class="text-muted">{len(quotes)} quotes</p>
+        <a href="/quotes/new" class="btn btn-primary">+ New Quote</a>
+    </div>
+    
+    <div class="card">{table}</div>
+    '''
+    
+    return page_wrapper("Quotes", content, active="quotes", user=user)
+
+
+@app.route("/quotes/new", methods=["GET", "POST"])
+def quote_new():
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    if request.method == "POST":
+        return process_quote_creation(request)
+    
+    stock = get_stock_for_selection()
+    customers = get_customers_for_selection()
+    quote_number = DocumentNumbers.get_next("QUO", "quotes", "quote_number")
+    
+    js = create_document_js("quote")
+    
+    content = f'''
+    
+    
+    <div class="card">
+        <h2 class="card-title mb-md">New Quote</h2>
+        
+        <form method="POST" id="doc-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Quote Number</label>
+                    <input type="text" name="doc_number" class="form-input" value="{quote_number}" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" name="date" class="form-input" value="{today()}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Customer</label>
+                    <select name="customer_id" id="customer_id" class="form-select" onchange="toggleNewCustomer(this)">
+                        <option value="">Walk-in Customer</option>
+                        <option value="NEW">➕ Add New Customer</option>
+                        {"".join([f'<option value="{c["id"]}">{safe_string(c["name"])}</option>' for c in customers])}
+                    </select>
+                </div>
+            </div>
+            
+            <div id="new-customer-fields" style="display:none;" class="form-row">
+                <div class="form-group">
+                    <label class="form-label">New Customer Name *</label>
+                    <input type="text" name="new_customer_name" class="form-input" placeholder="Customer name">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Phone</label>
+                    <input type="text" name="new_customer_phone" class="form-input" placeholder="Phone">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Email</label>
+                    <input type="email" name="new_customer_email" class="form-input" placeholder="Email">
+                </div>
+            </div>
+            
+            <h3 style="margin: 20px 0 10px;">Line Items</h3>
+            <input type="text" id="search-stock" class="form-input" placeholder="Search products..." onkeyup="searchStock(this.value)">
+            <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
+            
+            <table class="table" id="lines-table">
+                <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th><th></th></tr></thead>
+                <tbody id="lines-body"></tbody>
+                <tfoot>
+                    <tr><td colspan="3" style="text-align:right;font-weight:600;">Total:</td><td id="grand-total" style="text-align:right;font-weight:700;font-size:18px;color:var(--green);">R 0.00</td><td></td></tr>
+                </tfoot>
+            </table>
+            
+            <input type="hidden" name="items_json" id="items-json">
+            <input type="hidden" name="total" id="total-input">
+            
+            <div class="btn-group mt-lg">
+                <button type="submit" class="btn btn-primary">Save Quote</button>
+                <a href="/quotes" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+    const stockItems = {json.dumps(stock)};
+    {js}
+    </script>
+    '''
+    
+    return page_wrapper("New Quote", content, active="quotes", user=user)
+
+
+def process_quote_creation(req):
+    try:
+        items = json.loads(req.form.get("items_json", "[]"))
+        if not items:
+            return redirect("/quotes/new")
+        
+        customer_id = req.form.get("customer_id", "")
+        customer_name = ""
+        
+        # Handle new customer creation
+        if customer_id == "NEW":
+            new_name = req.form.get("new_customer_name", "").strip()
+            if new_name:
+                new_cust = {
+                    "id": generate_id(),
+                    "name": new_name,
+                    "phone": req.form.get("new_customer_phone", ""),
+                    "email": req.form.get("new_customer_email", ""),
+                    "balance": 0,
+                    "active": True,
+                    "created_at": now()
+                }
+                db.insert("customers", new_cust)
+                customer_id = new_cust["id"]
                 customer_name = new_name
             else:
                 customer_id = ""
@@ -8126,11 +8583,7 @@ def quote_view(quote_id):
                 <h1 style="font-size:24px;font-weight:700;">Quote {safe_string(q.get("quote_number", ""))}</h1>
                 <p class="text-muted">{q.get("date", "")[:10]} • {safe_string(q.get("customer_name", ""))}</p>
             </div>
-            <div class="btn-group">
-                <a href="/print/quote/{quote_id}" target="_blank" class="btn btn-sm btn-ghost">📄 Print</a>
-                <a href="/email/quote/{quote_id}" class="btn btn-sm btn-ghost">📧 Email</a>
-                {'<span class="badge badge-green" style="margin-left:10px">✓ Converted</span>' if q.get('status') == 'converted' else f'<a href="/quotes/{quote_id}/convert" class="btn btn-green">Convert to Invoice</a>'}
-            </div>
+            {'<span class="badge badge-green">✓ Converted</span>' if q.get('status') == 'converted' else f'<a href="/quotes/{quote_id}/convert" class="btn btn-green">Convert to Invoice</a>'}
         </div>
         
         <table class="table">
@@ -8243,8 +8696,6 @@ function toggleNewCustomer(select) {
         fields.style.display = select.value === 'NEW' ? 'flex' : 'none';
     }
 }
-
-let lines = [];
 
 function searchStock(q) {
     const results = document.getElementById('search-results');
@@ -9604,232 +10055,6 @@ def print_office(invoice_number):
     <a href="#" class="btn no-print" onclick="window.print(); return false;">Print Invoice</a>
 </body>
 </html>'''
-
-
-
-@app.route("/print/quote/<quote_id>")
-def print_quote(quote_id):
-    """Generate printable quote"""
-    q = get_quote(quote_id)
-    if not q:
-        return "Quote not found", 404
-    
-    items = json.loads(q.get("items", "[]"))
-    
-    item_rows = ""
-    for item in items:
-        qty = item.get("quantity", 1)
-        desc = item.get("description", "")
-        price = Decimal(str(item.get("price", 0)))
-        line_total = price * qty
-        item_rows += f"<tr><td>{desc}</td><td style='text-align:right'>{qty}</td><td style='text-align:right'>R {price:.2f}</td><td style='text-align:right'>R {line_total:.2f}</td></tr>"
-    
-    total = Decimal(str(q.get("total", 0)))
-    customer = q.get("customer_name", "") or "Customer"
-    
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-    <title>Quote {q.get("quote_number", "")}</title>
-    <style>
-        @media print {{ @page {{ margin: 15mm; }} }}
-        body {{ font-family: Arial, sans-serif; font-size: 14px; max-width: 210mm; margin: 0 auto; padding: 20px; }}
-        h1 {{ color: #333; margin-bottom: 5px; }}
-        .header {{ display: flex; justify-content: space-between; margin-bottom: 30px; }}
-        .quote-details {{ text-align: right; }}
-        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        th {{ background: #f5f5f5; text-align: left; padding: 10px; border-bottom: 2px solid #333; }}
-        td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
-        .totals {{ width: 300px; margin-left: auto; }}
-        .totals td {{ border: none; }}
-        .grand-total {{ font-size: 18px; font-weight: bold; background: #f0f0f0; }}
-        .validity {{ margin-top: 30px; font-size: 12px; color: #666; }}
-        .btn {{ display: inline-block; padding: 10px 20px; background: #8b5cf6; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }}
-        @media print {{ .no-print {{ display: none; }} }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <div>
-            <h1>QUOTATION</h1>
-            <p><strong>To:</strong> {customer}</p>
-        </div>
-        <div class="quote-details">
-            <p><strong>Quote:</strong> {q.get("quote_number", "")}</p>
-            <p><strong>Date:</strong> {q.get("date", "")[:10]}</p>
-        </div>
-    </div>
-    
-    <table>
-        <thead><tr><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Amount</th></tr></thead>
-        <tbody>{item_rows}</tbody>
-    </table>
-    
-    <table class="totals">
-        <tr class="grand-total"><td>TOTAL (incl VAT):</td><td style="text-align:right">R {total:.2f}</td></tr>
-    </table>
-    
-    <p class="validity">This quotation is valid for 30 days from the date of issue.</p>
-    
-    <a href="#" class="btn no-print" onclick="window.print(); return false;">Print Quote</a>
-</body>
-</html>'''
-
-
-@app.route("/email/quote/<quote_id>")
-def email_quote(quote_id):
-    """Placeholder for email functionality"""
-    # For now, show a page with the email that would be sent
-    q = get_quote(quote_id)
-    if not q:
-        return redirect("/quotes")
-    
-    user = UserSession.get_current_user()
-    
-    content = f'''
-    <div class="card" style="max-width:600px; margin:0 auto;">
-        <h2 class="card-title mb-md">📧 Email Quote</h2>
-        
-        <form method="POST" action="/email/quote/{quote_id}/send">
-            <div class="form-group">
-                <label class="form-label">To (Email Address)</label>
-                <input type="email" name="to_email" class="form-input" placeholder="customer@example.com" required>
-            </div>
-            
-            <div class="form-group">
-                <label class="form-label">Subject</label>
-                <input type="text" name="subject" class="form-input" value="Quote {q.get('quote_number', '')} from Click AI">
-            </div>
-            
-            <div class="form-group">
-                <label class="form-label">Message</label>
-                <textarea name="message" class="form-input" rows="5">Dear Customer,
-
-Please find attached your quotation {q.get('quote_number', '')}.
-
-Total: R {q.get('total', 0):.2f}
-
-This quote is valid for 30 days.
-
-Thank you for your business.</textarea>
-            </div>
-            
-            <div class="alert alert-info">
-                ℹ️ Email sending requires SMTP configuration. For now, you can print the quote and email manually.
-            </div>
-            
-            <div class="btn-group mt-lg">
-                <a href="/print/quote/{quote_id}" target="_blank" class="btn btn-primary">📄 Print Instead</a>
-                <a href="/quotes/{quote_id}" class="btn btn-ghost">Cancel</a>
-            </div>
-        </form>
-    </div>
-    '''
-    
-    return page_wrapper("Email Quote", content, "quotes", user)
-
-
-@app.route("/email/invoice/<invoice_id>")
-def email_invoice(invoice_id):
-    """Placeholder for email invoice"""
-    inv = get_invoice(invoice_id)
-    if not inv:
-        return redirect("/invoices")
-    
-    user = UserSession.get_current_user()
-    
-    content = f'''
-    <div class="card" style="max-width:600px; margin:0 auto;">
-        <h2 class="card-title mb-md">📧 Email Invoice</h2>
-        
-        <form method="POST" action="/email/invoice/{invoice_id}/send">
-            <div class="form-group">
-                <label class="form-label">To (Email Address)</label>
-                <input type="email" name="to_email" class="form-input" placeholder="customer@example.com" required>
-            </div>
-            
-            <div class="form-group">
-                <label class="form-label">Subject</label>
-                <input type="text" name="subject" class="form-input" value="Invoice {inv.get('invoice_number', '')} from Click AI">
-            </div>
-            
-            <div class="form-group">
-                <label class="form-label">Message</label>
-                <textarea name="message" class="form-input" rows="5">Dear Customer,
-
-Please find attached your invoice {inv.get('invoice_number', '')}.
-
-Total Due: R {inv.get('total', 0):.2f}
-
-Thank you for your business.</textarea>
-            </div>
-            
-            <div class="alert alert-info">
-                ℹ️ Email sending requires SMTP configuration. For now, you can print the invoice and email manually.
-            </div>
-            
-            <div class="btn-group mt-lg">
-                <a href="/print/office/{inv.get('invoice_number', '')}" target="_blank" class="btn btn-primary">📄 Print Instead</a>
-                <a href="/invoices/{invoice_id}" class="btn btn-ghost">Cancel</a>
-            </div>
-        </form>
-    </div>
-    '''
-    
-    return page_wrapper("Email Invoice", content, "invoices", user)
-
-
-# FIX 4: Printer setup page
-@app.route("/settings/printers")
-def printer_settings():
-    """Printer configuration page"""
-    user = UserSession.get_current_user()
-    if not user:
-        return redirect("/login")
-    
-    content = '''
-    <div class="card" style="max-width:700px; margin:0 auto;">
-        <h2 class="card-title mb-md">🖨️ Printer Setup</h2>
-        
-        <div class="alert alert-info mb-lg">
-            ℹ️ Click AI uses your browser's print function. Make sure your printers are set up in your operating system.
-        </div>
-        
-        <h3 style="margin-bottom:12px;">Thermal Receipt Printer (POS)</h3>
-        <p class="text-muted" style="margin-bottom:16px;">For 80mm receipt printers (Epson, Star, etc.)</p>
-        <ol style="margin-left:20px; margin-bottom:24px; color: var(--text-secondary);">
-            <li>Connect your thermal printer via USB or Network</li>
-            <li>Install the printer driver from the manufacturer</li>
-            <li>Set paper size to 80mm in printer properties</li>
-            <li>When printing receipts, select your thermal printer</li>
-        </ol>
-        <a href="/pos" class="btn btn-green mb-lg">Test POS Receipt →</a>
-        
-        <hr style="border-color: var(--border); margin: 24px 0;">
-        
-        <h3 style="margin-bottom:12px;">Office Printer (Invoices/Quotes)</h3>
-        <p class="text-muted" style="margin-bottom:16px;">For A4 inkjet or laser printers</p>
-        <ol style="margin-left:20px; margin-bottom:24px; color: var(--text-secondary);">
-            <li>Connect your printer via USB, WiFi, or Network</li>
-            <li>Install printer drivers (usually automatic on Windows/Mac)</li>
-            <li>Set as default printer for convenience</li>
-            <li>Print invoices and quotes using the 📄 Print button</li>
-        </ol>
-        <a href="/invoices" class="btn btn-primary mb-lg">View Invoices →</a>
-        
-        <hr style="border-color: var(--border); margin: 24px 0;">
-        
-        <h3 style="margin-bottom:12px;">Troubleshooting</h3>
-        <div class="text-muted" style="line-height:1.8;">
-            <p><strong>Printer not showing?</strong> Check if it's turned on and connected.</p>
-            <p><strong>Wrong paper size?</strong> Go to printer settings in your computer's control panel.</p>
-            <p><strong>Print is cut off?</strong> Check margins in print preview, or set to "Fit to page".</p>
-            <p><strong>Need help?</strong> Contact your printer manufacturer or IT support.</p>
-        </div>
-    </div>
-    '''
-    
-    return page_wrapper("Printer Setup", content, "settings", user)
 
 
 if __name__ == "__main__":
