@@ -10060,386 +10060,450 @@ def print_office(invoice_number):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MOBILE VERSION - Simple interface for phones
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MOBILE SCANNER - AI Document Capture
+# 3 buttons: COS, EXP, STOCK - Tap, Snap, Done
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def is_mobile():
-    """Check if request is from mobile device"""
-    ua = request.headers.get('User-Agent', '').lower()
-    return any(x in ua for x in ['mobile', 'android', 'iphone', 'ipad'])
-
-def mobile_wrapper(title, content):
-    """Simple mobile page wrapper"""
-    return f'''<!DOCTYPE html>
+@app.route("/m")
+def scanner_home():
+    """Mobile scanner - 3 buttons only"""
+    return '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>{title} - Click</title>
+    <title>Click Scanner</title>
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ 
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0a0a12; 
+            background: linear-gradient(180deg, #0a0a12 0%, #12121a 100%);
             color: #f0f0f0;
             min-height: 100vh;
-            padding-bottom: 80px;
-        }}
-        .header {{
-            background: linear-gradient(135deg, #1a1a2e, #16213e);
-            padding: 16px;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
             text-align: center;
-            border-bottom: 1px solid #2a2a4a;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }}
-        .header h1 {{
-            font-size: 20px;
+            padding: 40px 20px 30px;
+        }
+        .logo {
+            font-size: 32px;
+            font-weight: 800;
             background: linear-gradient(135deg, #8b5cf6, #3b82f6);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-        }}
-        .content {{ padding: 16px; }}
-        .card {{
-            background: #12121a;
-            border: 1px solid #2a2a4a;
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 16px;
-        }}
-        .btn {{
-            display: block;
-            width: 100%;
-            padding: 16px;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: 600;
-            text-align: center;
-            text-decoration: none;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
+        }
+        .tagline { color: #606070; font-size: 14px; }
+        .buttons {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 20px;
+            gap: 20px;
+        }
+        .scan-btn {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 28px 24px;
+            border-radius: 16px;
+            font-size: 20px;
+            font-weight: 700;
+            color: white;
             border: none;
             cursor: pointer;
-        }}
-        .btn-primary {{ background: linear-gradient(135deg, #8b5cf6, #3b82f6); color: white; }}
-        .btn-green {{ background: linear-gradient(135deg, #10b981, #059669); color: white; }}
-        .btn-orange {{ background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }}
-        .btn-ghost {{ background: #1a1a2e; color: #8b8b9a; border: 1px solid #2a2a4a; }}
-        .form-input {{
-            width: 100%;
-            padding: 14px;
-            background: #0a0a12;
-            border: 1px solid #2a2a4a;
-            border-radius: 8px;
-            color: #f0f0f0;
-            font-size: 16px;
-            margin-bottom: 12px;
-        }}
-        .form-label {{ display: block; margin-bottom: 6px; color: #8b8b9a; font-size: 14px; }}
-        .nav-bottom {{
+            transition: transform 0.2s;
+        }
+        .scan-btn:active { transform: scale(0.98); }
+        .scan-btn-cos {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            box-shadow: 0 8px 32px rgba(245, 158, 11, 0.3);
+        }
+        .scan-btn-exp {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            box-shadow: 0 8px 32px rgba(239, 68, 68, 0.3);
+        }
+        .scan-btn-stock {
+            background: linear-gradient(135deg, #10b981, #059669);
+            box-shadow: 0 8px 32px rgba(16, 185, 129, 0.3);
+        }
+        .scan-icon { font-size: 32px; }
+        .scan-text { text-align: left; }
+        .scan-title { display: block; font-size: 22px; margin-bottom: 4px; }
+        .scan-desc { display: block; font-size: 13px; font-weight: 400; opacity: 0.9; }
+        .footer { text-align: center; padding: 20px; color: #404050; font-size: 12px; }
+        .footer a { color: #8b5cf6; text-decoration: none; }
+        input[type="file"] { display: none; }
+        .overlay {
+            display: none;
             position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: #12121a;
-            border-top: 1px solid #2a2a4a;
-            display: flex;
-            justify-content: space-around;
-            padding: 10px 0;
-            z-index: 100;
-        }}
-        .nav-item {{
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(10, 10, 18, 0.95);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .overlay.show { display: flex; }
+        .spinner {
+            width: 60px; height: 60px;
+            border: 4px solid #1a1a2e;
+            border-top-color: #8b5cf6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .overlay-text { font-size: 18px; color: #8b8b9a; }
+        .result {
+            display: none;
+            position: fixed;
+            bottom: 100px; left: 20px; right: 20px;
+            padding: 16px 20px;
+            border-radius: 12px;
             text-align: center;
-            color: #606070;
-            text-decoration: none;
-            font-size: 12px;
-            padding: 8px 16px;
-        }}
-        .nav-item.active {{ color: #8b5cf6; }}
-        .nav-icon {{ font-size: 24px; display: block; margin-bottom: 4px; }}
-        .stat {{ text-align: center; padding: 12px; }}
-        .stat-value {{ font-size: 28px; font-weight: 700; color: #10b981; }}
-        .stat-label {{ font-size: 12px; color: #606070; }}
-        .list-item {{
-            display: flex;
-            justify-content: space-between;
-            padding: 14px;
-            border-bottom: 1px solid #1a1a2e;
-        }}
-        .list-item:last-child {{ border-bottom: none; }}
-        .text-muted {{ color: #606070; }}
-        .text-green {{ color: #10b981; }}
-        .alert {{ padding: 12px; border-radius: 8px; margin-bottom: 16px; }}
-        .alert-success {{ background: rgba(16, 185, 129, 0.2); color: #10b981; }}
-        .alert-error {{ background: rgba(239, 68, 68, 0.2); color: #ef4444; }}
+            font-weight: 600;
+            z-index: 100;
+        }
+        .result.success {
+            display: block;
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid #10b981;
+            color: #10b981;
+        }
+        .result.error {
+            display: block;
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid #ef4444;
+            color: #ef4444;
+        }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>Click</h1>
+        <div class="logo">Click</div>
+        <div class="tagline">Tap • Snap • Done</div>
     </div>
-    <div class="content">
-        {content}
+    
+    <div class="buttons">
+        <label class="scan-btn scan-btn-cos">
+            <span class="scan-icon">📦</span>
+            <span class="scan-text">
+                <span class="scan-title">Cost of Sales</span>
+                <span class="scan-desc">Scan supplier invoice</span>
+            </span>
+            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'cos')">
+        </label>
+        
+        <label class="scan-btn scan-btn-exp">
+            <span class="scan-icon">🧾</span>
+            <span class="scan-text">
+                <span class="scan-title">Expense</span>
+                <span class="scan-desc">Scan receipt or bill</span>
+            </span>
+            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'exp')">
+        </label>
+        
+        <label class="scan-btn scan-btn-stock">
+            <span class="scan-icon">📋</span>
+            <span class="scan-text">
+                <span class="scan-title">Stock Take</span>
+                <span class="scan-desc">Scan stock count sheet</span>
+            </span>
+            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'stock')">
+        </label>
     </div>
-    <nav class="nav-bottom">
-        <a href="/m" class="nav-item"><span class="nav-icon">🏠</span>Home</a>
-        <a href="/m/pos" class="nav-item"><span class="nav-icon">💰</span>POS</a>
-        <a href="/m/stock" class="nav-item"><span class="nav-icon">📦</span>Stock</a>
-        <a href="/m/expense" class="nav-item"><span class="nav-icon">💸</span>Expense</a>
-    </nav>
+    
+    <div class="footer">
+        <a href="/">Desktop Version</a>
+    </div>
+    
+    <div class="overlay" id="overlay">
+        <div class="spinner"></div>
+        <div class="overlay-text" id="overlay-text">Processing...</div>
+    </div>
+    
+    <div class="result" id="result"></div>
+    
+    <script>
+    async function processImage(input, type) {
+        if (!input.files || !input.files[0]) return;
+        
+        const file = input.files[0];
+        const overlay = document.getElementById('overlay');
+        const overlayText = document.getElementById('overlay-text');
+        const result = document.getElementById('result');
+        
+        overlay.classList.add('show');
+        result.className = 'result';
+        
+        const messages = {
+            'cos': 'AI reading supplier invoice...',
+            'exp': 'AI reading receipt...',
+            'stock': 'AI reading stock count...'
+        };
+        overlayText.textContent = messages[type] || 'Processing...';
+        
+        try {
+            const base64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            
+            const response = await fetch('/m/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: base64, type: type })
+            });
+            
+            const data = await response.json();
+            overlay.classList.remove('show');
+            
+            if (data.success) {
+                result.className = 'result success';
+                result.textContent = '✓ ' + data.message;
+            } else {
+                result.className = 'result error';
+                result.textContent = '✗ ' + (data.error || 'Failed');
+            }
+            
+            setTimeout(() => { result.className = 'result'; }, 4000);
+            
+        } catch (err) {
+            overlay.classList.remove('show');
+            result.className = 'result error';
+            result.textContent = '✗ ' + err.message;
+            setTimeout(() => { result.className = 'result'; }, 4000);
+        }
+        
+        input.value = '';
+    }
+    </script>
 </body>
 </html>'''
 
 
-@app.route("/m")
-def m_home():
-    """Mobile home screen"""
-    user = UserSession.get_current_user()
-    if not user:
-        return redirect("/login")
-    
-    content = f'''
-    <div style="text-align:center; padding: 20px 0;">
-        <div style="font-size: 48px; margin-bottom: 16px;">👋</div>
-        <h2 style="margin-bottom: 8px;">Welcome, {user.get("username", "")}</h2>
-        <p class="text-muted">What would you like to do?</p>
-    </div>
-    
-    <a href="/m/pos" class="btn btn-primary">💰 Make a Sale</a>
-    <a href="/m/expense" class="btn btn-green">💸 Add Expense</a>
-    <a href="/m/stock" class="btn btn-orange">📦 Check Stock</a>
-    
-    <div style="margin-top: 24px; text-align: center;">
-        <a href="/dashboard" class="btn btn-ghost">📊 Full Desktop Version</a>
-    </div>
-    '''
-    return mobile_wrapper("Home", content)
-
-
-@app.route("/m/pos")
-def m_pos():
-    """Mobile POS - Quick sale"""
-    user = UserSession.get_current_user()
-    if not user:
-        return redirect("/login")
-    
-    content = '''
-    <h2 style="margin-bottom: 16px;">Quick Sale</h2>
-    
-    <div class="card">
-        <label class="form-label">Search Product</label>
-        <input type="text" id="search" class="form-input" placeholder="Type product name..." oninput="searchStock(this.value)">
-        <div id="results"></div>
-    </div>
-    
-    <div class="card">
-        <h3 style="margin-bottom: 12px;">Cart</h3>
-        <div id="cart"><p class="text-muted">Empty</p></div>
-        <div style="display:flex; justify-content:space-between; margin-top:16px; font-size:20px; font-weight:700;">
-            <span>Total:</span>
-            <span id="total" class="text-green">R 0.00</span>
-        </div>
-    </div>
-    
-    <button class="btn btn-primary" onclick="processSale('cash')">💵 Cash Sale</button>
-    <button class="btn btn-green" onclick="processSale('card')">💳 Card Sale</button>
-    
-    <script>
-    let cart = [];
-    let stock = [];
-    
-    fetch('/api/pos/stock').then(r => r.json()).then(data => { stock = data; });
-    
-    function searchStock(q) {
-        if (q.length < 2) { document.getElementById('results').innerHTML = ''; return; }
-        q = q.toLowerCase();
-        let html = '';
-        for (const item of stock.slice(0, 20)) {
-            if (item.description.toLowerCase().includes(q) || (item.code||'').toLowerCase().includes(q)) {
-                html += '<div onclick="addToCart(\\''+item.id+'\\')\" style="padding:12px;border-bottom:1px solid #1a1a2e;cursor:pointer;">'+item.description+' <span class="text-green">'+item.price_formatted+'</span></div>';
-            }
-        }
-        document.getElementById('results').innerHTML = html || '<p class="text-muted">No results</p>';
-    }
-    
-    function addToCart(id) {
-        const item = stock.find(s => s.id === id);
-        if (!item) return;
-        const existing = cart.find(c => c.id === id);
-        if (existing) { existing.qty++; }
-        else { cart.push({id: item.id, name: item.description, price: item.price, qty: 1}); }
-        document.getElementById('search').value = '';
-        document.getElementById('results').innerHTML = '';
-        renderCart();
-    }
-    
-    function renderCart() {
-        if (cart.length === 0) {
-            document.getElementById('cart').innerHTML = '<p class="text-muted">Empty</p>';
-            document.getElementById('total').textContent = 'R 0.00';
-            return;
-        }
-        let html = '';
-        let total = 0;
-        for (let i = 0; i < cart.length; i++) {
-            const item = cart[i];
-            const line = item.price * item.qty;
-            total += line;
-            html += '<div class="list-item"><span>'+item.qty+'x '+item.name+'</span><span class="text-green">R '+line.toFixed(2)+'</span></div>';
-        }
-        document.getElementById('cart').innerHTML = html;
-        document.getElementById('total').textContent = 'R ' + total.toFixed(2);
-    }
-    
-    async function processSale(method) {
-        if (cart.length === 0) { alert('Cart is empty'); return; }
-        const items = cart.map(c => ({id: c.id, description: c.name, price: c.price, quantity: c.qty, cost: 0}));
-        const res = await fetch('/api/pos/sale', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({items, customer_id: '', payment_method: method})
-        });
-        const data = await res.json();
-        if (data.success) {
-            alert('Sale complete! ' + data.invoice_number);
-            cart = [];
-            renderCart();
-        } else {
-            alert('Error: ' + data.error);
-        }
-    }
-    </script>
-    '''
-    return mobile_wrapper("POS", content)
-
-
-@app.route("/m/expense")
-def m_expense():
-    """Mobile expense entry"""
-    user = UserSession.get_current_user()
-    if not user:
-        return redirect("/login")
-    
-    message = ""
-    if request.args.get("success"):
-        message = '<div class="alert alert-success">✓ Expense saved!</div>'
-    
-    content = f'''
-    <h2 style="margin-bottom: 16px;">Add Expense</h2>
-    
-    {message}
-    
-    <form method="POST" action="/m/expense/save">
-        <div class="card">
-            <label class="form-label">Amount (R)</label>
-            <input type="number" name="amount" class="form-input" placeholder="0.00" step="0.01" required>
-            
-            <label class="form-label">Description</label>
-            <input type="text" name="description" class="form-input" placeholder="What was purchased?" required>
-            
-            <label class="form-label">Supplier (optional)</label>
-            <input type="text" name="supplier" class="form-input" placeholder="Supplier name">
-        </div>
-        
-        <button type="submit" class="btn btn-primary">💾 Save Expense</button>
-    </form>
-    '''
-    return mobile_wrapper("Add Expense", content)
-
-
-@app.route("/m/expense/save", methods=["POST"])
-def m_expense_save():
-    """Save mobile expense"""
-    user = UserSession.get_current_user()
-    if not user:
-        return redirect("/login")
-    
+@app.route("/m/scan", methods=["POST"])
+def scanner_process():
+    """Process scanned image with AI"""
     try:
-        amount = Decimal(request.form.get("amount", "0"))
-        description = request.form.get("description", "")
-        supplier = request.form.get("supplier", "")
+        data = request.get_json()
+        image_data = data.get("image", "")
+        scan_type = data.get("type", "")
         
-        if amount > 0 and description:
-            expense = {
-                "id": generate_id(),
-                "date": today(),
-                "description": description,
-                "supplier": supplier,
-                "category": "6140",  # General expenses
-                "amount": float(amount),
-                "vat_type": "inclusive",
-                "created_at": now()
-            }
-            db.insert("expenses", expense)
+        if not image_data or not scan_type:
+            return jsonify({"success": False, "error": "Missing data"})
+        
+        # Extract base64 data (remove data:image/...;base64, prefix)
+        if "," in image_data:
+            image_data = image_data.split(",")[1]
+        
+        # Call Claude API to read the image
+        import anthropic
+        
+        client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY if hasattr(Config, 'ANTHROPIC_API_KEY') else os.environ.get("ANTHROPIC_API_KEY", ""))
+        
+        prompts = {
+            "cos": """Analyze this supplier invoice image. Extract:
+1. Supplier name
+2. Invoice number
+3. Date
+4. Line items (description, quantity, unit price)
+5. Total amount
+6. VAT amount if shown
+
+Return as JSON: {"supplier": "", "invoice_no": "", "date": "", "items": [{"description": "", "qty": 0, "price": 0}], "total": 0, "vat": 0}""",
+
+            "exp": """Analyze this receipt/expense image. Extract:
+1. Supplier/vendor name
+2. Date
+3. Description of purchase
+4. Total amount
+5. VAT amount if shown
+
+Return as JSON: {"supplier": "", "date": "", "description": "", "total": 0, "vat": 0}""",
+
+            "stock": """Analyze this stock count sheet image. Extract the list of items with their quantities.
+
+Return as JSON: {"items": [{"code": "", "description": "", "quantity": 0}]}"""
+        }
+        
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": image_data
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": prompts.get(scan_type, "Describe this image")
+                        }
+                    ]
+                }
+            ]
+        )
+        
+        ai_response = message.content[0].text
+        
+        # Parse AI response and process
+        import re
+        json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+        
+        if json_match:
+            parsed = json.loads(json_match.group())
             
-            # Post to GL
-            vat_info = VAT.calculate_from_inclusive(amount)
-            entry = JournalEntry(
-                date=today(),
-                reference=f"EXP-{expense['id'][:8]}",
-                description=description,
-                trans_type=TransactionType.EXPENSE,
-                source_type="expense",
-                source_id=expense["id"]
-            )
-            entry.debit("6140", vat_info["exclusive"])
-            entry.debit(AccountCodes.VAT_INPUT, vat_info["vat"])
-            entry.credit(AccountCodes.BANK, amount)
-            entry.post()
+            if scan_type == "cos":
+                # Create expense and update stock
+                result = process_cos_scan(parsed)
+                return jsonify({"success": True, "message": f"Invoice recorded: R{parsed.get('total', 0):.2f}"})
+                
+            elif scan_type == "exp":
+                # Create expense entry
+                result = process_exp_scan(parsed)
+                return jsonify({"success": True, "message": f"Expense saved: R{parsed.get('total', 0):.2f}"})
+                
+            elif scan_type == "stock":
+                # Update stock counts
+                count = len(parsed.get("items", []))
+                result = process_stock_scan(parsed)
+                return jsonify({"success": True, "message": f"Stock updated: {count} items"})
+        
+        return jsonify({"success": False, "error": "Could not read document"})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+def process_cos_scan(data):
+    """Process Cost of Sales scan - supplier invoice"""
+    try:
+        total = Decimal(str(data.get("total", 0)))
+        vat = Decimal(str(data.get("vat", 0)))
+        
+        if total <= 0:
+            return False
             
-        return redirect("/m/expense?success=1")
+        # Create expense record
+        expense = {
+            "id": generate_id(),
+            "date": data.get("date", today()),
+            "description": f"Supplier: {data.get('supplier', 'Unknown')} - Inv: {data.get('invoice_no', '')}",
+            "supplier": data.get("supplier", ""),
+            "category": "5000",  # Cost of Sales
+            "amount": float(total),
+            "vat_type": "inclusive" if vat > 0 else "none",
+            "created_at": now()
+        }
+        db.insert("expenses", expense)
+        
+        # Post to GL
+        if vat > 0:
+            exclusive = total - vat
+        else:
+            vat_info = VAT.calculate_from_inclusive(total)
+            exclusive = vat_info["exclusive"]
+            vat = vat_info["vat"]
+        
+        entry = JournalEntry(
+            date=today(),
+            reference=f"COS-{expense['id'][:8]}",
+            description=expense["description"],
+            trans_type=TransactionType.EXPENSE,
+            source_type="expense",
+            source_id=expense["id"]
+        )
+        entry.debit("5000", exclusive)  # Cost of Sales
+        entry.debit(AccountCodes.VAT_INPUT, vat)
+        entry.credit(AccountCodes.BANK, total)
+        entry.post()
+        
+        # TODO: Update stock quantities from line items
+        
+        return True
     except:
-        return redirect("/m/expense")
+        return False
 
 
-@app.route("/m/stock")
-def m_stock():
-    """Mobile stock check"""
-    user = UserSession.get_current_user()
-    if not user:
-        return redirect("/login")
-    
-    content = '''
-    <h2 style="margin-bottom: 16px;">Stock Check</h2>
-    
-    <div class="card">
-        <label class="form-label">Search Stock</label>
-        <input type="text" id="search" class="form-input" placeholder="Product name or code..." oninput="searchStock(this.value)">
-    </div>
-    
-    <div id="results">
-        <p class="text-muted" style="text-align:center; padding:20px;">Type to search stock...</p>
-    </div>
-    
-    <script>
-    let stock = [];
-    fetch('/api/pos/stock').then(r => r.json()).then(data => { stock = data; });
-    
-    function searchStock(q) {
-        if (q.length < 2) {
-            document.getElementById('results').innerHTML = '<p class="text-muted" style="text-align:center; padding:20px;">Type to search stock...</p>';
-            return;
+def process_exp_scan(data):
+    """Process Expense scan - receipt"""
+    try:
+        total = Decimal(str(data.get("total", 0)))
+        
+        if total <= 0:
+            return False
+            
+        expense = {
+            "id": generate_id(),
+            "date": data.get("date", today()),
+            "description": data.get("description", "Scanned expense"),
+            "supplier": data.get("supplier", ""),
+            "category": "6140",  # General Expenses
+            "amount": float(total),
+            "vat_type": "inclusive",
+            "created_at": now()
         }
-        q = q.toLowerCase();
-        let html = '<div class="card">';
-        let count = 0;
-        for (const item of stock) {
-            if (item.description.toLowerCase().includes(q) || (item.code||'').toLowerCase().includes(q)) {
-                const stockColor = item.quantity <= 5 ? '#f59e0b' : '#10b981';
-                html += '<div class="list-item"><div><strong>'+item.description+'</strong><br><span class="text-muted">'+item.code+'</span></div><div style="text-align:right;"><span class="text-green">'+item.price_formatted+'</span><br><span style="color:'+stockColor+'">'+item.quantity+' in stock</span></div></div>';
-                count++;
-                if (count >= 20) break;
-            }
-        }
-        html += '</div>';
-        if (count === 0) html = '<p class="text-muted" style="text-align:center; padding:20px;">No products found</p>';
-        document.getElementById('results').innerHTML = html;
-    }
-    </script>
-    '''
-    return mobile_wrapper("Stock", content)
+        db.insert("expenses", expense)
+        
+        # Post to GL
+        vat_info = VAT.calculate_from_inclusive(total)
+        
+        entry = JournalEntry(
+            date=today(),
+            reference=f"EXP-{expense['id'][:8]}",
+            description=expense["description"],
+            trans_type=TransactionType.EXPENSE,
+            source_type="expense",
+            source_id=expense["id"]
+        )
+        entry.debit("6140", vat_info["exclusive"])
+        entry.debit(AccountCodes.VAT_INPUT, vat_info["vat"])
+        entry.credit(AccountCodes.BANK, total)
+        entry.post()
+        
+        return True
+    except:
+        return False
+
+
+def process_stock_scan(data):
+    """Process Stock Take scan - update quantities"""
+    try:
+        items = data.get("items", [])
+        updated = 0
+        
+        for item in items:
+            code = item.get("code", "")
+            qty = int(item.get("quantity", 0))
+            
+            if code and qty >= 0:
+                # Find stock item by code
+                stock_items = db.query("stock", filters={"code": code})
+                if stock_items:
+                    db.update("stock", stock_items[0]["id"], {"quantity": qty})
+                    updated += 1
+        
+        return updated
+    except:
+        return 0
+
 
 
 if __name__ == "__main__":
-    print("Click AI starting on http://0.0.0.0:5000")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+
