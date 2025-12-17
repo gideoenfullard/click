@@ -10192,7 +10192,7 @@ def mobile_wrapper(title, content):
 
 
 @app.route("/m")
-def mobile_home():
+def m_home():
     """Mobile home screen"""
     user = UserSession.get_current_user()
     if not user:
@@ -10217,7 +10217,7 @@ def mobile_home():
 
 
 @app.route("/m/pos")
-def mobile_pos():
+def m_pos():
     """Mobile POS - Quick sale"""
     user = UserSession.get_current_user()
     if not user:
@@ -10314,7 +10314,7 @@ def mobile_pos():
 
 
 @app.route("/m/expense")
-def mobile_expense():
+def m_expense():
     """Mobile expense entry"""
     user = UserSession.get_current_user()
     if not user:
@@ -10348,7 +10348,7 @@ def mobile_expense():
 
 
 @app.route("/m/expense/save", methods=["POST"])
-def mobile_expense_save():
+def m_expense_save():
     """Save mobile expense"""
     user = UserSession.get_current_user()
     if not user:
@@ -10393,7 +10393,7 @@ def mobile_expense_save():
 
 
 @app.route("/m/stock")
-def mobile_stock():
+def m_stock():
     """Mobile stock check"""
     user = UserSession.get_current_user()
     if not user:
