@@ -9436,6 +9436,14 @@ def reports_menu():
     
     content = '''
     <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">Reports</h1>
+    
+    <h3 style="color: var(--purple); margin-bottom: 16px;">🤖 AI-Powered Reports</h3>
+    <div class="report-grid" style="margin-bottom: 32px;">
+        <a href="/reports/business-health" class="report-card" style="border-color: var(--purple);"><div class="report-card-icon">💊</div><h3 class="report-card-title">Business Health</h3><p class="report-card-desc">Plain-language financial analysis for owners</p></a>
+        <a href="/reports/management-financials" class="report-card" style="border-color: var(--purple);"><div class="report-card-icon">🏦</div><h3 class="report-card-title">Management Financials</h3><p class="report-card-desc">Professional report for banks & investors</p></a>
+    </div>
+    
+    <h3 style="color: var(--text-muted); margin-bottom: 16px;">📊 Standard Reports</h3>
     <div class="report-grid">
         <a href="/reports/trial-balance" class="report-card"><div class="report-card-icon">⚖️</div><h3 class="report-card-title">Trial Balance</h3><p class="report-card-desc">All accounts with debit/credit balances</p></a>
         <a href="/reports/income-statement" class="report-card"><div class="report-card-icon">📈</div><h3 class="report-card-title">Income Statement</h3><p class="report-card-desc">Profit & Loss report</p></a>
@@ -9523,6 +9531,615 @@ def report_trial_balance():
     </div>
     '''
     return page_wrapper("Trial Balance", content, "reports", user)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AI-POWERED REPORTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_financial_data_for_ai():
+    """
+    Gather all financial data needed for AI analysis.
+    Returns a comprehensive dict of business financials.
+    """
+    year_start = FinancialPeriod.get_current_year_start()
+    
+    data = {
+        "report_date": today(),
+        "period_start": year_start,
+        "period_end": today(),
+        "company_name": Config.COMPANY_NAME
+    }
+    
+    # Get Trial Balance
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_trial_balance"
+        headers = {
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, headers=headers, json={}, timeout=30)
+        tb_data = resp.json() if resp.status_code == 200 else []
+    except:
+        tb_data = []
+    
+    # Organize TB by account type
+    data["accounts"] = {}
+    for entry in tb_data:
+        code = entry.get("account_code", "")
+        data["accounts"][code] = {
+            "name": entry.get("account_name", ""),
+            "debit": float(entry.get("total_debit", 0) or 0),
+            "credit": float(entry.get("total_credit", 0) or 0),
+            "balance": float(entry.get("total_debit", 0) or 0) - float(entry.get("total_credit", 0) or 0)
+        }
+    
+    # Get Income Statement data
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_income_statement"
+        headers = {
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, headers=headers, json={"date_from": year_start, "date_to": today()}, timeout=30)
+        is_data = resp.json() if resp.status_code == 200 else []
+    except:
+        is_data = []
+    
+    revenue = 0
+    cogs = 0
+    expenses = 0
+    revenue_items = []
+    expense_items = []
+    
+    for entry in is_data:
+        amt = float(entry.get("amount", 0) or 0)
+        cat = entry.get("category", "")
+        name = entry.get("account_name", "")
+        
+        if cat == "revenue":
+            revenue += amt
+            revenue_items.append({"name": name, "amount": amt})
+        elif cat == "cost_of_sales":
+            cogs += amt
+        elif cat == "expense":
+            expenses += amt
+            expense_items.append({"name": name, "amount": amt})
+    
+    data["income_statement"] = {
+        "revenue": revenue,
+        "cost_of_sales": cogs,
+        "gross_profit": revenue - cogs,
+        "gross_margin_pct": ((revenue - cogs) / revenue * 100) if revenue > 0 else 0,
+        "expenses": expenses,
+        "net_profit": revenue - cogs - expenses,
+        "net_margin_pct": ((revenue - cogs - expenses) / revenue * 100) if revenue > 0 else 0,
+        "revenue_breakdown": sorted(revenue_items, key=lambda x: x["amount"], reverse=True)[:10],
+        "expense_breakdown": sorted(expense_items, key=lambda x: x["amount"], reverse=True)[:10]
+    }
+    
+    # Get Balance Sheet data
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_balance_sheet"
+        headers = {
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, headers=headers, json={}, timeout=30)
+        bs_data = resp.json() if resp.status_code == 200 else []
+    except:
+        bs_data = []
+    
+    current_assets = 0
+    fixed_assets = 0
+    current_liab = 0
+    longterm_liab = 0
+    equity = 0
+    
+    bank_balance = 0
+    debtors = 0
+    creditors = 0
+    stock = 0
+    vat_payable = 0
+    
+    for item in bs_data:
+        bal = float(item.get("balance", 0) or 0)
+        cat = item.get("account_category", "")
+        typ = item.get("account_type", "")
+        name = item.get("account_name", "").lower()
+        
+        if typ == "asset":
+            if cat in ["current_asset", "bank", "receivable", "inventory"]:
+                current_assets += bal
+                if "bank" in name or cat == "bank":
+                    bank_balance += bal
+                elif "debtor" in name or cat == "receivable":
+                    debtors += bal
+                elif "stock" in name or "inventory" in name or cat == "inventory":
+                    stock += bal
+            else:
+                fixed_assets += bal
+        elif typ == "liability":
+            if cat in ["current_liability", "payable", "vat"]:
+                current_liab += bal
+                if "creditor" in name or cat == "payable":
+                    creditors += bal
+                if "vat" in name:
+                    vat_payable += bal
+            else:
+                longterm_liab += bal
+        elif typ == "equity":
+            equity += bal
+    
+    total_assets = current_assets + fixed_assets
+    total_liab = current_liab + longterm_liab
+    
+    data["balance_sheet"] = {
+        "current_assets": current_assets,
+        "fixed_assets": fixed_assets,
+        "total_assets": total_assets,
+        "current_liabilities": current_liab,
+        "longterm_liabilities": longterm_liab,
+        "total_liabilities": total_liab,
+        "equity": equity,
+        "bank_balance": bank_balance,
+        "debtors": debtors,
+        "creditors": creditors,
+        "stock": stock,
+        "vat_payable": vat_payable
+    }
+    
+    # Calculate key ratios
+    data["ratios"] = {
+        "current_ratio": current_assets / current_liab if current_liab > 0 else 0,
+        "quick_ratio": (current_assets - stock) / current_liab if current_liab > 0 else 0,
+        "debt_to_equity": total_liab / equity if equity > 0 else 0,
+        "debtor_days": (debtors / revenue * 365) if revenue > 0 else 0,
+        "creditor_days": (creditors / cogs * 365) if cogs > 0 else 0,
+        "stock_days": (stock / cogs * 365) if cogs > 0 else 0,
+        "return_on_equity": ((revenue - cogs - expenses) / equity * 100) if equity > 0 else 0,
+        "return_on_assets": ((revenue - cogs - expenses) / total_assets * 100) if total_assets > 0 else 0
+    }
+    
+    # Get sales and customer data
+    try:
+        invoices = db.select("invoices", order="-date", limit=100)
+        total_sales = sum(float(inv.get("total", 0) or 0) for inv in invoices)
+        outstanding_invoices = [inv for inv in invoices if inv.get("status") == "outstanding"]
+        outstanding_total = sum(float(inv.get("total", 0) or 0) for inv in outstanding_invoices)
+        
+        data["sales"] = {
+            "total_invoices": len(invoices),
+            "total_sales": total_sales,
+            "outstanding_count": len(outstanding_invoices),
+            "outstanding_total": outstanding_total
+        }
+    except:
+        data["sales"] = {"total_invoices": 0, "total_sales": 0, "outstanding_count": 0, "outstanding_total": 0}
+    
+    return data
+
+
+@app.route("/reports/business-health")
+def report_business_health():
+    """
+    Business Health Report - AI-powered plain-language analysis
+    Written like a friend explaining your finances
+    """
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    # Check if we should generate the report
+    generate = request.args.get("generate") == "yes"
+    
+    if not generate:
+        # Show intro page
+        content = '''
+        <div class="card" style="max-width: 600px; margin: 0 auto; text-align: center;">
+            <div style="font-size: 64px; margin-bottom: 20px;">💊</div>
+            <h1 style="margin-bottom: 12px;">Business Health Report</h1>
+            <p class="text-muted" style="margin-bottom: 24px;">
+                AI will analyze your financials and explain what's happening in plain language.<br>
+                No accounting jargon - just straight talk about your business.
+            </p>
+            <p style="margin-bottom: 24px; padding: 16px; background: var(--bg-secondary); border-radius: 8px;">
+                <strong>What you'll get:</strong><br>
+                • How healthy is your cash position?<br>
+                • Are you making or losing money?<br>
+                • What risks should you know about?<br>
+                • What should you do next?
+            </p>
+            <a href="/reports/business-health?generate=yes" class="btn btn-primary btn-lg">
+                🤖 Generate Report
+            </a>
+            <p class="text-muted mt-md" style="font-size: 12px;">Takes about 30 seconds</p>
+        </div>
+        '''
+        return page_wrapper("Business Health Report", content, "reports", user)
+    
+    # Generate the report with AI
+    financial_data = get_financial_data_for_ai()
+    
+    # Check for API key
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        content = '''
+        <div class="alert alert-error">
+            AI not configured. Add ANTHROPIC_API_KEY to environment variables.
+        </div>
+        '''
+        return page_wrapper("Business Health Report", content, "reports", user)
+    
+    # Build prompt for Opus
+    prompt = f"""You are a sharp financial advisor writing a Business Health Report for a business owner. 
+
+The owner is NOT an accountant. They want to understand their business finances in plain language - like a friend explaining things over coffee.
+
+Here is the financial data for {financial_data['company_name']}:
+
+PERIOD: {financial_data['period_start']} to {financial_data['period_end']}
+
+INCOME STATEMENT:
+- Revenue: R {financial_data['income_statement']['revenue']:,.2f}
+- Cost of Sales: R {financial_data['income_statement']['cost_of_sales']:,.2f}
+- Gross Profit: R {financial_data['income_statement']['gross_profit']:,.2f} ({financial_data['income_statement']['gross_margin_pct']:.1f}%)
+- Operating Expenses: R {financial_data['income_statement']['expenses']:,.2f}
+- Net Profit: R {financial_data['income_statement']['net_profit']:,.2f} ({financial_data['income_statement']['net_margin_pct']:.1f}%)
+
+Top Expenses: {json.dumps(financial_data['income_statement']['expense_breakdown'][:5])}
+
+BALANCE SHEET:
+- Bank Balance: R {financial_data['balance_sheet']['bank_balance']:,.2f}
+- Debtors (owed to you): R {financial_data['balance_sheet']['debtors']:,.2f}
+- Stock: R {financial_data['balance_sheet']['stock']:,.2f}
+- Creditors (you owe): R {financial_data['balance_sheet']['creditors']:,.2f}
+- VAT Payable: R {financial_data['balance_sheet']['vat_payable']:,.2f}
+- Total Assets: R {financial_data['balance_sheet']['total_assets']:,.2f}
+- Total Liabilities: R {financial_data['balance_sheet']['total_liabilities']:,.2f}
+- Equity: R {financial_data['balance_sheet']['equity']:,.2f}
+
+KEY RATIOS:
+- Current Ratio: {financial_data['ratios']['current_ratio']:.2f} (healthy is 1.5-2.0)
+- Quick Ratio: {financial_data['ratios']['quick_ratio']:.2f} (healthy is 1.0+)
+- Debtor Days: {financial_data['ratios']['debtor_days']:.0f} days (how long customers take to pay)
+- Creditor Days: {financial_data['ratios']['creditor_days']:.0f} days (how long you take to pay suppliers)
+- Stock Days: {financial_data['ratios']['stock_days']:.0f} days (how long stock sits before selling)
+
+SALES INFO:
+- Total Invoices: {financial_data['sales']['total_invoices']}
+- Outstanding Invoices: {financial_data['sales']['outstanding_count']} worth R {financial_data['sales']['outstanding_total']:,.2f}
+
+Write a Business Health Report with these sections. Use a conversational, direct tone. No jargon. Be specific with numbers. Tell them what it MEANS, not just what it IS.
+
+1. THE VERDICT (2-3 sentences - is this business healthy or not?)
+
+2. CASH POSITION (How much actual cash do you have? Can you pay your bills? What's the real picture?)
+
+3. PROFIT REALITY (Are you actually making money? What's eating into your margins? Be honest.)
+
+4. WHAT'S WORRYING (What risks or red flags do you see? Don't sugarcoat it.)
+
+5. WHAT'S GOOD (What's working well? Give credit where it's due.)
+
+6. DO THIS NOW (3-5 specific, actionable things to improve the business. Be concrete.)
+
+Format as clean HTML with <h2> for section headers. Use <p> for paragraphs. Keep it readable. About 800-1000 words total.
+
+Remember: You're talking to the OWNER, not their accountant. They need to understand and act on this."""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        
+        message = client.messages.create(
+            model="claude-opus-4-20250514",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        report_html = message.content[0].text
+        
+    except Exception as e:
+        report_html = f"<p class='text-red'>Error generating report: {str(e)}</p>"
+    
+    # Build the page
+    content = f'''
+    <div class="flex-between mb-lg">
+        <div>
+            <h1 style="font-size: 24px; font-weight: 700;">💊 Business Health Report</h1>
+            <p class="text-muted">{financial_data['company_name']} • {financial_data['period_start']} to {financial_data['period_end']}</p>
+        </div>
+        <div class="btn-group">
+            <button onclick="window.print()" class="btn btn-ghost">🖨️ Print</button>
+            <a href="/reports/business-health?generate=yes" class="btn btn-ghost">🔄 Regenerate</a>
+        </div>
+    </div>
+    
+    <div class="stats mb-lg">
+        <div class="stat"><div class="stat-value">{Money.format(Decimal(str(financial_data['balance_sheet']['bank_balance'])))}</div><div class="stat-label">Cash in Bank</div></div>
+        <div class="stat"><div class="stat-value{' green' if financial_data['income_statement']['net_profit'] >= 0 else ' red'}">{Money.format(Decimal(str(financial_data['income_statement']['net_profit'])))}</div><div class="stat-label">Net Profit YTD</div></div>
+        <div class="stat"><div class="stat-value">{financial_data['ratios']['current_ratio']:.1f}</div><div class="stat-label">Current Ratio</div></div>
+        <div class="stat"><div class="stat-value">{financial_data['ratios']['debtor_days']:.0f}</div><div class="stat-label">Debtor Days</div></div>
+    </div>
+    
+    <div class="card report-content" style="line-height: 1.7;">
+        {report_html}
+    </div>
+    
+    <style>
+        .report-content h2 {{
+            color: var(--purple);
+            margin-top: 24px;
+            margin-bottom: 12px;
+            font-size: 18px;
+        }}
+        .report-content h2:first-child {{
+            margin-top: 0;
+        }}
+        .report-content p {{
+            margin-bottom: 12px;
+        }}
+        .report-content ul, .report-content ol {{
+            margin: 12px 0;
+            padding-left: 24px;
+        }}
+        .report-content li {{
+            margin-bottom: 8px;
+        }}
+        @media print {{
+            .header, .btn-group, .stats {{ display: none !important; }}
+            .card {{ border: none; padding: 0; }}
+        }}
+    </style>
+    '''
+    
+    return page_wrapper("Business Health Report", content, "reports", user)
+
+
+@app.route("/reports/management-financials")
+def report_management_financials():
+    """
+    Management Financials Report - Professional bank-ready report
+    For banks, investors, and formal submissions
+    """
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    # Check if we should generate the report
+    generate = request.args.get("generate") == "yes"
+    
+    if not generate:
+        # Show intro page
+        content = '''
+        <div class="card" style="max-width: 600px; margin: 0 auto; text-align: center;">
+            <div style="font-size: 64px; margin-bottom: 20px;">🏦</div>
+            <h1 style="margin-bottom: 12px;">Management Financials</h1>
+            <p class="text-muted" style="margin-bottom: 24px;">
+                Professional financial report suitable for banks, investors, and board presentations.<br>
+                AI analyzes your data and produces a formal management report.
+            </p>
+            <p style="margin-bottom: 24px; padding: 16px; background: var(--bg-secondary); border-radius: 8px;">
+                <strong>Includes:</strong><br>
+                • Executive Summary<br>
+                • Financial Performance Analysis<br>
+                • Liquidity & Solvency Assessment<br>
+                • Risk Analysis<br>
+                • Key Performance Indicators<br>
+                • Recommendations
+            </p>
+            <a href="/reports/management-financials?generate=yes" class="btn btn-primary btn-lg">
+                🤖 Generate Report
+            </a>
+            <p class="text-muted mt-md" style="font-size: 12px;">Takes about 30 seconds</p>
+        </div>
+        '''
+        return page_wrapper("Management Financials", content, "reports", user)
+    
+    # Generate the report with AI
+    financial_data = get_financial_data_for_ai()
+    
+    # Check for API key
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        content = '''
+        <div class="alert alert-error">
+            AI not configured. Add ANTHROPIC_API_KEY to environment variables.
+        </div>
+        '''
+        return page_wrapper("Management Financials", content, "reports", user)
+    
+    # Build prompt for Opus
+    prompt = f"""You are a senior financial analyst preparing a Management Financial Report for submission to banks and investors.
+
+This report must be professional, thorough, and suitable for formal financial review. Use proper financial terminology but remain clear and readable.
+
+Here is the financial data for {financial_data['company_name']}:
+
+REPORTING PERIOD: {financial_data['period_start']} to {financial_data['period_end']}
+REPORT DATE: {financial_data['report_date']}
+
+INCOME STATEMENT:
+- Total Revenue: R {financial_data['income_statement']['revenue']:,.2f}
+- Cost of Sales: R {financial_data['income_statement']['cost_of_sales']:,.2f}
+- Gross Profit: R {financial_data['income_statement']['gross_profit']:,.2f}
+- Gross Profit Margin: {financial_data['income_statement']['gross_margin_pct']:.1f}%
+- Operating Expenses: R {financial_data['income_statement']['expenses']:,.2f}
+- Net Profit Before Tax: R {financial_data['income_statement']['net_profit']:,.2f}
+- Net Profit Margin: {financial_data['income_statement']['net_margin_pct']:.1f}%
+
+Expense Breakdown: {json.dumps(financial_data['income_statement']['expense_breakdown'][:8])}
+
+BALANCE SHEET:
+- Current Assets: R {financial_data['balance_sheet']['current_assets']:,.2f}
+  - Cash and Bank: R {financial_data['balance_sheet']['bank_balance']:,.2f}
+  - Trade Debtors: R {financial_data['balance_sheet']['debtors']:,.2f}
+  - Inventory: R {financial_data['balance_sheet']['stock']:,.2f}
+- Fixed Assets: R {financial_data['balance_sheet']['fixed_assets']:,.2f}
+- Total Assets: R {financial_data['balance_sheet']['total_assets']:,.2f}
+
+- Current Liabilities: R {financial_data['balance_sheet']['current_liabilities']:,.2f}
+  - Trade Creditors: R {financial_data['balance_sheet']['creditors']:,.2f}
+  - VAT Payable: R {financial_data['balance_sheet']['vat_payable']:,.2f}
+- Long-term Liabilities: R {financial_data['balance_sheet']['longterm_liabilities']:,.2f}
+- Total Liabilities: R {financial_data['balance_sheet']['total_liabilities']:,.2f}
+- Shareholders' Equity: R {financial_data['balance_sheet']['equity']:,.2f}
+
+KEY FINANCIAL RATIOS:
+- Current Ratio: {financial_data['ratios']['current_ratio']:.2f}
+- Quick Ratio (Acid Test): {financial_data['ratios']['quick_ratio']:.2f}
+- Debt to Equity Ratio: {financial_data['ratios']['debt_to_equity']:.2f}
+- Debtor Days: {financial_data['ratios']['debtor_days']:.0f}
+- Creditor Days: {financial_data['ratios']['creditor_days']:.0f}
+- Inventory Days: {financial_data['ratios']['stock_days']:.0f}
+- Return on Equity: {financial_data['ratios']['return_on_equity']:.1f}%
+- Return on Assets: {financial_data['ratios']['return_on_assets']:.1f}%
+
+TRADE RECEIVABLES:
+- Outstanding Invoices: {financial_data['sales']['outstanding_count']}
+- Outstanding Value: R {financial_data['sales']['outstanding_total']:,.2f}
+
+Prepare a formal Management Financial Report with these sections:
+
+1. EXECUTIVE SUMMARY
+Brief overview of financial position, key findings, and overall assessment. 3-4 sentences.
+
+2. FINANCIAL PERFORMANCE ANALYSIS
+- Revenue and profitability analysis
+- Margin analysis and trends
+- Cost structure assessment
+
+3. LIQUIDITY AND SOLVENCY
+- Working capital analysis
+- Cash flow assessment
+- Ability to meet short and long-term obligations
+- Compare ratios to industry standards
+
+4. ASSET MANAGEMENT
+- Debtor collection efficiency
+- Inventory management
+- Creditor management
+- Cash conversion cycle
+
+5. RISK ASSESSMENT
+- Key financial risks identified
+- Concentration risks
+- Operational concerns
+
+6. KEY PERFORMANCE INDICATORS
+Present 5-6 most important KPIs in a clear format
+
+7. RECOMMENDATIONS
+Specific, actionable recommendations for improving financial position
+
+Format as professional HTML. Use <h2> for main sections, <h3> for subsections. Use tables where appropriate for presenting ratios and KPIs. Use <strong> for emphasis. Keep professional tone throughout. About 1200-1500 words."""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        
+        message = client.messages.create(
+            model="claude-opus-4-20250514",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        report_html = message.content[0].text
+        
+    except Exception as e:
+        report_html = f"<p class='text-red'>Error generating report: {str(e)}</p>"
+    
+    # Build the professional page
+    content = f'''
+    <div class="flex-between mb-lg no-print">
+        <div>
+            <h1 style="font-size: 24px; font-weight: 700;">🏦 Management Financials</h1>
+            <p class="text-muted">{financial_data['company_name']} • Report Date: {financial_data['report_date']}</p>
+        </div>
+        <div class="btn-group">
+            <button onclick="window.print()" class="btn btn-ghost">🖨️ Print</button>
+            <a href="/reports/management-financials?generate=yes" class="btn btn-ghost">🔄 Regenerate</a>
+        </div>
+    </div>
+    
+    <div class="card report-content management-report">
+        <div class="report-header print-only" style="display: none; text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #333;">
+            <h1 style="font-size: 24px; margin-bottom: 8px;">MANAGEMENT FINANCIAL REPORT</h1>
+            <h2 style="font-size: 18px; font-weight: normal; margin-bottom: 8px;">{financial_data['company_name']}</h2>
+            <p>For the period {financial_data['period_start']} to {financial_data['period_end']}</p>
+            <p>Report Date: {financial_data['report_date']}</p>
+        </div>
+        
+        {report_html}
+        
+        <div class="report-footer" style="margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted);">
+            <p>This report was prepared using data from {financial_data['company_name']}'s accounting system.</p>
+            <p>Generated by Click AI Financial Reporting System</p>
+        </div>
+    </div>
+    
+    <style>
+        .management-report {{
+            font-family: Georgia, serif;
+            line-height: 1.8;
+        }}
+        .management-report h2 {{
+            color: #333;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            font-size: 18px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+        }}
+        .management-report h2:first-child {{
+            margin-top: 0;
+        }}
+        .management-report h3 {{
+            color: #555;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-size: 15px;
+        }}
+        .management-report p {{
+            margin-bottom: 12px;
+            text-align: justify;
+        }}
+        .management-report table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }}
+        .management-report th, .management-report td {{
+            padding: 10px;
+            border: 1px solid var(--border);
+            text-align: left;
+        }}
+        .management-report th {{
+            background: var(--bg-secondary);
+            font-weight: 600;
+        }}
+        .management-report ul, .management-report ol {{
+            margin: 12px 0;
+            padding-left: 24px;
+        }}
+        .management-report li {{
+            margin-bottom: 8px;
+        }}
+        @media print {{
+            .header, .btn-group, .no-print {{ display: none !important; }}
+            .card {{ border: none; padding: 20px; box-shadow: none; }}
+            .print-only {{ display: block !important; }}
+            .management-report {{ font-size: 11pt; }}
+            .management-report h2 {{ font-size: 14pt; }}
+        }}
+    </style>
+    '''
+    
+    return page_wrapper("Management Financials", content, "reports", user)
 
 
 @app.route("/reports/income-statement")
@@ -12115,8 +12732,658 @@ Normal monthly hours are typically around 176 (22 days × 8 hours)."""
         return jsonify({"success": False, "error": str(e)})
 
 
-# Add payroll to navigation
-# Note: Add "payroll" to nav_items in get_header_html function
+@app.route("/payroll/timesheets")
+def payroll_timesheets():
+    """Manual timesheet entry page"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    employees = get_all_employees()
+    
+    emp_rows = ""
+    for emp in employees:
+        if not emp.get("active", True):
+            continue
+        
+        emp_rows += f'''
+        <tr>
+            <td>{safe_string(emp.get("employee_number", ""))}</td>
+            <td>{safe_string(emp.get("name", ""))}</td>
+            <td><input type="number" name="mon_{emp["id"]}" class="form-input" style="width:60px;" step="0.5"></td>
+            <td><input type="number" name="tue_{emp["id"]}" class="form-input" style="width:60px;" step="0.5"></td>
+            <td><input type="number" name="wed_{emp["id"]}" class="form-input" style="width:60px;" step="0.5"></td>
+            <td><input type="number" name="thu_{emp["id"]}" class="form-input" style="width:60px;" step="0.5"></td>
+            <td><input type="number" name="fri_{emp["id"]}" class="form-input" style="width:60px;" step="0.5"></td>
+            <td><input type="number" name="sat_{emp["id"]}" class="form-input" style="width:60px;" step="0.5"></td>
+            <td><input type="number" name="sun_{emp["id"]}" class="form-input" style="width:60px;" step="0.5"></td>
+            <td class="number" id="total_{emp["id"]}">0</td>
+        </tr>
+        '''
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/payroll" class="text-muted">← Payroll</a>
+        <h1>📝 Enter Timesheets</h1>
+        <p class="text-muted">Enter hours for each day - totals calculated automatically</p>
+    </div>
+    
+    <div class="card">
+        <div class="form-row mb-md">
+            <div class="form-group">
+                <label class="form-label">Week Starting</label>
+                <input type="date" id="week-start" class="form-input" style="max-width: 200px;">
+            </div>
+        </div>
+        
+        <div class="table-wrapper">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Emp #</th>
+                        <th>Name</th>
+                        <th>Mon</th>
+                        <th>Tue</th>
+                        <th>Wed</th>
+                        <th>Thu</th>
+                        <th>Fri</th>
+                        <th>Sat</th>
+                        <th>Sun</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {emp_rows}
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="btn-group mt-lg">
+            <button class="btn btn-primary" onclick="saveTimesheets()">Save Timesheets</button>
+            <a href="/payroll/timesheets/scan" class="btn btn-orange">📷 Scan Instead</a>
+        </div>
+    </div>
+    
+    <script>
+    // Auto-calculate row totals
+    document.querySelectorAll('input[type="number"]').forEach(input => {{
+        input.addEventListener('change', calculateTotals);
+    }});
+    
+    function calculateTotals() {{
+        const employees = {json.dumps([e["id"] for e in employees if e.get("active", True)])};
+        employees.forEach(empId => {{
+            let total = 0;
+            ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].forEach(day => {{
+                const input = document.querySelector(`input[name="${{day}}_${{empId}}"]`);
+                if (input && input.value) {{
+                    total += parseFloat(input.value) || 0;
+                }}
+            }});
+            document.getElementById('total_' + empId).textContent = total.toFixed(1);
+        }});
+    }}
+    
+    function saveTimesheets() {{
+        alert('Timesheets saved! Go to Run Payroll to process.');
+        window.location.href = '/payroll/run';
+    }}
+    </script>
+    '''
+    
+    return page_wrapper("Enter Timesheets", content, user=user)
+
+
+@app.route("/payroll/run/<run_id>/payslips")
+def payroll_payslips_print(run_id):
+    """Print payslips - A4 format"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    run = db.select_one("payroll_runs", run_id)
+    if not run:
+        return redirect("/payroll")
+    
+    payslips = json.loads(run.get("payslips", "[]"))
+    pay_period = run.get("pay_period", "")
+    
+    # Generate printable payslips
+    payslip_html = ""
+    for ps in payslips:
+        payslip_html += f'''
+        <div class="payslip">
+            <div class="payslip-header">
+                <div class="company-info">
+                    <h2>{Config.COMPANY_NAME}</h2>
+                    <p>PAYSLIP</p>
+                </div>
+                <div class="period-info">
+                    <p><strong>Pay Period:</strong> {pay_period}</p>
+                    <p><strong>Payment Date:</strong> {today()}</p>
+                </div>
+            </div>
+            
+            <div class="employee-info">
+                <div class="info-row">
+                    <span class="label">Employee:</span>
+                    <span class="value">{safe_string(ps.get("employee_name", ""))}</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">Employee No:</span>
+                    <span class="value">{safe_string(ps.get("employee_number", ""))}</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">ID Number:</span>
+                    <span class="value">{safe_string(ps.get("id_number", ""))}</span>
+                </div>
+            </div>
+            
+            <div class="payslip-body">
+                <div class="earnings">
+                    <h4>EARNINGS</h4>
+                    <div class="line-item">
+                        <span>Basic Salary</span>
+                        <span>R {ps.get("basic_salary", 0):,.2f}</span>
+                    </div>
+                    {"<div class='line-item'><span>Overtime (" + str(ps.get("overtime_hours", 0)) + " hrs)</span><span>R " + f"{ps.get('overtime_pay', 0):,.2f}" + "</span></div>" if ps.get("overtime_pay", 0) > 0 else ""}
+                    {"<div class='line-item'><span>Travel Allowance</span><span>R " + f"{ps.get('travel_allowance', 0):,.2f}" + "</span></div>" if ps.get("travel_allowance", 0) > 0 else ""}
+                    {"<div class='line-item'><span>Other Allowance</span><span>R " + f"{ps.get('other_allowance', 0):,.2f}" + "</span></div>" if ps.get("other_allowance", 0) > 0 else ""}
+                    <div class="line-item total">
+                        <span><strong>GROSS PAY</strong></span>
+                        <span><strong>R {ps.get("gross_pay", 0):,.2f}</strong></span>
+                    </div>
+                </div>
+                
+                <div class="deductions">
+                    <h4>DEDUCTIONS</h4>
+                    <div class="line-item">
+                        <span>PAYE Tax</span>
+                        <span>R {ps.get("paye", 0):,.2f}</span>
+                    </div>
+                    <div class="line-item">
+                        <span>UIF</span>
+                        <span>R {ps.get("uif_employee", 0):,.2f}</span>
+                    </div>
+                    {"<div class='line-item'><span>Medical Aid</span><span>R " + f"{ps.get('medical_aid', 0):,.2f}" + "</span></div>" if ps.get("medical_aid", 0) > 0 else ""}
+                    {"<div class='line-item'><span>Pension Fund</span><span>R " + f"{ps.get('pension', 0):,.2f}" + "</span></div>" if ps.get("pension", 0) > 0 else ""}
+                    {"<div class='line-item'><span>Loan Repayment</span><span>R " + f"{ps.get('loan_deduction', 0):,.2f}" + "</span></div>" if ps.get("loan_deduction", 0) > 0 else ""}
+                    {"<div class='line-item'><span>Other Deductions</span><span>R " + f"{ps.get('other_deduction', 0):,.2f}" + "</span></div>" if ps.get("other_deduction", 0) > 0 else ""}
+                    <div class="line-item total">
+                        <span><strong>TOTAL DEDUCTIONS</strong></span>
+                        <span><strong>R {ps.get("total_deductions", 0):,.2f}</strong></span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="payslip-footer">
+                <div class="net-pay">
+                    <span>NET PAY</span>
+                    <span class="amount">R {ps.get("net_pay", 0):,.2f}</span>
+                </div>
+            </div>
+            
+            <div class="employer-contrib">
+                <p class="small">Employer Contributions: UIF R {ps.get("uif_employer", 0):,.2f}</p>
+            </div>
+        </div>
+        '''
+    
+    html = f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Payslips - {pay_period}</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            color: #333;
+            background: #fff;
+        }}
+        
+        .payslip {{
+            width: 190mm;
+            min-height: 140mm;
+            margin: 10mm auto;
+            padding: 8mm;
+            border: 1px solid #333;
+            page-break-after: always;
+            background: #fff;
+        }}
+        
+        .payslip:last-child {{
+            page-break-after: auto;
+        }}
+        
+        .payslip-header {{
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 2px solid #333;
+            padding-bottom: 5mm;
+            margin-bottom: 5mm;
+        }}
+        
+        .company-info h2 {{
+            font-size: 16pt;
+            margin-bottom: 2mm;
+        }}
+        
+        .period-info {{
+            text-align: right;
+        }}
+        
+        .period-info p {{
+            margin: 1mm 0;
+        }}
+        
+        .employee-info {{
+            background: #f5f5f5;
+            padding: 4mm;
+            margin-bottom: 5mm;
+        }}
+        
+        .info-row {{
+            display: flex;
+            margin: 1mm 0;
+        }}
+        
+        .info-row .label {{
+            width: 100px;
+            font-weight: bold;
+        }}
+        
+        .payslip-body {{
+            display: flex;
+            gap: 10mm;
+        }}
+        
+        .earnings, .deductions {{
+            flex: 1;
+        }}
+        
+        h4 {{
+            background: #333;
+            color: #fff;
+            padding: 2mm 3mm;
+            margin-bottom: 3mm;
+            font-size: 10pt;
+        }}
+        
+        .line-item {{
+            display: flex;
+            justify-content: space-between;
+            padding: 1.5mm 3mm;
+            border-bottom: 1px dotted #ccc;
+        }}
+        
+        .line-item.total {{
+            border-bottom: none;
+            border-top: 1px solid #333;
+            margin-top: 3mm;
+            padding-top: 2mm;
+        }}
+        
+        .payslip-footer {{
+            margin-top: 5mm;
+            border-top: 2px solid #333;
+            padding-top: 5mm;
+        }}
+        
+        .net-pay {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #333;
+            color: #fff;
+            padding: 4mm 5mm;
+            font-size: 14pt;
+            font-weight: bold;
+        }}
+        
+        .net-pay .amount {{
+            font-size: 18pt;
+        }}
+        
+        .employer-contrib {{
+            margin-top: 3mm;
+            text-align: right;
+        }}
+        
+        .small {{
+            font-size: 9pt;
+            color: #666;
+        }}
+        
+        @media print {{
+            body {{
+                background: #fff;
+            }}
+            .payslip {{
+                border: 1px solid #333;
+                margin: 0;
+            }}
+            .no-print {{
+                display: none;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="no-print" style="padding: 20px; background: #333; color: #fff; text-align: center;">
+        <button onclick="window.print()" style="padding: 10px 30px; font-size: 16px; cursor: pointer;">🖨️ Print Payslips</button>
+        <a href="/payroll/run/{run_id}" style="color: #fff; margin-left: 20px;">← Back to Payroll Run</a>
+        <span style="margin-left: 20px;">|</span>
+        <a href="/payroll/run/{run_id}/payslips/compact" style="color: #fff; margin-left: 20px;">📄 Compact (3 per page)</a>
+    </div>
+    
+    {payslip_html}
+</body>
+</html>'''
+    
+    return html
+
+
+@app.route("/payroll/run/<run_id>/payslips/compact")
+def payroll_payslips_compact(run_id):
+    """Print payslips - Compact format (3 per A4 page for pre-printed stationery)"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    run = db.select_one("payroll_runs", run_id)
+    if not run:
+        return redirect("/payroll")
+    
+    payslips = json.loads(run.get("payslips", "[]"))
+    pay_period = run.get("pay_period", "")
+    
+    # Generate compact payslips (3 per page)
+    payslip_html = ""
+    for i, ps in enumerate(payslips):
+        if i > 0 and i % 3 == 0:
+            payslip_html += '<div class="page-break"></div>'
+        
+        payslip_html += f'''
+        <div class="payslip-compact">
+            <div class="row">
+                <div class="col"><strong>{Config.COMPANY_NAME}</strong></div>
+                <div class="col">Period: {pay_period}</div>
+                <div class="col">Date: {today()}</div>
+            </div>
+            <div class="row">
+                <div class="col">{safe_string(ps.get("employee_name", ""))}</div>
+                <div class="col">Emp#: {safe_string(ps.get("employee_number", ""))}</div>
+                <div class="col">ID: {safe_string(ps.get("id_number", "")[-6:]) if ps.get("id_number") else "-"}</div>
+            </div>
+            <div class="divider"></div>
+            <div class="row">
+                <div class="col">
+                    <div class="item">Basic: R {ps.get("basic_salary", 0):,.2f}</div>
+                    <div class="item">Overtime: R {ps.get("overtime_pay", 0):,.2f}</div>
+                    <div class="item">Allowances: R {(ps.get("travel_allowance", 0) + ps.get("other_allowance", 0)):,.2f}</div>
+                    <div class="item"><strong>GROSS: R {ps.get("gross_pay", 0):,.2f}</strong></div>
+                </div>
+                <div class="col">
+                    <div class="item">PAYE: R {ps.get("paye", 0):,.2f}</div>
+                    <div class="item">UIF: R {ps.get("uif_employee", 0):,.2f}</div>
+                    <div class="item">Other: R {(ps.get("medical_aid", 0) + ps.get("pension", 0) + ps.get("loan_deduction", 0)):,.2f}</div>
+                    <div class="item"><strong>DEDUCT: R {ps.get("total_deductions", 0):,.2f}</strong></div>
+                </div>
+                <div class="col net">
+                    <div>NET PAY</div>
+                    <div class="amount">R {ps.get("net_pay", 0):,.2f}</div>
+                </div>
+            </div>
+        </div>
+        '''
+    
+    html = f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Payslips Compact - {pay_period}</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: Arial, sans-serif;
+            font-size: 9pt;
+            color: #333;
+        }}
+        
+        .payslip-compact {{
+            width: 190mm;
+            height: 90mm;
+            margin: 2mm auto;
+            padding: 5mm;
+            border: 1px dashed #999;
+            page-break-inside: avoid;
+        }}
+        
+        .row {{
+            display: flex;
+            margin-bottom: 2mm;
+        }}
+        
+        .col {{
+            flex: 1;
+        }}
+        
+        .col.net {{
+            background: #333;
+            color: #fff;
+            padding: 3mm;
+            text-align: center;
+        }}
+        
+        .col.net .amount {{
+            font-size: 14pt;
+            font-weight: bold;
+            margin-top: 2mm;
+        }}
+        
+        .divider {{
+            border-top: 1px solid #333;
+            margin: 2mm 0;
+        }}
+        
+        .item {{
+            padding: 1mm 0;
+        }}
+        
+        .page-break {{
+            page-break-after: always;
+        }}
+        
+        @media print {{
+            .no-print {{
+                display: none;
+            }}
+            .payslip-compact {{
+                border: 1px dashed #ccc;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="no-print" style="padding: 20px; background: #333; color: #fff; text-align: center;">
+        <button onclick="window.print()" style="padding: 10px 30px; font-size: 16px; cursor: pointer;">🖨️ Print Payslips</button>
+        <a href="/payroll/run/{run_id}" style="color: #fff; margin-left: 20px;">← Back</a>
+        <span style="margin-left: 20px;">|</span>
+        <a href="/payroll/run/{run_id}/payslips" style="color: #fff; margin-left: 20px;">📄 Full A4 Format</a>
+    </div>
+    
+    {payslip_html}
+</body>
+</html>'''
+    
+    return html
+
+
+@app.route("/payroll/employees/<emp_id>/edit", methods=["GET", "POST"])
+def payroll_employee_edit(emp_id):
+    """Edit employee"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    emp = get_employee(emp_id)
+    if not emp:
+        return redirect("/payroll/employees")
+    
+    if request.method == "POST":
+        # Calculate age from ID number if changed
+        id_number = request.form.get("id_number", "").strip()
+        age = emp.get("age", 30)
+        if len(id_number) >= 6:
+            try:
+                year = int(id_number[:2])
+                year = 1900 + year if year > 25 else 2000 + year
+                current_year = int(today()[:4])
+                age = current_year - year
+            except:
+                pass
+        
+        updates = {
+            "employee_number": request.form.get("employee_number", "").strip(),
+            "name": request.form.get("name", "").strip(),
+            "id_number": id_number,
+            "age": age,
+            "pay_type": request.form.get("pay_type", "monthly"),
+            "basic_salary": float(request.form.get("basic_salary", 0) or 0),
+            "hourly_rate": float(request.form.get("hourly_rate", 0) or 0),
+            "travel_allowance": float(request.form.get("travel_allowance", 0) or 0),
+            "medical_aid": float(request.form.get("medical_aid", 0) or 0),
+            "pension": float(request.form.get("pension", 0) or 0),
+            "loan_deduction": float(request.form.get("loan_deduction", 0) or 0),
+            "bank_name": request.form.get("bank_name", "").strip(),
+            "bank_account": request.form.get("bank_account", "").strip(),
+            "bank_branch": request.form.get("bank_branch", "").strip(),
+            "active": request.form.get("active") == "on"
+        }
+        
+        db.update("employees", emp_id, updates)
+        return redirect(f"/payroll/employees/{emp_id}")
+    
+    pay_type = emp.get("pay_type", "monthly")
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/payroll/employees/{emp_id}" class="text-muted">← {safe_string(emp.get("name", ""))}</a>
+        <h1>Edit Employee</h1>
+    </div>
+    
+    <div class="card" style="max-width: 600px;">
+        <form method="POST">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Employee Number</label>
+                    <input type="text" name="employee_number" class="form-input" value="{safe_string(emp.get("employee_number", ""))}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Full Name *</label>
+                    <input type="text" name="name" class="form-input" value="{safe_string(emp.get("name", ""))}" required>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">SA ID Number</label>
+                <input type="text" name="id_number" class="form-input" maxlength="13" value="{safe_string(emp.get("id_number", ""))}">
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Pay Type</label>
+                    <select name="pay_type" class="form-select" onchange="togglePayType(this.value)">
+                        <option value="monthly" {"selected" if pay_type == "monthly" else ""}>Monthly Salary</option>
+                        <option value="hourly" {"selected" if pay_type == "hourly" else ""}>Hourly Rate</option>
+                    </select>
+                </div>
+                <div class="form-group" id="salary-group" style="{"" if pay_type == "monthly" else "display:none;"}">
+                    <label class="form-label">Monthly Salary</label>
+                    <input type="number" name="basic_salary" class="form-input" step="0.01" value="{emp.get("basic_salary", 0)}">
+                </div>
+                <div class="form-group" id="hourly-group" style="{"" if pay_type == "hourly" else "display:none;"}">
+                    <label class="form-label">Hourly Rate</label>
+                    <input type="number" name="hourly_rate" class="form-input" step="0.01" value="{emp.get("hourly_rate", 0)}">
+                </div>
+            </div>
+            
+            <h4 class="mt-lg mb-md">Allowances & Deductions</h4>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Travel Allowance</label>
+                    <input type="number" name="travel_allowance" class="form-input" step="0.01" value="{emp.get("travel_allowance", 0)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Medical Aid</label>
+                    <input type="number" name="medical_aid" class="form-input" step="0.01" value="{emp.get("medical_aid", 0)}">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Pension Fund</label>
+                    <input type="number" name="pension" class="form-input" step="0.01" value="{emp.get("pension", 0)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Loan Deduction</label>
+                    <input type="number" name="loan_deduction" class="form-input" step="0.01" value="{emp.get("loan_deduction", 0)}">
+                </div>
+            </div>
+            
+            <h4 class="mt-lg mb-md">Banking Details</h4>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Bank Name</label>
+                    <input type="text" name="bank_name" class="form-input" value="{safe_string(emp.get("bank_name", ""))}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Account Number</label>
+                    <input type="text" name="bank_account" class="form-input" value="{safe_string(emp.get("bank_account", ""))}">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Branch Code</label>
+                <input type="text" name="bank_branch" class="form-input" value="{safe_string(emp.get("bank_branch", ""))}">
+            </div>
+            
+            <div class="form-group mt-lg">
+                <label class="form-label">
+                    <input type="checkbox" name="active" {"checked" if emp.get("active", True) else ""}> Active Employee
+                </label>
+            </div>
+            
+            <div class="btn-group mt-lg">
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <a href="/payroll/employees/{emp_id}" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+    function togglePayType(type) {{
+        document.getElementById('salary-group').style.display = type === 'monthly' ? 'block' : 'none';
+        document.getElementById('hourly-group').style.display = type === 'hourly' ? 'block' : 'none';
+    }}
+    </script>
+    '''
+    
+    return page_wrapper("Edit Employee", content, user=user)
 
 
 if __name__ == "__main__":
