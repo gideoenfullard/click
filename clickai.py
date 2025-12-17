@@ -3955,7 +3955,7 @@ a:hover {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 12px;
-    max-height: 60vh;
+    max-height: 68vh;
     overflow-y: auto;
     padding: 4px;
 }
@@ -4035,8 +4035,9 @@ a:hover {
 }
 
 .cart-items {
+    /* Increased height */
     flex: 1;
-    min-height: 150px;
+    min-height: 200px;
     max-height: 300px;
     overflow-y: auto;
 }
@@ -6130,6 +6131,16 @@ function showReceipt(data) {
     document.getElementById('receipt-modal').classList.add('show');
 }
 
+function printThermal() {
+    const invoiceNum = document.getElementById("r-number").textContent;
+    window.open("/print/thermal/" + encodeURIComponent(invoiceNum), "_blank");
+}
+
+function printOffice() {
+    const invoiceNum = document.getElementById("r-number").textContent;
+    window.open("/print/office/" + encodeURIComponent(invoiceNum), "_blank");
+}
+
 function closeReceipt() {
     document.getElementById('receipt-modal').classList.remove('show');
 }
@@ -6222,6 +6233,8 @@ document.getElementById('search').addEventListener('input', renderProducts);
                 </div>
             </div>
             <div class="modal-footer" style="justify-content: center;">
+                <button class="btn btn-ghost" onclick="printThermal()">🖨️ Thermal</button>
+                <button class="btn btn-ghost" onclick="printOffice()">📄 Office</button>
                 <button class="btn btn-primary" onclick="closeReceipt()">Done</button>
             </div>
         </div>
@@ -7112,7 +7125,7 @@ def customer_new():
                 message = error_message(f"Failed: {result}")
     
     content = f'''
-    <a href="/customers" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card" style="max-width: 600px;">
         <h2 class="card-title mb-md">Add Customer</h2>
@@ -7200,7 +7213,7 @@ def customer_view(customer_id):
     )
     
     content = f'''
-    <a href="/customers" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="flex-between mb-lg">
         <div>
@@ -7269,7 +7282,7 @@ def customer_edit(customer_id):
                 customer.update(updates)
     
     content = f'''
-    <a href="/customers/{customer_id}" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card" style="max-width: 600px;">
         <h2 class="card-title mb-md">Edit Customer</h2>
@@ -7367,7 +7380,7 @@ def customer_receive_payment(customer_id):
                 message = error_message(f"Failed: {result}")
     
     content = f'''
-    <a href="/customers/{customer_id}" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card" style="max-width: 500px;">
         <h2 class="card-title mb-md">Receive Payment</h2>
@@ -7531,7 +7544,7 @@ def supplier_new():
                 message = error_message("Failed to save")
     
     content = f'''
-    <a href="/suppliers" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card" style="max-width: 600px;">
         <h2 class="card-title mb-md">Add Supplier</h2>
@@ -7592,7 +7605,7 @@ def supplier_view(supplier_id):
     balance = Decimal(str(supplier.get("balance", 0) or 0))
     
     content = f'''
-    <a href="/suppliers" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="flex-between mb-lg">
         <div>
@@ -7651,7 +7664,7 @@ def supplier_edit(supplier_id):
             supplier.update(updates)
     
     content = f'''
-    <a href="/suppliers/{supplier_id}" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card" style="max-width: 600px;">
         <h2 class="card-title mb-md">Edit Supplier</h2>
@@ -7749,7 +7762,7 @@ def supplier_pay(supplier_id):
                 message = error_message(f"Failed: {result}")
     
     content = f'''
-    <a href="/suppliers/{supplier_id}" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card" style="max-width: 500px;">
         <h2 class="card-title mb-md">Make Payment</h2>
@@ -7957,7 +7970,7 @@ def invoice_new():
     js = create_document_js("invoice")
     
     content = f'''
-    <a href="/invoices" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card">
         <h2 class="card-title mb-md">New Invoice</h2>
@@ -7983,10 +7996,10 @@ def invoice_new():
             
             <h3 style="margin: 20px 0 10px;">Line Items</h3>
             <input type="text" id="search-stock" class="form-input" placeholder="Search products to add..." onkeyup="searchStock(this.value)">
-            <div id="search-results" style="max-height:150px;overflow-y:auto;margin-bottom:10px;"></div>
+            <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
             
             <table class="table" id="lines-table">
-                <thead><tr><th>Description</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead>
+                <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th><th></th></tr></thead>
                 <tbody id="lines-body"></tbody>
                 <tfoot>
                     <tr><td colspan="3" style="text-align:right;font-weight:600;">Subtotal:</td><td id="subtotal" style="text-align:right;">R 0.00</td><td></td></tr>
@@ -8151,7 +8164,7 @@ def invoice_view(invoice_id):
         sb = badge(status.title(), "blue")
     
     content = f'''
-    <a href="/invoices" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card">
         <div class="flex-between mb-lg">
@@ -8159,7 +8172,11 @@ def invoice_view(invoice_id):
                 <h1 style="font-size:24px;font-weight:700;">Invoice {safe_string(inv.get("invoice_number", ""))}</h1>
                 <p class="text-muted">{inv.get("date", "")[:10]} • {safe_string(inv.get("customer_name", "Walk-in"))}</p>
             </div>
-            <div>{sb}</div>
+            <div class="btn-group">
+                <a href="/print/office/{invoice_id}" target="_blank" class="btn btn-sm btn-ghost">📄 Print</a>
+                <a href="/invoices/{invoice_id}/edit" class="btn btn-sm btn-ghost">✏️ Edit</a>
+                {sb}
+            </div>
         </div>
         
         <table class="table">
@@ -8175,6 +8192,141 @@ def invoice_view(invoice_id):
     '''
     
     return page_wrapper(f"Invoice {inv.get('invoice_number', '')}", content, active="invoices", user=user)
+
+
+
+@app.route("/invoices/<invoice_id>/edit", methods=["GET", "POST"])
+def invoice_edit(invoice_id):
+    """Edit invoice with warning if already printed/emailed"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    inv = get_invoice(invoice_id)
+    if not inv:
+        return redirect("/invoices")
+    
+    # Handle confirmation
+    confirmed = request.args.get("confirmed") == "yes"
+    
+    if request.method == "GET" and not confirmed:
+        # Show warning page first
+        content = f'''
+        <div class="card" style="max-width:500px; margin: 40px auto; text-align:center;">
+            <div style="font-size:48px; margin-bottom:20px;">⚠️</div>
+            <h2 style="margin-bottom:12px;">Edit Invoice?</h2>
+            <p class="text-muted" style="margin-bottom:24px;">
+                This invoice may have already been printed or emailed to the customer.<br>
+                Are you sure you want to edit it?
+            </p>
+            <div class="btn-group" style="justify-content:center;">
+                <a href="/invoices/{invoice_id}/edit?confirmed=yes" class="btn btn-orange">Yes, Edit Invoice</a>
+                <a href="/invoices/{invoice_id}" class="btn btn-ghost">Cancel</a>
+            </div>
+        </div>
+        '''
+        return page_wrapper("Edit Invoice", content, "invoices", user)
+    
+    if request.method == "POST":
+        # Save changes
+        try:
+            items = json.loads(request.form.get("items_json", "[]"))
+            
+            subtotal = Decimal("0")
+            total_vat = Decimal("0")
+            for item in items:
+                price = Decimal(str(item.get("price", 0)))
+                qty = int(item.get("quantity", 1))
+                line_total = price * qty
+                vat_info = VAT.calculate_from_inclusive(line_total)
+                subtotal += vat_info["exclusive"]
+                total_vat += vat_info["vat"]
+            
+            total = subtotal + total_vat
+            
+            updates = {
+                "items": request.form.get("items_json", "[]"),
+                "subtotal": float(subtotal),
+                "vat": float(total_vat),
+                "total": float(total),
+                "date": request.form.get("date", inv.get("date")),
+                "updated_at": now()
+            }
+            
+            db.update("invoices", invoice_id, updates)
+            return redirect(f"/invoices/{invoice_id}")
+            
+        except Exception:
+            return redirect(f"/invoices/{invoice_id}/edit?confirmed=yes")
+    
+    # Show edit form
+    stock = get_stock_for_selection()
+    items = json.loads(inv.get("items", "[]"))
+    js = create_document_js("invoice")
+    
+    # Pre-populate items
+    items_js = json.dumps(items)
+    
+    content = f'''
+    <div class="card">
+        <h2 class="card-title mb-md">Edit Invoice {safe_string(inv.get("invoice_number", ""))}</h2>
+        
+        <form method="POST" id="doc-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Invoice Number</label>
+                    <input type="text" class="form-input" value="{safe_string(inv.get('invoice_number', ''))}" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" name="date" class="form-input" value="{inv.get('date', today())[:10]}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Customer</label>
+                    <input type="text" class="form-input" value="{safe_string(inv.get('customer_name', 'Walk-in'))}" readonly>
+                </div>
+            </div>
+            
+            <h3 style="margin: 20px 0 10px;">Line Items</h3>
+            <input type="text" id="search-stock" class="form-input" placeholder="Search products..." onkeyup="searchStock(this.value)">
+            <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
+            
+            <table class="table" id="lines-table">
+                <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th><th></th></tr></thead>
+                <tbody id="lines-body"></tbody>
+                <tfoot>
+                    <tr><td colspan="3" style="text-align:right;font-weight:600;">Total:</td><td id="grand-total" style="text-align:right;font-weight:700;font-size:18px;color:var(--green);">R 0.00</td><td></td></tr>
+                </tfoot>
+            </table>
+            
+            <input type="hidden" name="items_json" id="items-json">
+            <input type="hidden" name="total" id="total-input">
+            
+            <div class="btn-group mt-lg">
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <a href="/invoices/{invoice_id}" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+    const stockItems = {json.dumps(stock)};
+    {js}
+    
+    // Pre-populate existing items
+    const existingItems = {items_js};
+    lines = existingItems.map(item => ({{
+        id: item.stock_id || '',
+        code: item.code || '',
+        description: item.description,
+        price: item.price,
+        quantity: item.quantity
+    }}));
+    renderLines();
+    </script>
+    '''
+    
+    return page_wrapper("Edit Invoice", content, "invoices", user)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -8233,7 +8385,7 @@ def quote_new():
     js = create_document_js("quote")
     
     content = f'''
-    <a href="/quotes" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card">
         <h2 class="card-title mb-md">New Quote</h2>
@@ -8259,10 +8411,10 @@ def quote_new():
             
             <h3 style="margin: 20px 0 10px;">Line Items</h3>
             <input type="text" id="search-stock" class="form-input" placeholder="Search products..." onkeyup="searchStock(this.value)">
-            <div id="search-results" style="max-height:150px;overflow-y:auto;margin-bottom:10px;"></div>
+            <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
             
             <table class="table" id="lines-table">
-                <thead><tr><th>Description</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead>
+                <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th><th></th></tr></thead>
                 <tbody id="lines-body"></tbody>
                 <tfoot>
                     <tr><td colspan="3" style="text-align:right;font-weight:600;">Total:</td><td id="grand-total" style="text-align:right;font-weight:700;font-size:18px;color:var(--green);">R 0.00</td><td></td></tr>
@@ -8334,6 +8486,10 @@ def quote_view(quote_id):
     if not q:
         return redirect("/quotes")
     
+    # Check if already converted
+    if q.get("status") == "converted":
+        return redirect(f"/quotes/{quote_id}")
+    
     items = json.loads(q.get("items", "[]"))
     
     item_rows = ""
@@ -8349,7 +8505,7 @@ def quote_view(quote_id):
         '''
     
     content = f'''
-    <a href="/quotes" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card">
         <div class="flex-between mb-lg">
@@ -8357,7 +8513,7 @@ def quote_view(quote_id):
                 <h1 style="font-size:24px;font-weight:700;">Quote {safe_string(q.get("quote_number", ""))}</h1>
                 <p class="text-muted">{q.get("date", "")[:10]} • {safe_string(q.get("customer_name", ""))}</p>
             </div>
-            <a href="/quotes/{quote_id}/convert" class="btn btn-green">Convert to Invoice</a>
+            {'<span class="badge badge-green">✓ Converted</span>' if q.get('status') == 'converted' else f'<a href="/quotes/{quote_id}/convert" class="btn btn-green">Convert to Invoice</a>'}
         </div>
         
         <table class="table">
@@ -8383,6 +8539,10 @@ def quote_convert(quote_id):
     q = get_quote(quote_id)
     if not q:
         return redirect("/quotes")
+    
+    # Check if already converted
+    if q.get("status") == "converted":
+        return redirect(f"/quotes/{quote_id}")
     
     # Create invoice from quote
     items = json.loads(q.get("items", "[]"))
@@ -8728,7 +8888,7 @@ def expense_new():
     ])
     
     content = f'''
-    <a href="/expenses" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card" style="max-width: 600px;">
         <h2 class="card-title mb-md">Add Expense</h2>
@@ -8911,7 +9071,7 @@ def expense_scan_page():
     ])
     
     content = f'''
-    <a href="/expenses" class="btn btn-ghost mb-lg">← Back</a>
+    
     
     <div class="card" style="max-width: 600px;">
         <h2 class="card-title mb-md">📷 Scan Receipt</h2>
@@ -9247,7 +9407,7 @@ def report_trial_balance():
     balance_badge = '<span class="badge badge-green">✓ Balanced</span>' if balanced else '<span class="badge badge-red">✗ Unbalanced</span>'
     
     content = f'''
-    <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
+    
     <div class="flex-between mb-lg">
         <div>
             <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;">Trial Balance</h1>
@@ -9322,7 +9482,7 @@ def report_income_statement():
     net_profit = gross_profit - expenses
     
     content = f'''
-    <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
+    
     <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;">Income Statement</h1>
     <p class="text-muted mb-lg">{year_start} to {today()}</p>
     
@@ -9366,45 +9526,96 @@ def report_balance_sheet():
     if not user:
         return redirect("/login")
     
-    bs = Journal.get_balance_sheet()
+    # Use fast database function
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_balance_sheet"
+        headers = {
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, headers=headers, json={}, timeout=30)
+        bs_data = resp.json() if resp.status_code == 200 else []
+    except:
+        bs_data = []
+    
+    # Organize by category
+    current_assets = []
+    fixed_assets = []
+    current_liab = []
+    longterm_liab = []
+    equity = []
+    
+    total_assets = Decimal("0")
+    total_liab = Decimal("0")
+    total_equity = Decimal("0")
+    
+    for item in bs_data:
+        bal = Decimal(str(item.get("balance", 0) or 0))
+        entry = {"name": item.get("account_name", ""), "balance": bal}
+        cat = item.get("account_category", "")
+        typ = item.get("account_type", "")
+        
+        if typ == "asset":
+            total_assets += bal
+            if cat in ["current_asset", "bank", "receivable", "inventory"]:
+                current_assets.append(entry)
+            else:
+                fixed_assets.append(entry)
+        elif typ == "liability":
+            total_liab += bal
+            if cat in ["current_liability", "payable", "vat"]:
+                current_liab.append(entry)
+            else:
+                longterm_liab.append(entry)
+        elif typ == "equity":
+            total_equity += bal
+            equity.append(entry)
     
     def make_rows(items):
+        if not items:
+            return '<tr><td colspan="2" class="text-muted" style="padding-left:20px;">None</td></tr>'
         return "".join([f'<tr><td style="padding-left:20px;">{i["name"]}</td><td class="number">{Money.format(i["balance"])}</td></tr>' for i in items])
     
-    balanced = abs(bs["total_assets"] - bs["total_liab_equity"]) < Decimal("0.01")
+    total_liab_equity = total_liab + total_equity
+    balanced = abs(total_assets - total_liab_equity) < Decimal("0.01")
+    
+    total_current_assets = sum(i["balance"] for i in current_assets)
+    total_fixed_assets = sum(i["balance"] for i in fixed_assets)
+    total_current_liab = sum(i["balance"] for i in current_liab)
+    total_longterm_liab = sum(i["balance"] for i in longterm_liab)
     
     content = f'''
-    <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
     <div class="flex-between mb-lg">
-        <div><h1 style="font-size:24px;font-weight:700;">Balance Sheet</h1><p class="text-muted">As at {format_date(today())}</p></div>
-        {badge("✓ Balanced", "green") if balanced else badge("✗ Unbalanced", "red")}
+        <div><h1 style="font-size:24px;font-weight:700;">Balance Sheet</h1><p class="text-muted">As at {today()}</p></div>
+        {'<span class="badge badge-green">✓ Balanced</span>' if balanced else '<span class="badge badge-red">✗ Unbalanced</span>'}
     </div>
     <div class="stats">
-        <div class="stat"><div class="stat-value">{Money.format(bs["total_assets"])}</div><div class="stat-label">Assets</div></div>
-        <div class="stat"><div class="stat-value">{Money.format(bs["total_liabilities"])}</div><div class="stat-label">Liabilities</div></div>
-        <div class="stat"><div class="stat-value">{Money.format(bs["total_equity"])}</div><div class="stat-label">Equity</div></div>
+        <div class="stat"><div class="stat-value">{Money.format(total_assets)}</div><div class="stat-label">Assets</div></div>
+        <div class="stat"><div class="stat-value">{Money.format(total_liab)}</div><div class="stat-label">Liabilities</div></div>
+        <div class="stat"><div class="stat-value">{Money.format(total_equity)}</div><div class="stat-label">Equity</div></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
         <div class="card"><h3 class="card-title mb-md">ASSETS</h3><table class="table"><tbody>
             <tr style="background:var(--bg-secondary);"><td><strong>Current Assets</strong></td><td></td></tr>
-            {make_rows(bs["current_assets"]) or '<tr><td colspan="2" class="text-muted" style="padding-left:20px;">None</td></tr>'}
-            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(bs["total_current_assets"])}</strong></td></tr>
+            {make_rows(current_assets)}
+            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(total_current_assets)}</strong></td></tr>
             <tr style="background:var(--bg-secondary);"><td><strong>Fixed Assets</strong></td><td></td></tr>
-            {make_rows(bs["fixed_assets"]) or '<tr><td colspan="2" class="text-muted" style="padding-left:20px;">None</td></tr>'}
-            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(bs["total_fixed_assets"])}</strong></td></tr>
-            <tr style="background:linear-gradient(135deg,rgba(59,130,246,0.1),rgba(139,92,246,0.1));"><td><strong>TOTAL ASSETS</strong></td><td class="number"><strong>{Money.format(bs["total_assets"])}</strong></td></tr>
+            {make_rows(fixed_assets)}
+            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(total_fixed_assets)}</strong></td></tr>
+            <tr style="background:linear-gradient(135deg,rgba(59,130,246,0.1),rgba(139,92,246,0.1));"><td><strong>TOTAL ASSETS</strong></td><td class="number"><strong>{Money.format(total_assets)}</strong></td></tr>
         </tbody></table></div>
         <div class="card"><h3 class="card-title mb-md">LIABILITIES & EQUITY</h3><table class="table"><tbody>
             <tr style="background:var(--bg-secondary);"><td><strong>Current Liabilities</strong></td><td></td></tr>
-            {make_rows(bs["current_liabilities"]) or '<tr><td colspan="2" class="text-muted" style="padding-left:20px;">None</td></tr>'}
-            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(bs["total_current_liabilities"])}</strong></td></tr>
+            {make_rows(current_liab)}
+            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(total_current_liab)}</strong></td></tr>
             <tr style="background:var(--bg-secondary);"><td><strong>Long-term Liabilities</strong></td><td></td></tr>
-            {make_rows(bs["long_term_liabilities"]) or '<tr><td colspan="2" class="text-muted" style="padding-left:20px;">None</td></tr>'}
-            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(bs["total_long_term_liabilities"])}</strong></td></tr>
+            {make_rows(longterm_liab)}
+            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(total_longterm_liab)}</strong></td></tr>
             <tr style="background:var(--bg-secondary);"><td><strong>Equity</strong></td><td></td></tr>
-            {make_rows(bs["equity"]) or '<tr><td colspan="2" class="text-muted" style="padding-left:20px;">None</td></tr>'}
-            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(bs["total_equity"])}</strong></td></tr>
-            <tr style="background:linear-gradient(135deg,rgba(59,130,246,0.1),rgba(139,92,246,0.1));"><td><strong>TOTAL</strong></td><td class="number"><strong>{Money.format(bs["total_liab_equity"])}</strong></td></tr>
+            {make_rows(equity)}
+            <tr><td><strong>Sub-total</strong></td><td class="number"><strong>{Money.format(total_equity)}</strong></td></tr>
+            <tr style="background:linear-gradient(135deg,rgba(59,130,246,0.1),rgba(139,92,246,0.1));"><td><strong>TOTAL</strong></td><td class="number"><strong>{Money.format(total_liab_equity)}</strong></td></tr>
         </tbody></table></div>
     </div>
     '''
@@ -9425,7 +9636,7 @@ def report_vat():
     net_label = "VAT Payable" if vat["net_vat"] > 0 else "VAT Refund"
     
     content = f'''
-    <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
+    
     <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;">VAT Report</h1>
     <p class="text-muted mb-lg">{format_date(date_from)} to {format_date(date_to)}</p>
     <div class="stats">
@@ -9458,7 +9669,7 @@ def report_sales():
     table = table_html(headers=["Invoice", "Date", "Customer", {"label": "Total", "class": "number"}, "Status"], rows=rows, empty_message="No sales")
     
     content = f'''
-    <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
+    
     <h1 style="font-size:24px;font-weight:700;margin-bottom:20px;">Sales Report</h1>
     <div class="stats">
         <div class="stat"><div class="stat-value">{len(invoices)}</div><div class="stat-label">Invoices</div></div>
@@ -9484,7 +9695,7 @@ def report_debtors():
     table = table_html(headers=["Customer", "Phone", {"label": "Balance", "class": "number"}], rows=rows, empty_message="No debtors 🎉")
     
     content = f'''
-    <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
+    
     <h1 style="font-size:24px;font-weight:700;margin-bottom:20px;">Debtors Report</h1>
     <div class="stats">
         <div class="stat"><div class="stat-value">{len(with_bal)}</div><div class="stat-label">Customers Owing</div></div>
@@ -9509,7 +9720,7 @@ def report_creditors():
     table = table_html(headers=["Supplier", "Phone", {"label": "We Owe", "class": "number"}], rows=rows, empty_message="No creditors 🎉")
     
     content = f'''
-    <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
+    
     <h1 style="font-size:24px;font-weight:700;margin-bottom:20px;">Creditors Report</h1>
     <div class="stats">
         <div class="stat"><div class="stat-value">{len(with_bal)}</div><div class="stat-label">Suppliers Owed</div></div>
@@ -9548,7 +9759,7 @@ def report_stock():
     profit_margin = retail_value - cost_value
     
     content = f'''
-    <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
+    
     <h1 style="font-size:24px;font-weight:700;margin-bottom:20px;">Stock Valuation Report</h1>
     
     <div class="stats">
@@ -9586,7 +9797,7 @@ def report_ledger():
     table = table_html(headers=["Date", "Account", "Ref", "Description", {"label": "Debit", "class": "number"}, {"label": "Credit", "class": "number"}], rows=rows, empty_message="No entries")
     
     content = f'''
-    <a href="/reports" class="btn btn-ghost mb-lg">← Back</a>
+    
     <h1 style="font-size:24px;font-weight:700;margin-bottom:20px;">General Ledger</h1>
     <div class="card">{table}</div>
     '''
@@ -9641,6 +9852,133 @@ try:
         init_database()
 except:
     pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRINT ROUTES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/print/thermal/<invoice_number>")
+def print_thermal(invoice_number):
+    """Generate thermal printer receipt"""
+    inv = db.query("invoices", filters={"invoice_number": invoice_number})
+    if not inv:
+        return "Invoice not found", 404
+    inv = inv[0]
+    
+    items = json.loads(inv.get("items", "[]"))
+    
+    item_lines = ""
+    for item in items:
+        qty = item.get("quantity", 1)
+        desc = item.get("description", "")[:20]
+        price = Decimal(str(item.get("price", 0)))
+        line_total = price * qty
+        item_lines += f"<tr><td>{qty}x {desc}</td><td style='text-align:right'>R{line_total:.2f}</td></tr>"
+    
+    total = Decimal(str(inv.get("total", 0)))
+    vat = Decimal(str(inv.get("vat", 0)))
+    
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>Receipt</title>
+    <style>
+        @media print {{ @page {{ margin: 0; size: 80mm auto; }} }}
+        body {{ font-family: monospace; font-size: 12px; width: 80mm; padding: 5mm; margin: 0; }}
+        h1 {{ font-size: 16px; text-align: center; margin: 0 0 10px; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        td {{ padding: 2px 0; }}
+        .total {{ font-size: 16px; font-weight: bold; border-top: 1px dashed #000; margin-top: 10px; padding-top: 10px; }}
+        .center {{ text-align: center; }}
+    </style>
+</head>
+<body onload="window.print()">
+    <h1>RECEIPT</h1>
+    <p class="center">{inv.get("invoice_number", "")}</p>
+    <p class="center">{inv.get("date", "")[:10]}</p>
+    <hr>
+    <table>{item_lines}</table>
+    <hr>
+    <table>
+        <tr><td>VAT (15%)</td><td style="text-align:right">R{vat:.2f}</td></tr>
+        <tr class="total"><td>TOTAL</td><td style="text-align:right">R{total:.2f}</td></tr>
+    </table>
+    <p class="center" style="margin-top:20px">Thank you!</p>
+</body>
+</html>'''
+
+
+@app.route("/print/office/<invoice_number>")
+def print_office(invoice_number):
+    """Generate A4 office invoice"""
+    inv = db.query("invoices", filters={"invoice_number": invoice_number})
+    if not inv:
+        return "Invoice not found", 404
+    inv = inv[0]
+    
+    items = json.loads(inv.get("items", "[]"))
+    
+    item_rows = ""
+    for item in items:
+        qty = item.get("quantity", 1)
+        desc = item.get("description", "")
+        price = Decimal(str(item.get("price", 0)))
+        line_total = price * qty
+        item_rows += f"<tr><td>{desc}</td><td style='text-align:right'>{qty}</td><td style='text-align:right'>R {price:.2f}</td><td style='text-align:right'>R {line_total:.2f}</td></tr>"
+    
+    total = Decimal(str(inv.get("total", 0)))
+    vat = Decimal(str(inv.get("vat", 0)))
+    subtotal = total - vat
+    customer = inv.get("customer_name", "Walk-in Customer")
+    
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>Invoice {inv.get("invoice_number", "")}</title>
+    <style>
+        @media print {{ @page {{ margin: 15mm; }} }}
+        body {{ font-family: Arial, sans-serif; font-size: 14px; max-width: 210mm; margin: 0 auto; padding: 20px; }}
+        h1 {{ color: #333; margin-bottom: 5px; }}
+        .header {{ display: flex; justify-content: space-between; margin-bottom: 30px; }}
+        .invoice-details {{ text-align: right; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+        th {{ background: #f5f5f5; text-align: left; padding: 10px; border-bottom: 2px solid #333; }}
+        td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
+        .totals {{ width: 300px; margin-left: auto; }}
+        .totals td {{ border: none; }}
+        .grand-total {{ font-size: 18px; font-weight: bold; background: #f0f0f0; }}
+        .btn {{ display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }}
+        @media print {{ .no-print {{ display: none; }} }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>INVOICE</h1>
+            <p><strong>To:</strong> {customer}</p>
+        </div>
+        <div class="invoice-details">
+            <p><strong>Invoice:</strong> {inv.get("invoice_number", "")}</p>
+            <p><strong>Date:</strong> {inv.get("date", "")[:10]}</p>
+        </div>
+    </div>
+    
+    <table>
+        <thead><tr><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Amount</th></tr></thead>
+        <tbody>{item_rows}</tbody>
+    </table>
+    
+    <table class="totals">
+        <tr><td>Subtotal:</td><td style="text-align:right">R {subtotal:.2f}</td></tr>
+        <tr><td>VAT (15%):</td><td style="text-align:right">R {vat:.2f}</td></tr>
+        <tr class="grand-total"><td>TOTAL:</td><td style="text-align:right">R {total:.2f}</td></tr>
+    </table>
+    
+    <a href="#" class="btn no-print" onclick="window.print(); return false;">Print Invoice</a>
+</body>
+</html>'''
+
 
 if __name__ == "__main__":
     print("Click AI starting on http://0.0.0.0:5000")
