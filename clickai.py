@@ -3968,6 +3968,9 @@ a:hover {
     padding: 14px;
     cursor: pointer;
     transition: all var(--transition-fast);
+    display: flex;
+    flex-direction: column;
+    height: 110px;
 }
 
 .product-item:hover {
@@ -3986,12 +3989,14 @@ a:hover {
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    flex: 1;
 }
 
 .product-price {
     font-size: 15px;
     font-weight: 700;
     color: var(--green);
+    margin-top: auto;
 }
 
 .product-stock {
@@ -8379,12 +8384,18 @@ def quote_list():
     
     rows = []
     for q in quotes[:50]:
+        # Check if converted
+        if q.get("status") == "converted":
+            action_btn = '<span class="badge badge-blue">✓ Converted</span>'
+        else:
+            action_btn = f'<a href="/quotes/{q["id"]}/convert" class="btn btn-sm btn-green">→ Invoice</a>'
+        
         rows.append([
             f'<a href="/quotes/{q["id"]}">{q.get("quote_number", "-")}</a>',
             q.get("date", "")[:10],
             safe_string(q.get("customer_name", "")),
             {"value": Money.format(Decimal(str(q.get("total", 0)))), "class": "number"},
-            f'<a href="/quotes/{q["id"]}/convert" class="btn btn-sm btn-green">→ Invoice</a>'
+            action_btn
         ])
     
     table = table_html(
@@ -10256,15 +10267,6 @@ SCANNER_HTML = '''<!DOCTYPE html>
                 <span class="scan-desc">Auto-categorize + Record + GL entries</span>
             </span>
             <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'exp')">
-        </label>
-        
-        <label class="scan-btn scan-btn-stock">
-            <span class="scan-icon">📋</span>
-            <span class="scan-text">
-                <span class="scan-title">Stock Count</span>
-                <span class="scan-desc">Update quantities + Variance report</span>
-            </span>
-            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'stock')">
         </label>
     </div>
     
