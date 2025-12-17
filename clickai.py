@@ -10266,15 +10266,6 @@ SCANNER_HTML = '''<!DOCTYPE html>
             </span>
             <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'stock')">
         </label>
-        
-        <label class="scan-btn scan-btn-payment">
-            <span class="scan-icon">💰</span>
-            <span class="scan-text">
-                <span class="scan-title">Customer Payment</span>
-                <span class="scan-desc">Match invoice + Mark paid + Bank rec</span>
-            </span>
-            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'payment')">
-        </label>
     </div>
     
     <div class="footer">
@@ -10561,8 +10552,8 @@ def process_supplier_invoice(data):
     try:
         invoice_no = data.get("invoice_no", "")
         supplier_name = data.get("supplier", "Unknown Supplier")
-        total = Decimal(str(data.get("total", 0)))
-        vat = Decimal(str(data.get("vat", 0)))
+        total = Money.parse(data.get("total", 0))
+        vat = Money.parse(data.get("vat", 0))
         items = data.get("items", [])
         is_paid = data.get("paid", False)
         inv_date = data.get("date", today())
@@ -10611,8 +10602,8 @@ def process_supplier_invoice(data):
         for item in items:
             desc = item.get("description", "Unknown Item")
             code = item.get("code", "")
-            qty = int(item.get("qty", 1))
-            unit_price = Decimal(str(item.get("unit_price", 0)))
+            qty = int(item.get("qty", 0) or 0) or 1
+            unit_price = Money.parse(item.get("unit_price", 0))
             
             # Find existing stock item
             stock_item = None
@@ -10734,8 +10725,8 @@ def process_expense_receipt(data):
     try:
         vendor = data.get("vendor", "Unknown")
         description = data.get("description", "Expense")
-        total = Decimal(str(data.get("total", 0)))
-        vat = Decimal(str(data.get("vat", 0)))
+        total = Money.parse(data.get("total", 0))
+        vat = Money.parse(data.get("vat", 0))
         category = data.get("category", "general")
         exp_date = data.get("date", today())
         
@@ -10836,7 +10827,10 @@ def process_stock_count(data):
         for item in items:
             code = item.get("code", "")
             desc = item.get("description", "")
-            counted = int(item.get("quantity", 0))
+            try:
+                counted = int(float(item.get("quantity", 0) or 0))
+            except:
+                counted = 0
             
             # Find matching stock item
             stock_item = None
