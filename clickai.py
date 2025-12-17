@@ -7990,6 +7990,7 @@ def invoice_new():
                     <label class="form-label">Customer</label>
                     <select name="customer_id" id="customer_id" class="form-select" onchange="toggleNewCustomer(this)">
                         <option value="">Walk-in Customer</option>
+                        <option value="NEW">➕ Add New Customer</option>
                         {"".join([f'<option value="{c["id"]}">{safe_string(c["name"])}</option>' for c in customers])}
                     </select>
                 </div>
@@ -10055,6 +10056,388 @@ def print_office(invoice_number):
     <a href="#" class="btn no-print" onclick="window.print(); return false;">Print Invoice</a>
 </body>
 </html>'''
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MOBILE VERSION - Simple interface for phones
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def is_mobile():
+    """Check if request is from mobile device"""
+    ua = request.headers.get('User-Agent', '').lower()
+    return any(x in ua for x in ['mobile', 'android', 'iphone', 'ipad'])
+
+def mobile_wrapper(title, content):
+    """Simple mobile page wrapper"""
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>{title} - Click</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a12; 
+            color: #f0f0f0;
+            min-height: 100vh;
+            padding-bottom: 80px;
+        }}
+        .header {{
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            padding: 16px;
+            text-align: center;
+            border-bottom: 1px solid #2a2a4a;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }}
+        .header h1 {{
+            font-size: 20px;
+            background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+        .content {{ padding: 16px; }}
+        .card {{
+            background: #12121a;
+            border: 1px solid #2a2a4a;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }}
+        .btn {{
+            display: block;
+            width: 100%;
+            padding: 16px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            text-align: center;
+            text-decoration: none;
+            margin-bottom: 12px;
+            border: none;
+            cursor: pointer;
+        }}
+        .btn-primary {{ background: linear-gradient(135deg, #8b5cf6, #3b82f6); color: white; }}
+        .btn-green {{ background: linear-gradient(135deg, #10b981, #059669); color: white; }}
+        .btn-orange {{ background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }}
+        .btn-ghost {{ background: #1a1a2e; color: #8b8b9a; border: 1px solid #2a2a4a; }}
+        .form-input {{
+            width: 100%;
+            padding: 14px;
+            background: #0a0a12;
+            border: 1px solid #2a2a4a;
+            border-radius: 8px;
+            color: #f0f0f0;
+            font-size: 16px;
+            margin-bottom: 12px;
+        }}
+        .form-label {{ display: block; margin-bottom: 6px; color: #8b8b9a; font-size: 14px; }}
+        .nav-bottom {{
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #12121a;
+            border-top: 1px solid #2a2a4a;
+            display: flex;
+            justify-content: space-around;
+            padding: 10px 0;
+            z-index: 100;
+        }}
+        .nav-item {{
+            text-align: center;
+            color: #606070;
+            text-decoration: none;
+            font-size: 12px;
+            padding: 8px 16px;
+        }}
+        .nav-item.active {{ color: #8b5cf6; }}
+        .nav-icon {{ font-size: 24px; display: block; margin-bottom: 4px; }}
+        .stat {{ text-align: center; padding: 12px; }}
+        .stat-value {{ font-size: 28px; font-weight: 700; color: #10b981; }}
+        .stat-label {{ font-size: 12px; color: #606070; }}
+        .list-item {{
+            display: flex;
+            justify-content: space-between;
+            padding: 14px;
+            border-bottom: 1px solid #1a1a2e;
+        }}
+        .list-item:last-child {{ border-bottom: none; }}
+        .text-muted {{ color: #606070; }}
+        .text-green {{ color: #10b981; }}
+        .alert {{ padding: 12px; border-radius: 8px; margin-bottom: 16px; }}
+        .alert-success {{ background: rgba(16, 185, 129, 0.2); color: #10b981; }}
+        .alert-error {{ background: rgba(239, 68, 68, 0.2); color: #ef4444; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Click</h1>
+    </div>
+    <div class="content">
+        {content}
+    </div>
+    <nav class="nav-bottom">
+        <a href="/m" class="nav-item"><span class="nav-icon">🏠</span>Home</a>
+        <a href="/m/pos" class="nav-item"><span class="nav-icon">💰</span>POS</a>
+        <a href="/m/stock" class="nav-item"><span class="nav-icon">📦</span>Stock</a>
+        <a href="/m/expense" class="nav-item"><span class="nav-icon">💸</span>Expense</a>
+    </nav>
+</body>
+</html>'''
+
+
+@app.route("/m")
+def mobile_home():
+    """Mobile home screen"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    content = f'''
+    <div style="text-align:center; padding: 20px 0;">
+        <div style="font-size: 48px; margin-bottom: 16px;">👋</div>
+        <h2 style="margin-bottom: 8px;">Welcome, {user.get("username", "")}</h2>
+        <p class="text-muted">What would you like to do?</p>
+    </div>
+    
+    <a href="/m/pos" class="btn btn-primary">💰 Make a Sale</a>
+    <a href="/m/expense" class="btn btn-green">💸 Add Expense</a>
+    <a href="/m/stock" class="btn btn-orange">📦 Check Stock</a>
+    
+    <div style="margin-top: 24px; text-align: center;">
+        <a href="/dashboard" class="btn btn-ghost">📊 Full Desktop Version</a>
+    </div>
+    '''
+    return mobile_wrapper("Home", content)
+
+
+@app.route("/m/pos")
+def mobile_pos():
+    """Mobile POS - Quick sale"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    content = '''
+    <h2 style="margin-bottom: 16px;">Quick Sale</h2>
+    
+    <div class="card">
+        <label class="form-label">Search Product</label>
+        <input type="text" id="search" class="form-input" placeholder="Type product name..." oninput="searchStock(this.value)">
+        <div id="results"></div>
+    </div>
+    
+    <div class="card">
+        <h3 style="margin-bottom: 12px;">Cart</h3>
+        <div id="cart"><p class="text-muted">Empty</p></div>
+        <div style="display:flex; justify-content:space-between; margin-top:16px; font-size:20px; font-weight:700;">
+            <span>Total:</span>
+            <span id="total" class="text-green">R 0.00</span>
+        </div>
+    </div>
+    
+    <button class="btn btn-primary" onclick="processSale('cash')">💵 Cash Sale</button>
+    <button class="btn btn-green" onclick="processSale('card')">💳 Card Sale</button>
+    
+    <script>
+    let cart = [];
+    let stock = [];
+    
+    fetch('/api/pos/stock').then(r => r.json()).then(data => { stock = data; });
+    
+    function searchStock(q) {
+        if (q.length < 2) { document.getElementById('results').innerHTML = ''; return; }
+        q = q.toLowerCase();
+        let html = '';
+        for (const item of stock.slice(0, 20)) {
+            if (item.description.toLowerCase().includes(q) || (item.code||'').toLowerCase().includes(q)) {
+                html += '<div onclick="addToCart(\\''+item.id+'\\')\" style="padding:12px;border-bottom:1px solid #1a1a2e;cursor:pointer;">'+item.description+' <span class="text-green">'+item.price_formatted+'</span></div>';
+            }
+        }
+        document.getElementById('results').innerHTML = html || '<p class="text-muted">No results</p>';
+    }
+    
+    function addToCart(id) {
+        const item = stock.find(s => s.id === id);
+        if (!item) return;
+        const existing = cart.find(c => c.id === id);
+        if (existing) { existing.qty++; }
+        else { cart.push({id: item.id, name: item.description, price: item.price, qty: 1}); }
+        document.getElementById('search').value = '';
+        document.getElementById('results').innerHTML = '';
+        renderCart();
+    }
+    
+    function renderCart() {
+        if (cart.length === 0) {
+            document.getElementById('cart').innerHTML = '<p class="text-muted">Empty</p>';
+            document.getElementById('total').textContent = 'R 0.00';
+            return;
+        }
+        let html = '';
+        let total = 0;
+        for (let i = 0; i < cart.length; i++) {
+            const item = cart[i];
+            const line = item.price * item.qty;
+            total += line;
+            html += '<div class="list-item"><span>'+item.qty+'x '+item.name+'</span><span class="text-green">R '+line.toFixed(2)+'</span></div>';
+        }
+        document.getElementById('cart').innerHTML = html;
+        document.getElementById('total').textContent = 'R ' + total.toFixed(2);
+    }
+    
+    async function processSale(method) {
+        if (cart.length === 0) { alert('Cart is empty'); return; }
+        const items = cart.map(c => ({id: c.id, description: c.name, price: c.price, quantity: c.qty, cost: 0}));
+        const res = await fetch('/api/pos/sale', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({items, customer_id: '', payment_method: method})
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert('Sale complete! ' + data.invoice_number);
+            cart = [];
+            renderCart();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    }
+    </script>
+    '''
+    return mobile_wrapper("POS", content)
+
+
+@app.route("/m/expense")
+def mobile_expense():
+    """Mobile expense entry"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    message = ""
+    if request.args.get("success"):
+        message = '<div class="alert alert-success">✓ Expense saved!</div>'
+    
+    content = f'''
+    <h2 style="margin-bottom: 16px;">Add Expense</h2>
+    
+    {message}
+    
+    <form method="POST" action="/m/expense/save">
+        <div class="card">
+            <label class="form-label">Amount (R)</label>
+            <input type="number" name="amount" class="form-input" placeholder="0.00" step="0.01" required>
+            
+            <label class="form-label">Description</label>
+            <input type="text" name="description" class="form-input" placeholder="What was purchased?" required>
+            
+            <label class="form-label">Supplier (optional)</label>
+            <input type="text" name="supplier" class="form-input" placeholder="Supplier name">
+        </div>
+        
+        <button type="submit" class="btn btn-primary">💾 Save Expense</button>
+    </form>
+    '''
+    return mobile_wrapper("Add Expense", content)
+
+
+@app.route("/m/expense/save", methods=["POST"])
+def mobile_expense_save():
+    """Save mobile expense"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    try:
+        amount = Decimal(request.form.get("amount", "0"))
+        description = request.form.get("description", "")
+        supplier = request.form.get("supplier", "")
+        
+        if amount > 0 and description:
+            expense = {
+                "id": generate_id(),
+                "date": today(),
+                "description": description,
+                "supplier": supplier,
+                "category": "6140",  # General expenses
+                "amount": float(amount),
+                "vat_type": "inclusive",
+                "created_at": now()
+            }
+            db.insert("expenses", expense)
+            
+            # Post to GL
+            vat_info = VAT.calculate_from_inclusive(amount)
+            entry = JournalEntry(
+                date=today(),
+                reference=f"EXP-{expense['id'][:8]}",
+                description=description,
+                trans_type=TransactionType.EXPENSE,
+                source_type="expense",
+                source_id=expense["id"]
+            )
+            entry.debit("6140", vat_info["exclusive"])
+            entry.debit(AccountCodes.VAT_INPUT, vat_info["vat"])
+            entry.credit(AccountCodes.BANK, amount)
+            entry.post()
+            
+        return redirect("/m/expense?success=1")
+    except:
+        return redirect("/m/expense")
+
+
+@app.route("/m/stock")
+def mobile_stock():
+    """Mobile stock check"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    content = '''
+    <h2 style="margin-bottom: 16px;">Stock Check</h2>
+    
+    <div class="card">
+        <label class="form-label">Search Stock</label>
+        <input type="text" id="search" class="form-input" placeholder="Product name or code..." oninput="searchStock(this.value)">
+    </div>
+    
+    <div id="results">
+        <p class="text-muted" style="text-align:center; padding:20px;">Type to search stock...</p>
+    </div>
+    
+    <script>
+    let stock = [];
+    fetch('/api/pos/stock').then(r => r.json()).then(data => { stock = data; });
+    
+    function searchStock(q) {
+        if (q.length < 2) {
+            document.getElementById('results').innerHTML = '<p class="text-muted" style="text-align:center; padding:20px;">Type to search stock...</p>';
+            return;
+        }
+        q = q.toLowerCase();
+        let html = '<div class="card">';
+        let count = 0;
+        for (const item of stock) {
+            if (item.description.toLowerCase().includes(q) || (item.code||'').toLowerCase().includes(q)) {
+                const stockColor = item.quantity <= 5 ? '#f59e0b' : '#10b981';
+                html += '<div class="list-item"><div><strong>'+item.description+'</strong><br><span class="text-muted">'+item.code+'</span></div><div style="text-align:right;"><span class="text-green">'+item.price_formatted+'</span><br><span style="color:'+stockColor+'">'+item.quantity+' in stock</span></div></div>';
+                count++;
+                if (count >= 20) break;
+            }
+        }
+        html += '</div>';
+        if (count === 0) html = '<p class="text-muted" style="text-align:center; padding:20px;">No products found</p>';
+        document.getElementById('results').innerHTML = html;
+    }
+    </script>
+    '''
+    return mobile_wrapper("Stock", content)
 
 
 if __name__ == "__main__":
