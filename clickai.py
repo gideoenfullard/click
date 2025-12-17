@@ -10062,14 +10062,11 @@ def print_office(invoice_number):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MOBILE SCANNER - AI Document Capture
-# 3 buttons: COS, EXP, STOCK - Tap, Snap, Done
+# CLICK AI SCANNER - The Heart of the System
+# Tap • Snap • Done - AI Does Everything
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.route("/m")
-def scanner_home():
-    """Mobile scanner - 3 buttons only"""
-    return '''<!DOCTYPE html>
+SCANNER_HTML = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -10087,101 +10084,153 @@ def scanner_home():
         }
         .header {
             text-align: center;
-            padding: 40px 20px 30px;
+            padding: 30px 20px 20px;
         }
         .logo {
-            font-size: 32px;
+            font-size: 28px;
             font-weight: 800;
             background: linear-gradient(135deg, #8b5cf6, #3b82f6);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: 8px;
+            margin-bottom: 4px;
         }
-        .tagline { color: #606070; font-size: 14px; }
+        .tagline { color: #606070; font-size: 13px; }
         .buttons {
             flex: 1;
             display: flex;
             flex-direction: column;
             justify-content: center;
-            padding: 20px;
-            gap: 20px;
+            padding: 16px;
+            gap: 14px;
         }
         .scan-btn {
             display: flex;
             align-items: center;
-            gap: 16px;
-            padding: 28px 24px;
-            border-radius: 16px;
-            font-size: 20px;
+            gap: 14px;
+            padding: 22px 20px;
+            border-radius: 14px;
+            font-size: 18px;
             font-weight: 700;
             color: white;
             border: none;
             cursor: pointer;
             transition: transform 0.2s;
+            text-align: left;
         }
         .scan-btn:active { transform: scale(0.98); }
         .scan-btn-cos {
             background: linear-gradient(135deg, #f59e0b, #d97706);
-            box-shadow: 0 8px 32px rgba(245, 158, 11, 0.3);
+            box-shadow: 0 6px 24px rgba(245, 158, 11, 0.3);
         }
         .scan-btn-exp {
             background: linear-gradient(135deg, #ef4444, #dc2626);
-            box-shadow: 0 8px 32px rgba(239, 68, 68, 0.3);
+            box-shadow: 0 6px 24px rgba(239, 68, 68, 0.3);
         }
         .scan-btn-stock {
             background: linear-gradient(135deg, #10b981, #059669);
-            box-shadow: 0 8px 32px rgba(16, 185, 129, 0.3);
+            box-shadow: 0 6px 24px rgba(16, 185, 129, 0.3);
         }
-        .scan-icon { font-size: 32px; }
-        .scan-text { text-align: left; }
-        .scan-title { display: block; font-size: 22px; margin-bottom: 4px; }
-        .scan-desc { display: block; font-size: 13px; font-weight: 400; opacity: 0.9; }
-        .footer { text-align: center; padding: 20px; color: #404050; font-size: 12px; }
-        .footer a { color: #8b5cf6; text-decoration: none; }
+        .scan-btn-payment {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            box-shadow: 0 6px 24px rgba(59, 130, 246, 0.3);
+        }
+        .scan-icon { font-size: 28px; }
+        .scan-text { flex: 1; }
+        .scan-title { display: block; font-size: 18px; margin-bottom: 2px; }
+        .scan-desc { display: block; font-size: 12px; font-weight: 400; opacity: 0.85; }
+        .footer { text-align: center; padding: 16px; }
+        .footer a { 
+            color: #606070; 
+            text-decoration: none; 
+            font-size: 13px;
+            padding: 10px 20px;
+            border: 1px solid #2a2a4a;
+            border-radius: 8px;
+            display: inline-block;
+        }
         input[type="file"] { display: none; }
         .overlay {
             display: none;
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(10, 10, 18, 0.95);
+            background: rgba(5, 5, 10, 0.97);
             z-index: 1000;
             justify-content: center;
             align-items: center;
             flex-direction: column;
+            padding: 20px;
         }
         .overlay.show { display: flex; }
         .spinner {
-            width: 60px; height: 60px;
-            border: 4px solid #1a1a2e;
+            width: 50px; height: 50px;
+            border: 3px solid #1a1a2e;
             border-top-color: #8b5cf6;
             border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 20px;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 16px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .overlay-text { font-size: 18px; color: #8b8b9a; }
-        .result {
+        .overlay-text { font-size: 16px; color: #8b8b9a; text-align: center; }
+        .overlay-sub { font-size: 13px; color: #505060; margin-top: 8px; text-align: center; }
+        
+        .result-card {
             display: none;
             position: fixed;
-            bottom: 100px; left: 20px; right: 20px;
-            padding: 16px 20px;
-            border-radius: 12px;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: #12121a;
+            border: 1px solid #2a2a4a;
+            border-radius: 16px;
+            padding: 24px;
+            width: calc(100% - 40px);
+            max-width: 340px;
+            z-index: 1001;
             text-align: center;
+        }
+        .result-card.show { display: block; }
+        .result-icon { font-size: 48px; margin-bottom: 12px; }
+        .result-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+        .result-details { font-size: 14px; color: #8b8b9a; margin-bottom: 16px; line-height: 1.6; }
+        .result-amount { font-size: 28px; font-weight: 800; color: #10b981; margin-bottom: 16px; }
+        .result-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-size: 16px;
             font-weight: 600;
-            z-index: 100;
+            cursor: pointer;
         }
-        .result.success {
-            display: block;
-            background: rgba(16, 185, 129, 0.2);
-            border: 1px solid #10b981;
-            color: #10b981;
+        .result-items { 
+            text-align: left; 
+            background: #0a0a12; 
+            border-radius: 8px; 
+            padding: 12px; 
+            margin-bottom: 16px;
+            max-height: 150px;
+            overflow-y: auto;
         }
-        .result.error {
-            display: block;
-            background: rgba(239, 68, 68, 0.2);
-            border: 1px solid #ef4444;
-            color: #ef4444;
+        .result-item { 
+            display: flex; 
+            justify-content: space-between; 
+            padding: 6px 0;
+            border-bottom: 1px solid #1a1a2e;
+            font-size: 13px;
         }
+        .result-item:last-child { border-bottom: none; }
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .badge-new { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+        .badge-update { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+        .badge-duplicate { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
     </style>
 </head>
 <body>
@@ -10194,8 +10243,8 @@ def scanner_home():
         <label class="scan-btn scan-btn-cos">
             <span class="scan-icon">📦</span>
             <span class="scan-text">
-                <span class="scan-title">Cost of Sales</span>
-                <span class="scan-desc">Scan supplier invoice</span>
+                <span class="scan-title">Supplier Invoice</span>
+                <span class="scan-desc">Stock IN + Create items + Pay supplier</span>
             </span>
             <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'cos')">
         </label>
@@ -10204,7 +10253,7 @@ def scanner_home():
             <span class="scan-icon">🧾</span>
             <span class="scan-text">
                 <span class="scan-title">Expense</span>
-                <span class="scan-desc">Scan receipt or bill</span>
+                <span class="scan-desc">Auto-categorize + Record + GL entries</span>
             </span>
             <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'exp')">
         </label>
@@ -10212,23 +10261,41 @@ def scanner_home():
         <label class="scan-btn scan-btn-stock">
             <span class="scan-icon">📋</span>
             <span class="scan-text">
-                <span class="scan-title">Stock Take</span>
-                <span class="scan-desc">Scan stock count sheet</span>
+                <span class="scan-title">Stock Count</span>
+                <span class="scan-desc">Update quantities + Variance report</span>
             </span>
             <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'stock')">
+        </label>
+        
+        <label class="scan-btn scan-btn-payment">
+            <span class="scan-icon">💰</span>
+            <span class="scan-text">
+                <span class="scan-title">Customer Payment</span>
+                <span class="scan-desc">Match invoice + Mark paid + Bank rec</span>
+            </span>
+            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'payment')">
         </label>
     </div>
     
     <div class="footer">
-        <a href="/">Desktop Version</a>
+        <a href="/">📊 Desktop Version</a>
     </div>
     
     <div class="overlay" id="overlay">
         <div class="spinner"></div>
-        <div class="overlay-text" id="overlay-text">Processing...</div>
+        <div class="overlay-text" id="overlay-text">AI is reading...</div>
+        <div class="overlay-sub" id="overlay-sub">This takes a few seconds</div>
     </div>
     
-    <div class="result" id="result"></div>
+    <div class="result-card" id="result-card">
+        <div class="result-icon" id="result-icon">✓</div>
+        <div class="badge" id="result-badge"></div>
+        <div class="result-title" id="result-title">Done!</div>
+        <div class="result-details" id="result-details"></div>
+        <div class="result-items" id="result-items"></div>
+        <div class="result-amount" id="result-amount"></div>
+        <button class="result-btn" onclick="closeResult()">Done</button>
+    </div>
     
     <script>
     async function processImage(input, type) {
@@ -10237,17 +10304,18 @@ def scanner_home():
         const file = input.files[0];
         const overlay = document.getElementById('overlay');
         const overlayText = document.getElementById('overlay-text');
-        const result = document.getElementById('result');
+        const overlaySub = document.getElementById('overlay-sub');
         
         overlay.classList.add('show');
-        result.className = 'result';
         
         const messages = {
-            'cos': 'AI reading supplier invoice...',
-            'exp': 'AI reading receipt...',
-            'stock': 'AI reading stock count...'
+            'cos': ['Reading supplier invoice...', 'Finding items, prices, supplier...'],
+            'exp': ['Reading receipt...', 'Auto-categorizing expense...'],
+            'stock': ['Reading stock count...', 'Matching items, checking quantities...'],
+            'payment': ['Reading payment proof...', 'Matching to customer invoice...']
         };
-        overlayText.textContent = messages[type] || 'Processing...';
+        overlayText.textContent = messages[type]?.[0] || 'Processing...';
+        overlaySub.textContent = messages[type]?.[1] || '';
         
         try {
             const base64 = await new Promise((resolve, reject) => {
@@ -10266,33 +10334,91 @@ def scanner_home():
             const data = await response.json();
             overlay.classList.remove('show');
             
-            if (data.success) {
-                result.className = 'result success';
-                result.textContent = '✓ ' + data.message;
-            } else {
-                result.className = 'result error';
-                result.textContent = '✗ ' + (data.error || 'Failed');
-            }
-            
-            setTimeout(() => { result.className = 'result'; }, 4000);
+            showResult(data);
             
         } catch (err) {
             overlay.classList.remove('show');
-            result.className = 'result error';
-            result.textContent = '✗ ' + err.message;
-            setTimeout(() => { result.className = 'result'; }, 4000);
+            showResult({ success: false, error: err.message });
         }
         
         input.value = '';
+    }
+    
+    function showResult(data) {
+        const card = document.getElementById('result-card');
+        const icon = document.getElementById('result-icon');
+        const badge = document.getElementById('result-badge');
+        const title = document.getElementById('result-title');
+        const details = document.getElementById('result-details');
+        const items = document.getElementById('result-items');
+        const amount = document.getElementById('result-amount');
+        
+        if (data.success) {
+            icon.textContent = '✓';
+            icon.style.color = '#10b981';
+            title.textContent = data.title || 'Success!';
+            details.innerHTML = data.details || '';
+            
+            if (data.badge) {
+                badge.textContent = data.badge;
+                badge.className = 'badge badge-' + (data.badge_type || 'new');
+                badge.style.display = 'inline-block';
+            } else {
+                badge.style.display = 'none';
+            }
+            
+            if (data.items && data.items.length > 0) {
+                let itemsHtml = '';
+                for (const item of data.items) {
+                    itemsHtml += '<div class="result-item"><span>' + item.name + '</span><span>' + item.value + '</span></div>';
+                }
+                items.innerHTML = itemsHtml;
+                items.style.display = 'block';
+            } else {
+                items.style.display = 'none';
+            }
+            
+            if (data.amount) {
+                amount.textContent = data.amount;
+                amount.style.display = 'block';
+            } else {
+                amount.style.display = 'none';
+            }
+            
+        } else {
+            icon.textContent = '✗';
+            icon.style.color = '#ef4444';
+            badge.style.display = 'none';
+            title.textContent = 'Failed';
+            details.textContent = data.error || 'Could not process';
+            items.style.display = 'none';
+            amount.style.display = 'none';
+        }
+        
+        card.classList.add('show');
+    }
+    
+    function closeResult() {
+        document.getElementById('result-card').classList.remove('show');
     }
     </script>
 </body>
 </html>'''
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# AI SCANNER ROUTES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/m")
+def scanner_home():
+    """Mobile scanner - 4 buttons: COS, EXP, STOCK, PAYMENT"""
+    return SCANNER_HTML
+
+
 @app.route("/m/scan", methods=["POST"])
 def scanner_process():
-    """Process scanned image with AI"""
+    """Process scanned image with AI - the magic happens here"""
     try:
         data = request.get_json()
         image_data = data.get("image", "")
@@ -10301,206 +10427,559 @@ def scanner_process():
         if not image_data or not scan_type:
             return jsonify({"success": False, "error": "Missing data"})
         
-        # Extract base64 data (remove data:image/...;base64, prefix)
+        # Extract base64 data
         if "," in image_data:
             image_data = image_data.split(",")[1]
         
-        # Call Claude API to read the image
+        # Get API key
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return jsonify({"success": False, "error": "AI not configured. Add ANTHROPIC_API_KEY to environment."})
+        
+        # Call Claude to read the image
         import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
         
-        client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY if hasattr(Config, 'ANTHROPIC_API_KEY') else os.environ.get("ANTHROPIC_API_KEY", ""))
-        
+        # Smart prompts for each type
         prompts = {
-            "cos": """Analyze this supplier invoice image. Extract:
-1. Supplier name
+            "cos": """You are an AI accountant. Analyze this supplier invoice image.
+
+Extract ALL of the following:
+1. Supplier name (company on the invoice)
 2. Invoice number
-3. Date
-4. Line items (description, quantity, unit price)
-5. Total amount
-6. VAT amount if shown
+3. Invoice date (format: YYYY-MM-DD)
+4. Is it marked as PAID? (yes/no)
+5. Line items - for EACH item extract:
+   - Description/product name
+   - Product code if visible
+   - Quantity
+   - Unit price (excluding VAT if shown separately)
+6. Subtotal (before VAT)
+7. VAT amount
+8. Total amount
 
-Return as JSON: {"supplier": "", "invoice_no": "", "date": "", "items": [{"description": "", "qty": 0, "price": 0}], "total": 0, "vat": 0}""",
+Return ONLY valid JSON:
+{"supplier": "Name", "invoice_no": "INV123", "date": "2025-01-15", "paid": false, "items": [{"description": "Product name", "code": "ABC123", "qty": 10, "unit_price": 50.00}], "subtotal": 500.00, "vat": 75.00, "total": 575.00}""",
 
-            "exp": """Analyze this receipt/expense image. Extract:
-1. Supplier/vendor name
-2. Date
-3. Description of purchase
+            "exp": """You are an AI accountant. Analyze this receipt/expense image.
+
+Extract:
+1. Vendor/supplier name
+2. Date (format: YYYY-MM-DD)  
+3. What was purchased (brief description)
 4. Total amount
 5. VAT amount if shown
+6. Expense category - choose the BEST match:
+   - "fuel" (petrol, diesel, gas)
+   - "telephone" (airtime, data, phone bills)
+   - "electricity" (power, utilities)
+   - "repairs" (maintenance, fixes)
+   - "stationery" (office supplies, printing)
+   - "travel" (transport, uber, flights)
+   - "advertising" (marketing, ads)
+   - "insurance" (premiums)
+   - "bank_charges" (fees, charges)
+   - "general" (anything else)
 
-Return as JSON: {"supplier": "", "date": "", "description": "", "total": 0, "vat": 0}""",
+Return ONLY valid JSON:
+{"vendor": "Shop Name", "date": "2025-01-15", "description": "What was bought", "total": 150.00, "vat": 19.57, "category": "fuel"}""",
 
-            "stock": """Analyze this stock count sheet image. Extract the list of items with their quantities.
+            "stock": """You are an AI inventory manager. Analyze this stock count sheet image.
 
-Return as JSON: {"items": [{"code": "", "description": "", "quantity": 0}]}"""
+Extract ALL items visible with their:
+1. Product code (if visible)
+2. Description/name
+3. Counted quantity
+
+Return ONLY valid JSON:
+{"items": [{"code": "SKU001", "description": "Product name", "quantity": 25}]}""",
+
+            "payment": """You are an AI accountant. Analyze this payment proof/bank slip image.
+
+Extract:
+1. Customer name (who paid)
+2. Amount paid
+3. Date of payment (format: YYYY-MM-DD)
+4. Reference/invoice number mentioned
+5. Payment method (EFT, cash, card)
+
+Return ONLY valid JSON:
+{"customer": "Customer Name", "amount": 1500.00, "date": "2025-01-15", "reference": "INV001", "method": "EFT"}"""
         }
         
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=1024,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": image_data
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": prompts.get(scan_type, "Describe this image")
-                        }
-                    ]
-                }
-            ]
+            max_tokens=2048,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
+                    {"type": "text", "text": prompts.get(scan_type, "Describe this image")}
+                ]
+            }]
         )
         
         ai_response = message.content[0].text
         
-        # Parse AI response and process
+        # Parse JSON from AI response
         import re
         json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
         
-        if json_match:
-            parsed = json.loads(json_match.group())
-            
-            if scan_type == "cos":
-                # Create expense and update stock
-                result = process_cos_scan(parsed)
-                return jsonify({"success": True, "message": f"Invoice recorded: R{parsed.get('total', 0):.2f}"})
-                
-            elif scan_type == "exp":
-                # Create expense entry
-                result = process_exp_scan(parsed)
-                return jsonify({"success": True, "message": f"Expense saved: R{parsed.get('total', 0):.2f}"})
-                
-            elif scan_type == "stock":
-                # Update stock counts
-                count = len(parsed.get("items", []))
-                result = process_stock_scan(parsed)
-                return jsonify({"success": True, "message": f"Stock updated: {count} items"})
+        if not json_match:
+            return jsonify({"success": False, "error": "Could not read document clearly. Try again with better lighting."})
         
-        return jsonify({"success": False, "error": "Could not read document"})
+        try:
+            parsed = json.loads(json_match.group())
+        except:
+            return jsonify({"success": False, "error": "Could not understand document format."})
+        
+        # Process based on type
+        if scan_type == "cos":
+            return process_supplier_invoice(parsed)
+        elif scan_type == "exp":
+            return process_expense_receipt(parsed)
+        elif scan_type == "stock":
+            return process_stock_count(parsed)
+        elif scan_type == "payment":
+            return process_customer_payment(parsed)
+        
+        return jsonify({"success": False, "error": "Unknown scan type"})
         
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
 
-def process_cos_scan(data):
-    """Process Cost of Sales scan - supplier invoice"""
+def process_supplier_invoice(data):
+    """
+    Process supplier invoice:
+    1. Check for duplicate invoice
+    2. Find or create supplier
+    3. For each item: find or create stock item, book IN
+    4. Record expense / creditor
+    5. Post GL entries
+    """
     try:
+        invoice_no = data.get("invoice_no", "")
+        supplier_name = data.get("supplier", "Unknown Supplier")
         total = Decimal(str(data.get("total", 0)))
         vat = Decimal(str(data.get("vat", 0)))
+        items = data.get("items", [])
+        is_paid = data.get("paid", False)
+        inv_date = data.get("date", today())
         
         if total <= 0:
-            return False
-            
-        # Create expense record
-        expense = {
-            "id": generate_id(),
-            "date": data.get("date", today()),
-            "description": f"Supplier: {data.get('supplier', 'Unknown')} - Inv: {data.get('invoice_no', '')}",
-            "supplier": data.get("supplier", ""),
-            "category": "5000",  # Cost of Sales
-            "amount": float(total),
-            "vat_type": "inclusive" if vat > 0 else "none",
-            "created_at": now()
-        }
-        db.insert("expenses", expense)
+            return jsonify({"success": False, "error": "Could not read total amount"})
         
-        # Post to GL
-        if vat > 0:
-            exclusive = total - vat
+        # 1. Check for duplicate
+        if invoice_no:
+            existing = db.query("expenses", filters={"reference": invoice_no})
+            if existing:
+                return jsonify({
+                    "success": False, 
+                    "error": f"Duplicate! Invoice {invoice_no} was already scanned.",
+                    "badge": "DUPLICATE",
+                    "badge_type": "duplicate"
+                })
+        
+        # 2. Find or create supplier
+        supplier_id = None
+        suppliers = db.query("suppliers")
+        for s in suppliers:
+            if s.get("name", "").lower() == supplier_name.lower():
+                supplier_id = s["id"]
+                break
+        
+        if not supplier_id:
+            supplier_id = generate_id()
+            db.insert("suppliers", {
+                "id": supplier_id,
+                "name": supplier_name,
+                "phone": "",
+                "balance": 0,
+                "active": True,
+                "created_at": now()
+            })
+            supplier_created = True
         else:
-            vat_info = VAT.calculate_from_inclusive(total)
-            exclusive = vat_info["exclusive"]
-            vat = vat_info["vat"]
+            supplier_created = False
         
-        entry = JournalEntry(
-            date=today(),
-            reference=f"COS-{expense['id'][:8]}",
-            description=expense["description"],
-            trans_type=TransactionType.EXPENSE,
-            source_type="expense",
-            source_id=expense["id"]
-        )
-        entry.debit("5000", exclusive)  # Cost of Sales
-        entry.debit(AccountCodes.VAT_INPUT, vat)
-        entry.credit(AccountCodes.BANK, total)
-        entry.post()
+        # 3. Process line items - find or create stock, book IN
+        items_created = 0
+        items_updated = 0
+        stock_booked = []
         
-        # TODO: Update stock quantities from line items
-        
-        return True
-    except:
-        return False
-
-
-def process_exp_scan(data):
-    """Process Expense scan - receipt"""
-    try:
-        total = Decimal(str(data.get("total", 0)))
-        
-        if total <= 0:
-            return False
+        for item in items:
+            desc = item.get("description", "Unknown Item")
+            code = item.get("code", "")
+            qty = int(item.get("qty", 1))
+            unit_price = Decimal(str(item.get("unit_price", 0)))
             
+            # Find existing stock item
+            stock_item = None
+            all_stock = db.query("stock")
+            
+            for s in all_stock:
+                if code and s.get("code", "").lower() == code.lower():
+                    stock_item = s
+                    break
+                if s.get("description", "").lower() == desc.lower():
+                    stock_item = s
+                    break
+            
+            if stock_item:
+                # Update quantity and cost price
+                new_qty = stock_item.get("quantity", 0) + qty
+                db.update("stock", stock_item["id"], {
+                    "quantity": new_qty,
+                    "cost_price": float(unit_price)
+                })
+                items_updated += 1
+                stock_booked.append({"name": desc[:25], "value": f"+{qty}"})
+            else:
+                # Create new stock item
+                if not code:
+                    # Generate code
+                    code = f"STK{len(all_stock) + 1:04d}"
+                
+                # Calculate selling price (30% markup default)
+                selling_price = unit_price * Decimal("1.30")
+                
+                db.insert("stock", {
+                    "id": generate_id(),
+                    "code": code,
+                    "description": desc,
+                    "quantity": qty,
+                    "cost_price": float(unit_price),
+                    "selling_price": float(selling_price),
+                    "category": "general",
+                    "active": True,
+                    "created_at": now()
+                })
+                items_created += 1
+                stock_booked.append({"name": f"NEW: {desc[:20]}", "value": f"+{qty}"})
+        
+        # 4. Record expense
+        expense_id = generate_id()
         expense = {
-            "id": generate_id(),
-            "date": data.get("date", today()),
-            "description": data.get("description", "Scanned expense"),
-            "supplier": data.get("supplier", ""),
-            "category": "6140",  # General Expenses
+            "id": expense_id,
+            "date": inv_date,
+            "description": f"{supplier_name} - {invoice_no}",
+            "supplier": supplier_name,
+            "reference": invoice_no,
+            "category": "5000",  # Cost of Sales
             "amount": float(total),
             "vat_type": "inclusive",
             "created_at": now()
         }
         db.insert("expenses", expense)
         
-        # Post to GL
-        vat_info = VAT.calculate_from_inclusive(total)
+        # 5. Post GL entries
+        subtotal = total - vat if vat > 0 else total / Decimal("1.15") * Decimal("0.85")
+        if vat <= 0:
+            vat = total - subtotal
         
         entry = JournalEntry(
-            date=today(),
-            reference=f"EXP-{expense['id'][:8]}",
-            description=expense["description"],
+            date=inv_date,
+            reference=invoice_no or f"COS-{expense_id[:8]}",
+            description=f"Supplier: {supplier_name}",
             trans_type=TransactionType.EXPENSE,
             source_type="expense",
-            source_id=expense["id"]
+            source_id=expense_id
         )
-        entry.debit("6140", vat_info["exclusive"])
-        entry.debit(AccountCodes.VAT_INPUT, vat_info["vat"])
-        entry.credit(AccountCodes.BANK, total)
+        
+        entry.debit("5000", subtotal)  # Cost of Sales
+        entry.debit(AccountCodes.VAT_INPUT, vat)  # VAT Input
+        
+        if is_paid:
+            entry.credit(AccountCodes.BANK, total)  # Paid - Bank
+        else:
+            entry.credit(AccountCodes.CREDITORS, total)  # Unpaid - Creditor
+            # Update supplier balance
+            db.update("suppliers", supplier_id, {
+                "balance": float(Decimal(str(db.select_one("suppliers", supplier_id).get("balance", 0))) + total)
+            })
+        
         entry.post()
         
-        return True
-    except:
-        return False
+        # Build response
+        details = f"<strong>{supplier_name}</strong><br>"
+        if invoice_no:
+            details += f"Invoice: {invoice_no}<br>"
+        details += f"{items_created} new items created<br>" if items_created > 0 else ""
+        details += f"{items_updated} items updated<br>" if items_updated > 0 else ""
+        details += f"{'Paid' if is_paid else 'Added to creditors'}"
+        
+        return jsonify({
+            "success": True,
+            "title": "Stock Booked In!",
+            "badge": "NEW SUPPLIER" if supplier_created else None,
+            "badge_type": "new",
+            "details": details,
+            "items": stock_booked[:8],  # Show max 8 items
+            "amount": f"R {total:,.2f}"
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 
-def process_stock_scan(data):
-    """Process Stock Take scan - update quantities"""
+def process_expense_receipt(data):
+    """
+    Process expense receipt:
+    1. Auto-categorize
+    2. Find or create supplier
+    3. Record expense
+    4. Post GL entries
+    """
+    try:
+        vendor = data.get("vendor", "Unknown")
+        description = data.get("description", "Expense")
+        total = Decimal(str(data.get("total", 0)))
+        vat = Decimal(str(data.get("vat", 0)))
+        category = data.get("category", "general")
+        exp_date = data.get("date", today())
+        
+        if total <= 0:
+            return jsonify({"success": False, "error": "Could not read amount"})
+        
+        # Map category to account code
+        category_map = {
+            "fuel": ("6110", "Fuel & Oil"),
+            "telephone": ("6120", "Telephone"),
+            "electricity": ("6130", "Electricity"),
+            "repairs": ("6150", "Repairs & Maintenance"),
+            "stationery": ("6160", "Stationery"),
+            "travel": ("6170", "Travel"),
+            "advertising": ("6180", "Advertising"),
+            "insurance": ("6190", "Insurance"),
+            "bank_charges": ("6200", "Bank Charges"),
+            "general": ("6140", "General Expenses")
+        }
+        
+        account_code, category_name = category_map.get(category, ("6140", "General Expenses"))
+        
+        # Calculate VAT if not provided
+        if vat <= 0:
+            vat_info = VAT.calculate_from_inclusive(total)
+            subtotal = vat_info["exclusive"]
+            vat = vat_info["vat"]
+        else:
+            subtotal = total - vat
+        
+        # Record expense
+        expense_id = generate_id()
+        expense = {
+            "id": expense_id,
+            "date": exp_date,
+            "description": f"{vendor} - {description}",
+            "supplier": vendor,
+            "category": account_code,
+            "amount": float(total),
+            "vat_type": "inclusive",
+            "created_at": now()
+        }
+        db.insert("expenses", expense)
+        
+        # Post GL
+        entry = JournalEntry(
+            date=exp_date,
+            reference=f"EXP-{expense_id[:8]}",
+            description=f"{vendor} - {description}",
+            trans_type=TransactionType.EXPENSE,
+            source_type="expense",
+            source_id=expense_id
+        )
+        
+        # Bank charges have no VAT
+        if category == "bank_charges":
+            entry.debit(account_code, total)
+            entry.credit(AccountCodes.BANK, total)
+        else:
+            entry.debit(account_code, subtotal)
+            entry.debit(AccountCodes.VAT_INPUT, vat)
+            entry.credit(AccountCodes.BANK, total)
+        
+        entry.post()
+        
+        return jsonify({
+            "success": True,
+            "title": "Expense Recorded!",
+            "badge": category_name.upper(),
+            "badge_type": "new",
+            "details": f"<strong>{vendor}</strong><br>{description}",
+            "amount": f"R {total:,.2f}"
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+def process_stock_count(data):
+    """
+    Process stock count:
+    1. Match items to stock
+    2. Update quantities
+    3. Calculate variances
+    """
     try:
         items = data.get("items", [])
+        
+        if not items:
+            return jsonify({"success": False, "error": "No items found on count sheet"})
+        
+        all_stock = db.query("stock")
+        
         updated = 0
+        variances = []
+        results = []
         
         for item in items:
             code = item.get("code", "")
-            qty = int(item.get("quantity", 0))
+            desc = item.get("description", "")
+            counted = int(item.get("quantity", 0))
             
-            if code and qty >= 0:
-                # Find stock item by code
-                stock_items = db.query("stock", filters={"code": code})
-                if stock_items:
-                    db.update("stock", stock_items[0]["id"], {"quantity": qty})
-                    updated += 1
+            # Find matching stock item
+            stock_item = None
+            for s in all_stock:
+                if code and s.get("code", "").lower() == code.lower():
+                    stock_item = s
+                    break
+                if desc and desc.lower() in s.get("description", "").lower():
+                    stock_item = s
+                    break
+            
+            if stock_item:
+                old_qty = stock_item.get("quantity", 0)
+                variance = counted - old_qty
+                
+                db.update("stock", stock_item["id"], {"quantity": counted})
+                updated += 1
+                
+                if variance != 0:
+                    variances.append({
+                        "item": stock_item.get("description", "")[:20],
+                        "was": old_qty,
+                        "now": counted,
+                        "diff": variance
+                    })
+                
+                sign = "+" if variance > 0 else ""
+                results.append({
+                    "name": stock_item.get("description", "")[:22],
+                    "value": f"{counted} ({sign}{variance})" if variance != 0 else str(counted)
+                })
         
-        return updated
-    except:
-        return 0
+        # Build variance summary
+        details = f"<strong>{updated} items updated</strong><br>"
+        if variances:
+            details += f"{len(variances)} with variances"
+        else:
+            details += "No variances found ✓"
+        
+        return jsonify({
+            "success": True,
+            "title": "Stock Updated!",
+            "details": details,
+            "items": results[:10]
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+def process_customer_payment(data):
+    """
+    Process customer payment:
+    1. Find customer
+    2. Match to invoice
+    3. Mark invoice paid
+    4. Post GL entries
+    """
+    try:
+        customer_name = data.get("customer", "")
+        amount = Decimal(str(data.get("amount", 0)))
+        reference = data.get("reference", "")
+        pay_date = data.get("date", today())
+        method = data.get("method", "EFT")
+        
+        if amount <= 0:
+            return jsonify({"success": False, "error": "Could not read payment amount"})
+        
+        # Find customer
+        customer = None
+        customer_id = None
+        customers = db.query("customers")
+        
+        for c in customers:
+            if customer_name.lower() in c.get("name", "").lower():
+                customer = c
+                customer_id = c["id"]
+                break
+        
+        # Find invoice by reference
+        invoice = None
+        if reference:
+            invoices = db.query("invoices")
+            for inv in invoices:
+                if reference.lower() in inv.get("invoice_number", "").lower():
+                    invoice = inv
+                    break
+                if customer_id and inv.get("customer_id") == customer_id and inv.get("status") == "outstanding":
+                    invoice = inv
+                    break
+        
+        # If no invoice found, try to find oldest outstanding for customer
+        if not invoice and customer_id:
+            invoices = db.query("invoices", filters={"customer_id": customer_id, "status": "outstanding"})
+            if invoices:
+                invoice = invoices[0]
+        
+        # Post payment
+        payment_id = generate_id()
+        
+        if invoice:
+            # Mark invoice as paid
+            db.update("invoices", invoice["id"], {"status": "paid", "paid_date": pay_date})
+            
+            # Update customer balance
+            if customer_id:
+                new_balance = Decimal(str(customer.get("balance", 0))) - amount
+                db.update("customers", customer_id, {"balance": float(new_balance)})
+        
+        # Post GL entry
+        entry = JournalEntry(
+            date=pay_date,
+            reference=f"PMT-{payment_id[:8]}",
+            description=f"Payment from {customer_name or 'Customer'} - {reference}",
+            trans_type=TransactionType.RECEIPT,
+            source_type="payment",
+            source_id=payment_id
+        )
+        
+        entry.debit(AccountCodes.BANK, amount)
+        entry.credit(AccountCodes.DEBTORS, amount)
+        entry.post()
+        
+        details = f"<strong>{customer_name or 'Customer'}</strong><br>"
+        if invoice:
+            details += f"Invoice: {invoice.get('invoice_number', reference)}<br>"
+            details += "Marked as PAID ✓"
+        else:
+            details += f"Ref: {reference}<br>"
+            details += "Posted to debtors"
+        
+        return jsonify({
+            "success": True,
+            "title": "Payment Received!",
+            "badge": method.upper(),
+            "badge_type": "update",
+            "details": details,
+            "amount": f"R {amount:,.2f}"
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
 
 
 
