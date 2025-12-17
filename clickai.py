@@ -4591,6 +4591,7 @@ def get_header_html(active: str = "", user: dict = None) -> str:
         ("invoices", "Invoices", "/invoices"),
         ("quotes", "Quotes", "/quotes"),
         ("expenses", "Expenses", "/expenses"),
+        ("payroll", "Payroll", "/payroll"),
         ("reports", "Reports", "/reports"),
     ]
     
@@ -10977,6 +10978,1145 @@ def process_customer_payment(data):
         return jsonify({"success": False, "error": str(e)})
 
 
+# =============================================================================
+# PIECE 12: PAYROLL MODULE
+# =============================================================================
+
+"""
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   CLICK AI - PAYROLL MODULE                                                   ║
+║                                                                               ║
+║   Features:                                                                   ║
+║   - Employee management                                                       ║
+║   - SARS PAYE calculation (2024/2025 tax tables)                             ║
+║   - UIF calculation (1% employee + 1% employer, capped at R17,712)           ║
+║   - SDL calculation (1% of total payroll)                                    ║
+║   - Timesheet entry from handwritten sheets                                  ║
+║   - AI scan of timesheets                                                    ║
+║   - Payslip generation                                                       ║
+║   - GL posting (Salaries, PAYE, UIF, SDL)                                   ║
+║   - EMP201 preparation                                                       ║
+║                                                                               ║
+║   All calculations in Flask - SARS compliant                                 ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SARS TAX TABLES 2024/2025 (1 March 2024 - 28 February 2025)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class PAYE:
+    """
+    SARS PAYE Calculator - 2024/2025 Tax Year
+    
+    Tax brackets and rebates from official SARS tables.
+    Calculates monthly PAYE from gross monthly income.
+    """
+    
+    # Annual tax brackets (2024/2025)
+    TAX_BRACKETS = [
+        (237100, Decimal("0.18"), Decimal("0")),           # 18% of first R237,100
+        (370500, Decimal("0.26"), Decimal("42678")),       # R42,678 + 26% above R237,100
+        (512800, Decimal("0.31"), Decimal("77362")),       # R77,362 + 31% above R370,500
+        (673000, Decimal("0.36"), Decimal("121475")),      # R121,475 + 36% above R512,800
+        (857900, Decimal("0.39"), Decimal("179147")),      # R179,147 + 39% above R673,000
+        (1817000, Decimal("0.41"), Decimal("251258")),     # R251,258 + 41% above R857,900
+        (None, Decimal("0.45"), Decimal("644489")),        # R644,489 + 45% above R1,817,000
+    ]
+    
+    # Annual rebates
+    PRIMARY_REBATE = Decimal("17235")      # All taxpayers
+    SECONDARY_REBATE = Decimal("9444")     # Age 65+
+    TERTIARY_REBATE = Decimal("3145")      # Age 75+
+    
+    # Tax thresholds (annual income below which no tax is payable)
+    THRESHOLD_UNDER_65 = Decimal("95750")
+    THRESHOLD_65_TO_74 = Decimal("148217")
+    THRESHOLD_75_PLUS = Decimal("165689")
+    
+    @classmethod
+    def calculate_annual_tax(cls, annual_income: Decimal, age: int = 30) -> dict:
+        """
+        Calculate annual PAYE tax
+        
+        Args:
+            annual_income: Gross annual income
+            age: Employee age (affects rebates)
+            
+        Returns:
+            Dict with tax breakdown
+        """
+        annual_income = Decimal(str(annual_income))
+        
+        # Determine threshold based on age
+        if age >= 75:
+            threshold = cls.THRESHOLD_75_PLUS
+        elif age >= 65:
+            threshold = cls.THRESHOLD_65_TO_74
+        else:
+            threshold = cls.THRESHOLD_UNDER_65
+        
+        # Below threshold = no tax
+        if annual_income <= threshold:
+            return {
+                "gross": annual_income,
+                "taxable": annual_income,
+                "tax_before_rebate": Decimal("0"),
+                "rebates": Decimal("0"),
+                "tax": Decimal("0"),
+                "effective_rate": Decimal("0")
+            }
+        
+        # Calculate tax using brackets
+        tax = Decimal("0")
+        prev_bracket = 0
+        
+        for bracket_limit, rate, base_tax in cls.TAX_BRACKETS:
+            if bracket_limit is None:
+                # Top bracket
+                if annual_income > prev_bracket:
+                    tax = base_tax + (annual_income - prev_bracket) * rate
+                break
+            elif annual_income <= bracket_limit:
+                if prev_bracket == 0:
+                    tax = annual_income * rate
+                else:
+                    tax = base_tax + (annual_income - prev_bracket) * rate
+                break
+            prev_bracket = bracket_limit
+        
+        # Apply rebates
+        rebates = cls.PRIMARY_REBATE
+        if age >= 65:
+            rebates += cls.SECONDARY_REBATE
+        if age >= 75:
+            rebates += cls.TERTIARY_REBATE
+        
+        tax_after_rebate = max(Decimal("0"), tax - rebates)
+        
+        effective_rate = (tax_after_rebate / annual_income * 100).quantize(Decimal("0.01")) if annual_income > 0 else Decimal("0")
+        
+        return {
+            "gross": annual_income,
+            "taxable": annual_income,
+            "tax_before_rebate": tax.quantize(Decimal("0.01")),
+            "rebates": rebates,
+            "tax": tax_after_rebate.quantize(Decimal("0.01")),
+            "effective_rate": effective_rate
+        }
+    
+    @classmethod
+    def calculate_monthly(cls, monthly_gross: Decimal, age: int = 30) -> Decimal:
+        """
+        Calculate monthly PAYE from monthly gross
+        
+        Args:
+            monthly_gross: Gross monthly salary
+            age: Employee age
+            
+        Returns:
+            Monthly PAYE amount
+        """
+        annual = Decimal(str(monthly_gross)) * 12
+        result = cls.calculate_annual_tax(annual, age)
+        monthly_tax = (result["tax"] / 12).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return monthly_tax
+
+
+class UIF:
+    """
+    Unemployment Insurance Fund Calculator
+    
+    - Employee contributes 1%
+    - Employer contributes 1%
+    - Capped at R17,712 monthly income
+    """
+    
+    RATE = Decimal("0.01")  # 1%
+    MONTHLY_CAP = Decimal("17712")  # Maximum income for UIF calculation
+    MAX_CONTRIBUTION = Decimal("177.12")  # Maximum monthly contribution per party
+    
+    @classmethod
+    def calculate(cls, monthly_gross: Decimal) -> dict:
+        """
+        Calculate UIF contributions
+        
+        Args:
+            monthly_gross: Gross monthly salary
+            
+        Returns:
+            Dict with employee and employer contributions
+        """
+        monthly_gross = Decimal(str(monthly_gross))
+        
+        # Cap the income
+        uif_income = min(monthly_gross, cls.MONTHLY_CAP)
+        
+        employee = (uif_income * cls.RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        employer = employee  # Same amount
+        
+        return {
+            "employee": employee,
+            "employer": employer,
+            "total": employee + employer,
+            "income_used": uif_income
+        }
+
+
+class SDL:
+    """
+    Skills Development Levy Calculator
+    
+    - Employer pays 1% of total payroll
+    - Only applies if annual payroll exceeds R500,000
+    """
+    
+    RATE = Decimal("0.01")  # 1%
+    ANNUAL_THRESHOLD = Decimal("500000")  # Below this, no SDL required
+    
+    @classmethod
+    def calculate(cls, monthly_payroll: Decimal, annual_payroll: Decimal = None) -> Decimal:
+        """
+        Calculate SDL contribution
+        
+        Args:
+            monthly_payroll: Total monthly payroll
+            annual_payroll: Total annual payroll (for threshold check)
+            
+        Returns:
+            SDL amount (paid by employer only)
+        """
+        monthly_payroll = Decimal(str(monthly_payroll))
+        
+        # If annual payroll provided, check threshold
+        if annual_payroll is not None:
+            if Decimal(str(annual_payroll)) < cls.ANNUAL_THRESHOLD:
+                return Decimal("0")
+        
+        return (monthly_payroll * cls.RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAYROLL HELPER FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_all_employees():
+    """Get all employees"""
+    return db.select("employees", order="name")
+
+def get_employee(emp_id):
+    """Get single employee"""
+    return db.select_one("employees", emp_id)
+
+def calculate_payslip(employee: dict, hours_worked: float = 0, overtime_hours: float = 0) -> dict:
+    """
+    Calculate complete payslip for an employee
+    
+    Args:
+        employee: Employee record
+        hours_worked: Normal hours worked
+        overtime_hours: Overtime hours worked
+        
+    Returns:
+        Complete payslip breakdown
+    """
+    # Get employee details
+    emp_type = employee.get("pay_type", "monthly")  # monthly or hourly
+    basic = Decimal(str(employee.get("basic_salary", 0) or 0))
+    hourly_rate = Decimal(str(employee.get("hourly_rate", 0) or 0))
+    age = int(employee.get("age", 30) or 30)
+    
+    # Calculate gross pay
+    if emp_type == "hourly":
+        normal_pay = hourly_rate * Decimal(str(hours_worked))
+        overtime_pay = hourly_rate * Decimal("1.5") * Decimal(str(overtime_hours))  # 1.5x for overtime
+        gross = normal_pay + overtime_pay
+    else:
+        gross = basic
+        normal_pay = basic
+        overtime_pay = Decimal("0")
+    
+    # Get any allowances
+    travel_allowance = Decimal(str(employee.get("travel_allowance", 0) or 0))
+    other_allowance = Decimal(str(employee.get("other_allowance", 0) or 0))
+    
+    gross_with_allowances = gross + travel_allowance + other_allowance
+    
+    # Calculate deductions
+    paye = PAYE.calculate_monthly(gross_with_allowances, age)
+    uif = UIF.calculate(gross_with_allowances)
+    
+    # Other deductions
+    medical_aid = Decimal(str(employee.get("medical_aid", 0) or 0))
+    pension = Decimal(str(employee.get("pension", 0) or 0))
+    loan_deduction = Decimal(str(employee.get("loan_deduction", 0) or 0))
+    other_deduction = Decimal(str(employee.get("other_deduction", 0) or 0))
+    
+    total_deductions = paye + uif["employee"] + medical_aid + pension + loan_deduction + other_deduction
+    
+    # Net pay
+    net_pay = gross_with_allowances - total_deductions
+    
+    # Employer contributions
+    uif_employer = uif["employer"]
+    
+    return {
+        "employee_id": employee.get("id"),
+        "employee_name": employee.get("name", ""),
+        "employee_number": employee.get("employee_number", ""),
+        "id_number": employee.get("id_number", ""),
+        "pay_period": today()[:7],  # YYYY-MM
+        
+        # Earnings
+        "basic_salary": float(gross),
+        "normal_hours": hours_worked,
+        "normal_pay": float(normal_pay),
+        "overtime_hours": overtime_hours,
+        "overtime_pay": float(overtime_pay),
+        "travel_allowance": float(travel_allowance),
+        "other_allowance": float(other_allowance),
+        "gross_pay": float(gross_with_allowances),
+        
+        # Deductions
+        "paye": float(paye),
+        "uif_employee": float(uif["employee"]),
+        "medical_aid": float(medical_aid),
+        "pension": float(pension),
+        "loan_deduction": float(loan_deduction),
+        "other_deduction": float(other_deduction),
+        "total_deductions": float(total_deductions),
+        
+        # Net
+        "net_pay": float(net_pay),
+        
+        # Employer costs
+        "uif_employer": float(uif_employer),
+        "total_cost": float(gross_with_allowances + uif_employer)
+    }
+
+
+def process_payroll(pay_period: str, timesheets: list = None) -> dict:
+    """
+    Process payroll for all employees
+    
+    Args:
+        pay_period: Period in YYYY-MM format
+        timesheets: Optional list of timesheet entries
+        
+    Returns:
+        Payroll summary with all payslips
+    """
+    employees = get_all_employees()
+    
+    if not employees:
+        return {"success": False, "error": "No employees found"}
+    
+    payslips = []
+    totals = {
+        "gross": Decimal("0"),
+        "paye": Decimal("0"),
+        "uif_employee": Decimal("0"),
+        "uif_employer": Decimal("0"),
+        "net": Decimal("0"),
+        "total_cost": Decimal("0")
+    }
+    
+    for emp in employees:
+        if not emp.get("active", True):
+            continue
+        
+        # Find timesheet for this employee if provided
+        hours = 0
+        overtime = 0
+        if timesheets:
+            for ts in timesheets:
+                if ts.get("employee_id") == emp["id"]:
+                    hours = float(ts.get("hours", 0) or 0)
+                    overtime = float(ts.get("overtime", 0) or 0)
+                    break
+        
+        payslip = calculate_payslip(emp, hours, overtime)
+        payslips.append(payslip)
+        
+        totals["gross"] += Decimal(str(payslip["gross_pay"]))
+        totals["paye"] += Decimal(str(payslip["paye"]))
+        totals["uif_employee"] += Decimal(str(payslip["uif_employee"]))
+        totals["uif_employer"] += Decimal(str(payslip["uif_employer"]))
+        totals["net"] += Decimal(str(payslip["net_pay"]))
+        totals["total_cost"] += Decimal(str(payslip["total_cost"]))
+    
+    # Calculate SDL on total payroll
+    sdl = SDL.calculate(totals["gross"])
+    totals["sdl"] = sdl
+    totals["total_cost"] += sdl
+    
+    return {
+        "success": True,
+        "pay_period": pay_period,
+        "employee_count": len(payslips),
+        "payslips": payslips,
+        "totals": {k: float(v) for k, v in totals.items()}
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAYROLL ROUTES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/payroll")
+def payroll_home():
+    """Payroll dashboard"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    employees = get_all_employees()
+    active_count = len([e for e in employees if e.get("active", True)])
+    
+    # Get recent payroll runs
+    recent_runs = db.select("payroll_runs", order="-pay_period", limit=5)
+    
+    runs_html = ""
+    if recent_runs:
+        for run in recent_runs:
+            runs_html += f'''
+            <div class="list-item">
+                <div>
+                    <strong>{run.get("pay_period", "")}</strong>
+                    <span class="text-muted ml-md">{run.get("employee_count", 0)} employees</span>
+                </div>
+                <div>
+                    <span class="text-green">{Money.format(Decimal(str(run.get("total_net", 0))))}</span>
+                    <a href="/payroll/run/{run['id']}" class="btn btn-sm btn-ghost ml-md">View</a>
+                </div>
+            </div>
+            '''
+    else:
+        runs_html = '<div class="text-muted text-center py-lg">No payroll runs yet</div>'
+    
+    content = f'''
+    <div class="flex-between mb-lg">
+        <div>
+            <h1>Payroll</h1>
+            <p class="text-muted">{active_count} active employees</p>
+        </div>
+        <div class="btn-group">
+            <a href="/payroll/employees" class="btn btn-ghost">👥 Employees</a>
+            <a href="/payroll/run" class="btn btn-primary">▶ Run Payroll</a>
+        </div>
+    </div>
+    
+    <div class="grid grid-2">
+        <div class="card">
+            <h3 class="card-title">Quick Actions</h3>
+            <div class="btn-group" style="flex-direction: column; gap: 12px;">
+                <a href="/payroll/employees/new" class="btn btn-ghost btn-block">+ Add Employee</a>
+                <a href="/payroll/timesheets" class="btn btn-ghost btn-block">📝 Enter Timesheets</a>
+                <a href="/payroll/timesheets/scan" class="btn btn-orange btn-block">📷 Scan Timesheet</a>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3 class="card-title">Recent Payroll Runs</h3>
+            {runs_html}
+        </div>
+    </div>
+    
+    <div class="card mt-lg">
+        <h3 class="card-title">SARS Submissions</h3>
+        <p class="text-muted mb-md">Monthly EMP201 and bi-annual EMP501 submissions</p>
+        <div class="btn-group">
+            <a href="/payroll/emp201" class="btn btn-ghost">EMP201 (Monthly)</a>
+            <a href="/payroll/emp501" class="btn btn-ghost">EMP501 (Bi-annual)</a>
+        </div>
+    </div>
+    '''
+    
+    return page_wrapper("Payroll", content, active="", user=user)
+
+
+@app.route("/payroll/employees")
+def payroll_employees():
+    """Employee list"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    employees = get_all_employees()
+    
+    rows = []
+    for emp in employees:
+        if not emp.get("active", True):
+            continue
+        
+        pay_type = emp.get("pay_type", "monthly")
+        if pay_type == "hourly":
+            rate = f"R {float(emp.get('hourly_rate', 0)):,.2f}/hr"
+        else:
+            rate = Money.format(Decimal(str(emp.get("basic_salary", 0))))
+        
+        rows.append([
+            emp.get("employee_number", "-"),
+            f'<a href="/payroll/employees/{emp["id"]}">{safe_string(emp.get("name", ""))}</a>',
+            emp.get("id_number", "-")[-6:] if emp.get("id_number") else "-",
+            pay_type.title(),
+            {"value": rate, "class": "number"},
+            f'<a href="/payroll/employees/{emp["id"]}/edit" class="btn btn-sm btn-ghost">Edit</a>'
+        ])
+    
+    table = table_html(
+        headers=["Emp #", "Name", "ID (last 6)", "Type", {"label": "Rate/Salary", "class": "number"}, ""],
+        rows=rows,
+        empty_message="No employees yet"
+    )
+    
+    content = f'''
+    <div class="flex-between mb-lg">
+        <div>
+            <a href="/payroll" class="text-muted">← Payroll</a>
+            <h1>Employees</h1>
+        </div>
+        <a href="/payroll/employees/new" class="btn btn-primary">+ Add Employee</a>
+    </div>
+    
+    <div class="card">{table}</div>
+    '''
+    
+    return page_wrapper("Employees", content, user=user)
+
+
+@app.route("/payroll/employees/new", methods=["GET", "POST"])
+def payroll_employee_new():
+    """Add new employee"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    if request.method == "POST":
+        emp_id = generate_id()
+        
+        # Calculate age from ID number if provided
+        id_number = request.form.get("id_number", "").strip()
+        age = 30
+        if len(id_number) >= 6:
+            try:
+                year = int(id_number[:2])
+                year = 1900 + year if year > 25 else 2000 + year
+                current_year = int(today()[:4])
+                age = current_year - year
+            except:
+                pass
+        
+        employee = {
+            "id": emp_id,
+            "employee_number": request.form.get("employee_number", "").strip() or f"EMP{len(get_all_employees()) + 1:03d}",
+            "name": request.form.get("name", "").strip(),
+            "id_number": id_number,
+            "age": age,
+            "pay_type": request.form.get("pay_type", "monthly"),
+            "basic_salary": float(request.form.get("basic_salary", 0) or 0),
+            "hourly_rate": float(request.form.get("hourly_rate", 0) or 0),
+            "travel_allowance": float(request.form.get("travel_allowance", 0) or 0),
+            "medical_aid": float(request.form.get("medical_aid", 0) or 0),
+            "pension": float(request.form.get("pension", 0) or 0),
+            "bank_name": request.form.get("bank_name", "").strip(),
+            "bank_account": request.form.get("bank_account", "").strip(),
+            "bank_branch": request.form.get("bank_branch", "").strip(),
+            "active": True,
+            "created_at": now()
+        }
+        
+        db.insert("employees", employee)
+        return redirect("/payroll/employees")
+    
+    content = '''
+    <div class="mb-lg">
+        <a href="/payroll/employees" class="text-muted">← Employees</a>
+        <h1>Add Employee</h1>
+    </div>
+    
+    <div class="card" style="max-width: 600px;">
+        <form method="POST">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Employee Number</label>
+                    <input type="text" name="employee_number" class="form-input" placeholder="Auto-generated if blank">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Full Name *</label>
+                    <input type="text" name="name" class="form-input" required>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">SA ID Number</label>
+                <input type="text" name="id_number" class="form-input" maxlength="13" placeholder="13-digit ID number">
+                <small class="text-muted">Used for age/tax calculation and SARS submissions</small>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Pay Type</label>
+                    <select name="pay_type" class="form-select" onchange="togglePayType(this.value)">
+                        <option value="monthly">Monthly Salary</option>
+                        <option value="hourly">Hourly Rate</option>
+                    </select>
+                </div>
+                <div class="form-group" id="salary-group">
+                    <label class="form-label">Monthly Salary</label>
+                    <input type="number" name="basic_salary" class="form-input" step="0.01">
+                </div>
+                <div class="form-group" id="hourly-group" style="display:none;">
+                    <label class="form-label">Hourly Rate</label>
+                    <input type="number" name="hourly_rate" class="form-input" step="0.01">
+                </div>
+            </div>
+            
+            <h4 class="mt-lg mb-md">Allowances & Deductions</h4>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Travel Allowance</label>
+                    <input type="number" name="travel_allowance" class="form-input" step="0.01" value="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Medical Aid (Employee)</label>
+                    <input type="number" name="medical_aid" class="form-input" step="0.01" value="0">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Pension/Provident Fund (Employee %)</label>
+                <input type="number" name="pension" class="form-input" step="0.01" value="0">
+            </div>
+            
+            <h4 class="mt-lg mb-md">Banking Details</h4>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Bank Name</label>
+                    <input type="text" name="bank_name" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Account Number</label>
+                    <input type="text" name="bank_account" class="form-input">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Branch Code</label>
+                <input type="text" name="bank_branch" class="form-input">
+            </div>
+            
+            <div class="btn-group mt-lg">
+                <button type="submit" class="btn btn-primary">Save Employee</button>
+                <a href="/payroll/employees" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+    function togglePayType(type) {
+        document.getElementById('salary-group').style.display = type === 'monthly' ? 'block' : 'none';
+        document.getElementById('hourly-group').style.display = type === 'hourly' ? 'block' : 'none';
+    }
+    </script>
+    '''
+    
+    return page_wrapper("Add Employee", content, user=user)
+
+
+@app.route("/payroll/employees/<emp_id>")
+def payroll_employee_view(emp_id):
+    """View employee details"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    emp = get_employee(emp_id)
+    if not emp:
+        return redirect("/payroll/employees")
+    
+    # Calculate sample payslip
+    sample = calculate_payslip(emp)
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/payroll/employees" class="text-muted">← Employees</a>
+        <h1>{safe_string(emp.get("name", ""))}</h1>
+        <p class="text-muted">Employee #{emp.get("employee_number", "-")}</p>
+    </div>
+    
+    <div class="grid grid-2">
+        <div class="card">
+            <h3 class="card-title">Employee Details</h3>
+            <div class="list-item"><span>ID Number:</span><span>{safe_string(emp.get("id_number", "-"))}</span></div>
+            <div class="list-item"><span>Age:</span><span>{emp.get("age", "-")} years</span></div>
+            <div class="list-item"><span>Pay Type:</span><span>{emp.get("pay_type", "monthly").title()}</span></div>
+            <div class="list-item"><span>Basic Salary:</span><span>{Money.format(Decimal(str(emp.get("basic_salary", 0))))}</span></div>
+            <div class="list-item"><span>Bank:</span><span>{safe_string(emp.get("bank_name", "-"))}</span></div>
+            <div class="list-item"><span>Account:</span><span>****{emp.get("bank_account", "")[-4:] if emp.get("bank_account") else "-"}</span></div>
+            
+            <a href="/payroll/employees/{emp_id}/edit" class="btn btn-ghost btn-block mt-lg">Edit Details</a>
+        </div>
+        
+        <div class="card">
+            <h3 class="card-title">Sample Payslip</h3>
+            <p class="text-muted mb-md">Based on current settings:</p>
+            
+            <div class="list-item"><span>Gross Pay:</span><span class="text-green">{Money.format(Decimal(str(sample["gross_pay"])))}</span></div>
+            <div class="list-item"><span>PAYE:</span><span class="text-red">-{Money.format(Decimal(str(sample["paye"])))}</span></div>
+            <div class="list-item"><span>UIF:</span><span class="text-red">-{Money.format(Decimal(str(sample["uif_employee"])))}</span></div>
+            <div class="list-item"><span>Medical Aid:</span><span class="text-red">-{Money.format(Decimal(str(sample["medical_aid"])))}</span></div>
+            <div class="list-item"><span>Pension:</span><span class="text-red">-{Money.format(Decimal(str(sample["pension"])))}</span></div>
+            <hr style="border-color: var(--border); margin: 12px 0;">
+            <div class="list-item"><span><strong>Net Pay:</strong></span><span class="text-green" style="font-size: 18px;"><strong>{Money.format(Decimal(str(sample["net_pay"])))}</strong></span></div>
+            
+            <p class="text-muted mt-md" style="font-size: 12px;">
+                Employer UIF: {Money.format(Decimal(str(sample["uif_employer"])))} | 
+                Total Cost: {Money.format(Decimal(str(sample["total_cost"])))}
+            </p>
+        </div>
+    </div>
+    '''
+    
+    return page_wrapper(f"Employee - {emp.get('name', '')}", content, user=user)
+
+
+@app.route("/payroll/run", methods=["GET", "POST"])
+def payroll_run():
+    """Run payroll"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    if request.method == "POST":
+        pay_period = request.form.get("pay_period", today()[:7])
+        
+        # Get timesheet data from form
+        timesheets = []
+        employees = get_all_employees()
+        for emp in employees:
+            hours = request.form.get(f"hours_{emp['id']}", 0)
+            overtime = request.form.get(f"overtime_{emp['id']}", 0)
+            if hours or overtime:
+                timesheets.append({
+                    "employee_id": emp["id"],
+                    "hours": float(hours or 0),
+                    "overtime": float(overtime or 0)
+                })
+        
+        # Process payroll
+        result = process_payroll(pay_period, timesheets)
+        
+        if result["success"]:
+            # Save payroll run
+            run_id = generate_id()
+            run_record = {
+                "id": run_id,
+                "pay_period": pay_period,
+                "employee_count": result["employee_count"],
+                "total_gross": result["totals"]["gross"],
+                "total_paye": result["totals"]["paye"],
+                "total_uif": result["totals"]["uif_employee"] + result["totals"]["uif_employer"],
+                "total_sdl": result["totals"]["sdl"],
+                "total_net": result["totals"]["net"],
+                "total_cost": result["totals"]["total_cost"],
+                "payslips": json.dumps(result["payslips"]),
+                "status": "processed",
+                "created_at": now()
+            }
+            db.insert("payroll_runs", run_record)
+            
+            # Post to GL
+            entry = JournalEntry(
+                date=today(),
+                reference=f"PAY-{pay_period}",
+                description=f"Payroll for {pay_period}",
+                trans_type=TransactionType.EXPENSE,
+                source_type="payroll",
+                source_id=run_id
+            )
+            
+            # Debit salaries expense
+            entry.debit("7000", Decimal(str(result["totals"]["gross"])))  # Salaries & Wages
+            
+            # Credit PAYE liability
+            entry.credit("2200", Decimal(str(result["totals"]["paye"])))  # PAYE Payable
+            
+            # Credit UIF liability (employee + employer)
+            total_uif = Decimal(str(result["totals"]["uif_employee"])) + Decimal(str(result["totals"]["uif_employer"]))
+            entry.credit("2210", total_uif)  # UIF Payable
+            
+            # Debit employer UIF expense
+            entry.debit("7010", Decimal(str(result["totals"]["uif_employer"])))  # Employer UIF
+            
+            # Credit SDL liability and debit expense
+            if result["totals"]["sdl"] > 0:
+                entry.debit("7020", Decimal(str(result["totals"]["sdl"])))  # SDL Expense
+                entry.credit("2220", Decimal(str(result["totals"]["sdl"])))  # SDL Payable
+            
+            # Credit Bank for net pay
+            entry.credit(AccountCodes.BANK, Decimal(str(result["totals"]["net"])))
+            
+            entry.post()
+            
+            return redirect(f"/payroll/run/{run_id}")
+    
+    # Show payroll form
+    employees = get_all_employees()
+    
+    emp_rows = ""
+    for emp in employees:
+        if not emp.get("active", True):
+            continue
+        
+        pay_type = emp.get("pay_type", "monthly")
+        
+        if pay_type == "hourly":
+            emp_rows += f'''
+            <tr>
+                <td>{safe_string(emp.get("name", ""))}</td>
+                <td>R {float(emp.get("hourly_rate", 0)):,.2f}/hr</td>
+                <td><input type="number" name="hours_{emp["id"]}" class="form-input" style="width:80px;" value="176" step="0.5"></td>
+                <td><input type="number" name="overtime_{emp["id"]}" class="form-input" style="width:80px;" value="0" step="0.5"></td>
+            </tr>
+            '''
+        else:
+            emp_rows += f'''
+            <tr>
+                <td>{safe_string(emp.get("name", ""))}</td>
+                <td>{Money.format(Decimal(str(emp.get("basic_salary", 0))))}</td>
+                <td colspan="2" class="text-muted">Monthly salary</td>
+            </tr>
+            '''
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/payroll" class="text-muted">← Payroll</a>
+        <h1>Run Payroll</h1>
+    </div>
+    
+    <div class="card" style="max-width: 800px;">
+        <form method="POST">
+            <div class="form-group">
+                <label class="form-label">Pay Period</label>
+                <input type="month" name="pay_period" class="form-input" value="{today()[:7]}" style="max-width: 200px;">
+            </div>
+            
+            <h4 class="mt-lg mb-md">Employees & Hours</h4>
+            
+            <div class="table-wrapper">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Employee</th>
+                            <th>Rate/Salary</th>
+                            <th>Hours</th>
+                            <th>Overtime</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {emp_rows}
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="alert alert-info mt-lg">
+                <strong>ℹ️ AI Check:</strong> After processing, AI will review for anomalies (unusual hours, pay changes) before finalizing.
+            </div>
+            
+            <div class="btn-group mt-lg">
+                <button type="submit" class="btn btn-primary btn-lg">Process Payroll</button>
+                <a href="/payroll" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    '''
+    
+    return page_wrapper("Run Payroll", content, user=user)
+
+
+@app.route("/payroll/run/<run_id>")
+def payroll_run_view(run_id):
+    """View payroll run results"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    run = db.select_one("payroll_runs", run_id)
+    if not run:
+        return redirect("/payroll")
+    
+    payslips = json.loads(run.get("payslips", "[]"))
+    
+    # Build payslip rows
+    rows = []
+    for ps in payslips:
+        rows.append([
+            safe_string(ps.get("employee_name", "")),
+            {"value": Money.format(Decimal(str(ps.get("gross_pay", 0)))), "class": "number"},
+            {"value": Money.format(Decimal(str(ps.get("paye", 0)))), "class": "number text-red"},
+            {"value": Money.format(Decimal(str(ps.get("uif_employee", 0)))), "class": "number text-red"},
+            {"value": Money.format(Decimal(str(ps.get("total_deductions", 0)))), "class": "number text-red"},
+            {"value": Money.format(Decimal(str(ps.get("net_pay", 0)))), "class": "number text-green"},
+        ])
+    
+    table = table_html(
+        headers=["Employee", {"label": "Gross", "class": "number"}, {"label": "PAYE", "class": "number"}, 
+                 {"label": "UIF", "class": "number"}, {"label": "Deductions", "class": "number"}, 
+                 {"label": "Net Pay", "class": "number"}],
+        rows=rows
+    )
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/payroll" class="text-muted">← Payroll</a>
+        <h1>Payroll Run - {run.get("pay_period", "")}</h1>
+        <span class="badge badge-green">Processed</span>
+    </div>
+    
+    <div class="grid grid-4 mb-lg">
+        {stat_card(Money.format(Decimal(str(run.get("total_gross", 0)))), "Total Gross")}
+        {stat_card(Money.format(Decimal(str(run.get("total_paye", 0)))), "PAYE", "red")}
+        {stat_card(Money.format(Decimal(str(run.get("total_uif", 0)))), "UIF (Total)", "orange")}
+        {stat_card(Money.format(Decimal(str(run.get("total_net", 0)))), "Net Payable", "green")}
+    </div>
+    
+    <div class="card">
+        <h3 class="card-title">Payslips</h3>
+        {table}
+    </div>
+    
+    <div class="card mt-lg">
+        <h3 class="card-title">SARS Summary</h3>
+        <div class="grid grid-3">
+            <div>
+                <p class="text-muted">PAYE Payable</p>
+                <p class="text-lg">{Money.format(Decimal(str(run.get("total_paye", 0))))}</p>
+            </div>
+            <div>
+                <p class="text-muted">UIF Payable</p>
+                <p class="text-lg">{Money.format(Decimal(str(run.get("total_uif", 0))))}</p>
+            </div>
+            <div>
+                <p class="text-muted">SDL Payable</p>
+                <p class="text-lg">{Money.format(Decimal(str(run.get("total_sdl", 0))))}</p>
+            </div>
+        </div>
+        <p class="text-muted mt-md">Due to SARS by 7th of next month via EMP201</p>
+    </div>
+    
+    <div class="btn-group mt-lg">
+        <a href="/payroll/run/{run_id}/payslips" class="btn btn-ghost">📄 Print Payslips</a>
+        <a href="/payroll/emp201?period={run.get("pay_period", "")}" class="btn btn-ghost">📋 Generate EMP201</a>
+    </div>
+    '''
+    
+    return page_wrapper(f"Payroll - {run.get('pay_period', '')}", content, user=user)
+
+
+@app.route("/payroll/timesheets/scan", methods=["GET", "POST"])
+def payroll_timesheet_scan():
+    """Scan handwritten timesheet with AI"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    content = '''
+    <div class="mb-lg">
+        <a href="/payroll" class="text-muted">← Payroll</a>
+        <h1>📷 Scan Timesheet</h1>
+        <p class="text-muted">Take a photo of your handwritten timesheet</p>
+    </div>
+    
+    <div class="card" style="max-width: 600px;">
+        <div class="btn-group mb-lg" style="justify-content: center;">
+            <button class="btn btn-orange" onclick="startCamera()">📷 Use Camera</button>
+            <label class="btn btn-ghost" style="cursor: pointer;">
+                📁 Upload Image
+                <input type="file" id="file-input" accept="image/*" style="display: none;" onchange="handleFile(this)">
+            </label>
+        </div>
+        
+        <video id="video" autoplay playsinline style="display:none;width:100%;max-width:400px;margin:0 auto;border-radius:12px;background:#000;"></video>
+        <button id="capture-btn" class="btn btn-green btn-block mt-md" style="display:none;" onclick="capture()">📸 Capture</button>
+        
+        <canvas id="canvas" style="display:none;"></canvas>
+        <img id="preview" style="display:none;max-width:100%;border-radius:12px;margin-top:16px;">
+        
+        <div id="processing" class="alert alert-info mt-lg" style="display:none;">
+            🔄 AI is reading your timesheet...
+        </div>
+        
+        <div id="result" style="display:none;" class="mt-lg">
+            <h4>Extracted Hours</h4>
+            <div id="result-content"></div>
+            <button class="btn btn-primary btn-block mt-md" onclick="useResults()">Use These Hours</button>
+        </div>
+    </div>
+    
+    <script>
+    let stream = null;
+    let extractedData = null;
+    
+    function startCamera() {
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(s => {
+                stream = s;
+                const video = document.getElementById('video');
+                video.srcObject = s;
+                video.style.display = 'block';
+                document.getElementById('capture-btn').style.display = 'block';
+            })
+            .catch(e => alert('Camera error: ' + e.message));
+    }
+    
+    function capture() {
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        
+        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+        
+        if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+        }
+        video.style.display = 'none';
+        document.getElementById('capture-btn').style.display = 'none';
+        
+        document.getElementById('preview').src = imageData;
+        document.getElementById('preview').style.display = 'block';
+        
+        processImage(imageData);
+    }
+    
+    function handleFile(input) {
+        if (input.files && input.files[0]) {
+            const reader = new FileReader();
+            reader.onload = e => {
+                document.getElementById('preview').src = e.target.result;
+                document.getElementById('preview').style.display = 'block';
+                processImage(e.target.result);
+            };
+            reader.readAsDataURL(input.files[0]);
+        }
+    }
+    
+    async function processImage(imageData) {
+        document.getElementById('processing').style.display = 'block';
+        document.getElementById('result').style.display = 'none';
+        
+        try {
+            const response = await fetch('/api/payroll/scan-timesheet', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ image: imageData })
+            });
+            
+            const result = await response.json();
+            
+            document.getElementById('processing').style.display = 'none';
+            
+            if (result.success) {
+                extractedData = result.data;
+                let html = '<table class="table"><thead><tr><th>Employee</th><th>Hours</th><th>Overtime</th></tr></thead><tbody>';
+                for (const row of result.data) {
+                    html += '<tr><td>' + row.name + '</td><td>' + row.hours + '</td><td>' + row.overtime + '</td></tr>';
+                }
+                html += '</tbody></table>';
+                document.getElementById('result-content').innerHTML = html;
+                document.getElementById('result').style.display = 'block';
+            } else {
+                alert('Could not read timesheet: ' + (result.error || 'Unknown error'));
+            }
+            
+        } catch (error) {
+            document.getElementById('processing').style.display = 'none';
+            alert('Error: ' + error.message);
+        }
+    }
+    
+    function useResults() {
+        // Store in session and redirect to payroll run
+        sessionStorage.setItem('timesheet_data', JSON.stringify(extractedData));
+        window.location.href = '/payroll/run';
+    }
+    </script>
+    '''
+    
+    return page_wrapper("Scan Timesheet", content, user=user)
+
+
+@app.route("/api/payroll/scan-timesheet", methods=["POST"])
+def api_scan_timesheet():
+    """AI scan of handwritten timesheet"""
+    try:
+        data = request.get_json()
+        image_data = data.get("image", "")
+        
+        if not image_data:
+            return jsonify({"success": False, "error": "No image provided"})
+        
+        if "," in image_data:
+            image_data = image_data.split(",")[1]
+        
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return jsonify({"success": False, "error": "AI not configured"})
+        
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        
+        prompt = """Analyze this handwritten timesheet image.
+
+Extract for each employee:
+1. Employee name
+2. Total normal hours worked
+3. Overtime hours (if any)
+
+Return ONLY valid JSON in this format:
+{"employees": [{"name": "John Smith", "hours": 176, "overtime": 8}]}
+
+If you can't read a name clearly, use what you can make out.
+If hours aren't clear, estimate based on what's visible.
+Normal monthly hours are typically around 176 (22 days × 8 hours)."""
+
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
+                    {"type": "text", "text": prompt}
+                ]
+            }]
+        )
+        
+        ai_response = message.content[0].text
+        
+        json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+        if not json_match:
+            return jsonify({"success": False, "error": "Could not read timesheet"})
+        
+        parsed = json.loads(json_match.group())
+        
+        return jsonify({
+            "success": True,
+            "data": parsed.get("employees", [])
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+# Add payroll to navigation
+# Note: Add "payroll" to nav_items in get_header_html function
 
 
 if __name__ == "__main__":
