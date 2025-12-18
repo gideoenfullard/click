@@ -14695,76 +14695,70 @@ def cleanup_stock():
     message_html = f'<div class="alert alert-info mb-lg">{message}</div>' if message else ""
     
     try:
-        stock = db.select("stock_items", order="description")
-    except:
+        stock = db.select("stock_items", order="description") or []
+    except Exception as e:
         stock = []
+        message_html = f'<div class="alert alert-error mb-lg">Error loading stock: {str(e)}</div>'
     
     issues = []
     for item in stock:
-        cost = float(item.get("cost_price", 0) or 0)
-        selling = float(item.get("selling_price", 0) or 0)
-        
-        issue_list = []
-        if cost <= 0 and selling <= 0:
-            issue_list.append("No prices at all")
-        elif cost <= 0:
-            issue_list.append("No cost price")
-        elif selling <= 0:
-            issue_list.append("No selling price")
-        elif cost > 0 and selling < cost:
-            issue_list.append("Selling below cost!")
-        elif cost > 0 and selling > 0:
-            margin = (selling - cost) / selling * 100
-            if margin < 10:
-                issue_list.append(f"Low margin ({margin:.0f}%)")
-        
-        if issue_list:
-            issues.append({
-                "id": item.get("id"),
-                "code": item.get("code", ""),
-                "description": item.get("description", ""),
-                "cost": cost,
-                "selling": selling,
-                "issues": issue_list
-            })
+        try:
+            cost = float(item.get("cost_price") or 0)
+            selling = float(item.get("selling_price") or 0)
+            
+            issue_list = []
+            if cost <= 0 and selling <= 0:
+                issue_list.append("No prices")
+            elif cost <= 0:
+                issue_list.append("No cost")
+            elif selling <= 0:
+                issue_list.append("No selling")
+            elif selling < cost:
+                issue_list.append("Below cost!")
+            elif selling > 0 and cost > 0:
+                margin = (selling - cost) / selling * 100
+                if margin < 10:
+                    issue_list.append(f"Low margin")
+            
+            if issue_list:
+                issues.append({
+                    "id": item.get("id", ""),
+                    "code": item.get("code") or "",
+                    "description": item.get("description") or "Unknown",
+                    "cost": cost,
+                    "selling": selling,
+                    "issues": issue_list
+                })
+        except:
+            continue
     
     rows = []
     for item in issues:
-        issue_badges = " ".join([f'<span class="badge badge-orange">{i}</span>' for i in item["issues"]])
-        
-        # Calculate suggested price - either selling from cost, or cost from selling
-        if item["cost"] > 0 and item["selling"] <= 0:
-            # Has cost, needs selling
-            suggested = PricingEngine.calculate_selling_price(Decimal(str(item["cost"])))
-            suggest_html = f'Sell: R {float(suggested["selling_price"]):.2f}'
-        elif item["selling"] > 0 and item["cost"] <= 0:
-            # Has selling, needs cost - estimate backwards
-            sell = Decimal(str(item["selling"]))
-            if sell < 65:
-                est_cost = sell / Decimal("1.50")
-            elif sell < 270:
-                est_cost = sell / Decimal("1.35")
-            elif sell < 1250:
-                est_cost = sell / Decimal("1.25")
-            else:
-                est_cost = sell / Decimal("1.15")
-            suggest_html = f'Cost: R {float(est_cost.quantize(Decimal("0.01"))):.2f}'
-        elif item["cost"] > 0 and item["selling"] < item["cost"]:
-            # Selling below cost - suggest correct selling
-            suggested = PricingEngine.calculate_selling_price(Decimal(str(item["cost"])))
-            suggest_html = f'Sell: R {float(suggested["selling_price"]):.2f}'
-        else:
-            suggest_html = '-'
-        
-        rows.append([
-            safe_string(item["code"]),
-            safe_string(item["description"][:40]),
-            {"value": f'R {item["cost"]:.2f}', "class": "number"},
-            {"value": f'R {item["selling"]:.2f}', "class": "number"},
-            {"value": suggest_html, "class": "number text-green"},
-            issue_badges,
-            f'<a href="/settings/cleanup/stock/{item["id"]}/fix" class="btn btn-sm btn-green">Fix</a>'
-        ])
+        try:
+            issue_badges = " ".join([f'<span class="badge badge-orange">{i}</span>' for i in item["issues"]])
+            
+            # Calculate suggested price
+            suggest_html = "-"
+            if item["cost"] > 0 and item["selling"] <= 0:
+                # Has cost, needs selling - use simple 35% markup
+                suggest_html = f'Sell: R {item["cost"] * 1.35:.2f}'
+            elif item["selling"] > 0 and item["cost"] <= 0:
+                # Has selling, needs cost - estimate backwards
+                suggest_html = f'Cost: R {item["selling"] / 1.35:.2f}'
+            elif item["cost"] > 0 and item["selling"] < item["cost"]:
+                suggest_html = f'Sell: R {item["cost"] * 1.35:.2f}'
+            
+            rows.append([
+                safe_string(item["code"])[:10],
+                safe_string(item["description"])[:35],
+                {"value": f'R {item["cost"]:.2f}', "class": "number"},
+                {"value": f'R {item["selling"]:.2f}', "class": "number"},
+                {"value": suggest_html, "class": "number text-green"},
+                issue_badges,
+                f'<a href="/settings/cleanup/stock/{item["id"]}/fix" class="btn btn-sm btn-green">Fix</a>'
+            ])
+        except:
+            continue
     
     table = table_html(
         headers=["Code", "Description", {"label": "Cost", "class": "number"}, 
@@ -14853,63 +14847,52 @@ def cleanup_stock_fix(item_id):
 
 @app.route("/settings/cleanup/stock/fix-all")
 def cleanup_stock_fix_all():
-    """Fix all stock items with missing or bad prices"""
+    """Fix all stock items with missing or bad prices - uses simple 35% markup"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
+    fixed = 0
+    errors = 0
+    
     try:
-        stock = db.select("stock_items")
-        fixed = 0
-        errors = 0
+        stock = db.select("stock_items") or []
         
         for item in stock:
             try:
-                cost = float(item.get("cost_price", 0) or 0)
-                selling = float(item.get("selling_price", 0) or 0)
+                cost = float(item.get("cost_price") or 0)
+                selling = float(item.get("selling_price") or 0)
+                item_id = item.get("id")
+                
+                if not item_id:
+                    continue
                 
                 updates = {}
                 
-                # CASE 1: Has cost but no selling price → calculate selling from cost
+                # CASE 1: Has cost but no selling → calculate selling (35% markup)
                 if cost > 0 and selling <= 0:
-                    suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
-                    updates["selling_price"] = float(suggested["selling_price"])
+                    updates["selling_price"] = round(cost * 1.35, 2)
                 
-                # CASE 2: Has selling but no cost price → calculate cost from selling (reverse)
-                # Assume ~30% margin, so cost = selling / 1.30
+                # CASE 2: Has selling but no cost → estimate cost (reverse 35% markup)
                 elif selling > 0 and cost <= 0:
-                    # Estimate cost based on typical markup
-                    if selling < 65:  # Would be under R50 cost with 30% markup
-                        estimated_cost = selling / Decimal("1.50")  # 50% markup tier
-                    elif selling < 270:  # Would be under R200 cost
-                        estimated_cost = selling / Decimal("1.35")  # 35% markup tier
-                    elif selling < 1250:  # Would be under R1000 cost
-                        estimated_cost = selling / Decimal("1.25")  # 25% markup tier
-                    else:
-                        estimated_cost = selling / Decimal("1.15")  # 15% markup tier
-                    
-                    updates["cost_price"] = float(Decimal(str(estimated_cost)).quantize(Decimal("0.01")))
+                    updates["cost_price"] = round(selling / 1.35, 2)
                 
                 # CASE 3: Selling below cost → fix selling price
                 elif cost > 0 and selling > 0 and selling < cost:
-                    suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
-                    updates["selling_price"] = float(suggested["selling_price"])
-                
-                # CASE 4: Both zero → can't fix automatically
-                # Skip these
+                    updates["selling_price"] = round(cost * 1.35, 2)
                 
                 if updates:
-                    success, _ = db.update("stock_items", item["id"], updates)
+                    success, _ = db.update("stock_items", item_id, updates)
                     if success:
                         fixed += 1
                     else:
                         errors += 1
-            except Exception as item_error:
+                        
+            except Exception:
                 errors += 1
                 continue
         
-        # Store result in session for display
-        session["cleanup_message"] = f"✓ Fixed {fixed} items" + (f", {errors} errors" if errors > 0 else "")
+        session["cleanup_message"] = f"✓ Fixed {fixed} items" + (f" ({errors} errors)" if errors > 0 else "")
         
     except Exception as e:
         session["cleanup_message"] = f"Error: {str(e)}"
@@ -15001,6 +14984,112 @@ def cleanup_supplier_delete(supplier_id):
     
     db.delete("suppliers", supplier_id)
     return redirect("/settings/cleanup/suppliers")
+
+
+@app.route("/settings/categories", methods=["GET", "POST"])
+def settings_categories():
+    """Stock categories management"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    message = session.pop("category_message", None)
+    message_html = f'<div class="alert alert-info mb-lg">{message}</div>' if message else ""
+    
+    if request.method == "POST":
+        action = request.form.get("action")
+        
+        if action == "add":
+            name = request.form.get("name", "").strip()
+            if name:
+                try:
+                    db.insert("stock_categories", {
+                        "id": generate_id(),
+                        "name": name,
+                        "created_at": now()
+                    })
+                    session["category_message"] = f"✓ Added category: {name}"
+                except:
+                    session["category_message"] = "Error adding category"
+        
+        elif action == "delete":
+            cat_id = request.form.get("category_id")
+            if cat_id:
+                try:
+                    db.delete("stock_categories", cat_id)
+                    session["category_message"] = "✓ Category deleted"
+                except:
+                    session["category_message"] = "Error deleting category"
+        
+        return redirect("/settings/categories")
+    
+    # Get existing categories
+    try:
+        categories = db.select("stock_categories", order="name") or []
+    except:
+        categories = []
+    
+    # Default categories if none exist
+    default_cats = ["General", "Fasteners", "Electrical", "Plumbing", "Safety", "Tools", "Consumables", "Fuel"]
+    
+    cat_rows = ""
+    for cat in categories:
+        cat_rows += f'''
+        <tr>
+            <td>{safe_string(cat.get("name", ""))}</td>
+            <td>
+                <form method="POST" style="display:inline;">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="category_id" value="{cat.get("id", "")}">
+                    <button type="submit" class="btn btn-sm btn-red" onclick="return confirm('Delete this category?')">Delete</button>
+                </form>
+            </td>
+        </tr>
+        '''
+    
+    if not cat_rows:
+        cat_rows = '<tr><td colspan="2" class="text-muted" style="text-align:center;padding:20px;">No categories yet. Add some below or use defaults.</td></tr>'
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/settings" class="text-muted">← Settings</a>
+        <h1>📁 Stock Categories</h1>
+    </div>
+    
+    {message_html}
+    
+    <div class="grid grid-2">
+        <div class="card">
+            <h3 class="card-title">Current Categories</h3>
+            <table class="table">
+                <thead><tr><th>Name</th><th></th></tr></thead>
+                <tbody>{cat_rows}</tbody>
+            </table>
+        </div>
+        
+        <div class="card">
+            <h3 class="card-title">Add Category</h3>
+            <form method="POST">
+                <input type="hidden" name="action" value="add">
+                <div class="form-group">
+                    <label class="form-label">Category Name</label>
+                    <input type="text" name="name" class="form-input" placeholder="e.g. Electrical">
+                </div>
+                <button type="submit" class="btn btn-primary">Add Category</button>
+            </form>
+            
+            <hr style="margin: 20px 0; border-color: var(--border);">
+            
+            <h4>Quick Add Defaults</h4>
+            <p class="text-muted mb-md">Click to add common categories:</p>
+            <div class="btn-group" style="flex-wrap: wrap;">
+                {"".join([f'<form method="POST" style="display:inline;margin:2px;"><input type="hidden" name="action" value="add"><input type="hidden" name="name" value="{cat}"><button type="submit" class="btn btn-sm btn-ghost">{cat}</button></form>' for cat in default_cats])}
+            </div>
+        </div>
+    </div>
+    '''
+    
+    return page_wrapper("Stock Categories", content, user=user)
 
 
 if __name__ == "__main__":
