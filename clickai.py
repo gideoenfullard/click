@@ -10568,7 +10568,7 @@ except:
 @app.route("/print/thermal/<invoice_number>")
 def print_thermal(invoice_number):
     """Generate thermal printer receipt"""
-    inv = db.query("invoices", filters={"invoice_number": invoice_number})
+    inv = db.select("invoices", filters={"invoice_number": invoice_number})
     if not inv:
         return "Invoice not found", 404
     inv = inv[0]
@@ -10619,7 +10619,7 @@ def print_thermal(invoice_number):
 @app.route("/print/office/<invoice_number>")
 def print_office(invoice_number):
     """Generate A4 office invoice"""
-    inv = db.query("invoices", filters={"invoice_number": invoice_number})
+    inv = db.select("invoices", filters={"invoice_number": invoice_number})
     if not inv:
         return "Invoice not found", 404
     inv = inv[0]
@@ -11183,7 +11183,7 @@ def process_supplier_invoice(data):
         
         # 1. Check for duplicate
         if invoice_no:
-            existing = db.query("expenses", filters={"reference": invoice_no})
+            existing = db.select("expenses", filters={"reference": invoice_no})
             if existing:
                 return jsonify({
                     "success": False, 
@@ -11194,7 +11194,7 @@ def process_supplier_invoice(data):
         
         # 2. Find or create supplier
         supplier_id = None
-        suppliers = db.query("suppliers")
+        suppliers = db.select("suppliers")
         for s in suppliers:
             if s.get("name", "").lower() == supplier_name.lower():
                 supplier_id = s["id"]
@@ -11227,7 +11227,7 @@ def process_supplier_invoice(data):
             
             # Find existing stock item
             stock_item = None
-            all_stock = db.query("stock")
+            all_stock = db.select("stock")
             
             for s in all_stock:
                 if code and s.get("code", "").lower() == code.lower():
@@ -11438,7 +11438,7 @@ def process_stock_count(data):
         if not items:
             return jsonify({"success": False, "error": "No items found on count sheet"})
         
-        all_stock = db.query("stock")
+        all_stock = db.select("stock")
         
         updated = 0
         variances = []
@@ -11522,7 +11522,7 @@ def process_customer_payment(data):
         # Find customer
         customer = None
         customer_id = None
-        customers = db.query("customers")
+        customers = db.select("customers")
         
         for c in customers:
             if customer_name.lower() in c.get("name", "").lower():
@@ -11533,7 +11533,7 @@ def process_customer_payment(data):
         # Find invoice by reference
         invoice = None
         if reference:
-            invoices = db.query("invoices")
+            invoices = db.select("invoices")
             for inv in invoices:
                 if reference.lower() in inv.get("invoice_number", "").lower():
                     invoice = inv
@@ -11544,7 +11544,7 @@ def process_customer_payment(data):
         
         # If no invoice found, try to find oldest outstanding for customer
         if not invoice and customer_id:
-            invoices = db.query("invoices", filters={"customer_id": customer_id, "status": "outstanding"})
+            invoices = db.select("invoices", filters={"customer_id": customer_id, "status": "outstanding"})
             if invoices:
                 invoice = invoices[0]
         
