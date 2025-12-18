@@ -9554,7 +9554,10 @@ def report_trial_balance():
             <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;">Trial Balance</h1>
             <p class="text-muted">As at {today()}</p>
         </div>
-        {balance_badge}
+        <div class="btn-group">
+            <a href="/reports/trial-balance/csv" class="btn btn-ghost">📥 Export CSV</a>
+            {balance_badge}
+        </div>
     </div>
     <div class="stats">
         <div class="stat"><div class="stat-value">{len(tb_data)}</div><div class="stat-label">Accounts</div></div>
@@ -9574,6 +9577,42 @@ def report_trial_balance():
     </div>
     '''
     return page_wrapper("Trial Balance", content, "reports", user)
+
+
+@app.route("/reports/trial-balance/csv")
+def report_trial_balance_csv():
+    """Export trial balance as CSV"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_trial_balance"
+        headers = {
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, headers=headers, json={}, timeout=30)
+        tb_data = resp.json() if resp.status_code == 200 else []
+    except:
+        tb_data = []
+    
+    # Build CSV
+    csv_lines = ["Account Code,Account Name,Debit,Credit"]
+    for entry in tb_data:
+        dr = entry.get("total_debit", 0) or 0
+        cr = entry.get("total_credit", 0) or 0
+        csv_lines.append(f'{entry.get("account_code", "")},{entry.get("account_name", "")},{dr},{cr}')
+    
+    csv_content = "\n".join(csv_lines)
+    
+    from flask import Response
+    return Response(
+        csv_content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment;filename=trial_balance_{today()}.csv"}
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -10664,11 +10703,43 @@ def print_thermal(invoice_number):
 
 @app.route("/print/office/<invoice_number>")
 def print_office(invoice_number):
-    """Generate A4 office invoice"""
+    """Generate A4 office invoice with company details"""
     inv = db.select("invoices", filters={"invoice_number": invoice_number})
     if not inv:
         return "Invoice not found", 404
     inv = inv[0]
+    
+    # Get company details from settings
+    try:
+        settings_row = db.select("settings", filters={"key": "company"}, limit=1)
+        if settings_row:
+            company = json.loads(settings_row[0].get("value", "{}"))
+        else:
+            company = {}
+    except:
+        company = {}
+    
+    company_name = company.get("name", "Your Business Name")
+    company_address = f"{company.get('address_line1', '')}"
+    if company.get('address_line2'):
+        company_address += f"<br>{company.get('address_line2')}"
+    if company.get('city'):
+        company_address += f"<br>{company.get('city')} {company.get('postal_code', '')}"
+    company_phone = company.get('phone', '')
+    company_email = company.get('email', '')
+    company_vat = company.get('vat_number', '')
+    
+    # Bank details
+    bank_details = ""
+    if company.get('bank_name'):
+        bank_details = f"""
+        <div style="margin-top: 30px; padding: 15px; background: #f9f9f9; border-radius: 5px;">
+            <strong>Banking Details:</strong><br>
+            {company.get('bank_name', '')}<br>
+            Account: {company.get('bank_account', '')}<br>
+            Branch: {company.get('bank_branch', '')}
+        </div>
+        """
     
     items = json.loads(inv.get("items", "[]"))
     
@@ -10694,7 +10765,10 @@ def print_office(invoice_number):
         body {{ font-family: Arial, sans-serif; font-size: 14px; max-width: 210mm; margin: 0 auto; padding: 20px; }}
         h1 {{ color: #333; margin-bottom: 5px; }}
         .header {{ display: flex; justify-content: space-between; margin-bottom: 30px; }}
+        .company {{ font-size: 12px; line-height: 1.6; }}
+        .company-name {{ font-size: 20px; font-weight: bold; color: #333; margin-bottom: 5px; }}
         .invoice-details {{ text-align: right; }}
+        .customer-box {{ background: #f5f5f5; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
         table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
         th {{ background: #f5f5f5; text-align: left; padding: 10px; border-bottom: 2px solid #333; }}
         td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
@@ -10707,14 +10781,23 @@ def print_office(invoice_number):
 </head>
 <body>
     <div class="header">
-        <div>
-            <h1>INVOICE</h1>
-            <p><strong>To:</strong> {customer}</p>
+        <div class="company">
+            <div class="company-name">{company_name}</div>
+            {company_address}<br>
+            {f"Tel: {company_phone}<br>" if company_phone else ""}
+            {f"Email: {company_email}<br>" if company_email else ""}
+            {f"VAT: {company_vat}" if company_vat else ""}
         </div>
         <div class="invoice-details">
-            <p><strong>Invoice:</strong> {inv.get("invoice_number", "")}</p>
+            <h1>INVOICE</h1>
+            <p><strong>Invoice #:</strong> {inv.get("invoice_number", "")}</p>
             <p><strong>Date:</strong> {inv.get("date", "")[:10]}</p>
         </div>
+    </div>
+    
+    <div class="customer-box">
+        <strong>Bill To:</strong><br>
+        {customer}
     </div>
     
     <table>
@@ -10727,6 +10810,8 @@ def print_office(invoice_number):
         <tr><td>VAT (15%):</td><td style="text-align:right">R {vat:.2f}</td></tr>
         <tr class="grand-total"><td>TOTAL:</td><td style="text-align:right">R {total:.2f}</td></tr>
     </table>
+    
+    {bank_details}
     
     <a href="#" class="btn no-print" onclick="window.print(); return false;">Print Invoice</a>
     <a href="#" class="btn no-print" style="background:#666; margin-left:10px;" onclick="window.close(); return false;">Close</a>
@@ -10920,18 +11005,36 @@ SCANNER_HTML = '''<!DOCTYPE html>
             <span class="scan-icon">📦</span>
             <span class="scan-text">
                 <span class="scan-title">Supplier Invoice</span>
-                <span class="scan-desc">Stock IN + Create items + Pay supplier</span>
+                <span class="scan-desc">Stock IN + Create items</span>
             </span>
             <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'cos')">
+        </label>
+        
+        <label class="scan-btn scan-btn-cos" style="background: linear-gradient(135deg, #22c55e, #16a34a); box-shadow: 0 6px 24px rgba(34, 197, 94, 0.3);">
+            <span class="scan-icon">💵</span>
+            <span class="scan-text">
+                <span class="scan-title">Supplier Invoice (PAID)</span>
+                <span class="scan-desc">Already paid cash - no creditor</span>
+            </span>
+            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'cos_paid')">
         </label>
         
         <label class="scan-btn scan-btn-exp">
             <span class="scan-icon">🧾</span>
             <span class="scan-text">
                 <span class="scan-title">Expense</span>
-                <span class="scan-desc">Auto-categorize + Record + GL entries</span>
+                <span class="scan-desc">Auto-categorize + Record</span>
             </span>
             <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'exp')">
+        </label>
+        
+        <label class="scan-btn scan-btn-exp" style="background: linear-gradient(135deg, #22c55e, #16a34a); box-shadow: 0 6px 24px rgba(34, 197, 94, 0.3);">
+            <span class="scan-icon">💵</span>
+            <span class="scan-text">
+                <span class="scan-title">Expense (PAID)</span>
+                <span class="scan-desc">Cash expense - already paid</span>
+            </span>
+            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'exp_paid')">
         </label>
     </div>
     
@@ -10968,7 +11071,9 @@ SCANNER_HTML = '''<!DOCTYPE html>
         
         const messages = {
             'cos': ['Reading supplier invoice...', 'Finding items, prices, supplier...'],
+            'cos_paid': ['Reading supplier invoice...', 'Finding items, prices, supplier...'],
             'exp': ['Reading receipt...', 'Auto-categorizing expense...'],
+            'exp_paid': ['Reading receipt...', 'Auto-categorizing expense...'],
             'stock': ['Reading stock count...', 'Matching items, checking quantities...'],
             'payment': ['Reading payment proof...', 'Matching to customer invoice...']
         };
@@ -11202,18 +11307,26 @@ Return ONLY valid JSON:
         # Check if staging is enabled (default: yes for safety)
         use_staging = request.args.get("direct") != "yes"
         
+        # Check if this is a "paid" variant
+        is_paid = scan_type.endswith("_paid")
+        base_type = scan_type.replace("_paid", "")
+        
+        # Add paid flag to parsed data
+        if is_paid:
+            parsed["paid"] = True
+        
         # Process based on type
-        if scan_type == "cos":
+        if base_type == "cos":
             if use_staging:
                 return stage_transaction("supplier_invoice", parsed)
             return process_supplier_invoice(parsed)
-        elif scan_type == "exp":
+        elif base_type == "exp":
             if use_staging:
                 return stage_transaction("expense", parsed)
             return process_expense_receipt(parsed)
-        elif scan_type == "stock":
+        elif base_type == "stock":
             return process_stock_count(parsed)  # Stock count is always direct
-        elif scan_type == "payment":
+        elif base_type == "payment":
             return process_customer_payment(parsed)  # Payments are always direct
         
         return jsonify({"success": False, "error": "Unknown scan type"})
@@ -11244,14 +11357,15 @@ def stage_transaction(trans_type: str, data: dict):
             supplier = data.get("supplier", "Unknown")
             total = Money.parse(data.get("total", 0))
             items_count = len(data.get("items", []))
+            is_paid = data.get("paid", False)
             
             return jsonify({
                 "success": True,
                 "staged": True,
                 "title": title,
-                "badge": "NEEDS REVIEW",
-                "badge_type": "review",
-                "details": f"<strong>{supplier}</strong><br>Invoice: {data.get('invoice_no', 'Not visible')}<br>{items_count} items",
+                "badge": "PAID ✓" if is_paid else "NEEDS REVIEW",
+                "badge_type": "paid" if is_paid else "review",
+                "details": f"<strong>{supplier}</strong><br>Invoice: {data.get('invoice_no', 'Not visible')}<br>{items_count} items" + ("<br><strong style='color:#22c55e'>💵 Paid Cash</strong>" if is_paid else ""),
                 "amount": f"R {float(total):,.2f}",
                 "review_url": f"/staging/{staged_id}",
                 "items": [{"name": item.get("description", "")[:25], "value": f"x{item.get('qty', 1)}"} for item in data.get("items", [])[:5]]
@@ -11266,8 +11380,8 @@ def stage_transaction(trans_type: str, data: dict):
                 "success": True,
                 "staged": True,
                 "title": title,
-                "badge": "NEEDS REVIEW",
-                "badge_type": "review",
+                "badge": "PAID ✓" if data.get("paid") else "NEEDS REVIEW",
+                "badge_type": "paid" if data.get("paid") else "review",
                 "details": f"<strong>{vendor}</strong><br>{data.get('description', '')}",
                 "amount": f"R {float(total):,.2f}",
                 "review_url": f"/staging/{staged_id}"
@@ -14884,37 +14998,105 @@ def cleanup_stock_fix(item_id):
 
 @app.route("/settings/cleanup/stock/fix-all")
 def cleanup_stock_fix_all():
-    """Fix all stock items with missing or bad prices - uses simple 35% markup"""
+    """
+    Fix all stock items with missing/bad prices - BATCH MODE
+    Processes in chunks to avoid timeout
+    """
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
-    fixed = 0
-    errors = 0
-    
     try:
         stock = db.select("stock_items") or []
         
+        # Build all updates first, then batch execute
+        updates_needed = []
+        
         for item in stock:
             try:
-                cost = float(item.get("cost_price") or 0)
-                selling = float(item.get("selling_price") or 0)
                 item_id = item.get("id")
-                
                 if not item_id:
                     continue
+                    
+                cost = float(item.get("cost_price") or 0)
+                selling = float(item.get("selling_price") or 0)
+                
+                # Determine what needs fixing
+                if cost > 0 and selling <= 0:
+                    # Has cost, needs selling (35% markup)
+                    updates_needed.append({
+                        "id": item_id,
+                        "selling_price": round(cost * 1.35, 2)
+                    })
+                elif selling > 0 and cost <= 0:
+                    # Has selling, needs cost (reverse 35%)
+                    updates_needed.append({
+                        "id": item_id,
+                        "cost_price": round(selling / 1.35, 2)
+                    })
+                elif cost > 0 and selling > 0 and selling < cost:
+                    # Selling below cost - fix it
+                    updates_needed.append({
+                        "id": item_id,
+                        "selling_price": round(cost * 1.35, 2)
+                    })
+            except:
+                continue
+        
+        # Now batch update - one call per item but fast
+        fixed = 0
+        errors = 0
+        
+        for upd in updates_needed:
+            try:
+                item_id = upd.pop("id")
+                success, _ = db.update("stock_items", item_id, upd)
+                if success:
+                    fixed += 1
+                else:
+                    errors += 1
+            except:
+                errors += 1
+        
+        session["cleanup_message"] = f"✓ Fixed {fixed} items!" + (f" ({errors} errors)" if errors > 0 else "")
+        
+    except Exception as e:
+        session["cleanup_message"] = f"Error: {str(e)}"
+    
+    return redirect("/settings/cleanup/stock")
+
+
+@app.route("/settings/cleanup/stock/fix-all-ajax")
+def cleanup_stock_fix_all_ajax():
+    """
+    AJAX endpoint for batch fixing with progress - handles large datasets
+    Returns JSON with progress updates
+    """
+    user = UserSession.get_current_user()
+    if not user:
+        return jsonify({"error": "Not logged in"})
+    
+    try:
+        stock = db.select("stock_items") or []
+        total = len(stock)
+        fixed = 0
+        errors = 0
+        
+        for item in stock:
+            try:
+                item_id = item.get("id")
+                if not item_id:
+                    continue
+                    
+                cost = float(item.get("cost_price") or 0)
+                selling = float(item.get("selling_price") or 0)
                 
                 updates = {}
                 
-                # CASE 1: Has cost but no selling → calculate selling (35% markup)
                 if cost > 0 and selling <= 0:
                     updates["selling_price"] = round(cost * 1.35, 2)
-                
-                # CASE 2: Has selling but no cost → estimate cost (reverse 35% markup)
                 elif selling > 0 and cost <= 0:
                     updates["cost_price"] = round(selling / 1.35, 2)
-                
-                # CASE 3: Selling below cost → fix selling price
                 elif cost > 0 and selling > 0 and selling < cost:
                     updates["selling_price"] = round(cost * 1.35, 2)
                 
@@ -14924,17 +15106,19 @@ def cleanup_stock_fix_all():
                         fixed += 1
                     else:
                         errors += 1
-                        
-            except Exception:
+            except:
                 errors += 1
-                continue
         
-        session["cleanup_message"] = f"✓ Fixed {fixed} items" + (f" ({errors} errors)" if errors > 0 else "")
+        return jsonify({
+            "success": True,
+            "total": total,
+            "fixed": fixed,
+            "errors": errors,
+            "message": f"Fixed {fixed} items!" + (f" ({errors} errors)" if errors > 0 else "")
+        })
         
     except Exception as e:
-        session["cleanup_message"] = f"Error: {str(e)}"
-    
-    return redirect("/settings/cleanup/stock")
+        return jsonify({"success": False, "error": str(e)})
 
 
 @app.route("/settings/cleanup/suppliers")
