@@ -14455,15 +14455,26 @@ def settings_cleanup():
     if not user:
         return redirect("/login")
     
-    # Count issues
-    suppliers = db.select("suppliers")
-    customers = db.select("customers")
-    stock = db.select("stock_items")
+    # Count issues with error handling
+    try:
+        suppliers = db.select("suppliers") or []
+    except:
+        suppliers = []
+    
+    try:
+        customers = db.select("customers") or []
+    except:
+        customers = []
+    
+    try:
+        stock = db.select("stock_items") or []
+    except:
+        stock = []
     
     # Supplier issues
     supplier_issues = 0
     for s in suppliers:
-        name = s.get("name", "").strip()
+        name = (s.get("name") or "").strip()
         if len(name) < 3 or name.isdigit() or "@" in name:
             supplier_issues += 1
     
@@ -14529,7 +14540,14 @@ def cleanup_stock():
     if not user:
         return redirect("/login")
     
-    stock = db.select("stock_items", order="description")
+    # Check for message from fix-all
+    message = session.pop("cleanup_message", None)
+    message_html = f'<div class="alert alert-info mb-lg">{message}</div>' if message else ""
+    
+    try:
+        stock = db.select("stock_items", order="description")
+    except:
+        stock = []
     
     issues = []
     for item in stock:
@@ -14588,6 +14606,7 @@ def cleanup_stock():
     )
     
     content = f'''
+    {message_html}
     <div class="flex-between mb-lg">
         <div>
             <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
@@ -14670,28 +14689,43 @@ def cleanup_stock_fix_all():
     if not user:
         return redirect("/login")
     
-    stock = db.select("stock_items")
-    fixed = 0
-    
-    for item in stock:
-        cost = float(item.get("cost_price", 0) or 0)
-        selling = float(item.get("selling_price", 0) or 0)
+    try:
+        stock = db.select("stock_items")
+        fixed = 0
+        errors = 0
         
-        updates = {}
+        for item in stock:
+            try:
+                cost = float(item.get("cost_price", 0) or 0)
+                selling = float(item.get("selling_price", 0) or 0)
+                
+                updates = {}
+                
+                # If no selling price but has cost, calculate it
+                if cost > 0 and selling <= 0:
+                    suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
+                    updates["selling_price"] = float(suggested["selling_price"])
+                
+                # If selling below cost, fix it
+                if cost > 0 and selling > 0 and selling < cost:
+                    suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
+                    updates["selling_price"] = float(suggested["selling_price"])
+                
+                if updates:
+                    success, _ = db.update("stock_items", item["id"], updates)
+                    if success:
+                        fixed += 1
+                    else:
+                        errors += 1
+            except Exception as item_error:
+                errors += 1
+                continue
         
-        # If no selling price but has cost, calculate it
-        if cost > 0 and selling <= 0:
-            suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
-            updates["selling_price"] = float(suggested["selling_price"])
+        # Store result in session for display
+        session["cleanup_message"] = f"Fixed {fixed} items" + (f", {errors} errors" if errors > 0 else "")
         
-        # If selling below cost, fix it
-        if cost > 0 and selling > 0 and selling < cost:
-            suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
-            updates["selling_price"] = float(suggested["selling_price"])
-        
-        if updates:
-            db.update("stock_items", item["id"], updates)
-            fixed += 1
+    except Exception as e:
+        session["cleanup_message"] = f"Error: {str(e)}"
     
     return redirect("/settings/cleanup/stock")
 
