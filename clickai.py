@@ -8202,10 +8202,13 @@ def invoice_view(invoice_id):
     status = inv.get("status", "draft")
     if status == "paid":
         sb = badge("Paid", "green")
+        status_btn = f'<a href="/invoices/{invoice_id}/mark-outstanding" class="btn btn-sm btn-orange">Mark Outstanding</a>'
     elif status == "outstanding":
         sb = badge("Outstanding", "orange")
+        status_btn = f'<a href="/invoices/{invoice_id}/mark-paid" class="btn btn-sm btn-green">Mark Paid</a>'
     else:
         sb = badge(status.title(), "blue")
+        status_btn = f'<a href="/invoices/{invoice_id}/mark-paid" class="btn btn-sm btn-green">Mark Paid</a>'
     
     content = f'''
     
@@ -8219,6 +8222,7 @@ def invoice_view(invoice_id):
             <div class="btn-group">
                 <a href="/print/office/{invoice_id}" target="_blank" class="btn btn-sm btn-ghost">📄 Print</a>
                 <a href="/invoices/{invoice_id}/edit" class="btn btn-sm btn-ghost">✏️ Edit</a>
+                {status_btn}
                 {sb}
             </div>
         </div>
@@ -8236,6 +8240,28 @@ def invoice_view(invoice_id):
     '''
     
     return page_wrapper(f"Invoice {inv.get('invoice_number', '')}", content, active="invoices", user=user)
+
+
+@app.route("/invoices/<invoice_id>/mark-paid")
+def invoice_mark_paid(invoice_id):
+    """Mark invoice as paid"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    db.update("invoices", invoice_id, {"status": "paid"})
+    return redirect(f"/invoices/{invoice_id}")
+
+
+@app.route("/invoices/<invoice_id>/mark-outstanding")
+def invoice_mark_outstanding(invoice_id):
+    """Mark invoice as outstanding"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    db.update("invoices", invoice_id, {"status": "outstanding"})
+    return redirect(f"/invoices/{invoice_id}")
 
 
 
@@ -10615,6 +10641,8 @@ def print_thermal(invoice_number):
         td {{ padding: 2px 0; }}
         .total {{ font-size: 16px; font-weight: bold; border-top: 1px dashed #000; margin-top: 10px; padding-top: 10px; }}
         .center {{ text-align: center; }}
+        .no-print {{ margin-top: 20px; }}
+        @media print {{ .no-print {{ display: none; }} }}
     </style>
 </head>
 <body onload="window.print()">
@@ -10629,6 +10657,7 @@ def print_thermal(invoice_number):
         <tr class="total"><td>TOTAL</td><td style="text-align:right">R{total:.2f}</td></tr>
     </table>
     <p class="center" style="margin-top:20px">Thank you!</p>
+    <p class="center no-print"><a href="#" onclick="window.close(); return false;" style="color:#666;">Close</a></p>
 </body>
 </html>'''
 
@@ -10700,6 +10729,7 @@ def print_office(invoice_number):
     </table>
     
     <a href="#" class="btn no-print" onclick="window.print(); return false;">Print Invoice</a>
+    <a href="#" class="btn no-print" style="background:#666; margin-left:10px;" onclick="window.close(); return false;">Close</a>
 </body>
 </html>'''
 
@@ -14792,35 +14822,42 @@ def cleanup_stock_fix(item_id):
     if not user:
         return redirect("/login")
     
-    item = db.select_one("stock_items", item_id)
-    if not item:
+    try:
+        item = db.select_one("stock_items", item_id)
+        if not item:
+            return redirect("/settings/cleanup/stock")
+    except:
         return redirect("/settings/cleanup/stock")
     
     if request.method == "POST":
-        cost = float(request.form.get("cost_price", 0) or 0)
-        selling = float(request.form.get("selling_price", 0) or 0)
-        
-        db.update("stock_items", item_id, {
-            "cost_price": cost,
-            "selling_price": selling
-        })
+        try:
+            cost = float(request.form.get("cost_price") or 0)
+            selling = float(request.form.get("selling_price") or 0)
+            
+            db.update("stock_items", item_id, {
+                "cost_price": cost,
+                "selling_price": selling
+            })
+        except:
+            pass
         
         return redirect("/settings/cleanup/stock")
     
-    cost = float(item.get("cost_price", 0) or 0)
-    selling = float(item.get("selling_price", 0) or 0)
+    cost = float(item.get("cost_price") or 0)
+    selling = float(item.get("selling_price") or 0)
     
-    # Calculate suggested
+    # Calculate suggested using simple math - no PricingEngine
     if cost > 0:
-        suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
-        suggested_price = float(suggested["selling_price"])
+        suggested_price = round(cost * 1.35, 2)
+    elif selling > 0:
+        suggested_price = round(selling / 1.35, 2)  # Estimate cost
     else:
         suggested_price = 0
     
     content = f'''
     <div class="mb-lg">
         <a href="/settings/cleanup/stock" class="text-muted">← Stock Cleanup</a>
-        <h1>Fix: {safe_string(item.get("description", ""))}</h1>
+        <h1>Fix: {safe_string(item.get("description") or "Unknown")}</h1>
     </div>
     
     <div class="card" style="max-width: 500px;">
@@ -14831,8 +14868,8 @@ def cleanup_stock_fix(item_id):
             </div>
             <div class="form-group">
                 <label class="form-label">Selling Price</label>
-                <input type="number" name="selling_price" class="form-input" value="{selling:.2f if selling > 0 else suggested_price:.2f}" step="0.01">
-                <small class="text-muted">Suggested: R {suggested_price:.2f}</small>
+                <input type="number" name="selling_price" class="form-input" value="{selling if selling > 0 else suggested_price:.2f}" step="0.01">
+                <small class="text-muted">Suggested (35% markup): R {suggested_price:.2f}</small>
             </div>
             <div class="btn-group">
                 <button type="submit" class="btn btn-primary">Save</button>
