@@ -15092,6 +15092,67 @@ def settings_categories():
     return page_wrapper("Stock Categories", content, user=user)
 
 
+@app.route("/settings/cleanup/ai-scan")
+def cleanup_ai_scan():
+    """AI-powered full data scan - placeholder for now"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    content = '''
+    <div class="mb-lg">
+        <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
+        <h1>🤖 Full AI Scan</h1>
+    </div>
+    
+    <div class="card" style="text-align: center; padding: 60px;">
+        <div style="font-size: 64px; margin-bottom: 20px;">🚧</div>
+        <h2>Coming Soon</h2>
+        <p class="text-muted">
+            AI-powered full scan of your data will analyze:<br><br>
+            • Duplicate suppliers and customers<br>
+            • Stock items that might be the same thing<br>
+            • Pricing anomalies across your inventory<br>
+            • Data quality issues<br><br>
+            For now, use the individual cleanup tools.
+        </p>
+        <a href="/settings/cleanup" class="btn btn-primary mt-lg">Back to Cleanup</a>
+    </div>
+    '''
+    
+    return page_wrapper("AI Scan", content, user=user)
+
+
+@app.route("/settings/cleanup/customers")
+def cleanup_customers():
+    """Customer cleanup page"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    content = '''
+    <div class="mb-lg">
+        <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
+        <h1>🧑‍🤝‍🧑 Customer Cleanup</h1>
+    </div>
+    
+    <div class="card" style="text-align: center; padding: 60px;">
+        <div style="font-size: 64px; margin-bottom: 20px;">🚧</div>
+        <h2>Coming Soon</h2>
+        <p class="text-muted">
+            Customer cleanup will help you:<br><br>
+            • Merge duplicate customers<br>
+            • Clean up walk-in entries<br>
+            • Fix phone number formats<br>
+            • Identify inactive customers
+        </p>
+        <a href="/settings/cleanup" class="btn btn-primary mt-lg">Back to Cleanup</a>
+    </div>
+    '''
+    
+    return page_wrapper("Customer Cleanup", content, user=user)
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
 
