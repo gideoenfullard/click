@@ -11192,70 +11192,112 @@ def process_supplier_invoice(data):
                     "badge_type": "duplicate"
                 })
         
-        # 2. Find or create supplier
+        # 2. Find or create supplier (smart matching)
         supplier_id = None
+        supplier_created = False
         suppliers = db.select("suppliers")
+        
+        # Try exact match first, then fuzzy match
+        supplier_name_lower = supplier_name.lower().strip()
         for s in suppliers:
-            if s.get("name", "").lower() == supplier_name.lower():
+            s_name = s.get("name", "").lower().strip()
+            # Exact match
+            if s_name == supplier_name_lower:
+                supplier_id = s["id"]
+                break
+            # Fuzzy match - check if one contains the other (handles "Makro" vs "Makro Warehouse")
+            if supplier_name_lower in s_name or s_name in supplier_name_lower:
                 supplier_id = s["id"]
                 break
         
         if not supplier_id:
             supplier_id = generate_id()
+            # Generate supplier code from name (e.g., "Makro Warehouse" -> "MAK001")
+            prefix = ''.join(c for c in supplier_name[:3].upper() if c.isalpha()) or "SUP"
+            existing_codes = [s.get("code", "") for s in suppliers]
+            sup_num = 1
+            while f"{prefix}{sup_num:03d}" in existing_codes:
+                sup_num += 1
+            supplier_code = f"{prefix}{sup_num:03d}"
+            
             db.insert("suppliers", {
                 "id": supplier_id,
+                "code": supplier_code,
                 "name": supplier_name,
                 "phone": "",
+                "email": "",
                 "balance": 0,
                 "active": True,
                 "created_at": now()
             })
             supplier_created = True
-        else:
-            supplier_created = False
         
         # 3. Process line items - find or create stock, book IN
         items_created = 0
         items_updated = 0
         stock_booked = []
+        all_stock = db.select("stock_items")  # Get once, not in loop
         
         for item in items:
-            desc = item.get("description", "Unknown Item")
-            code = item.get("code", "")
+            desc = item.get("description", "Unknown Item").strip()
+            code = item.get("code", "").strip()
             qty = int(item.get("qty", 0) or 0) or 1
             unit_price = Money.parse(item.get("unit_price", 0))
             
-            # Find existing stock item
+            # Find existing stock item (smart matching)
             stock_item = None
-            all_stock = db.select("stock")
+            desc_lower = desc.lower()
             
             for s in all_stock:
+                # Try code match first (most reliable)
                 if code and s.get("code", "").lower() == code.lower():
                     stock_item = s
                     break
-                if s.get("description", "").lower() == desc.lower():
+                # Try exact description match
+                if s.get("description", "").lower() == desc_lower:
+                    stock_item = s
+                    break
+                # Try fuzzy description match (one contains the other)
+                s_desc = s.get("description", "").lower()
+                if len(desc_lower) > 5 and (desc_lower in s_desc or s_desc in desc_lower):
                     stock_item = s
                     break
             
             if stock_item:
                 # Update quantity and cost price
                 new_qty = stock_item.get("quantity", 0) + qty
-                db.update("stock", stock_item["id"], {
+                db.update("stock_items", stock_item["id"], {
                     "quantity": new_qty,
                     "cost_price": float(unit_price)
                 })
                 items_updated += 1
                 stock_booked.append({"name": desc[:25], "value": f"+{qty}"})
             else:
-                # Create new stock item
+                # Create new stock item with smart code generation
                 if not code:
-                    # Generate code
-                    code = f"STK{len(all_stock) + 1:04d}"
+                    # Generate code from description (e.g., "Steel Tube 25mm" -> "STE0001")
+                    # Take first 3 consonants or letters from description
+                    clean_desc = ''.join(c for c in desc.upper() if c.isalpha())[:3] or "STK"
+                    existing_codes = [s.get("code", "") for s in all_stock]
+                    stk_num = 1
+                    while f"{clean_desc}{stk_num:04d}" in existing_codes:
+                        stk_num += 1
+                    code = f"{clean_desc}{stk_num:04d}"
                 
-                # Calculate selling price (30% markup default)
-                selling_price = unit_price * Decimal("1.30")
+                # Calculate selling price with smart markup based on cost
+                # Lower cost items get higher markup, expensive items lower markup
+                if unit_price < 50:
+                    markup = Decimal("1.50")  # 50% markup for cheap items
+                elif unit_price < 200:
+                    markup = Decimal("1.35")  # 35% markup for mid-range
+                elif unit_price < 1000:
+                    markup = Decimal("1.25")  # 25% markup for expensive
+                else:
+                    markup = Decimal("1.15")  # 15% markup for very expensive
                 
-                db.insert("stock", {
+                selling_price = (unit_price * markup).quantize(Decimal("0.01"))
+                
+                new_item = {
                     "id": generate_id(),
                     "code": code,
                     "description": desc,
@@ -11263,9 +11305,16 @@ def process_supplier_invoice(data):
                     "cost_price": float(unit_price),
                     "selling_price": float(selling_price),
                     "category": "general",
+                    "supplier_id": supplier_id,  # Link to supplier
+                    "reorder_level": max(1, qty // 4),  # Auto-set reorder level
                     "active": True,
                     "created_at": now()
-                })
+                }
+                db.insert("stock_items", new_item)
+                
+                # Add to all_stock so next items can find it (avoid duplicates in same invoice)
+                all_stock.append(new_item)
+                
                 items_created += 1
                 stock_booked.append({"name": f"NEW: {desc[:20]}", "value": f"+{qty}"})
         
@@ -11438,7 +11487,7 @@ def process_stock_count(data):
         if not items:
             return jsonify({"success": False, "error": "No items found on count sheet"})
         
-        all_stock = db.select("stock")
+        all_stock = db.select("stock_items")
         
         updated = 0
         variances = []
@@ -11466,7 +11515,7 @@ def process_stock_count(data):
                 old_qty = stock_item.get("quantity", 0)
                 variance = counted - old_qty
                 
-                db.update("stock", stock_item["id"], {"quantity": counted})
+                db.update("stock_items", stock_item["id"], {"quantity": counted})
                 updated += 1
                 
                 if variance != 0:
