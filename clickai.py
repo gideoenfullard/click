@@ -14829,296 +14829,224 @@ def settings_cleanup():
 
 @app.route("/settings/cleanup/stock")
 def cleanup_stock():
-    """Stock cleanup page"""
+    """Stock cleanup - bulk selection with user-chosen markup"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
-    # Check for message from fix-all
     message = session.pop("cleanup_message", None)
     message_html = f'<div class="alert alert-info mb-lg">{message}</div>' if message else ""
     
+    # Get filter from query string
+    filter_type = request.args.get("filter", "all")  # all, no_cost, no_selling, below_cost
+    
     try:
         stock = db.select("stock_items", order="description") or []
-    except Exception as e:
+    except:
         stock = []
-        message_html = f'<div class="alert alert-error mb-lg">Error loading stock: {str(e)}</div>'
     
-    issues = []
+    # Filter items based on selection
+    filtered = []
     for item in stock:
-        try:
-            cost = float(item.get("cost_price") or 0)
-            selling = float(item.get("selling_price") or 0)
-            
-            issue_list = []
-            if cost <= 0 and selling <= 0:
-                issue_list.append("No prices")
-            elif cost <= 0:
-                issue_list.append("No cost")
-            elif selling <= 0:
-                issue_list.append("No selling")
-            elif selling < cost:
-                issue_list.append("Below cost!")
-            elif selling > 0 and cost > 0:
-                margin = (selling - cost) / selling * 100
-                if margin < 10:
-                    issue_list.append(f"Low margin")
-            
-            if issue_list:
-                issues.append({
-                    "id": item.get("id", ""),
-                    "code": item.get("code") or "",
-                    "description": item.get("description") or "Unknown",
-                    "cost": cost,
-                    "selling": selling,
-                    "issues": issue_list
-                })
-        except:
-            continue
+        cost = float(item.get("cost_price") or 0)
+        selling = float(item.get("selling_price") or 0)
+        
+        if filter_type == "no_cost" and cost <= 0:
+            filtered.append(item)
+        elif filter_type == "no_selling" and selling <= 0:
+            filtered.append(item)
+        elif filter_type == "below_cost" and cost > 0 and selling < cost:
+            filtered.append(item)
+        elif filter_type == "all":
+            # Show items with any issue
+            if cost <= 0 or selling <= 0 or (cost > 0 and selling < cost):
+                filtered.append(item)
     
-    rows = []
-    for item in issues:
-        try:
-            issue_badges = " ".join([f'<span class="badge badge-orange">{i}</span>' for i in item["issues"]])
-            
-            # Calculate suggested price
-            suggest_html = "-"
-            if item["cost"] > 0 and item["selling"] <= 0:
-                # Has cost, needs selling - use simple 35% markup
-                suggest_html = f'Sell: R {item["cost"] * 1.35:.2f}'
-            elif item["selling"] > 0 and item["cost"] <= 0:
-                # Has selling, needs cost - estimate backwards
-                suggest_html = f'Cost: R {item["selling"] / 1.35:.2f}'
-            elif item["cost"] > 0 and item["selling"] < item["cost"]:
-                suggest_html = f'Sell: R {item["cost"] * 1.35:.2f}'
-            
-            rows.append([
-                safe_string(item["code"])[:10],
-                safe_string(item["description"])[:35],
-                {"value": f'R {item["cost"]:.2f}', "class": "number"},
-                {"value": f'R {item["selling"]:.2f}', "class": "number"},
-                {"value": suggest_html, "class": "number text-green"},
-                issue_badges,
-                f'<a href="/settings/cleanup/stock/{item["id"]}/fix" class="btn btn-sm btn-green">Fix</a>'
-            ])
-        except:
-            continue
+    # Count issues for filter buttons
+    no_cost_count = sum(1 for s in stock if float(s.get("cost_price") or 0) <= 0)
+    no_selling_count = sum(1 for s in stock if float(s.get("selling_price") or 0) <= 0)
+    below_cost_count = sum(1 for s in stock if float(s.get("cost_price") or 0) > 0 and float(s.get("selling_price") or 0) < float(s.get("cost_price") or 0))
     
-    table = table_html(
-        headers=["Code", "Description", {"label": "Cost", "class": "number"}, 
-                 {"label": "Selling", "class": "number"}, {"label": "Suggested", "class": "number"},
-                 "Issues", ""],
-        rows=rows,
-        empty_message="No stock issues found! 🎉"
-    )
+    # Build table rows with checkboxes
+    rows_html = ""
+    for item in filtered:
+        cost = float(item.get("cost_price") or 0)
+        selling = float(item.get("selling_price") or 0)
+        
+        # Determine issue
+        if cost <= 0 and selling <= 0:
+            issue = '<span class="badge badge-red">No prices</span>'
+        elif cost <= 0:
+            issue = '<span class="badge badge-orange">No cost</span>'
+        elif selling <= 0:
+            issue = '<span class="badge badge-orange">No selling</span>'
+        elif selling < cost:
+            issue = '<span class="badge badge-red">Below cost</span>'
+        else:
+            issue = ""
+        
+        rows_html += f'''
+        <tr>
+            <td><input type="checkbox" name="items" value="{item.get('id')}" class="item-check" data-cost="{cost}" data-selling="{selling}"></td>
+            <td>{safe_string(item.get("code") or "")[:10]}</td>
+            <td>{safe_string(item.get("description") or "")[:40]}</td>
+            <td class="number">R {cost:.2f}</td>
+            <td class="number">R {selling:.2f}</td>
+            <td>{issue}</td>
+        </tr>
+        '''
+    
+    if not rows_html:
+        rows_html = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:40px;">No items match this filter 🎉</td></tr>'
     
     content = f'''
     {message_html}
-    <div class="flex-between mb-lg">
-        <div>
-            <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
-            <h1>📦 Stock Cleanup</h1>
-            <p class="text-muted">{len(issues)} items with issues</p>
-        </div>
-        <a href="/settings/cleanup/stock/fix-all" class="btn btn-green">Fix All with Suggested Prices</a>
+    
+    <div class="mb-lg">
+        <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
+        <h1>📦 Stock Price Editor</h1>
+        <p class="text-muted">Select items, choose markup, click Apply</p>
     </div>
     
-    <div class="card">{table}</div>
+    <div class="btn-group mb-lg">
+        <a href="/settings/cleanup/stock?filter=all" class="btn {"btn-primary" if filter_type == "all" else "btn-ghost"}">All Issues ({len(filtered) if filter_type == "all" else no_cost_count + no_selling_count + below_cost_count})</a>
+        <a href="/settings/cleanup/stock?filter=no_cost" class="btn {"btn-primary" if filter_type == "no_cost" else "btn-ghost"}">No Cost ({no_cost_count})</a>
+        <a href="/settings/cleanup/stock?filter=no_selling" class="btn {"btn-primary" if filter_type == "no_selling" else "btn-ghost"}">No Selling ({no_selling_count})</a>
+        <a href="/settings/cleanup/stock?filter=below_cost" class="btn {"btn-primary" if filter_type == "below_cost" else "btn-ghost"}">Below Cost ({below_cost_count})</a>
+    </div>
+    
+    <form method="POST" action="/settings/cleanup/stock/bulk-update" id="bulk-form">
+        <div class="card mb-lg" style="background: #1a1a2e; padding: 16px;">
+            <div class="flex-between" style="flex-wrap: wrap; gap: 12px;">
+                <div class="btn-group">
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectAll()">Select All</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectNone()">Select None</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(0, 25)">Under R25</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(25, 100)">R25-R100</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(100, 500)">R100-R500</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(500, 99999)">Over R500</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span id="selected-count" style="color: #8b8b9a;">0 selected</span>
+                    <select name="action" class="form-select" style="width: auto;">
+                        <option value="markup_cost">Set Selling from Cost + Markup %</option>
+                        <option value="set_cost">Set Cost from Selling ÷ Markup</option>
+                    </select>
+                    <input type="number" name="markup" class="form-input" value="35" style="width: 80px;" min="1" max="200">
+                    <span>%</span>
+                    <button type="submit" class="btn btn-green">Apply to Selected</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th style="width:40px;"><input type="checkbox" id="select-all-check" onchange="toggleAll(this)"></th>
+                        <th>Code</th>
+                        <th>Description</th>
+                        <th class="number">Cost</th>
+                        <th class="number">Selling</th>
+                        <th>Issue</th>
+                    </tr>
+                </thead>
+                <tbody>{rows_html}</tbody>
+            </table>
+        </div>
+    </form>
+    
+    <script>
+    function selectAll() {{
+        document.querySelectorAll('.item-check').forEach(cb => cb.checked = true);
+        updateCount();
+    }}
+    
+    function selectNone() {{
+        document.querySelectorAll('.item-check').forEach(cb => cb.checked = false);
+        updateCount();
+    }}
+    
+    function selectByPrice(min, max) {{
+        document.querySelectorAll('.item-check').forEach(cb => {{
+            const cost = parseFloat(cb.dataset.cost) || 0;
+            const selling = parseFloat(cb.dataset.selling) || 0;
+            const price = cost > 0 ? cost : selling;
+            cb.checked = (price >= min && price < max);
+        }});
+        updateCount();
+    }}
+    
+    function toggleAll(master) {{
+        document.querySelectorAll('.item-check').forEach(cb => cb.checked = master.checked);
+        updateCount();
+    }}
+    
+    function updateCount() {{
+        const count = document.querySelectorAll('.item-check:checked').length;
+        document.getElementById('selected-count').textContent = count + ' selected';
+    }}
+    
+    document.querySelectorAll('.item-check').forEach(cb => cb.addEventListener('change', updateCount));
+    </script>
     '''
     
     return page_wrapper("Stock Cleanup", content, user=user)
 
 
-@app.route("/settings/cleanup/stock/<item_id>/fix", methods=["GET", "POST"])
-def cleanup_stock_fix(item_id):
-    """Fix a single stock item"""
+@app.route("/settings/cleanup/stock/bulk-update", methods=["POST"])
+def cleanup_stock_bulk_update():
+    """Apply markup to selected items"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
-    try:
-        item = db.select_one("stock_items", item_id)
-        if not item:
-            return redirect("/settings/cleanup/stock")
-    except:
+    item_ids = request.form.getlist("items")
+    action = request.form.get("action", "markup_cost")
+    markup = float(request.form.get("markup", 35) or 35)
+    
+    if not item_ids:
+        session["cleanup_message"] = "No items selected"
         return redirect("/settings/cleanup/stock")
     
-    if request.method == "POST":
+    fixed = 0
+    errors = 0
+    multiplier = 1 + (markup / 100)  # 35% = 1.35
+    
+    for item_id in item_ids:
         try:
-            cost = float(request.form.get("cost_price") or 0)
-            selling = float(request.form.get("selling_price") or 0)
-            
-            db.update("stock_items", item_id, {
-                "cost_price": cost,
-                "selling_price": selling
-            })
-        except:
-            pass
-        
-        return redirect("/settings/cleanup/stock")
-    
-    cost = float(item.get("cost_price") or 0)
-    selling = float(item.get("selling_price") or 0)
-    
-    # Calculate suggested using simple math - no PricingEngine
-    if cost > 0:
-        suggested_price = round(cost * 1.35, 2)
-    elif selling > 0:
-        suggested_price = round(selling / 1.35, 2)  # Estimate cost
-    else:
-        suggested_price = 0
-    
-    content = f'''
-    <div class="mb-lg">
-        <a href="/settings/cleanup/stock" class="text-muted">← Stock Cleanup</a>
-        <h1>Fix: {safe_string(item.get("description") or "Unknown")}</h1>
-    </div>
-    
-    <div class="card" style="max-width: 500px;">
-        <form method="POST">
-            <div class="form-group">
-                <label class="form-label">Cost Price</label>
-                <input type="number" name="cost_price" class="form-input" value="{cost:.2f}" step="0.01">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Selling Price</label>
-                <input type="number" name="selling_price" class="form-input" value="{selling if selling > 0 else suggested_price:.2f}" step="0.01">
-                <small class="text-muted">Suggested (35% markup): R {suggested_price:.2f}</small>
-            </div>
-            <div class="btn-group">
-                <button type="submit" class="btn btn-primary">Save</button>
-                <a href="/settings/cleanup/stock" class="btn btn-ghost">Cancel</a>
-            </div>
-        </form>
-    </div>
-    '''
-    
-    return page_wrapper("Fix Stock Item", content, user=user)
-
-
-@app.route("/settings/cleanup/stock/fix-all")
-def cleanup_stock_fix_all():
-    """
-    Fix all stock items with missing/bad prices - BATCH MODE
-    Processes in chunks to avoid timeout
-    """
-    user = UserSession.get_current_user()
-    if not user:
-        return redirect("/login")
-    
-    try:
-        stock = db.select("stock_items") or []
-        
-        # Build all updates first, then batch execute
-        updates_needed = []
-        
-        for item in stock:
-            try:
-                item_id = item.get("id")
-                if not item_id:
-                    continue
-                    
-                cost = float(item.get("cost_price") or 0)
-                selling = float(item.get("selling_price") or 0)
-                
-                # Determine what needs fixing
-                if cost > 0 and selling <= 0:
-                    # Has cost, needs selling (35% markup)
-                    updates_needed.append({
-                        "id": item_id,
-                        "selling_price": round(cost * 1.35, 2)
-                    })
-                elif selling > 0 and cost <= 0:
-                    # Has selling, needs cost (reverse 35%)
-                    updates_needed.append({
-                        "id": item_id,
-                        "cost_price": round(selling / 1.35, 2)
-                    })
-                elif cost > 0 and selling > 0 and selling < cost:
-                    # Selling below cost - fix it
-                    updates_needed.append({
-                        "id": item_id,
-                        "selling_price": round(cost * 1.35, 2)
-                    })
-            except:
+            item = db.select_one("stock_items", item_id)
+            if not item:
                 continue
-        
-        # Now batch update - one call per item but fast
-        fixed = 0
-        errors = 0
-        
-        for upd in updates_needed:
-            try:
-                item_id = upd.pop("id")
-                success, _ = db.update("stock_items", item_id, upd)
+            
+            cost = float(item.get("cost_price") or 0)
+            selling = float(item.get("selling_price") or 0)
+            
+            updates = {}
+            
+            if action == "markup_cost" and cost > 0:
+                # Set selling = cost * markup
+                updates["selling_price"] = round(cost * multiplier, 2)
+            elif action == "markup_cost" and cost <= 0 and selling > 0:
+                # No cost but has selling - estimate cost first, then recalc selling
+                est_cost = round(selling / multiplier, 2)
+                updates["cost_price"] = est_cost
+                updates["selling_price"] = round(est_cost * multiplier, 2)
+            elif action == "set_cost" and selling > 0:
+                # Set cost = selling / markup
+                updates["cost_price"] = round(selling / multiplier, 2)
+            
+            if updates:
+                success, _ = db.update("stock_items", item_id, updates)
                 if success:
                     fixed += 1
                 else:
                     errors += 1
-            except:
-                errors += 1
-        
-        session["cleanup_message"] = f"✓ Fixed {fixed} items!" + (f" ({errors} errors)" if errors > 0 else "")
-        
-    except Exception as e:
-        session["cleanup_message"] = f"Error: {str(e)}"
+        except:
+            errors += 1
     
+    session["cleanup_message"] = f"✓ Updated {fixed} items with {markup}% markup" + (f" ({errors} errors)" if errors > 0 else "")
     return redirect("/settings/cleanup/stock")
-
-
-@app.route("/settings/cleanup/stock/fix-all-ajax")
-def cleanup_stock_fix_all_ajax():
-    """
-    AJAX endpoint for batch fixing with progress - handles large datasets
-    Returns JSON with progress updates
-    """
-    user = UserSession.get_current_user()
-    if not user:
-        return jsonify({"error": "Not logged in"})
-    
-    try:
-        stock = db.select("stock_items") or []
-        total = len(stock)
-        fixed = 0
-        errors = 0
-        
-        for item in stock:
-            try:
-                item_id = item.get("id")
-                if not item_id:
-                    continue
-                    
-                cost = float(item.get("cost_price") or 0)
-                selling = float(item.get("selling_price") or 0)
-                
-                updates = {}
-                
-                if cost > 0 and selling <= 0:
-                    updates["selling_price"] = round(cost * 1.35, 2)
-                elif selling > 0 and cost <= 0:
-                    updates["cost_price"] = round(selling / 1.35, 2)
-                elif cost > 0 and selling > 0 and selling < cost:
-                    updates["selling_price"] = round(cost * 1.35, 2)
-                
-                if updates:
-                    success, _ = db.update("stock_items", item_id, updates)
-                    if success:
-                        fixed += 1
-                    else:
-                        errors += 1
-            except:
-                errors += 1
-        
-        return jsonify({
-            "success": True,
-            "total": total,
-            "fixed": fixed,
-            "errors": errors,
-            "message": f"Fixed {fixed} items!" + (f" ({errors} errors)" if errors > 0 else "")
-        })
-        
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
 
 
 @app.route("/settings/cleanup/suppliers")
