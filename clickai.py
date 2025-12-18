@@ -14829,7 +14829,7 @@ def settings_cleanup():
 
 @app.route("/settings/cleanup/stock")
 def cleanup_stock():
-    """Stock cleanup - bulk selection with user-chosen markup"""
+    """Stock cleanup - bulk selection with user-chosen markup - BATCH PROCESSING"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
@@ -14838,7 +14838,7 @@ def cleanup_stock():
     message_html = f'<div class="alert alert-info mb-lg">{message}</div>' if message else ""
     
     # Get filter from query string
-    filter_type = request.args.get("filter", "all")  # all, no_cost, no_selling, below_cost
+    filter_type = request.args.get("filter", "all")
     
     try:
         stock = db.select("stock_items", order="description") or []
@@ -14858,7 +14858,6 @@ def cleanup_stock():
         elif filter_type == "below_cost" and cost > 0 and selling < cost:
             filtered.append(item)
         elif filter_type == "all":
-            # Show items with any issue
             if cost <= 0 or selling <= 0 or (cost > 0 and selling < cost):
                 filtered.append(item)
     
@@ -14867,13 +14866,13 @@ def cleanup_stock():
     no_selling_count = sum(1 for s in stock if float(s.get("selling_price") or 0) <= 0)
     below_cost_count = sum(1 for s in stock if float(s.get("cost_price") or 0) > 0 and float(s.get("selling_price") or 0) < float(s.get("cost_price") or 0))
     
-    # Build table rows with checkboxes
+    # Build table rows with checkboxes - limit display to 500 for performance
+    display_items = filtered[:500]
     rows_html = ""
-    for item in filtered:
+    for item in display_items:
         cost = float(item.get("cost_price") or 0)
         selling = float(item.get("selling_price") or 0)
         
-        # Determine issue
         if cost <= 0 and selling <= 0:
             issue = '<span class="badge badge-red">No prices</span>'
         elif cost <= 0:
@@ -14899,47 +14898,67 @@ def cleanup_stock():
     if not rows_html:
         rows_html = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:40px;">No items match this filter 🎉</td></tr>'
     
+    showing_note = f'<p class="text-muted">Showing {len(display_items)} of {len(filtered)} items</p>' if len(filtered) > 500 else ""
+    
     content = f'''
     {message_html}
     
     <div class="mb-lg">
         <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
         <h1>📦 Stock Price Editor</h1>
-        <p class="text-muted">Select items, choose markup, click Apply</p>
+        <p class="text-muted">Select items, choose markup, click Apply (processes in small batches)</p>
     </div>
     
     <div class="btn-group mb-lg">
-        <a href="/settings/cleanup/stock?filter=all" class="btn {"btn-primary" if filter_type == "all" else "btn-ghost"}">All Issues ({len(filtered) if filter_type == "all" else no_cost_count + no_selling_count + below_cost_count})</a>
+        <a href="/settings/cleanup/stock?filter=all" class="btn {"btn-primary" if filter_type == "all" else "btn-ghost"}">All Issues ({no_cost_count + no_selling_count + below_cost_count})</a>
         <a href="/settings/cleanup/stock?filter=no_cost" class="btn {"btn-primary" if filter_type == "no_cost" else "btn-ghost"}">No Cost ({no_cost_count})</a>
         <a href="/settings/cleanup/stock?filter=no_selling" class="btn {"btn-primary" if filter_type == "no_selling" else "btn-ghost"}">No Selling ({no_selling_count})</a>
         <a href="/settings/cleanup/stock?filter=below_cost" class="btn {"btn-primary" if filter_type == "below_cost" else "btn-ghost"}">Below Cost ({below_cost_count})</a>
     </div>
     
-    <form method="POST" action="/settings/cleanup/stock/bulk-update" id="bulk-form">
+    <!-- Progress bar (hidden initially) -->
+    <div id="progress-container" style="display:none;" class="card mb-lg">
+        <div style="display:flex;align-items:center;gap:16px;">
+            <div style="flex:1;">
+                <div style="background:#1a1a2e;border-radius:8px;height:24px;overflow:hidden;">
+                    <div id="progress-bar" style="background:linear-gradient(90deg,#10b981,#22c55e);height:100%;width:0%;transition:width 0.3s;"></div>
+                </div>
+            </div>
+            <div id="progress-text" style="min-width:120px;text-align:right;">0 / 0</div>
+        </div>
+        <p id="progress-status" class="text-muted mt-md">Starting...</p>
+    </div>
+    
+    <form id="bulk-form">
         <div class="card mb-lg" style="background: #1a1a2e; padding: 16px;">
-            <div class="flex-between" style="flex-wrap: wrap; gap: 12px;">
+            <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
                 <div class="btn-group">
                     <button type="button" class="btn btn-ghost btn-sm" onclick="selectAll()">Select All</button>
                     <button type="button" class="btn btn-ghost btn-sm" onclick="selectNone()">Select None</button>
+                </div>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(0, 2)">Under R2</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(0, 5)">Under R5</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(0, 10)">Under R10</button>
                     <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(0, 25)">Under R25</button>
                     <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(25, 100)">R25-R100</button>
-                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(100, 500)">R100-R500</button>
-                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(500, 99999)">Over R500</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="selectByPrice(100, 9999)">Over R100</button>
                 </div>
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span id="selected-count" style="color: #8b8b9a;">0 selected</span>
-                    <select name="action" class="form-select" style="width: auto;">
-                        <option value="markup_cost">Set Selling from Cost + Markup %</option>
-                        <option value="set_cost">Set Cost from Selling ÷ Markup</option>
-                    </select>
-                    <input type="number" name="markup" class="form-input" value="35" style="width: 80px;" min="1" max="200">
-                    <span>%</span>
-                    <button type="submit" class="btn btn-green">Apply to Selected</button>
-                </div>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:12px;">
+                <span id="selected-count" style="color: #8b8b9a;">0 selected</span>
+                <select id="action-select" class="form-select" style="width: auto;">
+                    <option value="markup_cost">Set Selling = Cost + Markup %</option>
+                    <option value="set_cost">Set Cost = Selling ÷ Markup</option>
+                </select>
+                <input type="number" id="markup-input" class="form-input" value="50" style="width: 70px;" min="1" max="500">
+                <span>%</span>
+                <button type="button" class="btn btn-green" onclick="startBatchUpdate()">Apply to Selected</button>
             </div>
         </div>
         
         <div class="card">
+            {showing_note}
             <table class="table">
                 <thead>
                     <tr>
@@ -14988,64 +15007,133 @@ def cleanup_stock():
     }}
     
     document.querySelectorAll('.item-check').forEach(cb => cb.addEventListener('change', updateCount));
+    
+    async function startBatchUpdate() {{
+        const checked = document.querySelectorAll('.item-check:checked');
+        if (checked.length === 0) {{
+            alert('Please select some items first');
+            return;
+        }}
+        
+        const itemIds = Array.from(checked).map(cb => cb.value);
+        const action = document.getElementById('action-select').value;
+        const markup = document.getElementById('markup-input').value;
+        
+        // Show progress
+        document.getElementById('progress-container').style.display = 'block';
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const progressStatus = document.getElementById('progress-status');
+        
+        const batchSize = 15;  // Process 15 at a time
+        const total = itemIds.length;
+        let processed = 0;
+        let success = 0;
+        let errors = 0;
+        
+        progressStatus.textContent = 'Processing...';
+        
+        // Process in batches
+        for (let i = 0; i < total; i += batchSize) {{
+            const batch = itemIds.slice(i, i + batchSize);
+            
+            try {{
+                const response = await fetch('/settings/cleanup/stock/batch-update', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ items: batch, action: action, markup: markup }})
+                }});
+                
+                const result = await response.json();
+                success += result.success || 0;
+                errors += result.errors || 0;
+            }} catch (e) {{
+                errors += batch.length;
+            }}
+            
+            processed += batch.length;
+            const pct = Math.round((processed / total) * 100);
+            progressBar.style.width = pct + '%';
+            progressText.textContent = processed + ' / ' + total;
+            progressStatus.textContent = 'Updated ' + success + ' items...';
+            
+            // Small delay to not overwhelm server
+            await new Promise(r => setTimeout(r, 100));
+        }}
+        
+        progressStatus.textContent = '✓ Done! Updated ' + success + ' items' + (errors > 0 ? ' (' + errors + ' errors)' : '');
+        progressBar.style.background = 'linear-gradient(90deg,#10b981,#22c55e)';
+        
+        // Refresh after 2 seconds
+        setTimeout(() => location.reload(), 2000);
+    }}
     </script>
     '''
     
     return page_wrapper("Stock Cleanup", content, user=user)
 
 
+@app.route("/settings/cleanup/stock/batch-update", methods=["POST"])
+def cleanup_stock_batch_update():
+    """Process a small batch of stock updates - called via AJAX"""
+    user = UserSession.get_current_user()
+    if not user:
+        return jsonify({"error": "Not logged in"})
+    
+    try:
+        data = request.get_json()
+        item_ids = data.get("items", [])
+        action = data.get("action", "markup_cost")
+        markup = float(data.get("markup", 35) or 35)
+        
+        success_count = 0
+        error_count = 0
+        multiplier = 1 + (markup / 100)
+        
+        for item_id in item_ids:
+            try:
+                item = db.select_one("stock_items", item_id)
+                if not item:
+                    continue
+                
+                cost = float(item.get("cost_price") or 0)
+                selling = float(item.get("selling_price") or 0)
+                
+                updates = {}
+                
+                if action == "markup_cost":
+                    if cost > 0:
+                        updates["selling_price"] = round(cost * multiplier, 2)
+                    elif selling > 0:
+                        est_cost = round(selling / multiplier, 2)
+                        updates["cost_price"] = est_cost
+                        updates["selling_price"] = round(est_cost * multiplier, 2)
+                elif action == "set_cost" and selling > 0:
+                    updates["cost_price"] = round(selling / multiplier, 2)
+                
+                if updates:
+                    ok, _ = db.update("stock_items", item_id, updates)
+                    if ok:
+                        success_count += 1
+                    else:
+                        error_count += 1
+            except:
+                error_count += 1
+        
+        return jsonify({"success": success_count, "errors": error_count})
+        
+    except Exception as e:
+        return jsonify({"error": str(e), "success": 0, "errors": len(item_ids) if 'item_ids' in dir() else 0})
+
+
 @app.route("/settings/cleanup/stock/bulk-update", methods=["POST"])
 def cleanup_stock_bulk_update():
-    """Apply markup to selected items"""
+    """Fallback for non-JS form submit"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
-    item_ids = request.form.getlist("items")
-    action = request.form.get("action", "markup_cost")
-    markup = float(request.form.get("markup", 35) or 35)
-    
-    if not item_ids:
-        session["cleanup_message"] = "No items selected"
-        return redirect("/settings/cleanup/stock")
-    
-    fixed = 0
-    errors = 0
-    multiplier = 1 + (markup / 100)  # 35% = 1.35
-    
-    for item_id in item_ids:
-        try:
-            item = db.select_one("stock_items", item_id)
-            if not item:
-                continue
-            
-            cost = float(item.get("cost_price") or 0)
-            selling = float(item.get("selling_price") or 0)
-            
-            updates = {}
-            
-            if action == "markup_cost" and cost > 0:
-                # Set selling = cost * markup
-                updates["selling_price"] = round(cost * multiplier, 2)
-            elif action == "markup_cost" and cost <= 0 and selling > 0:
-                # No cost but has selling - estimate cost first, then recalc selling
-                est_cost = round(selling / multiplier, 2)
-                updates["cost_price"] = est_cost
-                updates["selling_price"] = round(est_cost * multiplier, 2)
-            elif action == "set_cost" and selling > 0:
-                # Set cost = selling / markup
-                updates["cost_price"] = round(selling / multiplier, 2)
-            
-            if updates:
-                success, _ = db.update("stock_items", item_id, updates)
-                if success:
-                    fixed += 1
-                else:
-                    errors += 1
-        except:
-            errors += 1
-    
-    session["cleanup_message"] = f"✓ Updated {fixed} items with {markup}% markup" + (f" ({errors} errors)" if errors > 0 else "")
+    session["cleanup_message"] = "Please enable JavaScript for batch updates"
     return redirect("/settings/cleanup/stock")
 
 
