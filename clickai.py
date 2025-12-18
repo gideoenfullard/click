@@ -14000,6 +14000,156 @@ def api_pricing_calculate():
         return jsonify({"error": "Invalid input"})
 
 
+@app.route("/settings/company", methods=["GET", "POST"])
+def settings_company():
+    """Company details settings"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    # Get current settings
+    try:
+        settings_row = db.select("settings", filters={"key": "company"}, limit=1)
+        if settings_row:
+            company = json.loads(settings_row[0].get("value", "{}"))
+        else:
+            company = {}
+    except:
+        company = {}
+    
+    if request.method == "POST":
+        try:
+            company = {
+                "name": request.form.get("name", ""),
+                "trading_as": request.form.get("trading_as", ""),
+                "registration": request.form.get("registration", ""),
+                "vat_number": request.form.get("vat_number", ""),
+                "address_line1": request.form.get("address_line1", ""),
+                "address_line2": request.form.get("address_line2", ""),
+                "city": request.form.get("city", ""),
+                "postal_code": request.form.get("postal_code", ""),
+                "phone": request.form.get("phone", ""),
+                "email": request.form.get("email", ""),
+                "bank_name": request.form.get("bank_name", ""),
+                "bank_account": request.form.get("bank_account", ""),
+                "bank_branch": request.form.get("bank_branch", ""),
+            }
+            
+            # Save to database
+            existing = db.select("settings", filters={"key": "company"}, limit=1)
+            if existing:
+                db.update("settings", existing[0]["id"], {"value": json.dumps(company)})
+            else:
+                db.insert("settings", {
+                    "id": generate_id(),
+                    "key": "company",
+                    "value": json.dumps(company),
+                    "created_at": now()
+                })
+            
+            session["settings_message"] = "✓ Company details saved"
+        except Exception as e:
+            session["settings_message"] = f"Error: {str(e)}"
+        
+        return redirect("/settings/company")
+    
+    message = session.pop("settings_message", None)
+    message_html = f'<div class="alert alert-info mb-lg">{message}</div>' if message else ""
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/settings" class="text-muted">← Settings</a>
+        <h1>🏢 Company Details</h1>
+    </div>
+    
+    {message_html}
+    
+    <form method="POST">
+        <div class="grid grid-2">
+            <div class="card">
+                <h3 class="card-title">Business Information</h3>
+                <div class="form-group">
+                    <label class="form-label">Company Name</label>
+                    <input type="text" name="name" class="form-input" value="{safe_string(company.get('name', ''))}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Trading As (if different)</label>
+                    <input type="text" name="trading_as" class="form-input" value="{safe_string(company.get('trading_as', ''))}">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Registration Number</label>
+                        <input type="text" name="registration" class="form-input" value="{safe_string(company.get('registration', ''))}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">VAT Number</label>
+                        <input type="text" name="vat_number" class="form-input" value="{safe_string(company.get('vat_number', ''))}">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3 class="card-title">Contact Details</h3>
+                <div class="form-group">
+                    <label class="form-label">Address Line 1</label>
+                    <input type="text" name="address_line1" class="form-input" value="{safe_string(company.get('address_line1', ''))}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Address Line 2</label>
+                    <input type="text" name="address_line2" class="form-input" value="{safe_string(company.get('address_line2', ''))}">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">City</label>
+                        <input type="text" name="city" class="form-input" value="{safe_string(company.get('city', ''))}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Postal Code</label>
+                        <input type="text" name="postal_code" class="form-input" value="{safe_string(company.get('postal_code', ''))}">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Phone</label>
+                        <input type="text" name="phone" class="form-input" value="{safe_string(company.get('phone', ''))}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Email</label>
+                        <input type="email" name="email" class="form-input" value="{safe_string(company.get('email', ''))}">
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mt-lg" style="max-width: 500px;">
+            <h3 class="card-title">Banking Details</h3>
+            <p class="text-muted mb-md">For invoices and quotes</p>
+            <div class="form-group">
+                <label class="form-label">Bank Name</label>
+                <input type="text" name="bank_name" class="form-input" value="{safe_string(company.get('bank_name', ''))}">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Account Number</label>
+                    <input type="text" name="bank_account" class="form-input" value="{safe_string(company.get('bank_account', ''))}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Branch Code</label>
+                    <input type="text" name="bank_branch" class="form-input" value="{safe_string(company.get('bank_branch', ''))}">
+                </div>
+            </div>
+        </div>
+        
+        <div class="btn-group mt-lg">
+            <button type="submit" class="btn btn-primary">Save Company Details</button>
+            <a href="/settings" class="btn btn-ghost">Cancel</a>
+        </div>
+    </form>
+    '''
+    
+    return page_wrapper("Company Details", content, user=user)
+
+
 # =============================================================================
 # PIECE 14: REVIEW BEFORE POSTING (STAGING SYSTEM)
 # =============================================================================
@@ -14555,9 +14705,11 @@ def cleanup_stock():
         selling = float(item.get("selling_price", 0) or 0)
         
         issue_list = []
-        if cost <= 0:
+        if cost <= 0 and selling <= 0:
+            issue_list.append("No prices at all")
+        elif cost <= 0:
             issue_list.append("No cost price")
-        if selling <= 0:
+        elif selling <= 0:
             issue_list.append("No selling price")
         elif cost > 0 and selling < cost:
             issue_list.append("Selling below cost!")
@@ -14580,10 +14732,27 @@ def cleanup_stock():
     for item in issues:
         issue_badges = " ".join([f'<span class="badge badge-orange">{i}</span>' for i in item["issues"]])
         
-        # Calculate suggested selling price
-        if item["cost"] > 0:
+        # Calculate suggested price - either selling from cost, or cost from selling
+        if item["cost"] > 0 and item["selling"] <= 0:
+            # Has cost, needs selling
             suggested = PricingEngine.calculate_selling_price(Decimal(str(item["cost"])))
-            suggest_html = f'R {float(suggested["selling_price"]):.2f}'
+            suggest_html = f'Sell: R {float(suggested["selling_price"]):.2f}'
+        elif item["selling"] > 0 and item["cost"] <= 0:
+            # Has selling, needs cost - estimate backwards
+            sell = Decimal(str(item["selling"]))
+            if sell < 65:
+                est_cost = sell / Decimal("1.50")
+            elif sell < 270:
+                est_cost = sell / Decimal("1.35")
+            elif sell < 1250:
+                est_cost = sell / Decimal("1.25")
+            else:
+                est_cost = sell / Decimal("1.15")
+            suggest_html = f'Cost: R {float(est_cost.quantize(Decimal("0.01"))):.2f}'
+        elif item["cost"] > 0 and item["selling"] < item["cost"]:
+            # Selling below cost - suggest correct selling
+            suggested = PricingEngine.calculate_selling_price(Decimal(str(item["cost"])))
+            suggest_html = f'Sell: R {float(suggested["selling_price"]):.2f}'
         else:
             suggest_html = '-'
         
@@ -14701,15 +14870,33 @@ def cleanup_stock_fix_all():
                 
                 updates = {}
                 
-                # If no selling price but has cost, calculate it
+                # CASE 1: Has cost but no selling price → calculate selling from cost
                 if cost > 0 and selling <= 0:
                     suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
                     updates["selling_price"] = float(suggested["selling_price"])
                 
-                # If selling below cost, fix it
-                if cost > 0 and selling > 0 and selling < cost:
+                # CASE 2: Has selling but no cost price → calculate cost from selling (reverse)
+                # Assume ~30% margin, so cost = selling / 1.30
+                elif selling > 0 and cost <= 0:
+                    # Estimate cost based on typical markup
+                    if selling < 65:  # Would be under R50 cost with 30% markup
+                        estimated_cost = selling / Decimal("1.50")  # 50% markup tier
+                    elif selling < 270:  # Would be under R200 cost
+                        estimated_cost = selling / Decimal("1.35")  # 35% markup tier
+                    elif selling < 1250:  # Would be under R1000 cost
+                        estimated_cost = selling / Decimal("1.25")  # 25% markup tier
+                    else:
+                        estimated_cost = selling / Decimal("1.15")  # 15% markup tier
+                    
+                    updates["cost_price"] = float(Decimal(str(estimated_cost)).quantize(Decimal("0.01")))
+                
+                # CASE 3: Selling below cost → fix selling price
+                elif cost > 0 and selling > 0 and selling < cost:
                     suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
                     updates["selling_price"] = float(suggested["selling_price"])
+                
+                # CASE 4: Both zero → can't fix automatically
+                # Skip these
                 
                 if updates:
                     success, _ = db.update("stock_items", item["id"], updates)
@@ -14722,7 +14909,7 @@ def cleanup_stock_fix_all():
                 continue
         
         # Store result in session for display
-        session["cleanup_message"] = f"Fixed {fixed} items" + (f", {errors} errors" if errors > 0 else "")
+        session["cleanup_message"] = f"✓ Fixed {fixed} items" + (f", {errors} errors" if errors > 0 else "")
         
     except Exception as e:
         session["cleanup_message"] = f"Error: {str(e)}"
