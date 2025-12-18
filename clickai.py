@@ -8716,14 +8716,29 @@ function searchStock(q) {
         results.innerHTML = '';
         return;
     }
-    q = q.toLowerCase();
+    
+    // Split search into words for flexible matching
+    // "m10 cap" will match "cap screw m10 x30" because both words are present
+    const searchWords = q.toLowerCase().split(/\\s+/).filter(w => w.length > 0);
+    
     let html = '';
     for (const item of stockItems) {
-        if (item.description.toLowerCase().includes(q) || (item.code || '').toLowerCase().includes(q)) {
-            html += '<div class="product-item" style="margin-bottom:5px;padding:10px;" onclick=\\'addLine(\"'+item.id+'\")\\'>'+escHtml(item.description)+' - '+item.price_formatted+'</div>';
+        const desc = item.description.toLowerCase();
+        const code = (item.code || '').toLowerCase();
+        
+        // Check if ALL search words are found in description or code
+        const allWordsMatch = searchWords.every(word => 
+            desc.includes(word) || code.includes(word)
+        );
+        
+        if (allWordsMatch) {
+            html += '<div class="product-item" style="margin-bottom:5px;padding:10px;cursor:pointer;" onclick="addLine(\\'' + item.id + '\\')">';
+            html += '<strong>' + escHtml(item.code || '') + '</strong> ';
+            html += escHtml(item.description) + ' - ' + item.price_formatted;
+            html += '</div>';
         }
     }
-    results.innerHTML = html || '<div style="padding:10px;color:#606070;">No matches</div>';
+    results.innerHTML = html || '<div style="padding:10px;color:#606070;">No matches - try different words</div>';
 }
 
 function addLine(itemId) {
@@ -11244,21 +11259,33 @@ def process_supplier_invoice(data):
             qty = int(item.get("qty", 0) or 0) or 1
             unit_price = Money.parse(item.get("unit_price", 0))
             
-            # Find existing stock item (smart matching)
+            # Find existing stock item (smart word-by-word matching)
             stock_item = None
             desc_lower = desc.lower()
+            desc_words = set(desc_lower.split())  # Split "m10 x30 cap screw" into words
             
             for s in all_stock:
                 # Try code match first (most reliable)
                 if code and s.get("code", "").lower() == code.lower():
                     stock_item = s
                     break
+                
+                s_desc = s.get("description", "").lower()
+                s_words = set(s_desc.split())
+                
                 # Try exact description match
-                if s.get("description", "").lower() == desc_lower:
+                if s_desc == desc_lower:
                     stock_item = s
                     break
-                # Try fuzzy description match (one contains the other)
-                s_desc = s.get("description", "").lower()
+                
+                # Word-by-word matching - if 2+ words match, it's likely the same item
+                # "m10 x30 cap screw" matches "cap screw m10" or "m10 cap screw grade 8"
+                matching_words = desc_words & s_words  # Intersection of word sets
+                if len(matching_words) >= 2 and len(matching_words) >= len(desc_words) * 0.5:
+                    stock_item = s
+                    break
+                
+                # Also try if one contains the other (handles partial matches)
                 if len(desc_lower) > 5 and (desc_lower in s_desc or s_desc in desc_lower):
                     stock_item = s
                     break
@@ -11305,18 +11332,21 @@ def process_supplier_invoice(data):
                     "cost_price": float(unit_price),
                     "selling_price": float(selling_price),
                     "category": "general",
-                    "supplier_id": supplier_id,  # Link to supplier
                     "reorder_level": max(1, qty // 4),  # Auto-set reorder level
                     "active": True,
                     "created_at": now()
                 }
-                db.insert("stock_items", new_item)
                 
-                # Add to all_stock so next items can find it (avoid duplicates in same invoice)
-                all_stock.append(new_item)
-                
-                items_created += 1
-                stock_booked.append({"name": f"NEW: {desc[:20]}", "value": f"+{qty}"})
+                # Insert and check result
+                success, result = db.insert("stock_items", new_item)
+                if success:
+                    # Add to all_stock so next items can find it (avoid duplicates in same invoice)
+                    all_stock.append(new_item)
+                    items_created += 1
+                    stock_booked.append({"name": f"NEW: {desc[:20]}", "value": f"+{qty}"})
+                else:
+                    # Log error but continue processing other items
+                    stock_booked.append({"name": f"ERR: {desc[:20]}", "value": str(result)[:15]})
         
         # 4. Record expense
         expense_id = generate_id()
