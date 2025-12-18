@@ -4593,6 +4593,8 @@ def get_header_html(active: str = "", user: dict = None) -> str:
         ("expenses", "Expenses", "/expenses"),
         ("payroll", "Payroll", "/payroll"),
         ("reports", "Reports", "/reports"),
+        ("staging", "📋 Review", "/staging"),
+        ("settings", "⚙️", "/settings"),
     ]
     
     nav_html = ""
@@ -10920,7 +10922,7 @@ SCANNER_HTML = '''<!DOCTYPE html>
         <div class="result-details" id="result-details"></div>
         <div class="result-items" id="result-items"></div>
         <div class="result-amount" id="result-amount"></div>
-        <button class="result-btn" onclick="closeResult()">Done</button>
+        <div id="done-btn"><button class="result-btn" onclick="closeResult()">Done</button></div>
     </div>
     
     <script>
@@ -11009,6 +11011,14 @@ SCANNER_HTML = '''<!DOCTYPE html>
                 amount.style.display = 'block';
             } else {
                 amount.style.display = 'none';
+            }
+            
+            // Add review button if staged
+            const doneBtn = document.getElementById('done-btn');
+            if (data.staged && data.review_url) {
+                doneBtn.innerHTML = '<a href="' + data.review_url + '" style="display:block;width:100%;padding:16px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;text-decoration:none;border-radius:12px;font-weight:600;text-align:center;">Review & Approve</a>';
+            } else {
+                doneBtn.innerHTML = '<button onclick="closeResult()" style="width:100%;padding:16px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:12px;font-weight:600;cursor:pointer;">Done</button>';
             }
             
         } else {
@@ -11159,17 +11169,79 @@ Return ONLY valid JSON:
         except:
             return jsonify({"success": False, "error": "Could not understand document format."})
         
+        # Check if staging is enabled (default: yes for safety)
+        use_staging = request.args.get("direct") != "yes"
+        
         # Process based on type
         if scan_type == "cos":
+            if use_staging:
+                return stage_transaction("supplier_invoice", parsed)
             return process_supplier_invoice(parsed)
         elif scan_type == "exp":
+            if use_staging:
+                return stage_transaction("expense", parsed)
             return process_expense_receipt(parsed)
         elif scan_type == "stock":
-            return process_stock_count(parsed)
+            return process_stock_count(parsed)  # Stock count is always direct
         elif scan_type == "payment":
-            return process_customer_payment(parsed)
+            return process_customer_payment(parsed)  # Payments are always direct
         
         return jsonify({"success": False, "error": "Unknown scan type"})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+def stage_transaction(trans_type: str, data: dict):
+    """
+    Stage a transaction for review instead of posting directly.
+    User must approve before it touches real data.
+    """
+    try:
+        staged_id = generate_id()
+        
+        db.insert("staged_transactions", {
+            "id": staged_id,
+            "type": trans_type,
+            "data": json.dumps(data),
+            "status": "pending",
+            "created_at": now()
+        })
+        
+        # Return success with redirect to review
+        if trans_type == "supplier_invoice":
+            title = "Ready for Review!"
+            supplier = data.get("supplier", "Unknown")
+            total = Money.parse(data.get("total", 0))
+            items_count = len(data.get("items", []))
+            
+            return jsonify({
+                "success": True,
+                "staged": True,
+                "title": title,
+                "badge": "NEEDS REVIEW",
+                "badge_type": "review",
+                "details": f"<strong>{supplier}</strong><br>Invoice: {data.get('invoice_no', 'Not visible')}<br>{items_count} items",
+                "amount": f"R {float(total):,.2f}",
+                "review_url": f"/staging/{staged_id}",
+                "items": [{"name": item.get("description", "")[:25], "value": f"x{item.get('qty', 1)}"} for item in data.get("items", [])[:5]]
+            })
+        
+        elif trans_type == "expense":
+            title = "Ready for Review!"
+            vendor = data.get("vendor", "Unknown")
+            total = Money.parse(data.get("total", 0))
+            
+            return jsonify({
+                "success": True,
+                "staged": True,
+                "title": title,
+                "badge": "NEEDS REVIEW",
+                "badge_type": "review",
+                "details": f"<strong>{vendor}</strong><br>{data.get('description', '')}",
+                "amount": f"R {float(total):,.2f}",
+                "review_url": f"/staging/{staged_id}"
+            })
         
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
@@ -11256,8 +11328,26 @@ def process_supplier_invoice(data):
         for item in items:
             desc = item.get("description", "Unknown Item").strip()
             code = item.get("code", "").strip()
-            qty = int(item.get("qty", 0) or 0) or 1
-            unit_price = Money.parse(item.get("unit_price", 0))
+            qty = int(item.get("qty", 0) or item.get("quantity", 0) or 0) or 1
+            
+            # Get price - could be unit_price or line_total
+            raw_price = Money.parse(item.get("unit_price", 0) or item.get("price", 0) or item.get("amount", 0))
+            line_total = Money.parse(item.get("line_total", 0) or item.get("total", 0))
+            
+            # If we have line_total but not unit_price, calculate unit price
+            if line_total > 0 and (raw_price <= 0 or raw_price == line_total):
+                unit_price = (line_total / Decimal(str(qty))).quantize(Decimal("0.01"))
+            elif raw_price > 0:
+                # Check if raw_price looks like a line total (much higher than expected unit price)
+                # If price * qty would be unreasonably high, it's probably already a line total
+                if raw_price > 100 and qty > 1 and raw_price > (total / Decimal(str(len(items) or 1)) * Decimal("0.5")):
+                    # This looks like a line total, not unit price
+                    unit_price = (raw_price / Decimal(str(qty))).quantize(Decimal("0.01"))
+                else:
+                    unit_price = raw_price
+            else:
+                # Fallback: estimate from invoice total
+                unit_price = (total / Decimal(str(len(items) or 1)) / Decimal(str(qty))).quantize(Decimal("0.01"))
             
             # Find existing stock item (smart word-by-word matching)
             stock_item = None
@@ -11293,10 +11383,33 @@ def process_supplier_invoice(data):
             if stock_item:
                 # Update quantity and cost price
                 new_qty = stock_item.get("quantity", 0) + qty
-                db.update("stock_items", stock_item["id"], {
-                    "quantity": new_qty,
-                    "cost_price": float(unit_price)
-                })
+                
+                # Also update selling price if cost changed significantly
+                old_cost = Decimal(str(stock_item.get("cost_price", 0) or 0))
+                if old_cost <= 0 or abs(unit_price - old_cost) / max(old_cost, Decimal("1")) > Decimal("0.1"):
+                    # Cost changed by more than 10% or was zero - recalculate selling price
+                    if unit_price < 50:
+                        markup = Decimal("1.50")
+                    elif unit_price < 200:
+                        markup = Decimal("1.35")
+                    elif unit_price < 1000:
+                        markup = Decimal("1.25")
+                    else:
+                        markup = Decimal("1.15")
+                    new_selling = (unit_price * markup).quantize(Decimal("0.01"))
+                    
+                    db.update("stock_items", stock_item["id"], {
+                        "quantity": new_qty,
+                        "cost_price": float(unit_price),
+                        "selling_price": float(new_selling)
+                    })
+                else:
+                    # Just update quantity and cost
+                    db.update("stock_items", stock_item["id"], {
+                        "quantity": new_qty,
+                        "cost_price": float(unit_price)
+                    })
+                
                 items_updated += 1
                 stock_booked.append({"name": desc[:25], "value": f"+{qty}"})
             else:
@@ -13463,6 +13576,1210 @@ def payroll_employee_edit(emp_id):
     '''
     
     return page_wrapper("Edit Employee", content, user=user)
+
+
+# =============================================================================
+# PIECE 13: SETTINGS & PRICING SYSTEM
+# =============================================================================
+
+"""
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   CLICK AI - SETTINGS & PRICING SYSTEM                                       ║
+║                                                                               ║
+║   Phase 1: Pricing Settings                                                   ║
+║   - Default markup rules by price tier                                        ║
+║   - Category-specific markup overrides                                        ║
+║   - Minimum margin warnings                                                   ║
+║   - Central pricing function used everywhere                                  ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRICING ENGINE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class PricingEngine:
+    """
+    Central pricing calculator used by all stock operations.
+    Retrieves settings from database, falls back to defaults.
+    """
+    
+    # Default markup tiers (used if no settings in database)
+    DEFAULT_TIERS = [
+        {"max_cost": 50, "markup_pct": 50},      # Under R50: 50% markup
+        {"max_cost": 200, "markup_pct": 35},     # R50-R200: 35% markup
+        {"max_cost": 1000, "markup_pct": 25},    # R200-R1000: 25% markup
+        {"max_cost": None, "markup_pct": 15},    # Over R1000: 15% markup
+    ]
+    
+    # Default category overrides
+    DEFAULT_CATEGORY_MARKUPS = {
+        "fuel": 10,           # Fuel has thin margins
+        "fasteners": 45,      # Small items, higher markup
+        "safety": 50,         # PPE and safety gear
+        "consumables": 40,    # Welding rods, etc.
+        "general": None,      # Use tier-based pricing
+    }
+    
+    DEFAULT_MIN_MARGIN = 10  # Warn if margin below 10%
+    
+    @classmethod
+    def get_settings(cls) -> dict:
+        """Get pricing settings from database or defaults"""
+        try:
+            settings = db.select("settings", filters={"key": "pricing"}, limit=1)
+            if settings:
+                return json.loads(settings[0].get("value", "{}"))
+        except:
+            pass
+        
+        return {
+            "tiers": cls.DEFAULT_TIERS,
+            "category_markups": cls.DEFAULT_CATEGORY_MARKUPS,
+            "min_margin": cls.DEFAULT_MIN_MARGIN
+        }
+    
+    @classmethod
+    def save_settings(cls, settings: dict) -> bool:
+        """Save pricing settings to database"""
+        try:
+            existing = db.select("settings", filters={"key": "pricing"}, limit=1)
+            if existing:
+                db.update("settings", existing[0]["id"], {"value": json.dumps(settings)})
+            else:
+                db.insert("settings", {
+                    "id": generate_id(),
+                    "key": "pricing",
+                    "value": json.dumps(settings),
+                    "created_at": now()
+                })
+            return True
+        except:
+            return False
+    
+    @classmethod
+    def calculate_selling_price(cls, cost_price: Decimal, category: str = "general") -> dict:
+        """
+        Calculate selling price from cost price.
+        
+        Args:
+            cost_price: The cost/purchase price
+            category: Stock category (for category-specific markups)
+            
+        Returns:
+            Dict with selling_price, markup_pct, margin_pct, warning
+        """
+        cost = Decimal(str(cost_price))
+        if cost <= 0:
+            return {
+                "selling_price": Decimal("0"),
+                "markup_pct": 0,
+                "margin_pct": 0,
+                "warning": "No cost price set"
+            }
+        
+        settings = cls.get_settings()
+        
+        # Check for category-specific markup first
+        category_markups = settings.get("category_markups", cls.DEFAULT_CATEGORY_MARKUPS)
+        category_lower = (category or "general").lower()
+        
+        markup_pct = category_markups.get(category_lower)
+        
+        # If no category markup, use tier-based pricing
+        if markup_pct is None:
+            tiers = settings.get("tiers", cls.DEFAULT_TIERS)
+            for tier in tiers:
+                max_cost = tier.get("max_cost")
+                if max_cost is None or cost <= Decimal(str(max_cost)):
+                    markup_pct = tier.get("markup_pct", 25)
+                    break
+        
+        # Calculate selling price
+        markup_multiplier = Decimal("1") + Decimal(str(markup_pct)) / Decimal("100")
+        selling_price = (cost * markup_multiplier).quantize(Decimal("0.01"))
+        
+        # Calculate actual margin percentage
+        margin_pct = ((selling_price - cost) / selling_price * 100).quantize(Decimal("0.1"))
+        
+        # Check for warning
+        min_margin = settings.get("min_margin", cls.DEFAULT_MIN_MARGIN)
+        warning = None
+        if margin_pct < min_margin:
+            warning = f"Margin {margin_pct}% is below minimum {min_margin}%"
+        
+        return {
+            "selling_price": selling_price,
+            "markup_pct": markup_pct,
+            "margin_pct": float(margin_pct),
+            "warning": warning
+        }
+    
+    @classmethod
+    def check_margin(cls, cost_price: Decimal, selling_price: Decimal) -> dict:
+        """
+        Check if a cost/selling price combo has acceptable margin.
+        
+        Returns:
+            Dict with margin_pct, is_ok, warning
+        """
+        cost = Decimal(str(cost_price))
+        sell = Decimal(str(selling_price))
+        
+        if sell <= 0:
+            return {"margin_pct": 0, "is_ok": False, "warning": "No selling price"}
+        if cost <= 0:
+            return {"margin_pct": 100, "is_ok": True, "warning": "No cost price set"}
+        
+        margin_pct = ((sell - cost) / sell * 100).quantize(Decimal("0.1"))
+        
+        settings = cls.get_settings()
+        min_margin = settings.get("min_margin", cls.DEFAULT_MIN_MARGIN)
+        
+        if margin_pct < 0:
+            return {"margin_pct": float(margin_pct), "is_ok": False, "warning": "Selling BELOW cost!"}
+        elif margin_pct < min_margin:
+            return {"margin_pct": float(margin_pct), "is_ok": False, "warning": f"Below {min_margin}% minimum"}
+        
+        return {"margin_pct": float(margin_pct), "is_ok": True, "warning": None}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SETTINGS ROUTES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/settings")
+def settings_home():
+    """Settings dashboard"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    content = '''
+    <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">⚙️ Settings</h1>
+    
+    <div class="report-grid">
+        <a href="/settings/pricing" class="report-card">
+            <div class="report-card-icon">💰</div>
+            <h3 class="report-card-title">Pricing & Markup</h3>
+            <p class="report-card-desc">Default markups, category pricing, minimum margins</p>
+        </a>
+        <a href="/settings/company" class="report-card">
+            <div class="report-card-icon">🏢</div>
+            <h3 class="report-card-title">Company Details</h3>
+            <p class="report-card-desc">Business name, VAT number, contact info</p>
+        </a>
+        <a href="/settings/cleanup" class="report-card" style="border-color: var(--orange);">
+            <div class="report-card-icon">🧹</div>
+            <h3 class="report-card-title">Data Cleanup</h3>
+            <p class="report-card-desc">AI-powered cleanup of suppliers, customers, stock</p>
+        </a>
+        <a href="/settings/categories" class="report-card">
+            <div class="report-card-icon">📁</div>
+            <h3 class="report-card-title">Stock Categories</h3>
+            <p class="report-card-desc">Manage product categories</p>
+        </a>
+    </div>
+    '''
+    
+    return page_wrapper("Settings", content, user=user)
+
+
+@app.route("/settings/pricing", methods=["GET", "POST"])
+def settings_pricing():
+    """Pricing settings page"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    if request.method == "POST":
+        # Save pricing settings
+        try:
+            tiers = []
+            for i in range(4):
+                max_cost = request.form.get(f"tier_{i}_max")
+                markup = request.form.get(f"tier_{i}_markup", 25)
+                tiers.append({
+                    "max_cost": int(max_cost) if max_cost and max_cost != "None" else None,
+                    "markup_pct": int(markup)
+                })
+            
+            category_markups = {}
+            categories = ["fuel", "fasteners", "safety", "consumables", "electrical", "plumbing", "general"]
+            for cat in categories:
+                markup = request.form.get(f"cat_{cat}")
+                if markup and markup.strip():
+                    category_markups[cat] = int(markup)
+                else:
+                    category_markups[cat] = None  # Use tier-based
+            
+            min_margin = int(request.form.get("min_margin", 10))
+            
+            settings = {
+                "tiers": tiers,
+                "category_markups": category_markups,
+                "min_margin": min_margin
+            }
+            
+            PricingEngine.save_settings(settings)
+            
+        except Exception as e:
+            pass  # Continue showing page
+        
+        return redirect("/settings/pricing")
+    
+    # Get current settings
+    settings = PricingEngine.get_settings()
+    tiers = settings.get("tiers", PricingEngine.DEFAULT_TIERS)
+    category_markups = settings.get("category_markups", PricingEngine.DEFAULT_CATEGORY_MARKUPS)
+    min_margin = settings.get("min_margin", PricingEngine.DEFAULT_MIN_MARGIN)
+    
+    # Build tier inputs
+    tier_html = ""
+    tier_labels = ["Budget (under)", "Mid-range (under)", "Premium (under)", "Luxury (over)"]
+    for i, tier in enumerate(tiers):
+        max_cost = tier.get("max_cost", "")
+        markup = tier.get("markup_pct", 25)
+        
+        if i < 3:
+            tier_html += f'''
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">{tier_labels[i]} R</label>
+                    <input type="number" name="tier_{i}_max" class="form-input" value="{max_cost or ''}" placeholder="Max cost">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Markup %</label>
+                    <input type="number" name="tier_{i}_markup" class="form-input" value="{markup}">
+                </div>
+            </div>
+            '''
+        else:
+            tier_html += f'''
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">{tier_labels[i]}</label>
+                    <input type="text" class="form-input" value="Everything else" disabled>
+                    <input type="hidden" name="tier_{i}_max" value="None">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Markup %</label>
+                    <input type="number" name="tier_{i}_markup" class="form-input" value="{markup}">
+                </div>
+            </div>
+            '''
+    
+    # Build category inputs
+    categories = [
+        ("fuel", "Fuel & Diesel"),
+        ("fasteners", "Fasteners & Bolts"),
+        ("safety", "Safety & PPE"),
+        ("consumables", "Consumables"),
+        ("electrical", "Electrical"),
+        ("plumbing", "Plumbing"),
+        ("general", "General / Other"),
+    ]
+    
+    cat_html = ""
+    for cat_key, cat_name in categories:
+        cat_markup = category_markups.get(cat_key, "")
+        if cat_markup is None:
+            cat_markup = ""
+        cat_html += f'''
+        <div class="form-row">
+            <div class="form-group" style="flex:2;">
+                <label class="form-label">{cat_name}</label>
+            </div>
+            <div class="form-group" style="flex:1;">
+                <input type="number" name="cat_{cat_key}" class="form-input" value="{cat_markup}" placeholder="Use tier">
+            </div>
+        </div>
+        '''
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/settings" class="text-muted">← Settings</a>
+        <h1>💰 Pricing & Markup</h1>
+    </div>
+    
+    <form method="POST">
+        <div class="grid grid-2">
+            <div class="card">
+                <h3 class="card-title">Price Tier Markups</h3>
+                <p class="text-muted mb-md">Default markup based on cost price</p>
+                {tier_html}
+            </div>
+            
+            <div class="card">
+                <h3 class="card-title">Category Overrides</h3>
+                <p class="text-muted mb-md">Leave blank to use tier-based pricing</p>
+                {cat_html}
+            </div>
+        </div>
+        
+        <div class="card mt-lg" style="max-width: 400px;">
+            <h3 class="card-title">Margin Warning</h3>
+            <div class="form-group">
+                <label class="form-label">Minimum Margin % (warn if below)</label>
+                <input type="number" name="min_margin" class="form-input" value="{min_margin}">
+            </div>
+        </div>
+        
+        <div class="btn-group mt-lg">
+            <button type="submit" class="btn btn-primary">Save Pricing Settings</button>
+            <a href="/settings" class="btn btn-ghost">Cancel</a>
+        </div>
+    </form>
+    
+    <div class="card mt-lg">
+        <h3 class="card-title">Test Calculator</h3>
+        <p class="text-muted mb-md">Enter a cost price to see calculated selling price</p>
+        <div class="form-row">
+            <div class="form-group">
+                <input type="number" id="test-cost" class="form-input" placeholder="Cost price" step="0.01">
+            </div>
+            <div class="form-group">
+                <select id="test-category" class="form-select">
+                    <option value="general">General</option>
+                    <option value="fuel">Fuel</option>
+                    <option value="fasteners">Fasteners</option>
+                    <option value="safety">Safety</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <button type="button" class="btn btn-ghost" onclick="testPrice()">Calculate</button>
+            </div>
+        </div>
+        <div id="test-result"></div>
+    </div>
+    
+    <script>
+    async function testPrice() {{
+        const cost = document.getElementById('test-cost').value;
+        const category = document.getElementById('test-category').value;
+        if (!cost) return;
+        
+        const resp = await fetch('/api/pricing/calculate?cost=' + cost + '&category=' + category);
+        const data = await resp.json();
+        
+        let html = '<div class="alert alert-info">';
+        html += '<strong>Cost:</strong> R ' + parseFloat(cost).toFixed(2) + '<br>';
+        html += '<strong>Selling:</strong> R ' + parseFloat(data.selling_price).toFixed(2) + '<br>';
+        html += '<strong>Markup:</strong> ' + data.markup_pct + '%<br>';
+        html += '<strong>Margin:</strong> ' + data.margin_pct + '%';
+        if (data.warning) {{
+            html += '<br><span class="text-orange">⚠️ ' + data.warning + '</span>';
+        }}
+        html += '</div>';
+        
+        document.getElementById('test-result').innerHTML = html;
+    }}
+    </script>
+    '''
+    
+    return page_wrapper("Pricing Settings", content, user=user)
+
+
+@app.route("/api/pricing/calculate")
+def api_pricing_calculate():
+    """API endpoint to calculate selling price from cost"""
+    cost = request.args.get("cost", 0)
+    category = request.args.get("category", "general")
+    
+    try:
+        result = PricingEngine.calculate_selling_price(Decimal(str(cost)), category)
+        return jsonify({
+            "selling_price": float(result["selling_price"]),
+            "markup_pct": result["markup_pct"],
+            "margin_pct": result["margin_pct"],
+            "warning": result["warning"]
+        })
+    except:
+        return jsonify({"error": "Invalid input"})
+
+
+# =============================================================================
+# PIECE 14: REVIEW BEFORE POSTING (STAGING SYSTEM)
+# =============================================================================
+
+"""
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   CLICK AI - REVIEW BEFORE POSTING                                           ║
+║                                                                               ║
+║   Phase 2: Staging System                                                     ║
+║   - Scanned invoices go to staging, not live tables                          ║
+║   - User reviews and edits before approving                                   ║
+║   - Shows GL entries that WILL be posted                                     ║
+║   - Nothing touches real data until approved                                  ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+@app.route("/staging")
+def staging_list():
+    """List all pending staged transactions"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    staged = db.select("staged_transactions", filters={"status": "pending"}, order="-created_at")
+    
+    rows = []
+    for item in staged:
+        data = json.loads(item.get("data", "{}"))
+        
+        badge_color = "orange"
+        if item.get("type") == "supplier_invoice":
+            badge = "INVOICE"
+            badge_color = "blue"
+        elif item.get("type") == "expense":
+            badge = "EXPENSE"
+            badge_color = "purple"
+        else:
+            badge = item.get("type", "").upper()
+        
+        rows.append([
+            item.get("created_at", "")[:16].replace("T", " "),
+            f'<span class="badge badge-{badge_color}">{badge}</span>',
+            safe_string(data.get("supplier", data.get("vendor", ""))),
+            {"value": Money.format(Decimal(str(data.get("total", 0)))), "class": "number"},
+            f'''<div class="btn-group">
+                <a href="/staging/{item["id"]}" class="btn btn-sm btn-green">Review</a>
+                <a href="/staging/{item["id"]}/reject" class="btn btn-sm btn-red">Reject</a>
+            </div>'''
+        ])
+    
+    table = table_html(
+        headers=["Date", "Type", "Supplier/Vendor", {"label": "Amount", "class": "number"}, "Actions"],
+        rows=rows,
+        empty_message="No pending transactions to review"
+    )
+    
+    content = f'''
+    <div class="flex-between mb-lg">
+        <div>
+            <h1>📋 Pending Review</h1>
+            <p class="text-muted">{len(staged)} transactions waiting for approval</p>
+        </div>
+    </div>
+    
+    <div class="card">{table}</div>
+    
+    <div class="alert alert-info mt-lg">
+        <strong>ℹ️ How it works:</strong> Scanned invoices and expenses are held here until you review and approve them. 
+        Nothing is posted to your accounts until you click Approve.
+    </div>
+    '''
+    
+    return page_wrapper("Pending Review", content, user=user)
+
+
+@app.route("/staging/<staged_id>")
+def staging_review(staged_id):
+    """Review a staged transaction before approving"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    staged = db.select_one("staged_transactions", staged_id)
+    if not staged:
+        return redirect("/staging")
+    
+    data = json.loads(staged.get("data", "{}"))
+    staged_type = staged.get("type", "")
+    
+    if staged_type == "supplier_invoice":
+        return render_staged_invoice_review(staged_id, data, user)
+    elif staged_type == "expense":
+        return render_staged_expense_review(staged_id, data, user)
+    else:
+        return redirect("/staging")
+
+
+def render_staged_invoice_review(staged_id: str, data: dict, user: dict):
+    """Render review screen for staged supplier invoice"""
+    
+    supplier_name = data.get("supplier", "Unknown")
+    invoice_no = data.get("invoice_no", "Not visible")
+    total = Decimal(str(data.get("total", 0)))
+    vat = Decimal(str(data.get("vat", 0)))
+    items = data.get("items", [])
+    
+    # Check if supplier exists
+    existing_supplier = None
+    suppliers = db.select("suppliers")
+    for s in suppliers:
+        if s.get("name", "").lower() == supplier_name.lower():
+            existing_supplier = s
+            break
+    
+    supplier_status = f'<span class="badge badge-green">Existing</span>' if existing_supplier else f'<span class="badge badge-orange">NEW - Will be created</span>'
+    
+    # Build items table with edit capability
+    items_html = ""
+    for i, item in enumerate(items):
+        desc = item.get("description", "")
+        code = item.get("code", "")
+        qty = item.get("qty", 1)
+        unit_price = Money.parse(item.get("unit_price", 0))
+        
+        # Check if stock exists
+        existing_stock = None
+        all_stock = db.select("stock_items")
+        for s in all_stock:
+            if s.get("description", "").lower() == desc.lower():
+                existing_stock = s
+                break
+        
+        stock_status = "Existing" if existing_stock else "NEW"
+        stock_badge = "green" if existing_stock else "orange"
+        
+        # Calculate selling price
+        pricing = PricingEngine.calculate_selling_price(unit_price)
+        
+        items_html += f'''
+        <tr>
+            <td>
+                <input type="text" name="item_{i}_desc" value="{safe_string(desc)}" class="form-input" style="width:100%;">
+            </td>
+            <td>
+                <input type="text" name="item_{i}_code" value="{safe_string(code)}" class="form-input" style="width:80px;">
+            </td>
+            <td>
+                <input type="number" name="item_{i}_qty" value="{qty}" class="form-input" style="width:60px;" min="1">
+            </td>
+            <td>
+                <input type="number" name="item_{i}_price" value="{float(unit_price):.2f}" class="form-input" style="width:100px;" step="0.01">
+            </td>
+            <td class="number">R {float(pricing['selling_price']):.2f}</td>
+            <td><span class="badge badge-{stock_badge}">{stock_status}</span></td>
+            <td>
+                <button type="button" class="btn btn-sm btn-red" onclick="this.closest('tr').remove()">×</button>
+            </td>
+        </tr>
+        '''
+    
+    # Calculate GL entries preview
+    subtotal = total - vat if vat > 0 else total / Decimal("1.15") * Decimal("0.85")
+    if vat <= 0:
+        vat = total - subtotal
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/staging" class="text-muted">← Pending Review</a>
+        <h1>Review Supplier Invoice</h1>
+    </div>
+    
+    <form method="POST" action="/staging/{staged_id}/approve">
+        <div class="grid grid-2">
+            <div class="card">
+                <h3 class="card-title">Invoice Details</h3>
+                <div class="form-group">
+                    <label class="form-label">Supplier {supplier_status}</label>
+                    <input type="text" name="supplier" value="{safe_string(supplier_name)}" class="form-input">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Invoice Number</label>
+                        <input type="text" name="invoice_no" value="{safe_string(invoice_no)}" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Date</label>
+                        <input type="date" name="date" value="{data.get('date', today())}" class="form-input">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">
+                        <input type="checkbox" name="paid" {'checked' if data.get('paid') else ''}> Already Paid
+                    </label>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3 class="card-title">GL Entries Preview</h3>
+                <p class="text-muted mb-md">These entries will be posted on approval:</p>
+                <table class="table">
+                    <tr><td>DR Stock / Purchases</td><td class="number">{Money.format(subtotal)}</td></tr>
+                    <tr><td>DR VAT Input</td><td class="number">{Money.format(vat)}</td></tr>
+                    <tr><td>CR Creditors</td><td class="number">{Money.format(total)}</td></tr>
+                </table>
+                <div class="mt-md" style="font-size: 24px; text-align: center; color: var(--green);">
+                    <strong>Total: {Money.format(total)}</strong>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mt-lg">
+            <h3 class="card-title">Line Items</h3>
+            <p class="text-muted mb-md">Edit descriptions, prices, or remove items before approving</p>
+            
+            <div class="table-wrapper">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Description</th>
+                            <th>Code</th>
+                            <th>Qty</th>
+                            <th>Cost (ea)</th>
+                            <th>Selling</th>
+                            <th>Status</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {items_html}
+                    </tbody>
+                </table>
+            </div>
+            
+            <input type="hidden" name="item_count" value="{len(items)}">
+        </div>
+        
+        <div class="btn-group mt-lg">
+            <button type="submit" class="btn btn-green btn-lg">✓ Approve & Post</button>
+            <a href="/staging/{staged_id}/reject" class="btn btn-red">✗ Reject</a>
+            <a href="/staging" class="btn btn-ghost">Cancel</a>
+        </div>
+    </form>
+    '''
+    
+    return page_wrapper("Review Invoice", content, user=user)
+
+
+def render_staged_expense_review(staged_id: str, data: dict, user: dict):
+    """Render review screen for staged expense"""
+    
+    vendor = data.get("vendor", "Unknown")
+    description = data.get("description", "")
+    total = Decimal(str(data.get("total", 0)))
+    vat = Decimal(str(data.get("vat", 0)))
+    category = data.get("category", "general")
+    
+    # Category options
+    categories = [
+        ("fuel", "Fuel & Diesel"),
+        ("telephone", "Telephone & Data"),
+        ("electricity", "Electricity & Water"),
+        ("repairs", "Repairs & Maintenance"),
+        ("stationery", "Stationery & Office"),
+        ("travel", "Travel & Transport"),
+        ("advertising", "Advertising & Marketing"),
+        ("insurance", "Insurance"),
+        ("bank_charges", "Bank Charges"),
+        ("general", "General Expenses"),
+    ]
+    
+    cat_options = ""
+    for cat_val, cat_name in categories:
+        selected = "selected" if cat_val == category else ""
+        cat_options += f'<option value="{cat_val}" {selected}>{cat_name}</option>'
+    
+    # Calculate VAT if not provided
+    if vat <= 0:
+        vat = (total / Decimal("1.15") * Decimal("0.15")).quantize(Decimal("0.01"))
+    subtotal = total - vat
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/staging" class="text-muted">← Pending Review</a>
+        <h1>Review Expense</h1>
+    </div>
+    
+    <form method="POST" action="/staging/{staged_id}/approve">
+        <div class="grid grid-2">
+            <div class="card">
+                <h3 class="card-title">Expense Details</h3>
+                <div class="form-group">
+                    <label class="form-label">Vendor/Supplier</label>
+                    <input type="text" name="vendor" value="{safe_string(vendor)}" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <input type="text" name="description" value="{safe_string(description)}" class="form-input">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Amount (incl VAT)</label>
+                        <input type="number" name="total" value="{float(total):.2f}" class="form-input" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">VAT</label>
+                        <input type="number" name="vat" value="{float(vat):.2f}" class="form-input" step="0.01">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Category</label>
+                    <select name="category" class="form-select">{cat_options}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" name="date" value="{data.get('date', today())}" class="form-input">
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3 class="card-title">GL Entries Preview</h3>
+                <p class="text-muted mb-md">These entries will be posted on approval:</p>
+                <table class="table">
+                    <tr><td>DR Expense ({category.title()})</td><td class="number">{Money.format(subtotal)}</td></tr>
+                    <tr><td>DR VAT Input</td><td class="number">{Money.format(vat)}</td></tr>
+                    <tr><td>CR Bank</td><td class="number">{Money.format(total)}</td></tr>
+                </table>
+                <div class="mt-md" style="font-size: 24px; text-align: center; color: var(--orange);">
+                    <strong>Total: {Money.format(total)}</strong>
+                </div>
+            </div>
+        </div>
+        
+        <div class="btn-group mt-lg">
+            <button type="submit" class="btn btn-green btn-lg">✓ Approve & Post</button>
+            <a href="/staging/{staged_id}/reject" class="btn btn-red">✗ Reject</a>
+            <a href="/staging" class="btn btn-ghost">Cancel</a>
+        </div>
+    </form>
+    '''
+    
+    return page_wrapper("Review Expense", content, user=user)
+
+
+@app.route("/staging/<staged_id>/approve", methods=["POST"])
+def staging_approve(staged_id):
+    """Approve and post a staged transaction"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    staged = db.select_one("staged_transactions", staged_id)
+    if not staged:
+        return redirect("/staging")
+    
+    staged_type = staged.get("type", "")
+    
+    # Rebuild data from form (user may have edited)
+    if staged_type == "supplier_invoice":
+        # Reconstruct items from form
+        items = []
+        i = 0
+        while True:
+            desc = request.form.get(f"item_{i}_desc")
+            if desc is None:
+                break
+            items.append({
+                "description": desc,
+                "code": request.form.get(f"item_{i}_code", ""),
+                "qty": int(request.form.get(f"item_{i}_qty", 1) or 1),
+                "unit_price": float(request.form.get(f"item_{i}_price", 0) or 0)
+            })
+            i += 1
+        
+        data = {
+            "supplier": request.form.get("supplier", ""),
+            "invoice_no": request.form.get("invoice_no", ""),
+            "date": request.form.get("date", today()),
+            "paid": request.form.get("paid") == "on",
+            "items": items,
+            "total": float(request.form.get("total", 0) or 0),
+            "vat": float(request.form.get("vat", 0) or 0)
+        }
+        
+        # Recalculate total from items
+        total = sum(item["qty"] * item["unit_price"] for item in items)
+        data["total"] = total
+        
+        # Process using existing function
+        result = process_supplier_invoice(data)
+        
+    elif staged_type == "expense":
+        data = {
+            "vendor": request.form.get("vendor", ""),
+            "description": request.form.get("description", ""),
+            "date": request.form.get("date", today()),
+            "total": float(request.form.get("total", 0) or 0),
+            "vat": float(request.form.get("vat", 0) or 0),
+            "category": request.form.get("category", "general")
+        }
+        
+        # Process using existing function
+        result = process_expense_receipt(data)
+    
+    # Mark as approved
+    db.update("staged_transactions", staged_id, {
+        "status": "approved",
+        "approved_at": now(),
+        "approved_by": user.get("username", "")
+    })
+    
+    return redirect("/staging")
+
+
+@app.route("/staging/<staged_id>/reject")
+def staging_reject(staged_id):
+    """Reject a staged transaction"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    db.update("staged_transactions", staged_id, {
+        "status": "rejected",
+        "rejected_at": now()
+    })
+    
+    return redirect("/staging")
+
+
+# =============================================================================
+# PIECE 15: DATA CLEANUP TOOL
+# =============================================================================
+
+"""
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   CLICK AI - DATA CLEANUP TOOL                                               ║
+║                                                                               ║
+║   Phase 3: AI-Powered Data Cleanup                                           ║
+║   - Scan suppliers for garbage entries                                       ║
+║   - Find duplicate customers/suppliers                                       ║
+║   - Fix missing cost/selling prices                                          ║
+║   - Merge duplicates                                                          ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+@app.route("/settings/cleanup")
+def settings_cleanup():
+    """Data cleanup dashboard"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    # Count issues
+    suppliers = db.select("suppliers")
+    customers = db.select("customers")
+    stock = db.select("stock_items")
+    
+    # Supplier issues
+    supplier_issues = 0
+    for s in suppliers:
+        name = s.get("name", "").strip()
+        if len(name) < 3 or name.isdigit() or "@" in name:
+            supplier_issues += 1
+    
+    # Stock issues
+    stock_no_cost = 0
+    stock_no_selling = 0
+    stock_below_cost = 0
+    for item in stock:
+        cost = float(item.get("cost_price", 0) or 0)
+        selling = float(item.get("selling_price", 0) or 0)
+        if cost <= 0:
+            stock_no_cost += 1
+        if selling <= 0:
+            stock_no_selling += 1
+        elif cost > 0 and selling < cost:
+            stock_below_cost += 1
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/settings" class="text-muted">← Settings</a>
+        <h1>🧹 Data Cleanup</h1>
+        <p class="text-muted">AI-powered cleanup of your data</p>
+    </div>
+    
+    <div class="grid grid-3 mb-lg">
+        {stat_card(str(supplier_issues), "Suspect Suppliers", "orange" if supplier_issues > 0 else "green")}
+        {stat_card(str(stock_no_cost), "Stock Missing Cost", "orange" if stock_no_cost > 0 else "green")}
+        {stat_card(str(stock_below_cost), "Selling Below Cost", "red" if stock_below_cost > 0 else "green")}
+    </div>
+    
+    <div class="grid grid-2">
+        <a href="/settings/cleanup/suppliers" class="card" style="text-decoration:none;">
+            <h3 class="card-title">👥 Clean Suppliers</h3>
+            <p class="text-muted">Find garbage entries, duplicates, incomplete records</p>
+            <p class="text-orange mt-md">{supplier_issues} issues found</p>
+        </a>
+        
+        <a href="/settings/cleanup/stock" class="card" style="text-decoration:none;">
+            <h3 class="card-title">📦 Clean Stock</h3>
+            <p class="text-muted">Fix missing prices, find duplicates, check margins</p>
+            <p class="text-orange mt-md">{stock_no_cost + stock_no_selling + stock_below_cost} issues found</p>
+        </a>
+        
+        <a href="/settings/cleanup/customers" class="card" style="text-decoration:none;">
+            <h3 class="card-title">🧑‍🤝‍🧑 Clean Customers</h3>
+            <p class="text-muted">Merge duplicates, clean up walk-ins</p>
+        </a>
+        
+        <a href="/settings/cleanup/ai-scan" class="card" style="text-decoration:none; border-color: var(--purple);">
+            <h3 class="card-title">🤖 Full AI Scan</h3>
+            <p class="text-muted">Let Opus analyze everything and suggest fixes</p>
+        </a>
+    </div>
+    '''
+    
+    return page_wrapper("Data Cleanup", content, user=user)
+
+
+@app.route("/settings/cleanup/stock")
+def cleanup_stock():
+    """Stock cleanup page"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    stock = db.select("stock_items", order="description")
+    
+    issues = []
+    for item in stock:
+        cost = float(item.get("cost_price", 0) or 0)
+        selling = float(item.get("selling_price", 0) or 0)
+        
+        issue_list = []
+        if cost <= 0:
+            issue_list.append("No cost price")
+        if selling <= 0:
+            issue_list.append("No selling price")
+        elif cost > 0 and selling < cost:
+            issue_list.append("Selling below cost!")
+        elif cost > 0 and selling > 0:
+            margin = (selling - cost) / selling * 100
+            if margin < 10:
+                issue_list.append(f"Low margin ({margin:.0f}%)")
+        
+        if issue_list:
+            issues.append({
+                "id": item.get("id"),
+                "code": item.get("code", ""),
+                "description": item.get("description", ""),
+                "cost": cost,
+                "selling": selling,
+                "issues": issue_list
+            })
+    
+    rows = []
+    for item in issues:
+        issue_badges = " ".join([f'<span class="badge badge-orange">{i}</span>' for i in item["issues"]])
+        
+        # Calculate suggested selling price
+        if item["cost"] > 0:
+            suggested = PricingEngine.calculate_selling_price(Decimal(str(item["cost"])))
+            suggest_html = f'R {float(suggested["selling_price"]):.2f}'
+        else:
+            suggest_html = '-'
+        
+        rows.append([
+            safe_string(item["code"]),
+            safe_string(item["description"][:40]),
+            {"value": f'R {item["cost"]:.2f}', "class": "number"},
+            {"value": f'R {item["selling"]:.2f}', "class": "number"},
+            {"value": suggest_html, "class": "number text-green"},
+            issue_badges,
+            f'<a href="/settings/cleanup/stock/{item["id"]}/fix" class="btn btn-sm btn-green">Fix</a>'
+        ])
+    
+    table = table_html(
+        headers=["Code", "Description", {"label": "Cost", "class": "number"}, 
+                 {"label": "Selling", "class": "number"}, {"label": "Suggested", "class": "number"},
+                 "Issues", ""],
+        rows=rows,
+        empty_message="No stock issues found! 🎉"
+    )
+    
+    content = f'''
+    <div class="flex-between mb-lg">
+        <div>
+            <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
+            <h1>📦 Stock Cleanup</h1>
+            <p class="text-muted">{len(issues)} items with issues</p>
+        </div>
+        <a href="/settings/cleanup/stock/fix-all" class="btn btn-green">Fix All with Suggested Prices</a>
+    </div>
+    
+    <div class="card">{table}</div>
+    '''
+    
+    return page_wrapper("Stock Cleanup", content, user=user)
+
+
+@app.route("/settings/cleanup/stock/<item_id>/fix", methods=["GET", "POST"])
+def cleanup_stock_fix(item_id):
+    """Fix a single stock item"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    item = db.select_one("stock_items", item_id)
+    if not item:
+        return redirect("/settings/cleanup/stock")
+    
+    if request.method == "POST":
+        cost = float(request.form.get("cost_price", 0) or 0)
+        selling = float(request.form.get("selling_price", 0) or 0)
+        
+        db.update("stock_items", item_id, {
+            "cost_price": cost,
+            "selling_price": selling
+        })
+        
+        return redirect("/settings/cleanup/stock")
+    
+    cost = float(item.get("cost_price", 0) or 0)
+    selling = float(item.get("selling_price", 0) or 0)
+    
+    # Calculate suggested
+    if cost > 0:
+        suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
+        suggested_price = float(suggested["selling_price"])
+    else:
+        suggested_price = 0
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/settings/cleanup/stock" class="text-muted">← Stock Cleanup</a>
+        <h1>Fix: {safe_string(item.get("description", ""))}</h1>
+    </div>
+    
+    <div class="card" style="max-width: 500px;">
+        <form method="POST">
+            <div class="form-group">
+                <label class="form-label">Cost Price</label>
+                <input type="number" name="cost_price" class="form-input" value="{cost:.2f}" step="0.01">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Selling Price</label>
+                <input type="number" name="selling_price" class="form-input" value="{selling:.2f if selling > 0 else suggested_price:.2f}" step="0.01">
+                <small class="text-muted">Suggested: R {suggested_price:.2f}</small>
+            </div>
+            <div class="btn-group">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <a href="/settings/cleanup/stock" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    '''
+    
+    return page_wrapper("Fix Stock Item", content, user=user)
+
+
+@app.route("/settings/cleanup/stock/fix-all")
+def cleanup_stock_fix_all():
+    """Fix all stock items with missing or bad prices"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    stock = db.select("stock_items")
+    fixed = 0
+    
+    for item in stock:
+        cost = float(item.get("cost_price", 0) or 0)
+        selling = float(item.get("selling_price", 0) or 0)
+        
+        updates = {}
+        
+        # If no selling price but has cost, calculate it
+        if cost > 0 and selling <= 0:
+            suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
+            updates["selling_price"] = float(suggested["selling_price"])
+        
+        # If selling below cost, fix it
+        if cost > 0 and selling > 0 and selling < cost:
+            suggested = PricingEngine.calculate_selling_price(Decimal(str(cost)))
+            updates["selling_price"] = float(suggested["selling_price"])
+        
+        if updates:
+            db.update("stock_items", item["id"], updates)
+            fixed += 1
+    
+    return redirect("/settings/cleanup/stock")
+
+
+@app.route("/settings/cleanup/suppliers")
+def cleanup_suppliers():
+    """Supplier cleanup page"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    suppliers = db.select("suppliers", order="name")
+    
+    issues = []
+    for s in suppliers:
+        name = (s.get("name") or "").strip()
+        
+        issue_list = []
+        
+        # Check for garbage entries
+        if len(name) < 3:
+            issue_list.append("Name too short")
+        elif name.isdigit():
+            issue_list.append("Just a number")
+        elif "@" in name and " " not in name:
+            issue_list.append("Looks like email")
+        elif re.match(r'^\d+\s+(street|road|ave|avenue|drive|rd|st)', name.lower()):
+            issue_list.append("Looks like address")
+        elif re.match(r'^0\d{9}$', name.replace(" ", "")):
+            issue_list.append("Looks like phone number")
+        
+        if issue_list:
+            issues.append({
+                "id": s.get("id"),
+                "name": name,
+                "phone": s.get("phone", ""),
+                "issues": issue_list
+            })
+    
+    rows = []
+    for item in issues:
+        issue_badges = " ".join([f'<span class="badge badge-red">{i}</span>' for i in item["issues"]])
+        rows.append([
+            safe_string(item["name"]),
+            safe_string(item["phone"]),
+            issue_badges,
+            f'''<div class="btn-group">
+                <a href="/suppliers/{item["id"]}/edit" class="btn btn-sm btn-ghost">Edit</a>
+                <a href="/settings/cleanup/suppliers/{item["id"]}/delete" class="btn btn-sm btn-red" 
+                   onclick="return confirm('Delete this supplier?')">Delete</a>
+            </div>'''
+        ])
+    
+    table = table_html(
+        headers=["Name", "Phone", "Issues", "Actions"],
+        rows=rows,
+        empty_message="No suspect suppliers found! 🎉"
+    )
+    
+    content = f'''
+    <div class="flex-between mb-lg">
+        <div>
+            <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
+            <h1>👥 Supplier Cleanup</h1>
+            <p class="text-muted">{len(issues)} suspect entries found</p>
+        </div>
+    </div>
+    
+    <div class="card">{table}</div>
+    
+    <div class="alert alert-info mt-lg">
+        <strong>Tip:</strong> Review each entry. If it's garbage (address, phone number, etc.), delete it. 
+        If it's a real supplier with a bad name, click Edit to fix it.
+    </div>
+    '''
+    
+    return page_wrapper("Supplier Cleanup", content, user=user)
+
+
+@app.route("/settings/cleanup/suppliers/<supplier_id>/delete")
+def cleanup_supplier_delete(supplier_id):
+    """Delete a garbage supplier"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    db.delete("suppliers", supplier_id)
+    return redirect("/settings/cleanup/suppliers")
 
 
 if __name__ == "__main__":
