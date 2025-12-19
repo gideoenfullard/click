@@ -3825,6 +3825,83 @@ a:hover {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   TOOLTIPS & HELP
+   ═══════════════════════════════════════════════════════════════════════════ */
+.help-tip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    background: var(--border);
+    border-radius: 50%;
+    font-size: 10px;
+    color: var(--text-muted);
+    cursor: help;
+    margin-left: 6px;
+    position: relative;
+}
+
+.help-tip:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    margin-bottom: 8px;
+}
+
+.info-box {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: #93c5fd;
+}
+
+.info-box::before {
+    content: 'ℹ️ ';
+}
+
+.success-box {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: #6ee7b7;
+}
+
+.success-box::before {
+    content: '✓ ';
+}
+
+.warning-box {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: #fcd34d;
+}
+
+.warning-box::before {
+    content: '⚠️ ';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    FORMS
    ═══════════════════════════════════════════════════════════════════════════ */
 .form-group {
@@ -5254,7 +5331,7 @@ LOGIN_CSS = """
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    """Login page"""
+    """Login page - beautiful and professional"""
     
     error = ""
     
@@ -5269,46 +5346,218 @@ def login():
         else:
             error = result
     
-    error_html = f'<div class="alert alert-error">{error}</div>' if error else ""
+    error_html = f'<div style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:12px;margin-bottom:16px;color:#ef4444;font-size:14px;">{error}</div>' if error else ""
     
     html = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Click AI</title>
-    {CSS}
-    {LOGIN_CSS}
+    <title>Click AI - Business Accounting</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            background: #050508;
+            color: #f0f0f5;
+        }}
+        .split-left {{
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+        }}
+        .split-right {{
+            flex: 1;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(59, 130, 246, 0.2) 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px;
+            position: relative;
+            overflow: hidden;
+        }}
+        .split-right::before {{
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(139, 92, 246, 0.1) 0%, transparent 70%);
+            animation: rotate 30s linear infinite;
+        }}
+        @keyframes rotate {{
+            from {{ transform: rotate(0deg); }}
+            to {{ transform: rotate(360deg); }}
+        }}
+        .login-box {{
+            width: 100%;
+            max-width: 380px;
+        }}
+        .logo {{
+            font-size: 36px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }}
+        .tagline {{
+            color: #8b8b9a;
+            font-size: 14px;
+            margin-bottom: 40px;
+        }}
+        .form-group {{
+            margin-bottom: 20px;
+        }}
+        .form-label {{
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: #a0a0b0;
+            margin-bottom: 8px;
+        }}
+        .form-input {{
+            width: 100%;
+            padding: 14px 16px;
+            background: #0a0a12;
+            border: 1px solid #2a2a4a;
+            border-radius: 10px;
+            color: #f0f0f5;
+            font-size: 15px;
+            transition: all 0.2s;
+        }}
+        .form-input:focus {{
+            outline: none;
+            border-color: #8b5cf6;
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+        }}
+        .btn-login {{
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 8px;
+        }}
+        .btn-login:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(139, 92, 246, 0.4);
+        }}
+        .demo-link {{
+            display: block;
+            text-align: center;
+            margin-top: 24px;
+            color: #8b8b9a;
+            font-size: 14px;
+            text-decoration: none;
+        }}
+        .demo-link:hover {{
+            color: #8b5cf6;
+        }}
+        .feature-list {{
+            position: relative;
+            z-index: 1;
+            text-align: center;
+        }}
+        .feature-title {{
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }}
+        .feature-sub {{
+            font-size: 18px;
+            color: #a0a0b0;
+            margin-bottom: 40px;
+        }}
+        .features {{
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            text-align: left;
+        }}
+        .feature {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 15px;
+        }}
+        .feature-icon {{
+            width: 36px;
+            height: 36px;
+            background: rgba(139, 92, 246, 0.2);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }}
+        @media (max-width: 900px) {{
+            body {{ flex-direction: column; }}
+            .split-right {{ display: none; }}
+            .split-left {{ min-height: 100vh; }}
+        }}
+    </style>
 </head>
 <body>
-    <div class="login-container">
+    <div class="split-left">
         <div class="login-box">
-            <div class="login-logo">Click AI</div>
-            <h1 class="login-title">Welcome Back</h1>
+            <div class="logo">Click AI</div>
+            <div class="tagline">Business accounting, powered by AI</div>
             
             {error_html}
             
             <form method="POST">
                 <div class="form-group">
-                    <label class="form-label" for="username">Username</label>
-                    <input type="text" id="username" name="username" class="form-input" 
-                           placeholder="Enter username" required autofocus>
+                    <label class="form-label">Username</label>
+                    <input type="text" name="username" class="form-input" placeholder="Enter username" required autofocus>
                 </div>
-                
                 <div class="form-group">
-                    <label class="form-label" for="password">Password</label>
-                    <input type="password" id="password" name="password" class="form-input" 
-                           placeholder="Enter password" required>
+                    <label class="form-label">Password</label>
+                    <input type="password" name="password" class="form-input" placeholder="Enter password" required>
                 </div>
-                
-                <button type="submit" class="btn btn-primary btn-block btn-lg mt-md">
-                    Login
-                </button>
+                <button type="submit" class="btn-login">Sign In</button>
             </form>
             
-            <p class="text-center text-muted mt-lg">
-                <a href="/">← Back to home</a>
-            </p>
+            <a href="/demo" class="demo-link">Try demo without account →</a>
+        </div>
+    </div>
+    <div class="split-right">
+        <div class="feature-list">
+            <div class="feature-title">Accounting Made Simple</div>
+            <div class="feature-sub">The AI does the hard work</div>
+            <div class="features">
+                <div class="feature">
+                    <div class="feature-icon">📷</div>
+                    <span>Scan invoices - AI reads everything</span>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">📦</div>
+                    <span>Stock created automatically</span>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">💰</div>
+                    <span>Prices calculated for you</span>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">📊</div>
+                    <span>Reports that explain themselves</span>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🤖</div>
+                    <span>AI business health analysis</span>
+                </div>
+            </div>
         </div>
     </div>
 </body>
@@ -5367,83 +5616,296 @@ def dashboard():
         supplier_count = db.count("suppliers")
     except:
         pass
+    # Get real financial data
+    today_sales = Decimal("0")
+    week_sales = Decimal("0")
+    month_sales = Decimal("0")
+    outstanding_debtors = Decimal("0")
+    outstanding_creditors = Decimal("0")
+    low_stock_count = 0
+    pending_review = 0
+    
     try:
-        invoice_count = db.count("invoices")
+        # Today's sales
+        today_invoices = db.select("invoices", filters={"date": today()}) or []
+        today_sales = sum(Decimal(str(inv.get("total", 0) or 0)) for inv in today_invoices)
+        
+        # This week/month sales (simplified)
+        all_invoices = db.select("invoices") or []
+        from datetime import datetime, timedelta
+        now_date = datetime.now()
+        week_ago = (now_date - timedelta(days=7)).strftime("%Y-%m-%d")
+        month_ago = (now_date - timedelta(days=30)).strftime("%Y-%m-%d")
+        
+        for inv in all_invoices:
+            inv_date = inv.get("date", "")[:10]
+            total = Decimal(str(inv.get("total", 0) or 0))
+            if inv_date >= week_ago:
+                week_sales += total
+            if inv_date >= month_ago:
+                month_sales += total
+        
+        # Outstanding amounts
+        customers = db.select("customers") or []
+        outstanding_debtors = sum(Decimal(str(c.get("balance", 0) or 0)) for c in customers if Decimal(str(c.get("balance", 0) or 0)) > 0)
+        
+        suppliers = db.select("suppliers") or []
+        outstanding_creditors = sum(Decimal(str(s.get("balance", 0) or 0)) for s in suppliers if Decimal(str(s.get("balance", 0) or 0)) > 0)
+        
+        # Low stock
+        stock = db.select("stock_items") or []
+        low_stock_count = sum(1 for s in stock if int(s.get("quantity", 0) or 0) <= int(s.get("reorder_level", 5) or 5) and int(s.get("quantity", 0) or 0) > 0)
+        
+        # Pending review
+        staged = db.select("staged_transactions", filters={"status": "pending"}) or []
+        pending_review = len(staged)
     except:
         pass
-    try:
-        expense_count = db.count("expenses")
-    except:
-        pass
+    
+    # Greeting based on time
+    hour = datetime.now().hour
+    if hour < 12:
+        greeting = "Good morning"
+    elif hour < 17:
+        greeting = "Good afternoon"
+    else:
+        greeting = "Good evening"
+    
+    # Cash position indicator
+    cash_status = "green" if outstanding_debtors < month_sales * Decimal("0.3") else "orange" if outstanding_debtors < month_sales else "red"
+    
+    # Alerts section
+    alerts_html = ""
+    if pending_review > 0:
+        alerts_html += f'<a href="/staging" class="alert-item alert-purple"><span class="alert-icon">📋</span><span class="alert-text">{pending_review} scanned item{"s" if pending_review > 1 else ""} waiting for review</span><span class="alert-action">Review →</span></a>'
+    if low_stock_count > 0:
+        alerts_html += f'<a href="/stock?filter=low" class="alert-item alert-orange"><span class="alert-icon">📦</span><span class="alert-text">{low_stock_count} item{"s" if low_stock_count > 1 else ""} running low</span><span class="alert-action">View →</span></a>'
+    if outstanding_debtors > 0:
+        alerts_html += f'<a href="/reports/debtors" class="alert-item alert-blue"><span class="alert-icon">💰</span><span class="alert-text">{Money.format(outstanding_debtors)} outstanding from customers</span><span class="alert-action">Collect →</span></a>'
+    
+    if not alerts_html:
+        alerts_html = '<div class="alert-item alert-green"><span class="alert-icon">✓</span><span class="alert-text">All clear! Nothing needs attention right now.</span></div>'
     
     content = f'''
-    <div class="flex-between mb-lg">
-        <div>
-            <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 4px;">Dashboard</h1>
-            <p class="text-muted">Welcome back, {user.get("username", "User")}</p>
+    <style>
+        .dashboard-hero {{
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            border: 1px solid rgba(139, 92, 246, 0.2);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+        }}
+        .dashboard-greeting {{
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }}
+        .dashboard-date {{
+            color: var(--text-muted);
+            font-size: 14px;
+        }}
+        .metric-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }}
+        .metric-card {{
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }}
+        .metric-card:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }}
+        .metric-label {{
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }}
+        .metric-value {{
+            font-size: 28px;
+            font-weight: 700;
+        }}
+        .metric-value.green {{ color: var(--green); }}
+        .metric-value.orange {{ color: var(--orange); }}
+        .metric-value.red {{ color: var(--red); }}
+        .metric-value.blue {{ color: var(--blue); }}
+        .metric-sub {{
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }}
+        .action-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }}
+        .action-btn {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            text-decoration: none;
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }}
+        .action-btn:hover {{
+            border-color: var(--purple);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(139, 92, 246, 0.2);
+        }}
+        .action-btn:hover .action-icon {{
+            transform: scale(1.1);
+        }}
+        .action-icon {{
+            font-size: 32px;
+            margin-bottom: 8px;
+            transition: transform 0.2s;
+        }}
+        .action-label {{
+            font-size: 13px;
+            font-weight: 600;
+        }}
+        .alert-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 24px;
+        }}
+        .alert-item {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 16px;
+            border-radius: 10px;
+            text-decoration: none;
+            color: var(--text-primary);
+            transition: transform 0.2s;
+        }}
+        .alert-item:hover {{
+            transform: translateX(4px);
+        }}
+        .alert-purple {{ background: rgba(139, 92, 246, 0.15); border-left: 3px solid var(--purple); }}
+        .alert-orange {{ background: rgba(245, 158, 11, 0.15); border-left: 3px solid var(--orange); }}
+        .alert-blue {{ background: rgba(59, 130, 246, 0.15); border-left: 3px solid var(--blue); }}
+        .alert-green {{ background: rgba(16, 185, 129, 0.15); border-left: 3px solid var(--green); }}
+        .alert-icon {{ font-size: 20px; }}
+        .alert-text {{ flex: 1; font-size: 14px; }}
+        .alert-action {{ font-size: 12px; color: var(--text-muted); }}
+        .section-title {{
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+        }}
+    </style>
+    
+    <div class="dashboard-hero">
+        <div class="dashboard-greeting">{greeting}, {user.get("username", "Boss")} 👋</div>
+        <div class="dashboard-date">{datetime.now().strftime("%A, %d %B %Y")}</div>
+    </div>
+    
+    <div class="section-title">💰 Your Money</div>
+    <div class="metric-grid">
+        <div class="metric-card">
+            <div class="metric-label">Today's Sales</div>
+            <div class="metric-value green">{Money.format(today_sales)}</div>
+            <div class="metric-sub">{len(today_invoices)} invoice{"s" if len(today_invoices) != 1 else ""}</div>
         </div>
-        <div class="btn-group">
-            <a href="/pos" class="btn btn-primary">💰 New Sale</a>
-            <a href="/expenses/new" class="btn btn-green">💸 Add Expense</a>
+        <div class="metric-card">
+            <div class="metric-label">This Week</div>
+            <div class="metric-value">{Money.format(week_sales)}</div>
+            <div class="metric-sub">Last 7 days</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">This Month</div>
+            <div class="metric-value">{Money.format(month_sales)}</div>
+            <div class="metric-sub">Last 30 days</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">Owed to You</div>
+            <div class="metric-value {cash_status}">{Money.format(outstanding_debtors)}</div>
+            <div class="metric-sub"><a href="/reports/debtors">View aging →</a></div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-label">You Owe</div>
+            <div class="metric-value orange">{Money.format(outstanding_creditors)}</div>
+            <div class="metric-sub"><a href="/reports/creditors">View aging →</a></div>
         </div>
     </div>
     
-    <!-- Quick Stats -->
-    <div class="stats">
-        <div class="stat">
-            <div class="stat-value">{stock_count}</div>
-            <div class="stat-label">Stock Items</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">{customer_count}</div>
-            <div class="stat-label">Customers</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">{supplier_count}</div>
-            <div class="stat-label">Suppliers</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">{invoice_count}</div>
-            <div class="stat-label">Invoices</div>
-        </div>
-        <div class="stat">
-            <div class="stat-value">{expense_count}</div>
-            <div class="stat-label">Expenses</div>
-        </div>
+    <div class="section-title">⚡ Needs Attention</div>
+    <div class="alert-list">
+        {alerts_html}
     </div>
     
-    <!-- Financial Reports -->
-    <div class="card">
-        <h3 style="margin-bottom: 16px;">📊 Financial Reports</h3>
-        <p class="text-muted" style="margin-bottom: 16px;">View detailed financial data</p>
-        <div class="btn-group" style="flex-wrap: wrap; gap: 12px;">
-            <a href="/reports/trial-balance" class="btn btn-primary">Trial Balance</a>
-            <a href="/reports/income-statement" class="btn btn-green">Income Statement</a>
-            <a href="/reports/balance-sheet" class="btn btn-purple">Balance Sheet</a>
-            <a href="/reports/vat" class="btn btn-orange">VAT Report</a>
-        </div>
+    <div class="section-title">🚀 Quick Actions</div>
+    <div class="action-grid">
+        <a href="/pos" class="action-btn">
+            <span class="action-icon">💰</span>
+            <span class="action-label">New Sale</span>
+        </a>
+        <a href="/m" class="action-btn">
+            <span class="action-icon">📷</span>
+            <span class="action-label">Scan Invoice</span>
+        </a>
+        <a href="/invoices/new" class="action-btn">
+            <span class="action-icon">📄</span>
+            <span class="action-label">New Invoice</span>
+        </a>
+        <a href="/quotes/new" class="action-btn">
+            <span class="action-icon">📋</span>
+            <span class="action-label">New Quote</span>
+        </a>
+        <a href="/purchase-orders/new" class="action-btn">
+            <span class="action-icon">📦</span>
+            <span class="action-label">New Order</span>
+        </a>
+        <a href="/expenses/new" class="action-btn">
+            <span class="action-icon">💸</span>
+            <span class="action-label">Add Expense</span>
+        </a>
+        <a href="/customers/new" class="action-btn">
+            <span class="action-icon">👤</span>
+            <span class="action-label">New Customer</span>
+        </a>
+        <a href="/stock/new" class="action-btn">
+            <span class="action-icon">🏷️</span>
+            <span class="action-label">New Product</span>
+        </a>
     </div>
     
-    <!-- Quick Actions -->
-    <div class="card">
-        <h3 style="margin-bottom: 16px;">⚡ Quick Actions</h3>
-        <div class="btn-group" style="flex-wrap: wrap; gap: 12px;">
-            <a href="/pos" class="btn btn-primary">Point of Sale</a>
-            <a href="/stock" class="btn btn-ghost">Stock</a>
-            <a href="/customers" class="btn btn-ghost">Customers</a>
-            <a href="/suppliers" class="btn btn-ghost">Suppliers</a>
-            <a href="/invoices" class="btn btn-ghost">Invoices</a>
-            <a href="/quotes" class="btn btn-ghost">Quotes</a>
-            <a href="/expenses" class="btn btn-ghost">Expenses</a>
-            <a href="/reports" class="btn btn-ghost">All Reports</a>
-        </div>
-    </div>
-    
-    <!-- System Info -->
-    <div class="card">
-        <h3 style="margin-bottom: 16px;">ℹ️ System</h3>
-        <p class="text-muted">Click AI Business Accounting v2.0</p>
-        <p class="text-muted">Full SA Chart of Accounts • Double-Entry Bookkeeping • VAT Ready</p>
+    <div class="section-title">📊 Reports</div>
+    <div class="action-grid">
+        <a href="/reports/business-health" class="action-btn" style="border-color: var(--purple);">
+            <span class="action-icon">🤖</span>
+            <span class="action-label">AI Health Check</span>
+        </a>
+        <a href="/reports/trial-balance" class="action-btn">
+            <span class="action-icon">⚖️</span>
+            <span class="action-label">Trial Balance</span>
+        </a>
+        <a href="/reports/income-statement" class="action-btn">
+            <span class="action-icon">📈</span>
+            <span class="action-label">Profit & Loss</span>
+        </a>
+        <a href="/reports/vat" class="action-btn">
+            <span class="action-icon">🏛️</span>
+            <span class="action-label">VAT Report</span>
+        </a>
     </div>
     '''
     
