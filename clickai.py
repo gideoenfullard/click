@@ -12677,6 +12677,8 @@ SCANNER_HTML = '''<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Click Scanner</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0a0a12">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -12700,6 +12702,34 @@ SCANNER_HTML = '''<!DOCTYPE html>
             margin-bottom: 4px;
         }
         .tagline { color: #606070; font-size: 13px; }
+        
+        /* Offline indicator */
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            padding: 8px;
+            font-size: 12px;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-online { background: #10b981; }
+        .status-offline { background: #ef4444; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .queue-count {
+            background: rgba(245, 158, 11, 0.2);
+            color: #f59e0b;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            display: none;
+        }
+        .queue-count.show { display: inline-block; }
+        
         .buttons {
             flex: 1;
             display: flex;
@@ -12752,6 +12782,12 @@ SCANNER_HTML = '''<!DOCTYPE html>
             border: 1px solid #2a2a4a;
             border-radius: 8px;
             display: inline-block;
+            margin: 4px;
+        }
+        .footer .sync-btn {
+            background: rgba(139, 92, 246, 0.2);
+            border-color: rgba(139, 92, 246, 0.3);
+            color: #a78bfa;
         }
         input[type="file"] { display: none; }
         .overlay {
@@ -12836,12 +12872,18 @@ SCANNER_HTML = '''<!DOCTYPE html>
         .badge-new { background: rgba(16, 185, 129, 0.2); color: #10b981; }
         .badge-update { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
         .badge-duplicate { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .badge-queued { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="logo">Click</div>
         <div class="tagline">Tap • Snap • Done</div>
+        <div class="status-bar">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">Online</span>
+            <span class="queue-count" id="queue-count">0 queued</span>
+        </div>
     </div>
     
     <div class="buttons">
@@ -12883,6 +12925,7 @@ SCANNER_HTML = '''<!DOCTYPE html>
     </div>
     
     <div class="footer">
+        <a href="/" class="sync-btn" id="sync-btn" onclick="syncQueue(); return false;" style="display:none;">🔄 Sync Now</a>
         <a href="/">📊 Desktop Version</a>
     </div>
     
@@ -12903,6 +12946,192 @@ SCANNER_HTML = '''<!DOCTYPE html>
     </div>
     
     <script>
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // OFFLINE CAPABILITY - IndexedDB Queue
+    // ═══════════════════════════════════════════════════════════════════════════════
+    
+    let db = null;
+    const DB_NAME = 'ClickScannerDB';
+    const DB_VERSION = 1;
+    const STORE_NAME = 'scanQueue';
+    
+    // Initialize IndexedDB
+    function initDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                db = request.result;
+                resolve(db);
+            };
+            
+            request.onupgradeneeded = (e) => {
+                const database = e.target.result;
+                if (!database.objectStoreNames.contains(STORE_NAME)) {
+                    database.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                }
+            };
+        });
+    }
+    
+    // Add scan to offline queue
+    async function addToQueue(imageData, scanType) {
+        if (!db) await initDB();
+        
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            const store = tx.objectStore(STORE_NAME);
+            
+            const item = {
+                image: imageData,
+                type: scanType,
+                timestamp: new Date().toISOString(),
+                status: 'pending'
+            };
+            
+            const request = store.add(item);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+    
+    // Get all queued scans
+    async function getQueue() {
+        if (!db) await initDB();
+        
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_NAME, 'readonly');
+            const store = tx.objectStore(STORE_NAME);
+            const request = store.getAll();
+            
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+    
+    // Remove item from queue
+    async function removeFromQueue(id) {
+        if (!db) await initDB();
+        
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            const store = tx.objectStore(STORE_NAME);
+            const request = store.delete(id);
+            
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+    
+    // Update queue count display
+    async function updateQueueDisplay() {
+        try {
+            const queue = await getQueue();
+            const count = queue.length;
+            const queueEl = document.getElementById('queue-count');
+            const syncBtn = document.getElementById('sync-btn');
+            
+            if (count > 0) {
+                queueEl.textContent = count + ' queued';
+                queueEl.classList.add('show');
+                syncBtn.style.display = 'inline-block';
+            } else {
+                queueEl.classList.remove('show');
+                syncBtn.style.display = 'none';
+            }
+        } catch (e) {
+            console.log('Queue display error:', e);
+        }
+    }
+    
+    // Online/offline status
+    function updateOnlineStatus() {
+        const dot = document.getElementById('status-dot');
+        const text = document.getElementById('status-text');
+        
+        if (navigator.onLine) {
+            dot.className = 'status-dot status-online';
+            text.textContent = 'Online';
+            // Auto-sync when back online
+            syncQueue();
+        } else {
+            dot.className = 'status-dot status-offline';
+            text.textContent = 'Offline - scans will queue';
+        }
+    }
+    
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+    
+    // Sync queued scans
+    async function syncQueue() {
+        if (!navigator.onLine) {
+            alert('Still offline. Will sync automatically when connected.');
+            return;
+        }
+        
+        try {
+            const queue = await getQueue();
+            if (queue.length === 0) return;
+            
+            const overlay = document.getElementById('overlay');
+            const overlayText = document.getElementById('overlay-text');
+            const overlaySub = document.getElementById('overlay-sub');
+            
+            overlay.classList.add('show');
+            overlayText.textContent = 'Syncing ' + queue.length + ' scans...';
+            overlaySub.textContent = 'Please wait';
+            
+            let synced = 0;
+            let failed = 0;
+            
+            for (const item of queue) {
+                try {
+                    overlayText.textContent = 'Syncing ' + (synced + 1) + ' of ' + queue.length + '...';
+                    
+                    const response = await fetch('/m/scan', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ image: item.image, type: item.type })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        await removeFromQueue(item.id);
+                        synced++;
+                    } else {
+                        failed++;
+                    }
+                } catch (e) {
+                    failed++;
+                }
+            }
+            
+            overlay.classList.remove('show');
+            await updateQueueDisplay();
+            
+            if (synced > 0) {
+                showResult({
+                    success: true,
+                    title: 'Sync Complete!',
+                    details: synced + ' scan(s) uploaded successfully' + (failed > 0 ? '<br>' + failed + ' failed' : ''),
+                    badge: 'SYNCED',
+                    badge_type: 'new'
+                });
+            }
+            
+        } catch (e) {
+            document.getElementById('overlay').classList.remove('show');
+            alert('Sync error: ' + e.message);
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // MAIN SCAN PROCESSING
+    // ═══════════════════════════════════════════════════════════════════════════════
+    
     async function processImage(input, type) {
         if (!input.files || !input.files[0]) return;
         
@@ -12932,6 +13161,24 @@ SCANNER_HTML = '''<!DOCTYPE html>
                 reader.readAsDataURL(file);
             });
             
+            // Check if offline
+            if (!navigator.onLine) {
+                // Queue for later
+                await addToQueue(base64, type);
+                await updateQueueDisplay();
+                
+                overlay.classList.remove('show');
+                showResult({
+                    success: true,
+                    title: 'Saved for Later',
+                    details: 'No internet connection.<br>Scan saved and will upload automatically when you\\'re back online.',
+                    badge: 'QUEUED',
+                    badge_type: 'queued'
+                });
+                input.value = '';
+                return;
+            }
+            
             const response = await fetch('/m/scan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -12944,8 +13191,35 @@ SCANNER_HTML = '''<!DOCTYPE html>
             showResult(data);
             
         } catch (err) {
-            overlay.classList.remove('show');
-            showResult({ success: false, error: err.message });
+            // Network error - queue it
+            if (!navigator.onLine || err.message.includes('fetch')) {
+                try {
+                    const base64 = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result);
+                        reader.onerror = reject;
+                        reader.readAsDataURL(file);
+                    });
+                    
+                    await addToQueue(base64, type);
+                    await updateQueueDisplay();
+                    
+                    overlay.classList.remove('show');
+                    showResult({
+                        success: true,
+                        title: 'Saved for Later',
+                        details: 'Connection lost. Scan saved and will upload when back online.',
+                        badge: 'QUEUED',
+                        badge_type: 'queued'
+                    });
+                } catch (queueErr) {
+                    overlay.classList.remove('show');
+                    showResult({ success: false, error: 'Could not save: ' + queueErr.message });
+                }
+            } else {
+                overlay.classList.remove('show');
+                showResult({ success: false, error: err.message });
+            }
         }
         
         input.value = '';
@@ -13016,6 +13290,13 @@ SCANNER_HTML = '''<!DOCTYPE html>
     function closeResult() {
         document.getElementById('result-card').classList.remove('show');
     }
+    
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', async () => {
+        await initDB();
+        updateOnlineStatus();
+        updateQueueDisplay();
+    });
     </script>
 </body>
 </html>'''
@@ -15749,6 +16030,11 @@ def settings_home():
     <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">⚙️ Settings</h1>
     
     <div class="report-grid">
+        <a href="/settings/industry" class="report-card" style="border-color: var(--purple);">
+            <div class="report-card-icon">🏭</div>
+            <h3 class="report-card-title">Industry Template</h3>
+            <p class="report-card-desc">Hardware, Motor, Engineering, Retail...</p>
+        </a>
         <a href="/settings/pricing" class="report-card">
             <div class="report-card-icon">💰</div>
             <h3 class="report-card-title">Pricing & Markup</h3>
@@ -15773,6 +16059,215 @@ def settings_home():
     '''
     
     return page_wrapper("Settings", content, user=user)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INDUSTRY TEMPLATES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+INDUSTRY_TEMPLATES = {
+    "hardware": {
+        "name": "Hardware & Building",
+        "icon": "🔨",
+        "description": "Bolts, nuts, tools, paint, building materials",
+        "categories": ["Fasteners", "Tools", "Paint", "Building Materials", "Plumbing", "Electrical", "Safety", "Garden"],
+        "expense_categories": ["Stock Purchases", "Fuel", "Vehicle Expenses", "Rent", "Utilities", "Staff Wages", "Repairs", "Advertising"],
+        "default_markup": 40,
+        "pricing_tiers": [
+            {"max": 10, "markup": 100},   # Small items 100%
+            {"max": 50, "markup": 60},    # Medium items 60%
+            {"max": 200, "markup": 40},   # Larger items 40%
+            {"max": None, "markup": 25}   # Big items 25%
+        ]
+    },
+    "motor": {
+        "name": "Motor / Auto Spares",
+        "icon": "🚗",
+        "description": "Car parts, spares, accessories, oils",
+        "categories": ["Engine Parts", "Brake Parts", "Filters", "Oils & Lubricants", "Electrical", "Body Parts", "Accessories", "Tyres"],
+        "expense_categories": ["Parts Purchases", "Fuel", "Vehicle Expenses", "Rent", "Utilities", "Staff Wages", "Equipment", "Insurance"],
+        "default_markup": 35,
+        "pricing_tiers": [
+            {"max": 50, "markup": 80},
+            {"max": 200, "markup": 50},
+            {"max": 1000, "markup": 35},
+            {"max": None, "markup": 20}
+        ]
+    },
+    "engineering": {
+        "name": "Engineering / Fabrication",
+        "icon": "⚙️",
+        "description": "Steel, welding, machining, fabrication",
+        "categories": ["Steel Stock", "Welding Supplies", "Cutting Tools", "Measuring Equipment", "Fasteners", "Abrasives", "Safety Equipment", "Gases"],
+        "expense_categories": ["Materials", "Gas & Consumables", "Subcontractors", "Vehicle Expenses", "Rent", "Utilities", "Staff Wages", "Equipment Maintenance"],
+        "default_markup": 30,
+        "pricing_tiers": [
+            {"max": 100, "markup": 50},
+            {"max": 500, "markup": 35},
+            {"max": 2000, "markup": 25},
+            {"max": None, "markup": 15}
+        ]
+    },
+    "retail": {
+        "name": "General Retail",
+        "icon": "🛒",
+        "description": "General merchandise, groceries, convenience",
+        "categories": ["Food & Beverage", "Household", "Personal Care", "Cleaning", "Stationery", "Electronics", "Clothing", "Other"],
+        "expense_categories": ["Stock Purchases", "Rent", "Utilities", "Staff Wages", "Transport", "Marketing", "Bank Charges", "Insurance"],
+        "default_markup": 30,
+        "pricing_tiers": [
+            {"max": 20, "markup": 50},
+            {"max": 100, "markup": 35},
+            {"max": 500, "markup": 25},
+            {"max": None, "markup": 20}
+        ]
+    },
+    "restaurant": {
+        "name": "Restaurant / Pub & Grill",
+        "icon": "🍔",
+        "description": "Food service, beverages, hospitality",
+        "categories": ["Food Ingredients", "Beverages - Alcohol", "Beverages - Soft", "Packaging", "Cleaning", "Kitchen Equipment", "Tableware", "Decor"],
+        "expense_categories": ["Food Cost", "Beverage Cost", "Staff Wages", "Rent", "Utilities", "Linen & Laundry", "Marketing", "Equipment Repairs"],
+        "default_markup": 200,  # Food typically 300% markup
+        "pricing_tiers": [
+            {"max": 50, "markup": 250},   # Cheap ingredients
+            {"max": 200, "markup": 200},
+            {"max": 500, "markup": 150},
+            {"max": None, "markup": 100}
+        ]
+    },
+    "accommodation": {
+        "name": "B&B / Guesthouse",
+        "icon": "🛏️",
+        "description": "Accommodation, hospitality, tourism",
+        "categories": ["Linen & Bedding", "Toiletries", "Cleaning Supplies", "Breakfast Items", "Beverages", "Maintenance", "Decor", "Guest Amenities"],
+        "expense_categories": ["Linen & Laundry", "Cleaning", "Food & Breakfast", "Utilities", "Repairs & Maintenance", "Marketing", "Staff Wages", "Commission Fees"],
+        "default_markup": 100,
+        "pricing_tiers": [
+            {"max": 100, "markup": 150},
+            {"max": 500, "markup": 100},
+            {"max": None, "markup": 50}
+        ]
+    },
+    "services": {
+        "name": "Professional Services",
+        "icon": "💼",
+        "description": "Consulting, IT, accounting, legal",
+        "categories": ["Software", "Office Supplies", "Equipment", "Subscriptions", "Training Materials", "Marketing", "Travel", "Other"],
+        "expense_categories": ["Software & Subscriptions", "Office Rent", "Utilities", "Staff Wages", "Professional Fees", "Travel", "Marketing", "Insurance"],
+        "default_markup": 50,
+        "pricing_tiers": []
+    }
+}
+
+
+@app.route("/settings/industry", methods=["GET", "POST"])
+def settings_industry():
+    """Industry template selection"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    message = ""
+    
+    if request.method == "POST":
+        industry = request.form.get("industry")
+        
+        if industry in INDUSTRY_TEMPLATES:
+            template = INDUSTRY_TEMPLATES[industry]
+            
+            # Save selected industry
+            db.upsert("settings", {
+                "id": "industry_template",
+                "key": "industry",
+                "value": json.dumps({"industry": industry, "name": template["name"]})
+            })
+            
+            # Create stock categories
+            for i, cat_name in enumerate(template["categories"]):
+                cat_id = f"cat_{industry}_{i}"
+                try:
+                    existing = db.select("stock_categories", filters={"name": cat_name})
+                    if not existing:
+                        db.insert("stock_categories", {
+                            "id": cat_id,
+                            "name": cat_name,
+                            "sort_order": i
+                        })
+                except:
+                    pass
+            
+            # Save pricing settings
+            pricing = {
+                "tiers": [{"max_cost": t["max"], "markup_pct": t["markup"]} for t in template["pricing_tiers"]],
+                "category_markups": {},
+                "min_margin": 10
+            }
+            PricingEngine.save_settings(pricing)
+            
+            message = f'<div class="success-box">Applied {template["name"]} template! Categories and pricing updated.</div>'
+    
+    # Get current industry
+    try:
+        ind_row = db.select("settings", filters={"key": "industry"}, limit=1)
+        current = json.loads(ind_row[0].get("value", "{}")) if ind_row else {}
+        current_industry = current.get("industry", "")
+    except:
+        current_industry = ""
+    
+    # Build industry cards
+    cards_html = ""
+    for key, template in INDUSTRY_TEMPLATES.items():
+        selected = "border-color: var(--green); background: rgba(16, 185, 129, 0.1);" if key == current_industry else ""
+        check = "✓ " if key == current_industry else ""
+        
+        cards_html += f'''
+        <div class="industry-card" style="border: 2px solid var(--border); border-radius: 12px; padding: 20px; cursor: pointer; transition: all 0.2s; {selected}" onclick="selectIndustry('{key}')">
+            <div style="font-size: 36px; margin-bottom: 8px;">{template["icon"]}</div>
+            <div style="font-size: 16px; font-weight: 600; margin-bottom: 4px;">{check}{template["name"]}</div>
+            <div style="font-size: 12px; color: var(--text-muted);">{template["description"]}</div>
+        </div>
+        '''
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/settings" class="text-muted">← Settings</a>
+        <h1>🏭 Industry Template</h1>
+        <p class="text-muted">Choose your business type to get pre-configured categories, pricing tiers, and expense types</p>
+    </div>
+    
+    {message}
+    
+    <form method="POST" id="industry-form">
+        <input type="hidden" name="industry" id="industry-input" value="{current_industry}">
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+            {cards_html}
+        </div>
+        
+        <button type="submit" class="btn btn-primary btn-lg" id="apply-btn" style="display: none;">Apply Template</button>
+    </form>
+    
+    <script>
+    let selectedIndustry = '{current_industry}';
+    
+    function selectIndustry(key) {{
+        selectedIndustry = key;
+        document.getElementById('industry-input').value = key;
+        document.getElementById('apply-btn').style.display = 'inline-block';
+        
+        // Update visual selection
+        document.querySelectorAll('.industry-card').forEach(card => {{
+            card.style.borderColor = 'var(--border)';
+            card.style.background = 'transparent';
+        }});
+        event.currentTarget.style.borderColor = 'var(--green)';
+        event.currentTarget.style.background = 'rgba(16, 185, 129, 0.1)';
+    }}
+    </script>
+    '''
+    
+    return page_wrapper("Industry Template", content, user=user)
 
 
 @app.route("/settings/pricing", methods=["GET", "POST"])
