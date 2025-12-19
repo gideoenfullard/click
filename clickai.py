@@ -4588,6 +4588,7 @@ def get_header_html(active: str = "", user: dict = None) -> str:
         ("stock", "Stock", "/stock"),
         ("customers", "Customers", "/customers"),
         ("suppliers", "Suppliers", "/suppliers"),
+        ("purchase-orders", "Orders", "/purchase-orders"),
         ("invoices", "Invoices", "/invoices"),
         ("quotes", "Quotes", "/quotes"),
         ("expenses", "Expenses", "/expenses"),
@@ -8203,6 +8204,447 @@ def supplier_pay(supplier_id):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PURCHASE ORDERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/purchase-orders")
+def purchase_order_list():
+    """List all purchase orders"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    pos = db.select("purchase_orders", order="created_at DESC") or []
+    
+    rows = []
+    for po in pos[:50]:
+        status = po.get("status", "draft")
+        if status == "draft":
+            sb = badge("Draft", "blue")
+        elif status == "sent":
+            sb = badge("Sent", "purple")
+        elif status == "received":
+            sb = badge("Received", "green")
+        elif status == "cancelled":
+            sb = badge("Cancelled", "red")
+        else:
+            sb = badge(status.title(), "blue")
+        
+        rows.append([
+            f'<a href="/purchase-orders/{po.get("id")}">{po.get("po_number", "-")}</a>',
+            po.get("date", "")[:10],
+            po.get("supplier_name", "-"),
+            {"value": Money.format(Decimal(str(po.get("total", 0)))), "class": "number"},
+            sb
+        ])
+    
+    table = table_html(
+        headers=["PO #", "Date", "Supplier", {"label": "Total", "class": "number"}, "Status"],
+        rows=rows,
+        empty_message="No purchase orders yet"
+    )
+    
+    content = f'''
+    <div class="flex-between mb-lg">
+        <h1 style="font-size:24px;font-weight:700;">Purchase Orders</h1>
+        <a href="/purchase-orders/new" class="btn btn-primary">+ New Order</a>
+    </div>
+    <div class="card">{table}</div>
+    '''
+    return page_wrapper("Purchase Orders", content, user=user)
+
+
+@app.route("/purchase-orders/new", methods=["GET", "POST"])
+def purchase_order_new():
+    """Create new purchase order"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    suppliers = get_all_suppliers()
+    stock = db.select("stock_items", order="description") or []
+    
+    if request.method == "POST":
+        supplier_id = request.form.get("supplier_id")
+        date = request.form.get("date", today())
+        items_json = request.form.get("items_json", "[]")
+        notes = request.form.get("notes", "")
+        
+        try:
+            items = json.loads(items_json)
+        except:
+            items = []
+        
+        if not supplier_id:
+            return "Supplier required", 400
+        if not items:
+            return "Add at least one item", 400
+        
+        # Get supplier
+        supplier = get_supplier(supplier_id)
+        supplier_name = supplier.get("name", "Unknown") if supplier else "Unknown"
+        
+        # Calculate total
+        total = sum(Decimal(str(item.get("line_total", 0))) for item in items)
+        
+        # Generate PO number
+        po_number = DocumentNumbers.get_next("PO", "purchase_orders", "po_number")
+        
+        po_id = generate_id()
+        po_record = {
+            "id": po_id,
+            "po_number": po_number,
+            "date": date,
+            "supplier_id": supplier_id,
+            "supplier_name": supplier_name,
+            "items": json.dumps(items),
+            "notes": notes,
+            "total": float(total),
+            "status": "draft",
+            "created_at": now()
+        }
+        
+        db.insert("purchase_orders", po_record)
+        return redirect(f"/purchase-orders/{po_id}")
+    
+    # Build form
+    supplier_options = "".join([f'<option value="{s["id"]}">{safe_string(s["name"])}</option>' for s in suppliers])
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/purchase-orders" class="text-muted">← Purchase Orders</a>
+        <h1>New Purchase Order</h1>
+    </div>
+    
+    <form method="POST" id="po-form">
+        <div class="card mb-lg">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" name="date" class="form-input" value="{today()}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Supplier *</label>
+                    <select name="supplier_id" class="form-select" required>
+                        <option value="">Select supplier...</option>
+                        {supplier_options}
+                    </select>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mb-lg">
+            <h3 class="mb-md">Items</h3>
+            <input type="text" id="search-stock" class="form-input mb-md" placeholder="Search products to add..." onkeyup="searchStock(this.value)">
+            <div id="search-results" style="max-height:200px;overflow-y:auto;margin-bottom:15px;"></div>
+            
+            <table class="table" id="items-table">
+                <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Cost</th><th class="number">Total</th><th></th></tr></thead>
+                <tbody id="items-body"></tbody>
+                <tfoot>
+                    <tr><td colspan="3" style="text-align:right;font-weight:700;">Total:</td><td id="grand-total" class="number" style="font-weight:700;">R 0.00</td><td></td></tr>
+                </tfoot>
+            </table>
+        </div>
+        
+        <div class="card mb-lg">
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea name="notes" class="form-input" rows="3" placeholder="Delivery instructions, special requests..."></textarea>
+            </div>
+        </div>
+        
+        <input type="hidden" name="items_json" id="items-json">
+        
+        <button type="submit" class="btn btn-primary">Create Purchase Order</button>
+        <a href="/purchase-orders" class="btn btn-ghost">Cancel</a>
+    </form>
+    
+    <script>
+    const allStock = {json.dumps([{"id": s.get("id"), "code": s.get("code", ""), "description": s.get("description", ""), "cost": float(s.get("cost_price") or 0)} for s in stock])};
+    let poItems = [];
+    
+    function searchStock(q) {{
+        const results = document.getElementById('search-results');
+        if (q.length < 2) {{ results.innerHTML = ''; return; }}
+        
+        const matches = allStock.filter(s => 
+            s.description.toLowerCase().includes(q.toLowerCase()) ||
+            s.code.toLowerCase().includes(q.toLowerCase())
+        ).slice(0, 10);
+        
+        results.innerHTML = matches.map(s => 
+            '<div style="padding:10px;border-bottom:1px solid var(--border);cursor:pointer;" onclick="addItem(\\''+s.id+'\\')">'+
+            '<strong>'+s.description+'</strong> <span class="text-muted">R '+s.cost.toFixed(2)+'</span></div>'
+        ).join('');
+    }}
+    
+    function addItem(itemId) {{
+        const stock = allStock.find(s => s.id === itemId);
+        if (!stock) return;
+        
+        const existing = poItems.find(i => i.id === itemId);
+        if (existing) {{
+            existing.qty++;
+            existing.line_total = existing.qty * existing.cost;
+        }} else {{
+            poItems.push({{
+                id: stock.id,
+                code: stock.code,
+                description: stock.description,
+                qty: 1,
+                cost: stock.cost,
+                line_total: stock.cost
+            }});
+        }}
+        
+        renderItems();
+        document.getElementById('search-stock').value = '';
+        document.getElementById('search-results').innerHTML = '';
+    }}
+    
+    function removeItem(idx) {{
+        poItems.splice(idx, 1);
+        renderItems();
+    }}
+    
+    function updateQty(idx, qty) {{
+        poItems[idx].qty = parseInt(qty) || 1;
+        poItems[idx].line_total = poItems[idx].qty * poItems[idx].cost;
+        renderItems();
+    }}
+    
+    function renderItems() {{
+        const body = document.getElementById('items-body');
+        let html = '';
+        let total = 0;
+        
+        poItems.forEach((item, idx) => {{
+            total += item.line_total;
+            html += '<tr>';
+            html += '<td>'+item.description+'</td>';
+            html += '<td class="number"><input type="number" value="'+item.qty+'" min="1" style="width:60px;text-align:center;" onchange="updateQty('+idx+', this.value)"></td>';
+            html += '<td class="number">R '+item.cost.toFixed(2)+'</td>';
+            html += '<td class="number">R '+item.line_total.toFixed(2)+'</td>';
+            html += '<td><button type="button" class="btn btn-sm btn-red" onclick="removeItem('+idx+')">×</button></td>';
+            html += '</tr>';
+        }});
+        
+        body.innerHTML = html || '<tr><td colspan="5" class="text-muted" style="text-align:center;">No items added</td></tr>';
+        document.getElementById('grand-total').textContent = 'R ' + total.toFixed(2);
+        document.getElementById('items-json').value = JSON.stringify(poItems);
+    }}
+    
+    renderItems();
+    </script>
+    '''
+    return page_wrapper("New Purchase Order", content, user=user)
+
+
+@app.route("/purchase-orders/<po_id>")
+def purchase_order_view(po_id):
+    """View purchase order"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    po = db.select_one("purchase_orders", po_id)
+    if not po:
+        return redirect("/purchase-orders")
+    
+    items = json.loads(po.get("items", "[]"))
+    
+    item_rows = ""
+    for item in items:
+        item_rows += f'''<tr>
+            <td>{safe_string(item.get("description", ""))}</td>
+            <td class="number">{item.get("qty", 1)}</td>
+            <td class="number">R {float(item.get("cost", 0)):.2f}</td>
+            <td class="number">R {float(item.get("line_total", 0)):.2f}</td>
+        </tr>'''
+    
+    status = po.get("status", "draft")
+    if status == "draft":
+        sb = badge("Draft", "blue")
+        actions = f'''
+            <a href="/purchase-orders/{po_id}/send" class="btn btn-sm btn-purple">📧 Mark Sent</a>
+            <a href="/purchase-orders/{po_id}/receive" class="btn btn-sm btn-green">📦 Receive Stock</a>
+        '''
+    elif status == "sent":
+        sb = badge("Sent", "purple")
+        actions = f'<a href="/purchase-orders/{po_id}/receive" class="btn btn-sm btn-green">📦 Receive Stock</a>'
+    elif status == "received":
+        sb = badge("Received", "green")
+        actions = ""
+    else:
+        sb = badge(status.title(), "blue")
+        actions = ""
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/purchase-orders" class="text-muted">← Purchase Orders</a>
+    </div>
+    
+    <div class="card">
+        <div class="flex-between mb-lg">
+            <div>
+                <h1 style="font-size:24px;font-weight:700;">PO {po.get("po_number", "")}</h1>
+                <p class="text-muted">{po.get("date", "")[:10]} • {safe_string(po.get("supplier_name", ""))}</p>
+            </div>
+            <div class="btn-group">
+                <a href="/purchase-orders/{po_id}/print" target="_blank" class="btn btn-sm btn-ghost">🖨️ Print</a>
+                {actions}
+                {sb}
+            </div>
+        </div>
+        
+        <table class="table">
+            <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Cost</th><th class="number">Total</th></tr></thead>
+            <tbody>{item_rows}</tbody>
+            <tfoot>
+                <tr><td colspan="3" style="text-align:right;font-weight:700;">Total:</td>
+                <td class="number" style="font-weight:700;">R {float(po.get("total", 0)):.2f}</td></tr>
+            </tfoot>
+        </table>
+        
+        {f'<div class="mt-lg"><strong>Notes:</strong><br>{safe_string(po.get("notes", ""))}</div>' if po.get("notes") else ""}
+    </div>
+    '''
+    return page_wrapper(f"PO {po.get('po_number', '')}", content, user=user)
+
+
+@app.route("/purchase-orders/<po_id>/send")
+def purchase_order_send(po_id):
+    """Mark PO as sent"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    db.update("purchase_orders", po_id, {"status": "sent"})
+    return redirect(f"/purchase-orders/{po_id}")
+
+
+@app.route("/purchase-orders/<po_id>/receive", methods=["GET", "POST"])
+def purchase_order_receive(po_id):
+    """Receive stock from PO"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    po = db.select_one("purchase_orders", po_id)
+    if not po:
+        return redirect("/purchase-orders")
+    
+    if request.method == "POST":
+        items = json.loads(po.get("items", "[]"))
+        
+        # Book stock IN for each item
+        for item in items:
+            stock_id = item.get("id")
+            qty = int(item.get("qty", 0))
+            
+            if stock_id and qty > 0:
+                stock_item = db.select_one("stock_items", stock_id)
+                if stock_item:
+                    current_qty = int(stock_item.get("quantity", 0) or 0)
+                    db.update("stock_items", stock_id, {"quantity": current_qty + qty})
+        
+        # Update PO status
+        db.update("purchase_orders", po_id, {"status": "received", "received_date": today()})
+        
+        return redirect(f"/purchase-orders/{po_id}")
+    
+    items = json.loads(po.get("items", "[]"))
+    item_list = "".join([f"<li>{item.get('description')} × {item.get('qty')}</li>" for item in items])
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/purchase-orders/{po_id}" class="text-muted">← Back to PO</a>
+        <h1>Receive Stock</h1>
+        <p class="text-muted">PO {po.get("po_number")} from {po.get("supplier_name")}</p>
+    </div>
+    
+    <div class="card" style="max-width:500px;">
+        <p class="mb-md">The following items will be added to stock:</p>
+        <ul style="margin-bottom:20px;">{item_list}</ul>
+        
+        <form method="POST">
+            <button type="submit" class="btn btn-green btn-block">Confirm Receipt</button>
+        </form>
+    </div>
+    '''
+    return page_wrapper("Receive Stock", content, user=user)
+
+
+@app.route("/purchase-orders/<po_id>/print")
+def purchase_order_print(po_id):
+    """Print purchase order"""
+    po = db.select_one("purchase_orders", po_id)
+    if not po:
+        return "PO not found", 404
+    
+    # Get company details
+    try:
+        settings_row = db.select("settings", filters={"key": "company"}, limit=1)
+        company = json.loads(settings_row[0].get("value", "{}")) if settings_row else {}
+    except:
+        company = {}
+    
+    items = json.loads(po.get("items", "[]"))
+    item_rows = ""
+    for item in items:
+        item_rows += f'<tr><td>{safe_string(item.get("description", ""))}</td><td style="text-align:right">{item.get("qty", 1)}</td><td style="text-align:right">R {float(item.get("cost", 0)):.2f}</td><td style="text-align:right">R {float(item.get("line_total", 0)):.2f}</td></tr>'
+    
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>PO {po.get("po_number", "")}</title>
+    <style>
+        @media print {{ @page {{ margin: 15mm; }} .no-print {{ display: none; }} }}
+        body {{ font-family: Arial, sans-serif; font-size: 14px; max-width: 210mm; margin: 0 auto; padding: 20px; }}
+        .header {{ display: flex; justify-content: space-between; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }}
+        h1 {{ margin: 0; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+        th {{ background: #f5f5f5; text-align: left; padding: 10px; border-bottom: 2px solid #333; }}
+        td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
+        .total {{ font-weight: bold; font-size: 16px; }}
+        .btn {{ display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 5px; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h2>{company.get("name", "Your Business")}</h2>
+            <p>{company.get("phone", "")}</p>
+        </div>
+        <div style="text-align:right;">
+            <h1>PURCHASE ORDER</h1>
+            <p><strong>PO #:</strong> {po.get("po_number", "")}<br>
+            <strong>Date:</strong> {po.get("date", "")[:10]}</p>
+        </div>
+    </div>
+    
+    <div style="background:#f5f5f5; padding:15px; margin-bottom:20px;">
+        <strong>To:</strong> {safe_string(po.get("supplier_name", ""))}
+    </div>
+    
+    <table>
+        <thead><tr><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Cost</th><th style="text-align:right">Total</th></tr></thead>
+        <tbody>{item_rows}</tbody>
+        <tfoot><tr class="total"><td colspan="3" style="text-align:right">TOTAL:</td><td style="text-align:right">R {float(po.get("total", 0)):.2f}</td></tr></tfoot>
+    </table>
+    
+    {f'<p><strong>Notes:</strong> {safe_string(po.get("notes", ""))}</p>' if po.get("notes") else ""}
+    
+    <div class="no-print" style="margin-top:30px; text-align:center;">
+        <a href="#" class="btn" onclick="window.print(); return false;">Print</a>
+        <a href="#" class="btn" style="background:#666;" onclick="window.close(); return false;">Close</a>
+    </div>
+</body>
+</html>'''
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # API ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -9898,6 +10340,7 @@ def reports_menu():
     <h3 style="color: var(--text-muted); margin-bottom: 16px;">✏️ Adjustments</h3>
     <div class="report-grid">
         <a href="/journal-entry" class="report-card"><div class="report-card-icon">📝</div><h3 class="report-card-title">Journal Entry</h3><p class="report-card-desc">Manual adjustments</p></a>
+        <a href="/bank-recon" class="report-card"><div class="report-card-icon">🏦</div><h3 class="report-card-title">Bank Reconciliation</h3><p class="report-card-desc">Match bank statement</p></a>
     </div>
     '''
     return page_wrapper("Reports", content, active="reports", user=user)
@@ -10158,6 +10601,137 @@ def journal_entry():
     '''
     
     return page_wrapper("Journal Entry", content, active="reports", user=user)
+
+
+@app.route("/bank-recon", methods=["GET", "POST"])
+def bank_recon():
+    """Simple bank reconciliation"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    message = ""
+    
+    if request.method == "POST":
+        statement_balance = Decimal(request.form.get("statement_balance", 0) or 0)
+        
+        # Save to settings
+        db.upsert("settings", {
+            "id": "bank_recon_" + today(),
+            "key": "bank_recon",
+            "value": json.dumps({
+                "date": today(),
+                "statement_balance": float(statement_balance)
+            })
+        })
+        
+        message = '<div class="alert alert-info">✓ Bank balance saved</div>'
+    
+    # Get GL bank balance
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_trial_balance"
+        headers = {
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, headers=headers, json={}, timeout=30)
+        tb_data = resp.json() if resp.status_code == 200 else []
+        
+        # Find bank account
+        gl_balance = Decimal("0")
+        for entry in tb_data:
+            if entry.get("account_code") == "1000":  # Bank
+                gl_balance = Decimal(str(entry.get("total_debit", 0) or 0)) - Decimal(str(entry.get("total_credit", 0) or 0))
+                break
+    except:
+        gl_balance = Decimal("0")
+    
+    # Get last saved statement balance
+    try:
+        recon = db.select("settings", filters={"key": "bank_recon"}, limit=1)
+        if recon:
+            recon_data = json.loads(recon[0].get("value", "{}"))
+            statement_balance = Decimal(str(recon_data.get("statement_balance", 0)))
+            recon_date = recon_data.get("date", "Not set")
+        else:
+            statement_balance = Decimal("0")
+            recon_date = "Not set"
+    except:
+        statement_balance = Decimal("0")
+        recon_date = "Not set"
+    
+    difference = gl_balance - statement_balance
+    
+    diff_class = "green" if abs(difference) < Decimal("0.01") else "red"
+    diff_status = "✓ Reconciled" if abs(difference) < Decimal("0.01") else f"Difference of {Money.format(abs(difference))}"
+    
+    # Get recent bank transactions from GL
+    gl_entries = db.select("gl_entries", filters={"account_code": "1000"}, order="date DESC", limit=20) or []
+    
+    rows = []
+    for entry in gl_entries:
+        dr = Decimal(str(entry.get("debit", 0) or 0))
+        cr = Decimal(str(entry.get("credit", 0) or 0))
+        
+        rows.append([
+            entry.get("date", "")[:10],
+            entry.get("description", "")[:40],
+            {"value": Money.format(dr) if dr > 0 else "-", "class": "number text-green"},
+            {"value": Money.format(cr) if cr > 0 else "-", "class": "number text-red"}
+        ])
+    
+    table = table_html(
+        headers=["Date", "Description", {"label": "In", "class": "number"}, {"label": "Out", "class": "number"}],
+        rows=rows,
+        empty_message="No bank transactions"
+    )
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/reports" class="text-muted">← Reports</a>
+        <h1>🏦 Bank Reconciliation</h1>
+        <p class="text-muted">Compare your books to your bank statement</p>
+    </div>
+    
+    {message}
+    
+    <div class="stats mb-lg">
+        <div class="stat">
+            <div class="stat-value">{Money.format(gl_balance)}</div>
+            <div class="stat-label">Book Balance (GL)</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">{Money.format(statement_balance)}</div>
+            <div class="stat-label">Bank Statement</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value {diff_class}">{diff_status}</div>
+            <div class="stat-label">Status</div>
+        </div>
+    </div>
+    
+    <div class="card mb-lg" style="max-width: 400px;">
+        <h3 class="mb-md">Update Bank Statement Balance</h3>
+        <form method="POST">
+            <div class="form-group">
+                <label class="form-label">Closing balance from bank statement</label>
+                <input type="number" name="statement_balance" class="form-input" 
+                       value="{float(statement_balance):.2f}" step="0.01"
+                       style="font-size:20px;">
+                <small class="text-muted">Last updated: {recon_date}</small>
+            </div>
+            <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+    </div>
+    
+    <div class="card">
+        <h3 class="mb-md">Recent Bank Transactions</h3>
+        {table}
+    </div>
+    '''
+    
+    return page_wrapper("Bank Reconciliation", content, active="reports", user=user)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -11017,52 +11591,315 @@ def report_sales():
 
 @app.route("/reports/debtors")
 def report_debtors():
+    """Debtors aging report - 30/60/90 days"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
     customers = [c for c in db.select("customers", order="name") if c.get("active", True)]
-    with_bal = [c for c in customers if Decimal(str(c.get("balance", 0) or 0)) > 0]
-    total = sum(Decimal(str(c.get("balance", 0) or 0)) for c in with_bal)
     
-    rows = [[c.get("name", "-"), c.get("phone", "-"), {"value": Money.format(Decimal(str(c.get("balance", 0)))), "class": "number text-red font-bold"}] for c in with_bal]
-    table = table_html(headers=["Customer", "Phone", {"label": "Balance", "class": "number"}], rows=rows, empty_message="No debtors 🎉")
+    # Get all outstanding invoices
+    invoices = db.select("invoices", filters={"status": "outstanding"}) or []
+    
+    # Calculate aging for each customer
+    from datetime import datetime, timedelta
+    today_date = datetime.strptime(today(), "%Y-%m-%d")
+    
+    aging_data = {}
+    for inv in invoices:
+        cust_id = inv.get("customer_id")
+        if not cust_id:
+            continue
+        
+        inv_date_str = inv.get("date", "")[:10]
+        try:
+            inv_date = datetime.strptime(inv_date_str, "%Y-%m-%d")
+        except:
+            continue
+        
+        days_old = (today_date - inv_date).days
+        amount = Decimal(str(inv.get("total", 0) or 0))
+        
+        if cust_id not in aging_data:
+            aging_data[cust_id] = {"current": Decimal("0"), "days_30": Decimal("0"), "days_60": Decimal("0"), "days_90": Decimal("0")}
+        
+        if days_old <= 30:
+            aging_data[cust_id]["current"] += amount
+        elif days_old <= 60:
+            aging_data[cust_id]["days_30"] += amount
+        elif days_old <= 90:
+            aging_data[cust_id]["days_60"] += amount
+        else:
+            aging_data[cust_id]["days_90"] += amount
+    
+    # Build rows
+    rows = []
+    total_current = Decimal("0")
+    total_30 = Decimal("0")
+    total_60 = Decimal("0")
+    total_90 = Decimal("0")
+    
+    for cust in customers:
+        cust_id = cust.get("id")
+        if cust_id not in aging_data:
+            continue
+        
+        aging = aging_data[cust_id]
+        total = aging["current"] + aging["days_30"] + aging["days_60"] + aging["days_90"]
+        
+        if total <= 0:
+            continue
+        
+        total_current += aging["current"]
+        total_30 += aging["days_30"]
+        total_60 += aging["days_60"]
+        total_90 += aging["days_90"]
+        
+        rows.append([
+            f'<a href="/customers/{cust_id}">{safe_string(cust.get("name", "-"))}</a>',
+            {"value": Money.format(aging["current"]) if aging["current"] > 0 else "-", "class": "number"},
+            {"value": Money.format(aging["days_30"]) if aging["days_30"] > 0 else "-", "class": "number text-orange"},
+            {"value": Money.format(aging["days_60"]) if aging["days_60"] > 0 else "-", "class": "number text-orange"},
+            {"value": Money.format(aging["days_90"]) if aging["days_90"] > 0 else "-", "class": "number text-red"},
+            {"value": Money.format(total), "class": "number font-bold"}
+        ])
+    
+    grand_total = total_current + total_30 + total_60 + total_90
+    
+    table = table_html(
+        headers=["Customer", {"label": "Current", "class": "number"}, {"label": "30 Days", "class": "number"}, 
+                 {"label": "60 Days", "class": "number"}, {"label": "90+ Days", "class": "number"}, {"label": "Total", "class": "number"}],
+        rows=rows,
+        empty_message="No outstanding debts 🎉"
+    )
     
     content = f'''
-    
-    <h1 style="font-size:24px;font-weight:700;margin-bottom:20px;">Debtors Report</h1>
-    <div class="stats">
-        <div class="stat"><div class="stat-value">{len(with_bal)}</div><div class="stat-label">Customers Owing</div></div>
-        <div class="stat"><div class="stat-value red">{Money.format(total)}</div><div class="stat-label">Total Owing</div></div>
+    <div class="flex-between mb-lg">
+        <div>
+            <h1 style="font-size:24px;font-weight:700;">Debtors Aging</h1>
+            <p class="text-muted">Who owes you and for how long</p>
+        </div>
+        <a href="/reports/debtors/csv" class="btn btn-ghost">📥 Export CSV</a>
     </div>
+    
+    <div class="stats">
+        <div class="stat"><div class="stat-value">{Money.format(total_current)}</div><div class="stat-label">Current</div></div>
+        <div class="stat"><div class="stat-value orange">{Money.format(total_30)}</div><div class="stat-label">30 Days</div></div>
+        <div class="stat"><div class="stat-value orange">{Money.format(total_60)}</div><div class="stat-label">60 Days</div></div>
+        <div class="stat"><div class="stat-value red">{Money.format(total_90)}</div><div class="stat-label">90+ Days</div></div>
+        <div class="stat"><div class="stat-value">{Money.format(grand_total)}</div><div class="stat-label">Total Owing</div></div>
+    </div>
+    
     <div class="card">{table}</div>
     '''
-    return page_wrapper("Debtors Report", content, active="reports", user=user)
+    return page_wrapper("Debtors Aging", content, active="reports", user=user)
+
+
+@app.route("/reports/debtors/csv")
+def report_debtors_csv():
+    """Export debtors aging to CSV"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    customers = db.select("customers", order="name") or []
+    invoices = db.select("invoices", filters={"status": "outstanding"}) or []
+    
+    from datetime import datetime
+    today_date = datetime.strptime(today(), "%Y-%m-%d")
+    
+    aging_data = {}
+    for inv in invoices:
+        cust_id = inv.get("customer_id")
+        if not cust_id:
+            continue
+        try:
+            inv_date = datetime.strptime(inv.get("date", "")[:10], "%Y-%m-%d")
+            days_old = (today_date - inv_date).days
+            amount = float(inv.get("total", 0) or 0)
+            
+            if cust_id not in aging_data:
+                aging_data[cust_id] = {"current": 0, "days_30": 0, "days_60": 0, "days_90": 0}
+            
+            if days_old <= 30:
+                aging_data[cust_id]["current"] += amount
+            elif days_old <= 60:
+                aging_data[cust_id]["days_30"] += amount
+            elif days_old <= 90:
+                aging_data[cust_id]["days_60"] += amount
+            else:
+                aging_data[cust_id]["days_90"] += amount
+        except:
+            continue
+    
+    csv_lines = ["Customer,Current,30 Days,60 Days,90+ Days,Total"]
+    for cust in customers:
+        cust_id = cust.get("id")
+        if cust_id in aging_data:
+            a = aging_data[cust_id]
+            total = a["current"] + a["days_30"] + a["days_60"] + a["days_90"]
+            if total > 0:
+                csv_lines.append(f'{cust.get("name", "")},{a["current"]},{a["days_30"]},{a["days_60"]},{a["days_90"]},{total}')
+    
+    from flask import Response
+    return Response("\n".join(csv_lines), mimetype="text/csv", 
+                    headers={"Content-Disposition": f"attachment;filename=debtors_aging_{today()}.csv"})
 
 
 @app.route("/reports/creditors")
 def report_creditors():
+    """Creditors aging report - 30/60/90 days"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
     suppliers = [s for s in db.select("suppliers", order="name") if s.get("active", True)]
-    with_bal = [s for s in suppliers if Decimal(str(s.get("balance", 0) or 0)) > 0]
-    total = sum(Decimal(str(s.get("balance", 0) or 0)) for s in with_bal)
     
-    rows = [[s.get("name", "-"), s.get("phone", "-"), {"value": Money.format(Decimal(str(s.get("balance", 0)))), "class": "number text-orange font-bold"}] for s in with_bal]
-    table = table_html(headers=["Supplier", "Phone", {"label": "We Owe", "class": "number"}], rows=rows, empty_message="No creditors 🎉")
+    # Get all expenses that are outstanding (unpaid supplier invoices)
+    expenses = db.select("expenses", filters={"status": "outstanding"}) or []
+    
+    from datetime import datetime
+    today_date = datetime.strptime(today(), "%Y-%m-%d")
+    
+    aging_data = {}
+    for exp in expenses:
+        supp_id = exp.get("supplier_id")
+        if not supp_id:
+            continue
+        
+        exp_date_str = exp.get("date", "")[:10]
+        try:
+            exp_date = datetime.strptime(exp_date_str, "%Y-%m-%d")
+        except:
+            continue
+        
+        days_old = (today_date - exp_date).days
+        amount = Decimal(str(exp.get("total", 0) or 0))
+        
+        if supp_id not in aging_data:
+            aging_data[supp_id] = {"current": Decimal("0"), "days_30": Decimal("0"), "days_60": Decimal("0"), "days_90": Decimal("0")}
+        
+        if days_old <= 30:
+            aging_data[supp_id]["current"] += amount
+        elif days_old <= 60:
+            aging_data[supp_id]["days_30"] += amount
+        elif days_old <= 90:
+            aging_data[supp_id]["days_60"] += amount
+        else:
+            aging_data[supp_id]["days_90"] += amount
+    
+    # Build rows
+    rows = []
+    total_current = Decimal("0")
+    total_30 = Decimal("0")
+    total_60 = Decimal("0")
+    total_90 = Decimal("0")
+    
+    for supp in suppliers:
+        supp_id = supp.get("id")
+        if supp_id not in aging_data:
+            continue
+        
+        aging = aging_data[supp_id]
+        total = aging["current"] + aging["days_30"] + aging["days_60"] + aging["days_90"]
+        
+        if total <= 0:
+            continue
+        
+        total_current += aging["current"]
+        total_30 += aging["days_30"]
+        total_60 += aging["days_60"]
+        total_90 += aging["days_90"]
+        
+        rows.append([
+            f'<a href="/suppliers/{supp_id}">{safe_string(supp.get("name", "-"))}</a>',
+            {"value": Money.format(aging["current"]) if aging["current"] > 0 else "-", "class": "number"},
+            {"value": Money.format(aging["days_30"]) if aging["days_30"] > 0 else "-", "class": "number text-orange"},
+            {"value": Money.format(aging["days_60"]) if aging["days_60"] > 0 else "-", "class": "number text-orange"},
+            {"value": Money.format(aging["days_90"]) if aging["days_90"] > 0 else "-", "class": "number text-red"},
+            {"value": Money.format(total), "class": "number font-bold"}
+        ])
+    
+    grand_total = total_current + total_30 + total_60 + total_90
+    
+    table = table_html(
+        headers=["Supplier", {"label": "Current", "class": "number"}, {"label": "30 Days", "class": "number"}, 
+                 {"label": "60 Days", "class": "number"}, {"label": "90+ Days", "class": "number"}, {"label": "Total", "class": "number"}],
+        rows=rows,
+        empty_message="No outstanding debts 🎉"
+    )
     
     content = f'''
-    
-    <h1 style="font-size:24px;font-weight:700;margin-bottom:20px;">Creditors Report</h1>
-    <div class="stats">
-        <div class="stat"><div class="stat-value">{len(with_bal)}</div><div class="stat-label">Suppliers Owed</div></div>
-        <div class="stat"><div class="stat-value orange">{Money.format(total)}</div><div class="stat-label">Total We Owe</div></div>
+    <div class="flex-between mb-lg">
+        <div>
+            <h1 style="font-size:24px;font-weight:700;">Creditors Aging</h1>
+            <p class="text-muted">What you owe and for how long</p>
+        </div>
+        <a href="/reports/creditors/csv" class="btn btn-ghost">📥 Export CSV</a>
     </div>
+    
+    <div class="stats">
+        <div class="stat"><div class="stat-value">{Money.format(total_current)}</div><div class="stat-label">Current</div></div>
+        <div class="stat"><div class="stat-value orange">{Money.format(total_30)}</div><div class="stat-label">30 Days</div></div>
+        <div class="stat"><div class="stat-value orange">{Money.format(total_60)}</div><div class="stat-label">60 Days</div></div>
+        <div class="stat"><div class="stat-value red">{Money.format(total_90)}</div><div class="stat-label">90+ Days</div></div>
+        <div class="stat"><div class="stat-value">{Money.format(grand_total)}</div><div class="stat-label">Total We Owe</div></div>
+    </div>
+    
     <div class="card">{table}</div>
     '''
-    return page_wrapper("Creditors Report", content, active="reports", user=user)
+    return page_wrapper("Creditors Aging", content, active="reports", user=user)
+
+
+@app.route("/reports/creditors/csv")
+def report_creditors_csv():
+    """Export creditors aging to CSV"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    suppliers = db.select("suppliers", order="name") or []
+    expenses = db.select("expenses", filters={"status": "outstanding"}) or []
+    
+    from datetime import datetime
+    today_date = datetime.strptime(today(), "%Y-%m-%d")
+    
+    aging_data = {}
+    for exp in expenses:
+        supp_id = exp.get("supplier_id")
+        if not supp_id:
+            continue
+        try:
+            exp_date = datetime.strptime(exp.get("date", "")[:10], "%Y-%m-%d")
+            days_old = (today_date - exp_date).days
+            amount = float(exp.get("total", 0) or 0)
+            
+            if supp_id not in aging_data:
+                aging_data[supp_id] = {"current": 0, "days_30": 0, "days_60": 0, "days_90": 0}
+            
+            if days_old <= 30:
+                aging_data[supp_id]["current"] += amount
+            elif days_old <= 60:
+                aging_data[supp_id]["days_30"] += amount
+            elif days_old <= 90:
+                aging_data[supp_id]["days_60"] += amount
+            else:
+                aging_data[supp_id]["days_90"] += amount
+        except:
+            continue
+    
+    csv_lines = ["Supplier,Current,30 Days,60 Days,90+ Days,Total"]
+    for supp in suppliers:
+        supp_id = supp.get("id")
+        if supp_id in aging_data:
+            a = aging_data[supp_id]
+            total = a["current"] + a["days_30"] + a["days_60"] + a["days_90"]
+            if total > 0:
+                csv_lines.append(f'{supp.get("name", "")},{a["current"]},{a["days_30"]},{a["days_60"]},{a["days_90"]},{total}')
+    
+    from flask import Response
+    return Response("\n".join(csv_lines), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment;filename=creditors_aging_{today()}.csv"})
 
 
 
