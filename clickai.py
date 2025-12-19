@@ -5791,6 +5791,8 @@ def api_pos_sale():
         items = data.get("items", [])
         customer_id = data.get("customer_id", "")
         payment_method = data.get("payment_method", "cash")
+        discount_type = data.get("discount_type", "percent")
+        discount_value = Decimal(str(data.get("discount_value", 0) or 0))
         
         if not items:
             return jsonify({"success": False, "error": "Cart is empty"})
@@ -5832,6 +5834,21 @@ def api_pos_sale():
                 "vat": float(vat_info["vat"]),
                 "cost": float(cost)
             })
+        
+        # Apply discount
+        discount_amount = Decimal("0")
+        if discount_value > 0:
+            if discount_type == "percent":
+                discount_amount = (total_incl * discount_value / Decimal("100")).quantize(Decimal("0.01"))
+            else:
+                discount_amount = discount_value
+            
+            # Reduce totals proportionally
+            if total_incl > 0:
+                ratio = (total_incl - discount_amount) / total_incl
+                total_incl = total_incl - discount_amount
+                total_excl = (total_excl * ratio).quantize(Decimal("0.01"))
+                total_vat = (total_vat * ratio).quantize(Decimal("0.01"))
         
         # Generate invoice number
         invoice_number = DocumentNumbers.get_next("INV", "invoices", "invoice_number")
@@ -6019,7 +6036,9 @@ function renderCustomers() {
     let html = '<option value="">Walk-in Customer</option>';
     
     for (const c of customers) {
-        html += '<option value="'+c.id+'">'+escHtml(c.name)+'</option>';
+        const balance = parseFloat(c.balance || 0);
+        const balanceNote = balance > 0 ? ' (R'+balance.toFixed(0)+' owing)' : '';
+        html += '<option value="'+c.id+'" data-balance="'+balance+'">'+escHtml(c.name)+balanceNote+'</option>';
     }
     
     sel.innerHTML = html;
@@ -6048,23 +6067,33 @@ function addToCart(itemId) {
     renderCart();
 }
 
+let discountType = 'percent';
+let discountValue = 0;
+
 function renderCart() {
     const container = document.getElementById('cart-items');
+    const subtotalEl = document.getElementById('cart-subtotal');
     const totalEl = document.getElementById('cart-total');
+    const discountLine = document.getElementById('discount-line');
+    const discountAmountEl = document.getElementById('discount-amount');
+    const discountSection = document.getElementById('discount-section');
     
     if (cart.length === 0) {
         container.innerHTML = '<div class="cart-empty">Cart is empty</div>';
+        subtotalEl.textContent = 'R 0.00';
         totalEl.textContent = 'R 0.00';
+        discountLine.style.display = 'none';
+        discountSection.style.display = 'none';
         return;
     }
     
     let html = '';
-    let total = 0;
+    let subtotal = 0;
     
     for (let i = 0; i < cart.length; i++) {
         const item = cart[i];
         const lineTotal = item.price * item.quantity;
-        total += lineTotal;
+        subtotal += lineTotal;
         
         html += '<div class="cart-item">';
         html += '<div>';
@@ -6078,6 +6107,27 @@ function renderCart() {
     }
     
     container.innerHTML = html;
+    subtotalEl.textContent = 'R ' + subtotal.toFixed(2);
+    
+    // Apply discount
+    let discountAmt = 0;
+    if (discountValue > 0) {
+        if (discountType === 'percent') {
+            discountAmt = subtotal * (discountValue / 100);
+        } else {
+            discountAmt = discountValue;
+        }
+        discountLine.style.display = 'flex';
+        discountAmountEl.textContent = '-R ' + discountAmt.toFixed(2);
+        discountSection.style.display = 'block';
+        document.getElementById('discount-display').textContent = 
+            discountType === 'percent' ? discountValue + '% off' : 'R ' + discountValue.toFixed(2) + ' off';
+    } else {
+        discountLine.style.display = 'none';
+        discountSection.style.display = 'none';
+    }
+    
+    const total = subtotal - discountAmt;
     totalEl.textContent = 'R ' + total.toFixed(2);
 }
 
@@ -6088,7 +6138,83 @@ function removeFromCart(index) {
 
 function clearCart() {
     cart = [];
+    discountValue = 0;
     renderCart();
+}
+
+// Discount functions
+function showDiscountModal() {
+    if (cart.length === 0) {
+        alert('Add items to cart first');
+        return;
+    }
+    document.getElementById('discount-modal').classList.add('show');
+    setDiscountType('percent');
+}
+
+function closeDiscountModal() {
+    document.getElementById('discount-modal').classList.remove('show');
+}
+
+function setDiscountType(type) {
+    discountType = type;
+    document.getElementById('disc-type-percent').className = type === 'percent' ? 'btn btn-primary' : 'btn btn-ghost';
+    document.getElementById('disc-type-amount').className = type === 'amount' ? 'btn btn-primary' : 'btn btn-ghost';
+    document.getElementById('discount-label').textContent = type === 'percent' ? 'Percentage' : 'Amount (R)';
+    document.getElementById('discount-value').placeholder = type === 'percent' ? '10' : '50';
+}
+
+function setDiscountQuick(val) {
+    document.getElementById('discount-value').value = val;
+}
+
+function applyDiscount() {
+    const val = parseFloat(document.getElementById('discount-value').value) || 0;
+    if (val <= 0) {
+        alert('Enter a discount value');
+        return;
+    }
+    if (discountType === 'percent' && val > 100) {
+        alert('Percentage cannot exceed 100%');
+        return;
+    }
+    discountValue = val;
+    closeDiscountModal();
+    renderCart();
+}
+
+function removeDiscount() {
+    discountValue = 0;
+    renderCart();
+}
+
+// Customer balance display
+function showCustomerBalance() {
+    const select = document.getElementById('customer-select');
+    const balanceDiv = document.getElementById('customer-balance');
+    const balanceAmount = document.getElementById('balance-amount');
+    
+    if (!select.value) {
+        balanceDiv.style.display = 'none';
+        return;
+    }
+    
+    const option = select.options[select.selectedIndex];
+    const balance = parseFloat(option.dataset.balance || 0);
+    
+    if (balance > 0) {
+        balanceDiv.style.display = 'block';
+        balanceAmount.textContent = 'R ' + balance.toFixed(2) + ' owing';
+        balanceAmount.style.color = '#f59e0b';
+    } else if (balance < 0) {
+        balanceDiv.style.display = 'block';
+        balanceAmount.textContent = 'R ' + Math.abs(balance).toFixed(2) + ' credit';
+        balanceAmount.style.color = '#10b981';
+    } else {
+        balanceDiv.style.display = 'block';
+        balanceAmount.textContent = 'R 0.00';
+        balanceAmount.style.color = '#8b8b9a';
+    }
 }
 
 async function processSale(method) {
@@ -6109,7 +6235,9 @@ async function processSale(method) {
             body: JSON.stringify({
                 items: cart,
                 customer_id: customerId,
-                payment_method: method
+                payment_method: method,
+                discount_type: discountType,
+                discount_value: discountValue
             })
         });
         
@@ -6118,6 +6246,7 @@ async function processSale(method) {
         if (result.success) {
             showReceipt(result);
             cart = [];
+            discountValue = 0;
             renderCart();
             loadData();
         } else {
@@ -6188,20 +6317,43 @@ document.getElementById('search').addEventListener('input', renderProducts);
             </div>
             
             <div style="margin-bottom: 12px;">
-                <select id="customer-select" class="form-select">
+                <select id="customer-select" class="form-select" onchange="showCustomerBalance()">
                     <option value="">Walk-in Customer</option>
                 </select>
+                <div id="customer-balance" style="display:none; margin-top:8px; padding:8px 12px; background:#1a1a2e; border-radius:8px; font-size:13px;">
+                    <span style="color:#8b8b9a;">Balance:</span> <span id="balance-amount" style="font-weight:600;"></span>
+                </div>
             </div>
             
             <div id="cart-items" class="cart-items">
                 <div class="cart-empty">Cart is empty</div>
             </div>
             
+            <!-- Discount Section -->
+            <div id="discount-section" style="display:none; padding:12px; background:#1a1a2e; border-radius:8px; margin-bottom:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="color:#f59e0b;">🏷️ Discount Applied</span>
+                    <button class="btn btn-sm btn-ghost" onclick="removeDiscount()">Remove</button>
+                </div>
+                <div id="discount-display" style="font-weight:600;"></div>
+            </div>
+            
             <div class="cart-total">
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                    <span style="color:#8b8b9a; font-size:13px;">Subtotal</span>
+                    <span id="cart-subtotal" style="color:#8b8b9a; font-size:13px;">R 0.00</span>
+                </div>
+                <div id="discount-line" style="display:none; justify-content:space-between; margin-bottom:4px;">
+                    <span style="color:#f59e0b; font-size:13px;">Discount</span>
+                    <span id="discount-amount" style="color:#f59e0b; font-size:13px;">-R 0.00</span>
+                </div>
                 <div class="cart-total-label">Total</div>
                 <div class="cart-total-value" id="cart-total">R 0.00</div>
             </div>
             
+            <div class="cart-actions">
+                <button class="btn btn-orange btn-sm" onclick="showDiscountModal()" style="margin-bottom:8px; width:100%;">🏷️ Discount</button>
+            </div>
             <div class="cart-actions">
                 <button class="btn btn-green" onclick="processSale('cash')">💵 Cash</button>
                 <button class="btn btn-blue" onclick="processSale('card')">💳 Card</button>
@@ -6209,6 +6361,36 @@ document.getElementById('search').addEventListener('input', renderProducts);
             <button class="btn btn-purple btn-block mt-sm" onclick="processSale('account')">
                 📋 Account
             </button>
+        </div>
+    </div>
+    
+    <!-- Discount Modal -->
+    <div class="modal-overlay" id="discount-modal">
+        <div class="modal" style="max-width: 320px;">
+            <div class="modal-header">
+                <h3 class="modal-title">🏷️ Apply Discount</h3>
+                <button class="modal-close" onclick="closeDiscountModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="btn-group mb-lg" style="width:100%;">
+                    <button class="btn btn-ghost" onclick="setDiscountType('percent')" id="disc-type-percent" style="flex:1;">%</button>
+                    <button class="btn btn-ghost" onclick="setDiscountType('amount')" id="disc-type-amount" style="flex:1;">R</button>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" id="discount-label">Percentage</label>
+                    <input type="number" id="discount-value" class="form-input" placeholder="10" min="0" style="font-size:24px; text-align:center;">
+                </div>
+                <div class="btn-group" style="flex-wrap:wrap; gap:8px;">
+                    <button class="btn btn-sm btn-ghost" onclick="setDiscountQuick(5)">5%</button>
+                    <button class="btn btn-sm btn-ghost" onclick="setDiscountQuick(10)">10%</button>
+                    <button class="btn btn-sm btn-ghost" onclick="setDiscountQuick(15)">15%</button>
+                    <button class="btn btn-sm btn-ghost" onclick="setDiscountQuick(20)">20%</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" onclick="closeDiscountModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="applyDiscount()">Apply</button>
+            </div>
         </div>
     </div>
     
@@ -7209,7 +7391,7 @@ def customer_view(customer_id):
             status_badge = badge(status.title(), "blue")
         
         rows.append([
-            inv.get("invoice_number", "-"),
+            f'<a href="/invoices/{inv.get("id")}">{inv.get("invoice_number", "-")}</a>',
             inv.get("date", "")[:10],
             {"value": Money.format(total), "class": "number"},
             status_badge
@@ -7230,6 +7412,7 @@ def customer_view(customer_id):
             <p class="text-muted">{safe_string(customer.get("phone", ""))} • {safe_string(customer.get("email", ""))}</p>
         </div>
         <div class="btn-group">
+            <a href="/customers/{customer_id}/statement" class="btn btn-ghost" target="_blank">📄 Statement</a>
             <a href="/customers/{customer_id}/receive" class="btn btn-green">Receive Payment</a>
             <a href="/customers/{customer_id}/edit" class="btn btn-ghost">Edit</a>
         </div>
@@ -7423,6 +7606,218 @@ def customer_receive_payment(customer_id):
     '''
     
     return page_wrapper("Receive Payment", content, active="customers", user=user)
+
+
+@app.route("/customers/<customer_id>/statement")
+def customer_statement(customer_id):
+    """Generate printable customer statement"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    customer = get_customer(customer_id)
+    if not customer:
+        return "Customer not found", 404
+    
+    invoices = get_customer_invoices(customer_id)
+    balance = Decimal(str(customer.get("balance", 0) or 0))
+    
+    # Get company details
+    try:
+        settings_row = db.select("settings", filters={"key": "company"}, limit=1)
+        company = json.loads(settings_row[0].get("value", "{}")) if settings_row else {}
+    except:
+        company = {}
+    
+    company_name = company.get("name", "Your Business")
+    company_phone = company.get("phone", "")
+    company_email = company.get("email", "")
+    
+    # Build invoice rows
+    rows_html = ""
+    running_balance = Decimal("0")
+    for inv in sorted(invoices, key=lambda x: x.get("date", "")):
+        inv_date = inv.get("date", "")[:10]
+        inv_num = inv.get("invoice_number", "-")
+        total = Decimal(str(inv.get("total", 0) or 0))
+        status = inv.get("status", "")
+        
+        if status == "paid":
+            # This was paid - show payment
+            rows_html += f'<tr><td>{inv_date}</td><td>{inv_num}</td><td style="text-align:right">R {total:.2f}</td><td style="text-align:right">-</td><td style="text-align:right">-</td></tr>'
+        else:
+            running_balance += total
+            rows_html += f'<tr><td>{inv_date}</td><td>{inv_num}</td><td style="text-align:right">R {total:.2f}</td><td style="text-align:right">-</td><td style="text-align:right">R {running_balance:.2f}</td></tr>'
+    
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>Statement - {safe_string(customer.get("name", ""))}</title>
+    <style>
+        @media print {{ @page {{ margin: 15mm; }} .no-print {{ display: none; }} }}
+        body {{ font-family: Arial, sans-serif; font-size: 14px; max-width: 210mm; margin: 0 auto; padding: 20px; }}
+        .header {{ display: flex; justify-content: space-between; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }}
+        .company {{ font-size: 12px; }}
+        .company-name {{ font-size: 20px; font-weight: bold; margin-bottom: 5px; }}
+        h1 {{ font-size: 24px; margin: 0; }}
+        .customer-box {{ background: #f5f5f5; padding: 15px; margin-bottom: 20px; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        th {{ background: #333; color: white; text-align: left; padding: 10px; }}
+        td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
+        .total-row {{ font-weight: bold; background: #f0f0f0; font-size: 16px; }}
+        .btn {{ display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 5px; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="company">
+            <div class="company-name">{company_name}</div>
+            {f"Tel: {company_phone}<br>" if company_phone else ""}
+            {f"Email: {company_email}" if company_email else ""}
+        </div>
+        <div>
+            <h1>STATEMENT</h1>
+            <p>Date: {today()}</p>
+        </div>
+    </div>
+    
+    <div class="customer-box">
+        <strong>{safe_string(customer.get("name", ""))}</strong><br>
+        {safe_string(customer.get("phone", ""))}<br>
+        {safe_string(customer.get("email", ""))}
+    </div>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Reference</th>
+                <th style="text-align:right">Charges</th>
+                <th style="text-align:right">Payments</th>
+                <th style="text-align:right">Balance</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows_html}
+        </tbody>
+        <tfoot>
+            <tr class="total-row">
+                <td colspan="4" style="text-align:right">Amount Due:</td>
+                <td style="text-align:right">R {balance:.2f}</td>
+            </tr>
+        </tfoot>
+    </table>
+    
+    <div class="no-print" style="margin-top: 30px; text-align: center;">
+        <a href="#" class="btn" onclick="window.print(); return false;">Print Statement</a>
+        <a href="#" class="btn" style="background:#666;" onclick="window.close(); return false;">Close</a>
+    </div>
+</body>
+</html>'''
+
+
+@app.route("/invoices/<invoice_id>/credit-note", methods=["GET", "POST"])
+def create_credit_note(invoice_id):
+    """Create a credit note (refund/return) for an invoice"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    inv = get_invoice(invoice_id)
+    if not inv:
+        return redirect("/invoices")
+    
+    if request.method == "POST":
+        reason = request.form.get("reason", "Return")
+        amount = Decimal(request.form.get("amount", 0) or 0)
+        
+        if amount <= 0:
+            amount = Decimal(str(inv.get("total", 0)))
+        
+        # Generate credit note number
+        cn_number = DocumentNumbers.get_next("CN", "credit_notes", "cn_number")
+        
+        # Create credit note record
+        cn_id = generate_id()
+        cn_record = {
+            "id": cn_id,
+            "cn_number": cn_number,
+            "date": today(),
+            "invoice_id": invoice_id,
+            "invoice_number": inv.get("invoice_number"),
+            "customer_id": inv.get("customer_id"),
+            "customer_name": inv.get("customer_name"),
+            "reason": reason,
+            "amount": float(amount),
+            "created_at": now()
+        }
+        
+        db.insert("credit_notes", cn_record)
+        
+        # Update customer balance (reduce what they owe)
+        if inv.get("customer_id"):
+            cust = db.select_one("customers", inv["customer_id"])
+            if cust:
+                new_balance = Decimal(str(cust.get("balance", 0) or 0)) - amount
+                db.update("customers", inv["customer_id"], {"balance": float(new_balance)})
+        
+        # Post to GL
+        entry = JournalEntry(
+            date=today(),
+            reference=cn_number,
+            description=f"Credit Note {cn_number} - {inv.get('customer_name')}",
+            trans_type=TransactionType.SALE,
+            source_type="credit_note",
+            source_id=cn_id
+        )
+        
+        # Reverse the sale
+        entry.debit(AccountCodes.SALES, amount)
+        entry.credit(AccountCodes.DEBTORS, amount)
+        entry.post()
+        
+        return redirect(f"/invoices/{invoice_id}")
+    
+    # Show form
+    items = json.loads(inv.get("items", "[]"))
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/invoices/{invoice_id}" class="text-muted">← Back to Invoice</a>
+        <h1>Create Credit Note</h1>
+        <p class="text-muted">For Invoice {inv.get("invoice_number")} - {inv.get("customer_name")}</p>
+    </div>
+    
+    <div class="card" style="max-width: 500px;">
+        <form method="POST">
+            <div class="form-group">
+                <label class="form-label">Reason</label>
+                <select name="reason" class="form-select">
+                    <option value="Return">Goods Returned</option>
+                    <option value="Damaged">Damaged Goods</option>
+                    <option value="Overcharge">Overcharge Correction</option>
+                    <option value="Cancelled">Order Cancelled</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Amount</label>
+                <input type="number" name="amount" class="form-input" 
+                       value="{float(inv.get('total', 0)):.2f}" step="0.01"
+                       style="font-size: 20px;">
+                <small class="text-muted">Original invoice: R {float(inv.get('total', 0)):.2f}</small>
+            </div>
+            
+            <div class="btn-group">
+                <button type="submit" class="btn btn-orange">Create Credit Note</button>
+                <a href="/invoices/{invoice_id}" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    '''
+    
+    return page_wrapper("Credit Note", content, user=user)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -8222,6 +8617,7 @@ def invoice_view(invoice_id):
             <div class="btn-group">
                 <a href="/print/office/{invoice_id}" target="_blank" class="btn btn-sm btn-ghost">📄 Print</a>
                 <a href="/invoices/{invoice_id}/edit" class="btn btn-sm btn-ghost">✏️ Edit</a>
+                <a href="/invoices/{invoice_id}/credit-note" class="btn btn-sm btn-orange">↩️ Return</a>
                 {status_btn}
                 {sb}
             </div>
@@ -9487,7 +9883,7 @@ def reports_menu():
     </div>
     
     <h3 style="color: var(--text-muted); margin-bottom: 16px;">📊 Standard Reports</h3>
-    <div class="report-grid">
+    <div class="report-grid" style="margin-bottom: 32px;">
         <a href="/reports/trial-balance" class="report-card"><div class="report-card-icon">⚖️</div><h3 class="report-card-title">Trial Balance</h3><p class="report-card-desc">All accounts with debit/credit balances</p></a>
         <a href="/reports/income-statement" class="report-card"><div class="report-card-icon">📈</div><h3 class="report-card-title">Income Statement</h3><p class="report-card-desc">Profit & Loss report</p></a>
         <a href="/reports/balance-sheet" class="report-card"><div class="report-card-icon">🏦</div><h3 class="report-card-title">Balance Sheet</h3><p class="report-card-desc">Assets, Liabilities, Equity</p></a>
@@ -9497,6 +9893,11 @@ def reports_menu():
         <a href="/reports/creditors" class="report-card"><div class="report-card-icon">📑</div><h3 class="report-card-title">Creditors</h3><p class="report-card-desc">Who you owe</p></a>
         <a href="/reports/stock" class="report-card"><div class="report-card-icon">📦</div><h3 class="report-card-title">Stock Report</h3><p class="report-card-desc">Levels and valuation</p></a>
         <a href="/reports/ledger" class="report-card"><div class="report-card-icon">📒</div><h3 class="report-card-title">General Ledger</h3><p class="report-card-desc">All transactions</p></a>
+    </div>
+    
+    <h3 style="color: var(--text-muted); margin-bottom: 16px;">✏️ Adjustments</h3>
+    <div class="report-grid">
+        <a href="/journal-entry" class="report-card"><div class="report-card-icon">📝</div><h3 class="report-card-title">Journal Entry</h3><p class="report-card-desc">Manual adjustments</p></a>
     </div>
     '''
     return page_wrapper("Reports", content, active="reports", user=user)
@@ -9613,6 +10014,150 @@ def report_trial_balance_csv():
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment;filename=trial_balance_{today()}.csv"}
     )
+
+
+@app.route("/journal-entry", methods=["GET", "POST"])
+def journal_entry():
+    """Manual journal entry for adjustments"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    message = ""
+    
+    if request.method == "POST":
+        date = request.form.get("date", today())
+        reference = request.form.get("reference", "")
+        description = request.form.get("description", "Manual Adjustment")
+        
+        # Get debit/credit entries
+        debit_account = request.form.get("debit_account", "")
+        debit_amount = Decimal(request.form.get("debit_amount", 0) or 0)
+        credit_account = request.form.get("credit_account", "")
+        credit_amount = Decimal(request.form.get("credit_amount", 0) or 0)
+        
+        # Validate
+        if debit_amount != credit_amount:
+            message = '<div class="alert alert-error">Debits must equal credits!</div>'
+        elif debit_amount <= 0:
+            message = '<div class="alert alert-error">Please enter an amount</div>'
+        elif not debit_account or not credit_account:
+            message = '<div class="alert alert-error">Please select both accounts</div>'
+        else:
+            # Post the entry
+            entry = JournalEntry(
+                date=date,
+                reference=reference or f"JE-{today()}",
+                description=description,
+                trans_type=TransactionType.JOURNAL,
+                source_type="manual",
+                source_id=generate_id()
+            )
+            
+            entry.debit(debit_account, debit_amount)
+            entry.credit(credit_account, credit_amount)
+            
+            success, result = entry.post()
+            
+            if success:
+                message = '<div class="alert alert-info">✓ Journal entry posted successfully!</div>'
+            else:
+                message = f'<div class="alert alert-error">Error: {result}</div>'
+    
+    # Build account options
+    accounts = [
+        ("1000", "Bank"),
+        ("1100", "Petty Cash"),
+        ("1200", "Debtors"),
+        ("1300", "Stock"),
+        ("2000", "Creditors"),
+        ("2100", "VAT Output"),
+        ("2200", "VAT Input"),
+        ("3000", "Capital"),
+        ("3100", "Retained Earnings"),
+        ("4000", "Sales"),
+        ("5000", "Cost of Sales"),
+        ("6000", "Salaries"),
+        ("6100", "Rent"),
+        ("6200", "Utilities"),
+        ("6300", "Repairs"),
+        ("6400", "Fuel"),
+        ("6500", "Office Expenses"),
+        ("6600", "Bank Charges"),
+        ("6900", "Other Expenses"),
+    ]
+    
+    account_options = "".join([f'<option value="{code}">{code} - {name}</option>' for code, name in accounts])
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/reports" class="text-muted">← Reports</a>
+        <h1>📝 Journal Entry</h1>
+        <p class="text-muted">Manual adjustments - debits must equal credits</p>
+    </div>
+    
+    {message}
+    
+    <div class="card" style="max-width: 600px;">
+        <form method="POST">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" name="date" class="form-input" value="{today()}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Reference</label>
+                    <input type="text" name="reference" class="form-input" placeholder="JE-001">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" name="description" class="form-input" placeholder="What is this adjustment for?">
+            </div>
+            
+            <div style="background:#1a1a2e; padding:16px; border-radius:8px; margin:16px 0;">
+                <h4 style="margin-bottom:12px;">Debit (Increase)</h4>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <select name="debit_account" class="form-select">
+                            <option value="">Select account...</option>
+                            {account_options}
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:1;">
+                        <input type="number" name="debit_amount" class="form-input" placeholder="0.00" step="0.01" id="debit-amt" onchange="syncAmounts(this)">
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background:#1a1a2e; padding:16px; border-radius:8px; margin:16px 0;">
+                <h4 style="margin-bottom:12px;">Credit (Decrease)</h4>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <select name="credit_account" class="form-select">
+                            <option value="">Select account...</option>
+                            {account_options}
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:1;">
+                        <input type="number" name="credit_amount" class="form-input" placeholder="0.00" step="0.01" id="credit-amt">
+                    </div>
+                </div>
+            </div>
+            
+            <button type="submit" class="btn btn-primary btn-block">Post Journal Entry</button>
+        </form>
+    </div>
+    
+    <script>
+    function syncAmounts(el) {{
+        document.getElementById('credit-amt').value = el.value;
+    }}
+    </script>
+    '''
+    
+    return page_wrapper("Journal Entry", content, active="reports", user=user)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
