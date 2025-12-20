@@ -645,6 +645,11 @@ class UserSession:
         session["role"] = user.get("role", "user")
         session["login_time"] = now()
         
+        # Set default business if user has businesses
+        businesses = BusinessManager.get_user_businesses(user["id"])
+        if businesses:
+            session["current_business_id"] = businesses[0]["id"]
+        
         return True, user
     
     @staticmethod
@@ -661,7 +666,8 @@ class UserSession:
         return {
             "id": session.get("user_id"),
             "username": session.get("username"),
-            "role": session.get("role")
+            "role": session.get("role"),
+            "current_business_id": session.get("current_business_id")
         }
     
     @staticmethod
@@ -692,6 +698,248 @@ class UserSession:
                 return f(*args, **kwargs)
             return decorated
         return decorator
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MULTI-BUSINESS MANAGEMENT - THE COMPETITIVE ADVANTAGE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class BusinessManager:
+    """
+    Multi-Business Management System
+    
+    One subscription, unlimited businesses. Each business:
+    - Has completely separate data (customers, stock, transactions)
+    - Can have its own industry template
+    - Maintains its own GL, VAT, and reports
+    - Accessible via business switcher in header
+    
+    This is what Xero/QuickBooks charge extra for. Click includes it FREE.
+    """
+    
+    # Industry templates with module visibility
+    INDUSTRY_CONFIGS = {
+        "hardware": {
+            "name": "Hardware Store",
+            "icon": "🔧",
+            "description": "Retail hardware, tools, building supplies",
+            "visible_modules": ["dashboard", "pos", "stock", "customers", "suppliers", "invoices", "quotes", "expenses", "banking", "reports", "payroll"],
+            "hidden_modules": ["rooms", "bookings", "tables", "job_cards", "recipes"],
+            "categories": ["Fasteners", "Power Tools", "Hand Tools", "Plumbing", "Electrical", "Paint", "Building Materials", "Safety Equipment", "Garden", "General"],
+            "terminology": {}  # Use defaults
+        },
+        "pub_grill": {
+            "name": "Pub & Grill",
+            "icon": "🍺",
+            "description": "Restaurant, bar, food service",
+            "visible_modules": ["dashboard", "pos", "stock", "customers", "suppliers", "invoices", "expenses", "banking", "reports", "payroll", "tables", "recipes"],
+            "hidden_modules": ["rooms", "bookings", "job_cards", "quotes"],
+            "categories": ["Food - Proteins", "Food - Produce", "Food - Dry Goods", "Beverages - Beer", "Beverages - Spirits", "Beverages - Wine", "Beverages - Soft", "Cleaning", "Disposables", "Equipment"],
+            "terminology": {"customer": "Guest", "stock": "Inventory"}
+        },
+        "bnb": {
+            "name": "B&B / Guesthouse",
+            "icon": "🛏️",
+            "description": "Accommodation, hospitality",
+            "visible_modules": ["dashboard", "customers", "suppliers", "invoices", "expenses", "banking", "reports", "payroll", "rooms", "bookings"],
+            "hidden_modules": ["pos", "stock", "quotes", "job_cards", "tables", "recipes"],
+            "categories": ["Linen", "Toiletries", "Breakfast Items", "Cleaning", "Maintenance", "Guest Amenities"],
+            "terminology": {"customer": "Guest", "invoice": "Booking Invoice"}
+        },
+        "engineering": {
+            "name": "Engineering / Manufacturing",
+            "icon": "⚙️",
+            "description": "Fabrication, repairs, job work",
+            "visible_modules": ["dashboard", "stock", "customers", "suppliers", "invoices", "quotes", "expenses", "banking", "reports", "payroll", "job_cards"],
+            "hidden_modules": ["pos", "rooms", "bookings", "tables", "recipes"],
+            "categories": ["Raw Materials", "Steel", "Stainless", "Consumables", "Welding", "Tools", "Safety", "Finished Goods"],
+            "terminology": {"invoice": "Job Invoice", "quote": "Job Quote"}
+        },
+        "retail": {
+            "name": "General Retail",
+            "icon": "🛒",
+            "description": "Shop, store, general trading",
+            "visible_modules": ["dashboard", "pos", "stock", "customers", "suppliers", "invoices", "quotes", "expenses", "banking", "reports", "payroll"],
+            "hidden_modules": ["rooms", "bookings", "tables", "job_cards", "recipes"],
+            "categories": ["Category A", "Category B", "Category C", "Accessories", "Specials", "General"],
+            "terminology": {}
+        },
+        "services": {
+            "name": "Professional Services",
+            "icon": "💼",
+            "description": "Consulting, IT, accounting",
+            "visible_modules": ["dashboard", "customers", "suppliers", "invoices", "quotes", "expenses", "banking", "reports", "payroll"],
+            "hidden_modules": ["pos", "stock", "rooms", "bookings", "tables", "job_cards", "recipes"],
+            "categories": [],
+            "terminology": {"customer": "Client"}
+        }
+    }
+    
+    @classmethod
+    def get_user_businesses(cls, user_id: str) -> list:
+        """Get all businesses for a user"""
+        try:
+            businesses = db.select("businesses", {"owner_id": user_id}, order="name")
+            return businesses if businesses else []
+        except:
+            return []
+    
+    @classmethod
+    def get_current_business(cls) -> dict:
+        """Get current active business from session"""
+        business_id = session.get("current_business_id")
+        if not business_id:
+            return None
+        
+        try:
+            business = db.select_one("businesses", business_id)
+            if business:
+                # Merge with industry config
+                industry = business.get("industry", "retail")
+                config = cls.INDUSTRY_CONFIGS.get(industry, cls.INDUSTRY_CONFIGS["retail"])
+                business["config"] = config
+            return business
+        except:
+            return None
+    
+    @classmethod
+    def switch_business(cls, business_id: str) -> bool:
+        """Switch to a different business"""
+        user = UserSession.get_current_user()
+        if not user:
+            return False
+        
+        # Verify user owns this business
+        try:
+            business = db.select_one("businesses", business_id)
+            if business and business.get("owner_id") == user["id"]:
+                session["current_business_id"] = business_id
+                return True
+        except:
+            pass
+        
+        return False
+    
+    @classmethod
+    def create_business(cls, owner_id: str, name: str, industry: str) -> tuple:
+        """
+        Create a new business
+        
+        Returns:
+            Tuple of (success: bool, business: dict or error: str)
+        """
+        if industry not in cls.INDUSTRY_CONFIGS:
+            industry = "retail"
+        
+        config = cls.INDUSTRY_CONFIGS[industry]
+        
+        business = {
+            "id": generate_id(),
+            "owner_id": owner_id,
+            "name": name,
+            "industry": industry,
+            "icon": config["icon"],
+            "visible_modules": json.dumps(config["visible_modules"]),
+            "hidden_modules": json.dumps(config["hidden_modules"]),
+            "terminology": json.dumps(config.get("terminology", {})),
+            "created_at": now(),
+            "active": True
+        }
+        
+        try:
+            success, result = db.insert("businesses", business)
+            if success:
+                # Create default stock categories for this business
+                for i, cat_name in enumerate(config["categories"]):
+                    try:
+                        db.insert("stock_categories", {
+                            "id": generate_id(),
+                            "business_id": business["id"],
+                            "name": cat_name,
+                            "sort_order": i
+                        })
+                    except:
+                        pass
+                
+                # Set as current business
+                session["current_business_id"] = business["id"]
+                return True, business
+            return False, "Failed to create business"
+        except Exception as e:
+            return False, str(e)
+    
+    @classmethod
+    def update_business(cls, business_id: str, data: dict) -> bool:
+        """Update business settings"""
+        try:
+            success, _ = db.update("businesses", business_id, data)
+            return success
+        except:
+            return False
+    
+    @classmethod
+    def delete_business(cls, business_id: str) -> bool:
+        """Delete a business (soft delete - just deactivate)"""
+        return cls.update_business(business_id, {"active": False})
+    
+    @classmethod
+    def is_module_visible(cls, module: str) -> bool:
+        """Check if a module is visible for current business"""
+        business = cls.get_current_business()
+        if not business:
+            return True  # No business context, show everything
+        
+        try:
+            visible = json.loads(business.get("visible_modules", "[]"))
+            hidden = json.loads(business.get("hidden_modules", "[]"))
+            
+            if module in hidden:
+                return False
+            if visible and module not in visible:
+                return False
+            return True
+        except:
+            return True
+    
+    @classmethod
+    def get_terminology(cls, term: str) -> str:
+        """Get custom terminology for current business"""
+        business = cls.get_current_business()
+        if not business:
+            return term.title()
+        
+        try:
+            terminology = json.loads(business.get("terminology", "{}"))
+            return terminology.get(term.lower(), term.title())
+        except:
+            return term.title()
+    
+    @classmethod
+    def get_business_filter(cls) -> dict:
+        """Get filter dict for current business - use in all queries"""
+        business_id = session.get("current_business_id")
+        if business_id:
+            return {"business_id": business_id}
+        return {}
+
+
+# Helper function to filter queries by business
+def biz_filter(extra_filters: dict = None) -> dict:
+    """
+    Get business filter for database queries
+    
+    Usage:
+        customers = db.select("customers", biz_filter({"active": True}))
+    """
+    filters = BusinessManager.get_business_filter()
+    if extra_filters:
+        filters.update(extra_filters)
+    return filters
+
+
+def get_biz_id() -> str:
+    """Get current business ID or None"""
+    return session.get("current_business_id")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -4672,32 +4920,109 @@ a:hover {
 
 def get_header_html(active: str = "", user: dict = None) -> str:
     """
-    Generate the glowing header HTML
+    Generate the glowing header HTML with business switcher
     
     Args:
         active: Current active page (home, pos, stock, etc.)
         user: Current user dict with name
     """
-    nav_items = [
-        ("home", "Home", "/"),
-        ("pos", "POS", "/pos"),
-        ("stock", "Stock", "/stock"),
-        ("customers", "Customers", "/customers"),
-        ("suppliers", "Suppliers", "/suppliers"),
-        ("purchase-orders", "Orders", "/purchase-orders"),
-        ("invoices", "Invoices", "/invoices"),
-        ("quotes", "Quotes", "/quotes"),
-        ("expenses", "Expenses", "/expenses"),
-        ("payroll", "Payroll", "/payroll"),
-        ("reports", "Reports", "/reports"),
-        ("staging", "📋 Review", "/staging"),
-        ("settings", "⚙️", "/settings"),
+    # All nav items - will be filtered by business config
+    all_nav_items = [
+        ("dashboard", "home", "Home", "/"),
+        ("pos", "pos", "POS", "/pos"),
+        ("stock", "stock", "Stock", "/stock"),
+        ("customers", "customers", "Customers", "/customers"),
+        ("suppliers", "suppliers", "Suppliers", "/suppliers"),
+        ("purchase-orders", "purchase-orders", "Orders", "/purchase-orders"),
+        ("invoices", "invoices", "Invoices", "/invoices"),
+        ("quotes", "quotes", "Quotes", "/quotes"),
+        ("expenses", "expenses", "Expenses", "/expenses"),
+        ("payroll", "payroll", "Payroll", "/payroll"),
+        ("reports", "reports", "Reports", "/reports"),
+        ("staging", "staging", "📋 Review", "/staging"),
+        ("settings", "settings", "⚙️", "/settings"),
     ]
     
+    # Filter nav items based on current business config
     nav_html = ""
-    for key, label, url in nav_items:
-        active_class = " active" if key == active else ""
-        nav_html += f'<a href="{url}" class="nav-item{active_class}">{label}</a>'
+    for module, key, label, url in all_nav_items:
+        if BusinessManager.is_module_visible(module):
+            active_class = " active" if key == active else ""
+            nav_html += f'<a href="{url}" class="nav-item{active_class}">{label}</a>'
+    
+    # Business switcher
+    business_html = ""
+    if user:
+        businesses = BusinessManager.get_user_businesses(user.get("id", ""))
+        current_biz = BusinessManager.get_current_business()
+        
+        if len(businesses) > 0:
+            current_name = current_biz.get("name", "Select Business") if current_biz else "Select Business"
+            current_icon = current_biz.get("icon", "🏢") if current_biz else "🏢"
+            
+            options_html = ""
+            for biz in businesses:
+                selected = "✓ " if current_biz and biz["id"] == current_biz["id"] else ""
+                options_html += f'''<a href="/switch-business/{biz["id"]}" class="biz-option">{selected}{biz.get("icon", "🏢")} {safe_string(biz["name"])}</a>'''
+            
+            # Add "New Business" option
+            options_html += f'''<a href="/businesses/new" class="biz-option biz-option-new">➕ Add New Business</a>'''
+            
+            business_html = f'''
+            <div class="business-switcher">
+                <button class="biz-current" onclick="toggleBizDropdown()">
+                    <span class="biz-icon">{current_icon}</span>
+                    <span class="biz-name">{safe_string(current_name)}</span>
+                    <span class="biz-arrow">▼</span>
+                </button>
+                <div class="biz-dropdown" id="biz-dropdown">
+                    {options_html}
+                </div>
+            </div>
+            <style>
+            .business-switcher {{ position: relative; margin-right: 16px; }}
+            .biz-current {{ 
+                display: flex; align-items: center; gap: 8px;
+                background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.3);
+                padding: 6px 12px; border-radius: 8px; cursor: pointer;
+                color: #a78bfa; font-size: 13px; font-weight: 600;
+            }}
+            .biz-current:hover {{ background: rgba(139, 92, 246, 0.25); }}
+            .biz-icon {{ font-size: 16px; }}
+            .biz-name {{ max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+            .biz-arrow {{ font-size: 10px; opacity: 0.7; }}
+            .biz-dropdown {{ 
+                display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
+                background: #12121a; border: 1px solid #2a2a4a; border-radius: 8px;
+                min-width: 200px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 1000;
+                overflow: hidden;
+            }}
+            .biz-dropdown.show {{ display: block; }}
+            .biz-option {{ 
+                display: block; padding: 12px 16px; color: #f0f0f0; text-decoration: none;
+                font-size: 13px; border-bottom: 1px solid #1a1a2e;
+            }}
+            .biz-option:hover {{ background: rgba(139, 92, 246, 0.1); }}
+            .biz-option-new {{ color: #8b5cf6; border-bottom: none; }}
+            </style>
+            <script>
+            function toggleBizDropdown() {{
+                document.getElementById('biz-dropdown').classList.toggle('show');
+            }}
+            document.addEventListener('click', function(e) {{
+                if (!e.target.closest('.business-switcher')) {{
+                    document.getElementById('biz-dropdown')?.classList.remove('show');
+                }}
+            }});
+            </script>
+            '''
+        elif len(businesses) == 0:
+            # No businesses yet - show setup prompt
+            business_html = f'''
+            <a href="/businesses/new" class="btn btn-sm btn-purple" style="margin-right:12px;">
+                ➕ Setup Your Business
+            </a>
+            '''
     
     user_html = ""
     if user:
@@ -4714,7 +5039,10 @@ def get_header_html(active: str = "", user: dict = None) -> str:
         <nav class="nav">
             {nav_html}
         </nav>
-        {user_html}
+        <div style="display:flex;align-items:center;">
+            {business_html}
+            {user_html}
+        </div>
     </header>
     '''
 
@@ -7388,7 +7716,7 @@ def dashboard():
 
 @app.route("/mobile")
 def mobile_home():
-    """Mobile-optimized home with big buttons"""
+    """Mobile-optimized home with big buttons - the best scanner interface"""
     
     user = UserSession.get_current_user()
     
@@ -7396,22 +7724,27 @@ def mobile_home():
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Click AI Mobile</title>
-    {CSS}
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#050508">
     <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
-            background: #050508;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(180deg, #050508 0%, #0a0a12 100%);
+            color: #f0f0f0;
+            min-height: 100vh;
         }}
         .mobile-home {{
             min-height: 100vh;
             display: flex;
             flex-direction: column;
-            padding: 20px;
+            padding: 12px;
         }}
         .mobile-header {{
             text-align: center;
-            padding: 20px 0;
+            padding: 16px 0 8px;
         }}
         .mobile-logo {{
             font-size: 28px;
@@ -7420,52 +7753,126 @@ def mobile_home():
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }}
+        .mobile-tagline {{
+            color: #606070;
+            font-size: 13px;
+            margin-top: 2px;
+        }}
+        .section-label {{
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #808090;
+            margin: 14px 0 8px;
+            padding-left: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }}
+        .section-label span {{
+            font-size: 12px;
+        }}
         .mobile-buttons {{
             flex: 1;
             display: flex;
             flex-direction: column;
-            gap: 20px;
-            justify-content: center;
-            padding: 20px 0;
+            gap: 8px;
+        }}
+        .btn-row {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
         }}
         .mobile-btn {{
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 50px 20px;
-            border-radius: 20px;
+            padding: 20px 12px;
+            border-radius: 14px;
             text-decoration: none;
             transition: all 0.2s;
+            position: relative;
         }}
         .mobile-btn:active {{
-            transform: scale(0.98);
+            transform: scale(0.97);
         }}
         .mobile-btn-icon {{
-            font-size: 56px;
-            margin-bottom: 16px;
+            font-size: 32px;
+            margin-bottom: 8px;
         }}
         .mobile-btn-label {{
-            font-size: 22px;
+            font-size: 14px;
             font-weight: 700;
+            text-align: center;
         }}
-        .mobile-btn.stock {{
-            background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(59, 130, 246, 0.15));
-            border: 2px solid rgba(139, 92, 246, 0.4);
-            color: #8b5cf6;
+        .mobile-btn-desc {{
+            font-size: 9px;
+            opacity: 0.85;
+            margin-top: 3px;
+            text-align: center;
         }}
+        /* Expense - Red */
         .mobile-btn.expense {{
-            background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(245, 158, 11, 0.15));
-            border: 2px solid rgba(239, 68, 68, 0.4);
-            color: #ef4444;
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            box-shadow: 0 4px 16px rgba(239, 68, 68, 0.25);
+        }}
+        .mobile-btn.expense-paid {{
+            background: linear-gradient(135deg, #f87171, #ef4444);
+            color: white;
+            box-shadow: 0 4px 16px rgba(239, 68, 68, 0.2);
+            border: 2px solid #22c55e;
+        }}
+        /* Stock - Purple */
+        .mobile-btn.stock {{
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+            box-shadow: 0 4px 16px rgba(139, 92, 246, 0.25);
+        }}
+        .mobile-btn.stock-paid {{
+            background: linear-gradient(135deg, #a78bfa, #8b5cf6);
+            color: white;
+            box-shadow: 0 4px 16px rgba(139, 92, 246, 0.2);
+            border: 2px solid #22c55e;
+        }}
+        /* COS - Orange */
+        .mobile-btn.cos {{
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+            box-shadow: 0 4px 16px rgba(245, 158, 11, 0.25);
+        }}
+        .mobile-btn.cos-paid {{
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            color: white;
+            box-shadow: 0 4px 16px rgba(245, 158, 11, 0.2);
+            border: 2px solid #22c55e;
         }}
         .mobile-footer {{
             text-align: center;
-            padding: 20px;
+            padding: 16px 0;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
         }}
         .mobile-footer a {{
-            color: #606070;
+            color: #808090;
             text-decoration: none;
+            font-size: 12px;
+            padding: 10px 16px;
+            border: 1px solid #2a2a4a;
+            border-radius: 8px;
+        }}
+        .paid-badge {{
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            background: #22c55e;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 8px;
+            font-weight: 700;
         }}
     </style>
 </head>
@@ -7473,23 +7880,65 @@ def mobile_home():
     <div class="mobile-home">
         <div class="mobile-header">
             <div class="mobile-logo">Click AI</div>
-            <p style="color: #606070; margin-top: 8px;">Quick Capture</p>
+            <div class="mobile-tagline">Tap • Snap • Done</div>
         </div>
         
         <div class="mobile-buttons">
-            <a href="/stock/scan" class="mobile-btn stock">
-                <div class="mobile-btn-icon">📦</div>
-                <div class="mobile-btn-label">Stock In</div>
-            </a>
+            <!-- EXPENSES -->
+            <div class="section-label"><span>🧾</span> EXPENSES (Business costs, NOT for resale)</div>
+            <div class="btn-row">
+                <a href="/m" class="mobile-btn expense" onclick="localStorage.setItem('lastScanType','exp')">
+                    <div class="mobile-btn-icon">🧾</div>
+                    <div class="mobile-btn-label">Expense</div>
+                    <div class="mobile-btn-desc">Van parts, office, etc</div>
+                </a>
+                
+                <a href="/m" class="mobile-btn expense-paid" onclick="localStorage.setItem('lastScanType','exp_paid')">
+                    <span class="paid-badge">PAID</span>
+                    <div class="mobile-btn-icon">💵</div>
+                    <div class="mobile-btn-label">Expense Paid</div>
+                    <div class="mobile-btn-desc">Cash - already paid</div>
+                </a>
+            </div>
             
-            <a href="/expenses/scan" class="mobile-btn expense">
-                <div class="mobile-btn-icon">💸</div>
-                <div class="mobile-btn-label">Expense</div>
-            </a>
+            <!-- STOCK -->
+            <div class="section-label"><span>📦</span> STOCK (Items for shop inventory)</div>
+            <div class="btn-row">
+                <a href="/m" class="mobile-btn stock" onclick="localStorage.setItem('lastScanType','cos')">
+                    <div class="mobile-btn-icon">📦</div>
+                    <div class="mobile-btn-label">Stock In</div>
+                    <div class="mobile-btn-desc">Supplier invoice</div>
+                </a>
+                
+                <a href="/m" class="mobile-btn stock-paid" onclick="localStorage.setItem('lastScanType','cos_paid')">
+                    <span class="paid-badge">PAID</span>
+                    <div class="mobile-btn-icon">💵</div>
+                    <div class="mobile-btn-label">Stock Paid</div>
+                    <div class="mobile-btn-desc">Cash - already paid</div>
+                </a>
+            </div>
+            
+            <!-- COS - BUYOUTS -->
+            <div class="section-label"><span>🔄</span> COS (Bought for immediate resale)</div>
+            <div class="btn-row">
+                <a href="/m" class="mobile-btn cos" onclick="localStorage.setItem('lastScanType','cos')">
+                    <div class="mobile-btn-icon">🔄</div>
+                    <div class="mobile-btn-label">COS</div>
+                    <div class="mobile-btn-desc">Buyout - on account</div>
+                </a>
+                
+                <a href="/m" class="mobile-btn cos-paid" onclick="localStorage.setItem('lastScanType','cos_paid')">
+                    <span class="paid-badge">PAID</span>
+                    <div class="mobile-btn-icon">💵</div>
+                    <div class="mobile-btn-label">COS Paid</div>
+                    <div class="mobile-btn-desc">Buyout - cash paid</div>
+                </a>
+            </div>
         </div>
         
         <div class="mobile-footer">
-            <a href="/dashboard">← Back to Full App</a>
+            <a href="/m">📷 Full Scanner</a>
+            <a href="/dashboard">📊 Desktop</a>
         </div>
     </div>
 </body>
@@ -10794,8 +11243,12 @@ def invoice_new():
             </div>
             
             <h3 style="margin: 20px 0 10px;">Line Items</h3>
-            <input type="text" id="search-stock" class="form-input" placeholder="Search products or click below to add custom item..." onkeyup="searchStock(this.value)" onfocus="searchStock('')">
-            <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
+            <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+                <input type="text" id="search-stock" class="form-input" style="flex:1;min-width:200px;" placeholder="Search stock items..." onkeyup="searchStock(this.value)">
+                <button type="button" class="btn btn-purple" onclick="addCustomLine()" title="Add empty row to type in">➕ Quick Add</button>
+                <button type="button" class="btn btn-ghost" onclick="showCustomItemModal()" title="Open popup form">📝 Form</button>
+            </div>
+            <div id="search-results" style="max-height:200px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
             
             <table class="table" id="lines-table">
                 <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th><th></th></tr></thead>
@@ -11295,8 +11748,12 @@ def quote_new():
             </div>
             
             <h3 style="margin: 20px 0 10px;">Line Items</h3>
-            <input type="text" id="search-stock" class="form-input" placeholder="Search products or click below to add custom item..." onkeyup="searchStock(this.value)" onfocus="searchStock('')">
-            <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
+            <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+                <input type="text" id="search-stock" class="form-input" style="flex:1;min-width:200px;" placeholder="Search stock items..." onkeyup="searchStock(this.value)">
+                <button type="button" class="btn btn-purple" onclick="addCustomLine()" title="Add empty row to type in">➕ Quick Add</button>
+                <button type="button" class="btn btn-ghost" onclick="showCustomItemModal()" title="Open popup form">📝 Form</button>
+            </div>
+            <div id="search-results" style="max-height:200px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
             
             <table class="table" id="lines-table">
                 <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th><th></th></tr></thead>
@@ -11536,93 +11993,41 @@ function toggleNewCustomer(select) {
 function searchStock(q) {
     const results = document.getElementById('search-results');
     if (!q || q.length < 2) {
-        results.innerHTML = '<div style="padding:10px;"><button type="button" class="btn btn-sm btn-purple" onclick="showCustomItemModal()">➕ Add Custom Item (Buyout)</button></div>';
+        results.innerHTML = '';
         return;
     }
     
-    // Split search into words for flexible matching
-    // "m10 cap" will match "cap screw m10 x30" because both words are present
     const searchWords = q.toLowerCase().split(/\\s+/).filter(w => w.length > 0);
     
     let html = '';
+    let count = 0;
     for (const item of stockItems) {
+        if (count >= 20) break;
         const desc = item.description.toLowerCase();
         const code = (item.code || '').toLowerCase();
         
-        // Check if ALL search words are found in description or code
         const allWordsMatch = searchWords.every(word => 
             desc.includes(word) || code.includes(word)
         );
         
         if (allWordsMatch) {
-            html += '<div class="product-item" style="margin-bottom:5px;padding:10px;cursor:pointer;border:1px solid var(--border);border-radius:8px;" onclick="addLine(\\'' + item.id + '\\')">';
-            html += '<strong>' + escHtml(item.code || '') + '</strong> ';
-            html += escHtml(item.description) + ' - ' + item.price_formatted;
-            html += '</div>';
+            count++;
+            html += '<div style="padding:10px;border-bottom:1px solid var(--border);cursor:pointer;" onclick="addLine(\\''+item.id+'\\')"><strong>'+escHtml(item.code||'')+'</strong> '+escHtml(item.description)+' - '+item.price_formatted+'</div>';
         }
     }
     
     if (!html) {
-        html = '<div style="padding:10px;color:#606070;">No matches found</div>';
+        html = '<div style="padding:10px;color:#606070;">No stock items found for "'+escHtml(q)+'"</div>';
     }
-    
-    // Always show custom item button at bottom
-    html += '<div style="padding:10px;border-top:1px solid var(--border);margin-top:10px;"><button type="button" class="btn btn-sm btn-purple" onclick="showCustomItemModal()">➕ Add Custom Item (Buyout)</button></div>';
     
     results.innerHTML = html;
-}
-
-function showCustomItemModal() {
-    document.getElementById('custom-item-modal').classList.add('active');
-    document.getElementById('custom-description').focus();
-}
-
-function closeCustomItemModal() {
-    document.getElementById('custom-item-modal').classList.remove('active');
-}
-
-function addCustomItem() {
-    const desc = document.getElementById('custom-description').value.trim();
-    const price = parseFloat(document.getElementById('custom-price').value) || 0;
-    const qty = parseInt(document.getElementById('custom-qty').value) || 1;
-    
-    if (!desc) {
-        alert('Please enter a description');
-        return;
-    }
-    if (price <= 0) {
-        alert('Please enter a price');
-        return;
-    }
-    
-    // Add as a custom line item
-    lines.push({
-        id: 'custom_' + Date.now(),
-        code: 'CUSTOM',
-        description: desc,
-        price: price,
-        quantity: qty,
-        is_zero_rated: false,
-        cost: 0,
-        is_custom: true
-    });
-    
-    // Clear and close
-    document.getElementById('custom-description').value = '';
-    document.getElementById('custom-price').value = '';
-    document.getElementById('custom-qty').value = '1';
-    closeCustomItemModal();
-    
-    document.getElementById('search-stock').value = '';
-    document.getElementById('search-results').innerHTML = '';
-    renderLines();
 }
 
 function addLine(itemId) {
     const item = stockItems.find(i => i.id === itemId);
     if (!item) return;
     
-    const existing = lines.find(l => l.id === itemId);
+    const existing = lines.find(l => l.id === itemId && !l.is_custom);
     if (existing) {
         existing.quantity++;
     } else {
@@ -11642,6 +12047,35 @@ function addLine(itemId) {
     renderLines();
 }
 
+function addCustomLine() {
+    lines.push({
+        id: 'custom_' + Date.now(),
+        code: '',
+        description: '',
+        price: 0,
+        quantity: 1,
+        is_zero_rated: false,
+        cost: 0,
+        is_custom: true
+    });
+    renderLines();
+    // Focus the new description input
+    setTimeout(() => {
+        const inputs = document.querySelectorAll('.custom-desc-input');
+        if (inputs.length > 0) inputs[inputs.length-1].focus();
+    }, 50);
+}
+
+function updateCustomDesc(index, value) {
+    lines[index].description = value;
+    updateHiddenFields();
+}
+
+function updateCustomPrice(index, value) {
+    lines[index].price = parseFloat(value) || 0;
+    renderLines();
+}
+
 function renderLines() {
     const tbody = document.getElementById('lines-body');
     let html = '';
@@ -11652,20 +12086,38 @@ function renderLines() {
         const lineTotal = line.price * line.quantity;
         total += lineTotal;
         
-        const customBadge = line.is_custom ? '<span style="background:#8b5cf6;color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:8px;">BUYOUT</span>' : '';
-        
-        html += '<tr>';
-        html += '<td>'+escHtml(line.description)+customBadge+'</td>';
-        html += '<td><input type="number" value="'+line.quantity+'" min="1" style="width:60px;padding:4px;background:#0a0a10;border:1px solid #1a1a2e;color:#f0f0f0;border-radius:4px;" onchange="updateQty('+i+',this.value)"></td>';
-        html += '<td class="number">R '+line.price.toFixed(2)+'</td>';
-        html += '<td class="number">R '+lineTotal.toFixed(2)+'</td>';
-        html += '<td><button type="button" class="btn btn-sm btn-red" onclick="removeLine('+i+')">×</button></td>';
-        html += '</tr>';
+        if (line.is_custom) {
+            // Editable row for custom/buyout items
+            html += '<tr style="background:rgba(139,92,246,0.05);">';
+            html += '<td><input type="text" class="custom-desc-input" value="'+escHtml(line.description)+'" placeholder="Type description..." style="width:100%;padding:6px;background:#0a0a10;border:1px solid #8b5cf6;color:#f0f0f0;border-radius:4px;" onchange="updateCustomDesc('+i+',this.value)"><span style="background:#8b5cf6;color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:8px;">BUYOUT</span></td>';
+            html += '<td><input type="number" value="'+line.quantity+'" min="1" style="width:60px;padding:4px;background:#0a0a10;border:1px solid #1a1a2e;color:#f0f0f0;border-radius:4px;" onchange="updateQty('+i+',this.value)"></td>';
+            html += '<td><input type="number" value="'+line.price.toFixed(2)+'" step="0.01" min="0" style="width:90px;padding:4px;background:#0a0a10;border:1px solid #8b5cf6;color:#f0f0f0;border-radius:4px;" onchange="updateCustomPrice('+i+',this.value)"></td>';
+            html += '<td class="number">R '+lineTotal.toFixed(2)+'</td>';
+            html += '<td><button type="button" class="btn btn-sm btn-red" onclick="removeLine('+i+')">×</button></td>';
+            html += '</tr>';
+        } else {
+            // Normal stock item row
+            html += '<tr>';
+            html += '<td>'+escHtml(line.description)+'</td>';
+            html += '<td><input type="number" value="'+line.quantity+'" min="1" style="width:60px;padding:4px;background:#0a0a10;border:1px solid #1a1a2e;color:#f0f0f0;border-radius:4px;" onchange="updateQty('+i+',this.value)"></td>';
+            html += '<td class="number">R '+line.price.toFixed(2)+'</td>';
+            html += '<td class="number">R '+lineTotal.toFixed(2)+'</td>';
+            html += '<td><button type="button" class="btn btn-sm btn-red" onclick="removeLine('+i+')">×</button></td>';
+            html += '</tr>';
+        }
     }
     
-    tbody.innerHTML = html || '<tr><td colspan="5" style="text-align:center;color:#606070;padding:30px;">Add items above</td></tr>';
+    tbody.innerHTML = html || '<tr><td colspan="5" style="text-align:center;color:#606070;padding:30px;">Search stock above or add a custom item</td></tr>';
     
+    updateHiddenFields();
     document.getElementById('grand-total').textContent = 'R ' + total.toFixed(2);
+}
+
+function updateHiddenFields() {
+    let total = 0;
+    for (const line of lines) {
+        total += line.price * line.quantity;
+    }
     document.getElementById('items-json').value = JSON.stringify(lines);
     document.getElementById('total-input').value = total.toFixed(2);
 }
@@ -11686,26 +12138,69 @@ function escHtml(text) {
     return div.innerHTML;
 }
 
+// Modal functions for popup option
+function showCustomItemModal() {
+    document.getElementById('custom-item-modal').classList.add('active');
+    document.getElementById('custom-description').focus();
+}
+
+function closeCustomItemModal() {
+    document.getElementById('custom-item-modal').classList.remove('active');
+}
+
+function addCustomItemFromModal() {
+    const desc = document.getElementById('custom-description').value.trim();
+    const price = parseFloat(document.getElementById('custom-price').value) || 0;
+    const qty = parseInt(document.getElementById('custom-qty').value) || 1;
+    
+    if (!desc) {
+        alert('Please enter a description');
+        return;
+    }
+    if (price <= 0) {
+        alert('Please enter a price');
+        return;
+    }
+    
+    lines.push({
+        id: 'custom_' + Date.now(),
+        code: '',
+        description: desc,
+        price: price,
+        quantity: qty,
+        is_zero_rated: false,
+        cost: 0,
+        is_custom: true
+    });
+    
+    // Clear and close
+    document.getElementById('custom-description').value = '';
+    document.getElementById('custom-price').value = '';
+    document.getElementById('custom-qty').value = '1';
+    closeCustomItemModal();
+    renderLines();
+}
+
 renderLines();
 '''
 
 
-# Custom item modal HTML to be added to invoice/quote forms
+# Custom item modal HTML for popup option
 CUSTOM_ITEM_MODAL = '''
 <!-- Custom Item Modal for Buyouts -->
 <div class="modal-overlay" id="custom-item-modal">
-    <div class="modal" style="max-width: 400px;">
+    <div class="modal" style="max-width: 420px;">
         <div class="modal-header">
-            <h3 class="modal-title">➕ Add Custom Item (Buyout)</h3>
+            <h3 class="modal-title">➕ Add Non-Stock Item (Buyout)</h3>
             <button class="modal-close" onclick="closeCustomItemModal()">&times;</button>
         </div>
         <div class="modal-body">
             <p style="color:#8b8b9a;margin-bottom:16px;font-size:14px;">
-                Add a non-stock item - perfect for special orders or buyouts.
+                Add items not in your stock - perfect for special orders, buyouts, or services.
             </p>
             <div class="form-group">
                 <label class="form-label">Description *</label>
-                <input type="text" id="custom-description" class="form-input" placeholder="e.g. Special order bracket">
+                <input type="text" id="custom-description" class="form-input" placeholder="e.g. Special order bracket, Labour charge">
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -11720,7 +12215,7 @@ CUSTOM_ITEM_MODAL = '''
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-ghost" onclick="closeCustomItemModal()">Cancel</button>
-            <button type="button" class="btn btn-primary" onclick="addCustomItem()">Add Item</button>
+            <button type="button" class="btn btn-primary" onclick="addCustomItemFromModal()">Add Item</button>
         </div>
     </div>
 </div>
@@ -17632,10 +18127,20 @@ def settings_home():
     if not user:
         return redirect("/login")
     
-    content = '''
+    # Get business count for display
+    businesses = BusinessManager.get_user_businesses(user["id"])
+    biz_count = len(businesses)
+    biz_text = f"{biz_count} business{'es' if biz_count != 1 else ''}" if biz_count > 0 else "Set up your first business"
+    
+    content = f'''
     <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">⚙️ Settings</h1>
     
     <div class="report-grid">
+        <a href="/businesses" class="report-card" style="border-color: var(--green); background: linear-gradient(135deg, rgba(16,185,129,0.1), rgba(59,130,246,0.05));">
+            <div class="report-card-icon">🏢</div>
+            <h3 class="report-card-title">Your Businesses</h3>
+            <p class="report-card-desc">{biz_text} • Unlimited included FREE</p>
+        </a>
         <a href="/settings/industry" class="report-card" style="border-color: var(--purple);">
             <div class="report-card-icon">🏭</div>
             <h3 class="report-card-title">Industry Template</h3>
@@ -17647,7 +18152,7 @@ def settings_home():
             <p class="report-card-desc">Default markups, category pricing, minimum margins</p>
         </a>
         <a href="/settings/company" class="report-card">
-            <div class="report-card-icon">🏢</div>
+            <div class="report-card-icon">🏪</div>
             <h3 class="report-card-title">Company Details</h3>
             <p class="report-card-desc">Business name, VAT number, contact info</p>
         </a>
@@ -19515,6 +20020,318 @@ def cleanup_customer_delete(customer_id):
     
     db.delete("customers", customer_id)
     return redirect("/settings/cleanup/customers")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MULTI-BUSINESS ROUTES - THE COMPETITIVE ADVANTAGE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/switch-business/<business_id>")
+def switch_business(business_id):
+    """Switch to a different business"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    if BusinessManager.switch_business(business_id):
+        return redirect("/")
+    
+    return redirect("/")
+
+
+@app.route("/businesses")
+def businesses_list():
+    """List all businesses for the user"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    businesses = BusinessManager.get_user_businesses(user["id"])
+    current_biz = BusinessManager.get_current_business()
+    
+    rows_html = ""
+    for biz in businesses:
+        is_current = "✓" if current_biz and biz["id"] == current_biz["id"] else ""
+        industry_config = BusinessManager.INDUSTRY_CONFIGS.get(biz.get("industry", "retail"), {})
+        
+        rows_html += f'''
+        <tr>
+            <td style="font-size:24px;">{biz.get("icon", "🏢")}</td>
+            <td><strong>{safe_string(biz["name"])}</strong></td>
+            <td>{industry_config.get("name", biz.get("industry", ""))}</td>
+            <td style="color:var(--green);font-weight:600;">{is_current}</td>
+            <td>
+                <a href="/switch-business/{biz["id"]}" class="btn btn-sm btn-primary">Switch</a>
+                <a href="/businesses/{biz["id"]}/edit" class="btn btn-sm btn-ghost">Edit</a>
+            </td>
+        </tr>
+        '''
+    
+    if not rows_html:
+        rows_html = '<tr><td colspan="5" style="text-align:center;padding:40px;color:#606070;">No businesses yet. Create your first one!</td></tr>'
+    
+    content = f'''
+    <div class="flex-between mb-lg">
+        <div>
+            <h1>🏢 Your Businesses</h1>
+            <p class="text-muted">One subscription, unlimited businesses - completely separate data for each</p>
+        </div>
+        <a href="/businesses/new" class="btn btn-primary">➕ Add Business</a>
+    </div>
+    
+    <div class="card">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th style="width:50px;"></th>
+                    <th>Business Name</th>
+                    <th>Type</th>
+                    <th>Active</th>
+                    <th style="width:180px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="card mt-lg" style="background: linear-gradient(135deg, rgba(139,92,246,0.1), rgba(59,130,246,0.1)); border-color: rgba(139,92,246,0.3);">
+        <h3 style="color:#a78bfa;margin-bottom:8px;">💎 What Makes This Special</h3>
+        <p style="color:#8b8b9a;margin-bottom:16px;">
+            Xero and QuickBooks charge <strong>per business</strong> - running 4 businesses could cost you R3,000+/month.
+            With Click AI, you get <strong>unlimited businesses included</strong>. Each business has:
+        </p>
+        <ul style="color:#8b8b9a;margin-left:20px;">
+            <li>Completely separate customers, suppliers, and stock</li>
+            <li>Its own invoices, expenses, and reports</li>
+            <li>Industry-specific configuration and categories</li>
+            <li>Isolated financial data and VAT calculations</li>
+        </ul>
+    </div>
+    '''
+    
+    return page_wrapper("Your Businesses", content, "settings", user)
+
+
+@app.route("/businesses/new", methods=["GET", "POST"])
+def business_new():
+    """Create a new business"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    message = ""
+    
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        industry = request.form.get("industry", "retail")
+        
+        if not name:
+            message = '<div class="alert alert-error">Please enter a business name</div>'
+        else:
+            success, result = BusinessManager.create_business(user["id"], name, industry)
+            if success:
+                return redirect("/businesses")
+            else:
+                message = f'<div class="alert alert-error">{result}</div>'
+    
+    # Build industry cards
+    cards_html = ""
+    for key, config in BusinessManager.INDUSTRY_CONFIGS.items():
+        cards_html += f'''
+        <label class="industry-card" style="display:block;border:2px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:all 0.2s;margin-bottom:12px;">
+            <input type="radio" name="industry" value="{key}" style="display:none;" onchange="selectIndustry(this)">
+            <div style="display:flex;align-items:center;gap:12px;">
+                <span style="font-size:32px;">{config["icon"]}</span>
+                <div>
+                    <div style="font-weight:600;font-size:16px;">{config["name"]}</div>
+                    <div style="font-size:12px;color:#606070;">{config["description"]}</div>
+                </div>
+            </div>
+        </label>
+        '''
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/businesses" class="text-muted">← Your Businesses</a>
+        <h1>➕ Add New Business</h1>
+        <p class="text-muted">Create a new business with its own separate data, customers, and stock</p>
+    </div>
+    
+    {message}
+    
+    <div class="card">
+        <form method="POST">
+            <div class="form-group">
+                <label class="form-label">Business Name *</label>
+                <input type="text" name="name" class="form-input" placeholder="e.g. FullTech Hardware, Joe's Pub" required autofocus>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Business Type</label>
+                <p class="text-muted" style="font-size:13px;margin-bottom:12px;">
+                    This configures which modules you see and sets up default categories. You can change it later.
+                </p>
+                {cards_html}
+            </div>
+            
+            <div class="btn-group mt-lg">
+                <button type="submit" class="btn btn-primary btn-lg">Create Business</button>
+                <a href="/businesses" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+    function selectIndustry(input) {{
+        document.querySelectorAll('.industry-card').forEach(card => {{
+            card.style.borderColor = 'var(--border)';
+            card.style.background = 'transparent';
+        }});
+        input.closest('.industry-card').style.borderColor = 'var(--green)';
+        input.closest('.industry-card').style.background = 'rgba(16,185,129,0.1)';
+    }}
+    // Select first option by default
+    document.querySelector('.industry-card input').checked = true;
+    document.querySelector('.industry-card').style.borderColor = 'var(--green)';
+    document.querySelector('.industry-card').style.background = 'rgba(16,185,129,0.1)';
+    </script>
+    '''
+    
+    return page_wrapper("Add New Business", content, "settings", user)
+
+
+@app.route("/businesses/<business_id>/edit", methods=["GET", "POST"])
+def business_edit(business_id):
+    """Edit a business"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    # Get the business
+    business = db.select_one("businesses", business_id)
+    if not business or business.get("owner_id") != user["id"]:
+        return redirect("/businesses")
+    
+    message = ""
+    
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        industry = request.form.get("industry", business.get("industry", "retail"))
+        
+        if not name:
+            message = '<div class="alert alert-error">Please enter a business name</div>'
+        else:
+            config = BusinessManager.INDUSTRY_CONFIGS.get(industry, BusinessManager.INDUSTRY_CONFIGS["retail"])
+            
+            update_data = {
+                "name": name,
+                "industry": industry,
+                "icon": config["icon"],
+                "visible_modules": json.dumps(config["visible_modules"]),
+                "hidden_modules": json.dumps(config["hidden_modules"]),
+                "terminology": json.dumps(config.get("terminology", {}))
+            }
+            
+            if BusinessManager.update_business(business_id, update_data):
+                return redirect("/businesses")
+            else:
+                message = '<div class="alert alert-error">Failed to update business</div>'
+    
+    # Build industry cards
+    current_industry = business.get("industry", "retail")
+    cards_html = ""
+    for key, config in BusinessManager.INDUSTRY_CONFIGS.items():
+        selected = "border-color:var(--green);background:rgba(16,185,129,0.1);" if key == current_industry else ""
+        checked = "checked" if key == current_industry else ""
+        cards_html += f'''
+        <label class="industry-card" style="display:block;border:2px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:all 0.2s;margin-bottom:12px;{selected}">
+            <input type="radio" name="industry" value="{key}" style="display:none;" onchange="selectIndustry(this)" {checked}>
+            <div style="display:flex;align-items:center;gap:12px;">
+                <span style="font-size:32px;">{config["icon"]}</span>
+                <div>
+                    <div style="font-weight:600;font-size:16px;">{config["name"]}</div>
+                    <div style="font-size:12px;color:#606070;">{config["description"]}</div>
+                </div>
+            </div>
+        </label>
+        '''
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/businesses" class="text-muted">← Your Businesses</a>
+        <h1>✏️ Edit Business</h1>
+    </div>
+    
+    {message}
+    
+    <div class="card">
+        <form method="POST">
+            <div class="form-group">
+                <label class="form-label">Business Name *</label>
+                <input type="text" name="name" class="form-input" value="{safe_string(business.get('name', ''))}" required>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Business Type</label>
+                {cards_html}
+            </div>
+            
+            <div class="btn-group mt-lg">
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <a href="/businesses" class="btn btn-ghost">Cancel</a>
+            </div>
+        </form>
+    </div>
+    
+    <div class="card mt-lg" style="border-color: rgba(239,68,68,0.3);">
+        <h3 style="color:#ef4444;margin-bottom:8px;">⚠️ Danger Zone</h3>
+        <p style="color:#8b8b9a;margin-bottom:16px;">
+            Deleting a business will hide it from your list. Data is preserved but inaccessible.
+        </p>
+        <a href="/businesses/{business_id}/delete" class="btn btn-red" onclick="return confirm('Are you sure you want to delete this business?')">Delete Business</a>
+    </div>
+    
+    <script>
+    function selectIndustry(input) {{
+        document.querySelectorAll('.industry-card').forEach(card => {{
+            card.style.borderColor = 'var(--border)';
+            card.style.background = 'transparent';
+        }});
+        input.closest('.industry-card').style.borderColor = 'var(--green)';
+        input.closest('.industry-card').style.background = 'rgba(16,185,129,0.1)';
+    }}
+    </script>
+    '''
+    
+    return page_wrapper("Edit Business", content, "settings", user)
+
+
+@app.route("/businesses/<business_id>/delete")
+def business_delete(business_id):
+    """Delete (deactivate) a business"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    # Verify ownership
+    business = db.select_one("businesses", business_id)
+    if not business or business.get("owner_id") != user["id"]:
+        return redirect("/businesses")
+    
+    # Soft delete
+    BusinessManager.delete_business(business_id)
+    
+    # If this was the current business, switch to another
+    if session.get("current_business_id") == business_id:
+        businesses = BusinessManager.get_user_businesses(user["id"])
+        if businesses:
+            session["current_business_id"] = businesses[0]["id"]
+        else:
+            session.pop("current_business_id", None)
+    
+    return redirect("/businesses")
 
 
 if __name__ == "__main__":
