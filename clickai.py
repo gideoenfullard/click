@@ -13351,6 +13351,178 @@ def tb_analyzer():
     if not user:
         return redirect("/login")
     
+    # Handle POST - file upload
+    if request.method == "POST":
+        file = request.files.get("tb_file")
+        context = request.form.get("context", "")
+        
+        if not file:
+            return redirect("/tb-analyzer")
+        
+        # Read file content
+        filename = file.filename.lower()
+        try:
+            if filename.endswith('.csv'):
+                content = file.read().decode('utf-8', errors='ignore')
+                accounts = TBAnalyzer.parse_tb_csv(content)
+            elif filename.endswith(('.xlsx', '.xls')):
+                # For Excel, try openpyxl
+                import io
+                try:
+                    import openpyxl
+                    wb = openpyxl.load_workbook(io.BytesIO(file.read()))
+                    ws = wb.active
+                    rows = []
+                    for row in ws.iter_rows(values_only=True):
+                        rows.append(','.join(str(c) if c else '' for c in row))
+                    content = '\n'.join(rows)
+                    accounts = TBAnalyzer.parse_tb_csv(content)
+                except ImportError:
+                    content = file.read().decode('utf-8', errors='ignore')
+                    accounts = TBAnalyzer.parse_tb_csv(content)
+            else:
+                accounts = []
+        except Exception as e:
+            accounts = []
+        
+        if not accounts:
+            error_content = '''
+            <div class="mb-lg">
+                <a href="/tb-analyzer" class="text-muted">← Back</a>
+                <h1>🧠 TB Analyzer</h1>
+            </div>
+            <div class="alert alert-error">
+                Could not read the file. Please make sure it's a valid CSV or Excel file with account codes and balances.
+            </div>
+            <a href="/tb-analyzer" class="btn btn-primary">Try Again</a>
+            '''
+            return page_wrapper("TB Analyzer", error_content, active="reports", user=user)
+        
+        # Store in session for chat
+        session['tb_accounts'] = accounts
+        session['tb_context'] = context
+        
+        # Show loading page, then run analysis
+        # Run Opus analysis
+        analysis = TBAnalyzer.analyze_with_opus(accounts, context)
+        session['tb_analysis'] = analysis
+        
+        # Get friendly chat response from Haiku
+        chat_response = TBAnalyzer.chat_response(analysis)
+        session['tb_chat_history'] = [
+            {"role": "assistant", "content": chat_response}
+        ]
+        
+        # Determine health color
+        health = analysis.get('company_health', 'unknown')
+        health_color = {'good': '#10b981', 'warning': '#f59e0b', 'critical': '#ef4444'}.get(health, '#8b8b9a')
+        health_icon = {'good': '✅', 'warning': '⚠️', 'critical': '🚨'}.get(health, '❓')
+        
+        # Build the chat interface
+        result_content = f'''
+        <div class="mb-lg">
+            <a href="/tb-analyzer" class="text-muted">← Upload New TB</a>
+            <h1>🧠 TB Analysis Results</h1>
+            <p class="text-muted">Analyzed {len(accounts)} accounts</p>
+        </div>
+        
+        <!-- Health Banner -->
+        <div class="card" style="background:linear-gradient(135deg,{health_color}20,{health_color}05);border-color:{health_color}50;margin-bottom:20px;">
+            <div style="display:flex;align-items:center;gap:16px;">
+                <div style="font-size:48px;">{health_icon}</div>
+                <div>
+                    <h2 style="color:{health_color};margin:0;">Business Health: {health.upper()}</h2>
+                    <p style="color:#c0c0c0;margin:4px 0 0;">{analysis.get('health_summary', '')}</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Chat Interface -->
+        <div class="card" id="chat-container">
+            <div id="chat-messages" style="max-height:500px;overflow-y:auto;padding:10px;">
+                <div class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                    <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
+                    <div style="white-space:pre-wrap;line-height:1.6;">{chat_response}</div>
+                </div>
+            </div>
+            
+            <div style="border-top:1px solid var(--border);padding:16px;display:flex;gap:12px;">
+                <input type="text" id="chat-input" class="form-input" style="flex:1;" placeholder="Ask a follow-up question..." onkeypress="if(event.key==='Enter')sendMessage()">
+                <button type="button" class="btn btn-purple" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+        
+        <!-- Quick Actions -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:20px;">
+            <button class="btn btn-ghost" onclick="askQuestion('What are the biggest red flags?')">🚩 Red Flags</button>
+            <button class="btn btn-ghost" onclick="askQuestion('What opportunities do you see?')">💡 Opportunities</button>
+            <button class="btn btn-ghost" onclick="askQuestion('What would SARS look at?')">🏛️ SARS Concerns</button>
+            <button class="btn btn-ghost" onclick="askQuestion('What should I do first?')">📋 Priorities</button>
+        </div>
+        
+        <!-- Detailed Metrics (collapsible) -->
+        <details class="card mt-lg" style="cursor:pointer;">
+            <summary style="font-weight:600;padding:16px;">📊 Detailed Metrics & Findings</summary>
+            <div style="padding:0 16px 16px;">
+                <pre style="background:#0a0a10;padding:16px;border-radius:8px;overflow-x:auto;font-size:12px;">{json.dumps(analysis, indent=2)}</pre>
+            </div>
+        </details>
+        
+        <script>
+        function sendMessage() {{
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (!message) return;
+            
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.innerHTML += `
+                <div class="chat-message user" style="background:rgba(59,130,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                    <div style="font-weight:600;color:#60a5fa;margin-bottom:8px;">You</div>
+                    <div>${{message}}</div>
+                </div>
+            `;
+            
+            chatMessages.innerHTML += `
+                <div id="loading-msg" class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                    <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
+                    <div style="color:#8b8b9a;">Thinking...</div>
+                </div>
+            `;
+            
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            input.value = '';
+            
+            fetch('/tb-analyzer/chat', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{message: message}})
+            }})
+            .then(r => r.json())
+            .then(data => {{
+                document.getElementById('loading-msg').remove();
+                chatMessages.innerHTML += `
+                    <div class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                        <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
+                        <div style="white-space:pre-wrap;line-height:1.6;">${{data.response}}</div>
+                    </div>
+                `;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }})
+            .catch(err => {{
+                document.getElementById('loading-msg').innerHTML = '<div style="color:#ef4444;">Error getting response</div>';
+            }});
+        }}
+        
+        function askQuestion(q) {{
+            document.getElementById('chat-input').value = q;
+            sendMessage();
+        }}
+        </script>
+        '''
+        
+        return page_wrapper("TB Analysis", result_content, active="reports", user=user)
+    
+    # GET - show upload form
     content = '''
     <div class="mb-lg">
         <h1>🧠 TB Analyzer</h1>
@@ -13441,186 +13613,6 @@ def tb_analyzer():
     return page_wrapper("TB Analyzer", content, active="reports", user=user)
 
 
-@app.route("/tb-analyzer", methods=["POST"])
-def tb_analyzer_process():
-    """Process uploaded TB and run analysis"""
-    user = UserSession.get_current_user()
-    if not user:
-        return redirect("/login")
-    
-    file = request.files.get("tb_file")
-    context = request.form.get("context", "")
-    
-    if not file:
-        return redirect("/tb-analyzer")
-    
-    # Read file content
-    filename = file.filename.lower()
-    try:
-        if filename.endswith('.csv'):
-            content = file.read().decode('utf-8', errors='ignore')
-            accounts = TBAnalyzer.parse_tb_csv(content)
-        elif filename.endswith(('.xlsx', '.xls')):
-            # For Excel, we'd need openpyxl - for now convert to CSV-like
-            import io
-            try:
-                import openpyxl
-                wb = openpyxl.load_workbook(io.BytesIO(file.read()))
-                ws = wb.active
-                rows = []
-                for row in ws.iter_rows(values_only=True):
-                    rows.append(','.join(str(c) if c else '' for c in row))
-                content = '\n'.join(rows)
-                accounts = TBAnalyzer.parse_tb_csv(content)
-            except ImportError:
-                # Fallback - try reading as text
-                content = file.read().decode('utf-8', errors='ignore')
-                accounts = TBAnalyzer.parse_tb_csv(content)
-        else:
-            accounts = []
-    except Exception as e:
-        accounts = []
-    
-    if not accounts:
-        content = '''
-        <div class="mb-lg">
-            <a href="/tb-analyzer" class="text-muted">← Back</a>
-            <h1>🧠 TB Analyzer</h1>
-        </div>
-        <div class="alert alert-error">
-            Could not read the file. Please make sure it's a valid CSV or Excel file with account codes and balances.
-        </div>
-        <a href="/tb-analyzer" class="btn btn-primary">Try Again</a>
-        '''
-        return page_wrapper("TB Analyzer", content, active="reports", user=user)
-    
-    # Store in session for chat
-    session['tb_accounts'] = accounts
-    session['tb_context'] = context
-    
-    # Run Opus analysis
-    analysis = TBAnalyzer.analyze_with_opus(accounts, context)
-    session['tb_analysis'] = analysis
-    
-    # Get friendly chat response from Haiku
-    chat_response = TBAnalyzer.chat_response(analysis)
-    session['tb_chat_history'] = [
-        {"role": "assistant", "content": chat_response}
-    ]
-    
-    # Determine health color
-    health = analysis.get('company_health', 'unknown')
-    health_color = {'good': '#10b981', 'warning': '#f59e0b', 'critical': '#ef4444'}.get(health, '#8b8b9a')
-    health_icon = {'good': '✅', 'warning': '⚠️', 'critical': '🚨'}.get(health, '❓')
-    
-    # Build the chat interface
-    content = f'''
-    <div class="mb-lg">
-        <a href="/tb-analyzer" class="text-muted">← Upload New TB</a>
-        <h1>🧠 TB Analysis Results</h1>
-        <p class="text-muted">Analyzed {len(accounts)} accounts</p>
-    </div>
-    
-    <!-- Health Banner -->
-    <div class="card" style="background:linear-gradient(135deg,{health_color}20,{health_color}05);border-color:{health_color}50;margin-bottom:20px;">
-        <div style="display:flex;align-items:center;gap:16px;">
-            <div style="font-size:48px;">{health_icon}</div>
-            <div>
-                <h2 style="color:{health_color};margin:0;">Business Health: {health.upper()}</h2>
-                <p style="color:#c0c0c0;margin:4px 0 0;">{analysis.get('health_summary', '')}</p>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Chat Interface -->
-    <div class="card" id="chat-container">
-        <div id="chat-messages" style="max-height:500px;overflow-y:auto;padding:10px;">
-            <div class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
-                <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
-                <div style="white-space:pre-wrap;line-height:1.6;">{chat_response}</div>
-            </div>
-        </div>
-        
-        <div style="border-top:1px solid var(--border);padding:16px;display:flex;gap:12px;">
-            <input type="text" id="chat-input" class="form-input" style="flex:1;" placeholder="Ask a follow-up question..." onkeypress="if(event.key==='Enter')sendMessage()">
-            <button type="button" class="btn btn-purple" onclick="sendMessage()">Send</button>
-        </div>
-    </div>
-    
-    <!-- Quick Actions -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:20px;">
-        <button class="btn btn-ghost" onclick="askQuestion('What are the biggest red flags?')">🚩 Red Flags</button>
-        <button class="btn btn-ghost" onclick="askQuestion('What opportunities do you see?')">💡 Opportunities</button>
-        <button class="btn btn-ghost" onclick="askQuestion('What would SARS look at?')">🏛️ SARS Concerns</button>
-        <button class="btn btn-ghost" onclick="askQuestion('What should I do first?')">📋 Priorities</button>
-    </div>
-    
-    <!-- Detailed Metrics (collapsible) -->
-    <details class="card mt-lg" style="cursor:pointer;">
-        <summary style="font-weight:600;padding:16px;">📊 Detailed Metrics & Findings</summary>
-        <div style="padding:0 16px 16px;">
-            <pre style="background:#0a0a10;padding:16px;border-radius:8px;overflow-x:auto;font-size:12px;">{json.dumps(analysis, indent=2)}</pre>
-        </div>
-    </details>
-    
-    <script>
-    function sendMessage() {{
-        const input = document.getElementById('chat-input');
-        const message = input.value.trim();
-        if (!message) return;
-        
-        // Add user message to chat
-        const chatMessages = document.getElementById('chat-messages');
-        chatMessages.innerHTML += `
-            <div class="chat-message user" style="background:rgba(59,130,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
-                <div style="font-weight:600;color:#60a5fa;margin-bottom:8px;">You</div>
-                <div>${{message}}</div>
-            </div>
-        `;
-        
-        // Add loading indicator
-        chatMessages.innerHTML += `
-            <div id="loading-msg" class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
-                <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
-                <div style="color:#8b8b9a;">Thinking...</div>
-            </div>
-        `;
-        
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-        input.value = '';
-        
-        // Send to backend
-        fetch('/tb-analyzer/chat', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{message: message}})
-        }})
-        .then(r => r.json())
-        .then(data => {{
-            document.getElementById('loading-msg').remove();
-            chatMessages.innerHTML += `
-                <div class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
-                    <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
-                    <div style="white-space:pre-wrap;line-height:1.6;">${{data.response}}</div>
-                </div>
-            `;
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }})
-        .catch(err => {{
-            document.getElementById('loading-msg').innerHTML = '<div style="color:#ef4444;">Error getting response</div>';
-        }});
-    }}
-    
-    function askQuestion(q) {{
-        document.getElementById('chat-input').value = q;
-        sendMessage();
-    }}
-    </script>
-    '''
-    
-    return page_wrapper("TB Analysis", content, active="reports", user=user)
-
-
 @app.route("/tb-analyzer/chat", methods=["POST"])
 def tb_analyzer_chat():
     """Handle chat follow-up questions"""
@@ -13646,6 +13638,9 @@ def tb_analyzer_chat():
     session['tb_chat_history'] = history[-20:]  # Keep last 20 messages
     
     return jsonify({"response": response})
+
+
+@app.route("/journal-entry", methods=["GET", "POST"])
 def journal_entry():
     """Manual journal entry for adjustments"""
     user = UserSession.get_current_user()
