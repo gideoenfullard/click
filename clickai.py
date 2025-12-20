@@ -5230,54 +5230,894 @@ LANDING_CSS = """
 
 @app.route("/")
 def landing():
-    """Landing page - show login or redirect to dashboard if logged in"""
+    """Landing page - professional marketing page that sells Click AI"""
     
     # If already logged in, go to dashboard
     if UserSession.is_logged_in():
         return redirect("/dashboard")
     
-    html = f'''<!DOCTYPE html>
+    html = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Click AI - Business Management System</title>
-    {CSS}
-    {LANDING_CSS}
+    <title>Click AI - The Accounting System That Works For You</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg-dark: #050508;
+            --bg-card: #0a0a12;
+            --purple: #8b5cf6;
+            --blue: #3b82f6;
+            --green: #10b981;
+            --orange: #f59e0b;
+            --text: #f0f0f5;
+            --text-muted: #8b8b9a;
+        }
+        
+        body {
+            font-family: 'DM Sans', -apple-system, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           HERO SECTION
+           ═══════════════════════════════════════════════════════════════════ */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: 
+                radial-gradient(ellipse at 20% 20%, rgba(139, 92, 246, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(59, 130, 246, 0.1) 0%, transparent 50%);
+            animation: rotate 60s linear infinite;
+            z-index: 0;
+        }
+        
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* NAV */
+        .nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px 48px;
+            position: relative;
+            z-index: 10;
+        }
+        
+        .nav-logo {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--purple), var(--blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-decoration: none;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        
+        .nav-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        
+        .nav-link:hover { color: var(--text); }
+        
+        .btn {
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--purple), var(--blue));
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(139, 92, 246, 0.3);
+        }
+        
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text);
+        }
+        
+        .btn-ghost:hover {
+            background: rgba(255,255,255,0.05);
+        }
+        
+        /* HERO CONTENT */
+        .hero-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 60px 24px;
+            position: relative;
+            z-index: 10;
+        }
+        
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(139, 92, 246, 0.15);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 100px;
+            padding: 8px 16px;
+            font-size: 13px;
+            color: var(--purple);
+            margin-bottom: 32px;
+        }
+        
+        .hero-badge-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .hero-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: clamp(40px, 8vw, 72px);
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 24px;
+            max-width: 900px;
+        }
+        
+        .hero-title span {
+            background: linear-gradient(135deg, var(--purple), var(--blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .hero-subtitle {
+            font-size: 20px;
+            color: var(--text-muted);
+            max-width: 600px;
+            margin-bottom: 40px;
+            line-height: 1.7;
+        }
+        
+        .hero-buttons {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        .hero-buttons .btn {
+            padding: 16px 32px;
+            font-size: 16px;
+        }
+        
+        .hero-stats {
+            display: flex;
+            gap: 48px;
+            margin-top: 80px;
+            padding-top: 40px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .hero-stat {
+            text-align: center;
+        }
+        
+        .hero-stat-value {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 36px;
+            font-weight: 700;
+            color: var(--purple);
+        }
+        
+        .hero-stat-label {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           PROBLEM SECTION
+           ═══════════════════════════════════════════════════════════════════ */
+        .section {
+            padding: 120px 48px;
+            position: relative;
+        }
+        
+        .section-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--purple);
+            margin-bottom: 16px;
+        }
+        
+        .section-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: clamp(32px, 5vw, 48px);
+            font-weight: 700;
+            margin-bottom: 24px;
+            max-width: 700px;
+        }
+        
+        .section-subtitle {
+            font-size: 18px;
+            color: var(--text-muted);
+            max-width: 600px;
+            line-height: 1.7;
+        }
+        
+        .problem-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-top: 60px;
+        }
+        
+        .problem-card {
+            background: var(--bg-card);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 16px;
+            padding: 32px;
+            transition: all 0.3s;
+        }
+        
+        .problem-card:hover {
+            border-color: rgba(239, 68, 68, 0.3);
+            transform: translateY(-4px);
+        }
+        
+        .problem-icon {
+            font-size: 40px;
+            margin-bottom: 20px;
+        }
+        
+        .problem-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .problem-desc {
+            color: var(--text-muted);
+            font-size: 15px;
+            line-height: 1.6;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           FEATURES SECTION
+           ═══════════════════════════════════════════════════════════════════ */
+        .features {
+            background: linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-card) 50%, var(--bg-dark) 100%);
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 32px;
+            margin-top: 60px;
+        }
+        
+        .feature-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 20px;
+            padding: 40px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+        
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--purple), var(--blue));
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .feature-card:hover::before { opacity: 1; }
+        
+        .feature-card:hover {
+            border-color: rgba(139, 92, 246, 0.2);
+            transform: translateY(-4px);
+        }
+        
+        .feature-icon {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(59, 130, 246, 0.2));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin-bottom: 24px;
+        }
+        
+        .feature-title {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .feature-desc {
+            color: var(--text-muted);
+            font-size: 15px;
+            line-height: 1.7;
+            margin-bottom: 20px;
+        }
+        
+        .feature-list {
+            list-style: none;
+        }
+        
+        .feature-list li {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+        
+        .feature-list li::before {
+            content: '✓';
+            color: var(--green);
+            font-weight: 600;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           IMPORT SECTION
+           ═══════════════════════════════════════════════════════════════════ */
+        .import-section {
+            text-align: center;
+        }
+        
+        .import-logos {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            flex-wrap: wrap;
+            margin: 60px 0;
+        }
+        
+        .import-logo {
+            background: var(--bg-card);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 24px 40px;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-muted);
+            transition: all 0.3s;
+        }
+        
+        .import-logo:hover {
+            border-color: var(--purple);
+            color: var(--text);
+            transform: translateY(-4px);
+        }
+        
+        .import-steps {
+            display: flex;
+            justify-content: center;
+            gap: 80px;
+            margin-top: 60px;
+            flex-wrap: wrap;
+        }
+        
+        .import-step {
+            text-align: center;
+            max-width: 200px;
+        }
+        
+        .import-step-num {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--purple), var(--blue));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 20px;
+            font-weight: 700;
+            margin: 0 auto 16px;
+        }
+        
+        .import-step-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .import-step-desc {
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           PRICING
+           ═══════════════════════════════════════════════════════════════════ */
+        .pricing {
+            text-align: center;
+        }
+        
+        .pricing-cards {
+            display: flex;
+            justify-content: center;
+            gap: 32px;
+            margin-top: 60px;
+            flex-wrap: wrap;
+        }
+        
+        .pricing-card {
+            background: var(--bg-card);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 20px;
+            padding: 40px;
+            width: 320px;
+            text-align: left;
+            position: relative;
+            transition: all 0.3s;
+        }
+        
+        .pricing-card.featured {
+            border-color: var(--purple);
+            transform: scale(1.05);
+        }
+        
+        .pricing-card.featured::before {
+            content: 'Most Popular';
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, var(--purple), var(--blue));
+            padding: 4px 16px;
+            border-radius: 100px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .pricing-name {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .pricing-desc {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 24px;
+        }
+        
+        .pricing-price {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        
+        .pricing-price span {
+            font-size: 16px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+        
+        .pricing-features {
+            list-style: none;
+            margin: 24px 0;
+            padding-top: 24px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .pricing-features li {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+        
+        .pricing-features li::before {
+            content: '✓';
+            color: var(--green);
+            font-weight: 600;
+        }
+        
+        .pricing-card .btn {
+            width: 100%;
+            text-align: center;
+            margin-top: 24px;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           CTA
+           ═══════════════════════════════════════════════════════════════════ */
+        .cta {
+            text-align: center;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            border-top: 1px solid rgba(139, 92, 246, 0.2);
+            border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+        }
+        
+        .cta-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: clamp(28px, 5vw, 40px);
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        
+        .cta-subtitle {
+            font-size: 18px;
+            color: var(--text-muted);
+            margin-bottom: 32px;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           FOOTER
+           ═══════════════════════════════════════════════════════════════════ */
+        .footer {
+            padding: 60px 48px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+        
+        .footer-logo {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--purple), var(--blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 16px;
+        }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           RESPONSIVE
+           ═══════════════════════════════════════════════════════════════════ */
+        @media (max-width: 768px) {
+            .nav { padding: 16px 24px; }
+            .nav-links { display: none; }
+            .section { padding: 80px 24px; }
+            .hero-stats { flex-direction: column; gap: 24px; }
+            .import-steps { gap: 40px; }
+            .pricing-card.featured { transform: none; }
+        }
+    </style>
 </head>
 <body>
-    <div class="landing">
-        <div class="landing-logo">Click AI</div>
-        <p class="landing-tagline">Complete Business Management.<br><span>Powered by AI.</span></p>
+    <!-- HERO -->
+    <section class="hero">
+        <nav class="nav">
+            <a href="/" class="nav-logo">Click AI</a>
+            <div class="nav-links">
+                <a href="#features" class="nav-link">Features</a>
+                <a href="#pricing" class="nav-link">Pricing</a>
+                <a href="/login" class="btn btn-ghost">Login</a>
+                <a href="/demo" class="btn btn-primary">Try Free Demo</a>
+            </div>
+        </nav>
         
-        <div class="landing-buttons">
-            <a href="/login" class="landing-btn landing-btn-primary">Login</a>
-            <a href="/demo" class="landing-btn landing-btn-secondary">Try Demo</a>
+        <div class="hero-content">
+            <div class="hero-badge">
+                <span class="hero-badge-dot"></span>
+                Built for South African Businesses
+            </div>
+            
+            <h1 class="hero-title">
+                Stop Fighting Your<br><span>Accounting Software</span>
+            </h1>
+            
+            <p class="hero-subtitle">
+                Click AI is the accounting system that actually works the way you think. 
+                AI-powered invoicing, instant expense capture, and reports that explain themselves.
+                Switch from Sage or Pastel in under 5 minutes.
+            </p>
+            
+            <div class="hero-buttons">
+                <a href="/demo" class="btn btn-primary">Try the Demo — It's Free</a>
+                <a href="/quickstart" class="btn btn-ghost">Import My Data</a>
+            </div>
+            
+            <div class="hero-stats">
+                <div class="hero-stat">
+                    <div class="hero-stat-value">5 min</div>
+                    <div class="hero-stat-label">To import your data</div>
+                </div>
+                <div class="hero-stat">
+                    <div class="hero-stat-value">R0</div>
+                    <div class="hero-stat-label">Setup fees</div>
+                </div>
+                <div class="hero-stat">
+                    <div class="hero-stat-value">100%</div>
+                    <div class="hero-stat-label">SARS compliant</div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- PROBLEMS -->
+    <section class="section">
+        <div class="section-label">The Problem</div>
+        <h2 class="section-title">Traditional accounting software wasn't built for you</h2>
+        <p class="section-subtitle">
+            You started a business to do what you love — not to become a bookkeeper.
+        </p>
+        
+        <div class="problem-grid">
+            <div class="problem-card">
+                <div class="problem-icon">😤</div>
+                <h3 class="problem-title">Too Complicated</h3>
+                <p class="problem-desc">
+                    You need an accounting degree to understand the interface. 
+                    Why does adding an invoice require 15 clicks?
+                </p>
+            </div>
+            <div class="problem-card">
+                <div class="problem-icon">🐌</div>
+                <h3 class="problem-title">Painfully Slow</h3>
+                <p class="problem-desc">
+                    Loading screens. Timeouts. That spinning wheel while you wait to capture one expense.
+                </p>
+            </div>
+            <div class="problem-card">
+                <div class="problem-icon">📱</div>
+                <h3 class="problem-title">Desktop Only</h3>
+                <p class="problem-desc">
+                    You're on site, supplier hands you a receipt. Now you have to remember to capture it... later.
+                </p>
+            </div>
+            <div class="problem-card">
+                <div class="problem-icon">📊</div>
+                <h3 class="problem-title">Useless Reports</h3>
+                <p class="problem-desc">
+                    Pages of numbers with no explanation. Is your business healthy? Who knows.
+                </p>
+            </div>
+        </div>
+    </section>
+    
+    <!-- FEATURES -->
+    <section class="section features" id="features">
+        <div class="section-label">The Solution</div>
+        <h2 class="section-title">Accounting that works with you, not against you</h2>
+        
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="feature-icon">📷</div>
+                <h3 class="feature-title">Snap & Done</h3>
+                <p class="feature-desc">
+                    Take a photo of any receipt or invoice. AI reads it, categorizes it, and creates the entry. You just approve.
+                </p>
+                <ul class="feature-list">
+                    <li>Works with any South African invoice format</li>
+                    <li>Learns your suppliers automatically</li>
+                    <li>VAT extracted correctly every time</li>
+                </ul>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">💰</div>
+                <h3 class="feature-title">Lightning POS</h3>
+                <p class="feature-desc">
+                    Ring up sales in seconds. Stock updates automatically. Customer accounts track themselves.
+                </p>
+                <ul class="feature-list">
+                    <li>Works offline — sync when you're ready</li>
+                    <li>Automatic low-stock alerts</li>
+                    <li>Customer credit limits built in</li>
+                </ul>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🤖</div>
+                <h3 class="feature-title">AI Business Health</h3>
+                <p class="feature-desc">
+                    Reports that actually tell you what's happening. Not just numbers — explanations and recommendations.
+                </p>
+                <ul class="feature-list">
+                    <li>"Your debtors are 47 days — here's who to chase"</li>
+                    <li>Bank-ready management accounts</li>
+                    <li>Business rescue early warning</li>
+                </ul>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">👥</div>
+                <h3 class="feature-title">Proper Payroll</h3>
+                <p class="feature-desc">
+                    PAYE, UIF, SDL calculated correctly. Payslips generated. EMP201 ready for SARS.
+                </p>
+                <ul class="feature-list">
+                    <li>2024/2025 tax tables built in</li>
+                    <li>Handles advances and deductions</li>
+                    <li>AI checks for mistakes before you pay</li>
+                </ul>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">📋</div>
+                <h3 class="feature-title">Real Double-Entry</h3>
+                <p class="feature-desc">
+                    Not some spreadsheet pretending to be accounting. Proper debits, credits, and audit trail.
+                </p>
+                <ul class="feature-list">
+                    <li>Trial balance that actually balances</li>
+                    <li>Full general ledger</li>
+                    <li>Your accountant will love you</li>
+                </ul>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">☁️</div>
+                <h3 class="feature-title">Anywhere Access</h3>
+                <p class="feature-desc">
+                    Phone, tablet, laptop — your business travels with you. No installation, no updates.
+                </p>
+                <ul class="feature-list">
+                    <li>Secure cloud backup</li>
+                    <li>Multiple users with permissions</li>
+                    <li>Works on any device with a browser</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+    
+    <!-- IMPORT -->
+    <section class="section import-section">
+        <div class="section-label">Switch in 5 Minutes</div>
+        <h2 class="section-title">Bring your data. Leave the headaches.</h2>
+        <p class="section-subtitle">
+            Export from your current system, upload to Click AI. We handle the rest.
+        </p>
+        
+        <div class="import-logos">
+            <div class="import-logo">Sage Pastel</div>
+            <div class="import-logo">Sage One</div>
+            <div class="import-logo">Xero</div>
+            <div class="import-logo">QuickBooks</div>
+            <div class="import-logo">Excel</div>
         </div>
         
-        <div class="landing-features">
-            <div class="landing-feature">
-                <div class="landing-feature-icon">💰</div>
-                <div class="landing-feature-title">Point of Sale</div>
-                <div class="landing-feature-desc">Fast, intuitive sales with automatic stock updates</div>
+        <div class="import-steps">
+            <div class="import-step">
+                <div class="import-step-num">1</div>
+                <h4 class="import-step-title">Export</h4>
+                <p class="import-step-desc">Download your data from your old system (we'll show you how)</p>
             </div>
-            <div class="landing-feature">
-                <div class="landing-feature-icon">📊</div>
-                <div class="landing-feature-title">Real Accounting</div>
-                <div class="landing-feature-desc">Double-entry bookkeeping with proper ledger</div>
+            <div class="import-step">
+                <div class="import-step-num">2</div>
+                <h4 class="import-step-title">Upload</h4>
+                <p class="import-step-desc">Drag and drop into Click AI</p>
             </div>
-            <div class="landing-feature">
-                <div class="landing-feature-icon">🤖</div>
-                <div class="landing-feature-title">AI Powered</div>
-                <div class="landing-feature-desc">Smart receipt scanning and categorization</div>
-            </div>
-            <div class="landing-feature">
-                <div class="landing-feature-icon">📱</div>
-                <div class="landing-feature-title">Mobile Ready</div>
-                <div class="landing-feature-desc">Capture expenses anywhere with your phone</div>
+            <div class="import-step">
+                <div class="import-step-num">3</div>
+                <h4 class="import-step-title">Done</h4>
+                <p class="import-step-desc">AI maps your accounts automatically. Start working.</p>
             </div>
         </div>
-    </div>
+    </section>
+    
+    <!-- PRICING -->
+    <section class="section pricing" id="pricing">
+        <div class="section-label">Simple Pricing</div>
+        <h2 class="section-title">No surprises. No hidden fees.</h2>
+        
+        <div class="pricing-cards">
+            <div class="pricing-card">
+                <h3 class="pricing-name">Starter</h3>
+                <p class="pricing-desc">Perfect for sole traders</p>
+                <div class="pricing-price">R299<span>/month</span></div>
+                <ul class="pricing-features">
+                    <li>1 user</li>
+                    <li>Unlimited invoices</li>
+                    <li>Receipt scanning (50/month)</li>
+                    <li>Basic reports</li>
+                    <li>Email support</li>
+                </ul>
+                <a href="/register?plan=starter" class="btn btn-ghost">Get Started</a>
+            </div>
+            
+            <div class="pricing-card featured">
+                <h3 class="pricing-name">Business</h3>
+                <p class="pricing-desc">For growing businesses</p>
+                <div class="pricing-price">R599<span>/month</span></div>
+                <ul class="pricing-features">
+                    <li>5 users</li>
+                    <li>Unlimited everything</li>
+                    <li>AI Business Health reports</li>
+                    <li>Payroll (up to 20 employees)</li>
+                    <li>Priority support</li>
+                </ul>
+                <a href="/register?plan=business" class="btn btn-primary">Get Started</a>
+            </div>
+            
+            <div class="pricing-card">
+                <h3 class="pricing-name">Enterprise</h3>
+                <p class="pricing-desc">Multi-branch operations</p>
+                <div class="pricing-price">R1,499<span>/month</span></div>
+                <ul class="pricing-features">
+                    <li>Unlimited users</li>
+                    <li>Multi-branch support</li>
+                    <li>Custom integrations</li>
+                    <li>Dedicated account manager</li>
+                    <li>On-site training</li>
+                </ul>
+                <a href="/register?plan=enterprise" class="btn btn-ghost">Contact Sales</a>
+            </div>
+        </div>
+    </section>
+    
+    <!-- CTA -->
+    <section class="section cta">
+        <h2 class="cta-title">Ready to take control of your books?</h2>
+        <p class="cta-subtitle">Try the full demo — no credit card, no signup required.</p>
+        <a href="/demo" class="btn btn-primary" style="padding: 16px 40px; font-size: 18px;">
+            Launch Demo →
+        </a>
+    </section>
+    
+    <!-- FOOTER -->
+    <footer class="footer">
+        <div class="footer-logo">Click AI</div>
+        <p>Built in South Africa, for South African businesses.</p>
+        <p style="margin-top: 8px;">© 2025 Click Fulltech. SARS-compliant accounting.</p>
+    </footer>
 </body>
 </html>'''
     
@@ -5575,14 +6415,630 @@ def logout():
 
 @app.route("/demo")
 def demo():
-    """Demo mode - create demo session"""
+    """Demo mode - create demo session with sample data"""
     # Set demo user in session
     session["user_id"] = "demo"
     session["username"] = "Demo User"
     session["role"] = "admin"
     session["is_demo"] = True
     
+    # Load sample data for demo (only if not already loaded)
+    try:
+        existing_stock = db.select("stock_items", filters={"created_by": "demo"})
+        if not existing_stock or len(existing_stock) < 5:
+            load_demo_data()
+    except:
+        pass
+    
     return redirect("/dashboard")
+
+
+def load_demo_data():
+    """Load sample data for demo mode so prospects can test the system"""
+    
+    # Sample customers
+    demo_customers = [
+        {"id": "demo-cust-1", "name": "ABC Construction", "email": "accounts@abcconstruction.co.za", "phone": "011-555-1234", "vat_number": "4000123456", "balance": Decimal("15420.00"), "credit_limit": Decimal("50000"), "created_by": "demo"},
+        {"id": "demo-cust-2", "name": "Mike's Plumbing", "email": "mike@mikesplumbing.co.za", "phone": "082-555-5678", "balance": Decimal("3200.50"), "credit_limit": Decimal("10000"), "created_by": "demo"},
+        {"id": "demo-cust-3", "name": "Sarah Williams", "email": "sarah.w@gmail.com", "phone": "076-555-9012", "balance": Decimal("0"), "credit_limit": Decimal("5000"), "created_by": "demo"},
+        {"id": "demo-cust-4", "name": "Township Hardware", "email": "orders@townshiphardware.co.za", "phone": "011-555-3456", "vat_number": "4000789012", "balance": Decimal("8750.00"), "credit_limit": Decimal("25000"), "created_by": "demo"},
+        {"id": "demo-cust-5", "name": "Cash Customer", "email": "", "phone": "", "balance": Decimal("0"), "credit_limit": Decimal("0"), "created_by": "demo"},
+    ]
+    
+    for c in demo_customers:
+        c["created_at"] = now()
+        try:
+            db.insert("customers", c)
+        except:
+            pass
+    
+    # Sample suppliers
+    demo_suppliers = [
+        {"id": "demo-supp-1", "name": "Makro", "email": "accounts@makro.co.za", "phone": "011-555-7890", "vat_number": "4100234567", "balance": Decimal("0"), "created_by": "demo"},
+        {"id": "demo-supp-2", "name": "Builders Warehouse", "email": "trade@builderswarehouse.co.za", "phone": "011-555-2345", "vat_number": "4100345678", "balance": Decimal("12500.00"), "created_by": "demo"},
+        {"id": "demo-supp-3", "name": "Mica Hardware", "email": "orders@mica.co.za", "phone": "011-555-6789", "vat_number": "4100456789", "balance": Decimal("4200.00"), "created_by": "demo"},
+        {"id": "demo-supp-4", "name": "Engen Fuel", "email": "fleet@engen.co.za", "phone": "011-555-0123", "balance": Decimal("0"), "created_by": "demo"},
+    ]
+    
+    for s in demo_suppliers:
+        s["created_at"] = now()
+        try:
+            db.insert("suppliers", s)
+        except:
+            pass
+    
+    # Sample stock items with realistic hardware store inventory
+    demo_stock = [
+        # Fasteners
+        {"id": "demo-stock-1", "sku": "NAIL-65MM", "name": "Nail 65mm (500g)", "description": "Wire nails for general construction", "category": "Fasteners", "cost_price": Decimal("18.50"), "selling_price": Decimal("32.00"), "quantity": 145, "reorder_level": 20, "created_by": "demo"},
+        {"id": "demo-stock-2", "sku": "SCREW-40MM", "name": "Wood Screw 40mm (100pk)", "description": "Countersunk wood screws", "category": "Fasteners", "cost_price": Decimal("24.00"), "selling_price": Decimal("45.00"), "quantity": 89, "reorder_level": 15, "created_by": "demo"},
+        {"id": "demo-stock-3", "sku": "BOLT-M10", "name": "Bolt M10x50 with Nut", "description": "Hex bolt with nut and washer", "category": "Fasteners", "cost_price": Decimal("4.50"), "selling_price": Decimal("8.50"), "quantity": 234, "reorder_level": 50, "created_by": "demo"},
+        
+        # Electrical
+        {"id": "demo-stock-4", "sku": "CABLE-2.5", "name": "Cable 2.5mm² (100m)", "description": "Twin & earth electrical cable", "category": "Electrical", "cost_price": Decimal("890.00"), "selling_price": Decimal("1299.00"), "quantity": 12, "reorder_level": 5, "created_by": "demo"},
+        {"id": "demo-stock-5", "sku": "SWITCH-1G", "name": "Light Switch 1-Gang", "description": "White plastic light switch", "category": "Electrical", "cost_price": Decimal("28.00"), "selling_price": Decimal("55.00"), "quantity": 67, "reorder_level": 20, "created_by": "demo"},
+        {"id": "demo-stock-6", "sku": "SOCKET-DBL", "name": "Socket Outlet Double", "description": "Double plug socket", "category": "Electrical", "cost_price": Decimal("45.00"), "selling_price": Decimal("89.00"), "quantity": 43, "reorder_level": 15, "created_by": "demo"},
+        
+        # Plumbing
+        {"id": "demo-stock-7", "sku": "PIPE-20MM", "name": "PVC Pipe 20mm (6m)", "description": "Class 16 PVC pressure pipe", "category": "Plumbing", "cost_price": Decimal("85.00"), "selling_price": Decimal("145.00"), "quantity": 28, "reorder_level": 10, "created_by": "demo"},
+        {"id": "demo-stock-8", "sku": "ELBOW-20", "name": "PVC Elbow 20mm 90°", "description": "90 degree elbow fitting", "category": "Plumbing", "cost_price": Decimal("8.00"), "selling_price": Decimal("16.00"), "quantity": 156, "reorder_level": 30, "created_by": "demo"},
+        {"id": "demo-stock-9", "sku": "TAPE-PTFE", "name": "PTFE Tape (12m)", "description": "Thread seal tape", "category": "Plumbing", "cost_price": Decimal("12.00"), "selling_price": Decimal("25.00"), "quantity": 89, "reorder_level": 25, "created_by": "demo"},
+        
+        # Tools
+        {"id": "demo-stock-10", "sku": "HAMMER-500", "name": "Claw Hammer 500g", "description": "Fiberglass handle claw hammer", "category": "Tools", "cost_price": Decimal("125.00"), "selling_price": Decimal("199.00"), "quantity": 18, "reorder_level": 5, "created_by": "demo"},
+        {"id": "demo-stock-11", "sku": "TAPE-5M", "name": "Measuring Tape 5m", "description": "Self-locking tape measure", "category": "Tools", "cost_price": Decimal("45.00"), "selling_price": Decimal("85.00"), "quantity": 34, "reorder_level": 10, "created_by": "demo"},
+        {"id": "demo-stock-12", "sku": "LEVEL-600", "name": "Spirit Level 600mm", "description": "3 vial spirit level", "category": "Tools", "cost_price": Decimal("89.00"), "selling_price": Decimal("159.00"), "quantity": 8, "reorder_level": 3, "created_by": "demo"},
+        
+        # Safety
+        {"id": "demo-stock-13", "sku": "GLOVE-PU", "name": "Work Gloves PU Palm", "description": "Size L work gloves", "category": "Safety", "cost_price": Decimal("35.00"), "selling_price": Decimal("65.00"), "quantity": 56, "reorder_level": 20, "created_by": "demo"},
+        {"id": "demo-stock-14", "sku": "GLASSES-CLR", "name": "Safety Glasses Clear", "description": "Impact resistant safety glasses", "category": "Safety", "cost_price": Decimal("28.00"), "selling_price": Decimal("55.00"), "quantity": 42, "reorder_level": 15, "created_by": "demo"},
+        
+        # Building
+        {"id": "demo-stock-15", "sku": "CEMENT-50", "name": "Cement 50kg", "description": "Portland cement CEM II", "category": "Building", "cost_price": Decimal("95.00"), "selling_price": Decimal("135.00"), "quantity": 75, "reorder_level": 25, "created_by": "demo"},
+        {"id": "demo-stock-16", "sku": "SAND-TON", "name": "Building Sand (per ton)", "description": "Washed building sand", "category": "Building", "cost_price": Decimal("450.00"), "selling_price": Decimal("650.00"), "quantity": 15, "reorder_level": 5, "created_by": "demo"},
+        
+        # Low stock items (for alerts)
+        {"id": "demo-stock-17", "sku": "DRILL-10", "name": "Drill Bit Set 10pc", "description": "HSS drill bit set 1-10mm", "category": "Tools", "cost_price": Decimal("120.00"), "selling_price": Decimal("199.00"), "quantity": 3, "reorder_level": 5, "created_by": "demo"},
+        {"id": "demo-stock-18", "sku": "ANGLE-100", "name": "Angle Grinder 100mm", "description": "850W angle grinder", "category": "Tools", "cost_price": Decimal("550.00"), "selling_price": Decimal("899.00"), "quantity": 2, "reorder_level": 3, "created_by": "demo"},
+    ]
+    
+    for s in demo_stock:
+        s["created_at"] = now()
+        try:
+            db.insert("stock_items", s)
+        except:
+            pass
+    
+    # Sample invoices (recent sales)
+    from datetime import timedelta
+    today_date = datetime.now()
+    
+    demo_invoices = [
+        {"id": "demo-inv-1", "invoice_number": "INV-0001", "customer_id": "demo-cust-1", "customer_name": "ABC Construction", "date": (today_date - timedelta(days=0)).strftime("%Y-%m-%d"), "subtotal": Decimal("4500.00"), "vat": Decimal("675.00"), "total": Decimal("5175.00"), "status": "paid", "created_by": "demo"},
+        {"id": "demo-inv-2", "invoice_number": "INV-0002", "customer_id": "demo-cust-2", "customer_name": "Mike's Plumbing", "date": (today_date - timedelta(days=1)).strftime("%Y-%m-%d"), "subtotal": Decimal("1280.00"), "vat": Decimal("192.00"), "total": Decimal("1472.00"), "status": "pending", "created_by": "demo"},
+        {"id": "demo-inv-3", "invoice_number": "INV-0003", "customer_id": "demo-cust-5", "customer_name": "Cash Customer", "date": (today_date - timedelta(days=1)).strftime("%Y-%m-%d"), "subtotal": Decimal("350.00"), "vat": Decimal("52.50"), "total": Decimal("402.50"), "status": "paid", "created_by": "demo"},
+        {"id": "demo-inv-4", "invoice_number": "INV-0004", "customer_id": "demo-cust-4", "customer_name": "Township Hardware", "date": (today_date - timedelta(days=3)).strftime("%Y-%m-%d"), "subtotal": Decimal("8500.00"), "vat": Decimal("1275.00"), "total": Decimal("9775.00"), "status": "pending", "created_by": "demo"},
+        {"id": "demo-inv-5", "invoice_number": "INV-0005", "customer_id": "demo-cust-1", "customer_name": "ABC Construction", "date": (today_date - timedelta(days=5)).strftime("%Y-%m-%d"), "subtotal": Decimal("12340.00"), "vat": Decimal("1851.00"), "total": Decimal("14191.00"), "status": "paid", "created_by": "demo"},
+    ]
+    
+    for inv in demo_invoices:
+        inv["created_at"] = now()
+        try:
+            db.insert("invoices", inv)
+        except:
+            pass
+    
+    # Sample expenses
+    demo_expenses = [
+        {"id": "demo-exp-1", "date": (today_date - timedelta(days=2)).strftime("%Y-%m-%d"), "description": "Office electricity", "category": "Utilities", "amount": Decimal("1850.00"), "vat": Decimal("277.50"), "supplier_id": "demo-supp-1", "supplier_name": "City Power", "status": "paid", "created_by": "demo"},
+        {"id": "demo-exp-2", "date": (today_date - timedelta(days=4)).strftime("%Y-%m-%d"), "description": "Delivery fuel", "category": "Transport", "amount": Decimal("1200.00"), "vat": Decimal("0"), "supplier_id": "demo-supp-4", "supplier_name": "Engen Fuel", "status": "paid", "is_zero_rated": True, "created_by": "demo"},
+        {"id": "demo-exp-3", "date": (today_date - timedelta(days=6)).strftime("%Y-%m-%d"), "description": "Stock purchase - fasteners", "category": "Stock", "amount": Decimal("4500.00"), "vat": Decimal("675.00"), "supplier_id": "demo-supp-2", "supplier_name": "Builders Warehouse", "status": "pending", "created_by": "demo"},
+    ]
+    
+    for exp in demo_expenses:
+        exp["created_at"] = now()
+        try:
+            db.insert("expenses", exp)
+        except:
+            pass
+    
+    # Add some staged transactions for review demo
+    demo_staged = [
+        {"id": "demo-staged-1", "type": "supplier_invoice", "supplier_name": "Mica Hardware", "description": "PVC fittings and pipe", "amount": Decimal("2450.00"), "vat": Decimal("367.50"), "status": "pending", "scanned_at": now(), "created_by": "demo"},
+        {"id": "demo-staged-2", "type": "expense", "description": "Telkom Internet", "category": "Communications", "amount": Decimal("899.00"), "vat": Decimal("134.85"), "status": "pending", "scanned_at": now(), "created_by": "demo"},
+    ]
+    
+    for staged in demo_staged:
+        staged["created_at"] = now()
+        try:
+            db.insert("staged_transactions", staged)
+        except:
+            pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# QUICKSTART - DATA IMPORT WIZARD
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/quickstart")
+def quickstart():
+    """Quickstart - Step 1: Choose your current system"""
+    
+    html = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick Start - Click AI</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'DM Sans', sans-serif; background: #050508; color: #f0f0f5; }
+        .qs-container { min-height: 100vh; }
+        .qs-header { padding: 24px 48px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .qs-logo { font-family: 'Space Grotesk', sans-serif; font-size: 24px; font-weight: 700; background: linear-gradient(135deg, #8b5cf6, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-decoration: none; }
+        .qs-main { max-width: 900px; margin: 0 auto; padding: 60px 24px; }
+        .qs-title { font-family: 'Space Grotesk', sans-serif; font-size: 36px; font-weight: 700; text-align: center; margin-bottom: 16px; }
+        .qs-subtitle { font-size: 18px; color: #8b8b9a; text-align: center; margin-bottom: 48px; }
+        .qs-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
+        .qs-option { background: #0a0a12; border: 2px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 32px 24px; text-align: center; cursor: pointer; transition: all 0.3s; text-decoration: none; color: inherit; }
+        .qs-option:hover { border-color: rgba(139, 92, 246, 0.3); transform: translateY(-4px); }
+        .qs-option-icon { font-size: 48px; margin-bottom: 16px; }
+        .qs-option-title { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+        .qs-option-desc { font-size: 14px; color: #8b8b9a; }
+        .qs-btn { padding: 14px 28px; border-radius: 10px; font-weight: 600; font-size: 15px; border: none; cursor: pointer; transition: all 0.2s; text-decoration: none; display: inline-block; }
+        .qs-btn-ghost { background: transparent; border: 1px solid rgba(255,255,255,0.1); color: #f0f0f5; }
+        .qs-btn-ghost:hover { background: rgba(255,255,255,0.05); }
+        .qs-buttons { display: flex; gap: 16px; justify-content: center; }
+    </style>
+</head>
+<body>
+    <div class="qs-container">
+        <header class="qs-header">
+            <a href="/" class="qs-logo">Click AI</a>
+            <a href="/login" class="qs-btn qs-btn-ghost">Already have an account?</a>
+        </header>
+        
+        <main class="qs-main">
+            <h1 class="qs-title">Where's your data coming from?</h1>
+            <p class="qs-subtitle">We'll help you export from your current system and import into Click AI.</p>
+            
+            <div class="qs-options">
+                <a href="/quickstart/sage-pastel" class="qs-option">
+                    <div class="qs-option-icon">📊</div>
+                    <h3 class="qs-option-title">Sage Pastel</h3>
+                    <p class="qs-option-desc">Partner, Xpress, or Evolution</p>
+                </a>
+                
+                <a href="/quickstart/sage-one" class="qs-option">
+                    <div class="qs-option-icon">☁️</div>
+                    <h3 class="qs-option-title">Sage One</h3>
+                    <p class="qs-option-desc">Cloud-based Sage</p>
+                </a>
+                
+                <a href="/quickstart/xero" class="qs-option">
+                    <div class="qs-option-icon">🔵</div>
+                    <h3 class="qs-option-title">Xero</h3>
+                    <p class="qs-option-desc">Export your Xero data</p>
+                </a>
+                
+                <a href="/quickstart/quickbooks" class="qs-option">
+                    <div class="qs-option-icon">🟢</div>
+                    <h3 class="qs-option-title">QuickBooks</h3>
+                    <p class="qs-option-desc">Desktop or Online</p>
+                </a>
+                
+                <a href="/quickstart/excel" class="qs-option">
+                    <div class="qs-option-icon">📗</div>
+                    <h3 class="qs-option-title">Excel</h3>
+                    <p class="qs-option-desc">Upload CSV or Excel files</p>
+                </a>
+                
+                <a href="/register?source=fresh" class="qs-option">
+                    <div class="qs-option-icon">✨</div>
+                    <h3 class="qs-option-title">Fresh Start</h3>
+                    <p class="qs-option-desc">Starting from scratch</p>
+                </a>
+            </div>
+            
+            <div class="qs-buttons">
+                <a href="/" class="qs-btn qs-btn-ghost">← Back to Home</a>
+            </div>
+        </main>
+    </div>
+</body>
+</html>'''
+    
+    return html
+
+
+@app.route("/quickstart/<source>", methods=["GET", "POST"])
+def quickstart_source(source):
+    """Quickstart - Step 2: Export instructions for specific system"""
+    import csv
+    import io
+    
+    sources = {
+        "sage-pastel": {"name": "Sage Pastel", "icon": "📊", "instructions": ["Open Sage Pastel → File → Export", "Export Customers as CSV", "Export Suppliers as CSV", "Export Inventory/Stock as CSV", "Run Trial Balance report → Export as CSV", "Upload all files below"]},
+        "sage-one": {"name": "Sage Business Cloud", "icon": "☁️", "instructions": ["Log into Sage Business Cloud", "Go to Settings → Data Export", "Select Customers, Suppliers, Items", "Click Export to CSV", "Upload the files below"]},
+        "xero": {"name": "Xero", "icon": "🔵", "instructions": ["Log into Xero → Settings → General Settings", "Click Export Accounting Data", "Select Contacts, Items, Chart of Accounts", "Download and upload the CSV files below"]},
+        "quickbooks": {"name": "QuickBooks", "icon": "🟢", "instructions": ["In QuickBooks → Reports → Trial Balance → Export to Excel", "Lists → Customer List → Export", "Lists → Vendor List → Export", "Lists → Item List → Export", "Upload all files below"]},
+        "excel": {"name": "Excel / CSV", "icon": "📗", "instructions": ["Prepare your data with columns:", "Customers: Name, Email, Phone, Balance", "Suppliers: Name, Email, Phone, Balance", "Stock: SKU, Name, Cost Price, Selling Price, Quantity", "Save as CSV and upload below"]},
+    }
+    
+    if source not in sources:
+        return redirect("/quickstart")
+    
+    src = sources[source]
+    
+    # Handle file upload
+    if request.method == "POST" and "files" in request.files:
+        files = request.files.getlist("files")
+        results = {"customers": [], "suppliers": [], "stock": [], "errors": []}
+        
+        for file in files:
+            if not file.filename:
+                continue
+            try:
+                if file.filename.lower().endswith('.csv'):
+                    content = file.read().decode('utf-8', errors='ignore')
+                    reader = csv.DictReader(io.StringIO(content))
+                    rows = list(reader)
+                    if rows:
+                        headers = [h.lower() for h in rows[0].keys()]
+                        # Detect type and extract data
+                        if any('customer' in h or 'client' in h or 'debtor' in h for h in headers):
+                            for row in rows:
+                                name = row.get('Customer') or row.get('Customer Name') or row.get('Client') or row.get('Name', '')
+                                if name and name.strip():
+                                    results["customers"].append({"name": name.strip(), "email": row.get('Email', ''), "phone": row.get('Phone', '') or row.get('Tel', ''), "balance": row.get('Balance', '0')})
+                        elif any('supplier' in h or 'vendor' in h for h in headers):
+                            for row in rows:
+                                name = row.get('Supplier') or row.get('Vendor') or row.get('Name', '')
+                                if name and name.strip():
+                                    results["suppliers"].append({"name": name.strip(), "email": row.get('Email', ''), "phone": row.get('Phone', ''), "balance": row.get('Balance', '0')})
+                        elif any('sku' in h or 'item' in h or 'product' in h or 'stock' in h for h in headers):
+                            for row in rows:
+                                name = row.get('Item') or row.get('Product') or row.get('Description') or row.get('Name', '')
+                                if name and name.strip():
+                                    results["stock"].append({"sku": row.get('SKU', '') or row.get('Code', ''), "name": name.strip(), "cost_price": row.get('Cost', '0') or row.get('Cost Price', '0'), "selling_price": row.get('Price', '0') or row.get('Selling Price', '0'), "quantity": row.get('Qty', '0') or row.get('Quantity', '0')})
+                else:
+                    results["errors"].append(f"{file.filename}: Please convert to CSV first")
+            except Exception as e:
+                results["errors"].append(f"{file.filename}: {str(e)}")
+        
+        session["import_results"] = results
+        return redirect("/quickstart/review")
+    
+    instructions_html = "".join([f"<li>{inst}</li>" for inst in src["instructions"]])
+    
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Import from {src["name"]} - Click AI</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'DM Sans', sans-serif; background: #050508; color: #f0f0f5; }}
+        .qs-container {{ min-height: 100vh; }}
+        .qs-header {{ padding: 24px 48px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+        .qs-logo {{ font-family: 'Space Grotesk', sans-serif; font-size: 24px; font-weight: 700; background: linear-gradient(135deg, #8b5cf6, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-decoration: none; }}
+        .qs-main {{ max-width: 700px; margin: 0 auto; padding: 60px 24px; }}
+        .qs-title {{ font-family: 'Space Grotesk', sans-serif; font-size: 32px; font-weight: 700; text-align: center; margin-bottom: 16px; }}
+        .qs-subtitle {{ font-size: 16px; color: #8b8b9a; text-align: center; margin-bottom: 40px; }}
+        .qs-instructions {{ background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 12px; padding: 24px; margin-bottom: 32px; }}
+        .qs-instructions h4 {{ color: #3b82f6; margin-bottom: 16px; }}
+        .qs-instructions ol {{ padding-left: 20px; color: #a0a0b0; font-size: 14px; line-height: 2; }}
+        .qs-upload {{ background: #0a0a12; border: 2px dashed rgba(139, 92, 246, 0.3); border-radius: 16px; padding: 50px; text-align: center; margin-bottom: 32px; cursor: pointer; transition: all 0.3s; }}
+        .qs-upload:hover {{ border-color: #8b5cf6; background: rgba(139, 92, 246, 0.05); }}
+        .qs-upload-icon {{ font-size: 48px; margin-bottom: 16px; }}
+        .qs-upload-text {{ font-size: 16px; margin-bottom: 8px; }}
+        .qs-upload-hint {{ font-size: 13px; color: #8b8b9a; }}
+        .qs-btn {{ padding: 14px 28px; border-radius: 10px; font-weight: 600; font-size: 15px; border: none; cursor: pointer; text-decoration: none; display: inline-block; }}
+        .qs-btn-ghost {{ background: transparent; border: 1px solid rgba(255,255,255,0.1); color: #f0f0f5; }}
+        .qs-buttons {{ display: flex; gap: 16px; justify-content: center; }}
+    </style>
+</head>
+<body>
+    <div class="qs-container">
+        <header class="qs-header">
+            <a href="/" class="qs-logo">Click AI</a>
+        </header>
+        
+        <main class="qs-main">
+            <h1 class="qs-title">{src["icon"]} Import from {src["name"]}</h1>
+            <p class="qs-subtitle">Follow these steps to export your data.</p>
+            
+            <div class="qs-instructions">
+                <h4>📋 How to export:</h4>
+                <ol>{instructions_html}</ol>
+            </div>
+            
+            <form method="POST" enctype="multipart/form-data" id="uploadForm">
+                <div class="qs-upload" onclick="document.getElementById('fileInput').click()">
+                    <div class="qs-upload-icon">📁</div>
+                    <p class="qs-upload-text">Drop files here or click to browse</p>
+                    <p class="qs-upload-hint">Accepts CSV files • Select multiple files</p>
+                </div>
+                <input type="file" name="files" multiple accept=".csv" style="display:none" id="fileInput" onchange="document.getElementById('uploadForm').submit()">
+            </form>
+            
+            <div class="qs-buttons">
+                <a href="/quickstart" class="qs-btn qs-btn-ghost">← Choose Different System</a>
+            </div>
+        </main>
+    </div>
+</body>
+</html>'''
+    
+    return html
+
+
+@app.route("/quickstart/review")
+def quickstart_review():
+    """Quickstart - Step 3: Review imported data"""
+    
+    results = session.get("import_results", {})
+    if not results:
+        return redirect("/quickstart")
+    
+    c_count = len(results.get("customers", []))
+    s_count = len(results.get("suppliers", []))
+    st_count = len(results.get("stock", []))
+    errors = results.get("errors", [])
+    
+    errors_html = ""
+    if errors:
+        errors_html = '<div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:12px;padding:20px;margin-bottom:24px;"><h4 style="color:#ef4444;margin-bottom:12px;">⚠️ Warnings</h4><ul style="color:#a0a0b0;font-size:14px;padding-left:20px;">' + "".join([f"<li>{e}</li>" for e in errors]) + '</ul></div>'
+    
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review Import - Click AI</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'DM Sans', sans-serif; background: #050508; color: #f0f0f5; }}
+        .qs-main {{ max-width: 600px; margin: 0 auto; padding: 60px 24px; }}
+        .qs-logo {{ font-family: 'Space Grotesk', sans-serif; font-size: 24px; font-weight: 700; background: linear-gradient(135deg, #8b5cf6, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-decoration: none; display: block; text-align: center; margin-bottom: 40px; }}
+        .qs-title {{ font-family: 'Space Grotesk', sans-serif; font-size: 32px; font-weight: 700; text-align: center; margin-bottom: 16px; }}
+        .qs-subtitle {{ font-size: 16px; color: #8b8b9a; text-align: center; margin-bottom: 40px; }}
+        .qs-result {{ background: #0a0a12; border: 1px solid rgba(16,185,129,0.3); border-radius: 16px; padding: 32px; margin-bottom: 32px; }}
+        .qs-result-title {{ display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 600; margin-bottom: 24px; color: #10b981; }}
+        .qs-result-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }}
+        .qs-result-item {{ background: rgba(255,255,255,0.02); border-radius: 8px; padding: 16px; text-align: center; }}
+        .qs-result-value {{ font-family: 'Space Grotesk', sans-serif; font-size: 32px; font-weight: 700; color: #8b5cf6; }}
+        .qs-result-label {{ font-size: 13px; color: #8b8b9a; margin-top: 4px; }}
+        .qs-btn {{ padding: 16px 32px; border-radius: 10px; font-weight: 600; font-size: 16px; border: none; cursor: pointer; text-decoration: none; display: inline-block; }}
+        .qs-btn-primary {{ background: linear-gradient(135deg, #8b5cf6, #3b82f6); color: white; }}
+        .qs-btn-ghost {{ background: transparent; border: 1px solid rgba(255,255,255,0.1); color: #f0f0f5; }}
+        .qs-buttons {{ display: flex; gap: 16px; justify-content: center; }}
+    </style>
+</head>
+<body>
+    <main class="qs-main">
+        <a href="/" class="qs-logo">Click AI</a>
+        
+        <h1 class="qs-title">✅ Data Ready to Import</h1>
+        <p class="qs-subtitle">Here's what we found in your files.</p>
+        
+        {errors_html}
+        
+        <div class="qs-result">
+            <div class="qs-result-title"><span>📊</span> Import Summary</div>
+            <div class="qs-result-grid">
+                <div class="qs-result-item">
+                    <div class="qs-result-value">{c_count}</div>
+                    <div class="qs-result-label">Customers</div>
+                </div>
+                <div class="qs-result-item">
+                    <div class="qs-result-value">{s_count}</div>
+                    <div class="qs-result-label">Suppliers</div>
+                </div>
+                <div class="qs-result-item">
+                    <div class="qs-result-value">{st_count}</div>
+                    <div class="qs-result-label">Stock Items</div>
+                </div>
+            </div>
+        </div>
+        
+        <div style="text-align:center;margin-bottom:32px;">
+            <p style="color:#8b8b9a;margin-bottom:24px;">Create your account and we'll import everything automatically.</p>
+            <a href="/register?import=true" class="qs-btn qs-btn-primary">Create Account & Import →</a>
+        </div>
+        
+        <div class="qs-buttons">
+            <a href="/quickstart" class="qs-btn qs-btn-ghost">← Start Over</a>
+        </div>
+    </main>
+</body>
+</html>'''
+    
+    return html
+
+
+def import_user_data(user_id, results):
+    """Import the uploaded data for a new user"""
+    
+    # Import customers
+    for c in results.get("customers", []):
+        try:
+            balance = c.get("balance", "0")
+            if isinstance(balance, str):
+                balance = balance.replace('R', '').replace(',', '').replace(' ', '').strip() or "0"
+            db.insert("customers", {
+                "id": generate_id(),
+                "name": c.get("name", ""),
+                "email": c.get("email", ""),
+                "phone": c.get("phone", ""),
+                "balance": Decimal(str(balance)),
+                "credit_limit": Decimal("10000"),
+                "created_by": user_id,
+                "created_at": now()
+            })
+        except:
+            pass
+    
+    # Import suppliers
+    for s in results.get("suppliers", []):
+        try:
+            balance = s.get("balance", "0")
+            if isinstance(balance, str):
+                balance = balance.replace('R', '').replace(',', '').replace(' ', '').strip() or "0"
+            db.insert("suppliers", {
+                "id": generate_id(),
+                "name": s.get("name", ""),
+                "email": s.get("email", ""),
+                "phone": s.get("phone", ""),
+                "balance": Decimal(str(balance)),
+                "created_by": user_id,
+                "created_at": now()
+            })
+        except:
+            pass
+    
+    # Import stock
+    for st in results.get("stock", []):
+        try:
+            cost = st.get("cost_price", "0")
+            sell = st.get("selling_price", "0")
+            qty = st.get("quantity", "0")
+            if isinstance(cost, str):
+                cost = cost.replace('R', '').replace(',', '').replace(' ', '').strip() or "0"
+            if isinstance(sell, str):
+                sell = sell.replace('R', '').replace(',', '').replace(' ', '').strip() or "0"
+            if isinstance(qty, str):
+                qty = qty.replace(',', '').replace(' ', '').strip() or "0"
+            db.insert("stock_items", {
+                "id": generate_id(),
+                "sku": st.get("sku", ""),
+                "name": st.get("name", ""),
+                "cost_price": Decimal(str(cost)),
+                "selling_price": Decimal(str(sell)),
+                "quantity": int(float(qty)),
+                "reorder_level": 5,
+                "created_by": user_id,
+                "created_at": now()
+            })
+        except:
+            pass
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    """Registration page for new users"""
+    import hashlib
+    
+    plan = request.args.get("plan", "business")
+    do_import = request.args.get("import") == "true"
+    
+    error = ""
+    
+    if request.method == "POST":
+        company = request.form.get("company", "").strip()
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
+        
+        if not company or not email or not password:
+            error = "Please fill in all fields"
+        elif len(password) < 6:
+            error = "Password must be at least 6 characters"
+        else:
+            user_id = generate_id()
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            
+            try:
+                db.insert("users", {
+                    "id": user_id,
+                    "username": email,
+                    "email": email,
+                    "password_hash": password_hash,
+                    "company_name": company,
+                    "role": "admin",
+                    "plan": plan,
+                    "created_at": now()
+                })
+                
+                session["user_id"] = user_id
+                session["username"] = email
+                session["role"] = "admin"
+                
+                if do_import and "import_results" in session:
+                    import_user_data(user_id, session["import_results"])
+                    session.pop("import_results", None)
+                
+                return redirect("/dashboard?welcome=true")
+                
+            except Exception as e:
+                error = f"Error creating account: {str(e)}"
+    
+    error_html = f'<div style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:12px;margin-bottom:16px;color:#ef4444;font-size:14px;">{error}</div>' if error else ""
+    
+    import_notice = ""
+    if do_import:
+        results = session.get("import_results", {})
+        total = len(results.get("customers", [])) + len(results.get("suppliers", [])) + len(results.get("stock", []))
+        if total > 0:
+            import_notice = f'<div style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:12px;margin-bottom:16px;color:#10b981;font-size:14px;">✓ {total} records ready to import</div>'
+    
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Account - Click AI</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'DM Sans', sans-serif; background: #050508; color: #f0f0f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }}
+        .register-box {{ width: 100%; max-width: 420px; }}
+        .logo {{ font-family: 'Space Grotesk', sans-serif; font-size: 32px; font-weight: 700; background: linear-gradient(135deg, #8b5cf6, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-align: center; margin-bottom: 8px; }}
+        .tagline {{ text-align: center; color: #8b8b9a; font-size: 14px; margin-bottom: 32px; }}
+        .form-card {{ background: #0a0a12; border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 32px; }}
+        .form-group {{ margin-bottom: 20px; }}
+        .form-label {{ display: block; font-size: 13px; font-weight: 500; color: #a0a0b0; margin-bottom: 8px; }}
+        .form-input {{ width: 100%; padding: 14px 16px; background: #050508; border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; color: #f0f0f5; font-size: 15px; transition: all 0.2s; }}
+        .form-input:focus {{ outline: none; border-color: #8b5cf6; box-shadow: 0 0 0 3px rgba(139,92,246,0.2); }}
+        .btn {{ width: 100%; padding: 16px; background: linear-gradient(135deg, #8b5cf6, #3b82f6); border: none; border-radius: 10px; color: white; font-size: 16px; font-weight: 600; cursor: pointer; transition: all 0.2s; }}
+        .btn:hover {{ transform: translateY(-2px); box-shadow: 0 8px 24px rgba(139,92,246,0.3); }}
+        .login-link {{ text-align: center; margin-top: 24px; color: #8b8b9a; font-size: 14px; }}
+        .login-link a {{ color: #8b5cf6; text-decoration: none; }}
+    </style>
+</head>
+<body>
+    <div class="register-box">
+        <div class="logo">Click AI</div>
+        <p class="tagline">Create your account</p>
+        
+        {error_html}
+        {import_notice}
+        
+        <form method="POST" class="form-card">
+            <div class="form-group">
+                <label class="form-label">Company Name</label>
+                <input type="text" name="company" class="form-input" placeholder="Your Business Name" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Email Address</label>
+                <input type="email" name="email" class="form-input" placeholder="you@company.co.za" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="password" name="password" class="form-input" placeholder="At least 6 characters" required>
+            </div>
+            <button type="submit" class="btn">Create Account</button>
+        </form>
+        
+        <p class="login-link">Already have an account? <a href="/login">Login</a></p>
+    </div>
+</body>
+</html>'''
+    
+    return html
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
