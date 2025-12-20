@@ -4488,6 +4488,25 @@ a:hover {
     grid-template-columns: 1fr 380px;
     gap: 24px;
     align-items: start;
+    height: calc(100vh - var(--header-height) - 32px);
+}
+
+.pos-layout > .card {
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.pos-layout > .card #product-grid {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.pos-layout > .cart {
+    height: 100%;
+    overflow-y: auto;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -8676,7 +8695,7 @@ def stock_new():
     content = f'''
     <a href="/stock" class="btn btn-ghost mb-lg">← Back to Stock</a>
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <h2 class="card-title mb-md">Add Stock Item</h2>
         
         {message}
@@ -8783,7 +8802,7 @@ def stock_edit(item_id):
     content = f'''
     <a href="/stock" class="btn btn-ghost mb-lg">← Back to Stock</a>
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <h2 class="card-title mb-md">Edit Stock Item</h2>
         
         {message}
@@ -8965,7 +8984,7 @@ def stock_import():
     content = f'''
     <a href="/stock" class="btn btn-ghost mb-lg">← Back to Stock</a>
     
-    <div class="card" style="max-width: 700px;">
+    <div class="card">
         <h2 class="card-title mb-md">Import Stock</h2>
         
         {message}
@@ -9237,7 +9256,7 @@ def customer_new():
     content = f'''
     
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <h2 class="card-title mb-md">Add Customer</h2>
         
         {message}
@@ -9395,7 +9414,7 @@ def customer_edit(customer_id):
     content = f'''
     
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <h2 class="card-title mb-md">Edit Customer</h2>
         
         {message}
@@ -9493,7 +9512,7 @@ def customer_receive_payment(customer_id):
     content = f'''
     
     
-    <div class="card" style="max-width: 500px;">
+    <div class="card">
         <h2 class="card-title mb-md">Receive Payment</h2>
         <p class="text-muted mb-lg">From: {safe_string(customer.get("name", ""))}</p>
         
@@ -9707,7 +9726,7 @@ def create_credit_note(invoice_id):
         <p class="text-muted">For Invoice {inv.get("invoice_number")} - {inv.get("customer_name")}</p>
     </div>
     
-    <div class="card" style="max-width: 500px;">
+    <div class="card">
         <form method="POST">
             <div class="form-group">
                 <label class="form-label">Reason</label>
@@ -9869,7 +9888,7 @@ def supplier_new():
     content = f'''
     
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <h2 class="card-title mb-md">Add Supplier</h2>
         
         {message}
@@ -9989,7 +10008,7 @@ def supplier_edit(supplier_id):
     content = f'''
     
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <h2 class="card-title mb-md">Edit Supplier</h2>
         
         {message}
@@ -10087,7 +10106,7 @@ def supplier_pay(supplier_id):
     content = f'''
     
     
-    <div class="card" style="max-width: 500px;">
+    <div class="card">
         <h2 class="card-title mb-md">Make Payment</h2>
         <p class="text-muted mb-lg">To: {safe_string(supplier.get("name", ""))}</p>
         
@@ -10482,7 +10501,7 @@ def purchase_order_receive(po_id):
         <p class="text-muted">PO {po.get("po_number")} from {po.get("supplier_name")}</p>
     </div>
     
-    <div class="card" style="max-width:500px;">
+    <div class="card">
         <p class="mb-md">The following items will be added to stock:</p>
         <ul style="margin-bottom:20px;">{item_list}</ul>
         
@@ -10775,7 +10794,7 @@ def invoice_new():
             </div>
             
             <h3 style="margin: 20px 0 10px;">Line Items</h3>
-            <input type="text" id="search-stock" class="form-input" placeholder="Search products to add..." onkeyup="searchStock(this.value)">
+            <input type="text" id="search-stock" class="form-input" placeholder="Search products or click below to add custom item..." onkeyup="searchStock(this.value)" onfocus="searchStock('')">
             <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
             
             <table class="table" id="lines-table">
@@ -10793,12 +10812,25 @@ def invoice_new():
             <input type="hidden" name="vat" id="vat-input">
             <input type="hidden" name="total" id="total-input">
             
+            <!-- Payment Status Option -->
+            <div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);border-radius:12px;padding:16px;margin-top:20px;">
+                <label style="display:flex;align-items:center;gap:12px;cursor:pointer;">
+                    <input type="checkbox" name="mark_paid" value="yes" style="width:20px;height:20px;">
+                    <div>
+                        <strong style="color:#10b981;">💵 Mark as Paid (Cash Sale)</strong>
+                        <div style="color:#8b8b9a;font-size:13px;">Check this if customer is paying now. Won't show as outstanding.</div>
+                    </div>
+                </label>
+            </div>
+            
             <div class="btn-group mt-lg">
                 <button type="submit" class="btn btn-primary">Save Invoice</button>
                 <a href="/invoices" class="btn btn-ghost">Cancel</a>
             </div>
         </form>
     </div>
+    
+    {CUSTOM_ITEM_MODAL}
     
     <script>
     const stockItems = {json.dumps(stock)};
@@ -10870,6 +10902,10 @@ def process_invoice_creation(req):
         invoice_id = generate_id()
         invoice_number = req.form.get("doc_number", DocumentNumbers.get_next("INV", "invoices", "invoice_number"))
         
+        # Check if marked as paid
+        mark_paid = req.form.get("mark_paid") == "yes"
+        invoice_status = "paid" if mark_paid or not customer_id else "outstanding"
+        
         invoice = {
             "id": invoice_id,
             "invoice_number": invoice_number,
@@ -10880,7 +10916,7 @@ def process_invoice_creation(req):
             "subtotal": float(subtotal),
             "vat": float(total_vat),
             "total": float(total),
-            "status": "outstanding",
+            "status": invoice_status,
             "created_at": now()
         }
         
@@ -10896,15 +10932,16 @@ def process_invoice_creation(req):
             source_id=invoice_id
         )
         
-        if customer_id:
+        # If marked as paid or walk-in, go to bank. Otherwise to debtors.
+        if mark_paid or not customer_id:
+            entry.debit(AccountCodes.BANK, total)
+        else:
             entry.debit(AccountCodes.DEBTORS, total)
             # Update customer balance
             cust = db.select_one("customers", customer_id)
             if cust:
                 new_bal = Decimal(str(cust.get("balance", 0) or 0)) + total
                 db.update("customers", customer_id, {"balance": float(new_bal)})
-        else:
-            entry.debit(AccountCodes.BANK, total)
         
         entry.credit(AccountCodes.SALES, subtotal)
         if total_vat > 0:
@@ -11258,7 +11295,7 @@ def quote_new():
             </div>
             
             <h3 style="margin: 20px 0 10px;">Line Items</h3>
-            <input type="text" id="search-stock" class="form-input" placeholder="Search products..." onkeyup="searchStock(this.value)">
+            <input type="text" id="search-stock" class="form-input" placeholder="Search products or click below to add custom item..." onkeyup="searchStock(this.value)" onfocus="searchStock('')">
             <div id="search-results" style="max-height:300px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
             
             <table class="table" id="lines-table">
@@ -11278,6 +11315,8 @@ def quote_new():
             </div>
         </form>
     </div>
+    
+    {CUSTOM_ITEM_MODAL}
     
     <script>
     const stockItems = {json.dumps(stock)};
@@ -11497,7 +11536,7 @@ function toggleNewCustomer(select) {
 function searchStock(q) {
     const results = document.getElementById('search-results');
     if (!q || q.length < 2) {
-        results.innerHTML = '';
+        results.innerHTML = '<div style="padding:10px;"><button type="button" class="btn btn-sm btn-purple" onclick="showCustomItemModal()">➕ Add Custom Item (Buyout)</button></div>';
         return;
     }
     
@@ -11516,13 +11555,67 @@ function searchStock(q) {
         );
         
         if (allWordsMatch) {
-            html += '<div class="product-item" style="margin-bottom:5px;padding:10px;cursor:pointer;" onclick="addLine(\\'' + item.id + '\\')">';
+            html += '<div class="product-item" style="margin-bottom:5px;padding:10px;cursor:pointer;border:1px solid var(--border);border-radius:8px;" onclick="addLine(\\'' + item.id + '\\')">';
             html += '<strong>' + escHtml(item.code || '') + '</strong> ';
             html += escHtml(item.description) + ' - ' + item.price_formatted;
             html += '</div>';
         }
     }
-    results.innerHTML = html || '<div style="padding:10px;color:#606070;">No matches - try different words</div>';
+    
+    if (!html) {
+        html = '<div style="padding:10px;color:#606070;">No matches found</div>';
+    }
+    
+    // Always show custom item button at bottom
+    html += '<div style="padding:10px;border-top:1px solid var(--border);margin-top:10px;"><button type="button" class="btn btn-sm btn-purple" onclick="showCustomItemModal()">➕ Add Custom Item (Buyout)</button></div>';
+    
+    results.innerHTML = html;
+}
+
+function showCustomItemModal() {
+    document.getElementById('custom-item-modal').classList.add('active');
+    document.getElementById('custom-description').focus();
+}
+
+function closeCustomItemModal() {
+    document.getElementById('custom-item-modal').classList.remove('active');
+}
+
+function addCustomItem() {
+    const desc = document.getElementById('custom-description').value.trim();
+    const price = parseFloat(document.getElementById('custom-price').value) || 0;
+    const qty = parseInt(document.getElementById('custom-qty').value) || 1;
+    
+    if (!desc) {
+        alert('Please enter a description');
+        return;
+    }
+    if (price <= 0) {
+        alert('Please enter a price');
+        return;
+    }
+    
+    // Add as a custom line item
+    lines.push({
+        id: 'custom_' + Date.now(),
+        code: 'CUSTOM',
+        description: desc,
+        price: price,
+        quantity: qty,
+        is_zero_rated: false,
+        cost: 0,
+        is_custom: true
+    });
+    
+    // Clear and close
+    document.getElementById('custom-description').value = '';
+    document.getElementById('custom-price').value = '';
+    document.getElementById('custom-qty').value = '1';
+    closeCustomItemModal();
+    
+    document.getElementById('search-stock').value = '';
+    document.getElementById('search-results').innerHTML = '';
+    renderLines();
 }
 
 function addLine(itemId) {
@@ -11559,8 +11652,10 @@ function renderLines() {
         const lineTotal = line.price * line.quantity;
         total += lineTotal;
         
+        const customBadge = line.is_custom ? '<span style="background:#8b5cf6;color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:8px;">BUYOUT</span>' : '';
+        
         html += '<tr>';
-        html += '<td>'+escHtml(line.description)+'</td>';
+        html += '<td>'+escHtml(line.description)+customBadge+'</td>';
         html += '<td><input type="number" value="'+line.quantity+'" min="1" style="width:60px;padding:4px;background:#0a0a10;border:1px solid #1a1a2e;color:#f0f0f0;border-radius:4px;" onchange="updateQty('+i+',this.value)"></td>';
         html += '<td class="number">R '+line.price.toFixed(2)+'</td>';
         html += '<td class="number">R '+lineTotal.toFixed(2)+'</td>';
@@ -11592,6 +11687,43 @@ function escHtml(text) {
 }
 
 renderLines();
+'''
+
+
+# Custom item modal HTML to be added to invoice/quote forms
+CUSTOM_ITEM_MODAL = '''
+<!-- Custom Item Modal for Buyouts -->
+<div class="modal-overlay" id="custom-item-modal">
+    <div class="modal" style="max-width: 400px;">
+        <div class="modal-header">
+            <h3 class="modal-title">➕ Add Custom Item (Buyout)</h3>
+            <button class="modal-close" onclick="closeCustomItemModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="color:#8b8b9a;margin-bottom:16px;font-size:14px;">
+                Add a non-stock item - perfect for special orders or buyouts.
+            </p>
+            <div class="form-group">
+                <label class="form-label">Description *</label>
+                <input type="text" id="custom-description" class="form-input" placeholder="e.g. Special order bracket">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Price (incl VAT) *</label>
+                    <input type="number" id="custom-price" class="form-input" placeholder="0.00" step="0.01" min="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Quantity</label>
+                    <input type="number" id="custom-qty" class="form-input" value="1" min="1">
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-ghost" onclick="closeCustomItemModal()">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="addCustomItem()">Add Item</button>
+        </div>
+    </div>
+</div>
 '''
 
 
@@ -11779,7 +11911,7 @@ def expense_new():
     content = f'''
     
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <h2 class="card-title mb-md">Add Expense</h2>
         
         {message}
@@ -11962,7 +12094,7 @@ def expense_scan_page():
     content = f'''
     
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <h2 class="card-title mb-md">📷 Scan Receipt</h2>
         <p class="text-muted mb-lg">Take a photo or upload an image. AI will extract the details.</p>
         
@@ -12459,7 +12591,7 @@ def journal_entry():
     
     {message}
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <form method="POST">
             <div class="form-row">
                 <div class="form-group">
@@ -13470,7 +13602,7 @@ def report_vat():
         <div class="stat"><div class="stat-value green">{Money.format(vat["input_vat"])}</div><div class="stat-label">Input VAT</div></div>
         <div class="stat"><div class="stat-value {net_color}">{Money.format(abs(vat["net_vat"]))}</div><div class="stat-label">{net_label}</div></div>
     </div>
-    <div class="card" style="max-width:500px;">
+    <div class="card">
         <table class="table"><tbody>
             <tr><td>Output VAT (collected)</td><td class="number">{Money.format(vat["output_vat"])}</td></tr>
             <tr><td>Less: Input VAT (paid)</td><td class="number">({Money.format(vat["input_vat"])})</td></tr>
@@ -14792,71 +14924,84 @@ def scanner_process():
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
         
-        # Smart prompts for each type
+        # Improved prompts with better instructions for mobile photos
         prompts = {
-            "cos": """You are an AI accountant. Analyze this supplier invoice image.
+            "cos": """You are an AI accountant reading a supplier invoice photo taken on a mobile phone.
 
-Extract ALL of the following:
-1. Supplier name (company on the invoice)
-2. Invoice number
-3. Invoice date (format: YYYY-MM-DD)
-4. Is it marked as PAID? (yes/no)
-5. Line items - for EACH item extract:
+IMPORTANT: The image may be slightly blurry, at an angle, or have poor lighting. Do your best to extract the information. If you can make out some text but not all, fill in what you can and estimate reasonable values for the rest.
+
+Extract these details:
+1. Supplier/company name (look at the top/letterhead)
+2. Invoice number (any number starting with INV, #, or similar)
+3. Invoice date (format: YYYY-MM-DD) - use today's date if unclear
+4. Line items - extract what you can see:
    - Description/product name
    - Product code if visible
-   - Quantity
-   - Unit price (excluding VAT if shown separately)
-6. Subtotal (before VAT)
-7. VAT amount
-8. Total amount
+   - Quantity (default to 1 if unclear)
+   - Unit price
+5. Subtotal (before VAT) - calculate from items if not shown
+6. VAT amount (15% in South Africa)
+7. Total amount
 
-Return ONLY valid JSON:
-{"supplier": "Name", "invoice_no": "INV123", "date": "2025-01-15", "paid": false, "items": [{"description": "Product name", "code": "ABC123", "qty": 10, "unit_price": 50.00}], "subtotal": 500.00, "vat": 75.00, "total": 575.00}""",
+Return ONLY valid JSON (no markdown, no explanation):
+{"supplier": "Name", "invoice_no": "INV123", "date": "2025-01-15", "paid": false, "items": [{"description": "Product name", "code": "ABC123", "qty": 10, "unit_price": 50.00}], "subtotal": 500.00, "vat": 75.00, "total": 575.00}
 
-            "exp": """You are an AI accountant. Analyze this receipt/expense image.
+If you cannot read the document at all, return: {"error": "unreadable"}""",
+
+            "exp": """You are an AI accountant reading a receipt/expense photo from a mobile phone.
+
+IMPORTANT: Receipts are often crumpled, faded, or photographed at angles. Extract what you can see, and make reasonable estimates for unclear amounts based on context.
 
 Extract:
-1. Vendor/supplier name
-2. Date (format: YYYY-MM-DD)  
-3. What was purchased (brief description)
-4. Total amount
-5. VAT amount if shown
-6. Expense category - choose the BEST match:
-   - "fuel" (petrol, diesel, gas)
-   - "telephone" (airtime, data, phone bills)
-   - "electricity" (power, utilities)
-   - "repairs" (maintenance, fixes)
-   - "stationery" (office supplies, printing)
-   - "travel" (transport, uber, flights)
-   - "advertising" (marketing, ads)
-   - "insurance" (premiums)
-   - "bank_charges" (fees, charges)
+1. Vendor/shop name (usually at top of receipt)
+2. Date (format: YYYY-MM-DD) - use today if unclear
+3. What was purchased (brief summary)
+4. Total amount (look for TOTAL, AMOUNT DUE, etc.)
+5. VAT amount if shown (15% in SA)
+6. Best category match:
+   - "fuel" (petrol stations, Sasol, Shell, Engen, BP, etc.)
+   - "telephone" (Vodacom, MTN, Cell C, Telkom, airtime)
+   - "electricity" (Eskom, City Power, prepaid tokens)
+   - "repairs" (parts, labor, maintenance)
+   - "stationery" (CNA, Waltons, office supplies)
+   - "travel" (Uber, parking, tolls)
+   - "advertising" (Facebook, Google, marketing)
    - "general" (anything else)
 
-Return ONLY valid JSON:
-{"vendor": "Shop Name", "date": "2025-01-15", "description": "What was bought", "total": 150.00, "vat": 19.57, "category": "fuel"}""",
+Return ONLY valid JSON (no markdown):
+{"vendor": "Shop Name", "date": "2025-01-15", "description": "What was bought", "total": 150.00, "vat": 19.57, "category": "fuel"}
 
-            "stock": """You are an AI inventory manager. Analyze this stock count sheet image.
+If you cannot read the receipt at all, return: {"error": "unreadable"}""",
+
+            "stock": """You are an AI inventory manager reading a stock count sheet photo.
+
+IMPORTANT: Stock lists may be handwritten or printed. Do your best to read each line. If handwriting is unclear, make your best guess at the product name and quantity.
 
 Extract ALL items visible with their:
 1. Product code (if visible)
 2. Description/name
-3. Counted quantity
+3. Counted quantity (numbers you can see)
 
 Return ONLY valid JSON:
-{"items": [{"code": "SKU001", "description": "Product name", "quantity": 25}]}""",
+{"items": [{"code": "SKU001", "description": "Product name", "quantity": 25}]}
 
-            "payment": """You are an AI accountant. Analyze this payment proof/bank slip image.
+If you cannot read the document at all, return: {"error": "unreadable"}""",
+
+            "payment": """You are an AI accountant reading a payment proof/bank slip photo.
+
+IMPORTANT: Bank slips and EFT confirmations come in many formats. Look for the key payment details.
 
 Extract:
-1. Customer name (who paid)
-2. Amount paid
+1. Customer/payer name (who paid)
+2. Amount paid (the transaction amount)
 3. Date of payment (format: YYYY-MM-DD)
-4. Reference/invoice number mentioned
+4. Reference number or invoice mentioned
 5. Payment method (EFT, cash, card)
 
 Return ONLY valid JSON:
-{"customer": "Customer Name", "amount": 1500.00, "date": "2025-01-15", "reference": "INV001", "method": "EFT"}"""
+{"customer": "Customer Name", "amount": 1500.00, "date": "2025-01-15", "reference": "INV001", "method": "EFT"}
+
+If you cannot read the document at all, return: {"error": "unreadable"}"""
         }
         
         message = client.messages.create(
@@ -14878,12 +15023,17 @@ Return ONLY valid JSON:
         json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
         
         if not json_match:
-            return jsonify({"success": False, "error": "Could not read document clearly. Try again with better lighting."})
+            # AI couldn't find any JSON - give helpful error
+            return jsonify({"success": False, "error": "Could not read document. Tips: Hold phone steady, ensure good lighting, keep document flat and fill the frame."})
         
         try:
             parsed = json.loads(json_match.group())
         except:
-            return jsonify({"success": False, "error": "Could not understand document format."})
+            return jsonify({"success": False, "error": "Could not understand document format. Try taking another photo."})
+        
+        # Check if AI returned an error
+        if parsed.get("error") == "unreadable":
+            return jsonify({"success": False, "error": "Document too blurry or dark. Tips: Use flash if needed, hold phone steady, make sure text is in focus."})
         
         # Check if staging is enabled (default: yes for safety)
         use_staging = request.args.get("direct") != "yes"
@@ -16071,7 +16221,7 @@ def payroll_employee_new():
         <h1>Add Employee</h1>
     </div>
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <form method="POST">
             <div class="form-row">
                 <div class="form-group">
@@ -16466,7 +16616,7 @@ def payroll_timesheet_scan():
         <p class="text-muted">Take a photo of your handwritten timesheet</p>
     </div>
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <div class="btn-group mb-lg" style="justify-content: center;">
             <button class="btn btn-orange" onclick="startCamera()">📷 Use Camera</button>
             <label class="btn btn-ghost" style="cursor: pointer;">
@@ -17201,7 +17351,7 @@ def payroll_employee_edit(emp_id):
         <h1>Edit Employee</h1>
     </div>
     
-    <div class="card" style="max-width: 600px;">
+    <div class="card">
         <form method="POST">
             <div class="form-row">
                 <div class="form-group">
@@ -18934,7 +19084,7 @@ def cleanup_stock_bulk_update():
 
 @app.route("/settings/cleanup/suppliers")
 def cleanup_suppliers():
-    """Supplier cleanup page"""
+    """Supplier cleanup page with better gibberish detection"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
@@ -18947,17 +19097,31 @@ def cleanup_suppliers():
         
         issue_list = []
         
-        # Check for garbage entries
+        # Better gibberish detection
         if len(name) < 3:
             issue_list.append("Name too short")
         elif name.isdigit():
             issue_list.append("Just a number")
         elif "@" in name and " " not in name:
             issue_list.append("Looks like email")
-        elif re.match(r'^\d+\s+(street|road|ave|avenue|drive|rd|st)', name.lower()):
+        elif re.match(r'^\d+\s+(street|road|ave|avenue|drive|rd|st|lane|crescent|close)', name.lower()):
             issue_list.append("Looks like address")
-        elif re.match(r'^0\d{9}$', name.replace(" ", "")):
+        elif re.match(r'^0\d{9}$', name.replace(" ", "").replace("-", "")):
             issue_list.append("Looks like phone number")
+        elif re.match(r'^\+27\d{9}$', name.replace(" ", "")):
+            issue_list.append("Looks like phone number")
+        elif re.match(r'^\d+$', name.replace(" ", "").replace("-", "")):
+            issue_list.append("Just numbers")
+        elif re.match(r'^[a-z0-9]{20,}$', name.lower().replace(" ", "")):
+            issue_list.append("Looks like random ID")
+        elif not any(c.isalpha() for c in name):
+            issue_list.append("No letters - gibberish?")
+        elif len(name) > 3 and name.lower() == name.upper() and not any(c.isalpha() for c in name):
+            issue_list.append("No letters")
+        elif re.match(r'^(mr|mrs|ms|dr|prof)\s*\.?\s*$', name.lower()):
+            issue_list.append("Just a title")
+        elif name.lower() in ['test', 'testing', 'asdf', 'qwerty', 'xxx', 'aaa', 'zzz', 'n/a', 'na', 'none', '-', '.', '...']:
+            issue_list.append("Test/placeholder")
         
         if issue_list:
             issues.append({
@@ -18967,10 +19131,14 @@ def cleanup_suppliers():
                 "issues": issue_list
             })
     
+    # Sort by issue severity - pure numbers first
+    issues.sort(key=lambda x: (0 if "Just a number" in x["issues"] or "Just numbers" in x["issues"] else 1, x["name"]))
+    
     rows = []
     for item in issues:
         issue_badges = " ".join([f'<span class="badge badge-red">{i}</span>' for i in item["issues"]])
         rows.append([
+            f'<input type="checkbox" name="delete_ids" value="{item["id"]}" class="delete-checkbox">',
             safe_string(item["name"]),
             safe_string(item["phone"]),
             issue_badges,
@@ -18982,7 +19150,7 @@ def cleanup_suppliers():
         ])
     
     table = table_html(
-        headers=["Name", "Phone", "Issues", "Actions"],
+        headers=["", "Name", "Phone", "Issues", "Actions"],
         rows=rows,
         empty_message="No suspect suppliers found! 🎉"
     )
@@ -18994,17 +19162,62 @@ def cleanup_suppliers():
             <h1>👥 Supplier Cleanup</h1>
             <p class="text-muted">{len(issues)} suspect entries found</p>
         </div>
+        <div class="btn-group">
+            <button onclick="selectAll()" class="btn btn-sm btn-ghost">Select All</button>
+            <button onclick="deleteSelected()" class="btn btn-sm btn-red">🗑️ Delete Selected</button>
+        </div>
     </div>
     
-    <div class="card">{table}</div>
+    <form id="bulk-delete-form" method="POST" action="/settings/cleanup/suppliers/bulk-delete">
+        <div class="card">{table}</div>
+    </form>
     
     <div class="alert alert-info mt-lg">
         <strong>Tip:</strong> Review each entry. If it's garbage (address, phone number, etc.), delete it. 
         If it's a real supplier with a bad name, click Edit to fix it.
     </div>
+    
+    <script>
+    function selectAll() {{
+        const checkboxes = document.querySelectorAll('.delete-checkbox');
+        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+        checkboxes.forEach(cb => cb.checked = !allChecked);
+    }}
+    
+    function deleteSelected() {{
+        const checkboxes = document.querySelectorAll('.delete-checkbox:checked');
+        if (checkboxes.length === 0) {{
+            alert('Please select items to delete');
+            return;
+        }}
+        if (confirm('Delete ' + checkboxes.length + ' selected suppliers? This cannot be undone.')) {{
+            document.getElementById('bulk-delete-form').submit();
+        }}
+    }}
+    </script>
     '''
     
     return page_wrapper("Supplier Cleanup", content, user=user)
+
+
+@app.route("/settings/cleanup/suppliers/bulk-delete", methods=["POST"])
+def cleanup_suppliers_bulk_delete():
+    """Bulk delete selected suppliers"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    ids = request.form.getlist("delete_ids")
+    deleted = 0
+    for supplier_id in ids:
+        try:
+            db.delete("suppliers", supplier_id)
+            deleted += 1
+        except:
+            pass
+    
+    session["cleanup_message"] = f"✓ Deleted {deleted} suppliers"
+    return redirect("/settings/cleanup/suppliers")
 
 
 @app.route("/settings/cleanup/suppliers/<supplier_id>/delete")
@@ -19157,32 +19370,151 @@ def cleanup_ai_scan():
 
 @app.route("/settings/cleanup/customers")
 def cleanup_customers():
-    """Customer cleanup page"""
+    """Customer cleanup page with gibberish detection"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
-    content = '''
-    <div class="mb-lg">
-        <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
-        <h1>🧑‍🤝‍🧑 Customer Cleanup</h1>
+    customers = db.select("customers", order="name")
+    
+    issues = []
+    for c in customers:
+        name = (c.get("name") or "").strip()
+        
+        issue_list = []
+        
+        # Better gibberish detection
+        if len(name) < 3:
+            issue_list.append("Name too short")
+        elif name.isdigit():
+            issue_list.append("Just a number")
+        elif "@" in name and " " not in name:
+            issue_list.append("Looks like email")
+        elif re.match(r'^\d+\s+(street|road|ave|avenue|drive|rd|st|lane|crescent|close)', name.lower()):
+            issue_list.append("Looks like address")
+        elif re.match(r'^0\d{9}$', name.replace(" ", "").replace("-", "")):
+            issue_list.append("Looks like phone number")
+        elif re.match(r'^\+27\d{9}$', name.replace(" ", "")):
+            issue_list.append("Looks like phone number")
+        elif re.match(r'^\d+$', name.replace(" ", "").replace("-", "")):
+            issue_list.append("Just numbers")
+        elif re.match(r'^[a-z0-9]{20,}$', name.lower().replace(" ", "")):
+            issue_list.append("Looks like random ID")
+        elif not any(ch.isalpha() for ch in name):
+            issue_list.append("No letters - gibberish?")
+        elif re.match(r'^(mr|mrs|ms|dr|prof)\s*\.?\s*$', name.lower()):
+            issue_list.append("Just a title")
+        elif name.lower() in ['test', 'testing', 'asdf', 'qwerty', 'xxx', 'aaa', 'zzz', 'n/a', 'na', 'none', '-', '.', '...', 'cash', 'walk-in', 'walkin']:
+            issue_list.append("Test/placeholder")
+        
+        if issue_list:
+            issues.append({
+                "id": c.get("id"),
+                "name": name,
+                "phone": c.get("phone", ""),
+                "balance": Decimal(str(c.get("balance", 0) or 0)),
+                "issues": issue_list
+            })
+    
+    # Sort by issue severity
+    issues.sort(key=lambda x: (0 if "Just a number" in x["issues"] or "Just numbers" in x["issues"] else 1, x["name"]))
+    
+    rows = []
+    for item in issues:
+        issue_badges = " ".join([f'<span class="badge badge-red">{i}</span>' for i in item["issues"]])
+        balance_display = Money.format(item["balance"]) if item["balance"] != 0 else "-"
+        rows.append([
+            f'<input type="checkbox" name="delete_ids" value="{item["id"]}" class="delete-checkbox">',
+            safe_string(item["name"]),
+            safe_string(item["phone"]),
+            balance_display,
+            issue_badges,
+            f'''<div class="btn-group">
+                <a href="/customers/{item["id"]}/edit" class="btn btn-sm btn-ghost">Edit</a>
+                <a href="/settings/cleanup/customers/{item["id"]}/delete" class="btn btn-sm btn-red" 
+                   onclick="return confirm('Delete this customer?')">Delete</a>
+            </div>'''
+        ])
+    
+    table = table_html(
+        headers=["", "Name", "Phone", "Balance", "Issues", "Actions"],
+        rows=rows,
+        empty_message="No suspect customers found! 🎉"
+    )
+    
+    content = f'''
+    <div class="flex-between mb-lg">
+        <div>
+            <a href="/settings/cleanup" class="text-muted">← Cleanup</a>
+            <h1>🧑‍🤝‍🧑 Customer Cleanup</h1>
+            <p class="text-muted">{len(issues)} suspect entries found</p>
+        </div>
+        <div class="btn-group">
+            <button onclick="selectAll()" class="btn btn-sm btn-ghost">Select All</button>
+            <button onclick="deleteSelected()" class="btn btn-sm btn-red">🗑️ Delete Selected</button>
+        </div>
     </div>
     
-    <div class="card" style="text-align: center; padding: 60px;">
-        <div style="font-size: 64px; margin-bottom: 20px;">🚧</div>
-        <h2>Coming Soon</h2>
-        <p class="text-muted">
-            Customer cleanup will help you:<br><br>
-            • Merge duplicate customers<br>
-            • Clean up walk-in entries<br>
-            • Fix phone number formats<br>
-            • Identify inactive customers
-        </p>
-        <a href="/settings/cleanup" class="btn btn-primary mt-lg">Back to Cleanup</a>
+    <form id="bulk-delete-form" method="POST" action="/settings/cleanup/customers/bulk-delete">
+        <div class="card">{table}</div>
+    </form>
+    
+    <div class="alert alert-info mt-lg">
+        <strong>Tip:</strong> Be careful with customers that have a balance - you may want to edit rather than delete.
     </div>
+    
+    <script>
+    function selectAll() {{
+        const checkboxes = document.querySelectorAll('.delete-checkbox');
+        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+        checkboxes.forEach(cb => cb.checked = !allChecked);
+    }}
+    
+    function deleteSelected() {{
+        const checkboxes = document.querySelectorAll('.delete-checkbox:checked');
+        if (checkboxes.length === 0) {{
+            alert('Please select items to delete');
+            return;
+        }}
+        if (confirm('Delete ' + checkboxes.length + ' selected customers? This cannot be undone.')) {{
+            document.getElementById('bulk-delete-form').submit();
+        }}
+    }}
+    </script>
     '''
     
     return page_wrapper("Customer Cleanup", content, user=user)
+
+
+@app.route("/settings/cleanup/customers/bulk-delete", methods=["POST"])
+def cleanup_customers_bulk_delete():
+    """Bulk delete selected customers"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    ids = request.form.getlist("delete_ids")
+    deleted = 0
+    for customer_id in ids:
+        try:
+            db.delete("customers", customer_id)
+            deleted += 1
+        except:
+            pass
+    
+    session["cleanup_message"] = f"✓ Deleted {deleted} customers"
+    return redirect("/settings/cleanup/customers")
+
+
+@app.route("/settings/cleanup/customers/<customer_id>/delete")
+def cleanup_customer_delete(customer_id):
+    """Delete a garbage customer"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    db.delete("customers", customer_id)
+    return redirect("/settings/cleanup/customers")
 
 
 if __name__ == "__main__":
