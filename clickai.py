@@ -13285,6 +13285,7 @@ Be specific with Rand amounts where relevant. Be honest but constructive.
 Return ONLY valid JSON, no other text."""
 
         try:
+            # Use Sonnet for faster analysis (still very capable)
             response = requests.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -13293,11 +13294,11 @@ Return ONLY valid JSON, no other text."""
                     "anthropic-version": "2023-06-01"
                 },
                 json={
-                    "model": cls.OPUS_MODEL,
+                    "model": "claude-opus-4-20250514",  # Opus for deep analysis
                     "max_tokens": 4000,
                     "messages": [{"role": "user", "content": prompt}]
                 },
-                timeout=120
+                timeout=90
             )
             
             if response.status_code == 200:
@@ -13312,11 +13313,13 @@ Return ONLY valid JSON, no other text."""
                         return json.loads(text[start:end])
                 except:
                     pass
-                return {"error": "Could not parse analysis", "raw": text[:500]}
+                return {"error": "Could not parse analysis", "raw": text[:500], "company_health": "unknown", "health_summary": "Analysis completed but couldn't parse results"}
             else:
-                return {"error": f"API error: {response.status_code}"}
+                return {"error": f"API error: {response.status_code}", "company_health": "unknown", "health_summary": "Could not complete analysis"}
+        except requests.exceptions.Timeout:
+            return {"error": "Analysis timed out - please try again", "company_health": "unknown", "health_summary": "The analysis took too long. Try uploading a smaller file."}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "company_health": "unknown", "health_summary": "An error occurred during analysis"}
     
     @classmethod
     def chat_response(cls, analysis: dict, user_message: str = "", conversation_history: list = None) -> str:
@@ -13440,27 +13443,45 @@ def tb_analyzer():
             '''
             return page_wrapper("TB Analyzer", error_content, active="reports", user=user)
         
+        # Calculate quick stats first (instant)
+        total_debit = sum(a['debit'] for a in accounts)
+        total_credit = sum(a['credit'] for a in accounts)
+        total_income = sum(a['credit'] for a in accounts if a.get('category', '').lower() in ['sales', 'income', 'revenue', 'other income'])
+        total_expenses = sum(a['debit'] for a in accounts if a.get('category', '').lower() in ['expenses', 'expense', 'cost of sales'])
+        
         # Store in session for chat
         session['tb_accounts'] = accounts
         session['tb_context'] = context
         
-        # Show loading page, then run analysis
-        # Run Opus analysis
-        analysis = TBAnalyzer.analyze_with_opus(accounts, context)
-        session['tb_analysis'] = analysis
+        # Quick stats to show immediately
+        quick_stats = f"""
+        <div class="card mb-lg">
+            <h3>📊 Quick Stats (from {len(accounts)} accounts)</h3>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-top:16px;">
+                <div style="text-align:center;padding:16px;background:rgba(16,185,129,0.1);border-radius:8px;">
+                    <div style="font-size:24px;font-weight:700;color:#10b981;">R {total_credit:,.0f}</div>
+                    <div style="color:#8b8b9a;font-size:13px;">Total Credits</div>
+                </div>
+                <div style="text-align:center;padding:16px;background:rgba(239,68,68,0.1);border-radius:8px;">
+                    <div style="font-size:24px;font-weight:700;color:#ef4444;">R {total_debit:,.0f}</div>
+                    <div style="color:#8b8b9a;font-size:13px;">Total Debits</div>
+                </div>
+                <div style="text-align:center;padding:16px;background:rgba(139,92,246,0.1);border-radius:8px;">
+                    <div style="font-size:24px;font-weight:700;color:#a78bfa;">R {abs(total_credit - total_debit):,.0f}</div>
+                    <div style="color:#8b8b9a;font-size:13px;">Net Position</div>
+                </div>
+            </div>
+        </div>
+        """
+        # DON'T run analysis here - will timeout. Do it async via JavaScript
+        # Just store the accounts for the async endpoint
+        session['tb_analysis'] = {}  # Will be populated async
+        session['tb_chat_history'] = []
         
-        # Get friendly chat response from Haiku
-        chat_response = TBAnalyzer.chat_response(analysis)
-        session['tb_chat_history'] = [
-            {"role": "assistant", "content": chat_response}
-        ]
+        # Check for errors
+        error_msg = ""
         
-        # Determine health color
-        health = analysis.get('company_health', 'unknown')
-        health_color = {'good': '#10b981', 'warning': '#f59e0b', 'critical': '#ef4444'}.get(health, '#8b8b9a')
-        health_icon = {'good': '✅', 'warning': '⚠️', 'critical': '🚨'}.get(health, '❓')
-        
-        # Build the chat interface
+        # Build the chat interface - AI loads async
         result_content = f'''
         <div class="mb-lg">
             <a href="/tb-analyzer" class="text-muted">← Upload New TB</a>
@@ -13468,13 +13489,18 @@ def tb_analyzer():
             <p class="text-muted">Analyzed {len(accounts)} accounts</p>
         </div>
         
-        <!-- Health Banner -->
-        <div class="card" style="background:linear-gradient(135deg,{health_color}20,{health_color}05);border-color:{health_color}50;margin-bottom:20px;">
+        {error_msg}
+        
+        <!-- Quick Stats -->
+        {quick_stats}
+        
+        <!-- Health Banner - will be updated by JS -->
+        <div class="card" id="health-banner" style="background:linear-gradient(135deg,#8b8b9a20,#8b8b9a05);border-color:#8b8b9a50;margin-bottom:20px;">
             <div style="display:flex;align-items:center;gap:16px;">
-                <div style="font-size:48px;">{health_icon}</div>
+                <div style="font-size:48px;" id="health-icon">⏳</div>
                 <div>
-                    <h2 style="color:{health_color};margin:0;">Business Health: {health.upper()}</h2>
-                    <p style="color:#c0c0c0;margin:4px 0 0;">{analysis.get('health_summary', '')}</p>
+                    <h2 style="color:#8b8b9a;margin:0;" id="health-title">Analyzing...</h2>
+                    <p style="color:#c0c0c0;margin:4px 0 0;" id="health-summary">Our AI accountant is reviewing your numbers...</p>
                 </div>
             </div>
         </div>
@@ -13482,24 +13508,29 @@ def tb_analyzer():
         <!-- Chat Interface -->
         <div class="card" id="chat-container">
             <div id="chat-messages" style="max-height:500px;overflow-y:auto;padding:10px;">
-                <div class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                <div id="initial-message" class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
                     <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
-                    <div style="white-space:pre-wrap;line-height:1.6;">{chat_response}</div>
+                    <div style="line-height:1.6;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <div class="spinner" style="width:20px;height:20px;border:3px solid #8b8b9a;border-top-color:#a78bfa;border-radius:50%;animation:spin 1s linear infinite;"></div>
+                            <span>Analyzing your trial balance... this takes about 30 seconds</span>
+                        </div>
+                    </div>
                 </div>
             </div>
             
             <div style="border-top:1px solid var(--border);padding:16px;display:flex;gap:12px;">
-                <input type="text" id="chat-input" class="form-input" style="flex:1;" placeholder="Ask a follow-up question..." onkeypress="if(event.key==='Enter')sendMessage()">
-                <button type="button" class="btn btn-purple" onclick="sendMessage()">Send</button>
+                <input type="text" id="chat-input" class="form-input" style="flex:1;" placeholder="Ask a follow-up question..." onkeypress="if(event.key==='Enter')sendMessage()" disabled>
+                <button type="button" class="btn btn-purple" onclick="sendMessage()" id="send-btn" disabled>Send</button>
             </div>
         </div>
         
         <!-- Quick Actions -->
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:20px;">
-            <button class="btn btn-ghost" onclick="askQuestion('What are the biggest red flags?')">🚩 Red Flags</button>
-            <button class="btn btn-ghost" onclick="askQuestion('What opportunities do you see?')">💡 Opportunities</button>
-            <button class="btn btn-ghost" onclick="askQuestion('What would SARS look at?')">🏛️ SARS Concerns</button>
-            <button class="btn btn-ghost" onclick="askQuestion('What should I do first?')">📋 Priorities</button>
+            <button class="btn btn-ghost" onclick="askQuestion('What are the biggest red flags?')" disabled id="q1">🚩 Red Flags</button>
+            <button class="btn btn-ghost" onclick="askQuestion('What opportunities do you see?')" disabled id="q2">💡 Opportunities</button>
+            <button class="btn btn-ghost" onclick="askQuestion('What would SARS look at?')" disabled id="q3">🏛️ SARS Concerns</button>
+            <button class="btn btn-ghost" onclick="askQuestion('What should I do first?')" disabled id="q4">📋 Priorities</button>
         </div>
         
         <!-- Detailed Metrics (collapsible) -->
@@ -13559,7 +13590,55 @@ def tb_analyzer():
             document.getElementById('chat-input').value = q;
             sendMessage();
         }}
+        
+        // Load AI analysis async on page load
+        window.onload = function() {{
+            fetch('/tb-analyzer/analyze', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}}
+            }})
+            .then(r => r.json())
+            .then(data => {{
+                // Update health banner
+                const colors = {{'good': '#10b981', 'warning': '#f59e0b', 'critical': '#ef4444'}};
+                const icons = {{'good': '✅', 'warning': '⚠️', 'critical': '🚨'}};
+                const health = data.health || 'unknown';
+                const color = colors[health] || '#8b8b9a';
+                const icon = icons[health] || '❓';
+                
+                document.getElementById('health-icon').textContent = icon;
+                document.getElementById('health-title').textContent = 'Business Health: ' + health.toUpperCase();
+                document.getElementById('health-title').style.color = color;
+                document.getElementById('health-summary').textContent = data.summary || '';
+                document.getElementById('health-banner').style.background = 'linear-gradient(135deg,' + color + '20,' + color + '05)';
+                document.getElementById('health-banner').style.borderColor = color + '50';
+                
+                // Update chat with AI response
+                document.getElementById('initial-message').innerHTML = `
+                    <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
+                    <div style="white-space:pre-wrap;line-height:1.6;">${{data.chat_response}}</div>
+                `;
+                
+                // Enable inputs
+                document.getElementById('chat-input').disabled = false;
+                document.getElementById('send-btn').disabled = false;
+                document.getElementById('q1').disabled = false;
+                document.getElementById('q2').disabled = false;
+                document.getElementById('q3').disabled = false;
+                document.getElementById('q4').disabled = false;
+            }})
+            .catch(err => {{
+                document.getElementById('initial-message').innerHTML = `
+                    <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
+                    <div style="color:#ef4444;">Sorry, the analysis timed out. Please try again with a smaller file or check your connection.</div>
+                `;
+                document.getElementById('health-icon').textContent = '⚠️';
+                document.getElementById('health-title').textContent = 'Analysis Failed';
+                document.getElementById('health-summary').textContent = 'Could not complete analysis - try again';
+            }});
+        }};
         </script>
+        <style>@keyframes spin {{ to {{ transform: rotate(360deg); }} }}</style>
         '''
         
         return page_wrapper("TB Analysis", result_content, active="reports", user=user)
@@ -13680,6 +13759,51 @@ def tb_analyzer_chat():
     session['tb_chat_history'] = history[-20:]  # Keep last 20 messages
     
     return jsonify({"response": response})
+
+
+@app.route("/tb-analyzer/analyze", methods=["POST"])
+def tb_analyzer_analyze():
+    """Async endpoint to run AI analysis - called via JavaScript"""
+    user = UserSession.get_current_user()
+    if not user:
+        return jsonify({"error": "Not logged in"})
+    
+    # Get stored accounts from session
+    accounts = session.get('tb_accounts', [])
+    context = session.get('tb_context', '')
+    
+    if not accounts:
+        return jsonify({
+            "error": "No data to analyze",
+            "health": "unknown",
+            "summary": "Please upload a trial balance first",
+            "chat_response": "I don't have any data to analyze. Please go back and upload a trial balance file."
+        })
+    
+    try:
+        # Run analysis with Sonnet (faster than Opus)
+        analysis = TBAnalyzer.analyze_with_opus(accounts, context)
+        session['tb_analysis'] = analysis
+        
+        # Get chat response from Haiku
+        chat_response = TBAnalyzer.chat_response(analysis)
+        session['tb_chat_history'] = [
+            {"role": "assistant", "content": chat_response}
+        ]
+        
+        return jsonify({
+            "health": analysis.get('company_health', 'unknown'),
+            "summary": analysis.get('health_summary', ''),
+            "chat_response": chat_response,
+            "analysis": analysis
+        })
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "health": "unknown",
+            "summary": "Analysis failed",
+            "chat_response": f"Sorry, I encountered an error while analyzing: {str(e)}"
+        })
 
 
 @app.route("/journal-entry", methods=["GET", "POST"])
