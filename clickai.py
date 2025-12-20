@@ -779,7 +779,7 @@ class BusinessManager:
     def get_user_businesses(cls, user_id: str) -> list:
         """Get all businesses for a user"""
         try:
-            businesses = db.select("businesses", {"owner_id": user_id}, order="name")
+            businesses = db.select("businesses", {"owner_id": user_id, "active": True}, order="business_name")
             return businesses if businesses else []
         except:
             return []
@@ -836,8 +836,10 @@ class BusinessManager:
         business = {
             "id": generate_id(),
             "owner_id": owner_id,
-            "name": name,
+            "business_name": name,
+            "name": name,  # Keep both for compatibility
             "industry": industry,
+            "business_type": config["name"],
             "icon": config["icon"],
             "visible_modules": json.dumps(config["visible_modules"]),
             "hidden_modules": json.dumps(config["hidden_modules"]),
@@ -4957,13 +4959,14 @@ def get_header_html(active: str = "", user: dict = None) -> str:
         current_biz = BusinessManager.get_current_business()
         
         if len(businesses) > 0:
-            current_name = current_biz.get("name", "Select Business") if current_biz else "Select Business"
+            current_name = current_biz.get("business_name", current_biz.get("name", "Select Business")) if current_biz else "Select Business"
             current_icon = current_biz.get("icon", "🏢") if current_biz else "🏢"
             
             options_html = ""
             for biz in businesses:
+                biz_name = biz.get("business_name", biz.get("name", "Unnamed"))
                 selected = "✓ " if current_biz and biz["id"] == current_biz["id"] else ""
-                options_html += f'''<a href="/switch-business/{biz["id"]}" class="biz-option">{selected}{biz.get("icon", "🏢")} {safe_string(biz["name"])}</a>'''
+                options_html += f'''<a href="/switch-business/{biz["id"]}" class="biz-option">{selected}{biz.get("icon", "🏢")} {safe_string(biz_name)}</a>'''
             
             # Add "New Business" option
             options_html += f'''<a href="/businesses/new" class="biz-option biz-option-new">➕ Add New Business</a>'''
@@ -20053,11 +20056,12 @@ def businesses_list():
     for biz in businesses:
         is_current = "✓" if current_biz and biz["id"] == current_biz["id"] else ""
         industry_config = BusinessManager.INDUSTRY_CONFIGS.get(biz.get("industry", "retail"), {})
+        biz_name = biz.get("business_name", biz.get("name", "Unnamed"))
         
         rows_html += f'''
         <tr>
             <td style="font-size:24px;">{biz.get("icon", "🏢")}</td>
-            <td><strong>{safe_string(biz["name"])}</strong></td>
+            <td><strong>{safe_string(biz_name)}</strong></td>
             <td>{industry_config.get("name", biz.get("industry", ""))}</td>
             <td style="color:var(--green);font-weight:600;">{is_current}</td>
             <td>
@@ -20226,8 +20230,10 @@ def business_edit(business_id):
             config = BusinessManager.INDUSTRY_CONFIGS.get(industry, BusinessManager.INDUSTRY_CONFIGS["retail"])
             
             update_data = {
-                "name": name,
+                "business_name": name,
+                "name": name,  # Keep both for compatibility
                 "industry": industry,
+                "business_type": config["name"],
                 "icon": config["icon"],
                 "visible_modules": json.dumps(config["visible_modules"]),
                 "hidden_modules": json.dumps(config["hidden_modules"]),
@@ -20270,7 +20276,7 @@ def business_edit(business_id):
         <form method="POST">
             <div class="form-group">
                 <label class="form-label">Business Name *</label>
-                <input type="text" name="name" class="form-input" value="{safe_string(business.get('name', ''))}" required>
+                <input type="text" name="name" class="form-input" value="{safe_string(business.get('business_name', business.get('name', '')))}" required>
             </div>
             
             <div class="form-group">
