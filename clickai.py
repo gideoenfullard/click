@@ -13058,34 +13058,39 @@ class TBAnalyzer:
         if not lines:
             return []
         
-        # Try to detect header row - look for common header patterns
-        header_idx = 0
-        for i, line in enumerate(lines[:10]):
-            lower = line.lower()
-            # Common header indicators
-            if any(word in lower for word in ['account', 'debit', 'credit', 'balance', 'name,', 'description']):
-                header_idx = i
-                break
-        
-        # Parse with CSV reader
+        # Parse all rows first
         import csv
-        reader = csv.reader(lines[header_idx:])
+        reader = csv.reader(lines)
         rows = list(reader)
         if not rows:
             return []
         
-        headers = [h.strip().lower() for h in rows[0]]
-        print(f"DEBUG: Headers found: {headers}")  # Debug
+        # Find the REAL header row - must have debit/credit columns OR name+amount
+        header_idx = 0
+        for i, row in enumerate(rows[:10]):
+            headers_lower = [h.strip().lower() for h in row]
+            # Look for rows that have BOTH debit and credit, or name and balance
+            has_debit = any('debit' in h for h in headers_lower)
+            has_credit = any('credit' in h for h in headers_lower)
+            has_name = any(h in ['name', 'account', 'description'] for h in headers_lower)
+            has_balance = any('balance' in h and h != 'trial balance report' for h in headers_lower)
+            
+            if (has_debit and has_credit) or (has_name and has_balance):
+                header_idx = i
+                print(f"DEBUG: Found header at row {i}: {row}")
+                break
+        
+        headers = [h.strip().lower() for h in rows[header_idx]]
+        print(f"DEBUG: Headers: {headers}")
         
         # Find column indices - be more flexible
-        # Name/Description column
         desc_col = None
         for i, h in enumerate(headers):
-            if any(word in h for word in ['name', 'desc', 'account']):
+            if h in ['name', 'account', 'description'] or 'account' in h:
                 desc_col = i
                 break
         if desc_col is None:
-            desc_col = 0  # Default to first column
+            desc_col = 0
         
         # Category column (optional)
         cat_col = next((i for i, h in enumerate(headers) if 'category' in h or 'type' in h), None)
@@ -13097,12 +13102,12 @@ class TBAnalyzer:
         credit_col = next((i for i, h in enumerate(headers) if 'credit' in h), None)
         
         # Balance column (fallback if no debit/credit)
-        balance_col = next((i for i, h in enumerate(headers) if 'balance' in h or 'amount' in h), None)
+        balance_col = next((i for i, h in enumerate(headers) if 'balance' in h and 'trial' not in h), None)
         
-        print(f"DEBUG: Columns - desc:{desc_col}, debit:{debit_col}, credit:{credit_col}, balance:{balance_col}")
+        print(f"DEBUG: Columns - desc:{desc_col}, cat:{cat_col}, debit:{debit_col}, credit:{credit_col}, balance:{balance_col}")
         
         accounts = []
-        for row in rows[1:]:
+        for row in rows[header_idx + 1:]:
             if len(row) < 2:
                 continue
             
@@ -13110,7 +13115,7 @@ class TBAnalyzer:
                 acc_name = row[desc_col].strip() if desc_col is not None and desc_col < len(row) else ""
                 
                 # Skip empty rows or header repeats
-                if not acc_name or acc_name.lower() in ['name', 'account', 'description', '']:
+                if not acc_name or acc_name.lower() in ['name', 'account', 'description', '', 'total', 'totals']:
                     continue
                 
                 # Get category if available
@@ -13134,10 +13139,10 @@ class TBAnalyzer:
                 if debit or credit:
                     balance = debit - credit
                 
-                # Only add if we have a name
+                # Only add if we have a name and some value
                 if acc_name:
                     accounts.append({
-                        "code": category,  # Use category as code for grouping
+                        "code": category,
                         "name": acc_name,
                         "category": category,
                         "debit": float(debit),
@@ -13152,8 +13157,8 @@ class TBAnalyzer:
         print(f"DEBUG: Parsed {len(accounts)} accounts")
         if accounts:
             print(f"DEBUG: First account: {accounts[0]}")
-            print(f"DEBUG: Total debits: {sum(a['debit'] for a in accounts)}")
-            print(f"DEBUG: Total credits: {sum(a['credit'] for a in accounts)}")
+            print(f"DEBUG: Total debits: R{sum(a['debit'] for a in accounts):,.2f}")
+            print(f"DEBUG: Total credits: R{sum(a['credit'] for a in accounts):,.2f}")
         
         return accounts
     
