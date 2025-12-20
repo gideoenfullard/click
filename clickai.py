@@ -11253,8 +11253,14 @@ def invoice_new():
             </div>
             <div id="search-results" style="max-height:200px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
             
-            <table class="table" id="lines-table">
-                <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th><th></th></tr></thead>
+            <table class="table" id="lines-table" style="table-layout:fixed;">
+                <thead><tr>
+                    <th style="width:50%;">Description</th>
+                    <th style="width:12%;text-align:center;">QTY</th>
+                    <th style="width:15%;text-align:right;">PRICE</th>
+                    <th style="width:15%;text-align:right;">TOTAL</th>
+                    <th style="width:8%;"></th>
+                </tr></thead>
                 <tbody id="lines-body"></tbody>
                 <tfoot>
                     <tr><td colspan="3" style="text-align:right;font-weight:600;">Subtotal:</td><td id="subtotal" style="text-align:right;">R 0.00</td><td></td></tr>
@@ -11758,8 +11764,14 @@ def quote_new():
             </div>
             <div id="search-results" style="max-height:200px;overflow-y:auto;margin-bottom:15px;border:1px solid var(--border);border-radius:var(--radius-md);"></div>
             
-            <table class="table" id="lines-table">
-                <thead><tr><th>Description</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th><th></th></tr></thead>
+            <table class="table" id="lines-table" style="table-layout:fixed;">
+                <thead><tr>
+                    <th style="width:50%;">Description</th>
+                    <th style="width:12%;text-align:center;">QTY</th>
+                    <th style="width:15%;text-align:right;">PRICE</th>
+                    <th style="width:15%;text-align:right;">TOTAL</th>
+                    <th style="width:8%;"></th>
+                </tr></thead>
                 <tbody id="lines-body"></tbody>
                 <tfoot>
                     <tr><td colspan="3" style="text-align:right;font-weight:600;">Total:</td><td id="grand-total" style="text-align:right;font-weight:700;font-size:18px;color:var(--green);">R 0.00</td><td></td></tr>
@@ -12090,22 +12102,31 @@ function renderLines() {
         total += lineTotal;
         
         if (line.is_custom) {
-            // Editable row for custom/buyout items
-            html += '<tr style="background:rgba(139,92,246,0.05);">';
-            html += '<td><input type="text" class="custom-desc-input" value="'+escHtml(line.description)+'" placeholder="Type description..." style="width:100%;padding:6px;background:#0a0a10;border:1px solid #8b5cf6;color:#f0f0f0;border-radius:4px;" onchange="updateCustomDesc('+i+',this.value)"><span style="background:#8b5cf6;color:white;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:8px;">BUYOUT</span></td>';
-            html += '<td><input type="number" value="'+line.quantity+'" min="1" style="width:60px;padding:4px;background:#0a0a10;border:1px solid #1a1a2e;color:#f0f0f0;border-radius:4px;" onchange="updateQty('+i+',this.value)"></td>';
-            html += '<td><input type="number" value="'+line.price.toFixed(2)+'" step="0.01" min="0" style="width:90px;padding:4px;background:#0a0a10;border:1px solid #8b5cf6;color:#f0f0f0;border-radius:4px;" onchange="updateCustomPrice('+i+',this.value)"></td>';
-            html += '<td class="number">R '+lineTotal.toFixed(2)+'</td>';
-            html += '<td><button type="button" class="btn btn-sm btn-red" onclick="removeLine('+i+')">×</button></td>';
+            // Editable row for custom/buyout items - SPACIOUS & FRIENDLY
+            html += '<tr style="background:rgba(139,92,246,0.08);">';
+            // Description - big comfortable input
+            html += '<td style="padding:12px 8px;">';
+            html += '<div style="display:flex;flex-direction:column;gap:6px;">';
+            html += '<input type="text" class="custom-desc-input" value="'+escHtml(line.description)+'" placeholder="What are you selling? e.g. Special order pump..." style="width:100%;padding:12px 14px;font-size:15px;background:#0a0a10;border:2px solid #8b5cf6;color:#f0f0f0;border-radius:8px;" onchange="updateCustomDesc('+i+',this.value)">';
+            html += '<span style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;width:fit-content;">BUYOUT ITEM</span>';
+            html += '</div></td>';
+            // Quantity - centered
+            html += '<td style="text-align:center;padding:12px 8px;"><input type="number" value="'+line.quantity+'" min="1" style="width:70px;padding:10px;font-size:15px;text-align:center;background:#0a0a10;border:2px solid #2a2a4a;color:#f0f0f0;border-radius:8px;" onchange="updateQty('+i+',this.value)"></td>';
+            // Price - right aligned with R prefix
+            html += '<td style="text-align:right;padding:12px 8px;"><div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;"><span style="color:#8b8b9a;">R</span><input type="number" value="'+line.price.toFixed(2)+'" step="0.01" min="0" style="width:100px;padding:10px;font-size:15px;text-align:right;background:#0a0a10;border:2px solid #8b5cf6;color:#f0f0f0;border-radius:8px;" onchange="updateCustomPrice('+i+',this.value)"></div></td>';
+            // Total - right aligned
+            html += '<td style="text-align:right;padding:12px 8px;font-weight:600;font-size:15px;">R '+lineTotal.toFixed(2)+'</td>';
+            // Delete button
+            html += '<td style="text-align:center;padding:12px 8px;"><button type="button" class="btn btn-sm btn-red" style="padding:8px 12px;" onclick="removeLine('+i+')">×</button></td>';
             html += '</tr>';
         } else {
             // Normal stock item row
             html += '<tr>';
-            html += '<td>'+escHtml(line.description)+'</td>';
-            html += '<td><input type="number" value="'+line.quantity+'" min="1" style="width:60px;padding:4px;background:#0a0a10;border:1px solid #1a1a2e;color:#f0f0f0;border-radius:4px;" onchange="updateQty('+i+',this.value)"></td>';
-            html += '<td class="number">R '+line.price.toFixed(2)+'</td>';
-            html += '<td class="number">R '+lineTotal.toFixed(2)+'</td>';
-            html += '<td><button type="button" class="btn btn-sm btn-red" onclick="removeLine('+i+')">×</button></td>';
+            html += '<td style="padding:12px 8px;">'+escHtml(line.description)+'</td>';
+            html += '<td style="text-align:center;padding:12px 8px;"><input type="number" value="'+line.quantity+'" min="1" style="width:70px;padding:10px;font-size:15px;text-align:center;background:#0a0a10;border:2px solid #2a2a4a;color:#f0f0f0;border-radius:8px;" onchange="updateQty('+i+',this.value)"></td>';
+            html += '<td style="text-align:right;padding:12px 8px;">R '+line.price.toFixed(2)+'</td>';
+            html += '<td style="text-align:right;padding:12px 8px;font-weight:600;">R '+lineTotal.toFixed(2)+'</td>';
+            html += '<td style="text-align:center;padding:12px 8px;"><button type="button" class="btn btn-sm btn-red" style="padding:8px 12px;" onclick="removeLine('+i+')">×</button></td>';
             html += '</tr>';
         }
     }
