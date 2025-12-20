@@ -12887,7 +12887,13 @@ def reports_menu():
     <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">Reports</h1>
     
     <h3 style="color: var(--purple); margin-bottom: 16px;">🤖 AI-Powered Reports</h3>
+    <h3 style="color: var(--text-muted); margin-bottom: 16px;">🧠 AI-Powered Analysis</h3>
     <div class="report-grid" style="margin-bottom: 32px;">
+        <a href="/tb-analyzer" class="report-card" style="border-color: var(--green); background: linear-gradient(135deg, rgba(16,185,129,0.1), rgba(139,92,246,0.1));">
+            <div class="report-card-icon">🧠</div>
+            <h3 class="report-card-title">TB Analyzer</h3>
+            <p class="report-card-desc">Upload ANY trial balance - AI analyzes it for you</p>
+        </a>
         <a href="/reports/business-health" class="report-card" style="border-color: var(--purple);"><div class="report-card-icon">💊</div><h3 class="report-card-title">Business Health</h3><p class="report-card-desc">Plain-language financial analysis for owners</p></a>
         <a href="/reports/management-financials" class="report-card" style="border-color: var(--purple);"><div class="report-card-icon">🏦</div><h3 class="report-card-title">Management Financials</h3><p class="report-card-desc">Professional report for banks & investors</p></a>
     </div>
@@ -13027,7 +13033,619 @@ def report_trial_balance_csv():
     )
 
 
-@app.route("/journal-entry", methods=["GET", "POST"])
+# ═══════════════════════════════════════════════════════════════════════════════
+# TB ANALYZER - THE DREAM FEATURE
+# Chatty Bot (Haiku) for friendly interface + Opus for deep analysis
+# "Horses for courses" - each AI does what it's best at
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TBAnalyzer:
+    """
+    Trial Balance Analyzer - The Heart of BB Fin
+    
+    Architecture:
+    - Haiku: Fast, friendly, handles conversation
+    - Opus: Deep analysis, pattern recognition, the "accountant brain"
+    """
+    
+    HAIKU_MODEL = "claude-3-5-haiku-20241022"
+    OPUS_MODEL = "claude-opus-4-20250514"
+    
+    @classmethod
+    def parse_tb_csv(cls, csv_content: str) -> list:
+        """Parse uploaded TB CSV into structured data"""
+        lines = csv_content.strip().split('\n')
+        if not lines:
+            return []
+        
+        # Try to detect header row
+        header_idx = 0
+        for i, line in enumerate(lines[:5]):
+            lower = line.lower()
+            if 'account' in lower or 'debit' in lower or 'credit' in lower or 'balance' in lower:
+                header_idx = i
+                break
+        
+        # Parse header
+        import csv
+        reader = csv.reader(lines[header_idx:])
+        rows = list(reader)
+        if not rows:
+            return []
+        
+        headers = [h.strip().lower() for h in rows[0]]
+        
+        # Find column indices
+        acc_col = next((i for i, h in enumerate(headers) if 'account' in h or 'code' in h or 'acc' in h), 0)
+        desc_col = next((i for i, h in enumerate(headers) if 'desc' in h or 'name' in h), 1)
+        debit_col = next((i for i, h in enumerate(headers) if 'debit' in h), None)
+        credit_col = next((i for i, h in enumerate(headers) if 'credit' in h), None)
+        balance_col = next((i for i, h in enumerate(headers) if 'balance' in h or 'amount' in h), None)
+        
+        accounts = []
+        for row in rows[1:]:
+            if len(row) < 2:
+                continue
+            
+            try:
+                acc_code = row[acc_col].strip() if acc_col < len(row) else ""
+                acc_name = row[desc_col].strip() if desc_col < len(row) else ""
+                
+                # Get debit/credit or balance
+                debit = 0
+                credit = 0
+                balance = 0
+                
+                if debit_col is not None and debit_col < len(row):
+                    debit = cls._parse_amount(row[debit_col])
+                if credit_col is not None and credit_col < len(row):
+                    credit = cls._parse_amount(row[credit_col])
+                if balance_col is not None and balance_col < len(row):
+                    balance = cls._parse_amount(row[balance_col])
+                
+                # Calculate net balance
+                if debit or credit:
+                    balance = debit - credit
+                
+                if acc_code or acc_name:
+                    accounts.append({
+                        "code": acc_code,
+                        "name": acc_name,
+                        "debit": float(debit),
+                        "credit": float(credit),
+                        "balance": float(balance)
+                    })
+            except:
+                continue
+        
+        return accounts
+    
+    @staticmethod
+    def _parse_amount(val: str) -> Decimal:
+        """Parse amount string to Decimal"""
+        if not val:
+            return Decimal("0")
+        val = str(val).strip()
+        val = val.replace("R", "").replace(",", "").replace(" ", "")
+        val = val.replace("(", "-").replace(")", "")
+        try:
+            return Decimal(val)
+        except:
+            return Decimal("0")
+    
+    @classmethod
+    def analyze_with_opus(cls, accounts: list, business_context: str = "") -> dict:
+        """
+        Deep analysis with Opus - the accountant brain
+        Returns structured findings for the chatty bot to present
+        """
+        api_key = Config.ANTHROPIC_API_KEY
+        if not api_key:
+            return {"error": "API key not configured"}
+        
+        # Prepare TB summary for Opus
+        tb_text = "TRIAL BALANCE DATA:\n"
+        tb_text += "=" * 60 + "\n"
+        
+        total_debit = 0
+        total_credit = 0
+        total_assets = 0
+        total_liabilities = 0
+        total_equity = 0
+        total_income = 0
+        total_expenses = 0
+        
+        for acc in accounts:
+            tb_text += f"{acc['code']}: {acc['name']} = R {acc['balance']:,.2f}\n"
+            
+            # Categorize by account code patterns
+            code = acc['code'].upper() if acc['code'] else ""
+            name = acc['name'].upper() if acc['name'] else ""
+            bal = acc['balance']
+            
+            if acc['debit']:
+                total_debit += acc['debit']
+            if acc['credit']:
+                total_credit += acc['credit']
+            
+            # Basic categorization
+            if code.startswith(('1', 'B/S')) or any(x in name for x in ['ASSET', 'BANK', 'CASH', 'DEBTOR', 'INVENTORY', 'EQUIPMENT', 'VEHICLE']):
+                total_assets += bal
+            elif code.startswith(('2', '3')) or any(x in name for x in ['LIABILITY', 'CREDITOR', 'LOAN', 'VAT', 'PAYE']):
+                total_liabilities += abs(bal)
+            elif code.startswith('3') or any(x in name for x in ['CAPITAL', 'RETAINED', 'EQUITY', 'RESERVE']):
+                total_equity += abs(bal)
+            elif code.startswith(('4', 'I')) or any(x in name for x in ['SALES', 'INCOME', 'REVENUE', 'FEE']):
+                total_income += abs(bal)
+            elif code.startswith(('5', '6', '7', 'E')) or any(x in name for x in ['EXPENSE', 'COST', 'SALARY', 'WAGE', 'RENT', 'TELEPHONE']):
+                total_expenses += abs(bal)
+        
+        tb_text += "\n" + "=" * 60 + "\n"
+        tb_text += f"Total Debits: R {total_debit:,.2f}\n"
+        tb_text += f"Total Credits: R {total_credit:,.2f}\n"
+        tb_text += f"Difference: R {abs(total_debit - total_credit):,.2f}\n"
+        
+        prompt = f"""You are a senior South African Chartered Accountant analyzing a Trial Balance. 
+Your task is to provide deep, insightful analysis that a business owner can understand.
+
+{tb_text}
+
+Additional context: {business_context if business_context else "No additional context provided"}
+
+Provide your analysis as JSON with this EXACT structure:
+{{
+    "company_health": "good|warning|critical",
+    "health_summary": "One sentence overall health assessment",
+    
+    "key_metrics": {{
+        "gross_profit_margin": null or percentage,
+        "net_profit_margin": null or percentage,
+        "current_ratio": null or number,
+        "debt_ratio": null or percentage,
+        "debtor_days": null or number,
+        "creditor_days": null or number
+    }},
+    
+    "red_flags": [
+        {{"issue": "Description", "severity": "high|medium|low", "recommendation": "What to do"}}
+    ],
+    
+    "opportunities": [
+        {{"opportunity": "Description", "potential_benefit": "What they could gain"}}
+    ],
+    
+    "questions_for_owner": [
+        "Question that would help clarify something unusual?"
+    ],
+    
+    "sars_concerns": [
+        "Any items SARS might query during an audit"
+    ],
+    
+    "industry_comparison": "How does this compare to typical businesses",
+    
+    "top_3_priorities": [
+        "Most important thing to address first",
+        "Second priority",
+        "Third priority"
+    ]
+}}
+
+Focus on:
+1. Cash flow health - can they pay their bills?
+2. Profit margins - are they making money?
+3. Balance sheet strength - assets vs liabilities
+4. Tax compliance - VAT, PAYE issues
+5. Unusual patterns - things that don't look right
+6. SA-specific issues - SARS, BEE, industry norms
+
+Be specific with Rand amounts where relevant. Be honest but constructive.
+Return ONLY valid JSON, no other text."""
+
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "content-type": "application/json",
+                    "anthropic-version": "2023-06-01"
+                },
+                json={
+                    "model": cls.OPUS_MODEL,
+                    "max_tokens": 4000,
+                    "messages": [{"role": "user", "content": prompt}]
+                },
+                timeout=120
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                text = result.get("content", [{}])[0].get("text", "{}")
+                # Parse JSON from response
+                try:
+                    # Find JSON in response
+                    start = text.find('{')
+                    end = text.rfind('}') + 1
+                    if start >= 0 and end > start:
+                        return json.loads(text[start:end])
+                except:
+                    pass
+                return {"error": "Could not parse analysis", "raw": text[:500]}
+            else:
+                return {"error": f"API error: {response.status_code}"}
+        except Exception as e:
+            return {"error": str(e)}
+    
+    @classmethod
+    def chat_response(cls, analysis: dict, user_message: str = "", conversation_history: list = None) -> str:
+        """
+        Haiku generates friendly conversational response based on Opus analysis
+        """
+        api_key = Config.ANTHROPIC_API_KEY
+        if not api_key:
+            return "I'm sorry, I can't analyze right now. The AI service isn't configured."
+        
+        # Build context from Opus analysis
+        analysis_context = json.dumps(analysis, indent=2) if isinstance(analysis, dict) else str(analysis)
+        
+        system_prompt = """You are a friendly, approachable financial advisor chatbot for BB Fin, a South African accounting system.
+
+Your personality:
+- Warm and encouraging, never condescending
+- Use simple language, avoid jargon (or explain it when you must use it)
+- South African context - understand SARS, VAT, local business challenges
+- Be honest about problems but always offer hope and solutions
+- Use occasional light humor to keep things friendly
+- Address the business owner directly as "you"
+
+You have access to a detailed analysis from our senior accountant (Opus). Your job is to:
+1. Present the findings in a friendly, conversational way
+2. Prioritize what matters most to the business owner
+3. Answer follow-up questions based on the analysis
+4. Encourage action but don't overwhelm
+
+IMPORTANT: You're talking to a business owner, not an accountant. Make it understandable.
+
+The analysis from our senior accountant:
+""" + analysis_context
+
+        messages = []
+        if conversation_history:
+            messages.extend(conversation_history)
+        
+        if user_message:
+            messages.append({"role": "user", "content": user_message})
+        else:
+            messages.append({"role": "user", "content": "Please give me a friendly summary of the analysis you received from the senior accountant. Start with the overall health, then the most important findings."})
+        
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "content-type": "application/json",
+                    "anthropic-version": "2023-06-01"
+                },
+                json={
+                    "model": cls.HAIKU_MODEL,
+                    "max_tokens": 1500,
+                    "system": system_prompt,
+                    "messages": messages
+                },
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("content", [{}])[0].get("text", "I couldn't generate a response.")
+            else:
+                return f"I'm having trouble connecting right now. Please try again in a moment."
+        except Exception as e:
+            return f"Something went wrong: {str(e)}"
+
+
+@app.route("/tb-analyzer", methods=["GET", "POST"])
+def tb_analyzer():
+    """TB Analyzer - Upload and analyze any trial balance"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    content = '''
+    <div class="mb-lg">
+        <h1>🧠 TB Analyzer</h1>
+        <p class="text-muted">Upload any Trial Balance and let our AI accountant analyze it for you</p>
+    </div>
+    
+    <div class="card" style="border: 2px dashed var(--purple); background: rgba(139,92,246,0.05);">
+        <form method="POST" enctype="multipart/form-data" id="upload-form">
+            <div style="text-align:center;padding:40px;">
+                <div style="font-size:48px;margin-bottom:16px;">📊</div>
+                <h3 style="margin-bottom:8px;">Drop your Trial Balance here</h3>
+                <p class="text-muted" style="margin-bottom:20px;">CSV or Excel file with account codes, names, and balances</p>
+                
+                <input type="file" name="tb_file" id="tb-file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleFileSelect(this)">
+                <label for="tb-file" class="btn btn-purple btn-lg" style="cursor:pointer;">
+                    📁 Choose File
+                </label>
+                
+                <div id="file-info" style="margin-top:16px;display:none;">
+                    <span id="file-name" style="color:var(--green);font-weight:600;"></span>
+                </div>
+            </div>
+            
+            <div style="border-top:1px solid var(--border);padding:20px;margin-top:20px;">
+                <label class="form-label">Business Context (optional)</label>
+                <textarea name="context" class="form-input" rows="2" placeholder="e.g. Hardware store, been trading 5 years, had a tough year due to load shedding..."></textarea>
+            </div>
+            
+            <div style="padding:0 20px 20px;">
+                <button type="submit" class="btn btn-primary btn-lg" style="width:100%;" id="analyze-btn" disabled>
+                    🔍 Analyze Trial Balance
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <div class="card mt-lg" style="background:linear-gradient(135deg,rgba(139,92,246,0.1),rgba(59,130,246,0.1));">
+        <h3 style="color:#a78bfa;margin-bottom:12px;">🤖 How it works</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;">
+            <div>
+                <div style="font-size:24px;margin-bottom:8px;">1️⃣</div>
+                <strong>Upload</strong>
+                <p class="text-muted" style="font-size:13px;">Drop your TB file - CSV or Excel from any accounting system</p>
+            </div>
+            <div>
+                <div style="font-size:24px;margin-bottom:8px;">2️⃣</div>
+                <strong>Deep Analysis</strong>
+                <p class="text-muted" style="font-size:13px;">Our AI accountant examines ratios, patterns, and red flags</p>
+            </div>
+            <div>
+                <div style="font-size:24px;margin-bottom:8px;">3️⃣</div>
+                <strong>Friendly Report</strong>
+                <p class="text-muted" style="font-size:13px;">Get insights in plain language you can actually use</p>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    function handleFileSelect(input) {
+        if (input.files && input.files[0]) {
+            document.getElementById('file-name').textContent = input.files[0].name;
+            document.getElementById('file-info').style.display = 'block';
+            document.getElementById('analyze-btn').disabled = false;
+        }
+    }
+    
+    // Drag and drop
+    const form = document.getElementById('upload-form');
+    form.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        form.style.borderColor = 'var(--green)';
+    });
+    form.addEventListener('dragleave', () => {
+        form.style.borderColor = 'var(--purple)';
+    });
+    form.addEventListener('drop', (e) => {
+        e.preventDefault();
+        form.style.borderColor = 'var(--purple)';
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            document.getElementById('tb-file').files = e.dataTransfer.files;
+            handleFileSelect(document.getElementById('tb-file'));
+        }
+    });
+    </script>
+    '''
+    
+    return page_wrapper("TB Analyzer", content, active="reports", user=user)
+
+
+@app.route("/tb-analyzer", methods=["POST"])
+def tb_analyzer_process():
+    """Process uploaded TB and run analysis"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    file = request.files.get("tb_file")
+    context = request.form.get("context", "")
+    
+    if not file:
+        return redirect("/tb-analyzer")
+    
+    # Read file content
+    filename = file.filename.lower()
+    try:
+        if filename.endswith('.csv'):
+            content = file.read().decode('utf-8', errors='ignore')
+            accounts = TBAnalyzer.parse_tb_csv(content)
+        elif filename.endswith(('.xlsx', '.xls')):
+            # For Excel, we'd need openpyxl - for now convert to CSV-like
+            import io
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(io.BytesIO(file.read()))
+                ws = wb.active
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    rows.append(','.join(str(c) if c else '' for c in row))
+                content = '\n'.join(rows)
+                accounts = TBAnalyzer.parse_tb_csv(content)
+            except ImportError:
+                # Fallback - try reading as text
+                content = file.read().decode('utf-8', errors='ignore')
+                accounts = TBAnalyzer.parse_tb_csv(content)
+        else:
+            accounts = []
+    except Exception as e:
+        accounts = []
+    
+    if not accounts:
+        content = '''
+        <div class="mb-lg">
+            <a href="/tb-analyzer" class="text-muted">← Back</a>
+            <h1>🧠 TB Analyzer</h1>
+        </div>
+        <div class="alert alert-error">
+            Could not read the file. Please make sure it's a valid CSV or Excel file with account codes and balances.
+        </div>
+        <a href="/tb-analyzer" class="btn btn-primary">Try Again</a>
+        '''
+        return page_wrapper("TB Analyzer", content, active="reports", user=user)
+    
+    # Store in session for chat
+    session['tb_accounts'] = accounts
+    session['tb_context'] = context
+    
+    # Run Opus analysis
+    analysis = TBAnalyzer.analyze_with_opus(accounts, context)
+    session['tb_analysis'] = analysis
+    
+    # Get friendly chat response from Haiku
+    chat_response = TBAnalyzer.chat_response(analysis)
+    session['tb_chat_history'] = [
+        {"role": "assistant", "content": chat_response}
+    ]
+    
+    # Determine health color
+    health = analysis.get('company_health', 'unknown')
+    health_color = {'good': '#10b981', 'warning': '#f59e0b', 'critical': '#ef4444'}.get(health, '#8b8b9a')
+    health_icon = {'good': '✅', 'warning': '⚠️', 'critical': '🚨'}.get(health, '❓')
+    
+    # Build the chat interface
+    content = f'''
+    <div class="mb-lg">
+        <a href="/tb-analyzer" class="text-muted">← Upload New TB</a>
+        <h1>🧠 TB Analysis Results</h1>
+        <p class="text-muted">Analyzed {len(accounts)} accounts</p>
+    </div>
+    
+    <!-- Health Banner -->
+    <div class="card" style="background:linear-gradient(135deg,{health_color}20,{health_color}05);border-color:{health_color}50;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:16px;">
+            <div style="font-size:48px;">{health_icon}</div>
+            <div>
+                <h2 style="color:{health_color};margin:0;">Business Health: {health.upper()}</h2>
+                <p style="color:#c0c0c0;margin:4px 0 0;">{analysis.get('health_summary', '')}</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Chat Interface -->
+    <div class="card" id="chat-container">
+        <div id="chat-messages" style="max-height:500px;overflow-y:auto;padding:10px;">
+            <div class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
+                <div style="white-space:pre-wrap;line-height:1.6;">{chat_response}</div>
+            </div>
+        </div>
+        
+        <div style="border-top:1px solid var(--border);padding:16px;display:flex;gap:12px;">
+            <input type="text" id="chat-input" class="form-input" style="flex:1;" placeholder="Ask a follow-up question..." onkeypress="if(event.key==='Enter')sendMessage()">
+            <button type="button" class="btn btn-purple" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+    
+    <!-- Quick Actions -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:20px;">
+        <button class="btn btn-ghost" onclick="askQuestion('What are the biggest red flags?')">🚩 Red Flags</button>
+        <button class="btn btn-ghost" onclick="askQuestion('What opportunities do you see?')">💡 Opportunities</button>
+        <button class="btn btn-ghost" onclick="askQuestion('What would SARS look at?')">🏛️ SARS Concerns</button>
+        <button class="btn btn-ghost" onclick="askQuestion('What should I do first?')">📋 Priorities</button>
+    </div>
+    
+    <!-- Detailed Metrics (collapsible) -->
+    <details class="card mt-lg" style="cursor:pointer;">
+        <summary style="font-weight:600;padding:16px;">📊 Detailed Metrics & Findings</summary>
+        <div style="padding:0 16px 16px;">
+            <pre style="background:#0a0a10;padding:16px;border-radius:8px;overflow-x:auto;font-size:12px;">{json.dumps(analysis, indent=2)}</pre>
+        </div>
+    </details>
+    
+    <script>
+    function sendMessage() {{
+        const input = document.getElementById('chat-input');
+        const message = input.value.trim();
+        if (!message) return;
+        
+        // Add user message to chat
+        const chatMessages = document.getElementById('chat-messages');
+        chatMessages.innerHTML += `
+            <div class="chat-message user" style="background:rgba(59,130,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                <div style="font-weight:600;color:#60a5fa;margin-bottom:8px;">You</div>
+                <div>${{message}}</div>
+            </div>
+        `;
+        
+        // Add loading indicator
+        chatMessages.innerHTML += `
+            <div id="loading-msg" class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
+                <div style="color:#8b8b9a;">Thinking...</div>
+            </div>
+        `;
+        
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        input.value = '';
+        
+        // Send to backend
+        fetch('/tb-analyzer/chat', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{message: message}})
+        }})
+        .then(r => r.json())
+        .then(data => {{
+            document.getElementById('loading-msg').remove();
+            chatMessages.innerHTML += `
+                <div class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                    <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
+                    <div style="white-space:pre-wrap;line-height:1.6;">${{data.response}}</div>
+                </div>
+            `;
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }})
+        .catch(err => {{
+            document.getElementById('loading-msg').innerHTML = '<div style="color:#ef4444;">Error getting response</div>';
+        }});
+    }}
+    
+    function askQuestion(q) {{
+        document.getElementById('chat-input').value = q;
+        sendMessage();
+    }}
+    </script>
+    '''
+    
+    return page_wrapper("TB Analysis", content, active="reports", user=user)
+
+
+@app.route("/tb-analyzer/chat", methods=["POST"])
+def tb_analyzer_chat():
+    """Handle chat follow-up questions"""
+    user = UserSession.get_current_user()
+    if not user:
+        return jsonify({"error": "Not logged in"})
+    
+    data = request.get_json()
+    message = data.get("message", "")
+    
+    # Get stored analysis and history
+    analysis = session.get('tb_analysis', {})
+    history = session.get('tb_chat_history', [])
+    
+    # Add user message to history
+    history.append({"role": "user", "content": message})
+    
+    # Get response from Haiku
+    response = TBAnalyzer.chat_response(analysis, message, history)
+    
+    # Add assistant response to history
+    history.append({"role": "assistant", "content": response})
+    session['tb_chat_history'] = history[-20:]  # Keep last 20 messages
+    
+    return jsonify({"response": response})
 def journal_entry():
     """Manual journal entry for adjustments"""
     user = UserSession.get_current_user()
