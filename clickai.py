@@ -13537,7 +13537,7 @@ def tb_analyzer():
         <details class="card mt-lg" style="cursor:pointer;">
             <summary style="font-weight:600;padding:16px;">📊 Detailed Metrics & Findings</summary>
             <div style="padding:0 16px 16px;">
-                <pre style="background:#0a0a10;padding:16px;border-radius:8px;overflow-x:auto;font-size:12px;">{json.dumps(analysis, indent=2)}</pre>
+                <pre id="analysis-json" style="background:#0a0a10;padding:16px;border-radius:8px;overflow-x:auto;font-size:12px;">Loading analysis data...</pre>
             </div>
         </details>
         
@@ -13591,73 +13591,64 @@ def tb_analyzer():
             sendMessage();
         }}
         
-        // Load AI analysis async on page load using Server-Sent Events
+        // Load AI analysis async on page load
         window.onload = function() {{
-            // Use EventSource for streaming - keeps connection alive, bypasses timeout
-            const eventSource = new EventSource('/tb-analyzer/analyze-stream');
-            
-            eventSource.onmessage = function(event) {{
-                const data = JSON.parse(event.data);
-                
-                if (data.status === 'starting') {{
-                    // Show progress
-                    document.getElementById('health-summary').textContent = 'Analysis started...';
-                }} else if (data.status === 'analyzed') {{
-                    // Show partial progress
-                    document.getElementById('health-summary').textContent = 'Generating insights...';
-                }} else if (data.status === 'complete') {{
-                    // Full result received
-                    eventSource.close();
-                    
-                    // Update health banner
-                    const colors = {{'good': '#10b981', 'warning': '#f59e0b', 'critical': '#ef4444'}};
-                    const icons = {{'good': '✅', 'warning': '⚠️', 'critical': '🚨'}};
-                    const health = data.health || 'unknown';
-                    const color = colors[health] || '#8b8b9a';
-                    const icon = icons[health] || '❓';
-                    
-                    document.getElementById('health-icon').textContent = icon;
-                    document.getElementById('health-title').textContent = 'Business Health: ' + health.toUpperCase();
-                    document.getElementById('health-title').style.color = color;
-                    document.getElementById('health-summary').textContent = data.summary || '';
-                    document.getElementById('health-banner').style.background = 'linear-gradient(135deg,' + color + '20,' + color + '05)';
-                    document.getElementById('health-banner').style.borderColor = color + '50';
-                    
-                    // Update chat with AI response
-                    document.getElementById('initial-message').innerHTML = `
-                        <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
-                        <div style="white-space:pre-wrap;line-height:1.6;">${{data.chat_response}}</div>
-                    `;
-                    
-                    // Enable inputs
-                    document.getElementById('chat-input').disabled = false;
-                    document.getElementById('send-btn').disabled = false;
-                    document.getElementById('q1').disabled = false;
-                    document.getElementById('q2').disabled = false;
-                    document.getElementById('q3').disabled = false;
-                    document.getElementById('q4').disabled = false;
-                }} else if (data.status === 'error') {{
-                    eventSource.close();
-                    document.getElementById('initial-message').innerHTML = `
-                        <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
-                        <div style="color:#ef4444;">${{data.chat_response || 'Analysis failed'}}</div>
-                    `;
-                    document.getElementById('health-icon').textContent = '⚠️';
-                    document.getElementById('health-title').textContent = 'Analysis Failed';
-                    document.getElementById('health-summary').textContent = data.summary || 'Could not complete analysis';
+            fetch('/tb-analyzer/analyze', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}}
+            }})
+            .then(r => {{
+                if (!r.ok) throw new Error('Server error');
+                return r.json();
+            }})
+            .then(data => {{
+                if (data.error) {{
+                    throw new Error(data.error);
                 }}
-            }};
-            
-            eventSource.onerror = function(err) {{
-                eventSource.close();
+                
+                // Update health banner
+                const colors = {{'good': '#10b981', 'warning': '#f59e0b', 'critical': '#ef4444'}};
+                const icons = {{'good': '✅', 'warning': '⚠️', 'critical': '🚨'}};
+                const health = data.health || 'unknown';
+                const color = colors[health] || '#8b8b9a';
+                const icon = icons[health] || '❓';
+                
+                document.getElementById('health-icon').textContent = icon;
+                document.getElementById('health-title').textContent = 'Business Health: ' + health.toUpperCase();
+                document.getElementById('health-title').style.color = color;
+                document.getElementById('health-summary').textContent = data.summary || '';
+                document.getElementById('health-banner').style.background = 'linear-gradient(135deg,' + color + '20,' + color + '05)';
+                document.getElementById('health-banner').style.borderColor = color + '50';
+                
+                // Update chat with AI response
                 document.getElementById('initial-message').innerHTML = `
                     <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
-                    <div style="color:#ef4444;">Sorry, the analysis timed out. Please try again with a smaller file or check your connection.</div>
+                    <div style="white-space:pre-wrap;line-height:1.6;">${{data.chat_response}}</div>
+                `;
+                
+                // Enable inputs
+                document.getElementById('chat-input').disabled = false;
+                document.getElementById('send-btn').disabled = false;
+                document.getElementById('q1').disabled = false;
+                document.getElementById('q2').disabled = false;
+                document.getElementById('q3').disabled = false;
+                document.getElementById('q4').disabled = false;
+                
+                // Update detailed analysis JSON
+                if (data.analysis) {{
+                    document.getElementById('analysis-json').textContent = JSON.stringify(data.analysis, null, 2);
+                }}
+            }})
+            .catch(err => {{
+                console.error('Analysis error:', err);
+                document.getElementById('initial-message').innerHTML = `
+                    <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Assistant</div>
+                    <div style="color:#ef4444;">Sorry, the analysis failed: ${{err.message}}. Please try again.</div>
                 `;
                 document.getElementById('health-icon').textContent = '⚠️';
                 document.getElementById('health-title').textContent = 'Analysis Failed';
                 document.getElementById('health-summary').textContent = 'Could not complete analysis - try again';
-            }};
+            }});
         }};
         </script>
         <style>@keyframes spin {{ to {{ transform: rotate(360deg); }} }}</style>
@@ -13783,78 +13774,9 @@ def tb_analyzer_chat():
     return jsonify({"response": response})
 
 
-@app.route("/tb-analyzer/analyze-stream")
-def tb_analyzer_analyze_stream():
-    """SSE streaming endpoint for AI analysis - bypasses Render 30s timeout"""
-    from flask import Response
-    
-    user = UserSession.get_current_user()
-    if not user:
-        def error_stream():
-            yield "data: {\"status\": \"error\", \"chat_response\": \"Not logged in\"}\n\n"
-        return Response(error_stream(), mimetype='text/event-stream')
-    
-    # Get stored accounts from session
-    accounts = session.get('tb_accounts', [])
-    context = session.get('tb_context', '')
-    
-    if not accounts:
-        def error_stream():
-            yield "data: {\"status\": \"error\", \"health\": \"unknown\", \"summary\": \"Please upload a trial balance first\", \"chat_response\": \"I don't have any data to analyze. Please go back and upload a trial balance file.\"}\n\n"
-        return Response(error_stream(), mimetype='text/event-stream')
-    
-    def generate():
-        """Stream response to keep connection alive and bypass Render timeout"""
-        # Send initial keepalive immediately - this is the key!
-        yield "data: {\"status\": \"starting\"}\n\n"
-        
-        try:
-            # Run analysis with Opus
-            analysis = TBAnalyzer.analyze_with_opus(accounts, context)
-            session['tb_analysis'] = analysis
-            
-            # Send progress update
-            yield f"data: {{\"status\": \"analyzed\", \"health\": \"{analysis.get('company_health', 'unknown')}\"}}\n\n"
-            
-            # Get chat response from Haiku
-            chat_response = TBAnalyzer.chat_response(analysis)
-            session['tb_chat_history'] = [
-                {"role": "assistant", "content": chat_response}
-            ]
-            
-            # Send final result
-            result = {
-                "status": "complete",
-                "health": analysis.get('company_health', 'unknown'),
-                "summary": analysis.get('health_summary', ''),
-                "chat_response": chat_response,
-                "analysis": analysis
-            }
-            yield f"data: {json.dumps(result)}\n\n"
-            
-        except Exception as e:
-            error_result = {
-                "status": "error",
-                "error": str(e),
-                "health": "unknown",
-                "summary": "Analysis failed",
-                "chat_response": f"Sorry, I encountered an error while analyzing: {str(e)}"
-            }
-            yield f"data: {json.dumps(error_result)}\n\n"
-    
-    # Return Server-Sent Events stream
-    return Response(generate(), mimetype='text/event-stream', headers={
-        'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no'  # Disable nginx buffering
-    })
-
-
 @app.route("/tb-analyzer/analyze", methods=["POST"])
 def tb_analyzer_analyze():
-    """Async endpoint to run AI analysis - uses streaming to bypass Render timeout"""
-    from flask import Response
-    import time
-    
+    """Async endpoint to run AI analysis - called via JavaScript"""
     user = UserSession.get_current_user()
     if not user:
         return jsonify({"error": "Not logged in"})
@@ -13871,50 +13793,30 @@ def tb_analyzer_analyze():
             "chat_response": "I don't have any data to analyze. Please go back and upload a trial balance file."
         })
     
-    def generate():
-        """Stream response to keep connection alive and bypass Render timeout"""
-        # Send initial keepalive immediately
-        yield "data: {\"status\": \"starting\"}\n\n"
+    try:
+        # Run analysis with Opus
+        analysis = TBAnalyzer.analyze_with_opus(accounts, context)
+        session['tb_analysis'] = analysis
         
-        try:
-            # Run analysis with Opus
-            analysis = TBAnalyzer.analyze_with_opus(accounts, context)
-            session['tb_analysis'] = analysis
-            
-            # Send progress update
-            yield f"data: {{\"status\": \"analyzed\", \"health\": \"{analysis.get('company_health', 'unknown')}\"}}\n\n"
-            
-            # Get chat response from Haiku
-            chat_response = TBAnalyzer.chat_response(analysis)
-            session['tb_chat_history'] = [
-                {"role": "assistant", "content": chat_response}
-            ]
-            
-            # Send final result
-            result = {
-                "status": "complete",
-                "health": analysis.get('company_health', 'unknown'),
-                "summary": analysis.get('health_summary', ''),
-                "chat_response": chat_response,
-                "analysis": analysis
-            }
-            yield f"data: {json.dumps(result)}\n\n"
-            
-        except Exception as e:
-            error_result = {
-                "status": "error",
-                "error": str(e),
-                "health": "unknown",
-                "summary": "Analysis failed",
-                "chat_response": f"Sorry, I encountered an error while analyzing: {str(e)}"
-            }
-            yield f"data: {json.dumps(error_result)}\n\n"
-    
-    # Return Server-Sent Events stream
-    return Response(generate(), mimetype='text/event-stream', headers={
-        'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no'  # Disable nginx buffering
-    })
+        # Get chat response from Haiku
+        chat_response = TBAnalyzer.chat_response(analysis)
+        session['tb_chat_history'] = [
+            {"role": "assistant", "content": chat_response}
+        ]
+        
+        return jsonify({
+            "health": analysis.get('company_health', 'unknown'),
+            "summary": analysis.get('health_summary', ''),
+            "chat_response": chat_response,
+            "analysis": analysis
+        })
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "health": "unknown",
+            "summary": "Analysis failed",
+            "chat_response": f"Sorry, I encountered an error while analyzing: {str(e)}"
+        })
 
 
 @app.route("/journal-entry", methods=["GET", "POST"])
