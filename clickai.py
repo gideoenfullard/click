@@ -4973,7 +4973,7 @@ def get_header_html(active: str = "", user: dict = None) -> str:
             
             business_html = f'''
             <div class="business-switcher">
-                <button class="biz-current" onclick="toggleBizDropdown()">
+                <button class="biz-current" onclick="toggleBizDropdown(event)">
                     <span class="biz-icon">{current_icon}</span>
                     <span class="biz-name">{safe_string(current_name)}</span>
                     <span class="biz-arrow">▼</span>
@@ -4987,34 +4987,45 @@ def get_header_html(active: str = "", user: dict = None) -> str:
             .biz-current {{ 
                 display: flex; align-items: center; gap: 8px;
                 background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.3);
-                padding: 6px 12px; border-radius: 8px; cursor: pointer;
-                color: #a78bfa; font-size: 13px; font-weight: 600;
+                padding: 8px 14px; border-radius: 8px; cursor: pointer;
+                color: #a78bfa; font-size: 14px; font-weight: 600;
+                transition: all 0.2s;
             }}
-            .biz-current:hover {{ background: rgba(139, 92, 246, 0.25); }}
-            .biz-icon {{ font-size: 16px; }}
-            .biz-name {{ max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-            .biz-arrow {{ font-size: 10px; opacity: 0.7; }}
+            .biz-current:hover {{ background: rgba(139, 92, 246, 0.25); border-color: rgba(139, 92, 246, 0.5); }}
+            .biz-icon {{ font-size: 18px; }}
+            .biz-name {{ max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+            .biz-arrow {{ font-size: 10px; opacity: 0.7; transition: transform 0.2s; }}
             .biz-dropdown {{ 
-                display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
-                background: #12121a; border: 1px solid #2a2a4a; border-radius: 8px;
-                min-width: 200px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 1000;
+                display: none; position: absolute; top: calc(100% + 8px); right: 0;
+                background: #12121a; border: 1px solid #2a2a4a; border-radius: 12px;
+                min-width: 220px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 9999;
                 overflow: hidden;
             }}
-            .biz-dropdown.show {{ display: block; }}
+            .biz-dropdown.show {{ display: block; animation: fadeIn 0.15s ease; }}
+            @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(-8px); }} to {{ opacity: 1; transform: translateY(0); }} }}
             .biz-option {{ 
-                display: block; padding: 12px 16px; color: #f0f0f0; text-decoration: none;
-                font-size: 13px; border-bottom: 1px solid #1a1a2e;
+                display: block; padding: 14px 18px; color: #f0f0f0; text-decoration: none;
+                font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.05);
+                transition: background 0.15s;
             }}
-            .biz-option:hover {{ background: rgba(139, 92, 246, 0.1); }}
-            .biz-option-new {{ color: #8b5cf6; border-bottom: none; }}
+            .biz-option:hover {{ background: rgba(139, 92, 246, 0.15); }}
+            .biz-option:last-child {{ border-bottom: none; }}
+            .biz-option-new {{ color: #8b5cf6; font-weight: 600; }}
             </style>
             <script>
-            function toggleBizDropdown() {{
-                document.getElementById('biz-dropdown').classList.toggle('show');
+            function toggleBizDropdown(e) {{
+                e.preventDefault();
+                e.stopPropagation();
+                var dropdown = document.getElementById('biz-dropdown');
+                if (dropdown) {{
+                    dropdown.classList.toggle('show');
+                }}
             }}
             document.addEventListener('click', function(e) {{
-                if (!e.target.closest('.business-switcher')) {{
-                    document.getElementById('biz-dropdown')?.classList.remove('show');
+                var dropdown = document.getElementById('biz-dropdown');
+                var switcher = document.querySelector('.business-switcher');
+                if (dropdown && switcher && !switcher.contains(e.target)) {{
+                    dropdown.classList.remove('show');
                 }}
             }});
             </script>
