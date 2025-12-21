@@ -6220,8 +6220,8 @@ def landing():
             </p>
             
             <div class="hero-buttons">
-                <a href="/demo" class="btn btn-primary">Try the Demo — It's Free</a>
-                <a href="/quickstart" class="btn btn-ghost">Import My Data</a>
+                <a href="/free-analysis" class="btn btn-primary" style="background: linear-gradient(135deg, #10b981, #059669);">🧠 Free TB Analysis — No Signup</a>
+                <a href="/demo" class="btn btn-ghost">Try Full Demo</a>
             </div>
             
             <div class="hero-stats">
@@ -6238,6 +6238,24 @@ def landing():
                     <div class="hero-stat-label">SARS compliant</div>
                 </div>
             </div>
+        </div>
+    </section>
+    
+    <!-- FREE TB ANALYZER PROMO -->
+    <section class="section" style="background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(139,92,246,0.15)); text-align: center; padding: 80px 48px;">
+        <div style="max-width: 800px; margin: 0 auto;">
+            <div style="font-size: 64px; margin-bottom: 24px;">🧠</div>
+            <h2 class="section-title" style="margin: 0 auto 16px;">Free AI Business Health Check</h2>
+            <p class="section-subtitle" style="margin: 0 auto 32px; max-width: 600px;">
+                Upload your Trial Balance from any accounting system. Our AI will analyze your business health, 
+                spot red flags, find opportunities, and answer your questions — <strong>completely free, no signup required</strong>.
+            </p>
+            <a href="/free-analysis" class="btn btn-primary" style="padding: 20px 48px; font-size: 18px; background: linear-gradient(135deg, #10b981, #059669);">
+                Upload My Trial Balance →
+            </a>
+            <p style="color: var(--text-muted); font-size: 13px; margin-top: 16px;">
+                Works with exports from Sage, Pastel, Xero, QuickBooks, or any CSV/Excel file
+            </p>
         </div>
     </section>
     
@@ -6472,6 +6490,807 @@ def landing():
 </html>'''
     
     return html
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FREE TB ANALYZER - PUBLIC (No Login Required) - THE SALES HOOK!
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/free-analysis", methods=["GET", "POST"])
+def free_analysis():
+    """Free TB Analysis - No login required - The killer sales demo!"""
+    
+    if request.method == "POST":
+        file = request.files.get("tb_file")
+        context = request.form.get("context", "")
+        
+        if not file:
+            return redirect("/free-analysis")
+        
+        # Read file content
+        filename = file.filename.lower()
+        try:
+            if filename.endswith('.csv'):
+                content = file.read().decode('utf-8', errors='ignore')
+                accounts = TBAnalyzer.parse_tb_csv(content)
+            elif filename.endswith(('.xlsx', '.xls')):
+                import io
+                try:
+                    import openpyxl
+                    wb = openpyxl.load_workbook(io.BytesIO(file.read()))
+                    ws = wb.active
+                    rows = []
+                    for row in ws.iter_rows(values_only=True):
+                        rows.append(','.join(str(c) if c else '' for c in row))
+                    content = '\n'.join(rows)
+                    accounts = TBAnalyzer.parse_tb_csv(content)
+                except ImportError:
+                    content = file.read().decode('utf-8', errors='ignore')
+                    accounts = TBAnalyzer.parse_tb_csv(content)
+            else:
+                accounts = []
+        except:
+            accounts = []
+        
+        if not accounts:
+            return free_analysis_page(error="Could not read the file. Please make sure it's a valid CSV or Excel file with account names and balances.")
+        
+        # Store in session
+        session['free_tb_accounts'] = accounts
+        session['free_tb_context'] = context
+        session['free_tb_chat_history'] = []
+        
+        # Calculate quick stats
+        total_debit = sum(a['debit'] for a in accounts)
+        total_credit = sum(a['credit'] for a in accounts)
+        
+        return free_analysis_results(accounts, total_debit, total_credit)
+    
+    return free_analysis_page()
+
+
+def free_analysis_page(error=None):
+    """Render the free analysis upload page"""
+    error_html = f'<div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;padding:16px;border-radius:8px;margin-bottom:24px;">{error}</div>' if error else ''
+    
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Free AI Business Analysis - Click AI</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        :root {{
+            --bg-dark: #050508;
+            --bg-card: #0a0a12;
+            --purple: #8b5cf6;
+            --green: #10b981;
+            --text: #f0f0f5;
+            --text-muted: #8b8b9a;
+        }}
+        body {{
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+        }}
+        .container {{
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }}
+        .logo {{
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--purple), #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-decoration: none;
+            display: inline-block;
+            margin-bottom: 40px;
+        }}
+        h1 {{
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 36px;
+            margin-bottom: 16px;
+        }}
+        h1 span {{
+            background: linear-gradient(135deg, var(--green), #059669);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+        .subtitle {{
+            color: var(--text-muted);
+            font-size: 18px;
+            margin-bottom: 40px;
+            line-height: 1.6;
+        }}
+        .upload-box {{
+            background: var(--bg-card);
+            border: 2px dashed var(--green);
+            border-radius: 16px;
+            padding: 60px 40px;
+            text-align: center;
+            transition: all 0.3s;
+        }}
+        .upload-box:hover {{
+            border-color: var(--purple);
+            background: rgba(139,92,246,0.05);
+        }}
+        .upload-icon {{
+            font-size: 64px;
+            margin-bottom: 20px;
+        }}
+        .upload-title {{
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }}
+        .upload-desc {{
+            color: var(--text-muted);
+            margin-bottom: 24px;
+        }}
+        .btn {{
+            padding: 16px 32px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }}
+        .btn-primary {{
+            background: linear-gradient(135deg, var(--green), #059669);
+            color: white;
+        }}
+        .btn-primary:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(16,185,129,0.3);
+        }}
+        .context-box {{
+            margin-top: 24px;
+            text-align: left;
+        }}
+        .context-label {{
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }}
+        .context-input {{
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 14px;
+            resize: vertical;
+        }}
+        .context-input:focus {{
+            outline: none;
+            border-color: var(--green);
+        }}
+        .formats {{
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }}
+        .format-badge {{
+            background: rgba(255,255,255,0.05);
+            padding: 8px 16px;
+            border-radius: 100px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }}
+        .features {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 48px;
+        }}
+        .feature {{
+            background: var(--bg-card);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+        }}
+        .feature-icon {{
+            font-size: 32px;
+            margin-bottom: 12px;
+        }}
+        .feature-title {{
+            font-weight: 600;
+            margin-bottom: 4px;
+        }}
+        .feature-desc {{
+            font-size: 13px;
+            color: var(--text-muted);
+        }}
+        .file-input {{ display: none; }}
+        .file-name {{
+            color: var(--green);
+            font-weight: 600;
+            margin-top: 16px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="logo">← Click AI</a>
+        
+        <h1>Free <span>AI Business Analysis</span></h1>
+        <p class="subtitle">
+            Upload your Trial Balance and get instant AI-powered insights. 
+            No signup, no credit card, no strings attached.
+        </p>
+        
+        {error_html}
+        
+        <form method="POST" enctype="multipart/form-data" id="upload-form">
+            <div class="upload-box" onclick="document.getElementById('file-input').click()">
+                <div class="upload-icon">📊</div>
+                <div class="upload-title">Drop your Trial Balance here</div>
+                <div class="upload-desc">or click to browse files</div>
+                <input type="file" name="tb_file" id="file-input" class="file-input" accept=".csv,.xlsx,.xls" onchange="handleFile(this)">
+                <div id="file-name" class="file-name" style="display:none;"></div>
+            </div>
+            
+            <div class="context-box">
+                <div class="context-label">Tell us about your business (optional - helps AI give better advice)</div>
+                <textarea name="context" class="context-input" rows="2" placeholder="e.g. Hardware store, trading for 5 years, struggling with cash flow lately..."></textarea>
+            </div>
+            
+            <div style="text-align:center;margin-top:24px;">
+                <button type="submit" class="btn btn-primary" id="analyze-btn" disabled>
+                    🧠 Analyze My Business
+                </button>
+            </div>
+            
+            <div class="formats">
+                <span class="format-badge">Sage Pastel</span>
+                <span class="format-badge">Sage One</span>
+                <span class="format-badge">Xero</span>
+                <span class="format-badge">QuickBooks</span>
+                <span class="format-badge">Excel/CSV</span>
+            </div>
+        </form>
+        
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">🔍</div>
+                <div class="feature-title">Deep Analysis</div>
+                <div class="feature-desc">AI examines every account for red flags</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">💬</div>
+                <div class="feature-title">Ask Questions</div>
+                <div class="feature-desc">Chat with AI about your numbers</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🏛️</div>
+                <div class="feature-title">SARS Ready</div>
+                <div class="feature-desc">Spots compliance issues</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🔒</div>
+                <div class="feature-title">Private & Secure</div>
+                <div class="feature-desc">Your data is never stored</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    function handleFile(input) {{
+        if (input.files && input.files[0]) {{
+            document.getElementById('file-name').textContent = '✓ ' + input.files[0].name;
+            document.getElementById('file-name').style.display = 'block';
+            document.getElementById('analyze-btn').disabled = false;
+        }}
+    }}
+    
+    // Drag and drop
+    const uploadBox = document.querySelector('.upload-box');
+    uploadBox.addEventListener('dragover', (e) => {{
+        e.preventDefault();
+        uploadBox.style.borderColor = 'var(--purple)';
+        uploadBox.style.background = 'rgba(139,92,246,0.1)';
+    }});
+    uploadBox.addEventListener('dragleave', () => {{
+        uploadBox.style.borderColor = 'var(--green)';
+        uploadBox.style.background = 'var(--bg-card)';
+    }});
+    uploadBox.addEventListener('drop', (e) => {{
+        e.preventDefault();
+        uploadBox.style.borderColor = 'var(--green)';
+        if (e.dataTransfer.files.length) {{
+            document.getElementById('file-input').files = e.dataTransfer.files;
+            handleFile(document.getElementById('file-input'));
+        }}
+    }});
+    </script>
+</body>
+</html>'''
+    return html
+
+
+def free_analysis_results(accounts, total_debit, total_credit):
+    """Render the free analysis results page with chat"""
+    net = total_credit - total_debit
+    
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Business Analysis - Click AI</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        :root {{
+            --bg-dark: #050508;
+            --bg-card: #0a0a12;
+            --purple: #8b5cf6;
+            --green: #10b981;
+            --red: #ef4444;
+            --text: #f0f0f5;
+            --text-muted: #8b8b9a;
+        }}
+        body {{
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+        }}
+        .container {{
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }}
+        .header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }}
+        .logo {{
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--purple), #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-decoration: none;
+        }}
+        h1 {{
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 28px;
+            margin-bottom: 8px;
+        }}
+        .subtitle {{
+            color: var(--text-muted);
+            font-size: 14px;
+        }}
+        .stats {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }}
+        .stat {{
+            background: var(--bg-card);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }}
+        .stat-value {{
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+        }}
+        .stat-label {{
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }}
+        .health-banner {{
+            background: linear-gradient(135deg, rgba(139,92,246,0.2), rgba(139,92,246,0.05));
+            border: 1px solid rgba(139,92,246,0.3);
+            border-radius: 16px;
+            padding: 24px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 24px;
+        }}
+        .health-icon {{
+            font-size: 48px;
+        }}
+        .health-title {{
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--purple);
+        }}
+        .health-summary {{
+            color: var(--text-muted);
+            font-size: 14px;
+            margin-top: 4px;
+        }}
+        .chat-box {{
+            background: var(--bg-card);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 16px;
+            overflow: hidden;
+        }}
+        .chat-messages {{
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 20px;
+        }}
+        .chat-message {{
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }}
+        .chat-message.assistant {{
+            background: rgba(139,92,246,0.1);
+        }}
+        .chat-message.user {{
+            background: rgba(59,130,246,0.1);
+        }}
+        .chat-sender {{
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }}
+        .chat-sender.assistant {{ color: var(--purple); }}
+        .chat-sender.user {{ color: #60a5fa; }}
+        .chat-text {{
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }}
+        .chat-input-row {{
+            display: flex;
+            gap: 12px;
+            padding: 16px 20px;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }}
+        .chat-input {{
+            flex: 1;
+            padding: 12px 16px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 14px;
+        }}
+        .chat-input:focus {{
+            outline: none;
+            border-color: var(--purple);
+        }}
+        .btn {{
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }}
+        .btn-purple {{
+            background: var(--purple);
+            color: white;
+        }}
+        .btn-purple:hover {{
+            background: #7c3aed;
+        }}
+        .quick-questions {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-top: 20px;
+        }}
+        .quick-btn {{
+            padding: 12px 16px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }}
+        .quick-btn:hover {{
+            background: rgba(139,92,246,0.1);
+            border-color: var(--purple);
+        }}
+        .cta-box {{
+            background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(139,92,246,0.15));
+            border: 1px solid rgba(16,185,129,0.3);
+            border-radius: 16px;
+            padding: 32px;
+            text-align: center;
+            margin-top: 32px;
+        }}
+        .cta-title {{
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 24px;
+            margin-bottom: 12px;
+        }}
+        .cta-desc {{
+            color: var(--text-muted);
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }}
+        .cta-btn {{
+            background: linear-gradient(135deg, var(--green), #059669);
+            color: white;
+            padding: 16px 32px;
+            font-size: 16px;
+            text-decoration: none;
+            display: inline-block;
+        }}
+        .cta-features {{
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 24px;
+            font-size: 14px;
+            color: var(--text-muted);
+        }}
+        .cta-features span::before {{
+            content: '✓';
+            color: var(--green);
+            margin-right: 8px;
+        }}
+        @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+        .spinner {{
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--text-muted);
+            border-top-color: var(--purple);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <a href="/" class="logo">Click AI</a>
+            </div>
+            <a href="/free-analysis" style="color: var(--text-muted); text-decoration: none; font-size: 14px;">← Upload New File</a>
+        </div>
+        
+        <h1>🧠 Your Business Analysis</h1>
+        <p class="subtitle">Analyzed {len(accounts)} accounts from your trial balance</p>
+        
+        <div class="stats" style="margin-top: 24px;">
+            <div class="stat">
+                <div class="stat-value" style="color: var(--green);">R {total_credit:,.0f}</div>
+                <div class="stat-label">Total Credits</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" style="color: var(--red);">R {total_debit:,.0f}</div>
+                <div class="stat-label">Total Debits</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" style="color: var(--purple);">R {abs(net):,.0f}</div>
+                <div class="stat-label">{"Net Profit" if net > 0 else "Net Loss"}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" style="color: #60a5fa;">{len(accounts)}</div>
+                <div class="stat-label">Accounts</div>
+            </div>
+        </div>
+        
+        <div class="health-banner" id="health-banner">
+            <div class="health-icon" id="health-icon">⏳</div>
+            <div>
+                <div class="health-title" id="health-title">Analyzing your business...</div>
+                <div class="health-summary" id="health-summary">Our AI is examining your numbers. This takes about 15 seconds.</div>
+            </div>
+        </div>
+        
+        <div class="chat-box">
+            <div class="chat-messages" id="chat-messages">
+                <div class="chat-message assistant" id="initial-message">
+                    <div class="chat-sender assistant">🤖 BB Fin Advisor</div>
+                    <div class="chat-text">
+                        <span class="spinner"></span> Analyzing your trial balance...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-input-row">
+                <input type="text" class="chat-input" id="chat-input" placeholder="Ask a follow-up question..." onkeypress="if(event.key==='Enter')sendMessage()" disabled>
+                <button class="btn btn-purple" onclick="sendMessage()" id="send-btn" disabled>Send</button>
+            </div>
+        </div>
+        
+        <div class="quick-questions" id="quick-questions" style="opacity: 0.5; pointer-events: none;">
+            <button class="quick-btn" onclick="askQuestion('What are the biggest red flags?')">🚩 Red Flags</button>
+            <button class="quick-btn" onclick="askQuestion('What opportunities do you see?')">💡 Opportunities</button>
+            <button class="quick-btn" onclick="askQuestion('What would SARS look at?')">🏛️ SARS Concerns</button>
+            <button class="quick-btn" onclick="askQuestion('What should I prioritize?')">📋 Priorities</button>
+            <button class="quick-btn" onclick="askQuestion('How is my cash flow?')">💰 Cash Flow</button>
+            <button class="quick-btn" onclick="askQuestion('Am I profitable?')">📈 Profitability</button>
+        </div>
+        
+        <!-- THE SOFT SELL -->
+        <div class="cta-box">
+            <div class="cta-title">💡 Imagine this insight — every day</div>
+            <div class="cta-desc">
+                What if you could chat with an AI that knows ALL your transactions, customers, and history?<br>
+                Not just a once-off upload — <strong>real-time insight into your business</strong>, whenever you need it.
+            </div>
+            <a href="/register" class="btn cta-btn">Start Free Trial — No Credit Card</a>
+            <div class="cta-features">
+                <span>Live transaction data</span>
+                <span>Automatic VAT returns</span>
+                <span>Invoice in 30 seconds</span>
+                <span>SARS compliant</span>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    // Load analysis on page load
+    window.onload = function() {{
+        fetch('/free-analysis/analyze', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}}
+        }})
+        .then(r => r.json())
+        .then(data => {{
+            // Update health banner
+            const colors = {{'good': '#10b981', 'warning': '#f59e0b', 'critical': '#ef4444'}};
+            const icons = {{'good': '✅', 'warning': '⚠️', 'critical': '🚨'}};
+            const health = data.health || 'unknown';
+            const color = colors[health] || '#8b8b9a';
+            const icon = icons[health] || '📊';
+            
+            document.getElementById('health-icon').textContent = icon;
+            document.getElementById('health-title').textContent = 'Business Health: ' + health.toUpperCase();
+            document.getElementById('health-title').style.color = color;
+            document.getElementById('health-summary').textContent = data.summary || '';
+            document.getElementById('health-banner').style.background = 'linear-gradient(135deg, ' + color + '20, ' + color + '05)';
+            document.getElementById('health-banner').style.borderColor = color + '50';
+            
+            // Update chat
+            document.getElementById('initial-message').innerHTML = `
+                <div class="chat-sender assistant">🤖 BB Fin Advisor</div>
+                <div class="chat-text">${{data.chat_response || 'Analysis complete!'}}</div>
+            `;
+            
+            // Enable inputs
+            document.getElementById('chat-input').disabled = false;
+            document.getElementById('send-btn').disabled = false;
+            document.getElementById('quick-questions').style.opacity = '1';
+            document.getElementById('quick-questions').style.pointerEvents = 'auto';
+        }})
+        .catch(err => {{
+            document.getElementById('initial-message').innerHTML = `
+                <div class="chat-sender assistant">🤖 BB Fin Advisor</div>
+                <div class="chat-text" style="color: #fca5a5;">Sorry, the analysis timed out. Please try again with a smaller file.</div>
+            `;
+        }});
+    }};
+    
+    function sendMessage() {{
+        const input = document.getElementById('chat-input');
+        const message = input.value.trim();
+        if (!message) return;
+        
+        const chatMessages = document.getElementById('chat-messages');
+        chatMessages.innerHTML += `
+            <div class="chat-message user">
+                <div class="chat-sender user">You</div>
+                <div class="chat-text">${{message}}</div>
+            </div>
+        `;
+        chatMessages.innerHTML += `
+            <div class="chat-message assistant" id="loading-msg">
+                <div class="chat-sender assistant">🤖 BB Fin Advisor</div>
+                <div class="chat-text"><span class="spinner"></span> Thinking...</div>
+            </div>
+        `;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        input.value = '';
+        
+        fetch('/free-analysis/chat', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{message: message}})
+        }})
+        .then(r => r.json())
+        .then(data => {{
+            document.getElementById('loading-msg').remove();
+            chatMessages.innerHTML += `
+                <div class="chat-message assistant">
+                    <div class="chat-sender assistant">🤖 BB Fin Advisor</div>
+                    <div class="chat-text">${{data.response}}</div>
+                </div>
+            `;
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }});
+    }}
+    
+    function askQuestion(q) {{
+        document.getElementById('chat-input').value = q;
+        sendMessage();
+    }}
+    </script>
+</body>
+</html>'''
+    return html
+
+
+@app.route("/free-analysis/analyze", methods=["POST"])
+def free_analysis_analyze():
+    """Run AI analysis for free TB analyzer"""
+    accounts = session.get('free_tb_accounts', [])
+    context = session.get('free_tb_context', '')
+    
+    if not accounts:
+        return jsonify({
+            "error": "No data",
+            "health": "unknown",
+            "summary": "Please upload a trial balance first",
+            "chat_response": "I don't have any data to analyze. Please go back and upload a file."
+        })
+    
+    try:
+        analysis = TBAnalyzer.analyze_with_opus(accounts, context)
+        session['free_tb_analysis'] = analysis
+        
+        chat_response = TBAnalyzer.chat_response(analysis)
+        session['free_tb_chat_history'] = [{"role": "assistant", "content": chat_response}]
+        
+        return jsonify({
+            "health": analysis.get('company_health', 'unknown'),
+            "summary": analysis.get('health_summary', ''),
+            "chat_response": chat_response
+        })
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "health": "unknown",
+            "summary": "Analysis failed",
+            "chat_response": f"Sorry, something went wrong: {str(e)}"
+        })
+
+
+@app.route("/free-analysis/chat", methods=["POST"])
+def free_analysis_chat():
+    """Handle chat for free TB analyzer"""
+    data = request.get_json()
+    message = data.get("message", "")
+    
+    analysis = session.get('free_tb_analysis', {})
+    history = session.get('free_tb_chat_history', [])
+    
+    if not analysis:
+        return jsonify({"response": "Please wait for the initial analysis to complete, or upload a new file."})
+    
+    history.append({"role": "user", "content": message})
+    response = TBAnalyzer.chat_response(analysis, message, history)
+    history.append({"role": "assistant", "content": response})
+    session['free_tb_chat_history'] = history[-20:]
+    
+    return jsonify({"response": response})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
