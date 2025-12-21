@@ -1020,38 +1020,71 @@ class OpusAI:
     @classmethod
     def read_receipt(cls, image_base64: str) -> dict:
         """
-        Extract data from receipt image
+        Extract data from receipt/invoice image - handles SA formats including Afrikaans
         
         Args:
             image_base64: Base64 encoded image
             
         Returns:
-            Dict with supplier, description, amount, vat_rate, category
+            Dict with supplier, description, amount, vat, line_items
         """
         # Clean base64 string
         if "," in image_base64:
             image_base64 = image_base64.split(",")[1]
         
-        prompt = """Analyze this receipt/invoice image and extract the following information.
-        
-For VAT, note South African rules:
-- Standard rate is 15%
-- ZERO-RATED (0% VAT): Petrol, diesel, basic foods (brown bread, maize meal, rice, eggs, milk, vegetables, fruit, cooking oil, dried beans, pilchards/sardines)
-- Look for "VAT" or "BTW" on the slip to determine the VAT amount
+        prompt = """You are an expert OCR system for South African receipts and invoices.
 
-Return ONLY a JSON object in this exact format:
+CAREFULLY read this receipt/invoice image and extract ALL visible information.
+
+IMPORTANT - South African terminology:
+- BTW = VAT (Belasting op Toegevoegde Waarde)
+- BEDRAG = Amount
+- TOTAAL = Total  
+- KONTANT = Cash
+- AANTAL = Quantity
+- EENHEID/PRYS = Unit Price
+- KORTING = Discount
+- INKL = Including
+- EKSKL = Excluding
+- BELASTINGFAKTUUR = Tax Invoice
+- NR/NOMMER = Number
+
+For VAT (15% standard rate):
+- Look for "BTW" or "VAT" column/line
+- ZERO-RATED items (0%): Petrol, diesel, paraffin, basic foods
+- The "S" code usually means Standard rated (15%)
+- The "T" code usually means Zero-rated or exempt
+
+Extract and return this EXACT JSON structure:
 {
-    "supplier": "Store/Company name",
-    "description": "Brief description of purchase",
-    "amount": 123.45,
-    "vat_amount": 12.34,
-    "is_zero_rated": false,
-    "category": "suggested expense category",
+    "supplier": "Company/Store name exactly as shown",
+    "supplier_vat_number": "VAT number if visible",
+    "invoice_number": "Invoice/Receipt number if visible",
+    "date": "Date if visible (YYYY-MM-DD format)",
+    "line_items": [
+        {
+            "description": "Item description",
+            "quantity": 1,
+            "unit_price": 0.00,
+            "vat": 0.00,
+            "total": 0.00
+        }
+    ],
+    "subtotal": 0.00,
+    "vat_total": 0.00,
+    "total": 0.00,
+    "category": "Stock/Inventory or Fuel or Office Supplies or Repairs & Maintenance or Other",
     "confidence": 0.95
 }
 
-If you cannot read something clearly, use your best judgment based on context.
-For category, suggest one of: Fuel, Stock/Inventory, Office Supplies, Repairs & Maintenance, Utilities, Cleaning, Consumables, Transport, Entertainment, Other"""
+CRITICAL RULES:
+1. ONLY extract what you can ACTUALLY SEE - do NOT make up or guess values
+2. If you cannot read a value clearly, use null instead of guessing
+3. Read numbers exactly as printed - do not round or estimate
+4. Include ALL line items you can see
+5. If the image is too blurry or dark, return {"error": "Cannot read image - please try better lighting", "confidence": 0}
+
+Return ONLY the JSON, no other text."""
 
         messages = [{
             "role": "user",
@@ -1068,20 +1101,47 @@ For category, suggest one of: Fuel, Stock/Inventory, Office Supplies, Repairs & 
             ]
         }]
         
-        success, response = cls._call_api(messages, max_tokens=500)
+        # Use Sonnet for speed, it's good at OCR
+        success, response = cls._call_api(messages, max_tokens=2000, model="claude-sonnet-4-20250514")
         
         if not success:
             return {"error": response}
         
         # Parse JSON from response
         try:
-            # Find JSON in response
-            json_match = re.search(r'\{[^{}]*\}', response, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group())
+            # Find JSON in response - handle nested objects
+            start = response.find('{')
+            end = response.rfind('}') + 1
+            if start >= 0 and end > start:
+                json_str = response[start:end]
+                data = json.loads(json_str)
+                
+                # Calculate totals if we have line items but no total
+                if data.get("line_items") and not data.get("total"):
+                    data["total"] = sum(item.get("total", 0) or 0 for item in data["line_items"])
+                    data["vat_total"] = sum(item.get("vat", 0) or 0 for item in data["line_items"])
+                    data["subtotal"] = data["total"] - data["vat_total"]
+                
+                # For backward compatibility, also set single amount/vat fields
+                if not data.get("amount") and data.get("subtotal"):
+                    data["amount"] = data["subtotal"]
+                if not data.get("vat_amount") and data.get("vat_total"):
+                    data["vat_amount"] = data["vat_total"]
+                
+                # Generate description from line items if not set
+                if not data.get("description") and data.get("line_items"):
+                    items = data["line_items"][:3]  # First 3 items
+                    desc_parts = [item.get("description", "") for item in items if item.get("description")]
+                    if len(data["line_items"]) > 3:
+                        data["description"] = ", ".join(desc_parts) + f" + {len(data['line_items'])-3} more items"
+                    else:
+                        data["description"] = ", ".join(desc_parts)
+                
                 return data
-        except:
-            pass
+        except json.JSONDecodeError as e:
+            return {"error": f"Could not parse response: {str(e)}", "raw": response[:500]}
+        except Exception as e:
+            return {"error": f"Processing error: {str(e)}"}
         
         return {"error": "Could not parse receipt"}
     
