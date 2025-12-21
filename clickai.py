@@ -17325,133 +17325,104 @@ def scanner_process():
         # Get API key
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
-            return jsonify({"success": False, "error": "AI not configured. Add ANTHROPIC_API_KEY to environment."})
+            return jsonify({"success": False, "error": "AI not configured"})
         
-        # Call Claude to read the image
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        
-        # Improved prompts with better instructions for mobile photos
+        # Prompts for different scan types
         prompts = {
-            "cos": """You are an AI accountant reading a supplier invoice photo taken on a mobile phone.
+            "cos": """Read this supplier invoice photo. Extract:
+- supplier: company name
+- invoice_no: invoice number
+- date: YYYY-MM-DD format
+- items: list of {description, qty, unit_price}
+- total: total amount
+- vat: VAT amount
 
-IMPORTANT: The image may be slightly blurry, at an angle, or have poor lighting. Do your best to extract the information. If you can make out some text but not all, fill in what you can and estimate reasonable values for the rest.
+Return ONLY JSON: {"supplier":"Name","invoice_no":"INV123","date":"2025-01-15","items":[{"description":"Item","qty":1,"unit_price":100}],"vat":15,"total":115}""",
 
-Extract these details:
-1. Supplier/company name (look at the top/letterhead)
-2. Invoice number (any number starting with INV, #, or similar)
-3. Invoice date (format: YYYY-MM-DD) - use today's date if unclear
-4. Line items - extract what you can see:
-   - Description/product name
-   - Product code if visible
-   - Quantity (default to 1 if unclear)
-   - Unit price
-5. Subtotal (before VAT) - calculate from items if not shown
-6. VAT amount (15% in South Africa)
-7. Total amount
+            "exp": """Read this receipt/expense photo. Extract:
+- vendor: shop/store name (look at top)
+- date: YYYY-MM-DD format  
+- description: what was bought
+- total: total amount
+- vat: VAT if shown
+- category: fuel/telephone/electricity/repairs/stationery/travel/general
 
-Return ONLY valid JSON (no markdown, no explanation):
-{"supplier": "Name", "invoice_no": "INV123", "date": "2025-01-15", "paid": false, "items": [{"description": "Product name", "code": "ABC123", "qty": 10, "unit_price": 50.00}], "subtotal": 500.00, "vat": 75.00, "total": 575.00}
+Return ONLY JSON: {"vendor":"Shop","date":"2025-01-15","description":"items bought","total":150.00,"vat":19.57,"category":"fuel"}""",
 
-If you cannot read the document at all, return: {"error": "unreadable"}""",
+            "exp_paid": """Read this receipt/expense photo. Extract:
+- vendor: shop/store name (look at top)
+- date: YYYY-MM-DD format  
+- description: what was bought
+- total: total amount
+- vat: VAT if shown
+- category: fuel/telephone/electricity/repairs/stationery/travel/general
 
-            "exp": """You are an AI accountant reading a receipt/expense photo from a mobile phone.
+Return ONLY JSON: {"vendor":"Shop","date":"2025-01-15","description":"items bought","total":150.00,"vat":19.57,"category":"fuel"}""",
 
-IMPORTANT: Receipts are often crumpled, faded, or photographed at angles. Extract what you can see, and make reasonable estimates for unclear amounts based on context.
+            "stock": """Read this stock count sheet. List all items with quantities.
+Return ONLY JSON: {"items":[{"code":"SKU1","description":"Product","quantity":25}]}""",
 
-Extract:
-1. Vendor/shop name (usually at top of receipt)
-2. Date (format: YYYY-MM-DD) - use today if unclear
-3. What was purchased (brief summary)
-4. Total amount (look for TOTAL, AMOUNT DUE, etc.)
-5. VAT amount if shown (15% in SA)
-6. Best category match:
-   - "fuel" (petrol stations, Sasol, Shell, Engen, BP, etc.)
-   - "telephone" (Vodacom, MTN, Cell C, Telkom, airtime)
-   - "electricity" (Eskom, City Power, prepaid tokens)
-   - "repairs" (parts, labor, maintenance)
-   - "stationery" (CNA, Waltons, office supplies)
-   - "travel" (Uber, parking, tolls)
-   - "advertising" (Facebook, Google, marketing)
-   - "general" (anything else)
+            "payment": """Read this payment proof/bank slip. Extract:
+- customer: who paid
+- amount: payment amount
+- date: YYYY-MM-DD
+- reference: ref number
+- method: EFT/cash/card
 
-Return ONLY valid JSON (no markdown):
-{"vendor": "Shop Name", "date": "2025-01-15", "description": "What was bought", "total": 150.00, "vat": 19.57, "category": "fuel"}
-
-If you cannot read the receipt at all, return: {"error": "unreadable"}""",
-
-            "stock": """You are an AI inventory manager reading a stock count sheet photo.
-
-IMPORTANT: Stock lists may be handwritten or printed. Do your best to read each line. If handwriting is unclear, make your best guess at the product name and quantity.
-
-Extract ALL items visible with their:
-1. Product code (if visible)
-2. Description/name
-3. Counted quantity (numbers you can see)
-
-Return ONLY valid JSON:
-{"items": [{"code": "SKU001", "description": "Product name", "quantity": 25}]}
-
-If you cannot read the document at all, return: {"error": "unreadable"}""",
-
-            "payment": """You are an AI accountant reading a payment proof/bank slip photo.
-
-IMPORTANT: Bank slips and EFT confirmations come in many formats. Look for the key payment details.
-
-Extract:
-1. Customer/payer name (who paid)
-2. Amount paid (the transaction amount)
-3. Date of payment (format: YYYY-MM-DD)
-4. Reference number or invoice mentioned
-5. Payment method (EFT, cash, card)
-
-Return ONLY valid JSON:
-{"customer": "Customer Name", "amount": 1500.00, "date": "2025-01-15", "reference": "INV001", "method": "EFT"}
-
-If you cannot read the document at all, return: {"error": "unreadable"}"""
+Return ONLY JSON: {"customer":"Name","amount":1500,"date":"2025-01-15","reference":"INV001","method":"EFT"}"""
         }
         
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2048,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
-                    {"type": "text", "text": prompts.get(scan_type, "Describe this image")}
-                ]
-            }]
+        prompt = prompts.get(scan_type, prompts.get("exp"))
+        
+        # Call Claude API directly with requests (more reliable)
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "content-type": "application/json",
+                "anthropic-version": "2023-06-01"
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1000,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }]
+            },
+            timeout=30
         )
         
-        ai_response = message.content[0].text
+        if response.status_code != 200:
+            return jsonify({"success": False, "error": f"AI service error ({response.status_code})"})
+        
+        result = response.json()
+        ai_response = result.get("content", [{}])[0].get("text", "")
         
         # Parse JSON from AI response
-        import re
-        json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+        start = ai_response.find('{')
+        end = ai_response.rfind('}') + 1
         
-        if not json_match:
-            # AI couldn't find any JSON - give helpful error
-            return jsonify({"success": False, "error": "Could not read document. Tips: Hold phone steady, ensure good lighting, keep document flat and fill the frame."})
+        if start < 0 or end <= start:
+            return jsonify({"success": False, "error": "Could not read document"})
         
         try:
-            parsed = json.loads(json_match.group())
+            parsed = json.loads(ai_response[start:end])
         except:
-            return jsonify({"success": False, "error": "Could not understand document format. Try taking another photo."})
-        
-        # Check if AI returned an error
-        if parsed.get("error") == "unreadable":
-            return jsonify({"success": False, "error": "Document too blurry or dark. Tips: Use flash if needed, hold phone steady, make sure text is in focus."})
-        
-        # Check if staging is enabled (default: yes for safety)
-        use_staging = request.args.get("direct") != "yes"
+            return jsonify({"success": False, "error": "Could not parse response"})
         
         # Check if this is a "paid" variant
         is_paid = scan_type.endswith("_paid")
         base_type = scan_type.replace("_paid", "")
         
-        # Add paid flag to parsed data
         if is_paid:
             parsed["paid"] = True
+        
+        # Check if staging is enabled
+        use_staging = request.args.get("direct") != "yes"
         
         # Process based on type
         if base_type == "cos":
@@ -17463,12 +17434,14 @@ If you cannot read the document at all, return: {"error": "unreadable"}"""
                 return stage_transaction("expense", parsed)
             return process_expense_receipt(parsed)
         elif base_type == "stock":
-            return process_stock_count(parsed)  # Stock count is always direct
+            return process_stock_count(parsed)
         elif base_type == "payment":
-            return process_customer_payment(parsed)  # Payments are always direct
+            return process_customer_payment(parsed)
         
         return jsonify({"success": False, "error": "Unknown scan type"})
         
+    except requests.exceptions.Timeout:
+        return jsonify({"success": False, "error": "AI took too long - try again"})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
