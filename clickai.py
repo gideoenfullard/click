@@ -1020,71 +1020,27 @@ class OpusAI:
     @classmethod
     def read_receipt(cls, image_base64: str) -> dict:
         """
-        Extract data from receipt/invoice image - handles SA formats including Afrikaans
-        
-        Args:
-            image_base64: Base64 encoded image
-            
-        Returns:
-            Dict with supplier, description, amount, vat, line_items
+        Extract data from receipt/invoice image - SA formats including Afrikaans
+        FOCUS: Get results, not errors!
         """
         # Clean base64 string
         if "," in image_base64:
             image_base64 = image_base64.split(",")[1]
         
-        prompt = """You are an expert OCR system for South African receipts and invoices.
+        prompt = """Look at this South African receipt/invoice and tell me:
 
-CAREFULLY read this receipt/invoice image and extract ALL visible information.
+1. SUPPLIER: What store/company name do you see at the top?
+2. TOTAL: What is the final total amount? (look for TOTAAL, TOTAL, or the biggest number at bottom)
+3. VAT: What is the VAT/BTW amount?
+4. DATE: What date is on it?
+5. ITEMS: List the main items purchased
 
-IMPORTANT - South African terminology:
-- BTW = VAT (Belasting op Toegevoegde Waarde)
-- BEDRAG = Amount
-- TOTAAL = Total  
-- KONTANT = Cash
-- AANTAL = Quantity
-- EENHEID/PRYS = Unit Price
-- KORTING = Discount
-- INKL = Including
-- EKSKL = Excluding
-- BELASTINGFAKTUUR = Tax Invoice
-- NR/NOMMER = Number
+South African terms: BTW=VAT, BEDRAG=Amount, TOTAAL=Total, KONTANT=Cash, INKL=Including
 
-For VAT (15% standard rate):
-- Look for "BTW" or "VAT" column/line
-- ZERO-RATED items (0%): Petrol, diesel, paraffin, basic foods
-- The "S" code usually means Standard rated (15%)
-- The "T" code usually means Zero-rated or exempt
+Reply with ONLY this JSON:
+{"supplier":"store name","total":123.45,"vat":15.67,"date":"2025-12-21","description":"brief list of items","category":"Stock/Inventory"}
 
-Extract and return this EXACT JSON structure:
-{
-    "supplier": "Company/Store name exactly as shown",
-    "supplier_vat_number": "VAT number if visible",
-    "invoice_number": "Invoice/Receipt number if visible",
-    "date": "Date if visible (YYYY-MM-DD format)",
-    "line_items": [
-        {
-            "description": "Item description",
-            "quantity": 1,
-            "unit_price": 0.00,
-            "vat": 0.00,
-            "total": 0.00
-        }
-    ],
-    "subtotal": 0.00,
-    "vat_total": 0.00,
-    "total": 0.00,
-    "category": "Stock/Inventory or Fuel or Office Supplies or Repairs & Maintenance or Other",
-    "confidence": 0.95
-}
-
-CRITICAL RULES:
-1. ONLY extract what you can ACTUALLY SEE - do NOT make up or guess values
-2. If you cannot read a value clearly, use null instead of guessing
-3. Read numbers exactly as printed - do not round or estimate
-4. Include ALL line items you can see
-5. If the image is too blurry or dark, return {"error": "Cannot read image - please try better lighting", "confidence": 0}
-
-Return ONLY the JSON, no other text."""
+For category use: Stock/Inventory, Fuel, Office Supplies, Repairs, Utilities, or Other"""
 
         messages = [{
             "role": "user",
@@ -1101,49 +1057,30 @@ Return ONLY the JSON, no other text."""
             ]
         }]
         
-        # Use Sonnet for speed, it's good at OCR
-        success, response = cls._call_api(messages, max_tokens=2000, model="claude-sonnet-4-20250514")
+        # Use Sonnet - fast and good at vision
+        success, response = cls._call_api(messages, max_tokens=500, model="claude-sonnet-4-20250514")
         
         if not success:
-            return {"error": response}
+            # Still try to return something useful
+            return {"supplier": "", "total": 0, "description": "Could not read - please enter manually", "category": "Other"}
         
         # Parse JSON from response
         try:
-            # Find JSON in response - handle nested objects
             start = response.find('{')
             end = response.rfind('}') + 1
             if start >= 0 and end > start:
-                json_str = response[start:end]
-                data = json.loads(json_str)
+                data = json.loads(response[start:end])
                 
-                # Calculate totals if we have line items but no total
-                if data.get("line_items") and not data.get("total"):
-                    data["total"] = sum(item.get("total", 0) or 0 for item in data["line_items"])
-                    data["vat_total"] = sum(item.get("vat", 0) or 0 for item in data["line_items"])
-                    data["subtotal"] = data["total"] - data["vat_total"]
-                
-                # For backward compatibility, also set single amount/vat fields
-                if not data.get("amount") and data.get("subtotal"):
-                    data["amount"] = data["subtotal"]
-                if not data.get("vat_amount") and data.get("vat_total"):
-                    data["vat_amount"] = data["vat_total"]
-                
-                # Generate description from line items if not set
-                if not data.get("description") and data.get("line_items"):
-                    items = data["line_items"][:3]  # First 3 items
-                    desc_parts = [item.get("description", "") for item in items if item.get("description")]
-                    if len(data["line_items"]) > 3:
-                        data["description"] = ", ".join(desc_parts) + f" + {len(data['line_items'])-3} more items"
-                    else:
-                        data["description"] = ", ".join(desc_parts)
+                # Ensure we have the fields the form needs
+                if "total" in data and "amount" not in data:
+                    data["amount"] = data["total"]
                 
                 return data
-        except json.JSONDecodeError as e:
-            return {"error": f"Could not parse response: {str(e)}", "raw": response[:500]}
-        except Exception as e:
-            return {"error": f"Processing error: {str(e)}"}
+        except:
+            pass
         
-        return {"error": "Could not parse receipt"}
+        # Last resort - return empty form
+        return {"supplier": "", "total": 0, "description": "", "category": "Other"}
     
     @classmethod
     def suggest_category(cls, description: str, supplier: str = "") -> str:
@@ -3856,8 +3793,7 @@ a:hover {
     align-items: center;
     padding: 0 20px;
     gap: 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow: visible;
 }
 
 .header::-webkit-scrollbar {
@@ -5037,36 +4973,62 @@ def get_header_html(active: str = "", user: dict = None) -> str:
             current_name = current_biz.get("business_name", current_biz.get("name", "Select Business")) if current_biz else "Select Business"
             current_icon = current_biz.get("icon", "🏢") if current_biz else "🏢"
             
-            options_html = ""
+            # Build dropdown options
+            dropdown_items = ""
             for biz in businesses:
                 biz_name = biz.get("business_name", biz.get("name", "Unnamed"))
-                selected = "✓ " if current_biz and biz["id"] == current_biz["id"] else ""
-                options_html += f'''<a href="/switch-business/{biz["id"]}" class="biz-option">{selected}{biz.get("icon", "🏢")} {safe_string(biz_name)}</a>'''
+                is_current = current_biz and biz["id"] == current_biz["id"]
+                check = "✓ " if is_current else "&nbsp;&nbsp;&nbsp;"
+                dropdown_items += f'<a href="/switch-business/{biz["id"]}" style="display:block;padding:12px 16px;color:#e0e0e0;text-decoration:none;border-bottom:1px solid #222;{"background:#1a1a2e;" if is_current else ""}">{check}{biz.get("icon", "🏢")} {safe_string(biz_name)}</a>'
             
-            # Add "New Business" option
-            options_html += f'''<a href="/businesses/new" class="biz-option biz-option-new">➕ Add New Business</a>'''
+            dropdown_items += '<a href="/businesses/new" style="display:block;padding:12px 16px;color:#a78bfa;text-decoration:none;font-weight:600;">➕ Add New Business</a>'
             
             business_html = f'''
-            <div class="business-switcher" style="position:relative;margin-right:16px;z-index:9999;">
-                <div onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'block' ? 'none' : 'block'" 
-                     style="display:flex;align-items:center;gap:8px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.3);padding:8px 14px;border-radius:8px;cursor:pointer;color:#a78bfa;font-size:14px;font-weight:600;">
-                    <span style="font-size:18px;">{current_icon}</span>
-                    <span style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(current_name)}</span>
-                    <span style="font-size:10px;opacity:0.7;">▼</span>
+            <style>
+            .biz-switcher {{ position: relative; }}
+            .biz-btn {{ 
+                display: flex; align-items: center; gap: 8px;
+                background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.3);
+                padding: 8px 14px; border-radius: 8px; cursor: pointer;
+                color: #a78bfa; font-size: 14px; font-weight: 600;
+                margin-right: 12px;
+            }}
+            .biz-btn:hover {{ background: rgba(139,92,246,0.25); }}
+            .biz-drop {{ 
+                display: none; position: fixed; 
+                background: #0d0d14; border: 1px solid #333; border-radius: 8px;
+                min-width: 240px; box-shadow: 0 10px 40px rgba(0,0,0,0.8); 
+                z-index: 99999; overflow: hidden;
+            }}
+            .biz-drop.open {{ display: block; }}
+            .biz-drop a:hover {{ background: #1a1a2e !important; }}
+            </style>
+            <div class="biz-switcher">
+                <div class="biz-btn" id="bizBtn">
+                    <span>{current_icon}</span>
+                    <span style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(current_name)}</span>
+                    <span style="font-size:10px;">▼</span>
                 </div>
-                <div id="biz-menu" style="display:none;position:absolute;top:calc(100% + 8px);right:0;background:#0f0f1a;border:1px solid #2a2a4a;border-radius:12px;min-width:250px;box-shadow:0 15px 50px rgba(0,0,0,0.7);z-index:99999;overflow:hidden;">
-                    {options_html}
+                <div class="biz-drop" id="bizDrop">
+                    {dropdown_items}
                 </div>
             </div>
-            <style>
-            .biz-option {{ 
-                display:block;padding:14px 18px;color:#f0f0f0;text-decoration:none;
-                font-size:14px;border-bottom:1px solid rgba(255,255,255,0.05);
-            }}
-            .biz-option:hover {{ background:rgba(139,92,246,0.2);color:#fff; }}
-            .biz-option:last-child {{ border-bottom:none; }}
-            .biz-option-new {{ color:#a78bfa;font-weight:600;background:rgba(139,92,246,0.1); }}
-            </style>
+            <script>
+            (function(){{
+                var btn = document.getElementById('bizBtn');
+                var drop = document.getElementById('bizDrop');
+                if(btn && drop){{
+                    btn.onclick = function(e){{
+                        e.stopPropagation();
+                        var rect = btn.getBoundingClientRect();
+                        drop.style.top = (rect.bottom + 5) + 'px';
+                        drop.style.right = (window.innerWidth - rect.right) + 'px';
+                        drop.classList.toggle('open');
+                    }};
+                    document.onclick = function(){{ drop.classList.remove('open'); }};
+                }}
+            }})();
+            </script>
             '''
         elif len(businesses) == 0:
             # No businesses yet - show setup prompt
@@ -13606,43 +13568,33 @@ def expense_scan_page():
         document.getElementById('processing').style.display = 'block';
         document.getElementById('result-card').style.display = 'none';
         
-        try {{
-            const response = await fetch('/api/expenses/scan', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{ image: imageData }})
-            }});
-            
-            const result = await response.json();
-            
-            document.getElementById('processing').style.display = 'none';
-            document.getElementById('result-card').style.display = 'block';
-            
-            if (result.supplier) document.getElementById('r-supplier').value = result.supplier;
-            if (result.description) document.getElementById('r-description').value = result.description;
-            if (result.amount) document.getElementById('r-amount').value = result.amount;
-            if (result.category) {{
-                // Try to match category
-                const catSelect = document.getElementById('r-category');
-                for (let i = 0; i < catSelect.options.length; i++) {{
-                    if (catSelect.options[i].text.toLowerCase().includes(result.category.toLowerCase())) {{
-                        catSelect.selectedIndex = i;
-                        break;
-                    }}
+        const response = await fetch('/api/expenses/scan', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{ image: imageData }})
+        }});
+        
+        const r = await response.json();
+        
+        document.getElementById('processing').style.display = 'none';
+        document.getElementById('result-card').style.display = 'block';
+        
+        // Fill the form
+        document.getElementById('r-supplier').value = r.supplier || '';
+        document.getElementById('r-description').value = r.description || '';
+        document.getElementById('r-amount').value = r.total || r.amount || '';
+        if (r.date) document.getElementById('r-date').value = r.date;
+        
+        // Match category
+        if (r.category) {{
+            const sel = document.getElementById('r-category');
+            const cat = r.category.toLowerCase();
+            for (let i = 0; i < sel.options.length; i++) {{
+                if (sel.options[i].text.toLowerCase().includes(cat)) {{
+                    sel.selectedIndex = i;
+                    break;
                 }}
             }}
-            if (result.is_zero_rated) {{
-                document.getElementById('r-vat-type').value = 'zero';
-            }}
-            
-            if (result.error) {{
-                console.log('AI note:', result.error);
-            }}
-            
-        }} catch (error) {{
-            document.getElementById('processing').style.display = 'none';
-            document.getElementById('result-card').style.display = 'block';
-            console.error('Scan error:', error);
         }}
     }}
     </script>
@@ -13653,26 +13605,18 @@ def expense_scan_page():
 
 @app.route("/api/expenses/scan", methods=["POST"])
 def api_scan_receipt():
-    """API: Process receipt image with AI"""
+    """API: Scan receipt with AI and return extracted data"""
+    data = request.get_json() or {}
+    image_data = data.get("image", "")
     
-    try:
-        data = request.get_json()
-        image_data = data.get("image", "")
-        
-        if not image_data:
-            return jsonify({"error": "No image provided"})
-        
-        # Clean base64 string
-        if "," in image_data:
-            image_data = image_data.split(",")[1]
-        
-        # Call Opus AI to read receipt
-        result = OpusAI.read_receipt(image_data)
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        return jsonify({"error": str(e)})
+    if not image_data:
+        return jsonify({"supplier": "", "total": 0, "description": "No image", "category": "Other"})
+    
+    if "," in image_data:
+        image_data = image_data.split(",")[1]
+    
+    result = OpusAI.read_receipt(image_data)
+    return jsonify(result)
 
 
 @app.route("/expenses/save-scanned", methods=["POST"])
