@@ -17179,7 +17179,7 @@ def scanner_approve(staged_id):
     """Approve and post a staged transaction from mobile"""
     try:
         # Get the staged transaction
-        success, result = db.query("staged_transactions", {"id": staged_id})
+        success, result = db.select("staged_transactions", filters={"id": staged_id})
         if not success or not result:
             return jsonify({"success": False, "error": "Not found"})
         
@@ -17367,7 +17367,7 @@ def stage_transaction(trans_type: str, data: dict):
         
         if invoice_no and supplier:
             # Check existing staged transactions
-            success, existing = db.query("staged_transactions", {})
+            success, existing = db.select("staged_transactions")
             if success and existing:
                 for staged in existing:
                     staged_data = json.loads(staged.get("data", "{}"))
@@ -17381,7 +17381,7 @@ def stage_transaction(trans_type: str, data: dict):
             
             # Check posted transactions (supplier invoices)
             if trans_type == "supplier_invoice":
-                success, posted = db.query("supplier_invoices", {"invoice_no": invoice_no})
+                success, posted = db.select("supplier_invoices", filters={"invoice_no": invoice_no})
                 if success and posted:
                     for inv in posted:
                         if inv.get("supplier_name", "").lower() == supplier.lower():
