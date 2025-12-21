@@ -366,7 +366,7 @@ class Database:
             "Content-Type": "application/json",
             "Prefer": "return=representation"
         }
-        self.timeout = 30
+        self.timeout = 10  # 10 seconds max per DB call
     
     def _request(self, method: str, endpoint: str, data: dict = None) -> tuple:
         """
@@ -777,19 +777,32 @@ class BusinessManager:
     
     @classmethod
     def get_user_businesses(cls, user_id: str) -> list:
-        """Get all businesses for a user"""
+        """Get all businesses for a user - cached per request"""
+        # Use Flask's g object to cache per-request
+        cache_key = f'user_businesses_{user_id}'
+        if hasattr(g, cache_key):
+            return getattr(g, cache_key)
+        
         try:
             businesses = db.select("businesses", {"owner_id": user_id, "active": True}, order="business_name")
-            return businesses if businesses else []
+            result = businesses if businesses else []
         except:
-            return []
+            result = []
+        
+        setattr(g, cache_key, result)
+        return result
     
     @classmethod
     def get_current_business(cls) -> dict:
-        """Get current active business from session"""
+        """Get current active business from session - cached per request"""
         business_id = session.get("current_business_id")
         if not business_id:
             return None
+        
+        # Use Flask's g object to cache per-request
+        cache_key = 'current_business'
+        if hasattr(g, cache_key):
+            return getattr(g, cache_key)
         
         try:
             business = db.select_one("businesses", business_id)
@@ -798,9 +811,11 @@ class BusinessManager:
                 industry = business.get("industry", "retail")
                 config = cls.INDUSTRY_CONFIGS.get(industry, cls.INDUSTRY_CONFIGS["retail"])
                 business["config"] = config
-            return business
         except:
-            return None
+            business = None
+        
+        setattr(g, cache_key, business)
+        return business
     
     @classmethod
     def switch_business(cls, business_id: str) -> bool:
