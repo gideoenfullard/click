@@ -12886,16 +12886,18 @@ def reports_menu():
     content = '''
     <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">Reports</h1>
     
-    <h3 style="color: var(--purple); margin-bottom: 16px;">🤖 AI-Powered Reports</h3>
-    <h3 style="color: var(--text-muted); margin-bottom: 16px;">🧠 AI-Powered Analysis</h3>
+    <h3 style="color: var(--purple); margin-bottom: 16px;">🤖 AI Business Advisor</h3>
     <div class="report-grid" style="margin-bottom: 32px;">
-        <a href="/tb-analyzer" class="report-card" style="border-color: var(--green); background: linear-gradient(135deg, rgba(16,185,129,0.1), rgba(139,92,246,0.1));">
+        <a href="/ai-advisor" class="report-card" style="border-color: var(--green); background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(139,92,246,0.15));">
             <div class="report-card-icon">🧠</div>
-            <h3 class="report-card-title">TB Analyzer</h3>
-            <p class="report-card-desc">Upload ANY trial balance - AI analyzes it for you</p>
+            <h3 class="report-card-title">AI Business Advisor</h3>
+            <p class="report-card-desc">Chat with AI about YOUR business data - it knows your numbers!</p>
         </a>
-        <a href="/reports/business-health" class="report-card" style="border-color: var(--purple);"><div class="report-card-icon">💊</div><h3 class="report-card-title">Business Health</h3><p class="report-card-desc">Plain-language financial analysis for owners</p></a>
-        <a href="/reports/management-financials" class="report-card" style="border-color: var(--purple);"><div class="report-card-icon">🏦</div><h3 class="report-card-title">Management Financials</h3><p class="report-card-desc">Professional report for banks & investors</p></a>
+        <a href="/tb-analyzer" class="report-card" style="border-color: var(--purple); background: rgba(139,92,246,0.05);">
+            <div class="report-card-icon">📤</div>
+            <h3 class="report-card-title">External TB Analyzer</h3>
+            <p class="report-card-desc">Upload a trial balance from another system</p>
+        </a>
     </div>
     
     <h3 style="color: var(--text-muted); margin-bottom: 16px;">📊 Standard Reports</h3>
@@ -12909,6 +12911,12 @@ def reports_menu():
         <a href="/reports/creditors" class="report-card"><div class="report-card-icon">📑</div><h3 class="report-card-title">Creditors</h3><p class="report-card-desc">Who you owe</p></a>
         <a href="/reports/stock" class="report-card"><div class="report-card-icon">📦</div><h3 class="report-card-title">Stock Report</h3><p class="report-card-desc">Levels and valuation</p></a>
         <a href="/reports/ledger" class="report-card"><div class="report-card-icon">📒</div><h3 class="report-card-title">General Ledger</h3><p class="report-card-desc">All transactions</p></a>
+    </div>
+    
+    <h3 style="color: var(--text-muted); margin-bottom: 16px;">🏦 Professional Reports</h3>
+    <div class="report-grid" style="margin-bottom: 32px;">
+        <a href="/reports/business-health" class="report-card"><div class="report-card-icon">💊</div><h3 class="report-card-title">Business Health</h3><p class="report-card-desc">Plain-language financial analysis</p></a>
+        <a href="/reports/management-financials" class="report-card"><div class="report-card-icon">📋</div><h3 class="report-card-title">Management Financials</h3><p class="report-card-desc">Professional report for banks</p></a>
     </div>
     
     <h3 style="color: var(--text-muted); margin-bottom: 16px;">✏️ Adjustments</h3>
@@ -13322,37 +13330,60 @@ Return ONLY valid JSON, no other text."""
             return {"error": str(e), "company_health": "unknown", "health_summary": "An error occurred during analysis"}
     
     @classmethod
-    def chat_response(cls, analysis: dict, user_message: str = "", conversation_history: list = None) -> str:
+    def chat_response(cls, analysis: dict, user_message: str = "", conversation_history: list = None, business_context: dict = None) -> str:
         """
-        Haiku generates friendly conversational response based on Opus analysis
+        Haiku generates friendly conversational response based on analysis
+        Strictly limited to business/financial topics only!
         """
         api_key = Config.ANTHROPIC_API_KEY
         if not api_key:
             return "I'm sorry, I can't analyze right now. The AI service isn't configured."
         
-        # Build context from Opus analysis
+        # Build context from analysis
         analysis_context = json.dumps(analysis, indent=2) if isinstance(analysis, dict) else str(analysis)
         
-        system_prompt = """You are a friendly, approachable financial advisor chatbot for BB Fin, a South African accounting system.
+        # Add business context if available (for Click AI native users)
+        business_info = ""
+        if business_context:
+            business_info = f"""
+BUSINESS CONTEXT (from Click AI records):
+- Business Name: {business_context.get('name', 'Unknown')}
+- Industry: {business_context.get('industry', 'General')}
+- Trading Since: {business_context.get('created_at', 'Unknown')[:10] if business_context.get('created_at') else 'Unknown'}
+- Business Type: {business_context.get('business_type', 'SME')}
+"""
+        
+        system_prompt = f"""You are BB Fin, a friendly financial advisor chatbot for Click AI, a South African accounting system.
 
 Your personality:
-- Warm and encouraging, never condescending
-- Use simple language, avoid jargon (or explain it when you must use it)
-- South African context - understand SARS, VAT, local business challenges
-- Be honest about problems but always offer hope and solutions
-- Use occasional light humor to keep things friendly
+- Warm, encouraging, and occasionally witty
+- Use simple language, avoid jargon (or explain it when needed)
+- South African context - understand SARS, VAT, BEE, load shedding impacts
+- Be honest about problems but always offer hope and actionable solutions
 - Address the business owner directly as "you"
 
-You have access to a detailed analysis from our senior accountant (Opus). Your job is to:
-1. Present the findings in a friendly, conversational way
-2. Prioritize what matters most to the business owner
-3. Answer follow-up questions based on the analysis
-4. Encourage action but don't overwhelm
+{business_info}
 
-IMPORTANT: You're talking to a business owner, not an accountant. Make it understandable.
+CRITICAL RULES - YOU MUST FOLLOW THESE:
+1. You ONLY discuss business, financial, and accounting matters
+2. If asked about ANYTHING not related to business/finances, respond with a witty but firm redirect:
+   - Personal problems: "Eish, that sounds rough, but I'm your numbers guy, not Dr Phil! Let's focus on what I CAN help with - your business finances. 📊"
+   - Health questions: "I'm flattered you'd ask, but my medical degree is in diagnosing sick balance sheets, not sick people! Let's talk business. 💼"
+   - Relationship advice: "Listen pal, I'm here to help with your cash flow, not your personal flow! Now, about those debtors... 😄"
+   - Politics/religion: "I only have strong opinions about VAT returns and profit margins! What business question can I help with?"
+   - Random topics: "That's interesting, but my expertise starts and ends with Rands and cents! What would you like to know about your finances?"
+3. Always bring the conversation back to their business data
+4. Never provide advice on: medical, legal (except basic tax), personal relationships, or non-business matters
+5. If someone seems distressed about personal issues, be kind but firm: "I can see things are tough. While I can't help with that, I CAN help you understand your business better. Sometimes getting your finances sorted helps everything else feel more manageable."
 
-The analysis from our senior accountant:
-""" + analysis_context
+The financial analysis to discuss:
+{analysis_context}
+
+Your job is to:
+1. Present findings in a friendly, conversational way
+2. Answer follow-up questions about the FINANCIAL DATA only
+3. Help them understand what the numbers mean for their business
+4. Suggest practical next steps they can take"""
 
         messages = []
         if conversation_history:
@@ -13361,7 +13392,7 @@ The analysis from our senior accountant:
         if user_message:
             messages.append({"role": "user", "content": user_message})
         else:
-            messages.append({"role": "user", "content": "Please give me a friendly summary of the analysis you received from the senior accountant. Start with the overall health, then the most important findings."})
+            messages.append({"role": "user", "content": "Please give me a friendly summary of the analysis. Start with the overall health, then the most important findings."})
         
         try:
             response = requests.post(
@@ -13377,7 +13408,7 @@ The analysis from our senior accountant:
                     "system": system_prompt,
                     "messages": messages
                 },
-                timeout=60
+                timeout=30
             )
             
             if response.status_code == 200:
@@ -13387,6 +13418,260 @@ The analysis from our senior accountant:
                 return f"I'm having trouble connecting right now. Please try again in a moment."
         except Exception as e:
             return f"Something went wrong: {str(e)}"
+
+
+# =============================================================================
+# AI BUSINESS ADVISOR - Native Click AI Analysis
+# =============================================================================
+
+@app.route("/ai-advisor", methods=["GET", "POST"])
+def ai_advisor():
+    """AI Business Advisor - Uses actual Click AI data for analysis"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    business_id = session.get("current_business_id")
+    if not business_id:
+        return redirect("/businesses")
+    
+    # Get business details
+    business = db.select_one("businesses", business_id)
+    if not business:
+        return redirect("/businesses")
+    
+    # Build trial balance from Click AI data
+    try:
+        url = f"{Config.SUPABASE_URL}/rest/v1/rpc/get_trial_balance"
+        response = requests.post(url, headers={
+            "apikey": Config.SUPABASE_KEY,
+            "Authorization": f"Bearer {Config.SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }, json={"p_business_id": business_id})
+        
+        if response.status_code == 200:
+            tb_data = response.json()
+        else:
+            tb_data = []
+    except:
+        tb_data = []
+    
+    # Convert to accounts format
+    accounts = []
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+    
+    for row in tb_data:
+        debit = Decimal(str(row.get('debit', 0) or 0))
+        credit = Decimal(str(row.get('credit', 0) or 0))
+        total_debit += debit
+        total_credit += credit
+        accounts.append({
+            "code": row.get('code', ''),
+            "name": row.get('account_name', row.get('name', '')),
+            "category": row.get('category', ''),
+            "debit": float(debit),
+            "credit": float(credit),
+            "balance": float(debit - credit)
+        })
+    
+    # Get additional business context
+    # Count transactions, invoices, etc
+    try:
+        tx_count = len(db.select("transactions", {"business_id": business_id}))
+        inv_count = len(db.select("invoices", {"business_id": business_id}))
+        cust_count = len(db.select("customers", {"business_id": business_id}))
+    except:
+        tx_count = inv_count = cust_count = 0
+    
+    business_context = {
+        "name": business.get("business_name", business.get("name", "Unknown")),
+        "industry": business.get("industry", "general"),
+        "business_type": business.get("business_type", "SME"),
+        "created_at": business.get("created_at", ""),
+        "transaction_count": tx_count,
+        "invoice_count": inv_count,
+        "customer_count": cust_count
+    }
+    
+    # Store in session
+    session['ai_advisor_accounts'] = accounts
+    session['ai_advisor_business'] = business_context
+    session['ai_advisor_history'] = []
+    
+    # Quick stats
+    net_position = total_credit - total_debit
+    
+    content = f'''
+    <div class="mb-lg">
+        <a href="/reports" class="text-muted">← Reports</a>
+        <h1>🧠 AI Business Advisor</h1>
+        <p class="text-muted">Chat with AI about <strong>{safe_string(business_context["name"])}</strong> - it knows your numbers!</p>
+    </div>
+    
+    <!-- Business Overview -->
+    <div class="card mb-lg" style="background: linear-gradient(135deg, rgba(16,185,129,0.1), rgba(139,92,246,0.1));">
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
+            <div style="font-size:48px;">🏢</div>
+            <div>
+                <h2 style="margin:0;">{safe_string(business_context["name"])}</h2>
+                <p style="color:#8b8b9a;margin:4px 0 0;">{business_context["industry"].title()} • {tx_count} transactions • {cust_count} customers</p>
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;">
+            <div style="text-align:center;padding:16px;background:rgba(255,255,255,0.05);border-radius:8px;">
+                <div style="font-size:24px;font-weight:700;color:#10b981;">R {total_credit:,.0f}</div>
+                <div style="color:#8b8b9a;font-size:13px;">Total Credits</div>
+            </div>
+            <div style="text-align:center;padding:16px;background:rgba(255,255,255,0.05);border-radius:8px;">
+                <div style="font-size:24px;font-weight:700;color:#ef4444;">R {total_debit:,.0f}</div>
+                <div style="color:#8b8b9a;font-size:13px;">Total Debits</div>
+            </div>
+            <div style="text-align:center;padding:16px;background:rgba(255,255,255,0.05);border-radius:8px;">
+                <div style="font-size:24px;font-weight:700;color:#a78bfa;">R {abs(net_position):,.0f}</div>
+                <div style="color:#8b8b9a;font-size:13px;">{"Profit" if net_position > 0 else "Loss"}</div>
+            </div>
+            <div style="text-align:center;padding:16px;background:rgba(255,255,255,0.05);border-radius:8px;">
+                <div style="font-size:24px;font-weight:700;color:#60a5fa;">{len(accounts)}</div>
+                <div style="color:#8b8b9a;font-size:13px;">Accounts</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Chat Interface -->
+    <div class="card" id="chat-container">
+        <div id="chat-messages" style="max-height:400px;overflow-y:auto;padding:10px;">
+            <div id="ai-message" class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Advisor</div>
+                <div style="line-height:1.6;">
+                    Hi! I'm your AI financial advisor. I've got access to all the data for <strong>{safe_string(business_context["name"])}</strong>.
+                    <br><br>
+                    Ask me anything about your finances - I can help you understand your numbers, spot trends, and find opportunities!
+                    <br><br>
+                    <em style="color:#8b8b9a;">Try: "How's my business doing?" or "What are my biggest expenses?"</em>
+                </div>
+            </div>
+        </div>
+        
+        <div style="border-top:1px solid var(--border);padding:16px;display:flex;gap:12px;">
+            <input type="text" id="chat-input" class="form-input" style="flex:1;" placeholder="Ask about your business finances..." onkeypress="if(event.key==='Enter')sendAdvisorMessage()">
+            <button type="button" class="btn btn-purple" onclick="sendAdvisorMessage()">Send</button>
+        </div>
+    </div>
+    
+    <!-- Quick Questions -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:20px;">
+        <button class="btn btn-ghost" onclick="askAdvisor('How is my business doing overall?')">📊 Overall Health</button>
+        <button class="btn btn-ghost" onclick="askAdvisor('What are my biggest expenses?')">💸 Top Expenses</button>
+        <button class="btn btn-ghost" onclick="askAdvisor('Am I making a profit?')">💰 Profitability</button>
+        <button class="btn btn-ghost" onclick="askAdvisor('What should I focus on improving?')">🎯 Priorities</button>
+        <button class="btn btn-ghost" onclick="askAdvisor('Any SARS concerns I should know about?')">🏛️ SARS Check</button>
+        <button class="btn btn-ghost" onclick="askAdvisor('How is my cash flow?')">🌊 Cash Flow</button>
+    </div>
+    
+    <script>
+    function sendAdvisorMessage() {{
+        const input = document.getElementById('chat-input');
+        const message = input.value.trim();
+        if (!message) return;
+        
+        const chatMessages = document.getElementById('chat-messages');
+        
+        // Add user message
+        chatMessages.innerHTML += `
+            <div class="chat-message user" style="background:rgba(59,130,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                <div style="font-weight:600;color:#60a5fa;margin-bottom:8px;">You</div>
+                <div>${{message}}</div>
+            </div>
+        `;
+        
+        // Add loading message
+        chatMessages.innerHTML += `
+            <div id="loading-msg" class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Advisor</div>
+                <div style="color:#8b8b9a;">
+                    <span class="spinner" style="display:inline-block;width:16px;height:16px;border:2px solid #8b8b9a;border-top-color:#a78bfa;border-radius:50%;animation:spin 1s linear infinite;margin-right:8px;vertical-align:middle;"></span>
+                    Thinking...
+                </div>
+            </div>
+        `;
+        
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        input.value = '';
+        
+        fetch('/ai-advisor/chat', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{message: message}})
+        }})
+        .then(r => r.json())
+        .then(data => {{
+            document.getElementById('loading-msg').remove();
+            chatMessages.innerHTML += `
+                <div class="chat-message assistant" style="background:rgba(139,92,246,0.1);padding:16px;border-radius:12px;margin-bottom:12px;">
+                    <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Advisor</div>
+                    <div style="white-space:pre-wrap;line-height:1.6;">${{data.response}}</div>
+                </div>
+            `;
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }})
+        .catch(err => {{
+            document.getElementById('loading-msg').innerHTML = `
+                <div style="font-weight:600;color:#a78bfa;margin-bottom:8px;">🤖 BB Fin Advisor</div>
+                <div style="color:#ef4444;">Sorry, something went wrong. Please try again.</div>
+            `;
+        }});
+    }}
+    
+    function askAdvisor(q) {{
+        document.getElementById('chat-input').value = q;
+        sendAdvisorMessage();
+    }}
+    </script>
+    <style>@keyframes spin {{ to {{ transform: rotate(360deg); }} }}</style>
+    '''
+    
+    return page_wrapper("AI Business Advisor", content, active="reports", user=user)
+
+
+@app.route("/ai-advisor/chat", methods=["POST"])
+def ai_advisor_chat():
+    """Handle AI advisor chat messages"""
+    user = UserSession.get_current_user()
+    if not user:
+        return jsonify({"error": "Not logged in", "response": "Please log in to continue."})
+    
+    data = request.get_json()
+    message = data.get("message", "")
+    
+    # Get stored data
+    accounts = session.get('ai_advisor_accounts', [])
+    business_context = session.get('ai_advisor_business', {})
+    history = session.get('ai_advisor_history', [])
+    
+    if not accounts:
+        return jsonify({"response": "I don't have your business data loaded. Please go back to the AI Advisor page and try again."})
+    
+    # Build analysis context (simplified for chat)
+    analysis = {
+        "accounts": accounts[:50],  # Limit to top 50 accounts for context
+        "total_accounts": len(accounts),
+        "total_debit": sum(a['debit'] for a in accounts),
+        "total_credit": sum(a['credit'] for a in accounts),
+        "net_position": sum(a['credit'] for a in accounts) - sum(a['debit'] for a in accounts)
+    }
+    
+    # Add user message to history
+    history.append({"role": "user", "content": message})
+    
+    # Get response with business context
+    response = TBAnalyzer.chat_response(analysis, message, history, business_context)
+    
+    # Add to history
+    history.append({"role": "assistant", "content": response})
+    session['ai_advisor_history'] = history[-20:]  # Keep last 20
+    
+    return jsonify({"response": response})
 
 
 @app.route("/tb-analyzer", methods=["GET", "POST"])
