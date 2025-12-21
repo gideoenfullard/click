@@ -4972,62 +4972,69 @@ def get_header_html(active: str = "", user: dict = None) -> str:
             options_html += f'''<a href="/businesses/new" class="biz-option biz-option-new">➕ Add New Business</a>'''
             
             business_html = f'''
-            <div class="business-switcher">
-                <button class="biz-current" onclick="toggleBizDropdown(event)">
+            <div class="business-switcher" id="business-switcher">
+                <div class="biz-current" id="biz-toggle">
                     <span class="biz-icon">{current_icon}</span>
                     <span class="biz-name">{safe_string(current_name)}</span>
-                    <span class="biz-arrow">▼</span>
-                </button>
+                    <span class="biz-arrow" id="biz-arrow">▼</span>
+                </div>
                 <div class="biz-dropdown" id="biz-dropdown">
                     {options_html}
                 </div>
             </div>
             <style>
-            .business-switcher {{ position: relative; margin-right: 16px; }}
+            .business-switcher {{ position: relative; margin-right: 16px; z-index: 9999; }}
             .biz-current {{ 
                 display: flex; align-items: center; gap: 8px;
                 background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.3);
                 padding: 8px 14px; border-radius: 8px; cursor: pointer;
                 color: #a78bfa; font-size: 14px; font-weight: 600;
-                transition: all 0.2s;
+                transition: all 0.2s; user-select: none;
             }}
             .biz-current:hover {{ background: rgba(139, 92, 246, 0.25); border-color: rgba(139, 92, 246, 0.5); }}
             .biz-icon {{ font-size: 18px; }}
             .biz-name {{ max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
             .biz-arrow {{ font-size: 10px; opacity: 0.7; transition: transform 0.2s; }}
+            .biz-arrow.open {{ transform: rotate(180deg); }}
             .biz-dropdown {{ 
                 display: none; position: absolute; top: calc(100% + 8px); right: 0;
-                background: #12121a; border: 1px solid #2a2a4a; border-radius: 12px;
-                min-width: 220px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 9999;
+                background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 12px;
+                min-width: 240px; box-shadow: 0 15px 50px rgba(0,0,0,0.6); z-index: 99999;
                 overflow: hidden;
             }}
-            .biz-dropdown.show {{ display: block; animation: fadeIn 0.15s ease; }}
-            @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(-8px); }} to {{ opacity: 1; transform: translateY(0); }} }}
+            .biz-dropdown.show {{ display: block; }}
             .biz-option {{ 
                 display: block; padding: 14px 18px; color: #f0f0f0; text-decoration: none;
                 font-size: 14px; border-bottom: 1px solid rgba(255,255,255,0.05);
                 transition: background 0.15s;
             }}
-            .biz-option:hover {{ background: rgba(139, 92, 246, 0.15); }}
+            .biz-option:hover {{ background: rgba(139, 92, 246, 0.2); color: #fff; }}
             .biz-option:last-child {{ border-bottom: none; }}
-            .biz-option-new {{ color: #8b5cf6; font-weight: 600; }}
+            .biz-option-new {{ color: #a78bfa; font-weight: 600; background: rgba(139,92,246,0.1); }}
+            .biz-option-new:hover {{ background: rgba(139, 92, 246, 0.25); }}
             </style>
             <script>
-            function toggleBizDropdown(e) {{
-                e.preventDefault();
-                e.stopPropagation();
+            (function() {{
+                var toggle = document.getElementById('biz-toggle');
                 var dropdown = document.getElementById('biz-dropdown');
-                if (dropdown) {{
-                    dropdown.classList.toggle('show');
+                var arrow = document.getElementById('biz-arrow');
+                
+                if (toggle && dropdown) {{
+                    toggle.addEventListener('click', function(e) {{
+                        e.stopPropagation();
+                        var isOpen = dropdown.classList.contains('show');
+                        dropdown.classList.toggle('show');
+                        if (arrow) arrow.classList.toggle('open');
+                    }});
+                    
+                    document.addEventListener('click', function(e) {{
+                        if (!e.target.closest('#business-switcher')) {{
+                            dropdown.classList.remove('show');
+                            if (arrow) arrow.classList.remove('open');
+                        }}
+                    }});
                 }}
-            }}
-            document.addEventListener('click', function(e) {{
-                var dropdown = document.getElementById('biz-dropdown');
-                var switcher = document.querySelector('.business-switcher');
-                if (dropdown && switcher && !switcher.contains(e.target)) {{
-                    dropdown.classList.remove('show');
-                }}
-            }});
+            }})();
             </script>
             '''
         elif len(businesses) == 0:
