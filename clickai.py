@@ -16672,45 +16672,57 @@ SCANNER_HTML = '''<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Click Scanner</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#0a0a12">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #0a0a12;
             color: #f0f0f0;
             min-height: 100vh;
-            min-height: -webkit-fill-available;
+            min-height: 100dvh;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
         }
         
         .header {
             text-align: center;
-            padding: 40px 20px 20px;
+            padding: 50px 20px 30px;
         }
         .logo {
-            font-size: 36px;
+            font-size: 42px;
             font-weight: 800;
             background: linear-gradient(135deg, #8b5cf6, #3b82f6);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
-        .tagline { color: #606070; font-size: 14px; margin-top: 6px; }
+        .tagline { 
+            color: #606070; 
+            font-size: 15px; 
+            margin-top: 8px;
+            letter-spacing: 0.5px;
+        }
         
         .biz-select {
-            margin: 16px 20px;
-            padding: 14px 16px;
+            margin: 0 24px 20px;
+            padding: 16px 20px;
             background: #12121a;
-            border: 1px solid #2a2a4a;
-            border-radius: 12px;
+            border: 2px solid #2a2a4a;
+            border-radius: 14px;
             color: #f0f0f0;
-            font-size: 16px;
-            width: calc(100% - 40px);
+            font-size: 17px;
+            width: calc(100% - 48px);
             appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b8b9a'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%238b8b9a'%3E%3Cpath d='M7 10L2 5h10z'/%3E%3C/svg%3E");
             background-repeat: no-repeat;
             background-position: right 16px center;
+        }
+        .biz-select:focus {
+            outline: none;
+            border-color: #8b5cf6;
         }
         
         .buttons {
@@ -16718,122 +16730,133 @@ SCANNER_HTML = '''<!DOCTYPE html>
             display: flex;
             flex-direction: column;
             justify-content: center;
-            padding: 20px;
-            gap: 16px;
+            padding: 24px;
+            gap: 20px;
         }
         
         .scan-btn {
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 12px;
-            padding: 28px 24px;
-            border-radius: 16px;
-            font-size: 20px;
+            gap: 16px;
+            padding: 32px 28px;
+            border-radius: 20px;
+            font-size: 22px;
             font-weight: 700;
             color: white;
             border: none;
             cursor: pointer;
             text-align: center;
-            transition: transform 0.1s;
+            transition: transform 0.15s, box-shadow 0.15s;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
         }
-        .scan-btn:active { transform: scale(0.97); }
+        .scan-btn:active { 
+            transform: scale(0.96); 
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        }
         
         .btn-supplier {
-            background: linear-gradient(135deg, #f59e0b, #d97706);
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
         }
         .btn-expense {
-            background: linear-gradient(135deg, #ef4444, #dc2626);
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
         }
         
-        .scan-icon { font-size: 32px; }
+        .scan-icon { font-size: 36px; }
         
         input[type="file"] { display: none; }
         
-        .queue-badge {
-            position: fixed;
-            top: 20px;
-            right: 20px;
+        .review-link {
+            display: block;
+            margin: 0 24px 30px;
+            padding: 18px;
+            background: rgba(139, 92, 246, 0.15);
+            border: 2px solid rgba(139, 92, 246, 0.3);
+            border-radius: 14px;
+            color: #a78bfa;
+            text-decoration: none;
+            text-align: center;
+            font-size: 17px;
+            font-weight: 600;
+        }
+        .review-count {
+            display: inline-block;
             background: #8b5cf6;
             color: white;
-            padding: 8px 14px;
+            padding: 4px 12px;
             border-radius: 20px;
-            font-size: 14px;
-            font-weight: 600;
-            display: none;
-            text-decoration: none;
-        }
-        .queue-badge.show { display: block; }
-        
-        .footer { 
-            padding: 20px;
-            text-align: center;
-        }
-        .footer a {
-            color: #8b5cf6;
-            text-decoration: none;
+            margin-left: 8px;
             font-size: 15px;
-            padding: 12px 24px;
-            border: 1px solid #8b5cf6;
-            border-radius: 10px;
-            display: inline-block;
         }
         
-        /* Success Toast */
+        /* Success Animation */
         .toast {
             position: fixed;
-            bottom: 100px;
+            top: 50%;
             left: 50%;
-            transform: translateX(-50%) translateY(100px);
-            background: #10b981;
+            transform: translate(-50%, -50%) scale(0.8);
+            background: linear-gradient(135deg, #10b981, #059669);
             color: white;
-            padding: 16px 32px;
-            border-radius: 12px;
-            font-size: 18px;
-            font-weight: 600;
+            padding: 32px 48px;
+            border-radius: 20px;
+            font-size: 24px;
+            font-weight: 700;
             opacity: 0;
-            transition: all 0.3s;
+            transition: all 0.3s ease-out;
             z-index: 1000;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(16, 185, 129, 0.4);
         }
         .toast.show {
-            transform: translateX(-50%) translateY(0);
+            transform: translate(-50%, -50%) scale(1);
             opacity: 1;
         }
+        .toast-icon {
+            font-size: 48px;
+            display: block;
+            margin-bottom: 12px;
+        }
         
-        /* Uploading overlay */
+        /* Uploading State */
         .uploading {
             display: none;
             position: fixed;
             inset: 0;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.9);
             justify-content: center;
             align-items: center;
             flex-direction: column;
             z-index: 999;
         }
         .uploading.show { display: flex; }
-        .uploading-text { 
-            color: white; 
-            font-size: 18px; 
-            margin-top: 16px;
-        }
         .upload-spinner {
-            width: 50px;
-            height: 50px;
-            border: 4px solid #333;
+            width: 60px;
+            height: 60px;
+            border: 4px solid #1a1a2e;
             border-top-color: #8b5cf6;
             border-radius: 50%;
-            animation: spin 0.8s linear infinite;
+            animation: spin 0.7s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
+        .upload-text { 
+            color: #a0a0a0; 
+            font-size: 18px; 
+            margin-top: 20px;
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 16px;
+            color: #404050;
+            font-size: 13px;
+        }
+        .footer a { color: #606070; text-decoration: none; }
     </style>
 </head>
 <body>
-    <a href="/staging" class="queue-badge" id="queue-badge">📋 0 to review</a>
-    
     <div class="header">
         <div class="logo">Click</div>
-        <div class="tagline">Snap • Upload • Review Later</div>
+        <div class="tagline">Snap · Upload · Review Later</div>
     </div>
     
     <select class="biz-select" id="biz-select">
@@ -16849,20 +16872,28 @@ SCANNER_HTML = '''<!DOCTYPE html>
         
         <label class="scan-btn btn-expense">
             <span class="scan-icon">🧾</span>
-            <span>Expense</span>
+            <span>Expense Receipt</span>
             <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'expense')">
         </label>
     </div>
     
+    <a href="/review" class="review-link" id="review-link" style="display:none;">
+        📋 Review Scanned Items
+        <span class="review-count" id="review-count">0</span>
+    </a>
+    
     <div class="footer">
-        <a href="/staging">📋 Review Scanned Items</a>
+        <a href="/">Open Desktop Version</a>
     </div>
     
-    <div class="toast" id="toast">✓ Uploaded!</div>
+    <div class="toast" id="toast">
+        <span class="toast-icon">✓</span>
+        <span>Uploaded!</span>
+    </div>
     
     <div class="uploading" id="uploading">
         <div class="upload-spinner"></div>
-        <div class="uploading-text">Uploading...</div>
+        <div class="upload-text">Uploading photo...</div>
     </div>
     
     <script>
@@ -16883,32 +16914,35 @@ SCANNER_HTML = '''<!DOCTYPE html>
                     sel.appendChild(opt);
                 });
             }
-        } catch(e) {}
+        } catch(e) { console.log('Business load error:', e); }
     }
     
-    // Load pending count
-    async function loadPendingCount() {
+    // Load pending review count
+    async function loadReviewCount() {
         try {
             const r = await fetch('/api/staging/count');
             const data = await r.json();
-            const badge = document.getElementById('queue-badge');
+            const link = document.getElementById('review-link');
+            const count = document.getElementById('review-count');
+            
             if (data.count > 0) {
-                badge.textContent = '📋 ' + data.count + ' to review';
-                badge.classList.add('show');
+                count.textContent = data.count;
+                link.style.display = 'block';
             } else {
-                badge.classList.remove('show');
+                link.style.display = 'none';
             }
-        } catch(e) {}
+        } catch(e) { console.log('Count load error:', e); }
     }
     
-    // Switch business
+    // Business change
     document.getElementById('biz-select').onchange = async function() {
         if (this.value) {
             await fetch('/switch-business/' + this.value);
+            loadReviewCount();
         }
     };
     
-    // Upload photo
+    // Upload photo to queue
     async function upload(input, type) {
         if (!input.files || !input.files[0]) return;
         
@@ -16923,12 +16957,12 @@ SCANNER_HTML = '''<!DOCTYPE html>
         document.getElementById('uploading').classList.add('show');
         
         const file = input.files[0];
-        
-        // Read as base64
         const reader = new FileReader();
+        
         reader.onload = async function(e) {
             try {
-                const response = await fetch('/m/upload', {
+                // Upload to queue (instant - no AI wait)
+                const response = await fetch('/m/queue', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
@@ -16939,17 +16973,20 @@ SCANNER_HTML = '''<!DOCTYPE html>
                 });
                 
                 const result = await response.json();
-                
                 document.getElementById('uploading').classList.remove('show');
                 
                 if (result.success) {
-                    // Show toast
+                    // Show success toast
                     const toast = document.getElementById('toast');
                     toast.classList.add('show');
-                    setTimeout(() => toast.classList.remove('show'), 2000);
                     
-                    // Update badge
-                    loadPendingCount();
+                    // Vibrate if supported
+                    if (navigator.vibrate) navigator.vibrate(100);
+                    
+                    setTimeout(() => {
+                        toast.classList.remove('show');
+                        loadReviewCount();
+                    }, 1500);
                 } else {
                     alert('Upload failed: ' + (result.error || 'Unknown error'));
                 }
@@ -16961,12 +16998,16 @@ SCANNER_HTML = '''<!DOCTYPE html>
             
             input.value = '';
         };
+        
         reader.readAsDataURL(file);
     }
     
     // Init
     loadBusinesses();
-    loadPendingCount();
+    loadReviewCount();
+    
+    // Refresh count every 10 seconds
+    setInterval(loadReviewCount, 10000);
     </script>
 </body>
 </html>'''
@@ -17013,12 +17054,11 @@ def scanner_home():
     return SCANNER_HTML
 
 
-@app.route("/m/upload", methods=["POST"])
-def scanner_upload():
+@app.route("/m/queue", methods=["POST"])
+def scanner_queue():
     """
-    Upload photo for background processing.
-    Just saves the image and queues for AI processing.
-    FAST - no waiting for AI.
+    Add photo to scan queue - INSTANT response.
+    AI processing happens in background via Supabase Edge Function.
     """
     try:
         data = request.get_json()
@@ -17033,138 +17073,36 @@ def scanner_upload():
         if "," in image_data:
             image_data = image_data.split(",")[1]
         
-        # Save to queue for background processing
+        # Get user
+        user = UserSession.get_current_user()
+        user_id = user.get("id", "") if user else ""
+        
+        # Insert into queue - Supabase Edge Function will process
         queue_id = generate_id()
         
-        db.insert("scan_queue", {
+        result = db.insert("scan_queue", {
             "id": queue_id,
-            "type": scan_type,
+            "user_id": user_id,
             "business_id": business_id,
+            "type": scan_type,
             "image_data": image_data,
             "status": "pending",
             "created_at": now()
         })
         
-        # Process immediately in background (or could use a worker)
-        # For now, process synchronously but return fast
-        import threading
-        thread = threading.Thread(target=process_queued_scan, args=(queue_id,))
-        thread.start()
+        if not result:
+            return jsonify({"success": False, "error": "Could not save to queue"})
         
-        return jsonify({"success": True, "queued": True, "id": queue_id})
+        # Return immediately - user doesn't wait for AI
+        return jsonify({
+            "success": True,
+            "queued": True,
+            "id": queue_id,
+            "message": "Photo uploaded! Processing in background."
+        })
         
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
-
-
-def process_queued_scan(queue_id: str):
-    """Background processor for queued scans"""
-    try:
-        # Get the queued item
-        success, items = db.select("scan_queue", filters={"id": queue_id})
-        if not success or not items:
-            return
-        
-        item = items[0]
-        image_data = item.get("image_data", "")
-        scan_type = item.get("type", "")
-        business_id = item.get("business_id", "")
-        
-        # Get API key
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            db.update("scan_queue", queue_id, {"status": "failed", "error": "No API key"})
-            return
-        
-        # Determine prompt based on type
-        if scan_type == "supplier":
-            prompt = """Read this supplier invoice. Extract:
-- supplier: company name at top
-- invoice_no: invoice/receipt number
-- date: date in YYYY-MM-DD format
-- items: list of items with description, qty, unit_price
-- vat: VAT amount
-- total: total amount
-
-Return ONLY JSON: {"supplier":"Name","invoice_no":"INV123","date":"2025-01-15","items":[{"description":"Item","qty":1,"unit_price":100}],"vat":15,"total":115}"""
-        else:
-            prompt = """Read this expense receipt. Extract:
-- vendor: store/shop name
-- date: date in YYYY-MM-DD format
-- description: what was purchased
-- category: fuel/telephone/electricity/repairs/stationery/travel/general
-- vat: VAT amount if shown
-- total: total amount
-
-Return ONLY JSON: {"vendor":"Shop","date":"2025-01-15","description":"items","category":"fuel","vat":15,"total":100}"""
-        
-        # Call Claude API
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "content-type": "application/json",
-                "anthropic-version": "2023-06-01"
-            },
-            json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 1000,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
-                        {"type": "text", "text": prompt}
-                    ]
-                }]
-            },
-            timeout=30
-        )
-        
-        if response.status_code != 200:
-            db.update("scan_queue", queue_id, {"status": "failed", "error": f"API error {response.status_code}"})
-            return
-        
-        result = response.json()
-        ai_response = result.get("content", [{}])[0].get("text", "")
-        
-        # Parse JSON
-        start = ai_response.find('{')
-        end = ai_response.rfind('}') + 1
-        
-        if start < 0 or end <= start:
-            db.update("scan_queue", queue_id, {"status": "failed", "error": "Could not parse"})
-            return
-        
-        try:
-            parsed = json.loads(ai_response[start:end])
-        except:
-            db.update("scan_queue", queue_id, {"status": "failed", "error": "Invalid JSON"})
-            return
-        
-        # Stage the transaction for review
-        staged_id = generate_id()
-        trans_type = "supplier_invoice" if scan_type == "supplier" else "expense"
-        
-        db.insert("staged_transactions", {
-            "id": staged_id,
-            "type": trans_type,
-            "business_id": business_id,
-            "data": json.dumps(parsed),
-            "status": "pending",
-            "created_at": now()
-        })
-        
-        # Update queue item as processed
-        db.update("scan_queue", queue_id, {"status": "processed", "staged_id": staged_id})
-        
-        # Clean up - remove image data to save space
-        db.update("scan_queue", queue_id, {"image_data": ""})
-        
-    except Exception as e:
-        try:
-            db.update("scan_queue", queue_id, {"status": "failed", "error": str(e)})
-        except:
-            pass
 
 
 @app.route("/m/approve/<staged_id>", methods=["POST"])
