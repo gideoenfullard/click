@@ -16672,13 +16672,12 @@ SCANNER_HTML = '''<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Click Scanner</title>
-    <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0a0a12">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(180deg, #0a0a12 0%, #12121a 100%);
+            background: #0a0a12;
             color: #f0f0f0;
             min-height: 100vh;
             display: flex;
@@ -16686,115 +16685,99 @@ SCANNER_HTML = '''<!DOCTYPE html>
         }
         .header {
             text-align: center;
-            padding: 30px 20px 20px;
+            padding: 24px 20px 16px;
         }
         .logo {
-            font-size: 28px;
+            font-size: 32px;
             font-weight: 800;
             background: linear-gradient(135deg, #8b5cf6, #3b82f6);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: 4px;
         }
-        .tagline { color: #606070; font-size: 13px; }
-        
-        /* Offline indicator */
-        .status-bar {
-            display: flex;
-            justify-content: center;
-            gap: 8px;
-            padding: 8px;
+        .tagline { color: #606070; font-size: 13px; margin-top: 4px; }
+        .status { 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            gap: 6px; 
+            margin-top: 8px;
             font-size: 12px;
+            color: #10b981;
         }
         .status-dot {
-            width: 8px;
-            height: 8px;
+            width: 8px; height: 8px;
+            background: #10b981;
             border-radius: 50%;
-            display: inline-block;
         }
-        .status-online { background: #10b981; }
-        .status-offline { background: #ef4444; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        .queue-count {
-            background: rgba(245, 158, 11, 0.2);
-            color: #f59e0b;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 11px;
-            display: none;
-        }
-        .queue-count.show { display: inline-block; }
         
+        /* Business Selector */
+        .biz-select {
+            margin: 8px 20px 0;
+            padding: 12px 16px;
+            background: #12121a;
+            border: 1px solid #2a2a4a;
+            border-radius: 10px;
+            color: #f0f0f0;
+            font-size: 15px;
+            width: calc(100% - 40px);
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b8b9a'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+        }
+        
+        /* Scan Buttons */
         .buttons {
             flex: 1;
             display: flex;
             flex-direction: column;
             justify-content: center;
-            padding: 16px;
-            gap: 14px;
+            padding: 20px;
+            gap: 12px;
         }
         .scan-btn {
             display: flex;
             align-items: center;
             gap: 14px;
-            padding: 22px 20px;
+            padding: 20px;
             border-radius: 14px;
-            font-size: 18px;
-            font-weight: 700;
+            font-size: 17px;
+            font-weight: 600;
             color: white;
             border: none;
             cursor: pointer;
-            transition: transform 0.2s;
             text-align: left;
         }
         .scan-btn:active { transform: scale(0.98); }
-        .scan-btn-cos {
-            background: linear-gradient(135deg, #f59e0b, #d97706);
-            box-shadow: 0 6px 24px rgba(245, 158, 11, 0.3);
-        }
-        .scan-btn-exp {
-            background: linear-gradient(135deg, #ef4444, #dc2626);
-            box-shadow: 0 6px 24px rgba(239, 68, 68, 0.3);
-        }
-        .scan-btn-stock {
-            background: linear-gradient(135deg, #10b981, #059669);
-            box-shadow: 0 6px 24px rgba(16, 185, 129, 0.3);
-        }
-        .scan-btn-payment {
-            background: linear-gradient(135deg, #3b82f6, #2563eb);
-            box-shadow: 0 6px 24px rgba(59, 130, 246, 0.3);
-        }
         .scan-icon { font-size: 28px; }
         .scan-text { flex: 1; }
-        .scan-title { display: block; font-size: 18px; margin-bottom: 2px; }
-        .scan-desc { display: block; font-size: 12px; font-weight: 400; opacity: 0.85; }
-        .footer { text-align: center; padding: 16px; }
-        .footer a { 
-            color: #606070; 
-            text-decoration: none; 
-            font-size: 13px;
-            padding: 10px 20px;
-            border: 1px solid #2a2a4a;
-            border-radius: 8px;
-            display: inline-block;
-            margin: 4px;
-        }
-        .footer .sync-btn {
-            background: rgba(139, 92, 246, 0.2);
-            border-color: rgba(139, 92, 246, 0.3);
-            color: #a78bfa;
-        }
+        .scan-title { display: block; }
+        .scan-desc { display: block; font-size: 12px; font-weight: 400; opacity: 0.8; margin-top: 2px; }
+        
+        .btn-cos { background: linear-gradient(135deg, #f59e0b, #d97706); }
+        .btn-cos-paid { background: linear-gradient(135deg, #22c55e, #16a34a); }
+        .btn-exp { background: linear-gradient(135deg, #ef4444, #dc2626); }
+        .btn-exp-paid { background: linear-gradient(135deg, #10b981, #059669); }
+        
         input[type="file"] { display: none; }
+        
+        .footer { 
+            text-align: center; 
+            padding: 16px; 
+            border-top: 1px solid #1a1a2e;
+        }
+        .footer a { color: #606070; text-decoration: none; font-size: 13px; }
+        
+        /* Loading Overlay */
         .overlay {
             display: none;
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(5, 5, 10, 0.97);
+            inset: 0;
+            background: rgba(5, 5, 10, 0.95);
             z-index: 1000;
             justify-content: center;
             align-items: center;
             flex-direction: column;
-            padding: 20px;
         }
         .overlay.show { display: flex; }
         .spinner {
@@ -16806,505 +16789,430 @@ SCANNER_HTML = '''<!DOCTYPE html>
             margin-bottom: 16px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .overlay-text { font-size: 16px; color: #8b8b9a; text-align: center; }
-        .overlay-sub { font-size: 13px; color: #505060; margin-top: 8px; text-align: center; }
+        .overlay-text { font-size: 16px; color: #a0a0a0; }
         
-        .result-card {
+        /* Result Card */
+        .result {
             display: none;
             position: fixed;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
+            inset: 0;
+            background: rgba(5, 5, 10, 0.95);
+            z-index: 1000;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .result.show { display: block; }
+        .result-card {
             background: #12121a;
             border: 1px solid #2a2a4a;
             border-radius: 16px;
             padding: 24px;
-            width: calc(100% - 40px);
-            max-width: 340px;
-            z-index: 1001;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .result-header {
             text-align: center;
+            margin-bottom: 20px;
         }
-        .result-card.show { display: block; }
-        .result-icon { font-size: 48px; margin-bottom: 12px; }
-        .result-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
-        .result-details { font-size: 14px; color: #8b8b9a; margin-bottom: 16px; line-height: 1.6; }
-        .result-amount { font-size: 28px; font-weight: 800; color: #10b981; margin-bottom: 16px; }
-        .result-btn {
-            width: 100%;
-            padding: 14px;
-            background: linear-gradient(135deg, #8b5cf6, #3b82f6);
-            border: none;
-            border-radius: 10px;
-            color: white;
-            font-size: 16px;
+        .result-icon { font-size: 48px; }
+        .result-supplier { font-size: 20px; font-weight: 700; margin-top: 8px; }
+        .result-amount { font-size: 32px; font-weight: 800; color: #10b981; margin-top: 4px; }
+        .result-desc { color: #8b8b9a; font-size: 14px; margin-top: 8px; }
+        .result-type {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
             font-weight: 600;
-            cursor: pointer;
+            margin-top: 12px;
         }
-        .result-items { 
-            text-align: left; 
-            background: #0a0a12; 
-            border-radius: 8px; 
-            padding: 12px; 
-            margin-bottom: 16px;
-            max-height: 150px;
+        .type-cos { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+        .type-exp { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .type-paid { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+        
+        .result-items {
+            background: #0a0a12;
+            border-radius: 10px;
+            padding: 12px;
+            margin: 16px 0;
+            max-height: 200px;
             overflow-y: auto;
         }
-        .result-item { 
-            display: flex; 
-            justify-content: space-between; 
-            padding: 6px 0;
+        .result-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
             border-bottom: 1px solid #1a1a2e;
             font-size: 13px;
         }
         .result-item:last-child { border-bottom: none; }
-        .badge {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            margin-bottom: 12px;
+        
+        .result-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
         }
-        .badge-new { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-        .badge-update { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-        .badge-duplicate { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-        .badge-queued { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+        .btn-post, .btn-delete {
+            flex: 1;
+            padding: 16px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .btn-post {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+        .btn-delete {
+            background: #1a1a2e;
+            color: #ef4444;
+            border: 1px solid #ef4444;
+        }
+        
+        .error-msg {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+            padding: 16px;
+            border-radius: 10px;
+            text-align: center;
+            margin-bottom: 16px;
+        }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="logo">Click</div>
         <div class="tagline">Tap • Snap • Done</div>
-        <div class="status-bar">
-            <span class="status-dot" id="status-dot"></span>
-            <span id="status-text">Online</span>
-            <span class="queue-count" id="queue-count">0 queued</span>
+        <div class="status">
+            <span class="status-dot"></span>
+            <span>Online</span>
         </div>
     </div>
     
+    <select class="biz-select" id="business-select">
+        <option value="">Select Business...</option>
+    </select>
+    
     <div class="buttons">
-        <label class="scan-btn scan-btn-cos">
+        <label class="scan-btn btn-cos">
             <span class="scan-icon">📦</span>
             <span class="scan-text">
                 <span class="scan-title">Supplier Invoice</span>
-                <span class="scan-desc">Stock IN + Create items</span>
+                <span class="scan-desc">On account - will pay later</span>
             </span>
-            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'cos')">
+            <input type="file" accept="image/*" capture="environment" onchange="scan(this, 'cos')">
         </label>
         
-        <label class="scan-btn scan-btn-cos" style="background: linear-gradient(135deg, #22c55e, #16a34a); box-shadow: 0 6px 24px rgba(34, 197, 94, 0.3);">
-            <span class="scan-icon">💵</span>
+        <label class="scan-btn btn-cos-paid">
+            <span class="scan-icon">📦💵</span>
             <span class="scan-text">
                 <span class="scan-title">Supplier Invoice (PAID)</span>
-                <span class="scan-desc">Already paid cash - no creditor</span>
+                <span class="scan-desc">Already paid cash</span>
             </span>
-            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'cos_paid')">
+            <input type="file" accept="image/*" capture="environment" onchange="scan(this, 'cos_paid')">
         </label>
         
-        <label class="scan-btn scan-btn-exp">
+        <label class="scan-btn btn-exp">
             <span class="scan-icon">🧾</span>
             <span class="scan-text">
                 <span class="scan-title">Expense</span>
-                <span class="scan-desc">Auto-categorize + Record</span>
+                <span class="scan-desc">On account - will pay later</span>
             </span>
-            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'exp')">
+            <input type="file" accept="image/*" capture="environment" onchange="scan(this, 'exp')">
         </label>
         
-        <label class="scan-btn scan-btn-exp" style="background: linear-gradient(135deg, #22c55e, #16a34a); box-shadow: 0 6px 24px rgba(34, 197, 94, 0.3);">
-            <span class="scan-icon">💵</span>
+        <label class="scan-btn btn-exp-paid">
+            <span class="scan-icon">🧾💵</span>
             <span class="scan-text">
                 <span class="scan-title">Expense (PAID)</span>
-                <span class="scan-desc">Cash expense - already paid</span>
+                <span class="scan-desc">Already paid cash</span>
             </span>
-            <input type="file" accept="image/*" capture="environment" onchange="processImage(this, 'exp_paid')">
+            <input type="file" accept="image/*" capture="environment" onchange="scan(this, 'exp_paid')">
         </label>
     </div>
     
     <div class="footer">
-        <a href="/" class="sync-btn" id="sync-btn" onclick="syncQueue(); return false;" style="display:none;">🔄 Sync Now</a>
-        <a href="/">📊 Desktop Version</a>
+        <a href="/">📊 Open Full Desktop Version</a>
     </div>
     
-    <div class="overlay" id="overlay">
+    <!-- Loading -->
+    <div class="overlay" id="loading">
         <div class="spinner"></div>
-        <div class="overlay-text" id="overlay-text">AI is reading...</div>
-        <div class="overlay-sub" id="overlay-sub">This takes a few seconds</div>
+        <div class="overlay-text">AI is reading your document...</div>
     </div>
     
-    <div class="result-card" id="result-card">
-        <div class="result-icon" id="result-icon">✓</div>
-        <div class="badge" id="result-badge"></div>
-        <div class="result-title" id="result-title">Done!</div>
-        <div class="result-details" id="result-details"></div>
-        <div class="result-items" id="result-items"></div>
-        <div class="result-amount" id="result-amount"></div>
-        <div id="done-btn"><button class="result-btn" onclick="closeResult()">Done</button></div>
+    <!-- Result -->
+    <div class="result" id="result">
+        <div class="result-card">
+            <div class="error-msg" id="error-msg" style="display:none;"></div>
+            
+            <div class="result-header">
+                <div class="result-icon" id="r-icon">📦</div>
+                <div class="result-supplier" id="r-supplier">NWK</div>
+                <div class="result-amount" id="r-amount">R 427.30</div>
+                <div class="result-desc" id="r-desc">PVC Fittings</div>
+                <div class="result-type" id="r-type">SUPPLIER INVOICE</div>
+            </div>
+            
+            <div class="result-items" id="r-items">
+                <!-- Items will be populated here -->
+            </div>
+            
+            <div class="result-actions">
+                <button class="btn-delete" onclick="deleteResult()">✗ DELETE</button>
+                <button class="btn-post" onclick="postResult()">✓ POST</button>
+            </div>
+        </div>
     </div>
     
     <script>
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // OFFLINE CAPABILITY - IndexedDB Queue
-    // ═══════════════════════════════════════════════════════════════════════════════
+    let currentScan = null;
+    let currentType = null;
     
-    let db = null;
-    const DB_NAME = 'ClickScannerDB';
-    const DB_VERSION = 1;
-    const STORE_NAME = 'scanQueue';
-    
-    // Initialize IndexedDB
-    function initDB() {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open(DB_NAME, DB_VERSION);
-            
-            request.onerror = () => reject(request.error);
-            request.onsuccess = () => {
-                db = request.result;
-                resolve(db);
-            };
-            
-            request.onupgradeneeded = (e) => {
-                const database = e.target.result;
-                if (!database.objectStoreNames.contains(STORE_NAME)) {
-                    database.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
-                }
-            };
-        });
-    }
-    
-    // Add scan to offline queue
-    async function addToQueue(imageData, scanType) {
-        if (!db) await initDB();
-        
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readwrite');
-            const store = tx.objectStore(STORE_NAME);
-            
-            const item = {
-                image: imageData,
-                type: scanType,
-                timestamp: new Date().toISOString(),
-                status: 'pending'
-            };
-            
-            const request = store.add(item);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-    }
-    
-    // Get all queued scans
-    async function getQueue() {
-        if (!db) await initDB();
-        
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readonly');
-            const store = tx.objectStore(STORE_NAME);
-            const request = store.getAll();
-            
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-    }
-    
-    // Remove item from queue
-    async function removeFromQueue(id) {
-        if (!db) await initDB();
-        
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readwrite');
-            const store = tx.objectStore(STORE_NAME);
-            const request = store.delete(id);
-            
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
-        });
-    }
-    
-    // Update queue count display
-    async function updateQueueDisplay() {
+    // Load businesses on start
+    async function loadBusinesses() {
         try {
-            const queue = await getQueue();
-            const count = queue.length;
-            const queueEl = document.getElementById('queue-count');
-            const syncBtn = document.getElementById('sync-btn');
+            const r = await fetch('/api/businesses');
+            const data = await r.json();
+            const select = document.getElementById('business-select');
             
-            if (count > 0) {
-                queueEl.textContent = count + ' queued';
-                queueEl.classList.add('show');
-                syncBtn.style.display = 'inline-block';
-            } else {
-                queueEl.classList.remove('show');
-                syncBtn.style.display = 'none';
+            if (data.businesses && data.businesses.length > 0) {
+                select.innerHTML = '';
+                data.businesses.forEach(b => {
+                    const opt = document.createElement('option');
+                    opt.value = b.id;
+                    opt.textContent = (b.icon || '🏢') + ' ' + (b.business_name || b.name);
+                    if (b.id === data.current) opt.selected = true;
+                    select.appendChild(opt);
+                });
             }
-        } catch (e) {
-            console.log('Queue display error:', e);
+        } catch(e) {
+            console.log('Could not load businesses');
         }
     }
     
-    // Online/offline status
-    function updateOnlineStatus() {
-        const dot = document.getElementById('status-dot');
-        const text = document.getElementById('status-text');
+    // When business changes
+    document.getElementById('business-select').onchange = async function() {
+        if (this.value) {
+            await fetch('/switch-business/' + this.value);
+        }
+    };
+    
+    // Scan image
+    async function scan(input, type) {
+        if (!input.files || !input.files[0]) return;
         
-        if (navigator.onLine) {
-            dot.className = 'status-dot status-online';
-            text.textContent = 'Online';
-            // Auto-sync when back online
-            syncQueue();
-        } else {
-            dot.className = 'status-dot status-offline';
-            text.textContent = 'Offline - scans will queue';
-        }
-    }
-    
-    window.addEventListener('online', updateOnlineStatus);
-    window.addEventListener('offline', updateOnlineStatus);
-    
-    // Sync queued scans
-    async function syncQueue() {
-        if (!navigator.onLine) {
-            alert('Still offline. Will sync automatically when connected.');
+        const bizId = document.getElementById('business-select').value;
+        if (!bizId) {
+            alert('Please select a business first');
+            input.value = '';
             return;
         }
         
-        try {
-            const queue = await getQueue();
-            if (queue.length === 0) return;
+        currentType = type;
+        document.getElementById('loading').classList.add('show');
+        
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            const imageData = e.target.result;
             
-            const overlay = document.getElementById('overlay');
-            const overlayText = document.getElementById('overlay-text');
-            const overlaySub = document.getElementById('overlay-sub');
-            
-            overlay.classList.add('show');
-            overlayText.textContent = 'Syncing ' + queue.length + ' scans...';
-            overlaySub.textContent = 'Please wait';
-            
-            let synced = 0;
-            let failed = 0;
-            
-            for (const item of queue) {
-                try {
-                    overlayText.textContent = 'Syncing ' + (synced + 1) + ' of ' + queue.length + '...';
-                    
-                    const response = await fetch('/m/scan', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ image: item.image, type: item.type })
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (data.success) {
-                        await removeFromQueue(item.id);
-                        synced++;
-                    } else {
-                        failed++;
-                    }
-                } catch (e) {
-                    failed++;
-                }
-            }
-            
-            overlay.classList.remove('show');
-            await updateQueueDisplay();
-            
-            if (synced > 0) {
-                showResult({
-                    success: true,
-                    title: 'Sync Complete!',
-                    details: synced + ' scan(s) uploaded successfully' + (failed > 0 ? '<br>' + failed + ' failed' : ''),
-                    badge: 'SYNCED',
-                    badge_type: 'new'
+            try {
+                const response = await fetch('/m/scan', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({image: imageData, type: type, business_id: bizId})
                 });
-            }
-            
-        } catch (e) {
-            document.getElementById('overlay').classList.remove('show');
-            alert('Sync error: ' + e.message);
-        }
-    }
-    
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // MAIN SCAN PROCESSING
-    // ═══════════════════════════════════════════════════════════════════════════════
-    
-    async function processImage(input, type) {
-        if (!input.files || !input.files[0]) return;
-        
-        const file = input.files[0];
-        const overlay = document.getElementById('overlay');
-        const overlayText = document.getElementById('overlay-text');
-        const overlaySub = document.getElementById('overlay-sub');
-        
-        overlay.classList.add('show');
-        
-        const messages = {
-            'cos': ['Reading supplier invoice...', 'Finding items, prices, supplier...'],
-            'cos_paid': ['Reading supplier invoice...', 'Finding items, prices, supplier...'],
-            'exp': ['Reading receipt...', 'Auto-categorizing expense...'],
-            'exp_paid': ['Reading receipt...', 'Auto-categorizing expense...'],
-            'stock': ['Reading stock count...', 'Matching items, checking quantities...'],
-            'payment': ['Reading payment proof...', 'Matching to customer invoice...']
-        };
-        overlayText.textContent = messages[type]?.[0] || 'Processing...';
-        overlaySub.textContent = messages[type]?.[1] || '';
-        
-        try {
-            const base64 = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
-            
-            // Check if offline
-            if (!navigator.onLine) {
-                // Queue for later
-                await addToQueue(base64, type);
-                await updateQueueDisplay();
                 
-                overlay.classList.remove('show');
-                showResult({
-                    success: true,
-                    title: 'Saved for Later',
-                    details: 'No internet connection.<br>Scan saved and will upload automatically when you\\'re back online.',
-                    badge: 'QUEUED',
-                    badge_type: 'queued'
-                });
-                input.value = '';
-                return;
-            }
-            
-            const response = await fetch('/m/scan', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image: base64, type: type })
-            });
-            
-            const data = await response.json();
-            overlay.classList.remove('show');
-            
-            showResult(data);
-            
-        } catch (err) {
-            // Network error - queue it
-            if (!navigator.onLine || err.message.includes('fetch')) {
-                try {
-                    const base64 = await new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result);
-                        reader.onerror = reject;
-                        reader.readAsDataURL(file);
-                    });
-                    
-                    await addToQueue(base64, type);
-                    await updateQueueDisplay();
-                    
-                    overlay.classList.remove('show');
-                    showResult({
-                        success: true,
-                        title: 'Saved for Later',
-                        details: 'Connection lost. Scan saved and will upload when back online.',
-                        badge: 'QUEUED',
-                        badge_type: 'queued'
-                    });
-                } catch (queueErr) {
-                    overlay.classList.remove('show');
-                    showResult({ success: false, error: 'Could not save: ' + queueErr.message });
+                const data = await response.json();
+                document.getElementById('loading').classList.remove('show');
+                
+                if (data.success) {
+                    showResult(data);
+                } else {
+                    showError(data.error || 'Could not read document');
                 }
-            } else {
-                overlay.classList.remove('show');
-                showResult({ success: false, error: err.message });
+            } catch(err) {
+                document.getElementById('loading').classList.remove('show');
+                showError('Connection error - please try again');
             }
-        }
-        
-        input.value = '';
+            
+            input.value = '';
+        };
+        reader.readAsDataURL(input.files[0]);
     }
     
+    // Show result for approval
     function showResult(data) {
-        const card = document.getElementById('result-card');
-        const icon = document.getElementById('result-icon');
-        const badge = document.getElementById('result-badge');
-        const title = document.getElementById('result-title');
-        const details = document.getElementById('result-details');
-        const items = document.getElementById('result-items');
-        const amount = document.getElementById('result-amount');
+        currentScan = data;
         
-        if (data.success) {
-            icon.textContent = '✓';
-            icon.style.color = '#10b981';
-            title.textContent = data.title || 'Success!';
-            details.innerHTML = data.details || '';
-            
-            if (data.badge) {
-                badge.textContent = data.badge;
-                badge.className = 'badge badge-' + (data.badge_type || 'new');
-                badge.style.display = 'inline-block';
-            } else {
-                badge.style.display = 'none';
-            }
-            
-            if (data.items && data.items.length > 0) {
-                let itemsHtml = '';
-                for (const item of data.items) {
-                    itemsHtml += '<div class="result-item"><span>' + item.name + '</span><span>' + item.value + '</span></div>';
-                }
-                items.innerHTML = itemsHtml;
-                items.style.display = 'block';
-            } else {
-                items.style.display = 'none';
-            }
-            
-            if (data.amount) {
-                amount.textContent = data.amount;
-                amount.style.display = 'block';
-            } else {
-                amount.style.display = 'none';
-            }
-            
-            // Add review button if staged
-            const doneBtn = document.getElementById('done-btn');
-            if (data.staged && data.review_url) {
-                doneBtn.innerHTML = '<a href="' + data.review_url + '" style="display:block;width:100%;padding:16px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;text-decoration:none;border-radius:12px;font-weight:600;text-align:center;">Review & Approve</a>';
-            } else {
-                doneBtn.innerHTML = '<button onclick="closeResult()" style="width:100%;padding:16px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:12px;font-weight:600;cursor:pointer;">Done</button>';
-            }
-            
+        const icon = document.getElementById('r-icon');
+        const supplier = document.getElementById('r-supplier');
+        const amount = document.getElementById('r-amount');
+        const desc = document.getElementById('r-desc');
+        const typeEl = document.getElementById('r-type');
+        const items = document.getElementById('r-items');
+        const error = document.getElementById('error-msg');
+        
+        error.style.display = 'none';
+        
+        // Set icon based on type
+        if (currentType.startsWith('cos')) {
+            icon.textContent = '📦';
+            typeEl.textContent = currentType.includes('paid') ? 'SUPPLIER INVOICE (PAID)' : 'SUPPLIER INVOICE';
+            typeEl.className = 'result-type ' + (currentType.includes('paid') ? 'type-paid' : 'type-cos');
         } else {
-            icon.textContent = '✗';
-            icon.style.color = '#ef4444';
-            badge.style.display = 'none';
-            title.textContent = 'Failed';
-            details.textContent = data.error || 'Could not process';
-            items.style.display = 'none';
-            amount.style.display = 'none';
+            icon.textContent = '🧾';
+            typeEl.textContent = currentType.includes('paid') ? 'EXPENSE (PAID)' : 'EXPENSE';
+            typeEl.className = 'result-type ' + (currentType.includes('paid') ? 'type-paid' : 'type-exp');
         }
         
-        card.classList.add('show');
+        supplier.textContent = data.supplier || data.vendor || 'Unknown';
+        amount.textContent = 'R ' + (data.total || data.amount || 0).toLocaleString('en-ZA', {minimumFractionDigits: 2});
+        desc.textContent = data.description || data.category || '';
+        
+        // Show items if available
+        if (data.items && data.items.length > 0) {
+            items.innerHTML = data.items.map(i => 
+                '<div class="result-item"><span>' + (i.description || i.name || 'Item') + '</span><span>R ' + (i.total || i.unit_price || 0).toFixed(2) + '</span></div>'
+            ).join('');
+            items.style.display = 'block';
+        } else {
+            items.style.display = 'none';
+        }
+        
+        document.getElementById('result').classList.add('show');
     }
     
-    function closeResult() {
-        document.getElementById('result-card').classList.remove('show');
+    // Show error
+    function showError(msg) {
+        document.getElementById('error-msg').textContent = msg;
+        document.getElementById('error-msg').style.display = 'block';
+        document.getElementById('r-icon').textContent = '⚠️';
+        document.getElementById('r-supplier').textContent = 'Could not read';
+        document.getElementById('r-amount').textContent = '';
+        document.getElementById('r-desc').textContent = 'Try again with better lighting';
+        document.getElementById('r-type').style.display = 'none';
+        document.getElementById('r-items').style.display = 'none';
+        document.getElementById('result').classList.add('show');
     }
     
-    // Initialize on page load
-    document.addEventListener('DOMContentLoaded', async () => {
-        await initDB();
-        updateOnlineStatus();
-        updateQueueDisplay();
-    });
+    // POST the result
+    async function postResult() {
+        if (!currentScan || !currentScan.staged_id) {
+            document.getElementById('result').classList.remove('show');
+            return;
+        }
+        
+        document.getElementById('loading').classList.add('show');
+        
+        try {
+            const r = await fetch('/m/approve/' + currentScan.staged_id, {method: 'POST'});
+            const data = await r.json();
+            
+            document.getElementById('loading').classList.remove('show');
+            document.getElementById('result').classList.remove('show');
+            
+            if (data.success) {
+                // Quick flash of success
+                alert('✓ Posted successfully!');
+            } else {
+                alert('Error: ' + (data.error || 'Could not post'));
+            }
+        } catch(e) {
+            document.getElementById('loading').classList.remove('show');
+            alert('Connection error');
+        }
+        
+        currentScan = null;
+    }
+    
+    // DELETE the result
+    async function deleteResult() {
+        if (currentScan && currentScan.staged_id) {
+            try {
+                await fetch('/m/delete/' + currentScan.staged_id, {method: 'POST'});
+            } catch(e) {}
+        }
+        
+        document.getElementById('result').classList.remove('show');
+        currentScan = null;
+    }
+    
+    // Init
+    loadBusinesses();
     </script>
 </body>
 </html>'''
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AI SCANNER ROUTES
+# MOBILE SCANNER ROUTES
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/businesses")
+def api_businesses():
+    """API: Get user's businesses for mobile selector"""
+    user = UserSession.get_current_user()
+    if not user:
+        return jsonify({"businesses": [], "current": None})
+    
+    businesses = BusinessManager.get_user_businesses(user.get("id", ""))
+    current = BusinessManager.get_current_business()
+    
+    return jsonify({
+        "businesses": businesses,
+        "current": current.get("id") if current else None
+    })
+
 
 @app.route("/m")
 def scanner_home():
-    """Mobile scanner - 4 buttons: COS, EXP, STOCK, PAYMENT"""
+    """Mobile scanner - 4 buttons, business selector, POST/DELETE only"""
     return SCANNER_HTML
+
+
+@app.route("/m/approve/<staged_id>", methods=["POST"])
+def scanner_approve(staged_id):
+    """Approve and post a staged transaction from mobile"""
+    try:
+        # Get the staged transaction
+        success, result = db.query("staged_transactions", {"id": staged_id})
+        if not success or not result:
+            return jsonify({"success": False, "error": "Not found"})
+        
+        staged = result[0]
+        data = json.loads(staged.get("data", "{}"))
+        trans_type = staged.get("type", "")
+        
+        # Process based on type
+        if trans_type == "supplier_invoice":
+            result = process_supplier_invoice(data)
+        elif trans_type == "expense":
+            result = process_expense_receipt(data)
+        else:
+            return jsonify({"success": False, "error": "Unknown type"})
+        
+        # Delete from staging if successful
+        if result.get("success"):
+            db.delete("staged_transactions", staged_id)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/m/delete/<staged_id>", methods=["POST"])
+def scanner_delete(staged_id):
+    """Delete a staged transaction without posting"""
+    try:
+        db.delete("staged_transactions", staged_id)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 
 @app.route("/m/scan", methods=["POST"])
@@ -17450,8 +17358,38 @@ def stage_transaction(trans_type: str, data: dict):
     """
     Stage a transaction for review instead of posting directly.
     User must approve before it touches real data.
+    Checks for duplicates based on invoice_no/reference.
     """
     try:
+        # Check for duplicate invoice number
+        invoice_no = data.get("invoice_no") or data.get("reference") or ""
+        supplier = data.get("supplier") or data.get("vendor") or ""
+        
+        if invoice_no and supplier:
+            # Check existing staged transactions
+            success, existing = db.query("staged_transactions", {})
+            if success and existing:
+                for staged in existing:
+                    staged_data = json.loads(staged.get("data", "{}"))
+                    existing_inv = staged_data.get("invoice_no") or staged_data.get("reference") or ""
+                    existing_sup = staged_data.get("supplier") or staged_data.get("vendor") or ""
+                    if existing_inv == invoice_no and existing_sup.lower() == supplier.lower():
+                        return jsonify({
+                            "success": False,
+                            "error": f"Duplicate! Invoice {invoice_no} from {supplier} already scanned."
+                        })
+            
+            # Check posted transactions (supplier invoices)
+            if trans_type == "supplier_invoice":
+                success, posted = db.query("supplier_invoices", {"invoice_no": invoice_no})
+                if success and posted:
+                    for inv in posted:
+                        if inv.get("supplier_name", "").lower() == supplier.lower():
+                            return jsonify({
+                                "success": False,
+                                "error": f"Duplicate! Invoice {invoice_no} from {supplier} already posted."
+                            })
+        
         staged_id = generate_id()
         
         db.insert("staged_transactions", {
@@ -17462,9 +17400,8 @@ def stage_transaction(trans_type: str, data: dict):
             "created_at": now()
         })
         
-        # Return success with redirect to review
+        # Return success with staged_id for mobile POST/DELETE
         if trans_type == "supplier_invoice":
-            title = "Ready for Review!"
             supplier = data.get("supplier", "Unknown")
             total = Money.parse(data.get("total", 0))
             items_count = len(data.get("items", []))
@@ -17473,28 +17410,29 @@ def stage_transaction(trans_type: str, data: dict):
             return jsonify({
                 "success": True,
                 "staged": True,
-                "title": title,
-                "badge": "PAID ✓" if is_paid else "NEEDS REVIEW",
-                "badge_type": "paid" if is_paid else "review",
-                "details": f"<strong>{supplier}</strong><br>Invoice: {data.get('invoice_no', 'Not visible')}<br>{items_count} items" + ("<br><strong style='color:#22c55e'>💵 Paid Cash</strong>" if is_paid else ""),
-                "amount": f"R {float(total):,.2f}",
-                "review_url": f"/staging/{staged_id}",
-                "items": [{"name": item.get("description", "")[:25], "value": f"x{item.get('qty', 1)}"} for item in data.get("items", [])[:5]]
+                "staged_id": staged_id,
+                "supplier": supplier,
+                "total": float(total),
+                "description": f"{items_count} items" + (" - PAID" if is_paid else ""),
+                "items": data.get("items", [])[:8],
+                "invoice_no": data.get("invoice_no", ""),
+                "review_url": f"/staging/{staged_id}"
             })
         
         elif trans_type == "expense":
-            title = "Ready for Review!"
             vendor = data.get("vendor", "Unknown")
             total = Money.parse(data.get("total", 0))
+            is_paid = data.get("paid", False)
             
             return jsonify({
                 "success": True,
                 "staged": True,
-                "title": title,
-                "badge": "PAID ✓" if data.get("paid") else "NEEDS REVIEW",
-                "badge_type": "paid" if data.get("paid") else "review",
-                "details": f"<strong>{vendor}</strong><br>{data.get('description', '')}",
-                "amount": f"R {float(total):,.2f}",
+                "staged_id": staged_id,
+                "supplier": vendor,
+                "vendor": vendor,
+                "total": float(total),
+                "description": data.get("description", "") + (" - PAID" if is_paid else ""),
+                "category": data.get("category", "general"),
                 "review_url": f"/staging/{staged_id}"
             })
         
