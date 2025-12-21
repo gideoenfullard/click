@@ -13285,7 +13285,7 @@ Be specific with Rand amounts where relevant. Be honest but constructive.
 Return ONLY valid JSON, no other text."""
 
         try:
-            # Use Sonnet for faster analysis (still very capable)
+            # Use Sonnet for faster analysis - Opus times out on Render's 30s limit
             response = requests.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -13294,11 +13294,11 @@ Return ONLY valid JSON, no other text."""
                     "anthropic-version": "2023-06-01"
                 },
                 json={
-                    "model": "claude-opus-4-20250514",  # Opus for deep analysis
+                    "model": "claude-sonnet-4-20250514",  # Sonnet - fast enough for Render
                     "max_tokens": 4000,
                     "messages": [{"role": "user", "content": prompt}]
                 },
-                timeout=90
+                timeout=25  # Under Render's 30s limit
             )
             
             if response.status_code == 200:
