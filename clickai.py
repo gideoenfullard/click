@@ -16680,469 +16680,293 @@ SCANNER_HTML = '''<!DOCTYPE html>
             background: #0a0a12;
             color: #f0f0f0;
             min-height: 100vh;
+            min-height: -webkit-fill-available;
             display: flex;
             flex-direction: column;
         }
+        
         .header {
             text-align: center;
-            padding: 24px 20px 16px;
+            padding: 40px 20px 20px;
         }
         .logo {
-            font-size: 32px;
+            font-size: 36px;
             font-weight: 800;
             background: linear-gradient(135deg, #8b5cf6, #3b82f6);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
-        .tagline { color: #606070; font-size: 13px; margin-top: 4px; }
-        .status { 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            gap: 6px; 
-            margin-top: 8px;
-            font-size: 12px;
-            color: #10b981;
-        }
-        .status-dot {
-            width: 8px; height: 8px;
-            background: #10b981;
-            border-radius: 50%;
-        }
+        .tagline { color: #606070; font-size: 14px; margin-top: 6px; }
         
-        /* Business Selector */
         .biz-select {
-            margin: 8px 20px 0;
-            padding: 12px 16px;
+            margin: 16px 20px;
+            padding: 14px 16px;
             background: #12121a;
             border: 1px solid #2a2a4a;
-            border-radius: 10px;
+            border-radius: 12px;
             color: #f0f0f0;
-            font-size: 15px;
+            font-size: 16px;
             width: calc(100% - 40px);
             appearance: none;
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238b8b9a'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
             background-repeat: no-repeat;
-            background-position: right 12px center;
+            background-position: right 16px center;
         }
         
-        /* Scan Buttons */
         .buttons {
             flex: 1;
             display: flex;
             flex-direction: column;
             justify-content: center;
             padding: 20px;
-            gap: 12px;
+            gap: 16px;
         }
+        
         .scan-btn {
             display: flex;
             align-items: center;
-            gap: 14px;
-            padding: 20px;
-            border-radius: 14px;
-            font-size: 17px;
-            font-weight: 600;
+            justify-content: center;
+            gap: 12px;
+            padding: 28px 24px;
+            border-radius: 16px;
+            font-size: 20px;
+            font-weight: 700;
             color: white;
             border: none;
             cursor: pointer;
-            text-align: left;
+            text-align: center;
+            transition: transform 0.1s;
         }
-        .scan-btn:active { transform: scale(0.98); }
-        .scan-icon { font-size: 28px; }
-        .scan-text { flex: 1; }
-        .scan-title { display: block; }
-        .scan-desc { display: block; font-size: 12px; font-weight: 400; opacity: 0.8; margin-top: 2px; }
+        .scan-btn:active { transform: scale(0.97); }
         
-        .btn-cos { background: linear-gradient(135deg, #f59e0b, #d97706); }
-        .btn-cos-paid { background: linear-gradient(135deg, #22c55e, #16a34a); }
-        .btn-exp { background: linear-gradient(135deg, #ef4444, #dc2626); }
-        .btn-exp-paid { background: linear-gradient(135deg, #10b981, #059669); }
+        .btn-supplier {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+        }
+        .btn-expense {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+        }
+        
+        .scan-icon { font-size: 32px; }
         
         input[type="file"] { display: none; }
         
-        .footer { 
-            text-align: center; 
-            padding: 16px; 
-            border-top: 1px solid #1a1a2e;
+        .queue-badge {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #8b5cf6;
+            color: white;
+            padding: 8px 14px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            display: none;
+            text-decoration: none;
         }
-        .footer a { color: #606070; text-decoration: none; font-size: 13px; }
+        .queue-badge.show { display: block; }
         
-        /* Loading Overlay */
-        .overlay {
+        .footer { 
+            padding: 20px;
+            text-align: center;
+        }
+        .footer a {
+            color: #8b5cf6;
+            text-decoration: none;
+            font-size: 15px;
+            padding: 12px 24px;
+            border: 1px solid #8b5cf6;
+            border-radius: 10px;
+            display: inline-block;
+        }
+        
+        /* Success Toast */
+        .toast {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #10b981;
+            color: white;
+            padding: 16px 32px;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            opacity: 0;
+            transition: all 0.3s;
+            z-index: 1000;
+        }
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+        
+        /* Uploading overlay */
+        .uploading {
             display: none;
             position: fixed;
             inset: 0;
-            background: rgba(5, 5, 10, 0.95);
-            z-index: 1000;
+            background: rgba(0,0,0,0.8);
             justify-content: center;
             align-items: center;
             flex-direction: column;
+            z-index: 999;
         }
-        .overlay.show { display: flex; }
-        .spinner {
-            width: 50px; height: 50px;
-            border: 3px solid #1a1a2e;
+        .uploading.show { display: flex; }
+        .uploading-text { 
+            color: white; 
+            font-size: 18px; 
+            margin-top: 16px;
+        }
+        .upload-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #333;
             border-top-color: #8b5cf6;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
-            margin-bottom: 16px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .overlay-text { font-size: 16px; color: #a0a0a0; }
-        
-        /* Result Card */
-        .result {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(5, 5, 10, 0.95);
-            z-index: 1000;
-            padding: 20px;
-            overflow-y: auto;
-        }
-        .result.show { display: block; }
-        .result-card {
-            background: #12121a;
-            border: 1px solid #2a2a4a;
-            border-radius: 16px;
-            padding: 24px;
-            max-width: 400px;
-            margin: 0 auto;
-        }
-        .result-header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        .result-icon { font-size: 48px; }
-        .result-supplier { font-size: 20px; font-weight: 700; margin-top: 8px; }
-        .result-amount { font-size: 32px; font-weight: 800; color: #10b981; margin-top: 4px; }
-        .result-desc { color: #8b8b9a; font-size: 14px; margin-top: 8px; }
-        .result-type {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            margin-top: 12px;
-        }
-        .type-cos { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
-        .type-exp { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-        .type-paid { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-        
-        .result-items {
-            background: #0a0a12;
-            border-radius: 10px;
-            padding: 12px;
-            margin: 16px 0;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-        .result-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid #1a1a2e;
-            font-size: 13px;
-        }
-        .result-item:last-child { border-bottom: none; }
-        
-        .result-actions {
-            display: flex;
-            gap: 12px;
-            margin-top: 20px;
-        }
-        .btn-post, .btn-delete {
-            flex: 1;
-            padding: 16px;
-            border: none;
-            border-radius: 12px;
-            font-size: 16px;
-            font-weight: 700;
-            cursor: pointer;
-        }
-        .btn-post {
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: white;
-        }
-        .btn-delete {
-            background: #1a1a2e;
-            color: #ef4444;
-            border: 1px solid #ef4444;
-        }
-        
-        .error-msg {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            color: #fca5a5;
-            padding: 16px;
-            border-radius: 10px;
-            text-align: center;
-            margin-bottom: 16px;
-        }
     </style>
 </head>
 <body>
+    <a href="/staging" class="queue-badge" id="queue-badge">📋 0 to review</a>
+    
     <div class="header">
         <div class="logo">Click</div>
-        <div class="tagline">Tap • Snap • Done</div>
-        <div class="status">
-            <span class="status-dot"></span>
-            <span>Online</span>
-        </div>
+        <div class="tagline">Snap • Upload • Review Later</div>
     </div>
     
-    <select class="biz-select" id="business-select">
+    <select class="biz-select" id="biz-select">
         <option value="">Select Business...</option>
     </select>
     
     <div class="buttons">
-        <label class="scan-btn btn-cos">
+        <label class="scan-btn btn-supplier">
             <span class="scan-icon">📦</span>
-            <span class="scan-text">
-                <span class="scan-title">Supplier Invoice</span>
-                <span class="scan-desc">On account - will pay later</span>
-            </span>
-            <input type="file" accept="image/*" capture="environment" onchange="scan(this, 'cos')">
+            <span>Supplier Invoice</span>
+            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'supplier')">
         </label>
         
-        <label class="scan-btn btn-cos-paid">
-            <span class="scan-icon">📦💵</span>
-            <span class="scan-text">
-                <span class="scan-title">Supplier Invoice (PAID)</span>
-                <span class="scan-desc">Already paid cash</span>
-            </span>
-            <input type="file" accept="image/*" capture="environment" onchange="scan(this, 'cos_paid')">
-        </label>
-        
-        <label class="scan-btn btn-exp">
+        <label class="scan-btn btn-expense">
             <span class="scan-icon">🧾</span>
-            <span class="scan-text">
-                <span class="scan-title">Expense</span>
-                <span class="scan-desc">On account - will pay later</span>
-            </span>
-            <input type="file" accept="image/*" capture="environment" onchange="scan(this, 'exp')">
-        </label>
-        
-        <label class="scan-btn btn-exp-paid">
-            <span class="scan-icon">🧾💵</span>
-            <span class="scan-text">
-                <span class="scan-title">Expense (PAID)</span>
-                <span class="scan-desc">Already paid cash</span>
-            </span>
-            <input type="file" accept="image/*" capture="environment" onchange="scan(this, 'exp_paid')">
+            <span>Expense</span>
+            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'expense')">
         </label>
     </div>
     
     <div class="footer">
-        <a href="/">📊 Open Full Desktop Version</a>
+        <a href="/staging">📋 Review Scanned Items</a>
     </div>
     
-    <!-- Loading -->
-    <div class="overlay" id="loading">
-        <div class="spinner"></div>
-        <div class="overlay-text">AI is reading your document...</div>
-    </div>
+    <div class="toast" id="toast">✓ Uploaded!</div>
     
-    <!-- Result -->
-    <div class="result" id="result">
-        <div class="result-card">
-            <div class="error-msg" id="error-msg" style="display:none;"></div>
-            
-            <div class="result-header">
-                <div class="result-icon" id="r-icon">📦</div>
-                <div class="result-supplier" id="r-supplier">NWK</div>
-                <div class="result-amount" id="r-amount">R 427.30</div>
-                <div class="result-desc" id="r-desc">PVC Fittings</div>
-                <div class="result-type" id="r-type">SUPPLIER INVOICE</div>
-            </div>
-            
-            <div class="result-items" id="r-items">
-                <!-- Items will be populated here -->
-            </div>
-            
-            <div class="result-actions">
-                <button class="btn-delete" onclick="deleteResult()">✗ DELETE</button>
-                <button class="btn-post" onclick="postResult()">✓ POST</button>
-            </div>
-        </div>
+    <div class="uploading" id="uploading">
+        <div class="upload-spinner"></div>
+        <div class="uploading-text">Uploading...</div>
     </div>
     
     <script>
-    let currentScan = null;
-    let currentType = null;
-    
-    // Load businesses on start
+    // Load businesses
     async function loadBusinesses() {
         try {
             const r = await fetch('/api/businesses');
             const data = await r.json();
-            const select = document.getElementById('business-select');
+            const sel = document.getElementById('biz-select');
             
             if (data.businesses && data.businesses.length > 0) {
-                select.innerHTML = '';
+                sel.innerHTML = '<option value="">Select Business...</option>';
                 data.businesses.forEach(b => {
                     const opt = document.createElement('option');
                     opt.value = b.id;
                     opt.textContent = (b.icon || '🏢') + ' ' + (b.business_name || b.name);
                     if (b.id === data.current) opt.selected = true;
-                    select.appendChild(opt);
+                    sel.appendChild(opt);
                 });
             }
-        } catch(e) {
-            console.log('Could not load businesses');
-        }
+        } catch(e) {}
     }
     
-    // When business changes
-    document.getElementById('business-select').onchange = async function() {
+    // Load pending count
+    async function loadPendingCount() {
+        try {
+            const r = await fetch('/api/staging/count');
+            const data = await r.json();
+            const badge = document.getElementById('queue-badge');
+            if (data.count > 0) {
+                badge.textContent = '📋 ' + data.count + ' to review';
+                badge.classList.add('show');
+            } else {
+                badge.classList.remove('show');
+            }
+        } catch(e) {}
+    }
+    
+    // Switch business
+    document.getElementById('biz-select').onchange = async function() {
         if (this.value) {
             await fetch('/switch-business/' + this.value);
         }
     };
     
-    // Scan image
-    async function scan(input, type) {
+    // Upload photo
+    async function upload(input, type) {
         if (!input.files || !input.files[0]) return;
         
-        const bizId = document.getElementById('business-select').value;
+        const bizId = document.getElementById('biz-select').value;
         if (!bizId) {
             alert('Please select a business first');
             input.value = '';
             return;
         }
         
-        currentType = type;
-        document.getElementById('loading').classList.add('show');
+        // Show uploading
+        document.getElementById('uploading').classList.add('show');
         
+        const file = input.files[0];
+        
+        // Read as base64
         const reader = new FileReader();
         reader.onload = async function(e) {
-            const imageData = e.target.result;
-            
             try {
-                const response = await fetch('/m/scan', {
+                const response = await fetch('/m/upload', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({image: imageData, type: type, business_id: bizId})
+                    body: JSON.stringify({
+                        image: e.target.result,
+                        type: type,
+                        business_id: bizId
+                    })
                 });
                 
-                const data = await response.json();
-                document.getElementById('loading').classList.remove('show');
+                const result = await response.json();
                 
-                if (data.success) {
-                    showResult(data);
+                document.getElementById('uploading').classList.remove('show');
+                
+                if (result.success) {
+                    // Show toast
+                    const toast = document.getElementById('toast');
+                    toast.classList.add('show');
+                    setTimeout(() => toast.classList.remove('show'), 2000);
+                    
+                    // Update badge
+                    loadPendingCount();
                 } else {
-                    showError(data.error || 'Could not read document');
+                    alert('Upload failed: ' + (result.error || 'Unknown error'));
                 }
+                
             } catch(err) {
-                document.getElementById('loading').classList.remove('show');
-                showError('Connection error - please try again');
+                document.getElementById('uploading').classList.remove('show');
+                alert('Connection error - please try again');
             }
             
             input.value = '';
         };
-        reader.readAsDataURL(input.files[0]);
-    }
-    
-    // Show result for approval
-    function showResult(data) {
-        currentScan = data;
-        
-        const icon = document.getElementById('r-icon');
-        const supplier = document.getElementById('r-supplier');
-        const amount = document.getElementById('r-amount');
-        const desc = document.getElementById('r-desc');
-        const typeEl = document.getElementById('r-type');
-        const items = document.getElementById('r-items');
-        const error = document.getElementById('error-msg');
-        
-        error.style.display = 'none';
-        
-        // Set icon based on type
-        if (currentType.startsWith('cos')) {
-            icon.textContent = '📦';
-            typeEl.textContent = currentType.includes('paid') ? 'SUPPLIER INVOICE (PAID)' : 'SUPPLIER INVOICE';
-            typeEl.className = 'result-type ' + (currentType.includes('paid') ? 'type-paid' : 'type-cos');
-        } else {
-            icon.textContent = '🧾';
-            typeEl.textContent = currentType.includes('paid') ? 'EXPENSE (PAID)' : 'EXPENSE';
-            typeEl.className = 'result-type ' + (currentType.includes('paid') ? 'type-paid' : 'type-exp');
-        }
-        
-        supplier.textContent = data.supplier || data.vendor || 'Unknown';
-        amount.textContent = 'R ' + (data.total || data.amount || 0).toLocaleString('en-ZA', {minimumFractionDigits: 2});
-        desc.textContent = data.description || data.category || '';
-        
-        // Show items if available
-        if (data.items && data.items.length > 0) {
-            items.innerHTML = data.items.map(i => 
-                '<div class="result-item"><span>' + (i.description || i.name || 'Item') + '</span><span>R ' + (i.total || i.unit_price || 0).toFixed(2) + '</span></div>'
-            ).join('');
-            items.style.display = 'block';
-        } else {
-            items.style.display = 'none';
-        }
-        
-        document.getElementById('result').classList.add('show');
-    }
-    
-    // Show error
-    function showError(msg) {
-        document.getElementById('error-msg').textContent = msg;
-        document.getElementById('error-msg').style.display = 'block';
-        document.getElementById('r-icon').textContent = '⚠️';
-        document.getElementById('r-supplier').textContent = 'Could not read';
-        document.getElementById('r-amount').textContent = '';
-        document.getElementById('r-desc').textContent = 'Try again with better lighting';
-        document.getElementById('r-type').style.display = 'none';
-        document.getElementById('r-items').style.display = 'none';
-        document.getElementById('result').classList.add('show');
-    }
-    
-    // POST the result
-    async function postResult() {
-        if (!currentScan || !currentScan.staged_id) {
-            document.getElementById('result').classList.remove('show');
-            return;
-        }
-        
-        document.getElementById('loading').classList.add('show');
-        
-        try {
-            const r = await fetch('/m/approve/' + currentScan.staged_id, {method: 'POST'});
-            const data = await r.json();
-            
-            document.getElementById('loading').classList.remove('show');
-            document.getElementById('result').classList.remove('show');
-            
-            if (data.success) {
-                // Quick flash of success
-                alert('✓ Posted successfully!');
-            } else {
-                alert('Error: ' + (data.error || 'Could not post'));
-            }
-        } catch(e) {
-            document.getElementById('loading').classList.remove('show');
-            alert('Connection error');
-        }
-        
-        currentScan = null;
-    }
-    
-    // DELETE the result
-    async function deleteResult() {
-        if (currentScan && currentScan.staged_id) {
-            try {
-                await fetch('/m/delete/' + currentScan.staged_id, {method: 'POST'});
-            } catch(e) {}
-        }
-        
-        document.getElementById('result').classList.remove('show');
-        currentScan = null;
+        reader.readAsDataURL(file);
     }
     
     // Init
     loadBusinesses();
+    loadPendingCount();
     </script>
 </body>
 </html>'''
@@ -17168,10 +16992,179 @@ def api_businesses():
     })
 
 
+@app.route("/api/staging/count")
+def api_staging_count():
+    """API: Get count of pending staged items"""
+    user = UserSession.get_current_user()
+    if not user:
+        return jsonify({"count": 0})
+    
+    try:
+        success, items = db.select("staged_transactions", filters={"status": "pending"})
+        count = len(items) if success and items else 0
+        return jsonify({"count": count})
+    except:
+        return jsonify({"count": 0})
+
+
 @app.route("/m")
 def scanner_home():
-    """Mobile scanner - 4 buttons, business selector, POST/DELETE only"""
+    """Mobile scanner - fast upload, review later"""
     return SCANNER_HTML
+
+
+@app.route("/m/upload", methods=["POST"])
+def scanner_upload():
+    """
+    Upload photo for background processing.
+    Just saves the image and queues for AI processing.
+    FAST - no waiting for AI.
+    """
+    try:
+        data = request.get_json()
+        image_data = data.get("image", "")
+        scan_type = data.get("type", "")
+        business_id = data.get("business_id", "")
+        
+        if not image_data:
+            return jsonify({"success": False, "error": "No image"})
+        
+        # Clean base64
+        if "," in image_data:
+            image_data = image_data.split(",")[1]
+        
+        # Save to queue for background processing
+        queue_id = generate_id()
+        
+        db.insert("scan_queue", {
+            "id": queue_id,
+            "type": scan_type,
+            "business_id": business_id,
+            "image_data": image_data,
+            "status": "pending",
+            "created_at": now()
+        })
+        
+        # Process immediately in background (or could use a worker)
+        # For now, process synchronously but return fast
+        import threading
+        thread = threading.Thread(target=process_queued_scan, args=(queue_id,))
+        thread.start()
+        
+        return jsonify({"success": True, "queued": True, "id": queue_id})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+def process_queued_scan(queue_id: str):
+    """Background processor for queued scans"""
+    try:
+        # Get the queued item
+        success, items = db.select("scan_queue", filters={"id": queue_id})
+        if not success or not items:
+            return
+        
+        item = items[0]
+        image_data = item.get("image_data", "")
+        scan_type = item.get("type", "")
+        business_id = item.get("business_id", "")
+        
+        # Get API key
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            db.update("scan_queue", queue_id, {"status": "failed", "error": "No API key"})
+            return
+        
+        # Determine prompt based on type
+        if scan_type == "supplier":
+            prompt = """Read this supplier invoice. Extract:
+- supplier: company name at top
+- invoice_no: invoice/receipt number
+- date: date in YYYY-MM-DD format
+- items: list of items with description, qty, unit_price
+- vat: VAT amount
+- total: total amount
+
+Return ONLY JSON: {"supplier":"Name","invoice_no":"INV123","date":"2025-01-15","items":[{"description":"Item","qty":1,"unit_price":100}],"vat":15,"total":115}"""
+        else:
+            prompt = """Read this expense receipt. Extract:
+- vendor: store/shop name
+- date: date in YYYY-MM-DD format
+- description: what was purchased
+- category: fuel/telephone/electricity/repairs/stationery/travel/general
+- vat: VAT amount if shown
+- total: total amount
+
+Return ONLY JSON: {"vendor":"Shop","date":"2025-01-15","description":"items","category":"fuel","vat":15,"total":100}"""
+        
+        # Call Claude API
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "content-type": "application/json",
+                "anthropic-version": "2023-06-01"
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1000,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }]
+            },
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            db.update("scan_queue", queue_id, {"status": "failed", "error": f"API error {response.status_code}"})
+            return
+        
+        result = response.json()
+        ai_response = result.get("content", [{}])[0].get("text", "")
+        
+        # Parse JSON
+        start = ai_response.find('{')
+        end = ai_response.rfind('}') + 1
+        
+        if start < 0 or end <= start:
+            db.update("scan_queue", queue_id, {"status": "failed", "error": "Could not parse"})
+            return
+        
+        try:
+            parsed = json.loads(ai_response[start:end])
+        except:
+            db.update("scan_queue", queue_id, {"status": "failed", "error": "Invalid JSON"})
+            return
+        
+        # Stage the transaction for review
+        staged_id = generate_id()
+        trans_type = "supplier_invoice" if scan_type == "supplier" else "expense"
+        
+        db.insert("staged_transactions", {
+            "id": staged_id,
+            "type": trans_type,
+            "business_id": business_id,
+            "data": json.dumps(parsed),
+            "status": "pending",
+            "created_at": now()
+        })
+        
+        # Update queue item as processed
+        db.update("scan_queue", queue_id, {"status": "processed", "staged_id": staged_id})
+        
+        # Clean up - remove image data to save space
+        db.update("scan_queue", queue_id, {"image_data": ""})
+        
+    except Exception as e:
+        try:
+            db.update("scan_queue", queue_id, {"status": "failed", "error": str(e)})
+        except:
+            pass
 
 
 @app.route("/m/approve/<staged_id>", methods=["POST"])
