@@ -20527,7 +20527,13 @@ def staging_list():
     
     rows = []
     for item in staged:
-        data = json.loads(item.get("data", "{}"))
+        # data is already jsonb (dict), not a string
+        data = item.get("data", {})
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except:
+                data = {}
         
         badge_color = "orange"
         if item.get("type") == "supplier_invoice":
@@ -20539,11 +20545,24 @@ def staging_list():
         else:
             badge = item.get("type", "").upper()
         
+        # Safely get supplier/vendor name
+        supplier = data.get("supplier") or data.get("vendor") or "Unknown"
+        total = data.get("total", 0)
+        try:
+            total_formatted = Money.format(Decimal(str(total)))
+        except:
+            total_formatted = f"R {total}"
+        
+        # Safe date display
+        created = item.get("created_at") or ""
+        if created and len(str(created)) > 16:
+            created = str(created)[:16].replace("T", " ")
+        
         rows.append([
-            item.get("created_at", "")[:16].replace("T", " "),
+            created,
             f'<span class="badge badge-{badge_color}">{badge}</span>',
-            safe_string(data.get("supplier", data.get("vendor", ""))),
-            {"value": Money.format(Decimal(str(data.get("total", 0)))), "class": "number"},
+            safe_string(supplier),
+            {"value": total_formatted, "class": "number"},
             f'''<div class="btn-group">
                 <a href="/staging/{item["id"]}" class="btn btn-sm btn-green">Review</a>
                 <a href="/staging/{item["id"]}/reject" class="btn btn-sm btn-red">Reject</a>
