@@ -20605,7 +20605,14 @@ def staging_review(staged_id):
     if not staged:
         return redirect("/staging")
     
-    data = json.loads(staged.get("data", "{}"))
+    # data is already jsonb (dict), not a string
+    data = staged.get("data", {})
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except:
+            data = {}
+    
     staged_type = staged.get("type", "")
     
     if staged_type == "supplier_invoice":
