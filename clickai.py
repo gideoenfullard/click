@@ -16758,8 +16758,14 @@ SCANNER_HTML = '''<!DOCTYPE html>
         .btn-supplier {
             background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
         }
+        .btn-supplier-paid {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        }
         .btn-expense {
             background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+        .btn-expense-paid {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
         }
         
         .scan-icon { font-size: 36px; }
@@ -16867,17 +16873,29 @@ SCANNER_HTML = '''<!DOCTYPE html>
         <label class="scan-btn btn-supplier">
             <span class="scan-icon">📦</span>
             <span>Supplier Invoice</span>
-            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'supplier')">
+            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'supplier', false)">
+        </label>
+        
+        <label class="scan-btn btn-supplier-paid">
+            <span class="scan-icon">📦💵</span>
+            <span>Supplier Invoice (PAID)</span>
+            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'supplier', true)">
         </label>
         
         <label class="scan-btn btn-expense">
             <span class="scan-icon">🧾</span>
-            <span>Expense Receipt</span>
-            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'expense')">
+            <span>Expense</span>
+            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'expense', false)">
+        </label>
+        
+        <label class="scan-btn btn-expense-paid">
+            <span class="scan-icon">🧾💵</span>
+            <span>Expense (PAID)</span>
+            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'expense', true)">
         </label>
     </div>
     
-    <a href="/review" class="review-link" id="review-link" style="display:none;">
+    <a href="/staging" class="review-link" id="review-link" style="display:none;">
         📋 Review Scanned Items
         <span class="review-count" id="review-count">0</span>
     </a>
@@ -16943,7 +16961,7 @@ SCANNER_HTML = '''<!DOCTYPE html>
     };
     
     // Upload photo to queue
-    async function upload(input, type) {
+    async function upload(input, type, isPaid) {
         if (!input.files || !input.files[0]) return;
         
         const bizId = document.getElementById('biz-select').value;
@@ -16968,6 +16986,7 @@ SCANNER_HTML = '''<!DOCTYPE html>
                     body: JSON.stringify({
                         image: e.target.result,
                         type: type,
+                        paid: isPaid,
                         business_id: bizId
                     })
                 });
@@ -17065,6 +17084,7 @@ def scanner_queue():
         image_data = data.get("image", "")
         scan_type = data.get("type", "")
         business_id = data.get("business_id", "")
+        is_paid = data.get("paid", False)
         
         if not image_data:
             return jsonify({"success": False, "error": "No image"})
@@ -17085,6 +17105,7 @@ def scanner_queue():
             "user_id": user_id,
             "business_id": business_id,
             "type": scan_type,
+            "paid": is_paid,
             "image_data": image_data,
             "status": "pending",
             "created_at": now()
@@ -20898,6 +20919,18 @@ def staging_approve(staged_id):
     
     # Rebuild data from form (user may have edited)
     if staged_type == "supplier_invoice":
+        # Check for duplicate invoice BEFORE processing
+        invoice_no = request.form.get("invoice_no", "")
+        if invoice_no:
+            existing = db.select("expenses", filters={"reference": invoice_no})
+            if existing:
+                # Mark as rejected and redirect with error
+                db.update("staged_transactions", staged_id, {
+                    "status": "rejected",
+                    "rejected_at": now()
+                })
+                return redirect(f"/staging?error=Duplicate+invoice+{invoice_no}+already+exists")
+        
         # Reconstruct items from form
         items = []
         i = 0
