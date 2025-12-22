@@ -20284,6 +20284,15 @@ def settings_language():
     
     lang = get_user_language()
     
+    # Build the active classes and checkmarks
+    en_active = "active" if lang == "en" else ""
+    af_active = "active" if lang == "af" else ""
+    en_check = "<span style='color:var(--green);font-size:24px;margin-left:auto;'>✓</span>" if lang == "en" else ""
+    af_check = "<span style='color:var(--green);font-size:24px;margin-left:auto;'>✓</span>" if lang == "af" else ""
+    
+    title = "Kies Taal" if lang == "af" else "Choose Language"
+    info_msg = "Alle fakture, kwotasies en verslae sal in u gekose taal wees." if lang == "af" else "All invoices, quotes and reports will be in your chosen language."
+    
     content = f'''
     <style>
         .lang-option {{
@@ -20302,28 +20311,28 @@ def settings_language():
     </style>
     
     <a href="/settings" class="text-muted" style="display:block; margin-bottom: 16px;">← {t("back", lang)}</a>
-    <h1 style="margin-bottom: 24px;">🌐 {"Kies Taal" if lang == "af" else "Choose Language"}</h1>
+    <h1 style="margin-bottom: 24px;">🌐 {title}</h1>
     
-    <a href="/settings/language/set/en" class="lang-option {"active" if lang == "en" else ""}">
+    <a href="/settings/language/set/en" class="lang-option {en_active}">
         <span class="lang-flag">🇬🇧</span>
         <div>
             <div class="lang-name">English</div>
             <div class="lang-native">English</div>
         </div>
-        {"<span style='color:var(--green);font-size:24px;margin-left:auto;'>✓</span>" if lang == "en" else ""}
+        {en_check}
     </a>
     
-    <a href="/settings/language/set/af" class="lang-option {"active" if lang == "af" else ""}">
+    <a href="/settings/language/set/af" class="lang-option {af_active}">
         <span class="lang-flag">🇿🇦</span>
         <div>
             <div class="lang-name">Afrikaans</div>
             <div class="lang-native">Afrikaans</div>
         </div>
-        {"<span style='color:var(--green);font-size:24px;margin-left:auto;'>✓</span>" if lang == "af" else ""}
+        {af_check}
     </a>
     
     <div class="alert alert-info" style="margin-top: 24px;">
-        {"Alle fakture, kwotasies en verslae sal in u gekose taal wees." if lang == "af" else "All invoices, quotes and reports will be in your chosen language."}
+        {info_msg}
     </div>
     '''
     
