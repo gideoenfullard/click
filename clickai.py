@@ -79,6 +79,207 @@ class Config:
 # VAT LOGIC - SOUTH AFRICAN RULES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LANGUAGE SYSTEM - ENGLISH / AFRIKAANS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+TRANSLATIONS = {
+    # Navigation / Headers
+    "home": {"en": "Home", "af": "Tuis"},
+    "pos": {"en": "POS", "af": "POS"},
+    "stock": {"en": "Stock", "af": "Voorraad"},
+    "customers": {"en": "Customers", "af": "Kliënte"},
+    "suppliers": {"en": "Suppliers", "af": "Verskaffers"},
+    "invoices": {"en": "Invoices", "af": "Fakture"},
+    "quotes": {"en": "Quotes", "af": "Kwotasies"},
+    "expenses": {"en": "Expenses", "af": "Uitgawes"},
+    "payroll": {"en": "Payroll", "af": "Betaalstaat"},
+    "reports": {"en": "Reports", "af": "Verslae"},
+    "settings": {"en": "Settings", "af": "Instellings"},
+    "logout": {"en": "Logout", "af": "Teken Uit"},
+    
+    # Common Labels
+    "date": {"en": "Date", "af": "Datum"},
+    "description": {"en": "Description", "af": "Beskrywing"},
+    "amount": {"en": "Amount", "af": "Bedrag"},
+    "total": {"en": "Total", "af": "Totaal"},
+    "subtotal": {"en": "Subtotal", "af": "Subtotaal"},
+    "vat": {"en": "VAT", "af": "BTW"},
+    "price": {"en": "Price", "af": "Prys"},
+    "quantity": {"en": "Quantity", "af": "Hoeveelheid"},
+    "qty": {"en": "Qty", "af": "Hvl"},
+    "unit_price": {"en": "Unit Price", "af": "Eenheidsprys"},
+    "discount": {"en": "Discount", "af": "Afslag"},
+    "balance": {"en": "Balance", "af": "Balans"},
+    "paid": {"en": "Paid", "af": "Betaal"},
+    "unpaid": {"en": "Unpaid", "af": "Onbetaal"},
+    "overdue": {"en": "Overdue", "af": "Agterstallig"},
+    "due_date": {"en": "Due Date", "af": "Betaaldatum"},
+    "reference": {"en": "Reference", "af": "Verwysing"},
+    "status": {"en": "Status", "af": "Status"},
+    "actions": {"en": "Actions", "af": "Aksies"},
+    "notes": {"en": "Notes", "af": "Notas"},
+    
+    # Buttons
+    "save": {"en": "Save", "af": "Stoor"},
+    "cancel": {"en": "Cancel", "af": "Kanselleer"},
+    "delete": {"en": "Delete", "af": "Verwyder"},
+    "edit": {"en": "Edit", "af": "Wysig"},
+    "add": {"en": "Add", "af": "Voeg By"},
+    "search": {"en": "Search", "af": "Soek"},
+    "filter": {"en": "Filter", "af": "Filter"},
+    "print": {"en": "Print", "af": "Druk"},
+    "export": {"en": "Export", "af": "Uitvoer"},
+    "approve": {"en": "Approve", "af": "Goedkeur"},
+    "reject": {"en": "Reject", "af": "Verwerp"},
+    "submit": {"en": "Submit", "af": "Dien In"},
+    "confirm": {"en": "Confirm", "af": "Bevestig"},
+    "back": {"en": "Back", "af": "Terug"},
+    "next": {"en": "Next", "af": "Volgende"},
+    "view": {"en": "View", "af": "Bekyk"},
+    "download": {"en": "Download", "af": "Aflaai"},
+    
+    # Invoice / Quote
+    "invoice": {"en": "Invoice", "af": "Faktuur"},
+    "tax_invoice": {"en": "Tax Invoice", "af": "Belastingfaktuur"},
+    "quote": {"en": "Quote", "af": "Kwotasie"},
+    "quotation": {"en": "Quotation", "af": "Kwotasie"},
+    "invoice_no": {"en": "Invoice No", "af": "Faktuur Nr"},
+    "quote_no": {"en": "Quote No", "af": "Kwotasie Nr"},
+    "order_no": {"en": "Order No", "af": "Bestelling Nr"},
+    "po_number": {"en": "PO Number", "af": "Bestelnommer"},
+    "bill_to": {"en": "Bill To", "af": "Faktureer Aan"},
+    "ship_to": {"en": "Ship To", "af": "Aflewer Aan"},
+    "valid_until": {"en": "Valid Until", "af": "Geldig Tot"},
+    "terms": {"en": "Terms", "af": "Terme"},
+    "payment_terms": {"en": "Payment Terms", "af": "Betalingsterme"},
+    "days": {"en": "days", "af": "dae"},
+    "thank_you": {"en": "Thank you for your business", "af": "Dankie vir u besigheid"},
+    
+    # Customer / Supplier
+    "customer": {"en": "Customer", "af": "Kliënt"},
+    "supplier": {"en": "Supplier", "af": "Verskaffer"},
+    "vendor": {"en": "Vendor", "af": "Verskaffer"},
+    "name": {"en": "Name", "af": "Naam"},
+    "contact": {"en": "Contact", "af": "Kontak"},
+    "phone": {"en": "Phone", "af": "Telefoon"},
+    "email": {"en": "Email", "af": "Epos"},
+    "address": {"en": "Address", "af": "Adres"},
+    "vat_number": {"en": "VAT Number", "af": "BTW Nommer"},
+    
+    # Stock
+    "stock_item": {"en": "Stock Item", "af": "Voorraad Item"},
+    "code": {"en": "Code", "af": "Kode"},
+    "cost_price": {"en": "Cost Price", "af": "Kosprys"},
+    "selling_price": {"en": "Selling Price", "af": "Verkoopprys"},
+    "in_stock": {"en": "In Stock", "af": "In Voorraad"},
+    "reorder_level": {"en": "Reorder Level", "af": "Herbestelvlak"},
+    "category": {"en": "Category", "af": "Kategorie"},
+    
+    # Expense Categories
+    "fuel": {"en": "Fuel & Diesel", "af": "Brandstof & Diesel"},
+    "telephone": {"en": "Telephone & Data", "af": "Telefoon & Data"},
+    "electricity": {"en": "Electricity & Water", "af": "Elektrisiteit & Water"},
+    "repairs": {"en": "Repairs & Maintenance", "af": "Herstelwerk & Onderhoud"},
+    "stationery": {"en": "Stationery", "af": "Skryfbehoeftes"},
+    "travel": {"en": "Travel", "af": "Reis"},
+    "advertising": {"en": "Advertising", "af": "Advertensies"},
+    "insurance": {"en": "Insurance", "af": "Versekering"},
+    "bank_charges": {"en": "Bank Charges", "af": "Bankkoste"},
+    "general": {"en": "General Expenses", "af": "Algemene Uitgawes"},
+    
+    # Reports
+    "profit_loss": {"en": "Profit & Loss", "af": "Wins & Verlies"},
+    "balance_sheet": {"en": "Balance Sheet", "af": "Balansstaat"},
+    "trial_balance": {"en": "Trial Balance", "af": "Proefbalans"},
+    "vat_report": {"en": "VAT Report", "af": "BTW Verslag"},
+    "aged_debtors": {"en": "Aged Debtors", "af": "Ouderdomsanalise Debiteure"},
+    "aged_creditors": {"en": "Aged Creditors", "af": "Ouderdomsanalise Krediteure"},
+    "sales_report": {"en": "Sales Report", "af": "Verkoopsverslag"},
+    "income": {"en": "Income", "af": "Inkomste"},
+    "expenses_report": {"en": "Expenses", "af": "Uitgawes"},
+    "gross_profit": {"en": "Gross Profit", "af": "Bruto Wins"},
+    "net_profit": {"en": "Net Profit", "af": "Netto Wins"},
+    "assets": {"en": "Assets", "af": "Bates"},
+    "liabilities": {"en": "Liabilities", "af": "Laste"},
+    "equity": {"en": "Equity", "af": "Ekwiteit"},
+    "current": {"en": "Current", "af": "Lopend"},
+    "30_days": {"en": "30 Days", "af": "30 Dae"},
+    "60_days": {"en": "60 Days", "af": "60 Dae"},
+    "90_days": {"en": "90 Days", "af": "90 Dae"},
+    "90_plus": {"en": "90+ Days", "af": "90+ Dae"},
+    
+    # Payroll
+    "employee": {"en": "Employee", "af": "Werknemer"},
+    "salary": {"en": "Salary", "af": "Salaris"},
+    "wage": {"en": "Wage", "af": "Loon"},
+    "basic_salary": {"en": "Basic Salary", "af": "Basiese Salaris"},
+    "gross_pay": {"en": "Gross Pay", "af": "Bruto Betaling"},
+    "net_pay": {"en": "Net Pay", "af": "Netto Betaling"},
+    "deductions": {"en": "Deductions", "af": "Aftrekkings"},
+    "paye": {"en": "PAYE", "af": "LBS"},
+    "uif": {"en": "UIF", "af": "WVF"},
+    "payslip": {"en": "Payslip", "af": "Betaalstrokie"},
+    
+    # Scanner / Review
+    "scan": {"en": "Scan", "af": "Skandeer"},
+    "scan_invoice": {"en": "Scan Invoice", "af": "Skandeer Faktuur"},
+    "scan_receipt": {"en": "Scan Receipt", "af": "Skandeer Kwitansie"},
+    "pending_review": {"en": "Pending Review", "af": "Wag vir Hersiening"},
+    "review": {"en": "Review", "af": "Hersien"},
+    "approve_post": {"en": "Approve & Post", "af": "Goedkeur & Plaas"},
+    
+    # Messages
+    "saved_success": {"en": "Saved successfully", "af": "Suksesvol gestoor"},
+    "deleted_success": {"en": "Deleted successfully", "af": "Suksesvol verwyder"},
+    "error_occurred": {"en": "An error occurred", "af": "'n Fout het voorgekom"},
+    "no_results": {"en": "No results found", "af": "Geen resultate gevind"},
+    "confirm_delete": {"en": "Are you sure you want to delete?", "af": "Is jy seker jy wil verwyder?"},
+    "required_field": {"en": "This field is required", "af": "Hierdie veld is verpligtend"},
+    "invalid_amount": {"en": "Invalid amount", "af": "Ongeldige bedrag"},
+    "select_customer": {"en": "Select a customer", "af": "Kies 'n kliënt"},
+    "select_supplier": {"en": "Select a supplier", "af": "Kies 'n verskaffer"},
+    "no_items": {"en": "No items added", "af": "Geen items bygevoeg"},
+    
+    # Dashboard
+    "dashboard": {"en": "Dashboard", "af": "Oorsig"},
+    "today": {"en": "Today", "af": "Vandag"},
+    "this_week": {"en": "This Week", "af": "Hierdie Week"},
+    "this_month": {"en": "This Month", "af": "Hierdie Maand"},
+    "sales_today": {"en": "Sales Today", "af": "Verkope Vandag"},
+    "outstanding": {"en": "Outstanding", "af": "Uitstaande"},
+    "low_stock": {"en": "Low Stock", "af": "Lae Voorraad"},
+    "quick_actions": {"en": "Quick Actions", "af": "Vinnige Aksies"},
+    "new_sale": {"en": "New Sale", "af": "Nuwe Verkoop"},
+    "new_invoice": {"en": "New Invoice", "af": "Nuwe Faktuur"},
+    "new_quote": {"en": "New Quote", "af": "Nuwe Kwotasie"},
+    "add_expense": {"en": "Add Expense", "af": "Voeg Uitgawe By"},
+    "new_customer": {"en": "New Customer", "af": "Nuwe Kliënt"},
+    "new_product": {"en": "New Product", "af": "Nuwe Produk"},
+}
+
+
+def t(key: str, lang: str = None) -> str:
+    """
+    Translate a key to the user's language.
+    Falls back to English if translation not found.
+    
+    Usage: t("invoice")  -> "Faktuur" or "Invoice"
+    """
+    if lang is None:
+        # Get from session or default to English
+        lang = session.get("language", "en")
+    
+    if key in TRANSLATIONS:
+        return TRANSLATIONS[key].get(lang, TRANSLATIONS[key].get("en", key))
+    return key
+
+
+def get_user_language() -> str:
+    """Get current user's language preference"""
+    return session.get("language", "en")
+
 class VAT:
     """
     South African VAT calculations
@@ -4995,28 +5196,43 @@ def get_header_html(active: str = "", user: dict = None) -> str:
         active: Current active page (home, pos, stock, etc.)
         user: Current user dict with name
     """
+    lang = get_user_language()
+    
     # All nav items - will be filtered by business config
+    # (module, key, translation_key, url)
     all_nav_items = [
-        ("dashboard", "home", "Home", "/"),
-        ("pos", "pos", "POS", "/pos"),
-        ("stock", "stock", "Stock", "/stock"),
-        ("customers", "customers", "Customers", "/customers"),
-        ("suppliers", "suppliers", "Suppliers", "/suppliers"),
-        ("purchase-orders", "purchase-orders", "Orders", "/purchase-orders"),
-        ("invoices", "invoices", "Invoices", "/invoices"),
-        ("quotes", "quotes", "Quotes", "/quotes"),
-        ("expenses", "expenses", "Expenses", "/expenses"),
-        ("payroll", "payroll", "Payroll", "/payroll"),
-        ("reports", "reports", "Reports", "/reports"),
-        ("staging", "staging", "📋 Review", "/staging"),
-        ("settings", "settings", "⚙️", "/settings"),
+        ("dashboard", "home", "home", "/"),
+        ("pos", "pos", "pos", "/pos"),
+        ("stock", "stock", "stock", "/stock"),
+        ("customers", "customers", "customers", "/customers"),
+        ("suppliers", "suppliers", "suppliers", "/suppliers"),
+        ("purchase-orders", "purchase-orders", "orders", "/purchase-orders"),
+        ("invoices", "invoices", "invoices", "/invoices"),
+        ("quotes", "quotes", "quotes", "/quotes"),
+        ("expenses", "expenses", "expenses", "/expenses"),
+        ("payroll", "payroll", "payroll", "/payroll"),
+        ("reports", "reports", "reports", "/reports"),
+        ("staging", "staging", "review", "/staging"),
+        ("settings", "settings", "settings", "/settings"),
     ]
+    
+    # Translation for "orders" - add if not present
+    orders_label = {"en": "Orders", "af": "Bestellings"}
     
     # Filter nav items based on current business config
     nav_html = ""
-    for module, key, label, url in all_nav_items:
+    for module, key, trans_key, url in all_nav_items:
         if BusinessManager.is_module_visible(module):
             active_class = " active" if key == active else ""
+            # Special cases
+            if trans_key == "orders":
+                label = orders_label.get(lang, "Orders")
+            elif trans_key == "review":
+                label = "📋 " + t("review", lang)
+            elif trans_key == "settings":
+                label = "⚙️"
+            else:
+                label = t(trans_key, lang)
             nav_html += f'<a href="{url}" class="nav-item{active_class}">{label}</a>'
     
     # Business switcher
@@ -5099,7 +5315,7 @@ def get_header_html(active: str = "", user: dict = None) -> str:
         user_html = f'''
         <div class="header-user">
             <span class="header-user-name">{safe_string(user.get("username", ""))}</span>
-            <a href="/logout" class="btn btn-sm btn-ghost">Logout</a>
+            <a href="/logout" class="btn btn-sm btn-ghost">{t("logout", lang)}</a>
         </div>
         '''
     
@@ -20004,49 +20220,122 @@ def settings_home():
     if not user:
         return redirect("/login")
     
+    lang = get_user_language()
+    
     # Get business count for display
     businesses = BusinessManager.get_user_businesses(user["id"])
     biz_count = len(businesses)
     biz_text = f"{biz_count} business{'es' if biz_count != 1 else ''}" if biz_count > 0 else "Set up your first business"
     
+    # Language display
+    lang_display = "Afrikaans 🇿🇦" if lang == "af" else "English 🇬🇧"
+    
     content = f'''
-    <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">⚙️ Settings</h1>
+    <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">⚙️ {t("settings", lang)}</h1>
     
     <div class="report-grid">
+        <a href="/settings/language" class="report-card" style="border-color: var(--primary); background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05));">
+            <div class="report-card-icon">🌐</div>
+            <h3 class="report-card-title">{"Taal / Language" if lang == "af" else "Language / Taal"}</h3>
+            <p class="report-card-desc">{lang_display}</p>
+        </a>
         <a href="/businesses" class="report-card" style="border-color: var(--green); background: linear-gradient(135deg, rgba(16,185,129,0.1), rgba(59,130,246,0.05));">
             <div class="report-card-icon">🏢</div>
-            <h3 class="report-card-title">Your Businesses</h3>
-            <p class="report-card-desc">{biz_text} • Unlimited included FREE</p>
+            <h3 class="report-card-title">{"U Besighede" if lang == "af" else "Your Businesses"}</h3>
+            <p class="report-card-desc">{biz_text} • {"Onbeperk ingesluit GRATIS" if lang == "af" else "Unlimited included FREE"}</p>
         </a>
         <a href="/settings/industry" class="report-card" style="border-color: var(--purple);">
             <div class="report-card-icon">🏭</div>
-            <h3 class="report-card-title">Industry Template</h3>
+            <h3 class="report-card-title">{"Industrie Templaat" if lang == "af" else "Industry Template"}</h3>
             <p class="report-card-desc">Hardware, Motor, Engineering, Retail...</p>
         </a>
         <a href="/settings/pricing" class="report-card">
             <div class="report-card-icon">💰</div>
-            <h3 class="report-card-title">Pricing & Markup</h3>
-            <p class="report-card-desc">Default markups, category pricing, minimum margins</p>
+            <h3 class="report-card-title">{"Pryse & Winsgrens" if lang == "af" else "Pricing & Markup"}</h3>
+            <p class="report-card-desc">{"Standaard winsgrense, kategorie pryse" if lang == "af" else "Default markups, category pricing, minimum margins"}</p>
         </a>
         <a href="/settings/company" class="report-card">
             <div class="report-card-icon">🏪</div>
-            <h3 class="report-card-title">Company Details</h3>
-            <p class="report-card-desc">Business name, VAT number, contact info</p>
+            <h3 class="report-card-title">{"Maatskappy Besonderhede" if lang == "af" else "Company Details"}</h3>
+            <p class="report-card-desc">{"Besigheidsnaam, BTW nommer, kontak" if lang == "af" else "Business name, VAT number, contact info"}</p>
         </a>
         <a href="/settings/cleanup" class="report-card" style="border-color: var(--orange);">
             <div class="report-card-icon">🧹</div>
-            <h3 class="report-card-title">Data Cleanup</h3>
-            <p class="report-card-desc">AI-powered cleanup of suppliers, customers, stock</p>
+            <h3 class="report-card-title">{"Data Skoonmaak" if lang == "af" else "Data Cleanup"}</h3>
+            <p class="report-card-desc">{"KI-aangedrewe skoonmaak" if lang == "af" else "AI-powered cleanup of suppliers, customers, stock"}</p>
         </a>
         <a href="/settings/categories" class="report-card">
             <div class="report-card-icon">📁</div>
-            <h3 class="report-card-title">Stock Categories</h3>
-            <p class="report-card-desc">Manage product categories</p>
+            <h3 class="report-card-title">{"Voorraad Kategorieë" if lang == "af" else "Stock Categories"}</h3>
+            <p class="report-card-desc">{"Bestuur produk kategorieë" if lang == "af" else "Manage product categories"}</p>
         </a>
     </div>
     '''
     
-    return page_wrapper("Settings", content, user=user)
+    return page_wrapper(t("settings", lang), content, user=user)
+
+
+@app.route("/settings/language")
+def settings_language():
+    """Language selection page"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    lang = get_user_language()
+    
+    content = f'''
+    <style>
+        .lang-option {{
+            display: flex; align-items: center; gap: 20px;
+            padding: 24px; margin-bottom: 16px;
+            background: var(--card-bg); border-radius: 12px;
+            border: 3px solid transparent;
+            cursor: pointer; transition: all 0.2s;
+            text-decoration: none; color: var(--text);
+        }}
+        .lang-option:hover {{ border-color: var(--primary); }}
+        .lang-option.active {{ border-color: var(--green); background: rgba(34,197,94,0.1); }}
+        .lang-flag {{ font-size: 48px; }}
+        .lang-name {{ font-size: 24px; font-weight: 700; }}
+        .lang-native {{ font-size: 16px; color: var(--text-muted); }}
+    </style>
+    
+    <a href="/settings" class="text-muted" style="display:block; margin-bottom: 16px;">← {t("back", lang)}</a>
+    <h1 style="margin-bottom: 24px;">🌐 {"Kies Taal" if lang == "af" else "Choose Language"}</h1>
+    
+    <a href="/settings/language/set/en" class="lang-option {"active" if lang == "en" else ""}">
+        <span class="lang-flag">🇬🇧</span>
+        <div>
+            <div class="lang-name">English</div>
+            <div class="lang-native">English</div>
+        </div>
+        {"<span style='color:var(--green);font-size:24px;margin-left:auto;'>✓</span>" if lang == "en" else ""}
+    </a>
+    
+    <a href="/settings/language/set/af" class="lang-option {"active" if lang == "af" else ""}">
+        <span class="lang-flag">🇿🇦</span>
+        <div>
+            <div class="lang-name">Afrikaans</div>
+            <div class="lang-native">Afrikaans</div>
+        </div>
+        {"<span style='color:var(--green);font-size:24px;margin-left:auto;'>✓</span>" if lang == "af" else ""}
+    </a>
+    
+    <div class="alert alert-info" style="margin-top: 24px;">
+        {"Alle fakture, kwotasies en verslae sal in u gekose taal wees." if lang == "af" else "All invoices, quotes and reports will be in your chosen language."}
+    </div>
+    '''
+    
+    return page_wrapper("Language", content, user=user)
+
+
+@app.route("/settings/language/set/<lang_code>")
+def settings_language_set(lang_code):
+    """Set user's language preference"""
+    if lang_code in ["en", "af"]:
+        session["language"] = lang_code
+    return redirect("/settings")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
