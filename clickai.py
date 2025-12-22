@@ -5151,6 +5151,31 @@ def page_wrapper(title: str, content: str, active: str = "",
     <!-- Floating Scan Button - Always visible on mobile -->
     <a href="/m" class="scan-fab" title="Scan Receipt">📷</a>
     
+    <!-- Mobile: Swipe anywhere to scroll header -->
+    <script>
+    (function() {{
+        if (window.innerWidth > 768) return;
+        
+        const header = document.querySelector('.header');
+        if (!header) return;
+        
+        let startX = 0;
+        let scrollStart = 0;
+        
+        document.addEventListener('touchstart', function(e) {{
+            startX = e.touches[0].clientX;
+            scrollStart = header.scrollLeft;
+        }}, {{ passive: true }});
+        
+        document.addEventListener('touchmove', function(e) {{
+            const deltaX = startX - e.touches[0].clientX;
+            if (Math.abs(deltaX) > 10) {{
+                header.scrollLeft = scrollStart + deltaX;
+            }}
+        }}, {{ passive: true }});
+    }})();
+    </script>
+    
     {extra_js}
 </body>
 </html>'''
@@ -20796,6 +20821,11 @@ def staging_quick_approve(staged_id):
     if not staged:
         return redirect("/staging")
     
+    # Check if already approved (prevents double-submit from phone + laptop)
+    if staged.get("status") != "pending":
+        # Already processed - just redirect back
+        return redirect("/staging")
+    
     data = staged.get("data", {})
     if isinstance(data, str):
         try:
@@ -20804,6 +20834,19 @@ def staging_quick_approve(staged_id):
             data = {}
     
     staged_type = staged.get("type", "")
+    
+    # Check for duplicate invoice before processing
+    if staged_type == "supplier_invoice":
+        invoice_no = data.get("invoice_no", "")
+        if invoice_no:
+            existing = db.select("expenses", filters={"reference": invoice_no})
+            if existing:
+                # Mark as rejected (duplicate) and redirect
+                db.update("staged_transactions", staged_id, {
+                    "status": "rejected",
+                    "rejected_at": now()
+                })
+                return redirect("/staging")
     
     try:
         if staged_type == "supplier_invoice":
