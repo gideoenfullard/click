@@ -16730,30 +16730,39 @@ SCANNER_HTML = '''<!DOCTYPE html>
             display: flex;
             flex-direction: column;
             justify-content: center;
-            padding: 24px;
-            gap: 20px;
+            padding: 16px;
+            gap: 12px;
+        }
+        
+        .btn-row {
+            display: flex;
+            gap: 12px;
         }
         
         .scan-btn {
+            flex: 1;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 16px;
-            padding: 32px 28px;
-            border-radius: 20px;
-            font-size: 22px;
+            gap: 8px;
+            padding: 20px 12px;
+            border-radius: 16px;
+            font-size: 15px;
             font-weight: 700;
             color: white;
             border: none;
             cursor: pointer;
             text-align: center;
             transition: transform 0.15s, box-shadow 0.15s;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
         }
         .scan-btn:active { 
             transform: scale(0.96); 
-            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
         }
+        
+        .scan-icon { font-size: 32px; }
+        .scan-label { font-size: 14px; }
         
         .btn-supplier {
             background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
@@ -16767,8 +16776,6 @@ SCANNER_HTML = '''<!DOCTYPE html>
         .btn-expense-paid {
             background: linear-gradient(135deg, #10b981 0%, #059669 100%);
         }
-        
-        .scan-icon { font-size: 36px; }
         
         input[type="file"] { display: none; }
         
@@ -16870,29 +16877,33 @@ SCANNER_HTML = '''<!DOCTYPE html>
     </select>
     
     <div class="buttons">
-        <label class="scan-btn btn-supplier">
-            <span class="scan-icon">📦</span>
-            <span>Supplier Invoice</span>
-            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'supplier', false)">
-        </label>
+        <div class="btn-row">
+            <label class="scan-btn btn-supplier">
+                <span class="scan-icon">📦</span>
+                <span class="scan-label">Invoice</span>
+                <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'supplier', false)">
+            </label>
+            
+            <label class="scan-btn btn-supplier-paid">
+                <span class="scan-icon">📦</span>
+                <span class="scan-label">Invoice PAID</span>
+                <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'supplier', true)">
+            </label>
+        </div>
         
-        <label class="scan-btn btn-supplier-paid">
-            <span class="scan-icon">📦💵</span>
-            <span>Supplier Invoice (PAID)</span>
-            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'supplier', true)">
-        </label>
-        
-        <label class="scan-btn btn-expense">
-            <span class="scan-icon">🧾</span>
-            <span>Expense</span>
-            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'expense', false)">
-        </label>
-        
-        <label class="scan-btn btn-expense-paid">
-            <span class="scan-icon">🧾💵</span>
-            <span>Expense (PAID)</span>
-            <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'expense', true)">
-        </label>
+        <div class="btn-row">
+            <label class="scan-btn btn-expense">
+                <span class="scan-icon">🧾</span>
+                <span class="scan-label">Expense</span>
+                <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'expense', false)">
+            </label>
+            
+            <label class="scan-btn btn-expense-paid">
+                <span class="scan-icon">🧾</span>
+                <span class="scan-label">Expense PAID</span>
+                <input type="file" accept="image/*" capture="environment" onchange="upload(this, 'expense', true)">
+            </label>
+        </div>
     </div>
     
     <a href="/staging" class="review-link" id="review-link" style="display:none;">
@@ -20651,13 +20662,15 @@ def staging_review(staged_id):
 
 
 def render_staged_invoice_review(staged_id: str, data: dict, user: dict):
-    """Render review screen for staged supplier invoice"""
+    """Render review screen for staged supplier invoice - EVERYTHING visible"""
     
     supplier_name = data.get("supplier", "Unknown")
-    invoice_no = data.get("invoice_no", "Not visible")
+    invoice_no = data.get("invoice_no", "")
+    invoice_date = data.get("date", today())
     total = Decimal(str(data.get("total", 0)))
     vat = Decimal(str(data.get("vat", 0)))
     items = data.get("items", [])
+    is_paid = data.get("paid", False)
     
     # Check if supplier exists
     existing_supplier = None
@@ -20667,15 +20680,17 @@ def render_staged_invoice_review(staged_id: str, data: dict, user: dict):
             existing_supplier = s
             break
     
-    supplier_status = f'<span class="badge badge-green">Existing</span>' if existing_supplier else f'<span class="badge badge-orange">NEW - Will be created</span>'
+    supplier_badge = '<span style="background:#22c55e;color:white;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:8px;">EXISTS</span>' if existing_supplier else '<span style="background:#f59e0b;color:white;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:8px;">NEW</span>'
     
-    # Build items table with edit capability
+    # Build items - all editable inline
     items_html = ""
+    line_total = Decimal("0")
     for i, item in enumerate(items):
         desc = item.get("description", "")
-        code = item.get("code", "")
         qty = item.get("qty", 1)
         unit_price = Money.parse(item.get("unit_price", 0))
+        line_amt = Decimal(str(qty)) * unit_price
+        line_total += line_amt
         
         # Check if stock exists
         existing_stock = None
@@ -20685,114 +20700,146 @@ def render_staged_invoice_review(staged_id: str, data: dict, user: dict):
                 existing_stock = s
                 break
         
-        stock_status = "Existing" if existing_stock else "NEW"
-        stock_badge = "green" if existing_stock else "orange"
-        
-        # Calculate selling price
-        pricing = PricingEngine.calculate_selling_price(unit_price)
+        stock_badge = "✓" if existing_stock else "NEW"
+        stock_color = "#22c55e" if existing_stock else "#f59e0b"
         
         items_html += f'''
-        <tr>
-            <td>
-                <input type="text" name="item_{i}_desc" value="{safe_string(desc)}" class="form-input" style="width:100%;">
-            </td>
-            <td>
-                <input type="text" name="item_{i}_code" value="{safe_string(code)}" class="form-input" style="width:80px;">
-            </td>
-            <td>
-                <input type="number" name="item_{i}_qty" value="{qty}" class="form-input" style="width:60px;" min="1">
-            </td>
-            <td>
-                <input type="number" name="item_{i}_price" value="{float(unit_price):.2f}" class="form-input" style="width:100px;" step="0.01">
-            </td>
-            <td class="number">R {float(pricing['selling_price']):.2f}</td>
-            <td><span class="badge badge-{stock_badge}">{stock_status}</span></td>
-            <td>
-                <button type="button" class="btn btn-sm btn-red" onclick="this.closest('tr').remove()">×</button>
-            </td>
-        </tr>
-        '''
+        <div class="line-item">
+            <div class="line-main">
+                <input type="text" name="item_{i}_desc" value="{safe_string(desc)}" class="line-desc" placeholder="Description">
+                <span class="line-status" style="color:{stock_color}">{stock_badge}</span>
+            </div>
+            <div class="line-numbers">
+                <div class="line-field">
+                    <span class="line-label">Qty</span>
+                    <input type="number" name="item_{i}_qty" value="{qty}" class="line-input" min="1">
+                </div>
+                <div class="line-field">
+                    <span class="line-label">Cost</span>
+                    <input type="number" name="item_{i}_price" value="{float(unit_price):.2f}" class="line-input" step="0.01">
+                </div>
+                <div class="line-field">
+                    <span class="line-label">Line Total</span>
+                    <span class="line-total">R {float(line_amt):.2f}</span>
+                </div>
+                <button type="button" class="line-remove" onclick="this.closest('.line-item').remove()">×</button>
+            </div>
+            <input type="hidden" name="item_{i}_code" value="">
+        </div>'''
     
-    # Calculate GL entries preview
-    subtotal = total - vat if vat > 0 else total / Decimal("1.15") * Decimal("0.85")
+    # Calculate GL
     if vat <= 0:
-        vat = total - subtotal
+        vat = (total / Decimal("1.15") * Decimal("0.15")).quantize(Decimal("0.01"))
+    subtotal = total - vat
     
     content = f'''
-    <div class="mb-lg">
-        <a href="/staging" class="text-muted">← Pending Review</a>
-        <h1>Review Supplier Invoice</h1>
-    </div>
+    <style>
+        .review-card {{ background: var(--card-bg); border-radius: 12px; padding: 24px; margin-bottom: 20px; }}
+        .review-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }}
+        .review-title {{ font-size: 24px; font-weight: 700; }}
+        .review-badge {{ padding: 6px 16px; border-radius: 20px; font-weight: 600; font-size: 14px; background: rgba(245, 158, 11, 0.2); color: #f59e0b; }}
+        
+        .header-grid {{ display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }}
+        .header-field {{ background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; }}
+        .header-label {{ font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }}
+        .header-input {{ width: 100%; background: transparent; border: none; font-size: 16px; color: var(--text); }}
+        .header-input:focus {{ outline: none; }}
+        
+        .paid-toggle {{ display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: rgba(255,255,255,0.05); border-radius: 8px; }}
+        .paid-toggle input {{ width: 20px; height: 20px; }}
+        .paid-toggle label {{ font-size: 14px; cursor: pointer; }}
+        
+        .line-item {{ background: rgba(255,255,255,0.03); border-radius: 8px; padding: 12px; margin-bottom: 8px; border-left: 3px solid var(--primary); }}
+        .line-main {{ display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }}
+        .line-desc {{ flex: 1; background: transparent; border: none; font-size: 15px; color: var(--text); font-weight: 500; }}
+        .line-desc:focus {{ outline: none; background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 4px; }}
+        .line-status {{ font-size: 12px; font-weight: 600; }}
+        .line-numbers {{ display: flex; align-items: center; gap: 16px; }}
+        .line-field {{ display: flex; flex-direction: column; }}
+        .line-label {{ font-size: 10px; color: var(--text-muted); text-transform: uppercase; }}
+        .line-input {{ width: 70px; background: rgba(255,255,255,0.1); border: none; border-radius: 4px; padding: 6px 8px; color: var(--text); text-align: right; }}
+        .line-total {{ font-weight: 600; color: var(--primary); }}
+        .line-remove {{ background: #ef4444; color: white; border: none; border-radius: 4px; width: 28px; height: 28px; cursor: pointer; font-size: 16px; }}
+        
+        .totals-section {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }}
+        .totals-card {{ background: rgba(255,255,255,0.05); border-radius: 8px; padding: 16px; }}
+        .total-row {{ display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+        .total-row:last-child {{ border: none; font-weight: 700; font-size: 18px; }}
+        .total-input {{ background: transparent; border: none; text-align: right; font-size: inherit; color: inherit; width: 100px; }}
+        
+        .gl-preview {{ background: rgba(34, 197, 94, 0.1); border-radius: 8px; padding: 16px; }}
+        .gl-row {{ display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; }}
+        .gl-dr {{ color: #22c55e; }}
+        .gl-cr {{ color: #ef4444; }}
+        
+        .action-buttons {{ display: flex; gap: 12px; margin-top: 24px; }}
+        .action-buttons .btn {{ flex: 1; padding: 16px; font-size: 16px; }}
+    </style>
+    
+    <a href="/staging" class="text-muted" style="display:block; margin-bottom: 16px;">← Back to Review Queue</a>
     
     <form method="POST" action="/staging/{staged_id}/approve">
-        <div class="grid grid-2">
-            <div class="card">
-                <h3 class="card-title">Invoice Details</h3>
-                <div class="form-group">
-                    <label class="form-label">Supplier {supplier_status}</label>
-                    <input type="text" name="supplier" value="{safe_string(supplier_name)}" class="form-input">
+        <div class="review-card">
+            <div class="review-header">
+                <span class="review-title">📦 Supplier Invoice</span>
+                <span class="review-badge">STOCK IN</span>
+            </div>
+            
+            <div class="header-grid">
+                <div class="header-field">
+                    <div class="header-label">Supplier {supplier_badge}</div>
+                    <input type="text" name="supplier" value="{safe_string(supplier_name)}" class="header-input">
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Invoice Number</label>
-                        <input type="text" name="invoice_no" value="{safe_string(invoice_no)}" class="form-input">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Date</label>
-                        <input type="date" name="date" value="{data.get('date', today())}" class="form-input">
-                    </div>
+                <div class="header-field">
+                    <div class="header-label">Invoice No.</div>
+                    <input type="text" name="invoice_no" value="{safe_string(invoice_no)}" class="header-input" placeholder="e.g. INV-001">
                 </div>
-                <div class="form-group">
-                    <label class="form-label">
-                        <input type="checkbox" name="paid" {'checked' if data.get('paid') else ''}> Already Paid
-                    </label>
+                <div class="header-field">
+                    <div class="header-label">Date</div>
+                    <input type="date" name="date" value="{invoice_date}" class="header-input">
                 </div>
             </div>
             
-            <div class="card">
-                <h3 class="card-title">GL Entries Preview</h3>
-                <p class="text-muted mb-md">These entries will be posted on approval:</p>
-                <table class="table">
-                    <tr><td>DR Stock / Purchases</td><td class="number">{Money.format(subtotal)}</td></tr>
-                    <tr><td>DR VAT Input</td><td class="number">{Money.format(vat)}</td></tr>
-                    <tr><td>CR Creditors</td><td class="number">{Money.format(total)}</td></tr>
-                </table>
-                <div class="mt-md" style="font-size: 24px; text-align: center; color: var(--green);">
-                    <strong>Total: {Money.format(total)}</strong>
+            <div class="paid-toggle">
+                <input type="checkbox" name="paid" id="paid-check" {"checked" if is_paid else ""}>
+                <label for="paid-check">Already Paid (Cash/EFT) - will credit Bank instead of Creditors</label>
+            </div>
+        </div>
+        
+        <div class="review-card">
+            <h3 style="margin-bottom: 16px;">Line Items</h3>
+            <div id="line-items">
+                {items_html}
+            </div>
+            
+            <div class="totals-section">
+                <div class="totals-card">
+                    <div class="total-row">
+                        <span>Subtotal (excl VAT)</span>
+                        <span>R {float(subtotal):.2f}</span>
+                    </div>
+                    <div class="total-row">
+                        <span>VAT (15%)</span>
+                        <span>R <input type="number" name="vat" value="{float(vat):.2f}" class="total-input" step="0.01"></span>
+                    </div>
+                    <div class="total-row">
+                        <span>TOTAL</span>
+                        <span style="color: var(--primary);">R <input type="number" name="total" value="{float(total):.2f}" class="total-input" step="0.01" style="color: var(--primary); font-weight: 700;"></span>
+                    </div>
+                </div>
+                
+                <div class="gl-preview">
+                    <div style="font-weight: 600; margin-bottom: 8px;">📒 Journal Entry Preview</div>
+                    <div class="gl-row"><span class="gl-dr">DR Stock / Purchases</span><span>R {float(subtotal):.2f}</span></div>
+                    <div class="gl-row"><span class="gl-dr">DR VAT Input</span><span>R {float(vat):.2f}</span></div>
+                    <div class="gl-row"><span class="gl-cr">CR {"Bank" if is_paid else "Creditors"}</span><span>R {float(total):.2f}</span></div>
                 </div>
             </div>
         </div>
         
-        <div class="card mt-lg">
-            <h3 class="card-title">Line Items</h3>
-            <p class="text-muted mb-md">Edit descriptions, prices, or remove items before approving</p>
-            
-            <div class="table-wrapper">
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Description</th>
-                            <th>Code</th>
-                            <th>Qty</th>
-                            <th>Cost (ea)</th>
-                            <th>Selling</th>
-                            <th>Status</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {items_html}
-                    </tbody>
-                </table>
-            </div>
-            
-            <input type="hidden" name="item_count" value="{len(items)}">
-        </div>
-        
-        <div class="btn-group mt-lg">
-            <button type="submit" class="btn btn-green btn-lg">✓ Approve & Post</button>
+        <div class="action-buttons">
+            <button type="submit" class="btn btn-green">✓ Approve & Post</button>
             <a href="/staging/{staged_id}/reject" class="btn btn-red">✗ Reject</a>
-            <a href="/staging" class="btn btn-ghost">Cancel</a>
         </div>
     </form>
     '''
@@ -20801,104 +20848,184 @@ def render_staged_invoice_review(staged_id: str, data: dict, user: dict):
 
 
 def render_staged_expense_review(staged_id: str, data: dict, user: dict):
-    """Render review screen for staged expense"""
+    """Render review screen for staged expense - EVERYTHING visible"""
     
     vendor = data.get("vendor", "Unknown")
     description = data.get("description", "")
     total = Decimal(str(data.get("total", 0)))
     vat = Decimal(str(data.get("vat", 0)))
     category = data.get("category", "general")
+    expense_date = data.get("date", today())
+    is_paid = data.get("paid", True)  # Default to paid for expenses
     
     # Zero-rated categories (NO VAT in South Africa)
     zero_rated = ["fuel", "bank_charges", "insurance"]
     
-    # Category options
+    # Category buttons - visual selection
+    category_buttons = ""
     categories = [
-        ("fuel", "Fuel & Diesel (Zero VAT)"),
-        ("telephone", "Telephone & Data"),
-        ("electricity", "Electricity & Water"),
-        ("repairs", "Repairs & Maintenance"),
-        ("stationery", "Stationery & Office"),
-        ("travel", "Travel & Transport"),
-        ("advertising", "Advertising & Marketing"),
-        ("insurance", "Insurance (Zero VAT)"),
-        ("bank_charges", "Bank Charges (Zero VAT)"),
-        ("general", "General Expenses"),
+        ("fuel", "⛽", "Fuel", True),
+        ("telephone", "📱", "Phone/Data", False),
+        ("electricity", "💡", "Electricity", False),
+        ("repairs", "🔧", "Repairs", False),
+        ("stationery", "📎", "Stationery", False),
+        ("travel", "✈️", "Travel", False),
+        ("advertising", "📢", "Advertising", False),
+        ("insurance", "🛡️", "Insurance", True),
+        ("bank_charges", "🏦", "Bank Fees", True),
+        ("general", "📋", "General", False),
     ]
     
-    cat_options = ""
-    for cat_val, cat_name in categories:
+    for cat_val, icon, label, is_zero in categories:
         selected = "selected" if cat_val == category else ""
-        cat_options += f'<option value="{cat_val}" {selected}>{cat_name}</option>'
+        zero_badge = '<span class="zero-vat">0% VAT</span>' if is_zero else ""
+        category_buttons += f'''
+        <label class="cat-btn {selected}" data-zero="{str(is_zero).lower()}">
+            <input type="radio" name="category" value="{cat_val}" {"checked" if cat_val == category else ""}>
+            <span class="cat-icon">{icon}</span>
+            <span class="cat-label">{label}</span>
+            {zero_badge}
+        </label>'''
     
-    # Calculate VAT - but NOT for zero-rated items
+    # Calculate VAT based on category
     if category in zero_rated:
         vat = Decimal("0")
         subtotal = total
-    elif vat <= 0:
-        vat = (total / Decimal("1.15") * Decimal("0.15")).quantize(Decimal("0.01"))
-        subtotal = total - vat
+        vat_note = "Zero-rated (no VAT)"
     else:
+        if vat <= 0:
+            vat = (total / Decimal("1.15") * Decimal("0.15")).quantize(Decimal("0.01"))
         subtotal = total - vat
+        vat_note = "15% VAT included"
     
     content = f'''
-    <div class="mb-lg">
-        <a href="/staging" class="text-muted">← Pending Review</a>
-        <h1>Review Expense</h1>
-    </div>
+    <style>
+        .review-card {{ background: var(--card-bg); border-radius: 12px; padding: 24px; margin-bottom: 20px; }}
+        .review-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }}
+        .review-title {{ font-size: 24px; font-weight: 700; }}
+        .review-badge {{ padding: 6px 16px; border-radius: 20px; font-weight: 600; font-size: 14px; }}
+        .badge-expense {{ background: rgba(239, 68, 68, 0.2); color: #ef4444; }}
+        
+        .field-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }}
+        .field-row.single {{ grid-template-columns: 1fr; }}
+        .field {{ background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px 16px; }}
+        .field-label {{ font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; letter-spacing: 0.5px; }}
+        .field-input {{ width: 100%; background: transparent; border: none; font-size: 18px; color: var(--text); padding: 4px 0; }}
+        .field-input:focus {{ outline: none; border-bottom: 2px solid var(--primary); }}
+        
+        .cat-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 16px 0; }}
+        .cat-btn {{ 
+            display: flex; flex-direction: column; align-items: center; padding: 12px 8px; 
+            background: rgba(255,255,255,0.05); border-radius: 10px; cursor: pointer;
+            border: 2px solid transparent; transition: all 0.2s; position: relative;
+        }}
+        .cat-btn:hover {{ background: rgba(255,255,255,0.1); }}
+        .cat-btn.selected {{ border-color: var(--primary); background: rgba(99, 102, 241, 0.2); }}
+        .cat-btn input {{ display: none; }}
+        .cat-icon {{ font-size: 24px; margin-bottom: 4px; }}
+        .cat-label {{ font-size: 11px; text-align: center; }}
+        .zero-vat {{ 
+            position: absolute; top: -6px; right: -6px; 
+            background: #22c55e; color: white; font-size: 9px; 
+            padding: 2px 6px; border-radius: 10px; font-weight: 700;
+        }}
+        
+        .amount-display {{ 
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2));
+            border-radius: 12px; padding: 20px; text-align: center; margin: 20px 0;
+        }}
+        .amount-big {{ font-size: 36px; font-weight: 700; color: var(--primary); }}
+        .amount-breakdown {{ display: flex; justify-content: center; gap: 32px; margin-top: 12px; font-size: 14px; color: var(--text-muted); }}
+        
+        .gl-preview {{ background: rgba(34, 197, 94, 0.1); border-radius: 8px; padding: 16px; margin: 16px 0; }}
+        .gl-row {{ display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; }}
+        .gl-dr {{ color: #22c55e; }}
+        .gl-cr {{ color: #ef4444; }}
+        
+        .action-buttons {{ display: flex; gap: 12px; margin-top: 24px; }}
+        .action-buttons .btn {{ flex: 1; padding: 16px; font-size: 16px; }}
+    </style>
+    
+    <a href="/staging" class="text-muted" style="display:block; margin-bottom: 16px;">← Back to Review Queue</a>
     
     <form method="POST" action="/staging/{staged_id}/approve">
-        <div class="grid grid-2">
-            <div class="card">
-                <h3 class="card-title">Expense Details</h3>
-                <div class="form-group">
-                    <label class="form-label">Vendor/Supplier</label>
-                    <input type="text" name="vendor" value="{safe_string(vendor)}" class="form-input">
+        <div class="review-card">
+            <div class="review-header">
+                <span class="review-title">🧾 Expense Receipt</span>
+                <span class="review-badge badge-expense">EXPENSE</span>
+            </div>
+            
+            <div class="field-row">
+                <div class="field">
+                    <div class="field-label">Vendor / Supplier</div>
+                    <input type="text" name="vendor" value="{safe_string(vendor)}" class="field-input">
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Description</label>
-                    <input type="text" name="description" value="{safe_string(description)}" class="form-input">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Amount (incl VAT)</label>
-                        <input type="number" name="total" value="{float(total):.2f}" class="form-input" step="0.01">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">VAT</label>
-                        <input type="number" name="vat" value="{float(vat):.2f}" class="form-input" step="0.01">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Category</label>
-                    <select name="category" class="form-select">{cat_options}</select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Date</label>
-                    <input type="date" name="date" value="{data.get('date', today())}" class="form-input">
+                <div class="field">
+                    <div class="field-label">Date</div>
+                    <input type="date" name="date" value="{expense_date}" class="field-input">
                 </div>
             </div>
             
-            <div class="card">
-                <h3 class="card-title">GL Entries Preview</h3>
-                <p class="text-muted mb-md">These entries will be posted on approval:</p>
-                <table class="table">
-                    <tr><td>DR Expense ({category.title()})</td><td class="number">{Money.format(subtotal)}</td></tr>
-                    <tr><td>DR VAT Input</td><td class="number">{Money.format(vat)}</td></tr>
-                    <tr><td>CR Bank</td><td class="number">{Money.format(total)}</td></tr>
-                </table>
-                <div class="mt-md" style="font-size: 24px; text-align: center; color: var(--orange);">
-                    <strong>Total: {Money.format(total)}</strong>
+            <div class="field-row single">
+                <div class="field">
+                    <div class="field-label">Description</div>
+                    <input type="text" name="description" value="{safe_string(description)}" class="field-input">
                 </div>
+            </div>
+            
+            <div class="field-label" style="margin-top: 20px;">Category (tap to change)</div>
+            <div class="cat-grid">
+                {category_buttons}
+            </div>
+            
+            <div class="amount-display">
+                <div class="amount-big">R <input type="number" name="total" value="{float(total):.2f}" step="0.01" 
+                    style="background:transparent; border:none; font-size:36px; font-weight:700; color:var(--primary); width:150px; text-align:center;"></div>
+                <div class="amount-breakdown">
+                    <span>Excl: R {float(subtotal):.2f}</span>
+                    <span>VAT: R <input type="number" name="vat" value="{float(vat):.2f}" step="0.01" id="vat-input"
+                        style="background:transparent; border:none; color:var(--text-muted); width:70px;"></span>
+                </div>
+                <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px;" id="vat-note">{vat_note}</div>
+            </div>
+            
+            <div class="gl-preview">
+                <div style="font-weight: 600; margin-bottom: 8px;">📒 Journal Entry Preview</div>
+                <div class="gl-row"><span class="gl-dr">DR {category.title()} Expense</span><span>R {float(subtotal):.2f}</span></div>
+                <div class="gl-row"><span class="gl-dr">DR VAT Input</span><span>R {float(vat):.2f}</span></div>
+                <div class="gl-row"><span class="gl-cr">CR Bank</span><span>R {float(total):.2f}</span></div>
             </div>
         </div>
         
-        <div class="btn-group mt-lg">
-            <button type="submit" class="btn btn-green btn-lg">✓ Approve & Post</button>
+        <div class="action-buttons">
+            <button type="submit" class="btn btn-green">✓ Approve & Post</button>
             <a href="/staging/{staged_id}/reject" class="btn btn-red">✗ Reject</a>
-            <a href="/staging" class="btn btn-ghost">Cancel</a>
         </div>
     </form>
+    
+    <script>
+        // Category selection
+        document.querySelectorAll('.cat-btn').forEach(btn => {{
+            btn.addEventListener('click', function() {{
+                document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('selected'));
+                this.classList.add('selected');
+                this.querySelector('input').checked = true;
+                
+                // Update VAT for zero-rated
+                const isZero = this.dataset.zero === 'true';
+                const vatInput = document.getElementById('vat-input');
+                const vatNote = document.getElementById('vat-note');
+                if (isZero) {{
+                    vatInput.value = '0.00';
+                    vatNote.textContent = 'Zero-rated (no VAT)';
+                }} else {{
+                    const total = parseFloat(document.querySelector('input[name="total"]').value) || 0;
+                    vatInput.value = (total / 1.15 * 0.15).toFixed(2);
+                    vatNote.textContent = '15% VAT included';
+                }}
+            }});
+        }});
+    </script>
     '''
     
     return page_wrapper("Review Expense", content, user=user)
