@@ -4784,20 +4784,46 @@ a:hover {
         font-size: 13px;
     }
     
+    /* Body only scrolls vertical */
+    body {
+        overflow-x: hidden;
+    }
+    
     .header {
-    flex-wrap: nowrap;
+        flex-wrap: nowrap;
         padding: 0 12px;
         gap: 4px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none; /* Firefox */
+    }
+    
+    .header::-webkit-scrollbar {
+        display: none;
+    }
+    
+    .nav {
+        overflow-x: visible;
+        display: flex;
+        padding-right: 100px; /* Extra space for last items */
     }
     
     .logo {
         font-size: 18px;
         margin-right: 12px;
+        flex-shrink: 0;
     }
     
     .nav-item {
         padding: 6px 10px;
         font-size: 12px;
+        flex-shrink: 0;
+    }
+    
+    /* Main content doesn't scroll horizontal */
+    .main {
+        overflow-x: hidden;
     }
     
     .main {
@@ -4895,6 +4921,36 @@ a:hover {
     
     .mobile-big-btn:active {
         transform: scale(0.98);
+    }
+}
+
+/* Floating Scan Button - visible on all pages */
+.scan-fab {
+    display: none; /* Hidden on desktop */
+}
+
+@media (max-width: 768px) {
+    .scan-fab {
+        display: flex;
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        color: white;
+        text-decoration: none;
+        box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5);
+        z-index: 1000;
+        transition: transform 0.2s;
+    }
+    
+    .scan-fab:active {
+        transform: scale(0.95);
     }
 }
 
@@ -5091,6 +5147,10 @@ def page_wrapper(title: str, content: str, active: str = "",
             {content}
         </div>
     </main>
+    
+    <!-- Floating Scan Button - Always visible on mobile -->
+    <a href="/m" class="scan-fab" title="Scan Receipt">📷</a>
+    
     {extra_js}
 </body>
 </html>'''
@@ -20556,16 +20616,19 @@ def settings_company():
 
 @app.route("/staging")
 def staging_list():
-    """List all pending staged transactions"""
+    """List all pending staged transactions - INLINE review with quick approve"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
     
     staged = db.select("staged_transactions", filters={"status": "pending"}, order="-created_at")
     
-    rows = []
+    # Zero-rated categories
+    zero_rated = ["fuel", "bank_charges", "insurance"]
+    
+    # Build cards for each item
+    cards_html = ""
     for item in staged:
-        # data is already jsonb (dict), not a string
         data = item.get("data", {})
         if isinstance(data, str):
             try:
@@ -20573,63 +20636,192 @@ def staging_list():
             except:
                 data = {}
         
-        badge_color = "orange"
-        if item.get("type") == "supplier_invoice":
-            badge = "INVOICE"
-            badge_color = "blue"
-        elif item.get("type") == "expense":
-            badge = "EXPENSE"
-            badge_color = "purple"
-        else:
-            badge = item.get("type", "").upper()
+        item_id = item.get("id", "")
+        item_type = item.get("type", "")
         
-        # Safely get supplier/vendor name
-        supplier = data.get("supplier") or data.get("vendor") or "Unknown"
-        total = data.get("total", 0)
-        try:
-            total_formatted = Money.format(Decimal(str(total)))
-        except:
-            total_formatted = f"R {total}"
-        
-        # Safe date display
-        created = item.get("created_at") or ""
-        if created and len(str(created)) > 16:
-            created = str(created)[:16].replace("T", " ")
-        
-        rows.append([
-            created,
-            f'<span class="badge badge-{badge_color}">{badge}</span>',
-            safe_string(supplier),
-            {"value": total_formatted, "class": "number"},
-            f'''<div class="btn-group">
-                <a href="/staging/{item["id"]}" class="btn btn-sm btn-green">Review</a>
-                <a href="/staging/{item["id"]}/reject" class="btn btn-sm btn-red">Reject</a>
+        if item_type == "supplier_invoice":
+            # Supplier invoice card
+            supplier = data.get("supplier", "Unknown")
+            invoice_no = data.get("invoice_no", "-")
+            total = Decimal(str(data.get("total", 0)))
+            vat = Decimal(str(data.get("vat", 0)))
+            if vat <= 0:
+                vat = (total / Decimal("1.15") * Decimal("0.15")).quantize(Decimal("0.01"))
+            items_count = len(data.get("items", []))
+            is_paid = data.get("paid", False)
+            
+            cards_html += f'''
+            <div class="review-row">
+                <div class="review-icon">📦</div>
+                <div class="review-main">
+                    <div class="review-title">{safe_string(supplier)}</div>
+                    <div class="review-meta">
+                        <span class="tag tag-blue">INVOICE</span>
+                        <span class="tag tag-gray">#{safe_string(invoice_no)}</span>
+                        <span class="tag tag-gray">{items_count} items</span>
+                        <span class="tag {"tag-green" if is_paid else "tag-orange"}">{"PAID" if is_paid else "ON CREDIT"}</span>
+                    </div>
+                </div>
+                <div class="review-amounts">
+                    <div class="review-total">R {float(total):,.2f}</div>
+                    <div class="review-vat">VAT: R {float(vat):,.2f}</div>
+                </div>
+                <div class="review-actions">
+                    <a href="/staging/{item_id}" class="btn btn-sm btn-ghost">Edit</a>
+                    <form method="POST" action="/staging/{item_id}/quick-approve" style="display:inline;">
+                        <button type="submit" class="btn btn-sm btn-green">✓ Approve</button>
+                    </form>
+                    <a href="/staging/{item_id}/reject" class="btn btn-sm btn-red">✗</a>
+                </div>
             </div>'''
-        ])
+        
+        elif item_type == "expense":
+            # Expense card
+            vendor = data.get("vendor", "Unknown")
+            description = data.get("description", "")
+            category = data.get("category", "general")
+            total = Decimal(str(data.get("total", 0)))
+            
+            # VAT based on category
+            if category in zero_rated:
+                vat = Decimal("0")
+                vat_display = "R 0.00 (Zero rated)"
+            else:
+                vat = (total / Decimal("1.15") * Decimal("0.15")).quantize(Decimal("0.01"))
+                vat_display = f"R {float(vat):,.2f}"
+            
+            # Category display
+            cat_icons = {
+                "fuel": "⛽", "telephone": "📱", "electricity": "💡", "repairs": "🔧",
+                "stationery": "📎", "travel": "✈️", "advertising": "📢", 
+                "insurance": "🛡️", "bank_charges": "🏦", "general": "📋"
+            }
+            cat_icon = cat_icons.get(category, "📋")
+            
+            cards_html += f'''
+            <div class="review-row">
+                <div class="review-icon">🧾</div>
+                <div class="review-main">
+                    <div class="review-title">{safe_string(vendor)}</div>
+                    <div class="review-meta">
+                        <span class="tag tag-purple">EXPENSE</span>
+                        <span class="tag tag-gray">{cat_icon} {category.replace("_", " ").title()}</span>
+                        {f'<span class="tag tag-green">0% VAT</span>' if category in zero_rated else ''}
+                    </div>
+                    <div class="review-desc">{safe_string(description[:50])}{"..." if len(description) > 50 else ""}</div>
+                </div>
+                <div class="review-amounts">
+                    <div class="review-total">R {float(total):,.2f}</div>
+                    <div class="review-vat">VAT: {vat_display}</div>
+                </div>
+                <div class="review-actions">
+                    <a href="/staging/{item_id}" class="btn btn-sm btn-ghost">Edit</a>
+                    <form method="POST" action="/staging/{item_id}/quick-approve" style="display:inline;">
+                        <button type="submit" class="btn btn-sm btn-green">✓ Approve</button>
+                    </form>
+                    <a href="/staging/{item_id}/reject" class="btn btn-sm btn-red">✗</a>
+                </div>
+            </div>'''
     
-    table = table_html(
-        headers=["Date", "Type", "Supplier/Vendor", {"label": "Amount", "class": "number"}, "Actions"],
-        rows=rows,
-        empty_message="No pending transactions to review"
-    )
+    if not cards_html:
+        cards_html = '<div class="empty-state">✓ No pending transactions to review</div>'
     
     content = f'''
-    <div class="flex-between mb-lg">
+    <style>
+        .review-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }}
+        .review-row {{ 
+            display: flex; align-items: center; gap: 16px; 
+            background: var(--card-bg); border-radius: 10px; padding: 16px; margin-bottom: 12px;
+            border-left: 4px solid var(--primary);
+        }}
+        .review-icon {{ font-size: 28px; }}
+        .review-main {{ flex: 1; min-width: 0; }}
+        .review-title {{ font-weight: 600; font-size: 16px; margin-bottom: 6px; }}
+        .review-meta {{ display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }}
+        .review-desc {{ font-size: 13px; color: var(--text-muted); }}
+        .tag {{ padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
+        .tag-blue {{ background: rgba(59, 130, 246, 0.2); color: #3b82f6; }}
+        .tag-purple {{ background: rgba(139, 92, 246, 0.2); color: #8b5cf6; }}
+        .tag-green {{ background: rgba(34, 197, 94, 0.2); color: #22c55e; }}
+        .tag-orange {{ background: rgba(249, 115, 22, 0.2); color: #f97316; }}
+        .tag-gray {{ background: rgba(156, 163, 175, 0.2); color: #9ca3af; }}
+        .review-amounts {{ text-align: right; min-width: 120px; }}
+        .review-total {{ font-size: 18px; font-weight: 700; color: var(--primary); }}
+        .review-vat {{ font-size: 12px; color: var(--text-muted); }}
+        .review-actions {{ display: flex; gap: 8px; }}
+        .empty-state {{ text-align: center; padding: 60px; color: var(--text-muted); font-size: 18px; }}
+        
+        .scan-float {{
+            position: fixed; bottom: 24px; right: 24px; z-index: 100;
+            width: 60px; height: 60px; border-radius: 50%;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 28px; color: white; text-decoration: none;
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+            transition: transform 0.2s;
+        }}
+        .scan-float:hover {{ transform: scale(1.1); }}
+        
+        @media (max-width: 768px) {{
+            .review-row {{ flex-wrap: wrap; }}
+            .review-amounts {{ width: 100%; text-align: left; margin-top: 8px; display: flex; gap: 16px; }}
+            .review-actions {{ width: 100%; margin-top: 12px; justify-content: flex-end; }}
+        }}
+    </style>
+    
+    <div class="review-header">
         <div>
             <h1>📋 Pending Review</h1>
             <p class="text-muted">{len(staged)} transactions waiting for approval</p>
         </div>
+        <a href="/m" class="btn btn-primary">📷 Scan More</a>
     </div>
     
-    <div class="card">{table}</div>
+    {cards_html}
     
-    <div class="alert alert-info mt-lg">
-        <strong>ℹ️ How it works:</strong> Scanned invoices and expenses are held here until you review and approve them. 
-        Nothing is posted to your accounts until you click Approve.
-    </div>
+    <a href="/m" class="scan-float" title="Scan Receipt">📷</a>
     '''
     
     return page_wrapper("Pending Review", content, user=user)
+
+
+@app.route("/staging/<staged_id>/quick-approve", methods=["POST"])
+def staging_quick_approve(staged_id):
+    """Quick approve without editing - uses AI-extracted data as-is"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    staged = db.select_one("staged_transactions", staged_id)
+    if not staged:
+        return redirect("/staging")
+    
+    data = staged.get("data", {})
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except:
+            data = {}
+    
+    staged_type = staged.get("type", "")
+    
+    try:
+        if staged_type == "supplier_invoice":
+            result = process_supplier_invoice(data)
+        elif staged_type == "expense":
+            result = process_expense_receipt(data)
+        
+        # Mark as approved
+        db.update("staged_transactions", staged_id, {
+            "status": "approved",
+            "approved_at": now(),
+            "approved_by": user.get("username", "")
+        })
+    except Exception as e:
+        # If processing fails, redirect to edit page
+        return redirect(f"/staging/{staged_id}?error={str(e)}")
+    
+    return redirect("/staging")
 
 
 @app.route("/staging/<staged_id>")
