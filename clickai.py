@@ -1103,6 +1103,10 @@ class BusinessManager:
     @classmethod
     def is_module_visible(cls, module: str) -> bool:
         """Check if a module is visible for current business"""
+        # Settings and staging ALWAYS visible
+        if module in ["settings", "staging"]:
+            return True
+            
         business = cls.get_current_business()
         if not business:
             return True  # No business context, show everything
