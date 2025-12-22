@@ -17685,8 +17685,14 @@ def process_expense_receipt(data):
         
         account_code, category_name = category_map.get(category, ("6140", "General Expenses"))
         
-        # Calculate VAT if not provided
-        if vat <= 0:
+        # Zero-rated categories (NO VAT in South Africa)
+        zero_rated = ["fuel", "bank_charges", "insurance"]
+        
+        # Calculate VAT - but NOT for zero-rated items
+        if category in zero_rated:
+            vat = Money.zero()
+            subtotal = total
+        elif vat <= 0:
             vat_info = VAT.calculate_from_inclusive(total)
             subtotal = vat_info["exclusive"]
             vat = vat_info["vat"]
@@ -17702,7 +17708,7 @@ def process_expense_receipt(data):
             "supplier": vendor,
             "category": account_code,
             "amount": float(total),
-            "vat_type": "inclusive",
+            "vat_type": "zero" if category in zero_rated else "inclusive",
             "created_at": now()
         }
         db.insert("expenses", expense)
@@ -17717,8 +17723,8 @@ def process_expense_receipt(data):
             source_id=expense_id
         )
         
-        # Bank charges have no VAT
-        if category == "bank_charges":
+        # Zero-rated items: no VAT entry
+        if category in zero_rated:
             entry.debit(account_code, total)
             entry.credit(AccountCodes.BANK, total)
         else:
@@ -20782,17 +20788,20 @@ def render_staged_expense_review(staged_id: str, data: dict, user: dict):
     vat = Decimal(str(data.get("vat", 0)))
     category = data.get("category", "general")
     
+    # Zero-rated categories (NO VAT in South Africa)
+    zero_rated = ["fuel", "bank_charges", "insurance"]
+    
     # Category options
     categories = [
-        ("fuel", "Fuel & Diesel"),
+        ("fuel", "Fuel & Diesel (Zero VAT)"),
         ("telephone", "Telephone & Data"),
         ("electricity", "Electricity & Water"),
         ("repairs", "Repairs & Maintenance"),
         ("stationery", "Stationery & Office"),
         ("travel", "Travel & Transport"),
         ("advertising", "Advertising & Marketing"),
-        ("insurance", "Insurance"),
-        ("bank_charges", "Bank Charges"),
+        ("insurance", "Insurance (Zero VAT)"),
+        ("bank_charges", "Bank Charges (Zero VAT)"),
         ("general", "General Expenses"),
     ]
     
@@ -20801,10 +20810,15 @@ def render_staged_expense_review(staged_id: str, data: dict, user: dict):
         selected = "selected" if cat_val == category else ""
         cat_options += f'<option value="{cat_val}" {selected}>{cat_name}</option>'
     
-    # Calculate VAT if not provided
-    if vat <= 0:
+    # Calculate VAT - but NOT for zero-rated items
+    if category in zero_rated:
+        vat = Decimal("0")
+        subtotal = total
+    elif vat <= 0:
         vat = (total / Decimal("1.15") * Decimal("0.15")).quantize(Decimal("0.01"))
-    subtotal = total - vat
+        subtotal = total - vat
+    else:
+        subtotal = total - vat
     
     content = f'''
     <div class="mb-lg">
