@@ -8532,11 +8532,13 @@ def register():
 
 @app.route("/dashboard")
 def dashboard():
-    """Dashboard - memory efficient version"""
+    """Dashboard - memory efficient version with language support"""
     
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
+    
+    lang = get_user_language()
     
     # Simple counts only - these are fast and low memory
     stock_count = 0
@@ -8565,6 +8567,7 @@ def dashboard():
     outstanding_creditors = Decimal("0")
     low_stock_count = 0
     pending_review = 0
+    today_invoices = []
     
     try:
         # Today's sales
@@ -8603,29 +8606,94 @@ def dashboard():
     except:
         pass
     
-    # Greeting based on time
+    # Greeting based on time and language
     hour = datetime.now().hour
-    if hour < 12:
-        greeting = "Good morning"
-    elif hour < 17:
-        greeting = "Good afternoon"
+    if lang == "af":
+        if hour < 12:
+            greeting = "Goeie môre"
+        elif hour < 17:
+            greeting = "Goeie middag"
+        else:
+            greeting = "Goeie naand"
     else:
-        greeting = "Good evening"
+        if hour < 12:
+            greeting = "Good morning"
+        elif hour < 17:
+            greeting = "Good afternoon"
+        else:
+            greeting = "Good evening"
     
     # Cash position indicator
     cash_status = "green" if outstanding_debtors < month_sales * Decimal("0.3") else "orange" if outstanding_debtors < month_sales else "red"
     
-    # Alerts section
+    # Alerts section - bilingual
     alerts_html = ""
     if pending_review > 0:
-        alerts_html += f'<a href="/staging" class="alert-item alert-purple"><span class="alert-icon">📋</span><span class="alert-text">{pending_review} scanned item{"s" if pending_review > 1 else ""} waiting for review</span><span class="alert-action">Review →</span></a>'
+        if lang == "af":
+            alert_text = f"{pending_review} geskandeerde item{'s' if pending_review > 1 else ''} wag vir hersiening"
+            alert_action = "Hersien →"
+        else:
+            alert_text = f"{pending_review} scanned item{'s' if pending_review > 1 else ''} waiting for review"
+            alert_action = "Review →"
+        alerts_html += f'<a href="/staging" class="alert-item alert-purple"><span class="alert-icon">📋</span><span class="alert-text">{alert_text}</span><span class="alert-action">{alert_action}</span></a>'
+    
     if low_stock_count > 0:
-        alerts_html += f'<a href="/stock?filter=low" class="alert-item alert-orange"><span class="alert-icon">📦</span><span class="alert-text">{low_stock_count} item{"s" if low_stock_count > 1 else ""} running low</span><span class="alert-action">View →</span></a>'
+        if lang == "af":
+            alert_text = f"{low_stock_count} item{'s' if low_stock_count > 1 else ''} raak min"
+            alert_action = "Bekyk →"
+        else:
+            alert_text = f"{low_stock_count} item{'s' if low_stock_count > 1 else ''} running low"
+            alert_action = "View →"
+        alerts_html += f'<a href="/stock?filter=low" class="alert-item alert-orange"><span class="alert-icon">📦</span><span class="alert-text">{alert_text}</span><span class="alert-action">{alert_action}</span></a>'
+    
     if outstanding_debtors > 0:
-        alerts_html += f'<a href="/reports/debtors" class="alert-item alert-blue"><span class="alert-icon">💰</span><span class="alert-text">{Money.format(outstanding_debtors)} outstanding from customers</span><span class="alert-action">Collect →</span></a>'
+        if lang == "af":
+            alert_text = f"{Money.format(outstanding_debtors)} uitstaande van kliënte"
+            alert_action = "Invorder →"
+        else:
+            alert_text = f"{Money.format(outstanding_debtors)} outstanding from customers"
+            alert_action = "Collect →"
+        alerts_html += f'<a href="/reports/debtors" class="alert-item alert-blue"><span class="alert-icon">💰</span><span class="alert-text">{alert_text}</span><span class="alert-action">{alert_action}</span></a>'
     
     if not alerts_html:
-        alerts_html = '<div class="alert-item alert-green"><span class="alert-icon">✓</span><span class="alert-text">All clear! Nothing needs attention right now.</span></div>'
+        if lang == "af":
+            alert_text = "Alles reg! Niks kort nou aandag nie."
+        else:
+            alert_text = "All clear! Nothing needs attention right now."
+        alerts_html = f'<div class="alert-item alert-green"><span class="alert-icon">✓</span><span class="alert-text">{alert_text}</span></div>'
+    
+    # Labels - bilingual
+    lbl = {
+        "your_money": "💰 Jou Geld" if lang == "af" else "💰 Your Money",
+        "todays_sales": "Vandag se Verkope" if lang == "af" else "Today's Sales",
+        "this_week": "Hierdie Week" if lang == "af" else "This Week",
+        "last_7": "Laaste 7 dae" if lang == "af" else "Last 7 days",
+        "this_month": "Hierdie Maand" if lang == "af" else "This Month",
+        "last_30": "Laaste 30 dae" if lang == "af" else "Last 30 days",
+        "owed_to_you": "Skuld Aan Jou" if lang == "af" else "Owed to You",
+        "you_owe": "Jy Skuld" if lang == "af" else "You Owe",
+        "view_aging": "Bekyk ouderdom →" if lang == "af" else "View aging →",
+        "needs_attention": "⚡ Benodig Aandag" if lang == "af" else "⚡ Needs Attention",
+        "quick_actions": "🚀 Vinnige Aksies" if lang == "af" else "🚀 Quick Actions",
+        "new_sale": "Nuwe Verkoop" if lang == "af" else "New Sale",
+        "scan_invoice": "Skandeer Faktuur" if lang == "af" else "Scan Invoice",
+        "new_invoice": "Nuwe Faktuur" if lang == "af" else "New Invoice",
+        "new_quote": "Nuwe Kwotasie" if lang == "af" else "New Quote",
+        "new_order": "Nuwe Bestelling" if lang == "af" else "New Order",
+        "add_expense": "Voeg Uitgawe By" if lang == "af" else "Add Expense",
+        "new_customer": "Nuwe Kliënt" if lang == "af" else "New Customer",
+        "new_product": "Nuwe Produk" if lang == "af" else "New Product",
+        "reports": "📊 Verslae" if lang == "af" else "📊 Reports",
+        "ai_health": "KI Gesondheid" if lang == "af" else "AI Health Check",
+        "trial_balance": "Proefbalans" if lang == "af" else "Trial Balance",
+        "profit_loss": "Wins & Verlies" if lang == "af" else "Profit & Loss",
+        "vat_report": "BTW Verslag" if lang == "af" else "VAT Report",
+        "invoices": "fakture" if lang == "af" else "invoices",
+        "invoice": "faktuur" if lang == "af" else "invoice",
+    }
+    
+    inv_count = len(today_invoices)
+    inv_label = lbl["invoice"] if inv_count == 1 else lbl["invoices"]
     
     content = f'''
     <style>
@@ -8759,98 +8827,98 @@ def dashboard():
         <div class="dashboard-date">{datetime.now().strftime("%A, %d %B %Y")}</div>
     </div>
     
-    <div class="section-title">💰 Your Money</div>
+    <div class="section-title">{lbl["your_money"]}</div>
     <div class="metric-grid">
         <div class="metric-card">
-            <div class="metric-label">Today's Sales</div>
+            <div class="metric-label">{lbl["todays_sales"]}</div>
             <div class="metric-value green">{Money.format(today_sales)}</div>
-            <div class="metric-sub">{len(today_invoices)} invoice{"s" if len(today_invoices) != 1 else ""}</div>
+            <div class="metric-sub">{inv_count} {inv_label}</div>
         </div>
         <div class="metric-card">
-            <div class="metric-label">This Week</div>
+            <div class="metric-label">{lbl["this_week"]}</div>
             <div class="metric-value">{Money.format(week_sales)}</div>
-            <div class="metric-sub">Last 7 days</div>
+            <div class="metric-sub">{lbl["last_7"]}</div>
         </div>
         <div class="metric-card">
-            <div class="metric-label">This Month</div>
+            <div class="metric-label">{lbl["this_month"]}</div>
             <div class="metric-value">{Money.format(month_sales)}</div>
-            <div class="metric-sub">Last 30 days</div>
+            <div class="metric-sub">{lbl["last_30"]}</div>
         </div>
         <div class="metric-card">
-            <div class="metric-label">Owed to You</div>
+            <div class="metric-label">{lbl["owed_to_you"]}</div>
             <div class="metric-value {cash_status}">{Money.format(outstanding_debtors)}</div>
-            <div class="metric-sub"><a href="/reports/debtors">View aging →</a></div>
+            <div class="metric-sub"><a href="/reports/debtors">{lbl["view_aging"]}</a></div>
         </div>
         <div class="metric-card">
-            <div class="metric-label">You Owe</div>
+            <div class="metric-label">{lbl["you_owe"]}</div>
             <div class="metric-value orange">{Money.format(outstanding_creditors)}</div>
-            <div class="metric-sub"><a href="/reports/creditors">View aging →</a></div>
+            <div class="metric-sub"><a href="/reports/creditors">{lbl["view_aging"]}</a></div>
         </div>
     </div>
     
-    <div class="section-title">⚡ Needs Attention</div>
+    <div class="section-title">{lbl["needs_attention"]}</div>
     <div class="alert-list">
         {alerts_html}
     </div>
     
-    <div class="section-title">🚀 Quick Actions</div>
+    <div class="section-title">{lbl["quick_actions"]}</div>
     <div class="action-grid">
         <a href="/pos" class="action-btn">
             <span class="action-icon">💰</span>
-            <span class="action-label">New Sale</span>
+            <span class="action-label">{lbl["new_sale"]}</span>
         </a>
         <a href="/m" class="action-btn">
             <span class="action-icon">📷</span>
-            <span class="action-label">Scan Invoice</span>
+            <span class="action-label">{lbl["scan_invoice"]}</span>
         </a>
         <a href="/invoices/new" class="action-btn">
             <span class="action-icon">📄</span>
-            <span class="action-label">New Invoice</span>
+            <span class="action-label">{lbl["new_invoice"]}</span>
         </a>
         <a href="/quotes/new" class="action-btn">
             <span class="action-icon">📋</span>
-            <span class="action-label">New Quote</span>
+            <span class="action-label">{lbl["new_quote"]}</span>
         </a>
         <a href="/purchase-orders/new" class="action-btn">
             <span class="action-icon">📦</span>
-            <span class="action-label">New Order</span>
+            <span class="action-label">{lbl["new_order"]}</span>
         </a>
         <a href="/expenses/new" class="action-btn">
             <span class="action-icon">💸</span>
-            <span class="action-label">Add Expense</span>
+            <span class="action-label">{lbl["add_expense"]}</span>
         </a>
         <a href="/customers/new" class="action-btn">
             <span class="action-icon">👤</span>
-            <span class="action-label">New Customer</span>
+            <span class="action-label">{lbl["new_customer"]}</span>
         </a>
         <a href="/stock/new" class="action-btn">
             <span class="action-icon">🏷️</span>
-            <span class="action-label">New Product</span>
+            <span class="action-label">{lbl["new_product"]}</span>
         </a>
     </div>
     
-    <div class="section-title">📊 Reports</div>
+    <div class="section-title">{lbl["reports"]}</div>
     <div class="action-grid">
         <a href="/reports/business-health" class="action-btn" style="border-color: var(--purple);">
             <span class="action-icon">🤖</span>
-            <span class="action-label">AI Health Check</span>
+            <span class="action-label">{lbl["ai_health"]}</span>
         </a>
         <a href="/reports/trial-balance" class="action-btn">
             <span class="action-icon">⚖️</span>
-            <span class="action-label">Trial Balance</span>
+            <span class="action-label">{lbl["trial_balance"]}</span>
         </a>
         <a href="/reports/income-statement" class="action-btn">
             <span class="action-icon">📈</span>
-            <span class="action-label">Profit & Loss</span>
+            <span class="action-label">{lbl["profit_loss"]}</span>
         </a>
         <a href="/reports/vat" class="action-btn">
             <span class="action-icon">🏛️</span>
-            <span class="action-label">VAT Report</span>
+            <span class="action-label">{lbl["vat_report"]}</span>
         </a>
     </div>
     '''
     
-    return page_wrapper("Dashboard", content, "dashboard", user)
+    return page_wrapper(t("dashboard", lang), content, "dashboard", user)
 
 @app.route("/mobile")
 def mobile_home():
@@ -14310,6 +14378,9 @@ class TBAnalyzer:
         if not api_key:
             return {"error": "API key not configured"}
         
+        # Get user language preference
+        lang = session.get("language", "en")
+        
         # Prepare TB summary for Opus
         tb_text = "TRIAL BALANCE DATA:\n"
         tb_text += "=" * 60 + "\n"
@@ -14352,7 +14423,68 @@ class TBAnalyzer:
         tb_text += f"Total Credits: R {total_credit:,.2f}\n"
         tb_text += f"Difference: R {abs(total_debit - total_credit):,.2f}\n"
         
-        prompt = f"""You are a senior South African Chartered Accountant analyzing a Trial Balance. 
+        # Language-specific prompt
+        if lang == "af":
+            prompt = f"""Jy is 'n senior Suid-Afrikaanse Geoktrooieerde Rekenmeester wat 'n Proefbalans analiseer.
+Jou taak is om diep, insiggewende analise te gee wat 'n besigheidseienaar kan verstaan.
+Skryf in AFRIKAANS - eenvoudig, professioneel, graad 5 leesvlak maar nie kinderagtig nie.
+Gebruik terme soos BTW (nie VAT), LBS (nie PAYE), debiteure, krediteure.
+
+{tb_text}
+
+Addisionele konteks: {business_context if business_context else "Geen addisionele konteks verskaf nie"}
+
+Gee jou analise as JSON met hierdie PRESIESE struktuur:
+{{
+    "company_health": "good|warning|critical",
+    "health_summary": "Een sin oor die algehele gesondheid",
+    
+    "key_metrics": {{
+        "gross_profit_margin": null of persentasie,
+        "net_profit_margin": null of persentasie,
+        "current_ratio": null of getal,
+        "debt_ratio": null of persentasie,
+        "debtor_days": null of getal,
+        "creditor_days": null of getal
+    }},
+    
+    "red_flags": [
+        {{"issue": "Beskrywing", "severity": "high|medium|low", "recommendation": "Wat om te doen"}}
+    ],
+    
+    "opportunities": [
+        {{"opportunity": "Beskrywing", "potential_benefit": "Wat hulle kan baat"}}
+    ],
+    
+    "questions_for_owner": [
+        "Vraag wat kan help om iets ongewoons te verklaar?"
+    ],
+    
+    "sars_concerns": [
+        "Enige items wat SARS dalk kan bevraagteken tydens 'n oudit"
+    ],
+    
+    "industry_comparison": "Hoe vergelyk dit met tipiese besighede",
+    
+    "top_3_priorities": [
+        "Belangrikste ding om eerste aan te pak",
+        "Tweede prioriteit",
+        "Derde prioriteit"
+    ]
+}}
+
+Fokus op:
+1. Kontantvloei gesondheid - kan hulle hul rekeninge betaal?
+2. Winsmarges - maak hulle geld?
+3. Balansstaat sterkte - bates vs laste
+4. Belasting nakoming - BTW, LBS kwessies
+5. Ongewone patrone - dinge wat nie reg lyk nie
+6. SA-spesifieke kwessies - SARS, SEB, industrie norme
+
+Wees spesifiek met Rand bedrae waar relevant. Wees eerlik maar konstruktief.
+Gee SLEGS geldige JSON, geen ander teks nie."""
+        else:
+            prompt = f"""You are a senior South African Chartered Accountant analyzing a Trial Balance. 
 Your task is to provide deep, insightful analysis that a business owner can understand.
 
 {tb_text}
@@ -14456,6 +14588,9 @@ Return ONLY valid JSON, no other text."""
         if not api_key:
             return "I'm sorry, I can't analyze right now. The AI service isn't configured."
         
+        # Get user language preference
+        lang = session.get("language", "en")
+        
         # Build context from analysis
         analysis_context = json.dumps(analysis, indent=2) if isinstance(analysis, dict) else str(analysis)
         
@@ -14470,7 +14605,41 @@ BUSINESS CONTEXT (from Click AI records):
 - Business Type: {business_context.get('business_type', 'SME')}
 """
         
-        system_prompt = f"""You are BB Fin, a friendly financial advisor chatbot for Click AI, a South African accounting system.
+        # Language-specific system prompt
+        if lang == "af":
+            system_prompt = f"""Jy is BB Fin, 'n vriendelike finansiële adviseur vir Click AI, 'n Suid-Afrikaanse rekeningkundige stelsel.
+
+Jou persoonlikheid:
+- Warm, bemoedigend, en soms geestig
+- Gebruik eenvoudige taal, vermy jargon (of verduidelik dit wanneer nodig)
+- Suid-Afrikaanse konteks - verstaan SARS, BTW, SEB, beurtkrag impakte
+- Wees eerlik oor probleme maar bied altyd hoop en praktiese oplossings
+- Spreek die besigheidseienaar direk aan as "jy"
+- Skryf in AFRIKAANS - natuurlik, soos 'n Boland rekenmeester sou praat
+- Gebruik BTW (nie VAT), LBS (nie PAYE), WVF (nie UIF)
+
+{business_info}
+
+KRITIESE REËLS - JY MOET DIT VOLG:
+1. Jy bespreek SLEGS besigheid, finansiële en rekeningkundige sake
+2. As gevra word oor ENIGIETS wat nie verband hou met besigheid/finansies nie, reageer met 'n vriendelike maar ferm herleiding:
+   - Persoonlike probleme: "Sjoe, dit klink moeilik, maar ek is jou syfer-ou, nie Dr Phil nie! Kom ons fokus op wat ek KAN help - jou besigheid se finansies. 📊"
+   - Gesondheidsvrae: "Ek's gevlei dat jy vra, maar my mediese graad is in siek balansstate diagnoseer, nie siek mense nie! Kom ons praat besigheid. 💼"
+   - Verhoudingsraad: "Luister pal, ek is hier om met jou kontantvloei te help, nie jou persoonlike vloei nie! Nou, oor daai debiteure... 😄"
+   - Politiek/godsdiens: "Ek het net sterk opinies oor BTW-opgawes en winsmarges! Watter besigheidsvraag kan ek help?"
+3. Bring altyd die gesprek terug na hul besigheidsdata
+4. Moet nooit raad gee oor: mediese, wetlike (behalwe basiese belasting), persoonlike verhoudings, of nie-besigheid sake nie
+
+Die finansiële analise om te bespreek:
+{analysis_context}
+
+Jou taak is om:
+1. Bevindings op 'n vriendelike, gesprekmatige manier aan te bied
+2. Opvolgvrae oor die FINANSIËLE DATA SLEGS te beantwoord
+3. Help hulle verstaan wat die syfers vir hul besigheid beteken
+4. Stel praktiese volgende stappe voor wat hulle kan neem"""
+        else:
+            system_prompt = f"""You are BB Fin, a friendly financial advisor chatbot for Click AI, a South African accounting system.
 
 Your personality:
 - Warm, encouraging, and occasionally witty
@@ -14509,7 +14678,10 @@ Your job is to:
         if user_message:
             messages.append({"role": "user", "content": user_message})
         else:
-            messages.append({"role": "user", "content": "Please give me a friendly summary of the analysis. Start with the overall health, then the most important findings."})
+            if lang == "af":
+                messages.append({"role": "user", "content": "Gee my asseblief 'n vriendelike opsomming van die analise. Begin met die algehele gesondheid, dan die belangrikste bevindings."})
+            else:
+                messages.append({"role": "user", "content": "Please give me a friendly summary of the analysis. Start with the overall health, then the most important findings."})
         
         try:
             response = requests.post(
@@ -17348,6 +17520,274 @@ SCANNER_HTML = '''<!DOCTYPE html>
 </html>'''
 
 
+def get_scanner_html(lbl: dict) -> str:
+    """Generate scanner HTML with translated labels"""
+    return f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>{lbl.get("title", "Click Scanner")}</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0a0a12">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a12;
+            color: #f0f0f0;
+            min-height: 100vh;
+            min-height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }}
+        
+        .header {{
+            text-align: center;
+            padding: 50px 20px 30px;
+        }}
+        .logo {{
+            font-size: 42px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }}
+        .tagline {{ 
+            color: #606070; 
+            font-size: 15px; 
+            margin-top: 8px;
+            letter-spacing: 0.5px;
+        }}
+        
+        .biz-select {{
+            margin: 0 24px 20px;
+            padding: 16px 20px;
+            background: #12121a;
+            border: 2px solid #2a2a4a;
+            border-radius: 14px;
+            color: #f0f0f0;
+            font-size: 17px;
+            width: calc(100% - 48px);
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%238b8b9a'%3E%3Cpath d='M7 10L2 5h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 16px center;
+        }}
+        .biz-select:focus {{
+            outline: none;
+            border-color: #8b5cf6;
+        }}
+        
+        .buttons {{
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 16px;
+            gap: 12px;
+        }}
+        
+        .btn-row {{
+            display: flex;
+            gap: 12px;
+        }}
+        
+        .scan-btn {{
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 20px 12px;
+            border-radius: 16px;
+            font-size: 15px;
+            font-weight: 700;
+            color: white;
+            border: none;
+            cursor: pointer;
+            text-align: center;
+            transition: transform 0.15s, box-shadow 0.15s;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        }}
+        .scan-btn:active {{ 
+            transform: scale(0.96); 
+        }}
+        
+        .scan-icon {{ font-size: 32px; }}
+        .scan-label {{ font-size: 14px; }}
+        
+        .btn-supplier {{
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        }}
+        .btn-supplier-paid {{
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        }}
+        .btn-expense {{
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        }}
+        .btn-expense-paid {{
+            background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+        }}
+        
+        .status {{
+            text-align: center;
+            padding: 10px 24px 30px;
+            font-size: 14px;
+            color: #606070;
+            min-height: 50px;
+        }}
+        .status.uploading {{ color: #f59e0b; }}
+        .status.done {{ color: #22c55e; }}
+        .status.error {{ color: #ef4444; }}
+        
+        .review-link {{
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1a1a2e;
+            border: 2px solid #3b82f6;
+            border-radius: 30px;
+            padding: 12px 24px;
+            color: #3b82f6;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 15px;
+            display: none;
+        }}
+        .review-link.visible {{ display: block; }}
+        
+        input[type="file"] {{ display: none; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">📷 Click</div>
+        <div class="tagline">{lbl.get("tagline", "Snap photo → Review later")}</div>
+    </div>
+    
+    <select id="businessSelect" class="biz-select">
+        <option value="">Loading...</option>
+    </select>
+    
+    <div class="buttons">
+        <div class="btn-row">
+            <button class="scan-btn btn-supplier" onclick="scan('supplier_invoice', false)">
+                <span class="scan-icon">📦</span>
+                <span class="scan-label">{lbl.get("invoice", "Invoice")}</span>
+            </button>
+            <button class="scan-btn btn-supplier-paid" onclick="scan('supplier_invoice', true)">
+                <span class="scan-icon">📦</span>
+                <span class="scan-label">{lbl.get("invoice_paid", "Invoice PAID")}</span>
+            </button>
+        </div>
+        <div class="btn-row">
+            <button class="scan-btn btn-expense" onclick="scan('expense', false)">
+                <span class="scan-icon">🧾</span>
+                <span class="scan-label">{lbl.get("expense", "Expense")}</span>
+            </button>
+            <button class="scan-btn btn-expense-paid" onclick="scan('expense', true)">
+                <span class="scan-icon">🧾</span>
+                <span class="scan-label">{lbl.get("expense_paid", "Expense PAID")}</span>
+            </button>
+        </div>
+    </div>
+    
+    <div class="status" id="status"></div>
+    <input type="file" id="camera" accept="image/*" capture="environment">
+    <a href="/staging" class="review-link" id="reviewLink">📋 {lbl.get("review", "Review Pending")} (<span id="pendingCount">0</span>)</a>
+    
+    <script>
+        let currentType = '';
+        let currentPaid = false;
+        const statusEl = document.getElementById('status');
+        const cameraEl = document.getElementById('camera');
+        const reviewLink = document.getElementById('reviewLink');
+        const pendingCount = document.getElementById('pendingCount');
+        const businessSelect = document.getElementById('businessSelect');
+        
+        // Load businesses
+        fetch('/api/businesses')
+            .then(r => r.json())
+            .then(data => {{
+                businessSelect.innerHTML = '';
+                (data.businesses || []).forEach(b => {{
+                    const opt = document.createElement('option');
+                    opt.value = b.id;
+                    opt.textContent = b.business_name || b.name;
+                    if (b.id === data.current) opt.selected = true;
+                    businessSelect.appendChild(opt);
+                }});
+            }});
+        
+        // Check pending count
+        function updatePendingCount() {{
+            fetch('/api/staging/count')
+                .then(r => r.json())
+                .then(data => {{
+                    const count = data.count || 0;
+                    pendingCount.textContent = count;
+                    reviewLink.classList.toggle('visible', count > 0);
+                }});
+        }}
+        updatePendingCount();
+        
+        function scan(type, paid) {{
+            currentType = type;
+            currentPaid = paid;
+            cameraEl.click();
+        }}
+        
+        cameraEl.onchange = async function(e) {{
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            statusEl.textContent = '{lbl.get("uploading", "Uploading...")}';
+            statusEl.className = 'status uploading';
+            
+            const reader = new FileReader();
+            reader.onload = async function(ev) {{
+                try {{
+                    const response = await fetch('/m/queue', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{
+                            image: ev.target.result,
+                            type: currentType,
+                            paid: currentPaid,
+                            business_id: businessSelect.value
+                        }})
+                    }});
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {{
+                        statusEl.textContent = '{lbl.get("done", "✓ Done! Take another")}';
+                        statusEl.className = 'status done';
+                        updatePendingCount();
+                        setTimeout(() => {{ statusEl.textContent = ''; statusEl.className = 'status'; }}, 2000);
+                    }} else {{
+                        statusEl.textContent = '{lbl.get("error", "Error - try again")}';
+                        statusEl.className = 'status error';
+                    }}
+                }} catch (err) {{
+                    statusEl.textContent = '{lbl.get("error", "Error - try again")}';
+                    statusEl.className = 'status error';
+                }}
+                
+                cameraEl.value = '';
+            }};
+            reader.readAsDataURL(file);
+        }};
+    </script>
+</body>
+</html>'''
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOBILE SCANNER ROUTES
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -17386,7 +17826,23 @@ def api_staging_count():
 @app.route("/m")
 def scanner_home():
     """Mobile scanner - fast upload, review later"""
-    return SCANNER_HTML
+    lang = get_user_language()
+    
+    # Bilingual labels
+    lbl = {
+        "title": "Click Skandeerder" if lang == "af" else "Click Scanner",
+        "tagline": "Neem foto → Hersien later" if lang == "af" else "Snap photo → Review later",
+        "invoice": "Faktuur" if lang == "af" else "Invoice",
+        "invoice_paid": "Faktuur BETAAL" if lang == "af" else "Invoice PAID",
+        "expense": "Uitgawe" if lang == "af" else "Expense",
+        "expense_paid": "Uitgawe BETAAL" if lang == "af" else "Expense PAID",
+        "uploading": "Laai op..." if lang == "af" else "Uploading...",
+        "done": "✓ Klaar! Neem nog een" if lang == "af" else "✓ Done! Take another",
+        "error": "Fout - probeer weer" if lang == "af" else "Error - try again",
+        "review": "Hersien Wag" if lang == "af" else "Review Pending",
+    }
+    
+    return get_scanner_html(lbl)
 
 
 @app.route("/m/queue", methods=["POST"])
