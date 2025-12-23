@@ -16192,18 +16192,18 @@ def universal_analyzer():
     # Labels - no emojis
     lbl = {
         "title": "Jou Syfer Ou" if lang == "af" else "Your Numbers Guy",
-        "subtitle": "Gooi enige CSV - ek maak sin daarvan" if lang == "af" else "Throw any CSV at me - I'll make sense of it",
-        "supported": "Ondersteunde dokumente:" if lang == "af" else "Supported documents:",
-        "upload_label": "Kies leer of sleep hierheen" if lang == "af" else "Choose file or drag here",
-        "context_label": "Addisionele konteks (opsioneel)" if lang == "af" else "Additional context (optional)",
-        "context_placeholder": "bv. Boerdery besigheid, seisoenale verkope..." if lang == "af" else "e.g. Farming business, seasonal sales...",
-        "analyze_btn": "Analiseer" if lang == "af" else "Analyze",
-        "gl": "Algemene Grootboek (GL)" if lang == "af" else "General Ledger (GL)",
-        "tb": "Proefbalans" if lang == "af" else "Trial Balance",
-        "bank": "Bankstaat" if lang == "af" else "Bank Statement",
-        "aged_d": "Ouderdomsanalise Debiteure" if lang == "af" else "Aged Debtors",
-        "aged_c": "Ouderdomsanalise Krediteure" if lang == "af" else "Aged Creditors",
-        "any": "Enige finansiele CSV" if lang == "af" else "Any financial CSV",
+        "subtitle": "Throw any CSV at me - I'll make sense of it",
+        "supported": "Supported documents:",
+        "upload_label": "Choose file or drag here",
+        "context_label": "Additional context (optional)",
+        "context_placeholder": "e.g. Farming business, seasonal sales...",
+        "analyze_btn": "Analyze",
+        "gl": "General Ledger (GL)",
+        "tb": "Trial Balance",
+        "bank": "Bank Statement",
+        "aged_d": "Aged Debtors",
+        "aged_c": "Aged Creditors",
+        "any": "Any financial CSV",
     }
     
     content = f'''
@@ -16622,10 +16622,11 @@ def analyze_results():
         </div>
         '''
     
+    # English only labels
     lbl = {
-        "detected": "Dokument tipe" if lang == "af" else "Document type",
-        "analysis": "Analise" if lang == "af" else "Analysis",
-        "another": "Analiseer Nog Een" if lang == "af" else "Analyze Another",
+        "detected": "Document type",
+        "analysis": "Analysis",
+        "another": "Analyze Another",
     }
     
     content = f'''
@@ -16635,6 +16636,8 @@ def analyze_results():
             justify-content: space-between;
             align-items: center;
             margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 12px;
         }}
         .doc-type-badge {{
             background: var(--purple);
@@ -16679,10 +16682,11 @@ def analyze_results():
         .interpretation-header {{
             display: flex;
             align-items: center;
-            gap: 12px;
-            margin-bottom: 16px;
+            gap: 10px;
             font-size: 18px;
             font-weight: 700;
+            margin-bottom: 16px;
+            color: var(--purple);
         }}
         .section-card {{
             background: var(--card-bg);
@@ -16713,6 +16717,7 @@ def analyze_results():
         .action-buttons {{
             display: flex;
             gap: 12px;
+            flex-wrap: wrap;
         }}
         .btn-download {{
             background: var(--green);
@@ -16722,6 +16727,89 @@ def analyze_results():
             text-decoration: none;
             font-weight: 600;
         }}
+        
+        /* Follow-up Chat Section */
+        .chat-section {{
+            background: var(--card-bg);
+            border: 2px solid var(--purple);
+            border-radius: 16px;
+            padding: 24px;
+            margin-top: 24px;
+        }}
+        .chat-title {{
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: var(--purple);
+        }}
+        .chat-messages {{
+            max-height: 400px;
+            overflow-y: auto;
+            margin-bottom: 16px;
+            padding: 12px;
+            background: var(--bg);
+            border-radius: 8px;
+            min-height: 100px;
+        }}
+        .chat-message {{
+            margin-bottom: 12px;
+            padding: 12px;
+            border-radius: 8px;
+        }}
+        .chat-message.user {{
+            background: var(--purple);
+            color: white;
+            margin-left: 20%;
+        }}
+        .chat-message.assistant {{
+            background: rgba(139, 92, 246, 0.1);
+            margin-right: 20%;
+        }}
+        .chat-input-row {{
+            display: flex;
+            gap: 12px;
+        }}
+        .chat-input {{
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            background: var(--bg);
+            color: var(--text);
+        }}
+        .chat-send {{
+            background: var(--purple);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }}
+        .chat-send:disabled {{
+            opacity: 0.5;
+            cursor: not-allowed;
+        }}
+        .suggested-questions {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 16px;
+        }}
+        .suggested-q {{
+            background: rgba(139, 92, 246, 0.1);
+            border: 1px solid var(--purple);
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }}
+        .suggested-q:hover {{
+            background: var(--purple);
+            color: white;
+        }}
     </style>
     
     <div class="result-header">
@@ -16730,7 +16818,7 @@ def analyze_results():
             <div class="doc-type-badge">{doc_name}</div>
         </div>
         <div class="action-buttons">
-            <a href="/analyze/download" class="btn-download">{"Laai Volledige Verslag Af" if lang == "af" else "Download Full Report"}</a>
+            <a href="/analyze/download" class="btn-download">Download Full Report</a>
             <a href="/analyze" class="btn btn-primary">{lbl["another"]}</a>
         </div>
     </div>
@@ -16740,7 +16828,7 @@ def analyze_results():
     
     <div class="interpretation-box">
         <div class="interpretation-header">
-            <span style="font-weight: bold;">{"Analise" if lang == "af" else "Analysis"}</span>
+            <span style="font-weight: bold;">Analysis</span>
         </div>
         <div>{interpretation_html}</div>
     </div>
@@ -16748,9 +16836,75 @@ def analyze_results():
     {duplicates_html}
     {anomalies_html}
     {high_risk_html}
+    
+    <!-- Follow-up Chat Section -->
+    <div class="chat-section">
+        <div class="chat-title">Ask Your Numbers Guy</div>
+        
+        <div class="suggested-questions">
+            <span class="suggested-q" onclick="askQuestion(this.innerText)">What should I focus on first?</span>
+            <span class="suggested-q" onclick="askQuestion(this.innerText)">How does this compare to industry average?</span>
+            <span class="suggested-q" onclick="askQuestion(this.innerText)">What are the warning signs here?</span>
+            <span class="suggested-q" onclick="askQuestion(this.innerText)">How can I improve cash flow?</span>
+            <span class="suggested-q" onclick="askQuestion(this.innerText)">Explain this in simpler terms</span>
+        </div>
+        
+        <div class="chat-messages" id="chat-messages">
+            <div class="chat-message assistant">I've analyzed your data. Feel free to ask me anything about the numbers - I'm here to help you understand what they mean for your business.</div>
+        </div>
+        
+        <div class="chat-input-row">
+            <input type="text" class="chat-input" id="chat-input" placeholder="Ask a follow-up question..." onkeypress="if(event.key==='Enter')sendChat()">
+            <button class="chat-send" id="chat-send" onclick="sendChat()">Ask</button>
+        </div>
+    </div>
+    
+    <script>
+    const chatMessages = document.getElementById('chat-messages');
+    const chatInput = document.getElementById('chat-input');
+    const chatSend = document.getElementById('chat-send');
+    
+    function askQuestion(q) {{
+        chatInput.value = q;
+        sendChat();
+    }}
+    
+    async function sendChat() {{
+        const question = chatInput.value.trim();
+        if (!question) return;
+        
+        // Add user message
+        chatMessages.innerHTML += `<div class="chat-message user">${{question}}</div>`;
+        chatInput.value = '';
+        chatSend.disabled = true;
+        chatSend.innerText = 'Thinking...';
+        
+        // Scroll to bottom
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        
+        try {{
+            const response = await fetch('/analyze/chat', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{question: question}})
+            }});
+            
+            const data = await response.json();
+            
+            // Add assistant message
+            chatMessages.innerHTML += `<div class="chat-message assistant">${{data.answer}}</div>`;
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }} catch (err) {{
+            chatMessages.innerHTML += `<div class="chat-message assistant">Sorry, something went wrong. Please try again.</div>`;
+        }}
+        
+        chatSend.disabled = false;
+        chatSend.innerText = 'Ask';
+    }}
+    </script>
     '''
     
-    title = f"{doc_name} - {'Resultate' if lang == 'af' else 'Results'}"
+    title = f"{doc_name} - Results"
     html = page_wrapper(title, content, user=user)
     
     # No cache - always fresh results
@@ -16786,6 +16940,76 @@ def analyze_download():
     response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
     
     return response
+
+
+@app.route("/analyze/chat", methods=["POST"])
+def analyze_chat():
+    """Follow-up chat with Your Numbers Guy"""
+    from flask import jsonify
+    
+    user = UserSession.get_current_user()
+    if not user:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    data = request.get_json() or {}
+    question = data.get("question", "").strip()
+    
+    if not question:
+        return jsonify({"answer": "Please ask a question."})
+    
+    # Get analysis context from session
+    analysis = session.get('analyze_results', {})
+    interpretation = session.get('analyze_interpretation', '')
+    
+    if not analysis:
+        return jsonify({"answer": "No analysis found. Please upload a file first."})
+    
+    # Build context for Claude
+    doc_type = analysis.get("doc_type", "financial data")
+    summary = analysis.get("summary", {})
+    
+    context = f"""Previous analysis of {doc_type}:
+
+Summary: {summary}
+
+Initial interpretation: {interpretation[:1500] if len(interpretation) > 1500 else interpretation}
+
+The user is now asking a follow-up question about this data."""
+
+    prompt = f"""{context}
+
+User's follow-up question: {question}
+
+Provide a helpful, specific answer based on the analysis. Be concise but thorough. Use specific numbers from the data where relevant. No emojis. Professional tone."""
+
+    api_key = Config.ANTHROPIC_API_KEY
+    if not api_key:
+        return jsonify({"answer": "API not configured"})
+    
+    try:
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "content-type": "application/json",
+                "anthropic-version": "2023-06-01"
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1000,
+                "messages": [{"role": "user", "content": prompt}]
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            answer = result.get("content", [{}])[0].get("text", "Could not generate response")
+            return jsonify({"answer": answer})
+        else:
+            return jsonify({"answer": f"API error: {response.status_code}"})
+    except Exception as e:
+        return jsonify({"answer": f"Error: {str(e)}"})
 
 
 @app.route("/tb-analyzer", methods=["GET", "POST"])
