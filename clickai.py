@@ -15880,6 +15880,12 @@ def universal_analyzer():
     lang = get_user_language()
     message = ""
     
+    # ALWAYS clear old results on GET (fresh start)
+    if request.method == "GET":
+        session.pop('analyze_results', None)
+        session.pop('analyze_interpretation', None)
+        session.pop('analyze_error', None)
+    
     # Check for errors from previous run
     if 'analyze_error' in session:
         error = session.pop('analyze_error')
@@ -16260,6 +16266,8 @@ def analyze_run():
 @app.route("/analyze/results")
 def analyze_results():
     """Show analysis results"""
+    from flask import make_response
+    
     user = UserSession.get_current_user()
     if not user:
         return redirect("/login")
@@ -16508,7 +16516,14 @@ def analyze_results():
     '''
     
     title = f"{doc_name} - {'Resultate' if lang == 'af' else 'Results'}"
-    return page_wrapper(title, content, user=user)
+    html = page_wrapper(title, content, user=user)
+    
+    # No cache - always fresh results
+    response = make_response(html)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 
 @app.route("/tb-analyzer", methods=["GET", "POST"])
