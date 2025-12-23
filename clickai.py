@@ -18838,23 +18838,42 @@ def analyze_chat():
     if not analysis:
         return jsonify({"answer": "No analysis found. Please upload a file first."})
     
-    # Build context for Claude
+    # Build context for Claude - include ALL relevant data
     doc_type = analysis.get("doc_type", "financial data")
     summary = analysis.get("summary", {})
+    entities = analysis.get("entities", [])  # Individual customers/accounts!
+    high_risk = analysis.get("high_risk", [])  # High risk items
+    
+    # Build entity list for context
+    entity_text = ""
+    if entities:
+        entity_lines = []
+        for e in entities[:15]:  # Top 15 entities
+            name = e.get("name") or e.get("entity") or e.get("customer", "Unknown")
+            amount = e.get("amount") or e.get("balance") or e.get("total", 0)
+            aging = e.get("aging") or e.get("category", "")
+            entity_lines.append(f"- {name}: R{amount:,.2f} ({aging})" if isinstance(amount, (int, float)) else f"- {name}: {amount} ({aging})")
+        entity_text = "\n".join(entity_lines)
     
     context = f"""Previous analysis of {doc_type}:
 
-Summary: {summary}
+Summary totals: {summary}
 
-The user is now asking a follow-up question about this data."""
+Individual entities/customers in the data:
+{entity_text if entity_text else "No individual customer breakdown available - only aggregate totals."}
+
+High risk items: {high_risk[:5] if high_risk else "None flagged"}
+
+The user is now asking a follow-up question."""
 
     prompt = f"""{context}
 
-User's follow-up question: {question}
+User's question: {question}
 
-Answer based on the Summary data above. Only reference names and amounts that appear in the data. If the data shows individual customers, you may discuss them. If only totals are shown, discuss totals - don't invent names.
+If the customer/entity is listed above, provide their specific details confidently.
+If they're NOT listed, say "I don't see [name] in the data provided."
 
-Be helpful and specific. Use actual numbers from the summary. No emojis. Professional tone."""
+Be direct and specific. Reference actual figures from above."""
 
     # System prompt to prevent hallucination BUT stand by real data
     system_prompt = """You are a financial analyst. Two rules:
