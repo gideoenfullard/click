@@ -10134,18 +10134,17 @@ BAR_CATEGORIES = {
 
 @app.route("/bar")
 def bar_pos():
-    """Bar/Restaurant POS - Premium Touch UI"""
+    """Bar/Restaurant POS - Light theme, big buttons, 4POS style navigation"""
     user = UserSession.get_current_user()
     if not user:
         return redirect("/bar/login")
     
-    # Get waitron info from session
     waitron = session.get('bar_waitron', {})
     if not waitron:
         return redirect("/bar/login")
     
     waitron_name = waitron.get('name', 'Staff')
-    current_table = session.get('bar_current_table', 'New Table')
+    current_table = session.get('bar_current_table', 'No Table')
     
     content = f'''
 <!DOCTYPE html>
@@ -10164,365 +10163,364 @@ def bar_pos():
             user-select: none;
         }}
         
-        :root {{
-            --bg-dark: #0a0a12;
-            --bg-card: #12121f;
-            --bg-input: #1a1a2e;
-            --bg-hover: #252545;
-            --text: #ffffff;
-            --text-muted: #8888aa;
-            --purple: #8b5cf6;
-            --purple-glow: rgba(139, 92, 246, 0.4);
-            --green: #22c55e;
-            --green-glow: rgba(34, 197, 94, 0.4);
-            --red: #ef4444;
-            --red-glow: rgba(239, 68, 68, 0.4);
-            --orange: #f97316;
-            --blue: #3b82f6;
-            --blue-glow: rgba(59, 130, 246, 0.4);
-            --border: #2a2a4a;
-            --gold: #fbbf24;
-        }}
-        
         html, body {{
             height: 100%;
             overflow: hidden;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-dark);
-            color: var(--text);
+            background: #f0f0f0;
+            color: #333;
         }}
         
         /* Main Layout */
-        .pos-container {{
+        .pos-layout {{
             display: grid;
-            grid-template-columns: 90px 1fr 340px;
+            grid-template-columns: 1fr 320px;
             height: 100vh;
-            gap: 1px;
-            background: var(--border);
         }}
         
-        /* ============ LEFT SIDEBAR ============ */
-        .sidebar {{
-            background: linear-gradient(180deg, #1e1e3f 0%, #12121f 100%);
+        /* Left Side - Menu Area */
+        .menu-area {{
             display: flex;
             flex-direction: column;
-            padding: 8px 6px;
-            gap: 8px;
-        }}
-        
-        .sidebar-btn {{
-            padding: 14px 6px;
-            background: linear-gradient(145deg, #252545, #1a1a35);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            color: var(--text);
-            font-size: 11px;
-            font-weight: 700;
-            cursor: pointer;
-            text-align: center;
-            transition: all 0.2s ease;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }}
-        
-        .sidebar-btn:active {{
-            transform: scale(0.95);
-        }}
-        
-        .sidebar-btn.glow-blue {{
-            box-shadow: 0 0 20px var(--blue-glow), inset 0 1px 0 rgba(255,255,255,0.1);
-            border-color: var(--blue);
-            background: linear-gradient(145deg, #2a3f5f, #1a2a4f);
-        }}
-        
-        .sidebar-btn.glow-green {{
-            box-shadow: 0 0 20px var(--green-glow), inset 0 1px 0 rgba(255,255,255,0.1);
-            border-color: var(--green);
-            background: linear-gradient(145deg, #1a4a3a, #0f3a2a);
-        }}
-        
-        .sidebar-btn.glow-red {{
-            box-shadow: 0 0 20px var(--red-glow), inset 0 1px 0 rgba(255,255,255,0.1);
-            border-color: var(--red);
-            background: linear-gradient(145deg, #4a1a1a, #3a0f0f);
-        }}
-        
-        .sidebar-btn.glow-purple {{
-            box-shadow: 0 0 20px var(--purple-glow), inset 0 1px 0 rgba(255,255,255,0.1);
-            border-color: var(--purple);
-            background: linear-gradient(145deg, #3a2a5f, #2a1a4f);
-        }}
-        
-        .waitron-badge {{
-            margin-top: auto;
-            padding: 12px 6px;
-            background: linear-gradient(145deg, var(--purple), #6d28d9);
-            border-radius: 10px;
-            font-size: 10px;
-            font-weight: 700;
-            text-align: center;
-            box-shadow: 0 0 25px var(--purple-glow);
-        }}
-        
-        /* ============ MAIN AREA ============ */
-        .main-area {{
-            background: var(--bg-dark);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }}
-        
-        /* Category Bar */
-        .category-bar {{
-            display: flex;
-            gap: 6px;
+            background: #e8e8e8;
             padding: 10px;
-            background: var(--bg-card);
-            overflow-x: auto;
-            border-bottom: 1px solid var(--border);
-        }}
-        
-        .category-bar::-webkit-scrollbar {{
-            height: 4px;
-        }}
-        
-        .category-bar::-webkit-scrollbar-thumb {{
-            background: var(--purple);
-            border-radius: 4px;
-        }}
-        
-        .cat-btn {{
-            padding: 12px 20px;
-            background: linear-gradient(145deg, #1f1f3a, #15152a);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text);
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            white-space: nowrap;
-            transition: all 0.2s ease;
-        }}
-        
-        .cat-btn:active {{
-            transform: scale(0.95);
-        }}
-        
-        .cat-btn.active {{
-            background: linear-gradient(145deg, var(--purple), #6d28d9);
-            border-color: var(--purple);
-            box-shadow: 0 0 20px var(--purple-glow);
-        }}
-        
-        .cat-btn.drinks {{ background: linear-gradient(145deg, #1e3a5f, #152a4a); border-color: #2563eb; }}
-        .cat-btn.food {{ background: linear-gradient(145deg, #3f2a1e, #2a1a0f); border-color: #d97706; }}
-        .cat-btn.specials {{ background: linear-gradient(145deg, #4a1e4a, #3a0f3a); border-color: #c026d3; }}
-        
-        /* Items Grid */
-        .items-grid {{
-            flex: 1;
-            padding: 12px;
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
             gap: 10px;
+        }}
+        
+        /* Top Bar */
+        .top-bar {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        
+        .staff-info {{
+            font-size: 18px;
+            font-weight: 700;
+            color: #2563eb;
+        }}
+        
+        .table-info {{
+            font-size: 18px;
+            font-weight: 700;
+            color: #059669;
+            cursor: pointer;
+            padding: 8px 16px;
+            background: #ecfdf5;
+            border-radius: 8px;
+        }}
+        
+        /* Navigation Breadcrumb */
+        .breadcrumb {{
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            padding: 8px 0;
+            font-size: 14px;
+            color: #666;
+        }}
+        
+        .breadcrumb span {{
+            cursor: pointer;
+        }}
+        
+        .breadcrumb span:hover {{
+            color: #2563eb;
+        }}
+        
+        .breadcrumb .current {{
+            font-weight: 700;
+            color: #333;
+        }}
+        
+        /* Menu Grid */
+        .menu-grid {{
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            padding: 5px;
             overflow-y: auto;
             align-content: start;
         }}
         
-        .items-grid::-webkit-scrollbar {{
-            width: 6px;
-        }}
-        
-        .items-grid::-webkit-scrollbar-thumb {{
-            background: var(--purple);
-            border-radius: 6px;
-        }}
-        
-        .item-btn {{
-            aspect-ratio: 1;
-            padding: 12px;
-            background: linear-gradient(145deg, #1f1f3a, #15152a);
-            border: 2px solid var(--border);
-            border-radius: 12px;
-            color: var(--text);
-            font-size: 13px;
-            font-weight: 600;
+        /* Big Menu Buttons */
+        .menu-btn {{
+            padding: 30px 15px;
+            border: none;
+            border-radius: 16px;
+            font-size: 18px;
+            font-weight: 700;
             cursor: pointer;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            text-align: center;
             gap: 8px;
-            transition: all 0.2s ease;
+            transition: transform 0.1s, box-shadow 0.1s;
+            min-height: 120px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }}
         
-        .item-btn:active {{
-            transform: scale(0.95);
-            background: var(--purple);
-            border-color: var(--purple);
-            box-shadow: 0 0 30px var(--purple-glow);
+        .menu-btn:active {{
+            transform: scale(0.96);
         }}
         
-        .item-btn .price {{
-            font-size: 15px;
+        /* Button Colors */
+        .menu-btn.drinks {{
+            background: linear-gradient(145deg, #3b82f6, #2563eb);
+            color: white;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+        }}
+        
+        .menu-btn.food {{
+            background: linear-gradient(145deg, #f97316, #ea580c);
+            color: white;
+            box-shadow: 0 4px 15px rgba(249, 115, 22, 0.4);
+        }}
+        
+        .menu-btn.specials {{
+            background: linear-gradient(145deg, #a855f7, #9333ea);
+            color: white;
+            box-shadow: 0 4px 15px rgba(168, 85, 247, 0.4);
+        }}
+        
+        .menu-btn.action {{
+            background: linear-gradient(145deg, #22c55e, #16a34a);
+            color: white;
+            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.4);
+        }}
+        
+        .menu-btn.tables {{
+            background: linear-gradient(145deg, #06b6d4, #0891b2);
+            color: white;
+            box-shadow: 0 4px 15px rgba(6, 182, 212, 0.4);
+        }}
+        
+        .menu-btn.danger {{
+            background: linear-gradient(145deg, #ef4444, #dc2626);
+            color: white;
+            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+        }}
+        
+        /* Sub-category buttons */
+        .menu-btn.sub {{
+            background: linear-gradient(145deg, #ffffff, #f3f4f6);
+            color: #333;
+            border: 2px solid #e5e7eb;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }}
+        
+        .menu-btn.sub:active {{
+            background: linear-gradient(145deg, #dbeafe, #bfdbfe);
+            border-color: #3b82f6;
+        }}
+        
+        /* Item buttons (products) */
+        .menu-btn.item {{
+            background: white;
+            color: #333;
+            border: 2px solid #d1d5db;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            padding: 20px 12px;
+            min-height: 100px;
+        }}
+        
+        .menu-btn.item:active {{
+            background: #dbeafe;
+            border-color: #3b82f6;
+        }}
+        
+        .menu-btn .price {{
+            font-size: 20px;
+            font-weight: 800;
+            color: #059669;
+        }}
+        
+        .menu-btn.item .price {{
+            color: #059669;
+        }}
+        
+        /* Back Buttons Row */
+        .back-row {{
+            display: flex;
+            gap: 10px;
+        }}
+        
+        .back-btn {{
+            flex: 1;
+            padding: 18px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
             font-weight: 700;
-            color: var(--green);
-            text-shadow: 0 0 10px var(--green-glow);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }}
         
-        /* ============ ORDER PANEL ============ */
+        .back-btn.back {{
+            background: linear-gradient(145deg, #6b7280, #4b5563);
+            color: white;
+        }}
+        
+        .back-btn.home {{
+            background: linear-gradient(145deg, #1f2937, #111827);
+            color: white;
+        }}
+        
+        .back-btn:active {{
+            transform: scale(0.96);
+        }}
+        
+        /* Right Side - Order Panel */
         .order-panel {{
-            background: linear-gradient(180deg, #15152a 0%, #0f0f1a 100%);
             display: flex;
             flex-direction: column;
-            border-left: 1px solid var(--border);
+            background: white;
+            border-left: 3px solid #2563eb;
         }}
         
         .order-header {{
-            display: flex;
-            gap: 8px;
-            padding: 12px;
-            background: var(--bg-card);
-        }}
-        
-        .header-badge {{
-            flex: 1;
-            padding: 12px;
-            border-radius: 10px;
-            font-weight: 700;
-            font-size: 14px;
+            padding: 15px;
+            background: #2563eb;
+            color: white;
             text-align: center;
         }}
         
-        .header-badge.waitron {{
-            background: linear-gradient(145deg, #059669, #047857);
-            box-shadow: 0 0 15px var(--green-glow);
+        .order-header h2 {{
+            font-size: 20px;
+            margin-bottom: 5px;
         }}
         
-        .header-badge.table {{
-            background: linear-gradient(145deg, #0ea5e9, #0284c7);
-            box-shadow: 0 0 15px var(--blue-glow);
-            cursor: pointer;
+        .order-header .table-name {{
+            font-size: 24px;
+            font-weight: 800;
         }}
         
         /* Order List */
-        .order-list-header {{
-            display: grid;
-            grid-template-columns: 30px 1fr 60px 40px 70px;
-            padding: 8px 12px;
-            background: var(--bg-input);
-            font-size: 10px;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-        }}
-        
         .order-list {{
             flex: 1;
             overflow-y: auto;
-            background: linear-gradient(180deg, #fafafa 0%, #f0f0f0 100%);
+            background: #fafafa;
         }}
         
         .order-item {{
             display: grid;
-            grid-template-columns: 30px 1fr 60px 40px 70px;
-            padding: 10px 12px;
-            border-bottom: 1px solid #ddd;
-            font-size: 13px;
-            color: #333;
+            grid-template-columns: 40px 1fr 70px;
+            padding: 12px 15px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 15px;
             align-items: center;
             cursor: pointer;
-            transition: background 0.15s;
         }}
         
         .order-item:active {{
-            background: #e0e0ff;
+            background: #dbeafe;
         }}
         
         .order-item .qty {{
-            font-weight: 700;
-            text-align: center;
+            font-weight: 800;
+            font-size: 18px;
+            color: #2563eb;
+        }}
+        
+        .order-item .name {{
+            font-weight: 600;
         }}
         
         .order-item .amount {{
             font-weight: 700;
             text-align: right;
+            color: #059669;
         }}
         
-        /* Action Buttons */
+        .order-empty {{
+            padding: 40px;
+            text-align: center;
+            color: #9ca3af;
+            font-size: 16px;
+        }}
+        
+        /* Order Actions */
         .order-actions {{
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 6px;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
             padding: 10px;
+            background: #f3f4f6;
         }}
         
-        .action-btn {{
-            padding: 14px 8px;
-            border: 1px solid var(--border);
+        .order-btn {{
+            padding: 15px;
+            border: none;
             border-radius: 10px;
-            font-size: 12px;
+            font-size: 14px;
             font-weight: 700;
             cursor: pointer;
             text-transform: uppercase;
-            transition: all 0.2s ease;
         }}
         
-        .action-btn:active {{
-            transform: scale(0.95);
+        .order-btn:active {{
+            transform: scale(0.96);
         }}
         
-        .action-btn.green {{
-            background: linear-gradient(145deg, #059669, #047857);
+        .order-btn.remove {{
+            background: #fee2e2;
+            color: #dc2626;
+        }}
+        
+        .order-btn.clear {{
+            background: #fef3c7;
+            color: #d97706;
+        }}
+        
+        /* Total Section */
+        .order-total {{
+            padding: 20px;
+            background: #1f2937;
             color: white;
-            border-color: var(--green);
-            box-shadow: 0 0 15px var(--green-glow);
         }}
         
-        .action-btn.blue {{
-            background: linear-gradient(145deg, #2563eb, #1d4ed8);
-            color: white;
-            border-color: var(--blue);
-            box-shadow: 0 0 15px var(--blue-glow);
-        }}
-        
-        .action-btn.red {{
-            background: linear-gradient(145deg, #dc2626, #b91c1c);
-            color: white;
-            border-color: var(--red);
-            box-shadow: 0 0 15px var(--red-glow);
-        }}
-        
-        .action-btn.default {{
-            background: linear-gradient(145deg, #252545, #1a1a35);
-            color: var(--text);
-        }}
-        
-        /* Total Bar */
-        .total-bar {{
+        .total-row {{
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            padding: 16px 20px;
-            background: linear-gradient(145deg, #1a1a35, #0f0f1a);
-            border-top: 1px solid var(--purple);
-        }}
-        
-        .total-label {{
-            font-size: 18px;
-            font-weight: 600;
-            color: var(--text-muted);
-        }}
-        
-        .total-amount {{
-            font-size: 32px;
+            font-size: 28px;
             font-weight: 800;
-            color: var(--green);
-            text-shadow: 0 0 20px var(--green-glow);
         }}
         
-        /* ============ MODAL / POPUP ============ */
+        .total-row .amount {{
+            color: #4ade80;
+        }}
+        
+        .cashout-btn {{
+            width: 100%;
+            margin-top: 15px;
+            padding: 20px;
+            background: linear-gradient(145deg, #22c55e, #16a34a);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 22px;
+            font-weight: 800;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.4);
+        }}
+        
+        .cashout-btn:active {{
+            transform: scale(0.96);
+        }}
+        
+        /* Modal */
         .modal-overlay {{
             display: none;
             position: fixed;
@@ -10530,7 +10528,7 @@ def bar_pos():
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.85);
+            background: rgba(0,0,0,0.5);
             z-index: 1000;
             justify-content: center;
             align-items: center;
@@ -10541,116 +10539,109 @@ def bar_pos():
         }}
         
         .modal {{
-            background: linear-gradient(145deg, #1f1f3a, #15152a);
+            background: white;
             border-radius: 20px;
-            padding: 24px;
-            min-width: 340px;
-            border: 1px solid var(--purple);
-            box-shadow: 0 0 50px var(--purple-glow);
+            padding: 25px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
         }}
         
         .modal-title {{
-            font-size: 18px;
+            font-size: 20px;
             font-weight: 700;
             text-align: center;
-            margin-bottom: 16px;
-            color: var(--purple);
+            margin-bottom: 20px;
+            color: #1f2937;
         }}
         
         .modal-input {{
             width: 100%;
-            padding: 16px;
-            font-size: 24px;
+            padding: 20px;
+            font-size: 28px;
             font-weight: 700;
             text-align: center;
-            background: var(--bg-dark);
-            border: 2px solid var(--border);
+            border: 3px solid #e5e7eb;
             border-radius: 12px;
-            color: var(--text);
-            margin-bottom: 16px;
+            margin-bottom: 15px;
         }}
         
         .modal-input:focus {{
             outline: none;
-            border-color: var(--purple);
-            box-shadow: 0 0 20px var(--purple-glow);
+            border-color: #2563eb;
         }}
         
-        /* On-Screen Keyboard */
+        /* Keyboard */
         .keyboard {{
             display: grid;
             grid-template-columns: repeat(10, 1fr);
-            gap: 6px;
-            margin-bottom: 16px;
+            gap: 5px;
+            margin-bottom: 15px;
         }}
         
-        .key-btn {{
-            padding: 14px 8px;
-            background: linear-gradient(145deg, #252545, #1a1a35);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text);
-            font-size: 16px;
+        .key {{
+            padding: 15px 5px;
+            font-size: 18px;
             font-weight: 700;
+            background: #f3f4f6;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
             cursor: pointer;
-            transition: all 0.15s;
         }}
         
-        .key-btn:active {{
-            background: var(--purple);
-            box-shadow: 0 0 20px var(--purple-glow);
-            transform: scale(0.95);
+        .key:active {{
+            background: #dbeafe;
+            border-color: #2563eb;
         }}
         
-        .key-btn.wide {{
+        .key.wide {{
             grid-column: span 2;
         }}
         
-        .key-btn.action {{
-            background: linear-gradient(145deg, var(--green), #16a34a);
-            border-color: var(--green);
+        .key.green {{
+            background: #22c55e;
+            color: white;
+            border-color: #16a34a;
         }}
         
-        .key-btn.delete {{
-            background: linear-gradient(145deg, var(--red), #dc2626);
-            border-color: var(--red);
+        .key.red {{
+            background: #ef4444;
+            color: white;
+            border-color: #dc2626;
         }}
         
         /* Numpad */
         .numpad {{
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
+            gap: 10px;
         }}
         
-        .num-btn {{
-            padding: 20px;
-            font-size: 28px;
+        .num {{
+            padding: 25px;
+            font-size: 32px;
             font-weight: 700;
-            background: linear-gradient(145deg, #252545, #1a1a35);
-            border: 1px solid var(--border);
+            background: #f3f4f6;
+            border: 2px solid #e5e7eb;
             border-radius: 12px;
-            color: var(--text);
             cursor: pointer;
-            transition: all 0.15s;
         }}
         
-        .num-btn:active {{
-            background: var(--purple);
-            box-shadow: 0 0 25px var(--purple-glow);
-            transform: scale(0.95);
+        .num:active {{
+            background: #dbeafe;
+            border-color: #2563eb;
         }}
         
-        .num-btn.action {{
-            background: linear-gradient(145deg, var(--green), #16a34a);
-            border-color: var(--green);
-            box-shadow: 0 0 15px var(--green-glow);
+        .num.green {{
+            background: #22c55e;
+            color: white;
+            border-color: #16a34a;
         }}
         
-        .num-btn.delete {{
-            background: linear-gradient(145deg, var(--red), #dc2626);
-            border-color: var(--red);
-            box-shadow: 0 0 15px var(--red-glow);
+        .num.red {{
+            background: #ef4444;
+            color: white;
+            border-color: #dc2626;
         }}
         
         .modal-buttons {{
@@ -10660,176 +10651,140 @@ def bar_pos():
         
         .modal-btn {{
             flex: 1;
-            padding: 16px;
-            border-radius: 12px;
-            font-size: 16px;
+            padding: 18px;
+            font-size: 18px;
             font-weight: 700;
-            cursor: pointer;
             border: none;
-            transition: all 0.15s;
-        }}
-        
-        .modal-btn:active {{
-            transform: scale(0.95);
-        }}
-        
-        .modal-btn.confirm {{
-            background: linear-gradient(145deg, var(--green), #16a34a);
-            color: white;
-            box-shadow: 0 0 20px var(--green-glow);
+            border-radius: 12px;
+            cursor: pointer;
         }}
         
         .modal-btn.cancel {{
-            background: linear-gradient(145deg, #3a3a5a, #2a2a4a);
-            color: var(--text);
+            background: #f3f4f6;
+            color: #4b5563;
+        }}
+        
+        .modal-btn.confirm {{
+            background: #22c55e;
+            color: white;
         }}
         
         /* Mobile */
-        @media (max-width: 900px) {{
-            .pos-container {{
-                grid-template-columns: 70px 1fr 280px;
-            }}
-        }}
-        
-        @media (max-width: 700px) {{
-            .pos-container {{
+        @media (max-width: 800px) {{
+            .pos-layout {{
                 grid-template-columns: 1fr;
-                grid-template-rows: auto 1fr auto;
-            }}
-            .sidebar {{
-                flex-direction: row;
-                padding: 6px;
-                overflow-x: auto;
-            }}
-            .sidebar-btn {{
-                min-width: 70px;
-                padding: 10px 8px;
-            }}
-            .waitron-badge {{
-                margin-top: 0;
-                min-width: 80px;
+                grid-template-rows: 1fr auto;
             }}
             .order-panel {{
-                max-height: 45vh;
+                max-height: 40vh;
+            }}
+            .menu-grid {{
+                grid-template-columns: repeat(2, 1fr);
+            }}
+            .menu-btn {{
+                min-height: 100px;
+                font-size: 16px;
             }}
         }}
     </style>
 </head>
 <body>
-    <div class="pos-container">
-        <!-- Left Sidebar -->
-        <div class="sidebar">
-            <button class="sidebar-btn glow-blue" onclick="showTableModal()">New<br>Table</button>
-            <button class="sidebar-btn glow-green" onclick="cashSale()">Cash<br>Sale</button>
-            <button class="sidebar-btn glow-purple" onclick="showOptions()">Options</button>
-            <button class="sidebar-btn glow-red" onclick="location.href='/bar/logout'">Log<br>Out</button>
-            <div class="waitron-badge">{waitron_name}</div>
-        </div>
-        
-        <!-- Main Area -->
-        <div class="main-area">
-            <div class="category-bar" id="categories">
-                <button class="cat-btn drinks active" onclick="showCategory('beer', this)">Beer</button>
-                <button class="cat-btn drinks" onclick="showCategory('ciders', this)">Ciders</button>
-                <button class="cat-btn drinks" onclick="showCategory('cold_drinks', this)">Cold Drinks</button>
-                <button class="cat-btn drinks" onclick="showCategory('alcohol', this)">Spirits</button>
-                <button class="cat-btn drinks" onclick="showCategory('wine', this)">Wine</button>
-                <button class="cat-btn drinks" onclick="showCategory('shooters', this)">Shooters</button>
-                <button class="cat-btn food" onclick="showCategory('toasted', this)">Toasted</button>
-                <button class="cat-btn food" onclick="showCategory('burgers', this)">Burgers</button>
-                <button class="cat-btn food" onclick="showCategory('mains', this)">Mains</button>
-                <button class="cat-btn food" onclick="showCategory('breakfast', this)">Breakfast</button>
-                <button class="cat-btn food" onclick="showCategory('starters', this)">Starters</button>
-                <button class="cat-btn specials" onclick="showCategory('specials', this)">Specials</button>
+    <div class="pos-layout">
+        <!-- Menu Area -->
+        <div class="menu-area">
+            <div class="top-bar">
+                <span class="staff-info">👤 {waitron_name}</span>
+                <span class="table-info" id="table-display" onclick="showTableModal()">{current_table}</span>
             </div>
             
-            <div class="items-grid" id="items">
-                <div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;">
-                    Loading items...
-                </div>
+            <div class="breadcrumb" id="breadcrumb">
+                <span class="current">Main Menu</span>
+            </div>
+            
+            <div class="menu-grid" id="menu-grid">
+                <!-- Main menu loads here -->
+            </div>
+            
+            <div class="back-row" id="back-row" style="display: none;">
+                <button class="back-btn back" onclick="goBack()">← BACK</button>
+                <button class="back-btn home" onclick="goHome()">🏠 MAIN MENU</button>
             </div>
         </div>
         
         <!-- Order Panel -->
         <div class="order-panel">
             <div class="order-header">
-                <div class="header-badge waitron">{waitron_name}</div>
-                <div class="header-badge table" id="table-display" onclick="showTableModal()">{current_table}</div>
+                <h2>{waitron_name}</h2>
+                <div class="table-name" id="order-table">{current_table}</div>
             </div>
             
-            <div class="order-list-header">
-                <span>#</span>
-                <span>Item</span>
-                <span>Price</span>
-                <span>Qty</span>
-                <span>Total</span>
+            <div class="order-list" id="order-list">
+                <div class="order-empty">No items yet</div>
             </div>
-            
-            <div class="order-list" id="order-list"></div>
             
             <div class="order-actions">
-                <button class="action-btn default" onclick="showQtyModal()">Qty</button>
-                <button class="action-btn default" onclick="revokeItem()">Revoke</button>
-                <button class="action-btn red" onclick="clearOrder()">Clear</button>
-                <button class="action-btn blue" onclick="saveOrder()">Save</button>
-                <button class="action-btn green" style="grid-column: span 2;" onclick="cashoutTable()">CASHOUT</button>
+                <button class="order-btn remove" onclick="removeLastItem()">Remove Last</button>
+                <button class="order-btn clear" onclick="clearOrder()">Clear All</button>
             </div>
             
-            <div class="total-bar">
-                <span class="total-label">TOTAL</span>
-                <span class="total-amount" id="total-amount">R 0.00</span>
+            <div class="order-total">
+                <div class="total-row">
+                    <span>TOTAL</span>
+                    <span class="amount" id="total-amount">R 0.00</span>
+                </div>
+                <button class="cashout-btn" onclick="cashout()">CASHOUT</button>
             </div>
         </div>
     </div>
     
-    <!-- Table Name Modal -->
+    <!-- Table Modal -->
     <div class="modal-overlay" id="table-modal">
         <div class="modal">
-            <div class="modal-title">Enter Table Name / Number</div>
-            <input type="text" class="modal-input" id="table-input" placeholder="e.g. Table 5" readonly>
-            <div class="keyboard">
-                <button class="key-btn" onclick="keyPress('1')">1</button>
-                <button class="key-btn" onclick="keyPress('2')">2</button>
-                <button class="key-btn" onclick="keyPress('3')">3</button>
-                <button class="key-btn" onclick="keyPress('4')">4</button>
-                <button class="key-btn" onclick="keyPress('5')">5</button>
-                <button class="key-btn" onclick="keyPress('6')">6</button>
-                <button class="key-btn" onclick="keyPress('7')">7</button>
-                <button class="key-btn" onclick="keyPress('8')">8</button>
-                <button class="key-btn" onclick="keyPress('9')">9</button>
-                <button class="key-btn" onclick="keyPress('0')">0</button>
-                <button class="key-btn" onclick="keyPress('Q')">Q</button>
-                <button class="key-btn" onclick="keyPress('W')">W</button>
-                <button class="key-btn" onclick="keyPress('E')">E</button>
-                <button class="key-btn" onclick="keyPress('R')">R</button>
-                <button class="key-btn" onclick="keyPress('T')">T</button>
-                <button class="key-btn" onclick="keyPress('Y')">Y</button>
-                <button class="key-btn" onclick="keyPress('U')">U</button>
-                <button class="key-btn" onclick="keyPress('I')">I</button>
-                <button class="key-btn" onclick="keyPress('O')">O</button>
-                <button class="key-btn" onclick="keyPress('P')">P</button>
-                <button class="key-btn" onclick="keyPress('A')">A</button>
-                <button class="key-btn" onclick="keyPress('S')">S</button>
-                <button class="key-btn" onclick="keyPress('D')">D</button>
-                <button class="key-btn" onclick="keyPress('F')">F</button>
-                <button class="key-btn" onclick="keyPress('G')">G</button>
-                <button class="key-btn" onclick="keyPress('H')">H</button>
-                <button class="key-btn" onclick="keyPress('J')">J</button>
-                <button class="key-btn" onclick="keyPress('K')">K</button>
-                <button class="key-btn" onclick="keyPress('L')">L</button>
-                <button class="key-btn delete" onclick="keyDelete()">⌫</button>
-                <button class="key-btn" onclick="keyPress('Z')">Z</button>
-                <button class="key-btn" onclick="keyPress('X')">X</button>
-                <button class="key-btn" onclick="keyPress('C')">C</button>
-                <button class="key-btn" onclick="keyPress('V')">V</button>
-                <button class="key-btn" onclick="keyPress('B')">B</button>
-                <button class="key-btn" onclick="keyPress('N')">N</button>
-                <button class="key-btn" onclick="keyPress('M')">M</button>
-                <button class="key-btn wide" onclick="keyPress(' ')">SPACE</button>
-                <button class="key-btn action" onclick="confirmTable()">OK</button>
+            <div class="modal-title">Table Name / Number</div>
+            <input type="text" class="modal-input" id="table-input" placeholder="e.g. 5 or JOHN" readonly>
+            <div class="keyboard" id="keyboard">
+                <button class="key" onclick="kp('1')">1</button>
+                <button class="key" onclick="kp('2')">2</button>
+                <button class="key" onclick="kp('3')">3</button>
+                <button class="key" onclick="kp('4')">4</button>
+                <button class="key" onclick="kp('5')">5</button>
+                <button class="key" onclick="kp('6')">6</button>
+                <button class="key" onclick="kp('7')">7</button>
+                <button class="key" onclick="kp('8')">8</button>
+                <button class="key" onclick="kp('9')">9</button>
+                <button class="key" onclick="kp('0')">0</button>
+                <button class="key" onclick="kp('Q')">Q</button>
+                <button class="key" onclick="kp('W')">W</button>
+                <button class="key" onclick="kp('E')">E</button>
+                <button class="key" onclick="kp('R')">R</button>
+                <button class="key" onclick="kp('T')">T</button>
+                <button class="key" onclick="kp('Y')">Y</button>
+                <button class="key" onclick="kp('U')">U</button>
+                <button class="key" onclick="kp('I')">I</button>
+                <button class="key" onclick="kp('O')">O</button>
+                <button class="key" onclick="kp('P')">P</button>
+                <button class="key" onclick="kp('A')">A</button>
+                <button class="key" onclick="kp('S')">S</button>
+                <button class="key" onclick="kp('D')">D</button>
+                <button class="key" onclick="kp('F')">F</button>
+                <button class="key" onclick="kp('G')">G</button>
+                <button class="key" onclick="kp('H')">H</button>
+                <button class="key" onclick="kp('J')">J</button>
+                <button class="key" onclick="kp('K')">K</button>
+                <button class="key" onclick="kp('L')">L</button>
+                <button class="key red" onclick="kpDel()">⌫</button>
+                <button class="key" onclick="kp('Z')">Z</button>
+                <button class="key" onclick="kp('X')">X</button>
+                <button class="key" onclick="kp('C')">C</button>
+                <button class="key" onclick="kp('V')">V</button>
+                <button class="key" onclick="kp('B')">B</button>
+                <button class="key" onclick="kp('N')">N</button>
+                <button class="key" onclick="kp('M')">M</button>
+                <button class="key" onclick="kp(' ')">_</button>
+                <button class="key wide green" onclick="confirmTable()">OK</button>
             </div>
             <div class="modal-buttons">
-                <button class="modal-btn cancel" onclick="closeTableModal()">Cancel</button>
+                <button class="modal-btn cancel" onclick="closeModal('table-modal')">Cancel</button>
             </div>
         </div>
     </div>
@@ -10840,86 +10795,179 @@ def bar_pos():
             <div class="modal-title" id="qty-title">Quantity</div>
             <input type="text" class="modal-input" id="qty-input" value="1" readonly>
             <div class="numpad">
-                <button class="num-btn" onclick="numPress('7')">7</button>
-                <button class="num-btn" onclick="numPress('8')">8</button>
-                <button class="num-btn" onclick="numPress('9')">9</button>
-                <button class="num-btn" onclick="numPress('4')">4</button>
-                <button class="num-btn" onclick="numPress('5')">5</button>
-                <button class="num-btn" onclick="numPress('6')">6</button>
-                <button class="num-btn" onclick="numPress('1')">1</button>
-                <button class="num-btn" onclick="numPress('2')">2</button>
-                <button class="num-btn" onclick="numPress('3')">3</button>
-                <button class="num-btn delete" onclick="numClear()">C</button>
-                <button class="num-btn" onclick="numPress('0')">0</button>
-                <button class="num-btn action" onclick="confirmQty()">OK</button>
+                <button class="num" onclick="np('7')">7</button>
+                <button class="num" onclick="np('8')">8</button>
+                <button class="num" onclick="np('9')">9</button>
+                <button class="num" onclick="np('4')">4</button>
+                <button class="num" onclick="np('5')">5</button>
+                <button class="num" onclick="np('6')">6</button>
+                <button class="num" onclick="np('1')">1</button>
+                <button class="num" onclick="np('2')">2</button>
+                <button class="num" onclick="np('3')">3</button>
+                <button class="num red" onclick="npClear()">C</button>
+                <button class="num" onclick="np('0')">0</button>
+                <button class="num green" onclick="confirmQty()">OK</button>
             </div>
         </div>
     </div>
     
     <script>
+        // Menu structure
+        const MENU = {{
+            main: [
+                {{ id: 'drinks', label: 'DRINKS', type: 'category', class: 'drinks' }},
+                {{ id: 'food', label: 'FOOD', type: 'category', class: 'food' }},
+                {{ id: 'specials', label: 'SPECIALS', type: 'category', class: 'specials' }},
+                {{ id: 'tables', label: 'TABLES', type: 'action', class: 'tables', action: 'showTables' }},
+                {{ id: 'cash', label: 'CASH SALE', type: 'action', class: 'action', action: 'cashSale' }},
+                {{ id: 'logout', label: 'LOG OUT', type: 'action', class: 'danger', action: 'logout' }},
+            ],
+            drinks: [
+                {{ id: 'beer', label: 'BEER', type: 'items' }},
+                {{ id: 'ciders', label: 'CIDERS', type: 'items' }},
+                {{ id: 'spirits', label: 'SPIRITS', type: 'items' }},
+                {{ id: 'wine', label: 'WINE', type: 'items' }},
+                {{ id: 'shooters', label: 'SHOOTERS', type: 'items' }},
+                {{ id: 'cold_drinks', label: 'COLD DRINKS', type: 'items' }},
+            ],
+            food: [
+                {{ id: 'burgers', label: 'BURGERS', type: 'items' }},
+                {{ id: 'toasted', label: 'TOASTED', type: 'items' }},
+                {{ id: 'baskets', label: 'BASKETS', type: 'items' }},
+                {{ id: 'mains', label: 'MAINS', type: 'items' }},
+                {{ id: 'breakfast', label: 'BREAKFAST', type: 'items' }},
+                {{ id: 'starters', label: 'STARTERS', type: 'items' }},
+                {{ id: 'pizza', label: 'PIZZA', type: 'items' }},
+                {{ id: 'kiddies', label: 'KIDDIES', type: 'items' }},
+            ],
+            specials: [
+                {{ id: 'daily_special', label: 'DAILY SPECIAL', type: 'items' }},
+                {{ id: 'friday_specials', label: 'FRIDAY SPECIAL', type: 'items' }},
+                {{ id: 'drink_specials', label: 'DRINK SPECIALS', type: 'items' }},
+            ]
+        }};
+        
+        let items = {{}};  // Loaded from server
         let currentOrder = [];
-        let currentCategory = 'beer';
-        let items = {{}};
+        let navStack = ['main'];  // Navigation history
         let pendingItem = null;
-        let selectedOrderIndex = -1;
         
-        // Load on start
-        document.addEventListener('DOMContentLoaded', loadItems);
-        
-        async function loadItems() {{
+        // Load items from server
+        document.addEventListener('DOMContentLoaded', async () => {{
             try {{
                 const res = await fetch('/bar/api/items');
                 items = await res.json();
-                showCategory('beer', document.querySelector('.cat-btn.active'));
             }} catch(e) {{
-                console.error('Failed to load items:', e);
-                document.getElementById('items').innerHTML = '<div style="color: var(--red); padding: 40px; text-align: center;">Failed to load items</div>';
+                console.error('Failed to load items');
             }}
-        }}
+            renderMenu();
+        }});
         
-        function showCategory(cat, btn) {{
-            currentCategory = cat;
+        function renderMenu() {{
+            const current = navStack[navStack.length - 1];
+            const grid = document.getElementById('menu-grid');
+            const backRow = document.getElementById('back-row');
             
-            // Update active button
-            document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
-            if (btn) btn.classList.add('active');
+            // Show/hide back buttons
+            backRow.style.display = navStack.length > 1 ? 'flex' : 'none';
             
-            // Show items
-            const container = document.getElementById('items');
-            const catItems = items[cat] || [];
+            // Update breadcrumb
+            updateBreadcrumb();
             
-            if (catItems.length === 0) {{
-                container.innerHTML = '<div style="grid-column: 1/-1; color: var(--text-muted); padding: 40px; text-align: center;">No items in this category</div>';
+            // Check if we're showing items (products)
+            if (items[current] && items[current].length > 0) {{
+                // Show actual products
+                grid.innerHTML = items[current].map(item => `
+                    <button class="menu-btn item" onclick="addItem('${{item.id}}', '${{item.name.replace(/'/g, "\\\\'")}}', ${{item.price}})">
+                        <span>${{item.name}}</span>
+                        <span class="price">R ${{item.price.toFixed(2)}}</span>
+                    </button>
+                `).join('');
                 return;
             }}
             
-            container.innerHTML = catItems.map(item => `
-                <button class="item-btn" onclick="addItem('${{item.id}}', '${{item.name.replace(/'/g, "\\\\\'")}}', ${{item.price}})">
-                    <span>${{item.name}}</span>
-                    <span class="price">R ${{item.price.toFixed(2)}}</span>
-                </button>
-            `).join('');
+            // Show menu categories
+            const menuItems = MENU[current] || [];
+            
+            if (menuItems.length === 0) {{
+                grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: #999;">No items in this category</div>';
+                return;
+            }}
+            
+            grid.innerHTML = menuItems.map(item => {{
+                if (item.type === 'category') {{
+                    return `<button class="menu-btn ${{item.class}}" onclick="navigate('${{item.id}}')">${{item.label}}</button>`;
+                }} else if (item.type === 'items') {{
+                    return `<button class="menu-btn sub" onclick="navigate('${{item.id}}')">${{item.label}}</button>`;
+                }} else if (item.type === 'action') {{
+                    return `<button class="menu-btn ${{item.class}}" onclick="${{item.action}}()">${{item.label}}</button>`;
+                }}
+            }}).join('');
         }}
         
+        function updateBreadcrumb() {{
+            const bc = document.getElementById('breadcrumb');
+            const labels = {{
+                'main': 'Main Menu',
+                'drinks': 'Drinks',
+                'food': 'Food',
+                'specials': 'Specials',
+                'beer': 'Beer',
+                'ciders': 'Ciders',
+                'spirits': 'Spirits',
+                'wine': 'Wine',
+                'shooters': 'Shooters',
+                'cold_drinks': 'Cold Drinks',
+                'burgers': 'Burgers',
+                'toasted': 'Toasted',
+                'baskets': 'Baskets',
+                'mains': 'Mains',
+                'breakfast': 'Breakfast',
+                'starters': 'Starters',
+                'pizza': 'Pizza',
+                'kiddies': 'Kiddies',
+                'daily_special': 'Daily Special',
+                'friday_specials': 'Friday Special',
+                'drink_specials': 'Drink Specials',
+            }};
+            
+            bc.innerHTML = navStack.map((item, i) => {{
+                const label = labels[item] || item;
+                if (i === navStack.length - 1) {{
+                    return `<span class="current">${{label}}</span>`;
+                }}
+                return `<span onclick="goToLevel(${{i}})">${{label}}</span> ›`;
+            }}).join(' ');
+        }}
+        
+        function navigate(id) {{
+            navStack.push(id);
+            renderMenu();
+        }}
+        
+        function goBack() {{
+            if (navStack.length > 1) {{
+                navStack.pop();
+                renderMenu();
+            }}
+        }}
+        
+        function goHome() {{
+            navStack = ['main'];
+            renderMenu();
+        }}
+        
+        function goToLevel(level) {{
+            navStack = navStack.slice(0, level + 1);
+            renderMenu();
+        }}
+        
+        // Add item to order
         function addItem(id, name, price) {{
             pendingItem = {{ id, name, price }};
             document.getElementById('qty-title').textContent = name;
             document.getElementById('qty-input').value = '1';
             document.getElementById('qty-modal').classList.add('show');
-        }}
-        
-        // Numpad functions
-        function numPress(n) {{
-            const input = document.getElementById('qty-input');
-            if (input.value === '0' || input.value === '1') {{
-                input.value = n;
-            }} else {{
-                input.value += n;
-            }}
-        }}
-        
-        function numClear() {{
-            document.getElementById('qty-input').value = '0';
         }}
         
         function confirmQty() {{
@@ -10932,32 +10980,30 @@ def bar_pos():
                     currentOrder.push({{ ...pendingItem, qty }});
                 }}
                 renderOrder();
-                saveOrderToServer();
+                saveOrder();
             }}
-            document.getElementById('qty-modal').classList.remove('show');
+            closeModal('qty-modal');
             pendingItem = null;
         }}
         
         function renderOrder() {{
-            const container = document.getElementById('order-list');
+            const list = document.getElementById('order-list');
             let total = 0;
             
             if (currentOrder.length === 0) {{
-                container.innerHTML = '<div style="color: #999; padding: 40px; text-align: center;">No items yet</div>';
+                list.innerHTML = '<div class="order-empty">No items yet</div>';
                 document.getElementById('total-amount').textContent = 'R 0.00';
                 return;
             }}
             
-            container.innerHTML = currentOrder.map((item, i) => {{
-                const amount = item.price * item.qty;
-                total += amount;
+            list.innerHTML = currentOrder.map((item, i) => {{
+                const amt = item.price * item.qty;
+                total += amt;
                 return `
                     <div class="order-item" onclick="selectItem(${{i}})">
-                        <span>${{i + 1}}</span>
-                        <span>${{item.name}}</span>
-                        <span>R ${{item.price.toFixed(2)}}</span>
-                        <span class="qty">${{item.qty}}</span>
-                        <span class="amount">R ${{amount.toFixed(2)}}</span>
+                        <span class="qty">${{item.qty}}x</span>
+                        <span class="name">${{item.name}}</span>
+                        <span class="amount">R ${{amt.toFixed(2)}}</span>
                     </div>
                 `;
             }}).join('');
@@ -10965,51 +11011,31 @@ def bar_pos():
             document.getElementById('total-amount').textContent = 'R ' + total.toFixed(2);
         }}
         
-        function selectItem(index) {{
-            selectedOrderIndex = index;
-            // Visual feedback could be added here
-        }}
-        
-        function revokeItem() {{
-            if (selectedOrderIndex >= 0 && selectedOrderIndex < currentOrder.length) {{
-                currentOrder.splice(selectedOrderIndex, 1);
-                selectedOrderIndex = -1;
-            }} else if (currentOrder.length > 0) {{
+        function removeLastItem() {{
+            if (currentOrder.length > 0) {{
                 currentOrder.pop();
+                renderOrder();
+                saveOrder();
             }}
-            renderOrder();
-            saveOrderToServer();
         }}
         
         function clearOrder() {{
-            if (currentOrder.length > 0) {{
-                currentOrder = [];
-                renderOrder();
-                saveOrderToServer();
-            }}
+            currentOrder = [];
+            renderOrder();
+            saveOrder();
         }}
         
-        async function saveOrderToServer() {{
+        async function saveOrder() {{
             try {{
                 await fetch('/bar/api/order', {{
                     method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
+                    headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{ items: currentOrder }})
                 }});
-            }} catch(e) {{
-                console.error('Save failed:', e);
-            }}
+            }} catch(e) {{}}
         }}
         
-        function saveOrder() {{
-            saveOrderToServer();
-            // Quick visual feedback
-            const btn = event.target;
-            btn.textContent = 'Saved!';
-            setTimeout(() => btn.textContent = 'Save', 1000);
-        }}
-        
-        function cashoutTable() {{
+        function cashout() {{
             if (currentOrder.length === 0) {{
                 alert('No items in order');
                 return;
@@ -11017,60 +11043,69 @@ def bar_pos():
             window.location.href = '/bar/payment';
         }}
         
-        // Table Modal
+        // Actions
+        function showTables() {{
+            showTableModal();
+        }}
+        
+        function cashSale() {{
+            setTable('Cash Sale');
+            currentOrder = [];
+            renderOrder();
+        }}
+        
+        function logout() {{
+            window.location.href = '/bar/logout';
+        }}
+        
+        // Table modal
         function showTableModal() {{
             document.getElementById('table-input').value = '';
             document.getElementById('table-modal').classList.add('show');
         }}
         
-        function closeTableModal() {{
-            document.getElementById('table-modal').classList.remove('show');
+        function closeModal(id) {{
+            document.getElementById(id).classList.remove('show');
         }}
         
-        function keyPress(key) {{
-            document.getElementById('table-input').value += key;
+        function kp(c) {{
+            document.getElementById('table-input').value += c;
         }}
         
-        function keyDelete() {{
-            const input = document.getElementById('table-input');
-            input.value = input.value.slice(0, -1);
+        function kpDel() {{
+            const inp = document.getElementById('table-input');
+            inp.value = inp.value.slice(0, -1);
         }}
         
         function confirmTable() {{
-            const tableName = document.getElementById('table-input').value.trim();
-            if (tableName) {{
-                document.getElementById('table-display').textContent = tableName;
-                fetch('/bar/api/table', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{ table: tableName }})
-                }});
-            }}
-            closeTableModal();
+            const name = document.getElementById('table-input').value.trim();
+            if (name) setTable(name);
+            closeModal('table-modal');
         }}
         
-        function cashSale() {{
-            document.getElementById('table-display').textContent = 'Cash Sale';
+        function setTable(name) {{
+            document.getElementById('table-display').textContent = name;
+            document.getElementById('order-table').textContent = name;
             fetch('/bar/api/table', {{
                 method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{ table: 'Cash Sale' }})
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ table: name }})
             }});
-            currentOrder = [];
-            renderOrder();
         }}
         
-        function showOptions() {{
-            window.location.href = '/bar/options';
+        // Numpad
+        function np(n) {{
+            const inp = document.getElementById('qty-input');
+            if (inp.value === '1' || inp.value === '0') inp.value = n;
+            else inp.value += n;
         }}
         
-        function showQtyModal() {{
-            if (selectedOrderIndex >= 0 && selectedOrderIndex < currentOrder.length) {{
-                pendingItem = {{ ...currentOrder[selectedOrderIndex], editIndex: selectedOrderIndex }};
-                document.getElementById('qty-title').textContent = 'Change Qty: ' + pendingItem.name;
-                document.getElementById('qty-input').value = String(pendingItem.qty);
-                document.getElementById('qty-modal').classList.add('show');
-            }}
+        function npClear() {{
+            document.getElementById('qty-input').value = '0';
+        }}
+        
+        function selectItem(i) {{
+            // Could open edit modal
         }}
     </script>
 </body>
@@ -11270,35 +11305,162 @@ def bar_api_items():
             "price": float(item.get("selling_price", 0))
         })
     
-    # Add some demo items if empty
+    # Add demo items if empty - FULL MENU for testing
     if not by_category:
         by_category = {
+            # === DRINKS ===
             "beer": [
-                {"id": "demo1", "name": "Castle Lager", "price": 28.00},
-                {"id": "demo2", "name": "Castle Lite", "price": 30.00},
-                {"id": "demo3", "name": "Windhoek", "price": 32.00},
-                {"id": "demo4", "name": "Heineken", "price": 38.00},
+                {"id": "b1", "name": "Castle Lager", "price": 28.00},
+                {"id": "b2", "name": "Castle Lite", "price": 30.00},
+                {"id": "b3", "name": "Windhoek Lager", "price": 32.00},
+                {"id": "b4", "name": "Windhoek Lite", "price": 32.00},
+                {"id": "b5", "name": "Heineken", "price": 38.00},
+                {"id": "b6", "name": "Black Label", "price": 28.00},
+                {"id": "b7", "name": "Hansa", "price": 26.00},
+                {"id": "b8", "name": "Corona", "price": 45.00},
             ],
             "ciders": [
-                {"id": "demo5", "name": "Savanna Dry", "price": 32.00},
-                {"id": "demo6", "name": "Hunters Dry", "price": 30.00},
-                {"id": "demo7", "name": "Brutal Fruit", "price": 35.00},
+                {"id": "c1", "name": "Savanna Dry", "price": 32.00},
+                {"id": "c2", "name": "Savanna Light", "price": 32.00},
+                {"id": "c3", "name": "Hunters Dry", "price": 30.00},
+                {"id": "c4", "name": "Hunters Gold", "price": 30.00},
+                {"id": "c5", "name": "Brutal Fruit", "price": 35.00},
+                {"id": "c6", "name": "Smirnoff Spin", "price": 35.00},
+            ],
+            "spirits": [
+                {"id": "s1", "name": "Klipdrift", "price": 22.00},
+                {"id": "s2", "name": "Richelieu", "price": 22.00},
+                {"id": "s3", "name": "J&B", "price": 25.00},
+                {"id": "s4", "name": "Jameson", "price": 30.00},
+                {"id": "s5", "name": "Jack Daniels", "price": 35.00},
+                {"id": "s6", "name": "Bells", "price": 22.00},
+                {"id": "s7", "name": "Smirnoff Vodka", "price": 22.00},
+                {"id": "s8", "name": "Captain Morgan", "price": 25.00},
+                {"id": "s9", "name": "Bacardi", "price": 25.00},
+                {"id": "s10", "name": "Gordons Gin", "price": 22.00},
+            ],
+            "wine": [
+                {"id": "w1", "name": "House Red", "price": 35.00},
+                {"id": "w2", "name": "House White", "price": 35.00},
+                {"id": "w3", "name": "House Rose", "price": 35.00},
+                {"id": "w4", "name": "Cab Sauv Glass", "price": 45.00},
+                {"id": "w5", "name": "Sauvignon Blanc", "price": 45.00},
+                {"id": "w6", "name": "Bottle Red", "price": 150.00},
+                {"id": "w7", "name": "Bottle White", "price": 140.00},
+            ],
+            "shooters": [
+                {"id": "sh1", "name": "Jagermeister", "price": 25.00},
+                {"id": "sh2", "name": "Tequila", "price": 22.00},
+                {"id": "sh3", "name": "Springbokkie", "price": 20.00},
+                {"id": "sh4", "name": "Sambuca", "price": 25.00},
+                {"id": "sh5", "name": "Baby Guinness", "price": 25.00},
+                {"id": "sh6", "name": "Slippery Nipple", "price": 22.00},
             ],
             "cold_drinks": [
-                {"id": "demo8", "name": "Coke", "price": 18.00},
-                {"id": "demo9", "name": "Sprite", "price": 18.00},
-                {"id": "demo10", "name": "Water", "price": 15.00},
+                {"id": "cd1", "name": "Coke", "price": 18.00},
+                {"id": "cd2", "name": "Coke Zero", "price": 18.00},
+                {"id": "cd3", "name": "Sprite", "price": 18.00},
+                {"id": "cd4", "name": "Fanta Orange", "price": 18.00},
+                {"id": "cd5", "name": "Appletiser", "price": 28.00},
+                {"id": "cd6", "name": "Red Bull", "price": 35.00},
+                {"id": "cd7", "name": "Water Still", "price": 15.00},
+                {"id": "cd8", "name": "Water Sparkling", "price": 18.00},
+                {"id": "cd9", "name": "Juice", "price": 22.00},
+                {"id": "cd10", "name": "Ginger Ale", "price": 18.00},
+            ],
+            # === FOOD ===
+            "burgers": [
+                {"id": "bg1", "name": "Beef Burger", "price": 85.00},
+                {"id": "bg2", "name": "Cheese Burger", "price": 95.00},
+                {"id": "bg3", "name": "Bacon Burger", "price": 99.00},
+                {"id": "bg4", "name": "Chicken Burger", "price": 79.00},
+                {"id": "bg5", "name": "Double Burger", "price": 120.00},
+                {"id": "bg6", "name": "Veggie Burger", "price": 75.00},
+                {"id": "bg7", "name": "BBQ Burger", "price": 105.00},
+                {"id": "bg8", "name": "Mushroom Burger", "price": 99.00},
             ],
             "toasted": [
-                {"id": "demo11", "name": "Cheese", "price": 45.00},
-                {"id": "demo12", "name": "Cheese & Tom", "price": 55.00},
-                {"id": "demo13", "name": "Bacon & Cheese", "price": 70.00},
-                {"id": "demo14", "name": "Chicken Mayo", "price": 65.00},
+                {"id": "t1", "name": "Cheese", "price": 45.00},
+                {"id": "t2", "name": "Cheese & Tomato", "price": 50.00},
+                {"id": "t3", "name": "Cheese & Ham", "price": 55.00},
+                {"id": "t4", "name": "Bacon & Cheese", "price": 65.00},
+                {"id": "t5", "name": "Chicken Mayo", "price": 60.00},
+                {"id": "t6", "name": "Cheese Bacon Egg", "price": 70.00},
+                {"id": "t7", "name": "Club Sandwich", "price": 85.00},
+                {"id": "t8", "name": "BLT", "price": 75.00},
             ],
-            "burgers": [
-                {"id": "demo15", "name": "Beef Burger", "price": 85.00},
-                {"id": "demo16", "name": "Chicken Burger", "price": 75.00},
-                {"id": "demo17", "name": "Cheese Burger", "price": 95.00},
+            "baskets": [
+                {"id": "bk1", "name": "Chips Basket", "price": 45.00},
+                {"id": "bk2", "name": "Onion Rings", "price": 55.00},
+                {"id": "bk3", "name": "Chicken Strips", "price": 75.00},
+                {"id": "bk4", "name": "Chicken Wings", "price": 85.00},
+                {"id": "bk5", "name": "Calamari", "price": 95.00},
+                {"id": "bk6", "name": "Fish Basket", "price": 89.00},
+                {"id": "bk7", "name": "Mixed Basket", "price": 110.00},
+                {"id": "bk8", "name": "Loaded Chips", "price": 75.00},
+            ],
+            "mains": [
+                {"id": "m1", "name": "Rump 300g", "price": 165.00},
+                {"id": "m2", "name": "Sirloin 300g", "price": 175.00},
+                {"id": "m3", "name": "T-Bone 500g", "price": 195.00},
+                {"id": "m4", "name": "Ribs Full", "price": 185.00},
+                {"id": "m5", "name": "Ribs Half", "price": 125.00},
+                {"id": "m6", "name": "Chicken Schnitzel", "price": 115.00},
+                {"id": "m7", "name": "Fish & Chips", "price": 105.00},
+                {"id": "m8", "name": "Lamb Chops", "price": 175.00},
+                {"id": "m9", "name": "Pork Chops", "price": 135.00},
+                {"id": "m10", "name": "Mixed Grill", "price": 210.00},
+            ],
+            "breakfast": [
+                {"id": "br1", "name": "Full Breakfast", "price": 95.00},
+                {"id": "br2", "name": "Bacon & Eggs", "price": 65.00},
+                {"id": "br3", "name": "Omelette", "price": 70.00},
+                {"id": "br4", "name": "Eggs Benny", "price": 85.00},
+                {"id": "br5", "name": "French Toast", "price": 55.00},
+                {"id": "br6", "name": "Pancakes", "price": 50.00},
+                {"id": "br7", "name": "Muesli & Yogurt", "price": 55.00},
+            ],
+            "starters": [
+                {"id": "st1", "name": "Soup of Day", "price": 55.00},
+                {"id": "st2", "name": "Garlic Bread", "price": 45.00},
+                {"id": "st3", "name": "Nachos", "price": 85.00},
+                {"id": "st4", "name": "Chicken Livers", "price": 75.00},
+                {"id": "st5", "name": "Prawn Cocktail", "price": 95.00},
+                {"id": "st6", "name": "Halloumi Salad", "price": 85.00},
+            ],
+            "pizza": [
+                {"id": "p1", "name": "Margherita", "price": 75.00},
+                {"id": "p2", "name": "Hawaiian", "price": 85.00},
+                {"id": "p3", "name": "Pepperoni", "price": 95.00},
+                {"id": "p4", "name": "BBQ Chicken", "price": 99.00},
+                {"id": "p5", "name": "Meat Feast", "price": 110.00},
+                {"id": "p6", "name": "Veggie Supreme", "price": 85.00},
+                {"id": "p7", "name": "Four Seasons", "price": 99.00},
+            ],
+            "kiddies": [
+                {"id": "k1", "name": "Kids Burger", "price": 55.00},
+                {"id": "k2", "name": "Kids Nuggets", "price": 50.00},
+                {"id": "k3", "name": "Kids Fish", "price": 55.00},
+                {"id": "k4", "name": "Kids Pasta", "price": 50.00},
+                {"id": "k5", "name": "Kids Pizza", "price": 55.00},
+                {"id": "k6", "name": "Kids Toastie", "price": 40.00},
+            ],
+            # === SPECIALS ===
+            "daily_special": [
+                {"id": "ds1", "name": "Monday Ribs", "price": 99.00},
+                {"id": "ds2", "name": "Tuesday Burger", "price": 69.00},
+                {"id": "ds3", "name": "Wednesday Wings", "price": 59.00},
+                {"id": "ds4", "name": "Thursday Steak", "price": 129.00},
+            ],
+            "friday_specials": [
+                {"id": "fs1", "name": "Friday Jager Bomb", "price": 35.00},
+                {"id": "fs2", "name": "Friday Bucket 6", "price": 140.00},
+                {"id": "fs3", "name": "Friday Platter", "price": 250.00},
+            ],
+            "drink_specials": [
+                {"id": "dsp1", "name": "2 for 1 Savanna", "price": 32.00},
+                {"id": "dsp2", "name": "Beer Tower", "price": 180.00},
+                {"id": "dsp3", "name": "Cocktail Special", "price": 45.00},
             ],
         }
     
