@@ -15896,6 +15896,7 @@ def universal_analyzer():
             filename = file.filename.lower()
             try:
                 # Read file content
+                content = None
                 if filename.endswith('.csv'):
                     content = file.read().decode('utf-8', errors='ignore')
                 elif filename.endswith('.xlsx') or filename.endswith('.xls'):
@@ -15910,25 +15911,49 @@ def universal_analyzer():
                             rows.append([str(c) if c is not None else "" for c in row])
                         content = "\n".join([",".join(row) for row in rows])
                     except ImportError:
-                        # Fallback - tell user to use CSV
                         if lang == "af":
                             message = '<div class="alert alert-error">Excel nie ondersteun nie. Stoor asseblief as CSV.</div>'
                         else:
                             message = '<div class="alert alert-error">Excel not supported. Please save as CSV.</div>'
-                        content = None
                 else:
                     if lang == "af":
                         message = '<div class="alert alert-error">Gebruik asseblief \'n CSV lêer</div>'
                     else:
                         message = '<div class="alert alert-error">Please use a CSV file</div>'
-                    content = None
                 
                 if content:
-                    # Store for background processing
-                    session['analyze_content'] = content
-                    session['analyze_context'] = context
-                    session['analyze_lang'] = lang
-                    return redirect("/analyze/processing")
+                    # Process IMMEDIATELY - don't store in session (too big for cookie)
+                    try:
+                        # Run Flask analysis
+                        analysis = FinancialAnalyzer.analyze(content)
+                        
+                        if analysis.get("error"):
+                            message = f'<div class="alert alert-error">Error: {analysis.get("error")}</div>'
+                        else:
+                            # Get Claude interpretation
+                            interpretation = FinancialAnalyzer.interpret_with_claude(analysis, lang, context)
+                            
+                            # Store SLIM results only (fits in session)
+                            slim_analysis = {
+                                "doc_type": analysis.get("doc_type"),
+                                "summary": analysis.get("summary", {}),
+                                "row_count": analysis.get("row_count", 0),
+                                "warnings": analysis.get("warnings", [])[:5],
+                                "potential_duplicates": analysis.get("potential_duplicates", [])[:10],
+                                "anomalies": analysis.get("anomalies", [])[:10],
+                                "high_risk": analysis.get("high_risk", [])[:15],
+                                "accounts": analysis.get("accounts", [])[:20],
+                                "monthly_trend": analysis.get("monthly_trend", [])[-12:],
+                                "entities": analysis.get("entities", [])[:20],
+                            }
+                            
+                            session['analyze_results'] = slim_analysis
+                            session['analyze_interpretation'] = interpretation
+                            session['analyze_lang'] = lang
+                            
+                            return redirect("/analyze/results")
+                    except Exception as e:
+                        message = f'<div class="alert alert-error">Analysis error: {str(e)}</div>'
                     
             except Exception as e:
                 message = f'<div class="alert alert-error">Error: {str(e)}</div>'
