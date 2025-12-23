@@ -4996,6 +4996,26 @@ a:hover {
         overflow-x: hidden;
     }
     
+    /* Prevent ANY horizontal overflow on mobile */
+    * {
+        max-width: 100%;
+    }
+    
+    /* Amount/money values - prevent overflow */
+    .metric-value, .amount, .total, .price, 
+    [class*="amount"], [class*="total"], [class*="balance"] {
+        font-size: 14px !important;
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+    
+    /* Tables scroll horizontally if needed */
+    table {
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
     .header {
         flex-wrap: nowrap;
         padding: 0 12px;
@@ -8664,34 +8684,34 @@ def dashboard():
             alert_text = "All clear! Nothing needs attention right now."
         alerts_html = f'<div class="alert-item alert-green"><span class="alert-icon">✓</span><span class="alert-text">{alert_text}</span></div>'
     
-    # Labels - bilingual
+    # Labels - English only (Afrikaans removed from UI, kept for reports)
     lbl = {
-        "your_money": "💰 Jou Geld" if lang == "af" else "💰 Your Money",
-        "todays_sales": "Vandag se Verkope" if lang == "af" else "Today's Sales",
-        "this_week": "Hierdie Week" if lang == "af" else "This Week",
-        "last_7": "Laaste 7 dae" if lang == "af" else "Last 7 days",
-        "this_month": "Hierdie Maand" if lang == "af" else "This Month",
-        "last_30": "Laaste 30 dae" if lang == "af" else "Last 30 days",
-        "owed_to_you": "Skuld Aan Jou" if lang == "af" else "Owed to You",
-        "you_owe": "Jy Skuld" if lang == "af" else "You Owe",
-        "view_aging": "Bekyk ouderdom →" if lang == "af" else "View aging →",
-        "needs_attention": "⚡ Benodig Aandag" if lang == "af" else "⚡ Needs Attention",
-        "quick_actions": "🚀 Vinnige Aksies" if lang == "af" else "🚀 Quick Actions",
-        "new_sale": "Nuwe Verkoop" if lang == "af" else "New Sale",
-        "scan_invoice": "Skandeer Faktuur" if lang == "af" else "Scan Invoice",
-        "new_invoice": "Nuwe Faktuur" if lang == "af" else "New Invoice",
-        "new_quote": "Nuwe Kwotasie" if lang == "af" else "New Quote",
-        "new_order": "Nuwe Bestelling" if lang == "af" else "New Order",
-        "add_expense": "Voeg Uitgawe By" if lang == "af" else "Add Expense",
-        "new_customer": "Nuwe Kliënt" if lang == "af" else "New Customer",
-        "new_product": "Nuwe Produk" if lang == "af" else "New Product",
-        "reports": "📊 Verslae" if lang == "af" else "📊 Reports",
-        "ai_health": "KI Gesondheid" if lang == "af" else "AI Health Check",
-        "trial_balance": "Proefbalans" if lang == "af" else "Trial Balance",
-        "profit_loss": "Wins & Verlies" if lang == "af" else "Profit & Loss",
-        "vat_report": "BTW Verslag" if lang == "af" else "VAT Report",
-        "invoices": "fakture" if lang == "af" else "invoices",
-        "invoice": "faktuur" if lang == "af" else "invoice",
+        "your_money": "Your Money",
+        "todays_sales": "Today's Sales",
+        "this_week": "This Week",
+        "last_7": "Last 7 days",
+        "this_month": "This Month",
+        "last_30": "Last 30 days",
+        "owed_to_you": "Owed to You",
+        "you_owe": "You Owe",
+        "view_aging": "View aging",
+        "needs_attention": "Needs Attention",
+        "quick_actions": "Quick Actions",
+        "new_sale": "New Sale",
+        "scan_invoice": "Scan Invoice",
+        "new_invoice": "New Invoice",
+        "new_quote": "New Quote",
+        "new_order": "New Order",
+        "add_expense": "Add Expense",
+        "new_customer": "New Customer",
+        "new_product": "New Product",
+        "reports": "Reports",
+        "ai_health": "AI Health Check",
+        "trial_balance": "Trial Balance",
+        "profit_loss": "Profit & Loss",
+        "vat_report": "VAT Report",
+        "invoices": "invoices",
+        "invoice": "invoice",
     }
     
     inv_count = len(today_invoices)
@@ -14077,7 +14097,7 @@ def reports_menu():
     <div class="report-grid" style="margin-bottom: 32px;">
         <a href="/analyze" class="report-card" style="border-color: var(--green); background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(139,92,246,0.15));">
             <div class="report-card-icon">📊</div>
-            <h3 class="report-card-title">Jou Syfer Ou</h3>
+            <h3 class="report-card-title">The Money Guy</h3>
             <p class="report-card-desc">Upload ANY CSV - GL, TB, Bank Statement, Aged Reports. Full analysis in seconds!</p>
         </a>
         <a href="/ai-advisor" class="report-card" style="border-color: var(--purple); background: rgba(139,92,246,0.05);">
@@ -15292,7 +15312,7 @@ Be specific with Rand amounts. Tell the story behind the numbers."""
         # Footer
         html += f"""
     <div class="footer">
-        <p>{"Verslag gegenereer deur Click AI - Jou Syfer Ou" if lang == "af" else "Report generated by Click AI - Your Numbers Guy"}</p>
+        <p>{"Verslag gegenereer deur Click AI - The Money Guy" if lang == "af" else "Report generated by Click AI - The Money Guy"}</p>
     </div>
 </body>
 </html>"""
@@ -16191,7 +16211,7 @@ def universal_analyzer():
     
     # Labels - no emojis
     lbl = {
-        "title": "Jou Syfer Ou" if lang == "af" else "Your Numbers Guy",
+        "title": "The Money Guy" if lang == "af" else "The Money Guy",
         "subtitle": "Throw any CSV at me - I'll make sense of it",
         "supported": "Supported documents:",
         "upload_label": "Choose file or drag here",
@@ -16361,7 +16381,7 @@ def universal_analyzer():
     </script>
     '''
     
-    title = "Jou Syfer Ou" if lang == "af" else "Your Numbers Guy"
+    title = "The Money Guy" if lang == "af" else "The Money Guy"
     return page_wrapper(title, content, user=user)
 
 
@@ -16379,7 +16399,7 @@ def analyze_processing():
     
     lbl = {
         "title": "Besig om te analiseer..." if lang == "af" else "Analyzing...",
-        "message": "Flask bereken, dan verduidelik Jou Syfer Ou die resultate." if lang == "af" else "Flask calculates, then Your Numbers Guy explains the results.",
+        "message": "Flask bereken, dan verduidelik The Money Guy die resultate." if lang == "af" else "Flask calculates, then The Money Guy explains the results.",
         "wait": "Dit neem gewoonlik 10-20 sekondes." if lang == "af" else "This usually takes 10-20 seconds."
     }
     
@@ -16504,25 +16524,25 @@ def analyze_results():
     doc_name = FinancialAnalyzer.DOCUMENT_TYPES.get(doc_type, "Financial Data")
     summary = analysis.get("summary", {})
     
-    # Build summary cards
+    # Build summary cards - English only
     summary_html = '<div class="metric-grid">'
     
     if doc_type == "gl":
         summary_html += f'''
             <div class="metric-card">
-                <div class="metric-label">{"Transaksies" if lang == "af" else "Transactions"}</div>
+                <div class="metric-label">Transactions</div>
                 <div class="metric-value">{summary.get("total_transactions", 0):,}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">{"Rekeninge" if lang == "af" else "Accounts"}</div>
+                <div class="metric-label">Accounts</div>
                 <div class="metric-value">{summary.get("total_accounts", 0)}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">{"Totaal Debiet" if lang == "af" else "Total Debit"}</div>
+                <div class="metric-label">Total Debit</div>
                 <div class="metric-value">R {summary.get("total_debit", 0):,.2f}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">{"Totaal Krediet" if lang == "af" else "Total Credit"}</div>
+                <div class="metric-label">Total Credit</div>
                 <div class="metric-value">R {summary.get("total_credit", 0):,.2f}</div>
             </div>
         '''
@@ -16530,19 +16550,19 @@ def analyze_results():
         overdue_color = "red" if summary.get("overdue_pct", 0) > 30 else "orange"
         summary_html += f'''
             <div class="metric-card">
-                <div class="metric-label">{"Totaal" if lang == "af" else "Total"}</div>
+                <div class="metric-label">Total</div>
                 <div class="metric-value">R {summary.get("total_balance", 0):,.2f}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">{"Lopend" if lang == "af" else "Current"}</div>
+                <div class="metric-label">Current</div>
                 <div class="metric-value green">R {summary.get("current", 0):,.2f}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">{"Agterstallig" if lang == "af" else "Overdue"}</div>
+                <div class="metric-label">Overdue</div>
                 <div class="metric-value {overdue_color}">R {summary.get("total_overdue", 0):,.2f}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">{"Agterstallig %" if lang == "af" else "Overdue %"}</div>
+                <div class="metric-label">Overdue %</div>
                 <div class="metric-value">{summary.get("overdue_pct", 0):.1f}%</div>
             </div>
         '''
@@ -16550,19 +16570,19 @@ def analyze_results():
         low_bal_color = "red" if summary.get("lowest_balance", 0) < 0 else ""
         summary_html += f'''
             <div class="metric-card">
-                <div class="metric-label">{"Geld In" if lang == "af" else "Money In"}</div>
+                <div class="metric-label">Money In</div>
                 <div class="metric-value green">R {summary.get("total_money_in", 0):,.2f}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">{"Geld Uit" if lang == "af" else "Money Out"}</div>
+                <div class="metric-label">Money Out</div>
                 <div class="metric-value red">R {summary.get("total_money_out", 0):,.2f}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">{"Netto Vloei" if lang == "af" else "Net Flow"}</div>
+                <div class="metric-label">Net Flow</div>
                 <div class="metric-value">R {summary.get("net_flow", 0):,.2f}</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">{"Laagste Balans" if lang == "af" else "Lowest Balance"}</div>
+                <div class="metric-label">Lowest Balance</div>
                 <div class="metric-value {low_bal_color}">R {summary.get("lowest_balance", 0):,.2f}</div>
             </div>
         '''
@@ -16581,7 +16601,7 @@ def analyze_results():
     duplicates_html = ""
     if analysis.get("potential_duplicates"):
         dups = analysis["potential_duplicates"]
-        dup_title = f"⚠️ {'Moontlike Duplikate' if lang == 'af' else 'Potential Duplicates'} ({len(dups)})"
+        dup_title = f"Potential Duplicates ({len(dups)})"
         dup_items = ""
         for dup in dups[:10]:
             dup_items += f'<div class="dup-item">Ref: {dup["reference"]} - R {dup["amount"]:,.2f}</div>'
@@ -16596,10 +16616,10 @@ def analyze_results():
     anomalies_html = ""
     if analysis.get("anomalies"):
         anoms = analysis["anomalies"]
-        anom_title = f"⚠️ {'Ongewone Transaksies' if lang == 'af' else 'Unusual Transactions'} ({len(anoms)})"
+        anom_title = f"Unusual Transactions ({len(anoms)})"
         anom_items = ""
         for anom in anoms[:10]:
-            anom_items += f'<div class="anom-item">{anom["account"]}: R {anom["this_amount"]:,.2f} ({anom["multiple"]:.1f}x {"gemiddeld" if lang == "af" else "average"})</div>'
+            anom_items += f'<div class="anom-item">{anom["account"]}: R {anom["this_amount"]:,.2f} ({anom["multiple"]:.1f}x average)</div>'
         anomalies_html = f'''
         <div class="section-card warning">
             <h3>{anom_title}</h3>
@@ -16611,10 +16631,10 @@ def analyze_results():
     high_risk_html = ""
     if analysis.get("high_risk"):
         risks = analysis["high_risk"]
-        risk_title = f"🚨 {'Hoë Risiko' if lang == 'af' else 'High Risk'} ({len(risks)})"
+        risk_title = f"High Risk ({len(risks)})"
         risk_items = ""
         for r in risks[:10]:
-            risk_items += f'<div class="risk-item">{r["name"]}: R {r["total"]:,.2f} ({r["overdue_pct"]:.0f}% {"agterstallig" if lang == "af" else "overdue"})</div>'
+            risk_items += f'<div class="risk-item">{r["name"]}: R {r["total"]:,.2f} ({r["overdue_pct"]:.0f}% overdue)</div>'
         high_risk_html = f'''
         <div class="section-card danger">
             <h3>{risk_title}</h3>
@@ -16839,7 +16859,7 @@ def analyze_results():
     
     <!-- Follow-up Chat Section -->
     <div class="chat-section">
-        <div class="chat-title">Ask Your Numbers Guy</div>
+        <div class="chat-title">Ask The Money Guy</div>
         
         <div class="suggested-questions">
             <span class="suggested-q" onclick="askQuestion(this.innerText)">What should I focus on first?</span>
@@ -16944,7 +16964,7 @@ def analyze_download():
 
 @app.route("/analyze/chat", methods=["POST"])
 def analyze_chat():
-    """Follow-up chat with Your Numbers Guy"""
+    """Follow-up chat with The Money Guy"""
     from flask import jsonify
     
     user = UserSession.get_current_user()
