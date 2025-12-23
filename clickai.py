@@ -9,7 +9,9 @@ import json
 import os
 import re
 import uuid
+import csv
 import requests
+from io import StringIO
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
@@ -14071,14 +14073,19 @@ def reports_menu():
     content = '''
     <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">Reports</h1>
     
-    <h3 style="color: var(--purple); margin-bottom: 16px;">🤖 AI Business Advisor</h3>
+    <h3 style="color: var(--purple); margin-bottom: 16px;">🤖 AI-Powered Analysis</h3>
     <div class="report-grid" style="margin-bottom: 32px;">
-        <a href="/ai-advisor" class="report-card" style="border-color: var(--green); background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(139,92,246,0.15));">
+        <a href="/analyze" class="report-card" style="border-color: var(--green); background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(139,92,246,0.15));">
+            <div class="report-card-icon">📊</div>
+            <h3 class="report-card-title">Jou Syfer Ou</h3>
+            <p class="report-card-desc">Upload ANY CSV - GL, TB, Bank Statement, Aged Reports. Full analysis in seconds!</p>
+        </a>
+        <a href="/ai-advisor" class="report-card" style="border-color: var(--purple); background: rgba(139,92,246,0.05);">
             <div class="report-card-icon">🧠</div>
             <h3 class="report-card-title">AI Business Advisor</h3>
             <p class="report-card-desc">Chat with AI about YOUR business data - it knows your numbers!</p>
         </a>
-        <a href="/tb-analyzer" class="report-card" style="border-color: var(--purple); background: rgba(139,92,246,0.05);">
+        <a href="/tb-analyzer" class="report-card">
             <div class="report-card-icon">📤</div>
             <h3 class="report-card-title">External TB Analyzer</h3>
             <p class="report-card-desc">Upload a trial balance from another system</p>
@@ -14231,6 +14238,892 @@ def report_trial_balance_csv():
 # Chatty Bot (Haiku) for friendly interface + Opus for deep analysis
 # "Horses for courses" - each AI does what it's best at
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# =============================================================================
+# UNIVERSAL FINANCIAL ANALYZER - "JOU SYFER OU"
+# Handles ANY CSV: GL, TB, Bank Statement, Aged Debtors, etc.
+# Flask does the math, Claude explains the story
+# =============================================================================
+
+class FinancialAnalyzer:
+    """
+    Universal Financial Document Analyzer
+    
+    Handles:
+    - General Ledger (GL) - full transaction detail
+    - Trial Balance (TB) - account summaries
+    - Bank Statements - cash flow analysis
+    - Aged Debtors - who owes you
+    - Aged Creditors - who you owe
+    - Any CSV with financial data
+    
+    Architecture:
+    - Flask: ALL calculations (free, fast, accurate)
+    - Claude: Interpretation only (cheap, gets summary not raw data)
+    """
+    
+    DOCUMENT_TYPES = {
+        "gl": "General Ledger",
+        "tb": "Trial Balance", 
+        "bank": "Bank Statement",
+        "aged_debtors": "Aged Debtors",
+        "aged_creditors": "Aged Creditors",
+        "income_statement": "Income Statement",
+        "unknown": "Financial Data"
+    }
+    
+    @classmethod
+    def detect_document_type(cls, headers: list, sample_rows: list) -> str:
+        """Auto-detect what type of financial document this is"""
+        headers_lower = [h.lower().strip() for h in headers]
+        headers_text = " ".join(headers_lower)
+        
+        # Check for GL indicators (has date + account + transaction detail)
+        has_date = any(h in ['date', 'transaction date', 'trans date', 'datum'] for h in headers_lower)
+        has_reference = any(h in ['reference', 'ref', 'document', 'doc', 'verwysing'] for h in headers_lower)
+        has_description = any(h in ['description', 'narration', 'details', 'beskrywing', 'transaction'] for h in headers_lower)
+        
+        # GL typically has: Date, Account, Reference, Description, Debit, Credit
+        if has_date and has_reference and has_description:
+            return "gl"
+        
+        # Bank statement indicators
+        if any(h in ['balance', 'running balance', 'closing balance'] for h in headers_lower):
+            if has_date and any('bank' in h or 'statement' in h for h in headers_lower):
+                return "bank"
+        
+        # Aged analysis indicators
+        if any(h in ['current', '30 days', '60 days', '90 days', '30', '60', '90', '120'] for h in headers_lower):
+            if any(h in ['customer', 'debtor', 'client', 'klient'] for h in headers_lower):
+                return "aged_debtors"
+            if any(h in ['supplier', 'creditor', 'vendor', 'verskaffer'] for h in headers_lower):
+                return "aged_creditors"
+            return "aged_debtors"  # Default to debtors
+        
+        # TB indicators (account + debit + credit, no transaction dates)
+        has_debit = any('debit' in h for h in headers_lower)
+        has_credit = any('credit' in h for h in headers_lower)
+        has_account = any(h in ['account', 'name', 'rekening', 'naam'] for h in headers_lower)
+        
+        if has_debit and has_credit and has_account and not has_date:
+            return "tb"
+        
+        # Income statement
+        if any(h in ['income', 'revenue', 'expense', 'profit', 'loss', 'inkomste', 'uitgawe'] for h in headers_lower):
+            return "income_statement"
+        
+        return "unknown"
+    
+    @classmethod
+    def detect_columns(cls, headers: list, doc_type: str) -> dict:
+        """Detect which column is which based on headers"""
+        headers_lower = [h.lower().strip() for h in headers]
+        
+        columns = {
+            "date": None,
+            "account": None,
+            "account_code": None,
+            "description": None,
+            "reference": None,
+            "debit": None,
+            "credit": None,
+            "amount": None,
+            "balance": None,
+            "customer": None,
+            "supplier": None,
+            "current": None,
+            "days_30": None,
+            "days_60": None,
+            "days_90": None,
+            "days_120": None,
+        }
+        
+        for i, h in enumerate(headers_lower):
+            # Date columns
+            if h in ['date', 'transaction date', 'trans date', 'datum', 'posting date']:
+                columns["date"] = i
+            
+            # Account columns
+            elif h in ['account', 'account name', 'gl account', 'rekening', 'naam', 'name']:
+                columns["account"] = i
+            elif h in ['account code', 'acc code', 'code', 'kode', 'account number']:
+                columns["account_code"] = i
+            
+            # Description/narrative
+            elif h in ['description', 'narration', 'details', 'beskrywing', 'transaction', 'memo', 'particulars']:
+                columns["description"] = i
+            
+            # Reference
+            elif h in ['reference', 'ref', 'document', 'doc', 'verwysing', 'doc no', 'invoice']:
+                columns["reference"] = i
+            
+            # Amount columns
+            elif 'debit' in h:
+                columns["debit"] = i
+            elif 'credit' in h:
+                columns["credit"] = i
+            elif h in ['amount', 'bedrag', 'value']:
+                columns["amount"] = i
+            elif h in ['balance', 'balans', 'running balance', 'closing balance']:
+                columns["balance"] = i
+            
+            # Customer/Supplier for aged reports
+            elif h in ['customer', 'debtor', 'client', 'klient', 'customer name']:
+                columns["customer"] = i
+            elif h in ['supplier', 'creditor', 'vendor', 'verskaffer', 'supplier name']:
+                columns["supplier"] = i
+            
+            # Aged buckets
+            elif h in ['current', 'lopend', '0-30']:
+                columns["current"] = i
+            elif h in ['30 days', '30', '31-60', '30 dae']:
+                columns["days_30"] = i
+            elif h in ['60 days', '60', '61-90', '60 dae']:
+                columns["days_60"] = i
+            elif h in ['90 days', '90', '91-120', '90 dae']:
+                columns["days_90"] = i
+            elif h in ['120 days', '120', '120+', '90+', '90+ days', '120 dae']:
+                columns["days_120"] = i
+        
+        return columns
+    
+    @classmethod
+    def parse_csv(cls, csv_content: str) -> dict:
+        """Parse any CSV and return structured data with auto-detection"""
+        import csv
+        from io import StringIO
+        
+        lines = csv_content.strip().split('\n')
+        if not lines:
+            return {"error": "Empty file", "rows": [], "doc_type": "unknown"}
+        
+        # Parse CSV
+        reader = csv.reader(StringIO(csv_content))
+        rows = list(reader)
+        
+        if len(rows) < 2:
+            return {"error": "File too small", "rows": [], "doc_type": "unknown"}
+        
+        # Find header row (skip blank rows or title rows)
+        header_idx = 0
+        for i, row in enumerate(rows[:10]):
+            # A header row typically has multiple non-empty cells
+            non_empty = [c for c in row if c.strip()]
+            if len(non_empty) >= 3:
+                # Check if it looks like a header (has text, not just numbers)
+                has_text = any(not c.replace('.', '').replace(',', '').replace('-', '').isdigit() 
+                              for c in non_empty if c.strip())
+                if has_text:
+                    header_idx = i
+                    break
+        
+        headers = [h.strip() for h in rows[header_idx]]
+        data_rows = rows[header_idx + 1:]
+        
+        # Detect document type
+        doc_type = cls.detect_document_type(headers, data_rows[:10])
+        
+        # Detect columns
+        columns = cls.detect_columns(headers, doc_type)
+        
+        return {
+            "headers": headers,
+            "columns": columns,
+            "doc_type": doc_type,
+            "doc_type_name": cls.DOCUMENT_TYPES.get(doc_type, "Financial Data"),
+            "rows": data_rows,
+            "row_count": len(data_rows),
+            "error": None
+        }
+    
+    @classmethod
+    def _parse_amount(cls, val) -> Decimal:
+        """Parse amount string to Decimal - handles various formats"""
+        if val is None:
+            return Decimal("0")
+        val = str(val).strip()
+        if not val or val == '-':
+            return Decimal("0")
+        
+        # Remove currency symbols and spaces
+        val = val.replace("R", "").replace("$", "").replace("€", "").replace(" ", "")
+        
+        # Handle brackets as negative
+        if val.startswith("(") and val.endswith(")"):
+            val = "-" + val[1:-1]
+        
+        # Handle comma as thousands separator
+        if "," in val and "." in val:
+            val = val.replace(",", "")  # 1,234.56 -> 1234.56
+        elif "," in val:
+            # Could be 1,234 (thousands) or 1,23 (decimal)
+            parts = val.split(",")
+            if len(parts[-1]) == 2:
+                val = val.replace(",", ".")  # European format
+            else:
+                val = val.replace(",", "")  # Thousands separator
+        
+        try:
+            return Decimal(val).quantize(Decimal("0.01"))
+        except:
+            return Decimal("0")
+    
+    @classmethod
+    def analyze_gl(cls, parsed_data: dict) -> dict:
+        """
+        Analyze General Ledger - the BIG one
+        Flask does ALL the math here
+        """
+        rows = parsed_data.get("rows", [])
+        columns = parsed_data.get("columns", {})
+        
+        if not rows:
+            return {"error": "No data to analyze"}
+        
+        # Initialize accumulators
+        accounts = {}  # account_name -> {debit, credit, balance, transactions}
+        monthly = {}   # YYYY-MM -> {debit, credit}
+        duplicates = []  # potential duplicate transactions
+        anomalies = []   # unusual transactions
+        all_transactions = []
+        
+        seen_refs = {}  # reference -> [transactions] for duplicate detection
+        
+        date_col = columns.get("date")
+        account_col = columns.get("account") or columns.get("account_code")
+        desc_col = columns.get("description")
+        ref_col = columns.get("reference")
+        debit_col = columns.get("debit")
+        credit_col = columns.get("credit")
+        amount_col = columns.get("amount")
+        
+        for row_num, row in enumerate(rows):
+            try:
+                # Skip empty rows
+                if not any(c.strip() for c in row if c):
+                    continue
+                
+                # Parse date
+                trans_date = None
+                if date_col is not None and date_col < len(row):
+                    date_str = row[date_col].strip()
+                    # Try various date formats
+                    for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%d-%m-%Y"]:
+                        try:
+                            trans_date = datetime.strptime(date_str, fmt)
+                            break
+                        except:
+                            continue
+                
+                # Parse account
+                account_name = ""
+                if account_col is not None and account_col < len(row):
+                    account_name = row[account_col].strip()
+                
+                # Skip if no account name
+                if not account_name or account_name.lower() in ['total', 'totals', '', 'grand total']:
+                    continue
+                
+                # Parse description
+                description = ""
+                if desc_col is not None and desc_col < len(row):
+                    description = row[desc_col].strip()
+                
+                # Parse reference
+                reference = ""
+                if ref_col is not None and ref_col < len(row):
+                    reference = row[ref_col].strip()
+                
+                # Parse amounts
+                debit = Decimal("0")
+                credit = Decimal("0")
+                
+                if debit_col is not None and debit_col < len(row):
+                    debit = cls._parse_amount(row[debit_col])
+                if credit_col is not None and credit_col < len(row):
+                    credit = cls._parse_amount(row[credit_col])
+                
+                # If only amount column (no separate debit/credit)
+                if amount_col is not None and debit_col is None and credit_col is None:
+                    amount = cls._parse_amount(row[amount_col])
+                    if amount >= 0:
+                        debit = amount
+                    else:
+                        credit = abs(amount)
+                
+                # Skip zero transactions
+                if debit == 0 and credit == 0:
+                    continue
+                
+                amount = debit - credit
+                
+                # Build transaction record
+                trans = {
+                    "row": row_num + 1,
+                    "date": trans_date.strftime("%Y-%m-%d") if trans_date else None,
+                    "account": account_name,
+                    "description": description,
+                    "reference": reference,
+                    "debit": float(debit),
+                    "credit": float(credit),
+                    "amount": float(amount)
+                }
+                all_transactions.append(trans)
+                
+                # Accumulate by account
+                if account_name not in accounts:
+                    accounts[account_name] = {
+                        "debit": Decimal("0"),
+                        "credit": Decimal("0"),
+                        "count": 0,
+                        "transactions": []
+                    }
+                accounts[account_name]["debit"] += debit
+                accounts[account_name]["credit"] += credit
+                accounts[account_name]["count"] += 1
+                
+                # Keep last 5 transactions per account for context
+                if len(accounts[account_name]["transactions"]) < 5:
+                    accounts[account_name]["transactions"].append(trans)
+                
+                # Accumulate by month
+                if trans_date:
+                    month_key = trans_date.strftime("%Y-%m")
+                    if month_key not in monthly:
+                        monthly[month_key] = {"debit": Decimal("0"), "credit": Decimal("0"), "count": 0}
+                    monthly[month_key]["debit"] += debit
+                    monthly[month_key]["credit"] += credit
+                    monthly[month_key]["count"] += 1
+                
+                # Duplicate detection (same reference, similar amount)
+                if reference:
+                    ref_key = f"{reference}_{float(debit + credit):.0f}"
+                    if ref_key in seen_refs:
+                        duplicates.append({
+                            "reference": reference,
+                            "amount": float(debit + credit),
+                            "transactions": [seen_refs[ref_key], trans]
+                        })
+                    else:
+                        seen_refs[ref_key] = trans
+                
+            except Exception as e:
+                continue  # Skip problem rows
+        
+        # Calculate account summaries
+        account_summaries = []
+        total_debit = Decimal("0")
+        total_credit = Decimal("0")
+        
+        for name, data in accounts.items():
+            balance = data["debit"] - data["credit"]
+            total_debit += data["debit"]
+            total_credit += data["credit"]
+            
+            account_summaries.append({
+                "name": name,
+                "debit": float(data["debit"]),
+                "credit": float(data["credit"]),
+                "balance": float(balance),
+                "transaction_count": data["count"],
+                "sample_transactions": data["transactions"][:3]
+            })
+        
+        # Sort by absolute balance (biggest accounts first)
+        account_summaries.sort(key=lambda x: abs(x["balance"]), reverse=True)
+        
+        # Monthly trends
+        monthly_trend = []
+        for month in sorted(monthly.keys()):
+            data = monthly[month]
+            monthly_trend.append({
+                "month": month,
+                "debit": float(data["debit"]),
+                "credit": float(data["credit"]),
+                "net": float(data["debit"] - data["credit"]),
+                "transactions": data["count"]
+            })
+        
+        # Detect anomalies (transactions > 2x average for that account)
+        for name, data in accounts.items():
+            if data["count"] < 3:
+                continue
+            avg = (data["debit"] + data["credit"]) / data["count"]
+            for trans in data.get("transactions", []):
+                trans_amt = Decimal(str(trans["debit"])) + Decimal(str(trans["credit"]))
+                if trans_amt > avg * 3 and trans_amt > 1000:  # 3x average and > R1000
+                    anomalies.append({
+                        "account": name,
+                        "transaction": trans,
+                        "average": float(avg),
+                        "this_amount": float(trans_amt),
+                        "multiple": float(trans_amt / avg) if avg > 0 else 0
+                    })
+        
+        # Top expenses (debit accounts with significant activity)
+        expense_accounts = [a for a in account_summaries if a["balance"] > 0][:10]
+        
+        # Top income (credit accounts)
+        income_accounts = [a for a in account_summaries if a["balance"] < 0][:10]
+        
+        return {
+            "doc_type": "gl",
+            "summary": {
+                "total_transactions": len(all_transactions),
+                "total_accounts": len(accounts),
+                "total_debit": float(total_debit),
+                "total_credit": float(total_credit),
+                "balance_difference": float(total_debit - total_credit),
+                "date_range": {
+                    "from": min((t["date"] for t in all_transactions if t["date"]), default=None),
+                    "to": max((t["date"] for t in all_transactions if t["date"]), default=None)
+                }
+            },
+            "accounts": account_summaries[:50],  # Top 50 accounts
+            "monthly_trend": monthly_trend,
+            "top_expenses": expense_accounts,
+            "top_income": income_accounts,
+            "potential_duplicates": duplicates[:20],
+            "anomalies": anomalies[:20],
+            "warnings": []
+        }
+    
+    @classmethod
+    def analyze_aged(cls, parsed_data: dict, is_debtors: bool = True) -> dict:
+        """Analyze Aged Debtors or Aged Creditors report"""
+        rows = parsed_data.get("rows", [])
+        columns = parsed_data.get("columns", {})
+        
+        entity_col = columns.get("customer") if is_debtors else columns.get("supplier")
+        if entity_col is None:
+            entity_col = columns.get("account") or 0
+        
+        current_col = columns.get("current")
+        days_30_col = columns.get("days_30")
+        days_60_col = columns.get("days_60")
+        days_90_col = columns.get("days_90")
+        days_120_col = columns.get("days_120")
+        balance_col = columns.get("balance")
+        
+        entities = []
+        total_current = Decimal("0")
+        total_30 = Decimal("0")
+        total_60 = Decimal("0")
+        total_90 = Decimal("0")
+        total_120 = Decimal("0")
+        total_balance = Decimal("0")
+        
+        for row in rows:
+            try:
+                if not any(c.strip() for c in row if c):
+                    continue
+                
+                name = row[entity_col].strip() if entity_col < len(row) else ""
+                if not name or name.lower() in ['total', 'totals', '', 'grand total']:
+                    continue
+                
+                current = cls._parse_amount(row[current_col]) if current_col is not None and current_col < len(row) else Decimal("0")
+                d30 = cls._parse_amount(row[days_30_col]) if days_30_col is not None and days_30_col < len(row) else Decimal("0")
+                d60 = cls._parse_amount(row[days_60_col]) if days_60_col is not None and days_60_col < len(row) else Decimal("0")
+                d90 = cls._parse_amount(row[days_90_col]) if days_90_col is not None and days_90_col < len(row) else Decimal("0")
+                d120 = cls._parse_amount(row[days_120_col]) if days_120_col is not None and days_120_col < len(row) else Decimal("0")
+                
+                balance = current + d30 + d60 + d90 + d120
+                if balance_col is not None and balance_col < len(row):
+                    balance = cls._parse_amount(row[balance_col])
+                
+                if balance == 0:
+                    continue
+                
+                # Risk score (higher = worse)
+                risk_score = 0
+                if d30 > 0: risk_score += 1
+                if d60 > 0: risk_score += 2
+                if d90 > 0: risk_score += 3
+                if d120 > 0: risk_score += 5
+                
+                # Percentage overdue
+                overdue = d30 + d60 + d90 + d120
+                overdue_pct = float(overdue / balance * 100) if balance > 0 else 0
+                
+                entities.append({
+                    "name": name,
+                    "current": float(current),
+                    "days_30": float(d30),
+                    "days_60": float(d60),
+                    "days_90": float(d90),
+                    "days_120_plus": float(d120),
+                    "total": float(balance),
+                    "overdue": float(overdue),
+                    "overdue_pct": overdue_pct,
+                    "risk_score": risk_score
+                })
+                
+                total_current += current
+                total_30 += d30
+                total_60 += d60
+                total_90 += d90
+                total_120 += d120
+                total_balance += balance
+                
+            except Exception as e:
+                continue
+        
+        # Sort by risk (highest risk first)
+        entities.sort(key=lambda x: (x["risk_score"], x["total"]), reverse=True)
+        
+        # Calculate percentages
+        total = total_balance if total_balance > 0 else Decimal("1")
+        
+        return {
+            "doc_type": "aged_debtors" if is_debtors else "aged_creditors",
+            "summary": {
+                "total_entities": len(entities),
+                "total_balance": float(total_balance),
+                "current": float(total_current),
+                "current_pct": float(total_current / total * 100),
+                "days_30": float(total_30),
+                "days_30_pct": float(total_30 / total * 100),
+                "days_60": float(total_60),
+                "days_60_pct": float(total_60 / total * 100),
+                "days_90": float(total_90),
+                "days_90_pct": float(total_90 / total * 100),
+                "days_120_plus": float(total_120),
+                "days_120_pct": float(total_120 / total * 100),
+                "total_overdue": float(total_30 + total_60 + total_90 + total_120),
+                "overdue_pct": float((total_30 + total_60 + total_90 + total_120) / total * 100)
+            },
+            "entities": entities[:100],  # Top 100
+            "high_risk": [e for e in entities if e["risk_score"] >= 5][:20],
+            "warnings": []
+        }
+    
+    @classmethod
+    def analyze_bank(cls, parsed_data: dict) -> dict:
+        """Analyze Bank Statement"""
+        rows = parsed_data.get("rows", [])
+        columns = parsed_data.get("columns", {})
+        
+        date_col = columns.get("date")
+        desc_col = columns.get("description")
+        debit_col = columns.get("debit")
+        credit_col = columns.get("credit")
+        amount_col = columns.get("amount")
+        balance_col = columns.get("balance")
+        
+        transactions = []
+        total_in = Decimal("0")
+        total_out = Decimal("0")
+        daily = {}
+        
+        for row in rows:
+            try:
+                if not any(c.strip() for c in row if c):
+                    continue
+                
+                # Parse date
+                trans_date = None
+                if date_col is not None and date_col < len(row):
+                    date_str = row[date_col].strip()
+                    for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%d-%m-%Y"]:
+                        try:
+                            trans_date = datetime.strptime(date_str, fmt)
+                            break
+                        except:
+                            continue
+                
+                description = row[desc_col].strip() if desc_col is not None and desc_col < len(row) else ""
+                
+                # Parse amounts
+                money_in = Decimal("0")
+                money_out = Decimal("0")
+                
+                if debit_col is not None and debit_col < len(row):
+                    money_out = cls._parse_amount(row[debit_col])
+                if credit_col is not None and credit_col < len(row):
+                    money_in = cls._parse_amount(row[credit_col])
+                
+                if amount_col is not None and debit_col is None:
+                    amt = cls._parse_amount(row[amount_col])
+                    if amt > 0:
+                        money_in = amt
+                    else:
+                        money_out = abs(amt)
+                
+                balance = cls._parse_amount(row[balance_col]) if balance_col is not None and balance_col < len(row) else Decimal("0")
+                
+                if money_in == 0 and money_out == 0:
+                    continue
+                
+                transactions.append({
+                    "date": trans_date.strftime("%Y-%m-%d") if trans_date else None,
+                    "description": description,
+                    "money_in": float(money_in),
+                    "money_out": float(money_out),
+                    "balance": float(balance)
+                })
+                
+                total_in += money_in
+                total_out += money_out
+                
+                # Daily accumulation
+                if trans_date:
+                    day_key = trans_date.strftime("%Y-%m-%d")
+                    if day_key not in daily:
+                        daily[day_key] = {"in": Decimal("0"), "out": Decimal("0")}
+                    daily[day_key]["in"] += money_in
+                    daily[day_key]["out"] += money_out
+                
+            except:
+                continue
+        
+        # Find lowest balance point
+        lowest_balance = min((t["balance"] for t in transactions if t["balance"]), default=0)
+        highest_balance = max((t["balance"] for t in transactions if t["balance"]), default=0)
+        
+        return {
+            "doc_type": "bank",
+            "summary": {
+                "total_transactions": len(transactions),
+                "total_money_in": float(total_in),
+                "total_money_out": float(total_out),
+                "net_flow": float(total_in - total_out),
+                "lowest_balance": lowest_balance,
+                "highest_balance": highest_balance,
+                "date_range": {
+                    "from": min((t["date"] for t in transactions if t["date"]), default=None),
+                    "to": max((t["date"] for t in transactions if t["date"]), default=None)
+                }
+            },
+            "transactions": transactions[:500],  # Last 500
+            "daily_summary": [{"date": k, "in": float(v["in"]), "out": float(v["out"])} 
+                            for k, v in sorted(daily.items())],
+            "warnings": []
+        }
+    
+    @classmethod
+    def analyze(cls, csv_content: str) -> dict:
+        """
+        Main entry point - parse and analyze any CSV
+        Returns structured results ready for Claude interpretation
+        """
+        # Parse the CSV
+        parsed = cls.parse_csv(csv_content)
+        
+        if parsed.get("error"):
+            return parsed
+        
+        doc_type = parsed.get("doc_type", "unknown")
+        
+        # Route to appropriate analyzer
+        if doc_type == "gl":
+            analysis = cls.analyze_gl(parsed)
+        elif doc_type == "tb":
+            # Use existing TB analyzer
+            accounts = TBAnalyzer.parse_tb_csv(csv_content)
+            return {
+                "doc_type": "tb",
+                "accounts": accounts,
+                "summary": {
+                    "total_accounts": len(accounts),
+                    "total_debit": sum(a["debit"] for a in accounts),
+                    "total_credit": sum(a["credit"] for a in accounts)
+                }
+            }
+        elif doc_type == "aged_debtors":
+            analysis = cls.analyze_aged(parsed, is_debtors=True)
+        elif doc_type == "aged_creditors":
+            analysis = cls.analyze_aged(parsed, is_debtors=False)
+        elif doc_type == "bank":
+            analysis = cls.analyze_bank(parsed)
+        else:
+            # Try GL analysis as fallback (most flexible)
+            analysis = cls.analyze_gl(parsed)
+            analysis["doc_type"] = "unknown"
+            analysis["warnings"].append("Could not auto-detect document type. Analyzed as general ledger.")
+        
+        # Add metadata
+        analysis["row_count"] = parsed.get("row_count", 0)
+        analysis["headers"] = parsed.get("headers", [])
+        analysis["detected_columns"] = parsed.get("columns", {})
+        
+        return analysis
+    
+    @classmethod
+    def get_claude_summary(cls, analysis: dict, lang: str = "en") -> str:
+        """
+        Generate a summary for Claude to interpret
+        This is what we send to Claude - NOT the raw data
+        """
+        doc_type = analysis.get("doc_type", "unknown")
+        summary = analysis.get("summary", {})
+        
+        if lang == "af":
+            lines = [f"DOKUMENT TIPE: {cls.DOCUMENT_TYPES.get(doc_type, 'Finansiële Data')}"]
+            lines.append(f"TOTALE RYE: {analysis.get('row_count', 0)}")
+            lines.append("")
+            lines.append("OPSOMMING:")
+        else:
+            lines = [f"DOCUMENT TYPE: {cls.DOCUMENT_TYPES.get(doc_type, 'Financial Data')}"]
+            lines.append(f"TOTAL ROWS: {analysis.get('row_count', 0)}")
+            lines.append("")
+            lines.append("SUMMARY:")
+        
+        for key, value in summary.items():
+            if isinstance(value, float):
+                lines.append(f"  {key}: R {value:,.2f}")
+            elif isinstance(value, dict):
+                lines.append(f"  {key}: {value}")
+            else:
+                lines.append(f"  {key}: {value}")
+        
+        # Add top accounts/entities
+        if doc_type == "gl":
+            if lang == "af":
+                lines.append("\nTOP 10 REKENINGE (volgens balans):")
+            else:
+                lines.append("\nTOP 10 ACCOUNTS (by balance):")
+            for acc in analysis.get("accounts", [])[:10]:
+                lines.append(f"  {acc['name']}: R {acc['balance']:,.2f} ({acc['transaction_count']} trans)")
+            
+            if analysis.get("potential_duplicates"):
+                if lang == "af":
+                    lines.append(f"\n⚠️ MOONTLIKE DUPLIKATE: {len(analysis['potential_duplicates'])} gevind")
+                else:
+                    lines.append(f"\n⚠️ POTENTIAL DUPLICATES: {len(analysis['potential_duplicates'])} found")
+                for dup in analysis["potential_duplicates"][:5]:
+                    lines.append(f"  Ref: {dup['reference']} - R {dup['amount']:,.2f}")
+            
+            if analysis.get("anomalies"):
+                if lang == "af":
+                    lines.append(f"\n⚠️ ONGEWONE TRANSAKSIES: {len(analysis['anomalies'])} gevind")
+                else:
+                    lines.append(f"\n⚠️ UNUSUAL TRANSACTIONS: {len(analysis['anomalies'])} found")
+                for anom in analysis["anomalies"][:5]:
+                    lines.append(f"  {anom['account']}: R {anom['this_amount']:,.2f} ({anom['multiple']:.1f}x average)")
+            
+            if analysis.get("monthly_trend"):
+                if lang == "af":
+                    lines.append("\nMAANDELIKSE TENDENS:")
+                else:
+                    lines.append("\nMONTHLY TREND:")
+                for m in analysis["monthly_trend"][-6:]:  # Last 6 months
+                    lines.append(f"  {m['month']}: Debit R {m['debit']:,.2f} | Credit R {m['credit']:,.2f} | Net R {m['net']:,.2f}")
+        
+        elif doc_type in ["aged_debtors", "aged_creditors"]:
+            if lang == "af":
+                lines.append("\nOUDERDOM VERDELING:")
+                lines.append(f"  Lopend: R {summary.get('current', 0):,.2f} ({summary.get('current_pct', 0):.1f}%)")
+                lines.append(f"  30 dae: R {summary.get('days_30', 0):,.2f} ({summary.get('days_30_pct', 0):.1f}%)")
+                lines.append(f"  60 dae: R {summary.get('days_60', 0):,.2f} ({summary.get('days_60_pct', 0):.1f}%)")
+                lines.append(f"  90 dae: R {summary.get('days_90', 0):,.2f} ({summary.get('days_90_pct', 0):.1f}%)")
+                lines.append(f"  120+ dae: R {summary.get('days_120_plus', 0):,.2f} ({summary.get('days_120_pct', 0):.1f}%)")
+                lines.append(f"\n  TOTAAL AGTERSTALLIG: R {summary.get('total_overdue', 0):,.2f} ({summary.get('overdue_pct', 0):.1f}%)")
+            else:
+                lines.append("\nAGING BREAKDOWN:")
+                lines.append(f"  Current: R {summary.get('current', 0):,.2f} ({summary.get('current_pct', 0):.1f}%)")
+                lines.append(f"  30 days: R {summary.get('days_30', 0):,.2f} ({summary.get('days_30_pct', 0):.1f}%)")
+                lines.append(f"  60 days: R {summary.get('days_60', 0):,.2f} ({summary.get('days_60_pct', 0):.1f}%)")
+                lines.append(f"  90 days: R {summary.get('days_90', 0):,.2f} ({summary.get('days_90_pct', 0):.1f}%)")
+                lines.append(f"  120+ days: R {summary.get('days_120_plus', 0):,.2f} ({summary.get('days_120_pct', 0):.1f}%)")
+                lines.append(f"\n  TOTAL OVERDUE: R {summary.get('total_overdue', 0):,.2f} ({summary.get('overdue_pct', 0):.1f}%)")
+            
+            if analysis.get("high_risk"):
+                if lang == "af":
+                    lines.append(f"\n🚨 HOË RISIKO ({len(analysis['high_risk'])} entiteite):")
+                else:
+                    lines.append(f"\n🚨 HIGH RISK ({len(analysis['high_risk'])} entities):")
+                for entity in analysis["high_risk"][:10]:
+                    lines.append(f"  {entity['name']}: R {entity['total']:,.2f} ({entity['overdue_pct']:.0f}% overdue)")
+        
+        elif doc_type == "bank":
+            if lang == "af":
+                lines.append(f"\nGELD IN: R {summary.get('total_money_in', 0):,.2f}")
+                lines.append(f"GELD UIT: R {summary.get('total_money_out', 0):,.2f}")
+                lines.append(f"NETTO VLOEI: R {summary.get('net_flow', 0):,.2f}")
+                lines.append(f"LAAGSTE BALANS: R {summary.get('lowest_balance', 0):,.2f}")
+                lines.append(f"HOOGSTE BALANS: R {summary.get('highest_balance', 0):,.2f}")
+            else:
+                lines.append(f"\nMONEY IN: R {summary.get('total_money_in', 0):,.2f}")
+                lines.append(f"MONEY OUT: R {summary.get('total_money_out', 0):,.2f}")
+                lines.append(f"NET FLOW: R {summary.get('net_flow', 0):,.2f}")
+                lines.append(f"LOWEST BALANCE: R {summary.get('lowest_balance', 0):,.2f}")
+                lines.append(f"HIGHEST BALANCE: R {summary.get('highest_balance', 0):,.2f}")
+        
+        return "\n".join(lines)
+    
+    @classmethod
+    def interpret_with_claude(cls, analysis: dict, lang: str = "en", business_context: str = "") -> str:
+        """
+        Send summary to Claude for human-friendly interpretation
+        Claude gets SUMMARY only, not raw data = cheap
+        """
+        api_key = Config.ANTHROPIC_API_KEY
+        if not api_key:
+            return "API not configured" if lang == "en" else "API nie opgestel nie"
+        
+        summary_text = cls.get_claude_summary(analysis, lang)
+        doc_type = analysis.get("doc_type", "unknown")
+        doc_name = cls.DOCUMENT_TYPES.get(doc_type, "Financial Data")
+        
+        if lang == "af":
+            prompt = f"""Jy is "Jou Syfer Ou" - 'n vriendelike finansiële assistent vir Suid-Afrikaanse besighede.
+
+'n Gebruiker het 'n {doc_name} opgelaai. Hier is die Flask-berekende opsomming:
+
+{summary_text}
+
+Addisionele konteks: {business_context if business_context else "Geen"}
+
+Gee 'n vriendelike, praktiese analise in Afrikaans:
+1. Begin met die belangrikste bevinding (goed of sleg)
+2. Wys op enige probleme of risiko's
+3. Gee spesifieke, aksie-gebaseerde aanbevelings
+4. Hou dit eenvoudig - graad 5 leesvlak maar professioneel
+
+Gebruik terme soos BTW (nie VAT), debiteure, krediteure. Wees spesifiek met Rand bedrae.
+Moenie net die syfers herhaal nie - vertel die STORIE agter die syfers."""
+        else:
+            prompt = f"""You are "Your Numbers Guy" - a friendly financial assistant for South African businesses.
+
+A user uploaded a {doc_name}. Here's the Flask-calculated summary:
+
+{summary_text}
+
+Additional context: {business_context if business_context else "None"}
+
+Provide a friendly, practical analysis:
+1. Start with the most important finding (good or bad)
+2. Point out any problems or risks
+3. Give specific, actionable recommendations
+4. Keep it simple - conversational but professional
+
+Be specific with Rand amounts. Don't just repeat the numbers - tell the STORY behind the numbers."""
+
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "content-type": "application/json",
+                    "anthropic-version": "2023-06-01"
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 2000,
+                    "messages": [{"role": "user", "content": prompt}]
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("content", [{}])[0].get("text", "Could not generate analysis")
+            else:
+                return f"API error: {response.status_code}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
 
 class TBAnalyzer:
     """
@@ -14961,6 +15854,588 @@ def ai_advisor_chat():
     session['ai_advisor_history'] = history[-20:]  # Keep last 20
     
     return jsonify({"response": response})
+
+
+# =============================================================================
+# UNIVERSAL FINANCIAL ANALYZER - "JOU SYFER OU" ROUTES
+# =============================================================================
+
+@app.route("/analyze", methods=["GET", "POST"])
+def universal_analyzer():
+    """Universal Financial Analyzer - handles ANY CSV"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    lang = get_user_language()
+    message = ""
+    
+    # Handle POST - file upload
+    if request.method == "POST":
+        file = request.files.get("file")
+        context = request.form.get("context", "")
+        
+        if not file:
+            message = '<div class="alert alert-error">No file uploaded</div>'
+        else:
+            filename = file.filename.lower()
+            try:
+                # Read file content
+                if filename.endswith('.csv'):
+                    content = file.read().decode('utf-8', errors='ignore')
+                elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+                    # Excel support
+                    import io
+                    try:
+                        import openpyxl
+                        wb = openpyxl.load_workbook(io.BytesIO(file.read()))
+                        ws = wb.active
+                        rows = []
+                        for row in ws.iter_rows(values_only=True):
+                            rows.append([str(c) if c is not None else "" for c in row])
+                        content = "\n".join([",".join(row) for row in rows])
+                    except ImportError:
+                        # Fallback - tell user to use CSV
+                        if lang == "af":
+                            message = '<div class="alert alert-error">Excel nie ondersteun nie. Stoor asseblief as CSV.</div>'
+                        else:
+                            message = '<div class="alert alert-error">Excel not supported. Please save as CSV.</div>'
+                        content = None
+                else:
+                    if lang == "af":
+                        message = '<div class="alert alert-error">Gebruik asseblief \'n CSV lêer</div>'
+                    else:
+                        message = '<div class="alert alert-error">Please use a CSV file</div>'
+                    content = None
+                
+                if content:
+                    # Store for background processing
+                    session['analyze_content'] = content
+                    session['analyze_context'] = context
+                    session['analyze_lang'] = lang
+                    return redirect("/analyze/processing")
+                    
+            except Exception as e:
+                message = f'<div class="alert alert-error">Error: {str(e)}</div>'
+    
+    # Labels
+    lbl = {
+        "title": "📊 Jou Syfer Ou" if lang == "af" else "📊 Your Numbers Guy",
+        "subtitle": "Gooi enige CSV - ek maak sin daarvan" if lang == "af" else "Throw any CSV at me - I'll make sense of it",
+        "supported": "Ondersteunde dokumente:" if lang == "af" else "Supported documents:",
+        "upload_label": "Kies lêer of sleep hierheen" if lang == "af" else "Choose file or drag here",
+        "context_label": "Addisionele konteks (opsioneel)" if lang == "af" else "Additional context (optional)",
+        "context_placeholder": "bv. Boerdery besigheid, seisoenale verkope..." if lang == "af" else "e.g. Farming business, seasonal sales...",
+        "analyze_btn": "Analiseer" if lang == "af" else "Analyze",
+        "gl": "Algemene Grootboek (GL)" if lang == "af" else "General Ledger (GL)",
+        "tb": "Proefbalans" if lang == "af" else "Trial Balance",
+        "bank": "Bankstaat" if lang == "af" else "Bank Statement",
+        "aged_d": "Ouderdomsanalise Debiteure" if lang == "af" else "Aged Debtors",
+        "aged_c": "Ouderdomsanalise Krediteure" if lang == "af" else "Aged Creditors",
+        "any": "Enige finansiële CSV" if lang == "af" else "Any financial CSV",
+    }
+    
+    content = f'''
+    <style>
+        .analyzer-hero {{
+            text-align: center;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            border-radius: 16px;
+            margin-bottom: 24px;
+        }}
+        .analyzer-title {{
+            font-size: 32px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }}
+        .analyzer-subtitle {{
+            color: var(--text-muted);
+            font-size: 16px;
+        }}
+        .upload-zone {{
+            border: 3px dashed var(--border);
+            border-radius: 16px;
+            padding: 60px 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 24px;
+        }}
+        .upload-zone:hover {{
+            border-color: var(--purple);
+            background: rgba(139, 92, 246, 0.05);
+        }}
+        .upload-zone.dragover {{
+            border-color: var(--green);
+            background: rgba(34, 197, 94, 0.1);
+        }}
+        .upload-icon {{
+            font-size: 64px;
+            margin-bottom: 16px;
+        }}
+        .upload-text {{
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }}
+        .upload-hint {{
+            color: var(--text-muted);
+            font-size: 14px;
+        }}
+        .doc-types {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }}
+        .doc-type {{
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+            font-size: 13px;
+        }}
+        .doc-type-icon {{
+            font-size: 24px;
+            margin-bottom: 4px;
+        }}
+        .context-box {{
+            margin-bottom: 24px;
+        }}
+        .context-box textarea {{
+            width: 100%;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text);
+            font-size: 14px;
+            resize: vertical;
+            min-height: 80px;
+        }}
+        .context-box label {{
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }}
+    </style>
+    
+    <div class="analyzer-hero">
+        <div class="analyzer-title">{lbl["title"]}</div>
+        <div class="analyzer-subtitle">{lbl["subtitle"]}</div>
+    </div>
+    
+    {message}
+    
+    <form method="POST" enctype="multipart/form-data" id="upload-form">
+        <div class="upload-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">{lbl["upload_label"]}</div>
+            <div class="upload-hint">CSV, Excel</div>
+        </div>
+        <input type="file" name="file" id="file-input" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleFile(this)">
+        
+        <div style="margin-bottom: 16px; font-weight: 600;">{lbl["supported"]}</div>
+        <div class="doc-types">
+            <div class="doc-type"><div class="doc-type-icon">📒</div>{lbl["gl"]}</div>
+            <div class="doc-type"><div class="doc-type-icon">⚖️</div>{lbl["tb"]}</div>
+            <div class="doc-type"><div class="doc-type-icon">🏦</div>{lbl["bank"]}</div>
+            <div class="doc-type"><div class="doc-type-icon">💰</div>{lbl["aged_d"]}</div>
+            <div class="doc-type"><div class="doc-type-icon">💳</div>{lbl["aged_c"]}</div>
+            <div class="doc-type"><div class="doc-type-icon">📊</div>{lbl["any"]}</div>
+        </div>
+        
+        <div class="context-box">
+            <label>{lbl["context_label"]}</label>
+            <textarea name="context" placeholder="{lbl["context_placeholder"]}"></textarea>
+        </div>
+        
+        <button type="submit" class="btn btn-primary btn-lg" style="width: 100%;" id="submit-btn" disabled>
+            {lbl["analyze_btn"]}
+        </button>
+    </form>
+    
+    <script>
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const submitBtn = document.getElementById('submit-btn');
+    
+    // Drag and drop
+    dropZone.addEventListener('dragover', (e) => {{
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    }});
+    dropZone.addEventListener('dragleave', () => {{
+        dropZone.classList.remove('dragover');
+    }});
+    dropZone.addEventListener('drop', (e) => {{
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {{
+            fileInput.files = e.dataTransfer.files;
+            handleFile(fileInput);
+        }}
+    }});
+    
+    function handleFile(input) {{
+        if (input.files.length) {{
+            const name = input.files[0].name;
+            dropZone.querySelector('.upload-text').textContent = '✓ ' + name;
+            dropZone.style.borderColor = 'var(--green)';
+            submitBtn.disabled = false;
+        }}
+    }}
+    </script>
+    '''
+    
+    title = "Jou Syfer Ou" if lang == "af" else "Your Numbers Guy"
+    return page_wrapper(title, content, user=user)
+
+
+@app.route("/analyze/processing")
+def analyze_processing():
+    """Processing page - shows spinner while analyzing"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    lang = session.get('analyze_lang', 'en')
+    
+    if 'analyze_content' not in session:
+        return redirect("/analyze")
+    
+    lbl = {
+        "title": "Besig om te analiseer..." if lang == "af" else "Analyzing...",
+        "message": "Flask bereken, dan verduidelik Jou Syfer Ou die resultate." if lang == "af" else "Flask calculates, then Your Numbers Guy explains the results.",
+        "wait": "Dit neem gewoonlik 10-20 sekondes." if lang == "af" else "This usually takes 10-20 seconds."
+    }
+    
+    content = f'''
+    <style>
+        .processing {{
+            text-align: center;
+            padding: 80px 20px;
+        }}
+        .processing-spinner {{
+            font-size: 64px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 24px;
+        }}
+        @keyframes spin {{
+            from {{ transform: rotate(0deg); }}
+            to {{ transform: rotate(360deg); }}
+        }}
+        .processing-title {{
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }}
+        .processing-text {{
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }}
+    </style>
+    
+    <div class="processing">
+        <div class="processing-spinner">⚙️</div>
+        <div class="processing-title">{lbl["title"]}</div>
+        <div class="processing-text">{lbl["message"]}</div>
+        <div class="processing-text">{lbl["wait"]}</div>
+    </div>
+    
+    <script>
+    // Auto-submit to run analysis
+    setTimeout(() => {{
+        window.location.href = '/analyze/run';
+    }}, 500);
+    </script>
+    '''
+    
+    return page_wrapper(lbl["title"], content, user=user)
+
+
+@app.route("/analyze/run")
+def analyze_run():
+    """Actually run the analysis (called from processing page)"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    content = session.get('analyze_content')
+    context = session.get('analyze_context', '')
+    lang = session.get('analyze_lang', 'en')
+    
+    if not content:
+        return redirect("/analyze")
+    
+    # Run Flask analysis
+    analysis = FinancialAnalyzer.analyze(content)
+    
+    # Get Claude interpretation
+    interpretation = FinancialAnalyzer.interpret_with_claude(analysis, lang, context)
+    
+    # Store results
+    session['analyze_results'] = analysis
+    session['analyze_interpretation'] = interpretation
+    
+    # Clear content (save memory)
+    session.pop('analyze_content', None)
+    
+    return redirect("/analyze/results")
+
+
+@app.route("/analyze/results")
+def analyze_results():
+    """Show analysis results"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    lang = session.get('analyze_lang', 'en')
+    analysis = session.get('analyze_results', {})
+    interpretation = session.get('analyze_interpretation', '')
+    
+    if not analysis:
+        return redirect("/analyze")
+    
+    doc_type = analysis.get("doc_type", "unknown")
+    doc_name = FinancialAnalyzer.DOCUMENT_TYPES.get(doc_type, "Financial Data")
+    summary = analysis.get("summary", {})
+    
+    # Build summary cards
+    summary_html = '<div class="metric-grid">'
+    
+    if doc_type == "gl":
+        summary_html += f'''
+            <div class="metric-card">
+                <div class="metric-label">{"Transaksies" if lang == "af" else "Transactions"}</div>
+                <div class="metric-value">{summary.get("total_transactions", 0):,}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">{"Rekeninge" if lang == "af" else "Accounts"}</div>
+                <div class="metric-value">{summary.get("total_accounts", 0)}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">{"Totaal Debiet" if lang == "af" else "Total Debit"}</div>
+                <div class="metric-value">R {summary.get("total_debit", 0):,.2f}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">{"Totaal Krediet" if lang == "af" else "Total Credit"}</div>
+                <div class="metric-value">R {summary.get("total_credit", 0):,.2f}</div>
+            </div>
+        '''
+    elif doc_type in ["aged_debtors", "aged_creditors"]:
+        summary_html += f'''
+            <div class="metric-card">
+                <div class="metric-label">{"Totaal" if lang == "af" else "Total"}</div>
+                <div class="metric-value">R {summary.get("total_balance", 0):,.2f}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">{"Lopend" if lang == "af" else "Current"}</div>
+                <div class="metric-value green">R {summary.get("current", 0):,.2f}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">{"Agterstallig" if lang == "af" else "Overdue"}</div>
+                <div class="metric-value {"red" if summary.get("overdue_pct", 0) > 30 else "orange"}">R {summary.get("total_overdue", 0):,.2f}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">{"Agterstallig %" if lang == "af" else "Overdue %"}</div>
+                <div class="metric-value">{summary.get("overdue_pct", 0):.1f}%</div>
+            </div>
+        '''
+    elif doc_type == "bank":
+        summary_html += f'''
+            <div class="metric-card">
+                <div class="metric-label">{"Geld In" if lang == "af" else "Money In"}</div>
+                <div class="metric-value green">R {summary.get("total_money_in", 0):,.2f}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">{"Geld Uit" if lang == "af" else "Money Out"}</div>
+                <div class="metric-value red">R {summary.get("total_money_out", 0):,.2f}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">{"Netto Vloei" if lang == "af" else "Net Flow"}</div>
+                <div class="metric-value">R {summary.get("net_flow", 0):,.2f}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">{"Laagste Balans" if lang == "af" else "Lowest Balance"}</div>
+                <div class="metric-value {"red" if summary.get("lowest_balance", 0) < 0 else ""}">R {summary.get("lowest_balance", 0):,.2f}</div>
+            </div>
+        '''
+    
+    summary_html += '</div>'
+    
+    # Format interpretation with proper line breaks
+    interpretation_html = interpretation.replace('\n', '<br>')
+    
+    # Warnings
+    warnings_html = ""
+    if analysis.get("warnings"):
+        warnings_html = '<div class="alert alert-warning">' + '<br>'.join(analysis["warnings"]) + '</div>'
+    
+    # Duplicates section
+    duplicates_html = ""
+    if analysis.get("potential_duplicates"):
+        dups = analysis["potential_duplicates"]
+        dup_title = f"⚠️ {'Moontlike Duplikate' if lang == 'af' else 'Potential Duplicates'} ({len(dups)})"
+        dup_items = ""
+        for dup in dups[:10]:
+            dup_items += f'<div class="dup-item">Ref: {dup["reference"]} - R {dup["amount"]:,.2f}</div>'
+        duplicates_html = f'''
+        <div class="section-card warning">
+            <h3>{dup_title}</h3>
+            {dup_items}
+        </div>
+        '''
+    
+    # Anomalies section
+    anomalies_html = ""
+    if analysis.get("anomalies"):
+        anoms = analysis["anomalies"]
+        anom_title = f"⚠️ {'Ongewone Transaksies' if lang == 'af' else 'Unusual Transactions'} ({len(anoms)})"
+        anom_items = ""
+        for anom in anoms[:10]:
+            anom_items += f'<div class="anom-item">{anom["account"]}: R {anom["this_amount"]:,.2f} ({anom["multiple"]:.1f}x {"gemiddeld" if lang == "af" else "average"})</div>'
+        anomalies_html = f'''
+        <div class="section-card warning">
+            <h3>{anom_title}</h3>
+            {anom_items}
+        </div>
+        '''
+    
+    # High risk entities
+    high_risk_html = ""
+    if analysis.get("high_risk"):
+        risks = analysis["high_risk"]
+        risk_title = f"🚨 {'Hoë Risiko' if lang == 'af' else 'High Risk'} ({len(risks)})"
+        risk_items = ""
+        for r in risks[:10]:
+            risk_items += f'<div class="risk-item">{r["name"]}: R {r["total"]:,.2f} ({r["overdue_pct"]:.0f}% {"agterstallig" if lang == "af" else "overdue"})</div>'
+        high_risk_html = f'''
+        <div class="section-card danger">
+            <h3>{risk_title}</h3>
+            {risk_items}
+        </div>
+        '''
+    
+    lbl = {
+        "detected": "Dokument tipe" if lang == "af" else "Document type",
+        "analysis": "Analise" if lang == "af" else "Analysis",
+        "another": "Analiseer Nog Een" if lang == "af" else "Analyze Another",
+    }
+    
+    content = f'''
+    <style>
+        .result-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }}
+        .doc-type-badge {{
+            background: var(--purple);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+        }}
+        .metric-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }}
+        .metric-card {{
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }}
+        .metric-label {{
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }}
+        .metric-value {{
+            font-size: 24px;
+            font-weight: 700;
+        }}
+        .metric-value.green {{ color: var(--green); }}
+        .metric-value.red {{ color: var(--red); }}
+        .metric-value.orange {{ color: var(--orange); }}
+        .interpretation-box {{
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            line-height: 1.7;
+        }}
+        .interpretation-header {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            font-size: 18px;
+            font-weight: 700;
+        }}
+        .section-card {{
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }}
+        .section-card.warning {{
+            border-color: var(--orange);
+            background: rgba(249, 115, 22, 0.05);
+        }}
+        .section-card.danger {{
+            border-color: var(--red);
+            background: rgba(239, 68, 68, 0.05);
+        }}
+        .section-card h3 {{
+            margin-bottom: 12px;
+        }}
+        .dup-item, .anom-item, .risk-item {{
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+        }}
+        .dup-item:last-child, .anom-item:last-child, .risk-item:last-child {{
+            border-bottom: none;
+        }}
+    </style>
+    
+    <div class="result-header">
+        <div>
+            <div style="color: var(--text-muted); font-size: 14px;">{lbl["detected"]}</div>
+            <div class="doc-type-badge">{doc_name}</div>
+        </div>
+        <a href="/analyze" class="btn btn-primary">{lbl["another"]}</a>
+    </div>
+    
+    {warnings_html}
+    {summary_html}
+    
+    <div class="interpretation-box">
+        <div class="interpretation-header">
+            <span>🧠</span>
+            <span>{"Jou Syfer Ou Sê" if lang == "af" else "Your Numbers Guy Says"}</span>
+        </div>
+        <div>{interpretation_html}</div>
+    </div>
+    
+    {duplicates_html}
+    {anomalies_html}
+    {high_risk_html}
+    '''
+    
+    title = f"{doc_name} - {'Resultate' if lang == 'af' else 'Results'}"
+    return page_wrapper(title, content, user=user)
 
 
 @app.route("/tb-analyzer", methods=["GET", "POST"])
