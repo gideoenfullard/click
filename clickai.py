@@ -1,7 +1,152 @@
 #!/usr/bin/env python3
 """
-Click AI - Complete Business Management System v2.0
-SINGLE FILE - 9000+ lines - Full SA Accounting
+Click AI - Complete Business Management System
+==============================================
+
+SINGLE FILE ARCHITECTURE - This is intentional, not lazy.
+One file = one truth. No lost imports, no broken dependencies.
+
+VERSION: 117
+LAST UPDATED: December 2024
+AUTHOR: Deon @ FullTech + Claude AI
+
+TABLE OF CONTENTS (use Ctrl+F to jump to sections):
+====================================================
+
+LINE ~50      FLASK SETUP & ERROR HANDLING
+              - App initialization
+              - Global error handlers
+              - Logging setup
+
+LINE ~180     CONFIGURATION & TRANSLATIONS
+              - Config class (Supabase, API keys)
+              - Bilingual translations (EN/AF)
+
+LINE ~430     VAT & MONEY CLASSES
+              - South African VAT calculations (15%)
+              - Money formatting helpers
+
+LINE ~700     DATABASE CLASS
+              - Supabase connection
+              - CRUD operations (select, insert, update, delete)
+              - Multi-tenant support
+
+LINE ~960     USER SESSION & AUTH
+              - Login/logout handling
+              - Business context management
+
+LINE ~1200    AI INTEGRATION (OpusAI)
+              - Claude API calls
+              - Receipt scanning
+              - Financial analysis
+
+LINE ~1650    ACCOUNTING ENGINE
+              - Chart of Accounts
+              - Account codes (SA standard)
+              - Journal entries (double-entry)
+
+LINE ~3000    TRANSACTION HANDLING
+              - JournalLine, JournalEntry classes
+              - Posting to ledgers
+              - Transaction queries
+
+LINE ~4000    HTML COMPONENTS
+              - Reusable UI components
+              - Navigation, cards, tables
+              - Form helpers
+
+LINE ~5900    ROUTES - LANDING & AUTH
+              - Landing page
+              - Login/Register
+              - Dashboard
+
+LINE ~9400    ROUTES - POS
+              - Point of Sale
+              - Bar POS (Bedrock)
+              - Bluetooth printing
+
+LINE ~12400   ROUTES - STOCK & INVENTORY
+              - Stock items CRUD
+              - Low stock alerts
+              - Import/Export
+
+LINE ~13100   ROUTES - CUSTOMERS
+              - Customer management
+              - Statements
+              - Receive payments
+
+LINE ~14100   ROUTES - SUPPLIERS
+              - Supplier management
+              - Purchase orders
+              - Pay suppliers
+
+LINE ~14650   ROUTES - INVOICES & QUOTES
+              - Create/Edit invoices
+              - Quotes to invoices
+              - Credit notes
+
+LINE ~15850   ROUTES - EXPENSES
+              - Expense tracking
+              - Receipt scanning
+              - Category management
+
+LINE ~16400   ROUTES - REPORTS
+              - Trial Balance
+              - Income Statement
+              - Balance Sheet
+              - Debtors/Creditors aging
+
+LINE ~18150   ROUTES - AI ANALYSIS
+              - The Money Guy (AI advisor)
+              - TB Analyzer
+              - Universal CSV analysis
+
+LINE ~19850   ROUTES - JOURNAL & BANK RECON
+              - Manual journal entries
+              - Bank reconciliation
+
+LINE ~20300   ROUTES - ADVANCED REPORTS
+              - Business Health Report
+              - Management Financials
+
+LINE ~22250   ROUTES - MOBILE SCANNER
+              - Mobile-optimized scanning
+              - Queue-based processing
+
+LINE ~23550   ROUTES - PAYROLL
+              - Employees
+              - Payroll runs
+              - Payslips (SARS compliant)
+
+LINE ~25100   ROUTES - SETTINGS
+              - Company settings
+              - Language preferences
+              - Data cleanup tools
+
+LINE ~25850   ROUTES - STAGING/REVIEW
+              - Review scanned items
+              - Approve/reject flow
+
+LINE ~27400   ROUTES - MULTI-BUSINESS
+              - Switch businesses
+              - Create new business
+
+LINE ~27700   APP STARTUP
+              - Main entry point
+
+CODING CONVENTIONS:
+==================
+- All money calculations use Decimal, never float
+- VAT is always 15% (SA standard)
+- All dates in YYYY-MM-DD format
+- Double-entry accounting: every debit has a credit
+- Flask does calculations, AI does interpretation
+
+BILINGUAL SUPPORT:
+=================
+- Use t("key") for translations
+- Afrikaans terms: BTW (VAT), LBS (PAYE), WVF (UIF)
+- Language stored in session["language"]
 """
 
 from flask import Flask, jsonify, request, redirect, session, g
@@ -48,6 +193,150 @@ from functools import wraps
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "clickai-secret-key-change-in-production")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ERROR HANDLING & LOGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import logging
+import traceback
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('clickai')
+
+
+def log_error(error, context=""):
+    """Log an error with context"""
+    logger.error(f"{context}: {str(error)}")
+    logger.error(traceback.format_exc())
+
+
+def friendly_error_page(title, message, back_url="/dashboard"):
+    """Generate a friendly error page"""
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oops - Click AI</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .error-box {{
+            background: #1a1a2e;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            border: 1px solid #2a2a4a;
+        }}
+        .error-icon {{
+            font-size: 64px;
+            margin-bottom: 20px;
+        }}
+        .error-title {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 15px;
+        }}
+        .error-message {{
+            font-size: 16px;
+            color: #a0a0b0;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }}
+        .error-btn {{
+            display: inline-block;
+            padding: 14px 32px;
+            background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+            color: white;
+            text-decoration: none;
+            border-radius: 10px;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }}
+        .error-btn:hover {{
+            transform: translateY(-2px);
+        }}
+        .error-code {{
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #2a2a4a;
+            font-size: 12px;
+            color: #666;
+        }}
+    </style>
+</head>
+<body>
+    <div class="error-box">
+        <div class="error-icon">😕</div>
+        <h1 class="error-title">{title}</h1>
+        <p class="error-message">{message}</p>
+        <a href="{back_url}" class="error-btn">Go Back</a>
+        <div class="error-code">If this keeps happening, please contact support.</div>
+    </div>
+</body>
+</html>'''
+
+
+@app.errorhandler(404)
+def page_not_found(e):
+    """Handle 404 errors - page not found"""
+    return friendly_error_page(
+        "Page Not Found",
+        "The page you're looking for doesn't exist or has been moved.",
+        "/dashboard"
+    ), 404
+
+
+@app.errorhandler(500)
+def internal_error(e):
+    """Handle 500 errors - server error"""
+    log_error(e, "500 Internal Server Error")
+    return friendly_error_page(
+        "Something Went Wrong",
+        "We hit a snag. Don't worry, your data is safe. Try again or go back to the dashboard.",
+        "/dashboard"
+    ), 500
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Catch-all error handler for any unhandled exceptions"""
+    log_error(e, "Unhandled Exception")
+    return friendly_error_page(
+        "Unexpected Error",
+        "Something unexpected happened. Your data is safe - please try again.",
+        "/dashboard"
+    ), 500
+
+
+def safe_execute(func, default=None, context=""):
+    """
+    Safely execute a function, returning default on error.
+    Usage: result = safe_execute(lambda: risky_operation(), default=[], context="Loading items")
+    """
+    try:
+        return func()
+    except Exception as e:
+        log_error(e, context)
+        return default
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -5292,6 +5581,11 @@ def get_header_html(active: str = "", user: dict = None) -> str:
                 margin-right: 12px;
             }}
             .biz-btn:hover {{ background: rgba(139,92,246,0.25); }}
+            .biz-name {{ max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }}
+            @media (max-width: 600px) {{
+                .biz-name {{ display: none; }}
+                .biz-btn {{ padding: 8px 10px; margin-right: 8px; }}
+            }}
             .biz-drop {{ 
                 display: none; position: fixed; 
                 background: #0d0d14; border: 1px solid #333; border-radius: 8px;
@@ -5304,7 +5598,7 @@ def get_header_html(active: str = "", user: dict = None) -> str:
             <div class="biz-switcher">
                 <div class="biz-btn" id="bizBtn">
                     <span>{current_icon}</span>
-                    <span style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(current_name)}</span>
+                    <span class="biz-name">{safe_string(current_name)}</span>
                     <span style="font-size:10px;">▼</span>
                 </div>
                 <div class="biz-drop" id="bizDrop">
@@ -16383,23 +16677,23 @@ def report_trial_balance():
     
     content = f'''
     
-    <div class="flex-between mb-lg">
+    <div class="flex-between mb-lg" style="flex-wrap: wrap; gap: 12px;">
         <div>
             <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;">Trial Balance</h1>
             <p class="text-muted">As at {today()}</p>
         </div>
-        <div class="btn-group">
+        <div class="btn-group" style="flex-wrap: wrap;">
             <a href="/reports/trial-balance/csv" class="btn btn-ghost">📥 Export CSV</a>
             {balance_badge}
         </div>
     </div>
-    <div class="stats">
+    <div class="stats" style="flex-wrap: wrap;">
         <div class="stat"><div class="stat-value">{len(tb_data)}</div><div class="stat-label">Accounts</div></div>
         <div class="stat"><div class="stat-value green">{Money.format(total_dr)}</div><div class="stat-label">Total Debits</div></div>
         <div class="stat"><div class="stat-value green">{Money.format(total_cr)}</div><div class="stat-label">Total Credits</div></div>
     </div>
-    <div class="card">
-        <table class="table">
+    <div class="card" style="overflow-x: auto;">
+        <table class="table" style="min-width: 400px;">
             <thead><tr><th>Code</th><th>Account</th><th class="number">Debit</th><th class="number">Credit</th></tr></thead>
             <tbody>{rows}</tbody>
             <tfoot><tr style="font-weight:bold;background:#0a0a10;">
