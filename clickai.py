@@ -11127,7 +11127,7 @@ def bar_api_table():
 
 @app.route("/bar/payment")
 def bar_payment():
-    """Payment screen"""
+    """Payment screen with Bluetooth printing"""
     user = UserSession.get_current_user()
     waitron = session.get('bar_waitron', {})
     if not waitron:
@@ -11138,6 +11138,9 @@ def bar_payment():
     
     # Calculate total
     subtotal = sum(item['price'] * item['qty'] for item in order)
+    
+    # Build order JSON for JS
+    order_json = json.dumps(order)
     
     content = f'''
 <!DOCTYPE html>
@@ -11177,10 +11180,26 @@ def bar_payment():
             font-size: 24px;
             font-weight: 700;
         }}
+        .printer-status {{
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        .printer-status.disconnected {{
+            background: #ef4444;
+        }}
+        .printer-status.connected {{
+            background: #22c55e;
+        }}
+        .printer-status.connecting {{
+            background: #f97316;
+        }}
         .payment-types {{
             display: flex;
             gap: 8px;
             margin-bottom: 24px;
+            flex-wrap: wrap;
         }}
         .pay-type-btn {{
             padding: 16px 24px;
@@ -11217,14 +11236,15 @@ def bar_payment():
         .numpad-section {{
             display: flex;
             gap: 24px;
+            flex-wrap: wrap;
         }}
         .numpad {{
             display: grid;
-            grid-template-columns: repeat(3, 80px);
+            grid-template-columns: repeat(3, 70px);
             gap: 8px;
         }}
         .num-btn {{
-            padding: 24px;
+            padding: 20px;
             font-size: 24px;
             font-weight: 600;
             background: #252540;
@@ -11270,14 +11290,16 @@ def bar_payment():
         }}
         .action-btn.exit {{ background: #3b82f6; font-size: 18px; padding: 20px 40px; }}
         .action-btn.print {{ background: #22c55e; font-size: 18px; padding: 20px 40px; }}
+        .action-btn.bt {{ background: #8b5cf6; }}
         
         /* Receipt Preview */
         .receipt-panel {{
             background: white;
             color: #333;
             padding: 20px;
-            font-family: monospace;
+            font-family: 'Courier New', monospace;
             font-size: 12px;
+            overflow-y: auto;
         }}
         .receipt-header {{
             text-align: center;
@@ -11286,7 +11308,7 @@ def bar_payment():
             margin-bottom: 12px;
         }}
         .receipt-header h2 {{
-            font-size: 16px;
+            font-size: 18px;
             margin-bottom: 4px;
         }}
         .receipt-items {{
@@ -11303,6 +11325,12 @@ def bar_payment():
             font-weight: bold;
             font-size: 14px;
         }}
+        .receipt-footer {{
+            text-align: center;
+            margin-top: 16px;
+            padding-top: 12px;
+            border-top: 1px dashed #ccc;
+        }}
         
         @media (max-width: 768px) {{
             .payment-container {{
@@ -11310,6 +11338,13 @@ def bar_payment():
             }}
             .receipt-panel {{
                 display: none;
+            }}
+            .numpad {{
+                grid-template-columns: repeat(3, 60px);
+            }}
+            .num-btn {{
+                padding: 16px;
+                font-size: 20px;
             }}
         }}
     </style>
@@ -11319,13 +11354,19 @@ def bar_payment():
         <div class="payment-main">
             <div class="payment-header">
                 <div class="payment-title">Payment</div>
-                <div>{waitron.get('name', 'Staff')} | {table}</div>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span>{waitron.get('name', 'Staff')} | {table}</span>
+                    <span class="printer-status disconnected" id="printer-status" onclick="connectPrinter()">
+                        Printer: Tap to Connect
+                    </span>
+                </div>
             </div>
             
             <div class="payment-types">
                 <button class="pay-type-btn active" onclick="setPayType('cash')">Cash</button>
                 <button class="pay-type-btn" onclick="setPayType('card')">Card</button>
                 <button class="pay-type-btn" onclick="setPayType('split')">Split</button>
+                <button class="action-btn bt" onclick="connectPrinter()">Connect Printer</button>
             </div>
             
             <div class="totals">
@@ -11386,35 +11427,246 @@ def bar_payment():
             </div>
         </div>
         
-        <div class="receipt-panel">
+        <div class="receipt-panel" id="receipt-preview">
             <div class="receipt-header">
                 <h2>Bedrock Cafe</h2>
                 <div>PUB & GRILL</div>
                 <div>RANDFONTEIN</div>
+                <div>011-692-1515</div>
             </div>
-            <div class="receipt-items">
+            <div style="text-align: center; margin-bottom: 12px; font-size: 11px;">
+                <div>TAX INVOICE</div>
+                <div>{datetime.now().strftime('%d/%m/%Y %H:%M')}</div>
+            </div>
+            <div class="receipt-items" id="receipt-items">
                 {"".join(f'<div class="receipt-item"><span>{item["qty"]}x {item["name"]}</span><span>R {item["price"] * item["qty"]:.2f}</span></div>' for item in order)}
             </div>
             <div class="receipt-total">
                 <div class="receipt-item">
-                    <span>TOTAL:</span>
+                    <span>SUBTOTAL:</span>
                     <span>R {subtotal:.2f}</span>
+                </div>
+                <div class="receipt-item" id="receipt-discount" style="display: none;">
+                    <span>DISCOUNT:</span>
+                    <span id="receipt-discount-val">R 0.00</span>
+                </div>
+                <div class="receipt-item" style="font-size: 16px; margin-top: 8px;">
+                    <span>TOTAL:</span>
+                    <span id="receipt-total">R {subtotal:.2f}</span>
                 </div>
             </div>
             <div style="margin-top: 12px; font-size: 10px;">
                 <div>Waitron: {waitron.get('name', 'Staff')}</div>
-                <div>Date: {datetime.now().strftime('%d/%m/%Y %H:%M')}</div>
                 <div>Table: {table}</div>
+                <div id="receipt-payment"></div>
+            </div>
+            <div class="receipt-footer">
+                <div>Thank you for your visit!</div>
+                <div style="margin-top: 8px;">VAT Incl. | VAT No: ___________</div>
             </div>
         </div>
     </div>
     
     <script>
+        // Order data
+        const orderItems = {order_json};
         const subtotal = {subtotal};
+        const waitronName = "{waitron.get('name', 'Staff')}";
+        const tableName = "{table}";
+        
         let tender = 0;
         let tenderStr = '';
         let payType = 'cash';
         let discount = 0;
+        
+        // Bluetooth Printer
+        let btDevice = null;
+        let btCharacteristic = null;
+        const PRINTER_SERVICE = '000018f0-0000-1000-8000-00805f9b34fb';
+        const PRINTER_CHAR = '00002af1-0000-1000-8000-00805f9b34fb';
+        
+        // ESC/POS Commands
+        const ESC = 0x1B;
+        const GS = 0x1D;
+        const CMD = {{
+            INIT: [ESC, 0x40],
+            ALIGN_CENTER: [ESC, 0x61, 0x01],
+            ALIGN_LEFT: [ESC, 0x61, 0x00],
+            ALIGN_RIGHT: [ESC, 0x61, 0x02],
+            BOLD_ON: [ESC, 0x45, 0x01],
+            BOLD_OFF: [ESC, 0x45, 0x00],
+            DOUBLE_HEIGHT: [GS, 0x21, 0x10],
+            DOUBLE_WIDTH: [GS, 0x21, 0x20],
+            DOUBLE_SIZE: [GS, 0x21, 0x30],
+            NORMAL_SIZE: [GS, 0x21, 0x00],
+            CUT: [GS, 0x56, 0x00],
+            FEED: [ESC, 0x64, 0x03],
+        }};
+        
+        async function connectPrinter() {{
+            const status = document.getElementById('printer-status');
+            
+            if (btDevice && btDevice.gatt.connected) {{
+                status.textContent = 'Printer: Connected';
+                status.className = 'printer-status connected';
+                return true;
+            }}
+            
+            try {{
+                status.textContent = 'Printer: Connecting...';
+                status.className = 'printer-status connecting';
+                
+                // Request Bluetooth device
+                btDevice = await navigator.bluetooth.requestDevice({{
+                    filters: [
+                        {{ services: [PRINTER_SERVICE] }},
+                        {{ namePrefix: 'Printer' }},
+                        {{ namePrefix: 'POS' }},
+                        {{ namePrefix: 'XP' }},
+                        {{ namePrefix: 'Xprinter' }},
+                        {{ namePrefix: 'BlueTooth' }},
+                        {{ namePrefix: 'BT' }}
+                    ],
+                    optionalServices: [PRINTER_SERVICE, '49535343-fe7d-4ae5-8fa9-9fafd205e455']
+                }});
+                
+                // Connect to GATT server
+                const server = await btDevice.gatt.connect();
+                
+                // Try known printer services
+                let service;
+                try {{
+                    service = await server.getPrimaryService(PRINTER_SERVICE);
+                }} catch {{
+                    // Try alternate service UUID (common for Chinese printers)
+                    service = await server.getPrimaryService('49535343-fe7d-4ae5-8fa9-9fafd205e455');
+                }}
+                
+                // Get characteristic
+                const chars = await service.getCharacteristics();
+                btCharacteristic = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+                
+                if (!btCharacteristic) {{
+                    throw new Error('No writable characteristic found');
+                }}
+                
+                status.textContent = 'Printer: ' + btDevice.name;
+                status.className = 'printer-status connected';
+                
+                // Handle disconnect
+                btDevice.addEventListener('gattserverdisconnected', () => {{
+                    status.textContent = 'Printer: Disconnected';
+                    status.className = 'printer-status disconnected';
+                    btCharacteristic = null;
+                }});
+                
+                return true;
+                
+            }} catch (err) {{
+                console.error('Bluetooth error:', err);
+                status.textContent = 'Printer: ' + (err.message || 'Failed');
+                status.className = 'printer-status disconnected';
+                return false;
+            }}
+        }}
+        
+        async function printReceipt() {{
+            if (!btCharacteristic) {{
+                const connected = await connectPrinter();
+                if (!connected) {{
+                    // Fallback: just show alert
+                    return false;
+                }}
+            }}
+            
+            try {{
+                const encoder = new TextEncoder();
+                const due = subtotal - discount;
+                const change = Math.max(0, tender - due);
+                const now = new Date().toLocaleString('en-ZA');
+                
+                // Build receipt
+                let receipt = [];
+                
+                // Initialize
+                receipt.push(...CMD.INIT);
+                
+                // Header - centered, bold
+                receipt.push(...CMD.ALIGN_CENTER);
+                receipt.push(...CMD.DOUBLE_SIZE);
+                receipt.push(...encoder.encode('Bedrock Cafe\\n'));
+                receipt.push(...CMD.NORMAL_SIZE);
+                receipt.push(...CMD.BOLD_ON);
+                receipt.push(...encoder.encode('PUB & GRILL\\n'));
+                receipt.push(...CMD.BOLD_OFF);
+                receipt.push(...encoder.encode('RANDFONTEIN\\n'));
+                receipt.push(...encoder.encode('011-692-1515\\n'));
+                receipt.push(...encoder.encode('\\n'));
+                receipt.push(...encoder.encode('TAX INVOICE\\n'));
+                receipt.push(...encoder.encode(now + '\\n'));
+                receipt.push(...encoder.encode('--------------------------------\\n'));
+                
+                // Items - left aligned
+                receipt.push(...CMD.ALIGN_LEFT);
+                for (const item of orderItems) {{
+                    const amount = (item.price * item.qty).toFixed(2);
+                    const line = `${{item.qty}}x ${{item.name}}`.padEnd(24) + `R ${{amount}}\\n`;
+                    receipt.push(...encoder.encode(line));
+                }}
+                receipt.push(...encoder.encode('--------------------------------\\n'));
+                
+                // Totals
+                receipt.push(...CMD.BOLD_ON);
+                receipt.push(...encoder.encode(`SUBTOTAL:`.padEnd(24) + `R ${{subtotal.toFixed(2)}}\\n`));
+                
+                if (discount > 0) {{
+                    receipt.push(...encoder.encode(`DISCOUNT:`.padEnd(24) + `R ${{discount.toFixed(2)}}\\n`));
+                }}
+                
+                receipt.push(...CMD.DOUBLE_SIZE);
+                receipt.push(...encoder.encode(`TOTAL:`.padEnd(20) + `R ${{due.toFixed(2)}}\\n`));
+                receipt.push(...CMD.NORMAL_SIZE);
+                receipt.push(...CMD.BOLD_OFF);
+                
+                // Payment info
+                receipt.push(...encoder.encode('--------------------------------\\n'));
+                receipt.push(...encoder.encode(`${{payType.toUpperCase()}}:`.padEnd(24) + `R ${{tender.toFixed(2)}}\\n`));
+                if (payType === 'cash' && change > 0) {{
+                    receipt.push(...encoder.encode(`CHANGE:`.padEnd(24) + `R ${{change.toFixed(2)}}\\n`));
+                }}
+                
+                // Footer
+                receipt.push(...encoder.encode('--------------------------------\\n'));
+                receipt.push(...encoder.encode(`Waitron: ${{waitronName}}\\n`));
+                receipt.push(...encoder.encode(`Table: ${{tableName}}\\n`));
+                receipt.push(...encoder.encode('\\n'));
+                receipt.push(...CMD.ALIGN_CENTER);
+                receipt.push(...encoder.encode('Thank you for your visit!\\n'));
+                receipt.push(...encoder.encode('\\n'));
+                receipt.push(...encoder.encode('VAT Included\\n'));
+                
+                // Feed and cut
+                receipt.push(...CMD.FEED);
+                receipt.push(...CMD.CUT);
+                
+                // Send to printer in chunks (BT has packet size limit)
+                const data = new Uint8Array(receipt);
+                const chunkSize = 100;
+                
+                for (let i = 0; i < data.length; i += chunkSize) {{
+                    const chunk = data.slice(i, i + chunkSize);
+                    await btCharacteristic.writeValueWithoutResponse(chunk);
+                    await new Promise(r => setTimeout(r, 50)); // Small delay between chunks
+                }}
+                
+                return true;
+                
+            }} catch (err) {{
+                console.error('Print error:', err);
+                alert('Print failed: ' + err.message);
+                return false;
+            }}
+        }}
         
         function setPayType(type) {{
             payType = type;
@@ -11454,6 +11706,16 @@ def bar_payment():
             document.getElementById('change-display').textContent = 'R ' + change.toFixed(2);
             document.getElementById('due-display').textContent = 'R ' + due.toFixed(2);
             document.getElementById('discount-display').textContent = 'R ' + discount.toFixed(2);
+            
+            // Update receipt preview
+            document.getElementById('receipt-total').textContent = 'R ' + due.toFixed(2);
+            if (discount > 0) {{
+                document.getElementById('receipt-discount').style.display = 'flex';
+                document.getElementById('receipt-discount-val').textContent = 'R ' + discount.toFixed(2);
+            }}
+            document.getElementById('receipt-payment').textContent = 
+                payType.toUpperCase() + ': R ' + tender.toFixed(2) + 
+                (payType === 'cash' && change > 0 ? ' | Change: R ' + change.toFixed(2) : '');
         }}
         
         function applyDiscount() {{
@@ -11480,6 +11742,10 @@ def bar_payment():
             }}
             
             try {{
+                // Print receipt first
+                await printReceipt();
+                
+                // Then complete the sale
                 const res = await fetch('/bar/api/complete-sale', {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
@@ -11493,13 +11759,14 @@ def bar_payment():
                 
                 const result = await res.json();
                 if (result.success) {{
-                    alert('Sale complete! Change: R ' + (tender - due).toFixed(2));
+                    const change = Math.max(0, tender - due);
+                    alert('Sale complete!' + (change > 0 ? ' Change: R ' + change.toFixed(2) : ''));
                     window.location.href = '/bar';
                 }} else {{
                     alert('Error: ' + result.error);
                 }}
             }} catch(e) {{
-                alert('Error completing sale');
+                alert('Error completing sale: ' + e.message);
             }}
         }}
     </script>
@@ -16676,14 +16943,16 @@ class FinancialAnalyzer:
 
 Addisionele konteks: {business_context if business_context else "Geen"}
 
+KRITIEKE REËL: Verwys SLEGS na data wat hierbo verskyn. MOET NOOIT name, bedrae, of persentasies uitdink wat nie in die data is nie. As jy nie spesifieke kliënte of transaksies sien nie, moenie hulle noem nie.
+
 Skryf 'n professionele maar verstaanbare analise in Afrikaans:
-1. Begin met die belangrikste bevinding
-2. Wys op probleme of risiko's met spesifieke bedrae
-3. Gee aksie-gebaseerde aanbevelings
+1. Begin met die belangrikste bevinding uit die WERKLIKE data
+2. Wys op probleme of risiko's - gebruik SLEGS bedrae wat in die data verskyn
+3. Gee aksie-gebaseerde aanbevelings gebaseer op die WERKLIKE syfers
 4. Hou dit eenvoudig maar professioneel - geen emojis
 
 Gebruik korrekte terme: BTW, LBS, debiteure, krediteure.
-Wees spesifiek met Rand bedrae. Vertel die storie agter die syfers."""
+Vertel die storie agter die syfers - maar SLEGS die syfers wat jy het."""
         else:
             prompt = f"""You are a senior financial analyst writing reports for South African business owners.
 
@@ -16693,14 +16962,16 @@ A user uploaded a {doc_name}. Here's the calculated summary:
 
 Additional context: {business_context if business_context else "None"}
 
+CRITICAL RULE: ONLY reference data that appears above. NEVER invent names, amounts, percentages, or customer details that are not explicitly in the data. If you don't see specific customer names or transaction details, DO NOT make them up. This is critical - someone might take action based on your report.
+
 Write a professional but understandable analysis:
-1. Start with the most important finding
-2. Point out problems or risks with specific amounts
-3. Give actionable recommendations
+1. Start with the most important finding from the ACTUAL data
+2. Point out problems or risks - use ONLY amounts that appear in the data
+3. Give actionable recommendations based on the REAL numbers
 4. Keep it simple but professional - no emojis
 
 Use correct terms: VAT, PAYE, debtors, creditors.
-Be specific with Rand amounts. Tell the story behind the numbers."""
+Tell the story behind the numbers - but ONLY the numbers you actually have."""
 
         try:
             response = requests.post(
@@ -18571,7 +18842,9 @@ The user is now asking a follow-up question about this data."""
 
 User's follow-up question: {question}
 
-Provide a helpful, specific answer based on the analysis. Be concise but thorough. Use specific numbers from the data where relevant. No emojis. Professional tone."""
+CRITICAL RULE: ONLY reference data that appears in the Summary above. NEVER invent customer names, specific amounts, percentages, or details that are not explicitly shown. If you don't have specific information to answer the question, say so honestly. Someone might take real-world action based on your answer - do not make things up.
+
+Provide a helpful, specific answer based on the analysis. Be concise but thorough. Use specific numbers from the data where relevant. No emojis. Professional tone. If you don't know or can't see specific details in the data, say "I don't have that specific information in the data provided" rather than guessing."""
 
     api_key = Config.ANTHROPIC_API_KEY
     if not api_key:
