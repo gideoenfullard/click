@@ -15077,38 +15077,39 @@ class FinancialAnalyzer:
         doc_name = cls.DOCUMENT_TYPES.get(doc_type, "Financial Data")
         
         if lang == "af":
-            prompt = f"""Jy is "Jou Syfer Ou" - 'n vriendelike finansiële assistent vir Suid-Afrikaanse besighede.
+            prompt = f"""Jy is 'n senior finansiele analis wat verslae skryf vir Suid-Afrikaanse besigheidseienaars.
 
-'n Gebruiker het 'n {doc_name} opgelaai. Hier is die Flask-berekende opsomming:
+'n Gebruiker het 'n {doc_name} opgelaai. Hier is die berekende opsomming:
 
 {summary_text}
 
 Addisionele konteks: {business_context if business_context else "Geen"}
 
-Gee 'n vriendelike, praktiese analise in Afrikaans:
-1. Begin met die belangrikste bevinding (goed of sleg)
-2. Wys op enige probleme of risiko's
-3. Gee spesifieke, aksie-gebaseerde aanbevelings
-4. Hou dit eenvoudig - graad 5 leesvlak maar professioneel
+Skryf 'n professionele maar verstaanbare analise in Afrikaans:
+1. Begin met die belangrikste bevinding
+2. Wys op probleme of risiko's met spesifieke bedrae
+3. Gee aksie-gebaseerde aanbevelings
+4. Hou dit eenvoudig maar professioneel - geen emojis
 
-Gebruik terme soos BTW (nie VAT), debiteure, krediteure. Wees spesifiek met Rand bedrae.
-Moenie net die syfers herhaal nie - vertel die STORIE agter die syfers."""
+Gebruik korrekte terme: BTW, LBS, debiteure, krediteure.
+Wees spesifiek met Rand bedrae. Vertel die storie agter die syfers."""
         else:
-            prompt = f"""You are "Your Numbers Guy" - a friendly financial assistant for South African businesses.
+            prompt = f"""You are a senior financial analyst writing reports for South African business owners.
 
-A user uploaded a {doc_name}. Here's the Flask-calculated summary:
+A user uploaded a {doc_name}. Here's the calculated summary:
 
 {summary_text}
 
 Additional context: {business_context if business_context else "None"}
 
-Provide a friendly, practical analysis:
-1. Start with the most important finding (good or bad)
-2. Point out any problems or risks
-3. Give specific, actionable recommendations
-4. Keep it simple - conversational but professional
+Write a professional but understandable analysis:
+1. Start with the most important finding
+2. Point out problems or risks with specific amounts
+3. Give actionable recommendations
+4. Keep it simple but professional - no emojis
 
-Be specific with Rand amounts. Don't just repeat the numbers - tell the STORY behind the numbers."""
+Use correct terms: VAT, PAYE, debtors, creditors.
+Be specific with Rand amounts. Tell the story behind the numbers."""
 
         try:
             response = requests.post(
@@ -15133,6 +15134,170 @@ Be specific with Rand amounts. Don't just repeat the numbers - tell the STORY be
                 return f"API error: {response.status_code}"
         except Exception as e:
             return f"Error: {str(e)}"
+    
+    @classmethod
+    def generate_full_report(cls, analysis: dict, interpretation: str, lang: str = "en") -> str:
+        """Generate full HTML report with ALL data for PDF export"""
+        doc_type = analysis.get("doc_type", "unknown")
+        doc_name = cls.DOCUMENT_TYPES.get(doc_type, "Financial Data")
+        summary = analysis.get("summary", {})
+        
+        # Header
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>{doc_name} - {"Volledige Verslag" if lang == "af" else "Full Report"}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; color: #333; line-height: 1.6; }}
+        h1 {{ color: #1a1a2e; border-bottom: 2px solid #8b5cf6; padding-bottom: 10px; }}
+        h2 {{ color: #4a4a6a; margin-top: 30px; }}
+        h3 {{ color: #6a6a8a; }}
+        .summary-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin: 20px 0; }}
+        .summary-item {{ background: #f8f8fc; padding: 15px; border-radius: 8px; }}
+        .summary-label {{ font-size: 12px; color: #666; text-transform: uppercase; }}
+        .summary-value {{ font-size: 20px; font-weight: bold; color: #1a1a2e; }}
+        .interpretation {{ background: #f0f0ff; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #8b5cf6; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
+        th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }}
+        th {{ background: #f0f0f5; font-weight: 600; }}
+        .amount {{ text-align: right; font-family: monospace; }}
+        .negative {{ color: #dc2626; }}
+        .positive {{ color: #16a34a; }}
+        .warning {{ background: #fef3cd; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #f59e0b; }}
+        .danger {{ background: #fee2e2; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #dc2626; }}
+        .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }}
+    </style>
+</head>
+<body>
+    <h1>{doc_name}</h1>
+    <p><strong>{"Gegenereer" if lang == "af" else "Generated"}:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
+"""
+        
+        # Summary section
+        html += f'<h2>{"Opsomming" if lang == "af" else "Summary"}</h2>'
+        html += '<div class="summary-grid">'
+        
+        if doc_type == "gl":
+            html += f"""
+                <div class="summary-item"><div class="summary-label">{"Transaksies" if lang == "af" else "Transactions"}</div><div class="summary-value">{summary.get("total_transactions", 0):,}</div></div>
+                <div class="summary-item"><div class="summary-label">{"Rekeninge" if lang == "af" else "Accounts"}</div><div class="summary-value">{summary.get("total_accounts", 0)}</div></div>
+                <div class="summary-item"><div class="summary-label">{"Totaal Debiet" if lang == "af" else "Total Debit"}</div><div class="summary-value">R {summary.get("total_debit", 0):,.2f}</div></div>
+                <div class="summary-item"><div class="summary-label">{"Totaal Krediet" if lang == "af" else "Total Credit"}</div><div class="summary-value">R {summary.get("total_credit", 0):,.2f}</div></div>
+            """
+        elif doc_type in ["aged_debtors", "aged_creditors"]:
+            html += f"""
+                <div class="summary-item"><div class="summary-label">{"Totaal Balans" if lang == "af" else "Total Balance"}</div><div class="summary-value">R {summary.get("total_balance", 0):,.2f}</div></div>
+                <div class="summary-item"><div class="summary-label">{"Lopend" if lang == "af" else "Current"}</div><div class="summary-value">R {summary.get("current", 0):,.2f}</div></div>
+                <div class="summary-item"><div class="summary-label">{"Agterstallig" if lang == "af" else "Overdue"}</div><div class="summary-value">R {summary.get("total_overdue", 0):,.2f}</div></div>
+                <div class="summary-item"><div class="summary-label">{"Agterstallig %" if lang == "af" else "Overdue %"}</div><div class="summary-value">{summary.get("overdue_pct", 0):.1f}%</div></div>
+            """
+        elif doc_type == "bank":
+            html += f"""
+                <div class="summary-item"><div class="summary-label">{"Geld In" if lang == "af" else "Money In"}</div><div class="summary-value positive">R {summary.get("total_money_in", 0):,.2f}</div></div>
+                <div class="summary-item"><div class="summary-label">{"Geld Uit" if lang == "af" else "Money Out"}</div><div class="summary-value negative">R {summary.get("total_money_out", 0):,.2f}</div></div>
+                <div class="summary-item"><div class="summary-label">{"Netto Vloei" if lang == "af" else "Net Flow"}</div><div class="summary-value">R {summary.get("net_flow", 0):,.2f}</div></div>
+                <div class="summary-item"><div class="summary-label">{"Laagste Balans" if lang == "af" else "Lowest Balance"}</div><div class="summary-value">R {summary.get("lowest_balance", 0):,.2f}</div></div>
+            """
+        
+        html += '</div>'
+        
+        # AI Interpretation
+        html += f'<h2>{"Analise" if lang == "af" else "Analysis"}</h2>'
+        html += f'<div class="interpretation">{interpretation.replace(chr(10), "<br>")}</div>'
+        
+        # Accounts table (for GL)
+        if doc_type == "gl" and analysis.get("accounts"):
+            html += f'<h2>{"Alle Rekeninge" if lang == "af" else "All Accounts"}</h2>'
+            html += f"""<table>
+                <tr>
+                    <th>{"Rekening" if lang == "af" else "Account"}</th>
+                    <th class="amount">{"Debiet" if lang == "af" else "Debit"}</th>
+                    <th class="amount">{"Krediet" if lang == "af" else "Credit"}</th>
+                    <th class="amount">{"Balans" if lang == "af" else "Balance"}</th>
+                    <th>{"Trans" if lang == "af" else "Trans"}</th>
+                </tr>"""
+            for acc in analysis.get("accounts", []):
+                bal_class = "negative" if acc.get("balance", 0) < 0 else ""
+                html += f"""<tr>
+                    <td>{acc.get("name", "")}</td>
+                    <td class="amount">R {acc.get("debit", 0):,.2f}</td>
+                    <td class="amount">R {acc.get("credit", 0):,.2f}</td>
+                    <td class="amount {bal_class}">R {acc.get("balance", 0):,.2f}</td>
+                    <td>{acc.get("transaction_count", 0)}</td>
+                </tr>"""
+            html += '</table>'
+        
+        # Monthly trend (for GL)
+        if doc_type == "gl" and analysis.get("monthly_trend"):
+            html += f'<h2>{"Maandelikse Tendens" if lang == "af" else "Monthly Trend"}</h2>'
+            html += f"""<table>
+                <tr>
+                    <th>{"Maand" if lang == "af" else "Month"}</th>
+                    <th class="amount">{"Debiet" if lang == "af" else "Debit"}</th>
+                    <th class="amount">{"Krediet" if lang == "af" else "Credit"}</th>
+                    <th class="amount">{"Netto" if lang == "af" else "Net"}</th>
+                </tr>"""
+            for m in analysis.get("monthly_trend", []):
+                net_class = "negative" if m.get("net", 0) < 0 else "positive"
+                html += f"""<tr>
+                    <td>{m.get("month", "")}</td>
+                    <td class="amount">R {m.get("debit", 0):,.2f}</td>
+                    <td class="amount">R {m.get("credit", 0):,.2f}</td>
+                    <td class="amount {net_class}">R {m.get("net", 0):,.2f}</td>
+                </tr>"""
+            html += '</table>'
+        
+        # Entities table (for aged reports)
+        if doc_type in ["aged_debtors", "aged_creditors"] and analysis.get("entities"):
+            entity_type = "Debiteure" if doc_type == "aged_debtors" else "Krediteure"
+            entity_type_en = "Debtors" if doc_type == "aged_debtors" else "Creditors"
+            html += f'<h2>{"Alle " + entity_type if lang == "af" else "All " + entity_type_en}</h2>'
+            html += f"""<table>
+                <tr>
+                    <th>{"Naam" if lang == "af" else "Name"}</th>
+                    <th class="amount">{"Lopend" if lang == "af" else "Current"}</th>
+                    <th class="amount">30 {"Dae" if lang == "af" else "Days"}</th>
+                    <th class="amount">60 {"Dae" if lang == "af" else "Days"}</th>
+                    <th class="amount">90 {"Dae" if lang == "af" else "Days"}</th>
+                    <th class="amount">120+ {"Dae" if lang == "af" else "Days"}</th>
+                    <th class="amount">{"Totaal" if lang == "af" else "Total"}</th>
+                </tr>"""
+            for e in analysis.get("entities", []):
+                html += f"""<tr>
+                    <td>{e.get("name", "")}</td>
+                    <td class="amount">R {e.get("current", 0):,.2f}</td>
+                    <td class="amount">R {e.get("days_30", 0):,.2f}</td>
+                    <td class="amount">R {e.get("days_60", 0):,.2f}</td>
+                    <td class="amount">R {e.get("days_90", 0):,.2f}</td>
+                    <td class="amount">R {e.get("days_120_plus", 0):,.2f}</td>
+                    <td class="amount"><strong>R {e.get("total", 0):,.2f}</strong></td>
+                </tr>"""
+            html += '</table>'
+        
+        # Duplicates warning
+        if analysis.get("potential_duplicates"):
+            html += f'<div class="warning"><h3>{"Moontlike Duplikate" if lang == "af" else "Potential Duplicates"}</h3><ul>'
+            for dup in analysis.get("potential_duplicates", []):
+                html += f'<li><strong>{dup.get("reference", "")}</strong>: R {dup.get("amount", 0):,.2f} ({dup.get("date1", "")} / {dup.get("date2", "")})</li>'
+            html += '</ul></div>'
+        
+        # High risk warning
+        if analysis.get("high_risk"):
+            html += f'<div class="danger"><h3>{"Hoe Risiko" if lang == "af" else "High Risk"}</h3><ul>'
+            for r in analysis.get("high_risk", []):
+                html += f'<li><strong>{r.get("name", "")}</strong>: R {r.get("total", 0):,.2f} ({r.get("overdue_pct", 0):.0f}% {"agterstallig" if lang == "af" else "overdue"})</li>'
+            html += '</ul></div>'
+        
+        # Footer
+        html += f"""
+    <div class="footer">
+        <p>{"Verslag gegenereer deur Click AI - Jou Syfer Ou" if lang == "af" else "Report generated by Click AI - Your Numbers Guy"}</p>
+    </div>
+</body>
+</html>"""
+        
+        return html
 
 
 class TBAnalyzer:
@@ -15943,20 +16108,76 @@ def universal_analyzer():
                             # Get Claude interpretation
                             interpretation = FinancialAnalyzer.interpret_with_claude(analysis, lang, context)
                             
-                            # Store SLIM results only (fits in session)
+                            # Store REALLY SLIM results (must fit in 4KB cookie!)
+                            # Strip sample_transactions from accounts
+                            slim_accounts = []
+                            for acc in analysis.get("accounts", [])[:15]:
+                                slim_accounts.append({
+                                    "name": acc.get("name"),
+                                    "balance": acc.get("balance"),
+                                    "transaction_count": acc.get("transaction_count")
+                                })
+                            
+                            # Strip transaction details from duplicates
+                            slim_dups = []
+                            for dup in analysis.get("potential_duplicates", [])[:5]:
+                                slim_dups.append({
+                                    "reference": dup.get("reference"),
+                                    "amount": dup.get("amount"),
+                                    "date1": dup.get("date1"),
+                                    "date2": dup.get("date2")
+                                })
+                            
+                            # Strip transaction details from anomalies  
+                            slim_anoms = []
+                            for anom in analysis.get("anomalies", [])[:5]:
+                                slim_anoms.append({
+                                    "account": anom.get("account"),
+                                    "this_amount": anom.get("this_amount"),
+                                    "multiple": anom.get("multiple")
+                                })
+                            
                             slim_analysis = {
                                 "doc_type": analysis.get("doc_type"),
                                 "summary": analysis.get("summary", {}),
                                 "row_count": analysis.get("row_count", 0),
-                                "warnings": analysis.get("warnings", [])[:5],
-                                "potential_duplicates": analysis.get("potential_duplicates", [])[:10],
-                                "anomalies": analysis.get("anomalies", [])[:10],
-                                "high_risk": analysis.get("high_risk", [])[:15],
-                                "accounts": analysis.get("accounts", [])[:20],
-                                "monthly_trend": analysis.get("monthly_trend", [])[-12:],
-                                "entities": analysis.get("entities", [])[:20],
+                                "warnings": analysis.get("warnings", [])[:3],
+                                "potential_duplicates": slim_dups,
+                                "anomalies": slim_anoms,
+                                "high_risk": analysis.get("high_risk", [])[:10],
+                                "accounts": slim_accounts,
+                                "monthly_trend": analysis.get("monthly_trend", [])[-6:],
+                                "entities": analysis.get("entities", [])[:10],
                             }
                             
+                            # Generate FULL report HTML now and store in memory cache
+                            # (Can't store in session - too big for cookie)
+                            full_analysis = {
+                                "doc_type": analysis.get("doc_type"),
+                                "summary": analysis.get("summary", {}),
+                                "accounts": analysis.get("accounts", []),  # ALL accounts
+                                "monthly_trend": analysis.get("monthly_trend", []),  # ALL months
+                                "potential_duplicates": analysis.get("potential_duplicates", []),
+                                "anomalies": analysis.get("anomalies", []),
+                                "high_risk": analysis.get("high_risk", []),
+                                "entities": analysis.get("entities", []),  # ALL entities
+                            }
+                            
+                            # Generate report HTML and store in global cache
+                            report_html = FinancialAnalyzer.generate_full_report(full_analysis, interpretation, lang)
+                            report_id = f"{user.get('id', 'anon')}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                            
+                            # Store in global cache (will be cleared on restart, that's fine)
+                            if not hasattr(app, 'report_cache'):
+                                app.report_cache = {}
+                            app.report_cache[report_id] = {
+                                "html": report_html,
+                                "created": datetime.now(),
+                                "doc_type": analysis.get("doc_type")
+                            }
+                            
+                            # Only store report_id in session (small)
+                            session['analyze_report_id'] = report_id
                             session['analyze_results'] = slim_analysis
                             session['analyze_interpretation'] = interpretation
                             session['analyze_lang'] = lang
@@ -15968,12 +16189,12 @@ def universal_analyzer():
             except Exception as e:
                 message = f'<div class="alert alert-error">Error: {str(e)}</div>'
     
-    # Labels
+    # Labels - no emojis
     lbl = {
-        "title": "📊 Jou Syfer Ou" if lang == "af" else "📊 Your Numbers Guy",
+        "title": "Jou Syfer Ou" if lang == "af" else "Your Numbers Guy",
         "subtitle": "Gooi enige CSV - ek maak sin daarvan" if lang == "af" else "Throw any CSV at me - I'll make sense of it",
         "supported": "Ondersteunde dokumente:" if lang == "af" else "Supported documents:",
-        "upload_label": "Kies lêer of sleep hierheen" if lang == "af" else "Choose file or drag here",
+        "upload_label": "Kies leer of sleep hierheen" if lang == "af" else "Choose file or drag here",
         "context_label": "Addisionele konteks (opsioneel)" if lang == "af" else "Additional context (optional)",
         "context_placeholder": "bv. Boerdery besigheid, seisoenale verkope..." if lang == "af" else "e.g. Farming business, seasonal sales...",
         "analyze_btn": "Analiseer" if lang == "af" else "Analyze",
@@ -15982,7 +16203,7 @@ def universal_analyzer():
         "bank": "Bankstaat" if lang == "af" else "Bank Statement",
         "aged_d": "Ouderdomsanalise Debiteure" if lang == "af" else "Aged Debtors",
         "aged_c": "Ouderdomsanalise Krediteure" if lang == "af" else "Aged Creditors",
-        "any": "Enige finansiële CSV" if lang == "af" else "Any financial CSV",
+        "any": "Enige finansiele CSV" if lang == "af" else "Any financial CSV",
     }
     
     content = f'''
@@ -16489,6 +16710,18 @@ def analyze_results():
         .dup-item:last-child, .anom-item:last-child, .risk-item:last-child {{
             border-bottom: none;
         }}
+        .action-buttons {{
+            display: flex;
+            gap: 12px;
+        }}
+        .btn-download {{
+            background: var(--green);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+        }}
     </style>
     
     <div class="result-header">
@@ -16496,7 +16729,10 @@ def analyze_results():
             <div style="color: var(--text-muted); font-size: 14px;">{lbl["detected"]}</div>
             <div class="doc-type-badge">{doc_name}</div>
         </div>
-        <a href="/analyze" class="btn btn-primary">{lbl["another"]}</a>
+        <div class="action-buttons">
+            <a href="/analyze/download" class="btn-download">{"Laai Volledige Verslag Af" if lang == "af" else "Download Full Report"}</a>
+            <a href="/analyze" class="btn btn-primary">{lbl["another"]}</a>
+        </div>
     </div>
     
     {warnings_html}
@@ -16504,8 +16740,7 @@ def analyze_results():
     
     <div class="interpretation-box">
         <div class="interpretation-header">
-            <span>🧠</span>
-            <span>{"Jou Syfer Ou Sê" if lang == "af" else "Your Numbers Guy Says"}</span>
+            <span style="font-weight: bold;">{"Analise" if lang == "af" else "Analysis"}</span>
         </div>
         <div>{interpretation_html}</div>
     </div>
@@ -16523,6 +16758,33 @@ def analyze_results():
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
+    return response
+
+
+@app.route("/analyze/download")
+def analyze_download():
+    """Download full report as HTML"""
+    from flask import make_response
+    
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    report_id = session.get('analyze_report_id')
+    
+    if not report_id or not hasattr(app, 'report_cache') or report_id not in app.report_cache:
+        return redirect("/analyze")
+    
+    cached = app.report_cache[report_id]
+    report_html = cached.get("html", "")
+    doc_type = cached.get("doc_type", "report")
+    
+    filename = f"analysis_{doc_type}_{datetime.now().strftime('%Y%m%d_%H%M')}.html"
+    
+    response = make_response(report_html)
+    response.headers['Content-Type'] = 'text/html; charset=utf-8'
+    response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    
     return response
 
 
