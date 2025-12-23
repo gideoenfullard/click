@@ -10088,6 +10088,1577 @@ Next: Piece 7 - Stock Management
 """
 
 # =============================================================================
+# BAR/RESTAURANT POS - TOUCH OPTIMIZED (4POS STYLE)
+# =============================================================================
+
+# Bar POS Categories (matching 4POS layout)
+BAR_CATEGORIES = {
+    "drinks": [
+        {"id": "cold_drinks", "name": "Cold Drinks", "color": "#1a1a2e"},
+        {"id": "juice", "name": "Juice", "color": "#1a1a2e"},
+        {"id": "cordials", "name": "Cordials", "color": "#1a1a2e"},
+        {"id": "cocktails", "name": "Cocktails", "color": "#1a1a2e"},
+        {"id": "alcohol", "name": "Alcohol", "color": "#1a1a2e"},
+        {"id": "beer", "name": "Beer", "color": "#1a1a2e"},
+        {"id": "ciders", "name": "Ciders", "color": "#1a1a2e"},
+        {"id": "shooters", "name": "Shooters", "color": "#1a1a2e"},
+        {"id": "wine", "name": "Wine", "color": "#1a1a2e"},
+    ],
+    "food": [
+        {"id": "breakfast", "name": "Breakfast", "color": "#2d3748"},
+        {"id": "starters", "name": "Starters", "color": "#2d3748"},
+        {"id": "salads", "name": "Salads", "color": "#2d3748"},
+        {"id": "wraps", "name": "Wraps", "color": "#2d3748"},
+        {"id": "toasted", "name": "Toasted", "color": "#2d3748"},
+        {"id": "burgers", "name": "Burgers", "color": "#2d3748"},
+        {"id": "baskets", "name": "Baskets", "color": "#2d3748"},
+        {"id": "sauces", "name": "Sauces", "color": "#2d3748"},
+        {"id": "mains", "name": "Mains", "color": "#2d3748"},
+        {"id": "pizza", "name": "Pizza", "color": "#2d3748"},
+        {"id": "add_ons", "name": "Add Ons", "color": "#2d3748"},
+        {"id": "kiddies", "name": "Kiddies", "color": "#2d3748"},
+    ],
+    "specials": [
+        {"id": "drink_specials", "name": "Drink Specials", "color": "#7c3aed"},
+        {"id": "big_specials", "name": "Big Specials", "color": "#7c3aed"},
+        {"id": "daily_special", "name": "Daily Special", "color": "#7c3aed"},
+        {"id": "friday_specials", "name": "Friday Specials", "color": "#7c3aed"},
+        {"id": "food_specials", "name": "Food Specials", "color": "#7c3aed"},
+    ],
+    "extras": [
+        {"id": "extras", "name": "Extras", "color": "#059669"},
+        {"id": "delivery_fee", "name": "Delivery Fee", "color": "#dc2626"},
+    ]
+}
+
+
+@app.route("/bar")
+def bar_pos():
+    """Bar/Restaurant POS - Touch optimized like 4POS"""
+    user = UserSession.get_current_user()
+    if not user:
+        return redirect("/bar/login")
+    
+    # Get waitron info from session
+    waitron = session.get('bar_waitron', {})
+    if not waitron:
+        return redirect("/bar/login")
+    
+    waitron_name = waitron.get('name', 'Staff')
+    
+    # Get current table/tab from session
+    current_table = session.get('bar_current_table', None)
+    current_order = session.get('bar_current_order', [])
+    
+    content = f'''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bar POS - Click AI</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }}
+        
+        :root {{
+            --bg-dark: #0f0f1a;
+            --bg-card: #1a1a2e;
+            --bg-input: #252540;
+            --text: #ffffff;
+            --text-muted: #a0a0b0;
+            --purple: #8b5cf6;
+            --green: #22c55e;
+            --red: #ef4444;
+            --orange: #f97316;
+            --blue: #3b82f6;
+            --border: #2a2a4a;
+        }}
+        
+        html, body {{
+            height: 100%;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+        }}
+        
+        .bar-container {{
+            display: grid;
+            grid-template-columns: 100px 1fr 320px;
+            grid-template-rows: 1fr;
+            height: 100vh;
+            gap: 2px;
+            background: var(--border);
+        }}
+        
+        /* Left Sidebar - Main Actions */
+        .sidebar {{
+            background: var(--blue);
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }}
+        
+        .sidebar-btn {{
+            padding: 16px 8px;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: white;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            text-align: center;
+            transition: background 0.15s;
+        }}
+        
+        .sidebar-btn:hover {{
+            background: rgba(255,255,255,0.2);
+        }}
+        
+        .sidebar-btn:active {{
+            background: rgba(255,255,255,0.3);
+        }}
+        
+        .sidebar-btn.active {{
+            background: rgba(0,0,0,0.3);
+        }}
+        
+        /* Main Area - Categories and Items */
+        .main-area {{
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-dark);
+            overflow: hidden;
+        }}
+        
+        /* Category Tabs */
+        .category-tabs {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            padding: 8px;
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+        }}
+        
+        .cat-btn {{
+            padding: 12px 16px;
+            background: var(--bg-input);
+            border: none;
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+        }}
+        
+        .cat-btn:hover {{
+            background: var(--purple);
+        }}
+        
+        .cat-btn.active {{
+            background: var(--purple);
+        }}
+        
+        .cat-btn.drinks {{ background: #1a1a2e; }}
+        .cat-btn.food {{ background: #2d3748; }}
+        .cat-btn.specials {{ background: #7c3aed; }}
+        
+        /* Items Grid */
+        .items-area {{
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+            gap: 8px;
+            align-content: start;
+        }}
+        
+        .item-btn {{
+            aspect-ratio: 1;
+            padding: 12px 8px;
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            transition: all 0.15s;
+            gap: 4px;
+        }}
+        
+        .item-btn:hover {{
+            border-color: var(--purple);
+            transform: scale(1.02);
+        }}
+        
+        .item-btn:active {{
+            transform: scale(0.98);
+            background: var(--purple);
+        }}
+        
+        .item-btn .price {{
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--green);
+        }}
+        
+        /* Right Panel - Order */
+        .order-panel {{
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-card);
+        }}
+        
+        /* Order Header */
+        .order-header {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2px;
+            padding: 8px;
+            background: var(--bg-input);
+        }}
+        
+        .order-info {{
+            padding: 8px 12px;
+            background: linear-gradient(135deg, #059669, #10b981);
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 14px;
+        }}
+        
+        .order-info.table {{
+            background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+        }}
+        
+        /* Order Items List */
+        .order-items {{
+            flex: 1;
+            overflow-y: auto;
+            background: #f5f5f5;
+        }}
+        
+        .order-item {{
+            display: grid;
+            grid-template-columns: 30px 1fr 60px 40px 70px;
+            padding: 8px 12px;
+            border-bottom: 1px solid #ddd;
+            font-size: 13px;
+            color: #333;
+            align-items: center;
+        }}
+        
+        .order-item:nth-child(odd) {{
+            background: #fff;
+        }}
+        
+        .order-item .line-num {{
+            color: #666;
+        }}
+        
+        .order-item .qty {{
+            text-align: center;
+            font-weight: 600;
+        }}
+        
+        .order-item .amount {{
+            text-align: right;
+            font-weight: 600;
+        }}
+        
+        .order-header-row {{
+            display: grid;
+            grid-template-columns: 30px 1fr 60px 40px 70px;
+            padding: 8px 12px;
+            background: #e0e0e0;
+            font-size: 11px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+        }}
+        
+        /* Order Actions */
+        .order-actions {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4px;
+            padding: 8px;
+        }}
+        
+        .action-btn {{
+            padding: 16px 8px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.15s;
+        }}
+        
+        .action-btn.primary {{
+            background: var(--green);
+            color: white;
+        }}
+        
+        .action-btn.secondary {{
+            background: var(--bg-input);
+            color: var(--text);
+        }}
+        
+        .action-btn.danger {{
+            background: var(--red);
+            color: white;
+        }}
+        
+        .action-btn:active {{
+            transform: scale(0.98);
+        }}
+        
+        /* Total Bar */
+        .total-bar {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: var(--bg-input);
+            font-size: 24px;
+            font-weight: 700;
+        }}
+        
+        .total-bar .label {{
+            color: var(--text-muted);
+        }}
+        
+        .total-bar .amount {{
+            color: var(--green);
+        }}
+        
+        /* Quantity Popup */
+        .qty-popup {{
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 24px;
+            z-index: 1000;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }}
+        
+        .qty-popup.show {{
+            display: block;
+        }}
+        
+        .overlay {{
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 999;
+        }}
+        
+        .overlay.show {{
+            display: block;
+        }}
+        
+        .numpad {{
+            display: grid;
+            grid-template-columns: repeat(3, 70px);
+            gap: 8px;
+        }}
+        
+        .numpad-btn {{
+            padding: 20px;
+            font-size: 24px;
+            font-weight: 700;
+            background: var(--bg-input);
+            border: none;
+            border-radius: 10px;
+            color: var(--text);
+            cursor: pointer;
+        }}
+        
+        .numpad-btn:active {{
+            background: var(--purple);
+        }}
+        
+        .numpad-btn.enter {{
+            background: var(--green);
+        }}
+        
+        .numpad-btn.del {{
+            background: var(--red);
+        }}
+        
+        .qty-display {{
+            font-size: 32px;
+            font-weight: 700;
+            text-align: center;
+            padding: 16px;
+            margin-bottom: 16px;
+            background: var(--bg-input);
+            border-radius: 8px;
+        }}
+        
+        /* Mobile adjustments */
+        @media (max-width: 768px) {{
+            .bar-container {{
+                grid-template-columns: 70px 1fr 280px;
+            }}
+            
+            .sidebar-btn {{
+                font-size: 11px;
+                padding: 12px 4px;
+            }}
+            
+            .items-area {{
+                grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+            }}
+            
+            .item-btn {{
+                font-size: 11px;
+            }}
+        }}
+        
+        @media (max-width: 600px) {{
+            .bar-container {{
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr auto;
+            }}
+            
+            .sidebar {{
+                flex-direction: row;
+                overflow-x: auto;
+            }}
+            
+            .sidebar-btn {{
+                min-width: 80px;
+            }}
+            
+            .order-panel {{
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                max-height: 50vh;
+                border-radius: 16px 16px 0 0;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="bar-container">
+        <!-- Left Sidebar -->
+        <div class="sidebar">
+            <button class="sidebar-btn" onclick="showOptions()">Option<br>Menu</button>
+            <button class="sidebar-btn" onclick="addTable()">Add a<br>Table</button>
+            <button class="sidebar-btn" onclick="cashSale()">Cash<br>Sale</button>
+            <button class="sidebar-btn" onclick="delivery()">Delivery</button>
+            <button class="sidebar-btn" onclick="location.href='/bar/logout'">Logoff</button>
+            <button class="sidebar-btn active">{waitron_name}</button>
+        </div>
+        
+        <!-- Main Area -->
+        <div class="main-area">
+            <!-- Category Tabs -->
+            <div class="category-tabs" id="categories">
+                <!-- Drinks -->
+                <button class="cat-btn drinks active" onclick="showCategory('cold_drinks')">Cold Drinks</button>
+                <button class="cat-btn drinks" onclick="showCategory('juice')">Juice</button>
+                <button class="cat-btn drinks" onclick="showCategory('cordials')">Cordials</button>
+                <button class="cat-btn drinks" onclick="showCategory('cocktails')">Cocktails</button>
+                <button class="cat-btn drinks" onclick="showCategory('alcohol')">Alcohol</button>
+                <button class="cat-btn drinks" onclick="showCategory('beer')">Beer</button>
+                <button class="cat-btn drinks" onclick="showCategory('ciders')">Ciders</button>
+                <button class="cat-btn drinks" onclick="showCategory('shooters')">Shooters</button>
+                <button class="cat-btn drinks" onclick="showCategory('wine')">Wine</button>
+                <!-- Food -->
+                <button class="cat-btn food" onclick="showCategory('breakfast')">Breakfast</button>
+                <button class="cat-btn food" onclick="showCategory('starters')">Starters</button>
+                <button class="cat-btn food" onclick="showCategory('salads')">Salads</button>
+                <button class="cat-btn food" onclick="showCategory('wraps')">Wraps</button>
+                <button class="cat-btn food" onclick="showCategory('toasted')">Toasted</button>
+                <button class="cat-btn food" onclick="showCategory('burgers')">Burgers</button>
+                <button class="cat-btn food" onclick="showCategory('baskets')">Baskets</button>
+                <button class="cat-btn food" onclick="showCategory('mains')">Mains</button>
+                <button class="cat-btn food" onclick="showCategory('pizza')">Pizza</button>
+                <button class="cat-btn food" onclick="showCategory('kiddies')">Kiddies</button>
+                <!-- Specials -->
+                <button class="cat-btn specials" onclick="showCategory('drink_specials')">Drink Specials</button>
+                <button class="cat-btn specials" onclick="showCategory('daily_special')">Daily Special</button>
+                <button class="cat-btn specials" onclick="showCategory('friday_specials')">Friday Specials</button>
+            </div>
+            
+            <!-- Items Grid -->
+            <div class="items-area" id="items">
+                <!-- Items loaded dynamically -->
+                <div style="color: var(--text-muted); padding: 40px; text-align: center;">
+                    Select a category to see items
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Panel - Order -->
+        <div class="order-panel">
+            <div class="order-header">
+                <div class="order-info">{waitron_name}</div>
+                <div class="order-info table" id="table-display">New Table</div>
+            </div>
+            
+            <div class="order-header-row">
+                <span>#</span>
+                <span>Description</span>
+                <span>Price</span>
+                <span>Qty</span>
+                <span>Amount</span>
+            </div>
+            
+            <div class="order-items" id="order-items">
+                <!-- Order items here -->
+            </div>
+            
+            <div class="order-actions">
+                <button class="action-btn secondary" onclick="changeQty()">Quantity</button>
+                <button class="action-btn secondary" onclick="changePrice()">Price</button>
+                <button class="action-btn danger" onclick="exitOrder()">EXIT</button>
+                <button class="action-btn primary" onclick="cashoutTable()">Cashout Table</button>
+                <button class="action-btn secondary" onclick="revokeItem()">Revoke</button>
+                <button class="action-btn secondary" onclick="reversal()">Reversal</button>
+                <button class="action-btn primary" onclick="finishOrder()">FINISH</button>
+                <button class="action-btn secondary" onclick="reOrder()">Re-Order</button>
+            </div>
+            
+            <div class="total-bar">
+                <span class="label">Due</span>
+                <span class="amount" id="total-amount">R 0.00</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quantity Popup -->
+    <div class="overlay" id="overlay" onclick="closePopup()"></div>
+    <div class="qty-popup" id="qty-popup">
+        <div class="qty-display" id="qty-display">1</div>
+        <div class="numpad">
+            <button class="numpad-btn" onclick="numpadInput(7)">7</button>
+            <button class="numpad-btn" onclick="numpadInput(8)">8</button>
+            <button class="numpad-btn" onclick="numpadInput(9)">9</button>
+            <button class="numpad-btn" onclick="numpadInput(4)">4</button>
+            <button class="numpad-btn" onclick="numpadInput(5)">5</button>
+            <button class="numpad-btn" onclick="numpadInput(6)">6</button>
+            <button class="numpad-btn" onclick="numpadInput(1)">1</button>
+            <button class="numpad-btn" onclick="numpadInput(2)">2</button>
+            <button class="numpad-btn" onclick="numpadInput(3)">3</button>
+            <button class="numpad-btn" onclick="numpadInput(0)">0</button>
+            <button class="numpad-btn enter" onclick="confirmQty()">OK</button>
+            <button class="numpad-btn del" onclick="numpadDel()">Del</button>
+        </div>
+    </div>
+    
+    <script>
+        let currentOrder = [];
+        let currentCategory = 'cold_drinks';
+        let items = {{}};
+        let pendingItem = null;
+        let qtyInput = '';
+        
+        // Load items on start
+        document.addEventListener('DOMContentLoaded', loadItems);
+        
+        async function loadItems() {{
+            try {{
+                const res = await fetch('/bar/api/items');
+                items = await res.json();
+                showCategory('cold_drinks');
+            }} catch(e) {{
+                console.error('Failed to load items:', e);
+            }}
+        }}
+        
+        function showCategory(cat) {{
+            currentCategory = cat;
+            
+            // Update active button
+            document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Show items
+            const container = document.getElementById('items');
+            const catItems = items[cat] || [];
+            
+            if (catItems.length === 0) {{
+                container.innerHTML = '<div style="color: var(--text-muted); padding: 40px; text-align: center; grid-column: 1/-1;">No items in this category</div>';
+                return;
+            }}
+            
+            container.innerHTML = catItems.map(item => `
+                <button class="item-btn" onclick="addItem('${{item.id}}', '${{item.name}}', ${{item.price}})">
+                    <span>${{item.name}}</span>
+                    <span class="price">R ${{item.price.toFixed(2)}}</span>
+                </button>
+            `).join('');
+        }}
+        
+        function addItem(id, name, price) {{
+            // Show quantity popup
+            pendingItem = {{ id, name, price }};
+            qtyInput = '1';
+            document.getElementById('qty-display').textContent = '1';
+            document.getElementById('overlay').classList.add('show');
+            document.getElementById('qty-popup').classList.add('show');
+        }}
+        
+        function numpadInput(num) {{
+            if (qtyInput === '0' || qtyInput === '') {{
+                qtyInput = String(num);
+            }} else {{
+                qtyInput += String(num);
+            }}
+            document.getElementById('qty-display').textContent = qtyInput || '0';
+        }}
+        
+        function numpadDel() {{
+            qtyInput = qtyInput.slice(0, -1);
+            document.getElementById('qty-display').textContent = qtyInput || '0';
+        }}
+        
+        function closePopup() {{
+            document.getElementById('overlay').classList.remove('show');
+            document.getElementById('qty-popup').classList.remove('show');
+            pendingItem = null;
+        }}
+        
+        function confirmQty() {{
+            const qty = parseInt(qtyInput) || 1;
+            if (pendingItem && qty > 0) {{
+                // Check if item already in order
+                const existing = currentOrder.find(o => o.id === pendingItem.id);
+                if (existing) {{
+                    existing.qty += qty;
+                }} else {{
+                    currentOrder.push({{
+                        id: pendingItem.id,
+                        name: pendingItem.name,
+                        price: pendingItem.price,
+                        qty: qty
+                    }});
+                }}
+                renderOrder();
+                saveOrder();
+            }}
+            closePopup();
+        }}
+        
+        function renderOrder() {{
+            const container = document.getElementById('order-items');
+            let total = 0;
+            
+            container.innerHTML = currentOrder.map((item, i) => {{
+                const amount = item.price * item.qty;
+                total += amount;
+                return `
+                    <div class="order-item" onclick="selectOrderItem(${{i}})">
+                        <span class="line-num">${{i + 1}}</span>
+                        <span>${{item.qty}} x ${{item.name}}</span>
+                        <span>R ${{item.price.toFixed(2)}}</span>
+                        <span class="qty">${{item.qty}}</span>
+                        <span class="amount">R ${{amount.toFixed(2)}}</span>
+                    </div>
+                `;
+            }}).join('');
+            
+            document.getElementById('total-amount').textContent = `R ${{total.toFixed(2)}}`;
+        }}
+        
+        async function saveOrder() {{
+            try {{
+                await fetch('/bar/api/order', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{ items: currentOrder }})
+                }});
+            }} catch(e) {{
+                console.error('Failed to save order:', e);
+            }}
+        }}
+        
+        function cashoutTable() {{
+            if (currentOrder.length === 0) {{
+                alert('No items in order');
+                return;
+            }}
+            window.location.href = '/bar/payment';
+        }}
+        
+        function finishOrder() {{
+            // Save and keep table open
+            saveOrder();
+            alert('Order saved');
+        }}
+        
+        function exitOrder() {{
+            if (confirm('Exit without saving?')) {{
+                currentOrder = [];
+                renderOrder();
+                window.location.href = '/bar';
+            }}
+        }}
+        
+        function revokeItem() {{
+            if (currentOrder.length > 0) {{
+                currentOrder.pop();
+                renderOrder();
+                saveOrder();
+            }}
+        }}
+        
+        function addTable() {{
+            const tableName = prompt('Enter table name or number:');
+            if (tableName) {{
+                document.getElementById('table-display').textContent = tableName;
+                fetch('/bar/api/table', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{ table: tableName }})
+                }});
+            }}
+        }}
+        
+        function cashSale() {{
+            document.getElementById('table-display').textContent = 'Cash Sale';
+            currentOrder = [];
+            renderOrder();
+        }}
+        
+        function showOptions() {{
+            window.location.href = '/bar/options';
+        }}
+        
+        function delivery() {{
+            document.getElementById('table-display').textContent = 'Delivery';
+        }}
+        
+        function changeQty() {{
+            // TODO: Change quantity of selected item
+        }}
+        
+        function changePrice() {{
+            // TODO: Override price
+        }}
+        
+        function reversal() {{
+            // TODO: Reversal functionality
+        }}
+        
+        function reOrder() {{
+            // TODO: Re-order last items
+        }}
+        
+        function selectOrderItem(index) {{
+            // TODO: Select item for editing
+        }}
+    </script>
+</body>
+</html>
+'''
+    return content
+
+
+@app.route("/bar/login", methods=["GET", "POST"])
+def bar_login():
+    """Waitron PIN login"""
+    if request.method == "POST":
+        pin = request.form.get("pin", "")
+        
+        # Simple PIN validation (in production, check against staff table)
+        # For now, accept any 4-digit PIN
+        if len(pin) >= 4:
+            # Get staff name from PIN (simplified - just use first 4 digits as ID)
+            staff_names = {
+                "1234": "NATASHA",
+                "1111": "MANAGER",
+                "2222": "STAFF 1",
+                "3333": "STAFF 2",
+                "0000": "ADMIN"
+            }
+            name = staff_names.get(pin, f"STAFF-{pin[:4]}")
+            
+            session['bar_waitron'] = {
+                "pin": pin,
+                "name": name,
+                "login_time": datetime.now().isoformat()
+            }
+            return redirect("/bar")
+        else:
+            return redirect("/bar/login?error=1")
+    
+    error = request.args.get("error")
+    error_msg = '<div style="color: #ef4444; margin-bottom: 16px;">Invalid PIN</div>' if error else ''
+    
+    content = f'''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bar POS Login</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }}
+        .login-box {{
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            width: 100%;
+            max-width: 360px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }}
+        .logo {{
+            text-align: center;
+            font-size: 24px;
+            font-weight: 800;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+        }}
+        .subtitle {{
+            text-align: center;
+            color: #666;
+            margin-bottom: 24px;
+        }}
+        .pin-display {{
+            background: #f5f5f5;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 32px;
+            text-align: center;
+            letter-spacing: 16px;
+            margin-bottom: 16px;
+            font-family: monospace;
+        }}
+        .numpad {{
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }}
+        .num-btn {{
+            padding: 24px;
+            font-size: 24px;
+            font-weight: 600;
+            background: #f0f0f0;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }}
+        .num-btn:hover {{ background: #e0e0e0; }}
+        .num-btn:active {{ background: #3b82f6; color: white; }}
+        .num-btn.enter {{ background: #22c55e; color: white; }}
+        .num-btn.del {{ background: #ef4444; color: white; }}
+        .num-btn.finger {{ background: #8b5cf6; color: white; font-size: 14px; }}
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <div class="logo">Click AI Bar</div>
+        <div class="subtitle">Enter your PIN to login</div>
+        {error_msg}
+        <form method="POST" id="login-form">
+            <input type="hidden" name="pin" id="pin-input">
+            <div class="pin-display" id="pin-display">____</div>
+            <div class="numpad">
+                <button type="button" class="num-btn" onclick="addDigit(7)">7</button>
+                <button type="button" class="num-btn" onclick="addDigit(8)">8</button>
+                <button type="button" class="num-btn" onclick="addDigit(9)">9</button>
+                <button type="button" class="num-btn" onclick="addDigit(4)">4</button>
+                <button type="button" class="num-btn" onclick="addDigit(5)">5</button>
+                <button type="button" class="num-btn" onclick="addDigit(6)">6</button>
+                <button type="button" class="num-btn" onclick="addDigit(1)">1</button>
+                <button type="button" class="num-btn" onclick="addDigit(2)">2</button>
+                <button type="button" class="num-btn" onclick="addDigit(3)">3</button>
+                <button type="button" class="num-btn" onclick="addDigit(0)">0</button>
+                <button type="button" class="num-btn enter" onclick="submitPin()">Enter</button>
+                <button type="button" class="num-btn del" onclick="delDigit()">Del</button>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+        let pin = '';
+        
+        function addDigit(d) {{
+            if (pin.length < 6) {{
+                pin += d;
+                updateDisplay();
+            }}
+        }}
+        
+        function delDigit() {{
+            pin = pin.slice(0, -1);
+            updateDisplay();
+        }}
+        
+        function updateDisplay() {{
+            const display = pin.padEnd(4, '_').split('').join(' ');
+            document.getElementById('pin-display').textContent = pin.length > 0 ? '*'.repeat(pin.length).padEnd(4, '_').split('').join(' ') : '_ _ _ _';
+        }}
+        
+        function submitPin() {{
+            if (pin.length >= 4) {{
+                document.getElementById('pin-input').value = pin;
+                document.getElementById('login-form').submit();
+            }}
+        }}
+    </script>
+</body>
+</html>
+'''
+    return content
+
+
+@app.route("/bar/logout")
+def bar_logout():
+    """Logout waitron"""
+    session.pop('bar_waitron', None)
+    session.pop('bar_current_table', None)
+    session.pop('bar_current_order', None)
+    return redirect("/bar/login")
+
+
+@app.route("/bar/api/items")
+def bar_api_items():
+    """Get items by category for bar POS"""
+    # Get stock items and organize by category
+    items = db.select("stock_items", filters={"active": True})
+    
+    # Organize by bar_category (or category)
+    by_category = {}
+    
+    for item in items:
+        cat = item.get("bar_category") or item.get("category", "").lower().replace(" ", "_")
+        if not cat:
+            continue
+            
+        if cat not in by_category:
+            by_category[cat] = []
+        
+        by_category[cat].append({
+            "id": item.get("id"),
+            "name": item.get("description", "")[:20],
+            "price": float(item.get("selling_price", 0))
+        })
+    
+    # Add some demo items if empty
+    if not by_category:
+        by_category = {
+            "beer": [
+                {"id": "demo1", "name": "Castle Lager", "price": 28.00},
+                {"id": "demo2", "name": "Castle Lite", "price": 30.00},
+                {"id": "demo3", "name": "Windhoek", "price": 32.00},
+                {"id": "demo4", "name": "Heineken", "price": 38.00},
+            ],
+            "ciders": [
+                {"id": "demo5", "name": "Savanna Dry", "price": 32.00},
+                {"id": "demo6", "name": "Hunters Dry", "price": 30.00},
+                {"id": "demo7", "name": "Brutal Fruit", "price": 35.00},
+            ],
+            "cold_drinks": [
+                {"id": "demo8", "name": "Coke", "price": 18.00},
+                {"id": "demo9", "name": "Sprite", "price": 18.00},
+                {"id": "demo10", "name": "Water", "price": 15.00},
+            ],
+            "toasted": [
+                {"id": "demo11", "name": "Cheese", "price": 45.00},
+                {"id": "demo12", "name": "Cheese & Tom", "price": 55.00},
+                {"id": "demo13", "name": "Bacon & Cheese", "price": 70.00},
+                {"id": "demo14", "name": "Chicken Mayo", "price": 65.00},
+            ],
+            "burgers": [
+                {"id": "demo15", "name": "Beef Burger", "price": 85.00},
+                {"id": "demo16", "name": "Chicken Burger", "price": 75.00},
+                {"id": "demo17", "name": "Cheese Burger", "price": 95.00},
+            ],
+        }
+    
+    return jsonify(by_category)
+
+
+@app.route("/bar/api/order", methods=["POST"])
+def bar_api_order():
+    """Save current order to session"""
+    data = request.get_json() or {}
+    session['bar_current_order'] = data.get('items', [])
+    return jsonify({"status": "ok"})
+
+
+@app.route("/bar/api/table", methods=["POST"])
+def bar_api_table():
+    """Set current table"""
+    data = request.get_json() or {}
+    session['bar_current_table'] = data.get('table', 'New Table')
+    return jsonify({"status": "ok"})
+
+
+@app.route("/bar/payment")
+def bar_payment():
+    """Payment screen"""
+    user = UserSession.get_current_user()
+    waitron = session.get('bar_waitron', {})
+    if not waitron:
+        return redirect("/bar/login")
+    
+    order = session.get('bar_current_order', [])
+    table = session.get('bar_current_table', 'Table')
+    
+    # Calculate total
+    subtotal = sum(item['price'] * item['qty'] for item in order)
+    
+    content = f'''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Payment - Bar POS</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            min-height: 100vh;
+            background: #0f0f1a;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: white;
+        }}
+        .payment-container {{
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            min-height: 100vh;
+            gap: 2px;
+            background: #2a2a4a;
+        }}
+        .payment-main {{
+            background: #1a1a2e;
+            padding: 24px;
+        }}
+        .payment-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #2a2a4a;
+        }}
+        .payment-title {{
+            font-size: 24px;
+            font-weight: 700;
+        }}
+        .payment-types {{
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+        }}
+        .pay-type-btn {{
+            padding: 16px 24px;
+            background: #3b82f6;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }}
+        .pay-type-btn:hover {{ background: #2563eb; }}
+        .pay-type-btn.active {{ background: #22c55e; }}
+        .totals {{
+            background: #252540;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }}
+        .total-row {{
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 18px;
+        }}
+        .total-row.due {{
+            font-size: 28px;
+            font-weight: 700;
+            color: #22c55e;
+            border-top: 1px solid #2a2a4a;
+            padding-top: 16px;
+            margin-top: 8px;
+        }}
+        .numpad-section {{
+            display: flex;
+            gap: 24px;
+        }}
+        .numpad {{
+            display: grid;
+            grid-template-columns: repeat(3, 80px);
+            gap: 8px;
+        }}
+        .num-btn {{
+            padding: 24px;
+            font-size: 24px;
+            font-weight: 600;
+            background: #252540;
+            border: none;
+            border-radius: 10px;
+            color: white;
+            cursor: pointer;
+        }}
+        .num-btn:active {{ background: #8b5cf6; }}
+        .num-btn.esc {{ background: #ef4444; }}
+        .quick-cash {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            max-width: 300px;
+        }}
+        .cash-btn {{
+            padding: 16px 24px;
+            background: #252540;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+        }}
+        .cash-btn:hover {{ background: #3b82f6; }}
+        .bottom-actions {{
+            display: flex;
+            gap: 8px;
+            margin-top: 24px;
+            flex-wrap: wrap;
+        }}
+        .action-btn {{
+            padding: 16px 24px;
+            background: #252540;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }}
+        .action-btn.exit {{ background: #3b82f6; font-size: 18px; padding: 20px 40px; }}
+        .action-btn.print {{ background: #22c55e; font-size: 18px; padding: 20px 40px; }}
+        
+        /* Receipt Preview */
+        .receipt-panel {{
+            background: white;
+            color: #333;
+            padding: 20px;
+            font-family: monospace;
+            font-size: 12px;
+        }}
+        .receipt-header {{
+            text-align: center;
+            border-bottom: 1px dashed #ccc;
+            padding-bottom: 12px;
+            margin-bottom: 12px;
+        }}
+        .receipt-header h2 {{
+            font-size: 16px;
+            margin-bottom: 4px;
+        }}
+        .receipt-items {{
+            border-bottom: 1px dashed #ccc;
+            padding-bottom: 12px;
+            margin-bottom: 12px;
+        }}
+        .receipt-item {{
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }}
+        .receipt-total {{
+            font-weight: bold;
+            font-size: 14px;
+        }}
+        
+        @media (max-width: 768px) {{
+            .payment-container {{
+                grid-template-columns: 1fr;
+            }}
+            .receipt-panel {{
+                display: none;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="payment-container">
+        <div class="payment-main">
+            <div class="payment-header">
+                <div class="payment-title">Payment</div>
+                <div>{waitron.get('name', 'Staff')} | {table}</div>
+            </div>
+            
+            <div class="payment-types">
+                <button class="pay-type-btn active" onclick="setPayType('cash')">Cash</button>
+                <button class="pay-type-btn" onclick="setPayType('card')">Card</button>
+                <button class="pay-type-btn" onclick="setPayType('split')">Split</button>
+            </div>
+            
+            <div class="totals">
+                <div class="total-row">
+                    <span>Sub Total</span>
+                    <span>R {subtotal:.2f}</span>
+                </div>
+                <div class="total-row">
+                    <span>Discount</span>
+                    <span id="discount-display">R 0.00</span>
+                </div>
+                <div class="total-row due">
+                    <span>Due</span>
+                    <span id="due-display">R {subtotal:.2f}</span>
+                </div>
+                <div class="total-row">
+                    <span>Tender</span>
+                    <span id="tender-display">R 0.00</span>
+                </div>
+                <div class="total-row" style="color: #22c55e;">
+                    <span>Change</span>
+                    <span id="change-display">R 0.00</span>
+                </div>
+            </div>
+            
+            <div class="numpad-section">
+                <div class="numpad">
+                    <button class="num-btn" onclick="numInput(7)">7</button>
+                    <button class="num-btn" onclick="numInput(8)">8</button>
+                    <button class="num-btn" onclick="numInput(9)">9</button>
+                    <button class="num-btn" onclick="numInput(4)">4</button>
+                    <button class="num-btn" onclick="numInput(5)">5</button>
+                    <button class="num-btn" onclick="numInput(6)">6</button>
+                    <button class="num-btn" onclick="numInput(1)">1</button>
+                    <button class="num-btn" onclick="numInput(2)">2</button>
+                    <button class="num-btn" onclick="numInput(3)">3</button>
+                    <button class="num-btn" onclick="numInput(0)">0</button>
+                    <button class="num-btn" onclick="numInput('00')">00</button>
+                    <button class="num-btn esc" onclick="numClear()">C</button>
+                </div>
+                
+                <div class="quick-cash">
+                    <button class="cash-btn" onclick="quickCash(500)">R 500</button>
+                    <button class="cash-btn" onclick="quickCash(200)">R 200</button>
+                    <button class="cash-btn" onclick="quickCash(100)">R 100</button>
+                    <button class="cash-btn" onclick="quickCash(50)">R 50</button>
+                    <button class="cash-btn" onclick="quickCash(20)">R 20</button>
+                    <button class="cash-btn" onclick="quickCash(10)">R 10</button>
+                    <button class="cash-btn" onclick="exactAmount()">Exact</button>
+                </div>
+            </div>
+            
+            <div class="bottom-actions">
+                <button class="action-btn" onclick="applyDiscount()">% Discount</button>
+                <button class="action-btn" onclick="applyValueDiscount()">R Discount</button>
+                <button class="action-btn exit" onclick="window.location.href='/bar'">EXIT</button>
+                <button class="action-btn print" onclick="completePayment()">Print & Close</button>
+            </div>
+        </div>
+        
+        <div class="receipt-panel">
+            <div class="receipt-header">
+                <h2>Bedrock Cafe</h2>
+                <div>PUB & GRILL</div>
+                <div>RANDFONTEIN</div>
+            </div>
+            <div class="receipt-items">
+                {"".join(f'<div class="receipt-item"><span>{item["qty"]}x {item["name"]}</span><span>R {item["price"] * item["qty"]:.2f}</span></div>' for item in order)}
+            </div>
+            <div class="receipt-total">
+                <div class="receipt-item">
+                    <span>TOTAL:</span>
+                    <span>R {subtotal:.2f}</span>
+                </div>
+            </div>
+            <div style="margin-top: 12px; font-size: 10px;">
+                <div>Waitron: {waitron.get('name', 'Staff')}</div>
+                <div>Date: {datetime.now().strftime('%d/%m/%Y %H:%M')}</div>
+                <div>Table: {table}</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const subtotal = {subtotal};
+        let tender = 0;
+        let tenderStr = '';
+        let payType = 'cash';
+        let discount = 0;
+        
+        function setPayType(type) {{
+            payType = type;
+            document.querySelectorAll('.pay-type-btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+        }}
+        
+        function numInput(n) {{
+            tenderStr += String(n);
+            tender = parseFloat(tenderStr) / 100;
+            updateDisplay();
+        }}
+        
+        function numClear() {{
+            tenderStr = '';
+            tender = 0;
+            updateDisplay();
+        }}
+        
+        function quickCash(amount) {{
+            tender += amount;
+            tenderStr = String(Math.round(tender * 100));
+            updateDisplay();
+        }}
+        
+        function exactAmount() {{
+            tender = subtotal - discount;
+            tenderStr = String(Math.round(tender * 100));
+            updateDisplay();
+        }}
+        
+        function updateDisplay() {{
+            const due = subtotal - discount;
+            const change = Math.max(0, tender - due);
+            
+            document.getElementById('tender-display').textContent = 'R ' + tender.toFixed(2);
+            document.getElementById('change-display').textContent = 'R ' + change.toFixed(2);
+            document.getElementById('due-display').textContent = 'R ' + due.toFixed(2);
+            document.getElementById('discount-display').textContent = 'R ' + discount.toFixed(2);
+        }}
+        
+        function applyDiscount() {{
+            const pct = prompt('Enter discount percentage:');
+            if (pct) {{
+                discount = subtotal * (parseFloat(pct) / 100);
+                updateDisplay();
+            }}
+        }}
+        
+        function applyValueDiscount() {{
+            const val = prompt('Enter discount amount:');
+            if (val) {{
+                discount = parseFloat(val);
+                updateDisplay();
+            }}
+        }}
+        
+        async function completePayment() {{
+            const due = subtotal - discount;
+            if (tender < due && payType === 'cash') {{
+                alert('Insufficient tender amount');
+                return;
+            }}
+            
+            try {{
+                const res = await fetch('/bar/api/complete-sale', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{
+                        subtotal: subtotal,
+                        discount: discount,
+                        tender: tender,
+                        payment_type: payType
+                    }})
+                }});
+                
+                const result = await res.json();
+                if (result.success) {{
+                    alert('Sale complete! Change: R ' + (tender - due).toFixed(2));
+                    window.location.href = '/bar';
+                }} else {{
+                    alert('Error: ' + result.error);
+                }}
+            }} catch(e) {{
+                alert('Error completing sale');
+            }}
+        }}
+    </script>
+</body>
+</html>
+'''
+    return content
+
+
+@app.route("/bar/api/complete-sale", methods=["POST"])
+def bar_complete_sale():
+    """Complete the sale - deduct stock, record transaction"""
+    data = request.get_json() or {}
+    order = session.get('bar_current_order', [])
+    waitron = session.get('bar_waitron', {})
+    table = session.get('bar_current_table', 'Cash Sale')
+    
+    if not order:
+        return jsonify({"success": False, "error": "No items in order"})
+    
+    subtotal = data.get('subtotal', 0)
+    discount = data.get('discount', 0)
+    tender = data.get('tender', 0)
+    payment_type = data.get('payment_type', 'cash')
+    
+    total = subtotal - discount
+    
+    try:
+        # Record the sale
+        sale_id = str(uuid.uuid4())[:8]
+        
+        # Deduct stock for each item
+        for item in order:
+            item_id = item.get('id', '')
+            qty = item.get('qty', 1)
+            
+            # Skip demo items
+            if item_id.startswith('demo'):
+                continue
+            
+            # Reduce stock quantity
+            reduce_stock(item_id, qty)
+        
+        # Create invoice record
+        invoice_data = {
+            "id": sale_id,
+            "type": "bar_sale",
+            "table": table,
+            "waitron": waitron.get('name', 'Unknown'),
+            "items": order,
+            "subtotal": subtotal,
+            "discount": discount,
+            "total": total,
+            "payment_type": payment_type,
+            "tender": tender,
+            "change": tender - total if payment_type == 'cash' else 0,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        db.insert("invoices", invoice_data)
+        
+        # Clear the order
+        session.pop('bar_current_order', None)
+        session.pop('bar_current_table', None)
+        
+        return jsonify({"success": True, "sale_id": sale_id})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/bar/options")
+def bar_options():
+    """Manager options screen"""
+    waitron = session.get('bar_waitron', {})
+    if not waitron:
+        return redirect("/bar/login")
+    
+    content = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Options - Bar POS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            background: #f5f5f5;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 24px;
+        }
+        h1 {
+            color: #1a1a2e;
+            margin-bottom: 24px;
+        }
+        .options-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 12px;
+            max-width: 900px;
+        }
+        .option-btn {
+            padding: 24px 16px;
+            background: linear-gradient(135deg, #e8e8f0, #f5f5fa);
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #1a1a2e;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.15s;
+        }
+        .option-btn:hover {
+            background: linear-gradient(135deg, #3b82f6, #60a5fa);
+            color: white;
+            border-color: #3b82f6;
+        }
+        .option-btn:active {
+            transform: scale(0.98);
+        }
+        .back-btn {
+            margin-top: 24px;
+            padding: 16px 32px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Manager Options</h1>
+    
+    <div class="options-grid">
+        <button class="option-btn" onclick="location.href='/bar/cashup'">Cashup</button>
+        <button class="option-btn" onclick="location.href='/bar/x-reading'">X-Reading</button>
+        <button class="option-btn" onclick="location.href='/bar/tables'">View Tables</button>
+        <button class="option-btn" onclick="location.href='/bar/reprint'">Reprint</button>
+        <button class="option-btn" onclick="location.href='/bar/payout'">Pay Out</button>
+        <button class="option-btn" onclick="location.href='/bar/open-till'">Open Till</button>
+        <button class="option-btn" onclick="location.href='/stock'">Stock</button>
+        <button class="option-btn" onclick="location.href='/reports'">Reports</button>
+        <button class="option-btn" onclick="location.href='/dashboard'">Dashboard</button>
+    </div>
+    
+    <button class="back-btn" onclick="location.href='/bar'">EXIT</button>
+</body>
+</html>
+'''
+    return content
+
+
+# =============================================================================
 # PIECE7_STOCK.PY
 # =============================================================================
 
