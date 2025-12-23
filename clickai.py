@@ -14595,17 +14595,27 @@ class FinancialAnalyzer:
                     monthly[month_key]["credit"] += credit
                     monthly[month_key]["count"] += 1
                 
-                # Duplicate detection (same reference, similar amount)
+                # Duplicate detection - look for REAL duplicates
+                # Same reference + same account (but different date) = likely duplicate payment
                 if reference:
-                    ref_key = f"{reference}_{float(debit + credit):.0f}"
-                    if ref_key in seen_refs:
-                        duplicates.append({
-                            "reference": reference,
-                            "amount": float(debit + credit),
-                            "transactions": [seen_refs[ref_key], trans]
-                        })
+                    # Key: reference + account + debit/credit side
+                    side = "D" if debit > 0 else "C"
+                    dup_key = f"{reference}_{account_name}_{side}"
+                    
+                    if dup_key in seen_refs:
+                        prev_trans = seen_refs[dup_key]
+                        # Only flag if different dates (same date is normal double-entry)
+                        if prev_trans.get("date") != (trans_date.strftime("%Y-%m-%d") if trans_date else None):
+                            duplicates.append({
+                                "reference": reference,
+                                "amount": float(debit + credit),
+                                "account": account_name,
+                                "date1": prev_trans.get("date"),
+                                "date2": trans_date.strftime("%Y-%m-%d") if trans_date else None,
+                                "transactions": [prev_trans, trans]
+                            })
                     else:
-                        seen_refs[ref_key] = trans
+                        seen_refs[dup_key] = trans
                 
             except Exception as e:
                 continue  # Skip problem rows
@@ -15870,6 +15880,11 @@ def universal_analyzer():
     lang = get_user_language()
     message = ""
     
+    # Check for errors from previous run
+    if 'analyze_error' in session:
+        error = session.pop('analyze_error')
+        message = f'<div class="alert alert-error">Error: {error}</div>'
+    
     # Handle POST - file upload
     if request.method == "POST":
         file = request.files.get("file")
@@ -16170,20 +16185,47 @@ def analyze_run():
     if not content:
         return redirect("/analyze")
     
-    # Run Flask analysis
-    analysis = FinancialAnalyzer.analyze(content)
-    
-    # Get Claude interpretation
-    interpretation = FinancialAnalyzer.interpret_with_claude(analysis, lang, context)
-    
-    # Store results
-    session['analyze_results'] = analysis
-    session['analyze_interpretation'] = interpretation
-    
-    # Clear content (save memory)
-    session.pop('analyze_content', None)
-    
-    return redirect("/analyze/results")
+    try:
+        # Run Flask analysis
+        analysis = FinancialAnalyzer.analyze(content)
+        
+        # Check for errors
+        if analysis.get("error"):
+            session['analyze_error'] = analysis.get("error")
+            session.pop('analyze_content', None)
+            return redirect("/analyze")
+        
+        # Get Claude interpretation
+        interpretation = FinancialAnalyzer.interpret_with_claude(analysis, lang, context)
+        
+        # IMPORTANT: Limit what we store in session to avoid size issues
+        # Keep only essential summary data, not full transaction lists
+        slim_analysis = {
+            "doc_type": analysis.get("doc_type"),
+            "summary": analysis.get("summary", {}),
+            "row_count": analysis.get("row_count", 0),
+            "warnings": analysis.get("warnings", [])[:5],
+            "potential_duplicates": analysis.get("potential_duplicates", [])[:10],
+            "anomalies": analysis.get("anomalies", [])[:10],
+            "high_risk": analysis.get("high_risk", [])[:15],
+            "accounts": analysis.get("accounts", [])[:20],  # Top 20 only
+            "monthly_trend": analysis.get("monthly_trend", [])[-12:],  # Last 12 months
+            "entities": analysis.get("entities", [])[:20],  # Top 20 only
+        }
+        
+        # Store results
+        session['analyze_results'] = slim_analysis
+        session['analyze_interpretation'] = interpretation
+        
+        # Clear content (save memory)
+        session.pop('analyze_content', None)
+        
+        return redirect("/analyze/results")
+        
+    except Exception as e:
+        session['analyze_error'] = str(e)
+        session.pop('analyze_content', None)
+        return redirect("/analyze")
 
 
 @app.route("/analyze/results")
@@ -16227,6 +16269,7 @@ def analyze_results():
             </div>
         '''
     elif doc_type in ["aged_debtors", "aged_creditors"]:
+        overdue_color = "red" if summary.get("overdue_pct", 0) > 30 else "orange"
         summary_html += f'''
             <div class="metric-card">
                 <div class="metric-label">{"Totaal" if lang == "af" else "Total"}</div>
@@ -16238,7 +16281,7 @@ def analyze_results():
             </div>
             <div class="metric-card">
                 <div class="metric-label">{"Agterstallig" if lang == "af" else "Overdue"}</div>
-                <div class="metric-value {"red" if summary.get("overdue_pct", 0) > 30 else "orange"}">R {summary.get("total_overdue", 0):,.2f}</div>
+                <div class="metric-value {overdue_color}">R {summary.get("total_overdue", 0):,.2f}</div>
             </div>
             <div class="metric-card">
                 <div class="metric-label">{"Agterstallig %" if lang == "af" else "Overdue %"}</div>
@@ -16246,6 +16289,7 @@ def analyze_results():
             </div>
         '''
     elif doc_type == "bank":
+        low_bal_color = "red" if summary.get("lowest_balance", 0) < 0 else ""
         summary_html += f'''
             <div class="metric-card">
                 <div class="metric-label">{"Geld In" if lang == "af" else "Money In"}</div>
@@ -16261,7 +16305,7 @@ def analyze_results():
             </div>
             <div class="metric-card">
                 <div class="metric-label">{"Laagste Balans" if lang == "af" else "Lowest Balance"}</div>
-                <div class="metric-value {"red" if summary.get("lowest_balance", 0) < 0 else ""}">R {summary.get("lowest_balance", 0):,.2f}</div>
+                <div class="metric-value {low_bal_color}">R {summary.get("lowest_balance", 0):,.2f}</div>
             </div>
         '''
     
