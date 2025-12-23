@@ -15887,6 +15887,10 @@ def universal_analyzer():
     
     # Handle POST - file upload
     if request.method == "POST":
+        # CLEAR old results first!
+        session.pop('analyze_results', None)
+        session.pop('analyze_interpretation', None)
+        
         file = request.files.get("file")
         context = request.form.get("context", "")
         
