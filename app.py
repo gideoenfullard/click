@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-                              CLICK AI v2.0.247 - OPUS REPORTS
+                              CLICK AI v2.0.222 - JOB CARD SYSTEM
 ================================================================================
                            ZANE IS THE SYSTEM
                               
@@ -10,12 +10,12 @@
   
 ================================================================================
 
-VERSION: 2.0.247
+VERSION: 2.0.222
 CREATED: January 2026
 UPDATED: January 20, 2026
 
 \nNEW IN v2.0.222:
-- JOB CARD SYSTEM - Beautiful manufacturing/workshop management
+- 🔧 JOB CARD SYSTEM - Beautiful manufacturing/workshop management
 - Quote → Job Card with one click
 - Simple 3-card interface: Materials | Labour | Complete
 - BOM tracking with issue management
@@ -457,12 +457,9 @@ from flask import Flask, request, redirect, session, jsonify, Response, send_fil
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "click-ai-2-secret-key-change-in-prod")
 
-# Session config - keep users logged in for 90 days (like Sage), auto-renew on each visit
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=90)
+# Session config - keep users logged in for 31 days, auto-renew on each visit
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True  # Renew session on every request
-app.config['SESSION_COOKIE_SECURE'] = False  # Allow HTTP for testing (set True in prod with HTTPS)
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s: %(message)s')
@@ -470,7 +467,6 @@ logger = logging.getLogger(__name__)
 
 # API Keys - ALL from environment variables (no hardcoded defaults!)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "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")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
@@ -937,7 +933,7 @@ VERIFY and CORRECT these values by examining the image yourself.
 """
             
             message = client.messages.create(
-                model="claude-opus-4-5-20251101",  # Opus 4.5 for deep analysis
+                model="claude-opus-4-20250514",  # The big brain for accuracy
                 max_tokens=2000,
                 messages=[
                     {
@@ -1112,31 +1108,6 @@ class EmailScanner:
             logger.error("[EMAIL] No IMAP credentials configured")
             return results
         
-        # Subjects/senders to skip (bounce notifications, system emails)
-        SKIP_SUBJECTS = [
-            "delivery status notification",
-            "undeliverable",
-            "mail delivery failed",
-            "returned mail",
-            "delivery failure",
-            "failure notice",
-            "undelivered mail",
-            "delivery has failed",
-            "could not be delivered",
-            "automatic reply",
-            "auto-reply",
-            "out of office",
-        ]
-        
-        SKIP_SENDERS = [
-            "mailer-daemon",
-            "postmaster",
-            "noreply",
-            "no-reply",
-            "donotreply",
-            "do-not-reply",
-        ]
-        
         try:
             # Connect to IMAP
             mail = imaplib.IMAP4_SSL(host)
@@ -1182,29 +1153,6 @@ class EmailScanner:
                         else:
                             decoded_subject += part
                     subject = decoded_subject or subject
-                    
-                    # Skip bounce/notification emails
-                    subject_lower = subject.lower()
-                    sender_lower = sender_email.lower()
-                    
-                    skip_email = False
-                    for skip_subj in SKIP_SUBJECTS:
-                        if skip_subj in subject_lower:
-                            logger.info(f"[EMAIL] Skipping bounce email: {subject}")
-                            skip_email = True
-                            break
-                    
-                    if not skip_email:
-                        for skip_sender in SKIP_SENDERS:
-                            if skip_sender in sender_lower:
-                                logger.info(f"[EMAIL] Skipping system email from: {sender_email}")
-                                skip_email = True
-                                break
-                    
-                    if skip_email:
-                        # Mark as read so we don't process again
-                        mail.store(email_id, '+FLAGS', '\\Seen')
-                        continue
                     
                     # Get attachments
                     attachments = []
@@ -1312,7 +1260,7 @@ DOCUMENT TYPE CLASSIFICATION
 
 Identify as ONE type based on visual cues:
 
-supplier_invoice:
+🧾 supplier_invoice:
 • Header shows SUPPLIER company name/logo (NOT your company)
 • Says "TAX INVOICE", "INVOICE", "FAKTUUR"
 • Has detailed line items with descriptions, quantities, prices
@@ -1335,7 +1283,7 @@ supplier_invoice:
 • Employee name visible
 • Time entries per day/week
 
-delivery_note:
+📦 delivery_note:
 • Says "DELIVERY NOTE", "WAYBILL", "AFLEWERINGSBRIEF"
 • Goods delivered with quantities
 • Usually NO prices shown
@@ -1345,7 +1293,7 @@ delivery_note:
 • List of transactions over time period
 • Shows opening/closing balance
 
-Quote / proforma:
+📝 quote / proforma:
 • Says "QUOTATION", "QUOTE", "KWOTASIE", "PROFORMA"
 • Valid until date shown
 • NOT yet an official invoice
@@ -1663,18 +1611,6 @@ STAINLESS STEEL TUBING PRICES:
 def generate_id() -> str:
     """Generate unique ID - full UUID for database"""
     return str(uuid.uuid4())
-
-def is_valid_uuid(value) -> bool:
-    """Check if a value is a valid UUID format"""
-    if not value:
-        return False
-    import re
-    uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
-    return bool(uuid_pattern.match(str(value)))
-
-def safe_uuid(value):
-    """Return UUID if valid, else None (for database UUID columns)"""
-    return value if is_valid_uuid(value) else None
 
 def now() -> str:
     """Current timestamp in ISO 8601 format for Supabase"""
@@ -2274,78 +2210,6 @@ class DB:
         
         return success, failed
     
-    def get_table_schema(self, table: str) -> List[str]:
-        """Get column names for a table from Supabase"""
-        try:
-            # Try to get one record to see column names
-            endpoint = f"{self.url}/rest/v1/{table}?limit=1"
-            response = requests.get(endpoint, headers=self.headers, timeout=30)
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data and len(data) > 0:
-                    return list(data[0].keys())
-            
-            # If no records, try to get schema from error message or use OPTIONS
-            options_response = requests.options(
-                f"{self.url}/rest/v1/{table}",
-                headers=self.headers,
-                timeout=30
-            )
-            # Parse columns from response if available
-            return []
-        except Exception as e:
-            logger.error(f"[DB] Get schema error: {e}")
-            return []
-    
-    def add_column(self, table: str, column_name: str, column_type: str = "text") -> Tuple[bool, str]:
-        """
-        Add a new column to a Supabase table via SQL.
-        column_type can be: text, integer, numeric, boolean, timestamp
-        """
-        try:
-            # Map simple types to PostgreSQL types
-            type_map = {
-                "text": "TEXT",
-                "string": "TEXT",
-                "integer": "INTEGER",
-                "int": "INTEGER",
-                "number": "NUMERIC",
-                "numeric": "NUMERIC",
-                "float": "NUMERIC",
-                "decimal": "NUMERIC",
-                "boolean": "BOOLEAN",
-                "bool": "BOOLEAN",
-                "date": "DATE",
-                "datetime": "TIMESTAMP",
-                "timestamp": "TIMESTAMP"
-            }
-            pg_type = type_map.get(column_type.lower(), "TEXT")
-            
-            # Use Supabase SQL endpoint (requires service role key)
-            sql = f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column_name} {pg_type};"
-            
-            endpoint = f"{self.url}/rest/v1/rpc/exec_sql"
-            response = requests.post(
-                endpoint,
-                headers=self.headers,
-                json={"query": sql},
-                timeout=30
-            )
-            
-            if response.status_code in (200, 201, 204):
-                logger.info(f"[DB] Added column {column_name} ({pg_type}) to {table}")
-                return True, f"Added column {column_name}"
-            else:
-                # Try alternative approach - just save a record with the new field
-                # Supabase will accept it if the column exists
-                logger.warning(f"[DB] Could not add column via SQL, will try on insert: {response.text[:200]}")
-                return False, f"Could not add column: {response.text[:200]}"
-                
-        except Exception as e:
-            logger.error(f"[DB] Add column error: {e}")
-            return False, str(e)
-    
     def count(self, table: str, filters: dict = None) -> int:
         """Count records"""
         records = self.get(table, filters)
@@ -2353,534 +2217,6 @@ class DB:
 
 
 db = DB()
-
-
-# 
-# RECORD FACTORY - Ensures all records have correct fields for Supabase
-# This prevents data inconsistency between Supabase schema and code
-# EVERY record creation MUST use these methods
-# 
-
-class RecordFactory:
-    """
-    Creates properly structured records that match Supabase schema exactly.
-    Use these methods instead of creating dicts manually.
-    
-    IMPORTANT: There are TWO stock tables:
-    - stock: uuid ids, uses qty/cost/price (legacy)
-    - stock_items: text ids, uses quantity/cost_price/selling_price (newer)
-    """
-    
-    @staticmethod
-    def customer(business_id: str, name: str, **kwargs) -> dict:
-        """Create a customer record with all required fields"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "code": kwargs.get("code", ""),
-            "name": name,
-            "phone": kwargs.get("phone", ""),
-            "email": kwargs.get("email", ""),
-            "address": kwargs.get("address", ""),
-            "vat_number": kwargs.get("vat_number", ""),
-            "balance": float(kwargs.get("balance", 0)),
-            "active": kwargs.get("active", True),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", ""),
-            "category": kwargs.get("category", ""),
-            "contact_name": kwargs.get("contact_name", ""),
-            "payment_intelligence": kwargs.get("payment_intelligence")
-        }
-    
-    @staticmethod
-    def supplier(business_id: str, name: str, **kwargs) -> dict:
-        """Create a supplier record with all required fields"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "code": kwargs.get("code", ""),
-            "name": name,
-            "phone": kwargs.get("phone", ""),
-            "email": kwargs.get("email", ""),
-            "address": kwargs.get("address", ""),
-            "vat_number": kwargs.get("vat_number", ""),
-            "balance": float(kwargs.get("balance", 0)),
-            "active": kwargs.get("active", True),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", ""),
-            "category": kwargs.get("category", ""),
-            "contact_name": kwargs.get("contact_name", "")
-        }
-    
-    @staticmethod
-    def stock(business_id: str, description: str, **kwargs) -> dict:
-        """
-        Create a stock record for the 'stock' table (uuid ids, qty/cost/price fields)
-        This is the LEGACY table - use stock_item() for newer stock_items table
-        """
-        return {
-            "id": kwargs.get("id") or str(uuid.uuid4()),
-            "business_id": business_id,
-            "code": kwargs.get("code", ""),
-            "description": description,
-            "category": kwargs.get("category", ""),
-            "unit": kwargs.get("unit", ""),
-            "qty": float(kwargs.get("qty") or kwargs.get("quantity", 0)),
-            "quantity": float(kwargs.get("quantity") or kwargs.get("qty", 0)),
-            "cost": float(kwargs.get("cost") or kwargs.get("cost_price", 0)),
-            "cost_price": float(kwargs.get("cost_price") or kwargs.get("cost", 0)),
-            "price": float(kwargs.get("price") or kwargs.get("selling_price", 0)),
-            "stock_forecast": kwargs.get("stock_forecast"),
-            "created_at": kwargs.get("created_at") or now()
-        }
-    
-    @staticmethod
-    def stock_item(business_id: str, description: str, **kwargs) -> dict:
-        """
-        Create a stock item record for the 'stock_items' table (text ids, quantity/cost_price/selling_price)
-        This is the NEWER table structure
-        """
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "code": kwargs.get("code", ""),
-            "description": description,
-            "category": kwargs.get("category", ""),
-            "quantity": int(kwargs.get("quantity") or kwargs.get("qty", 0)),
-            "cost_price": float(kwargs.get("cost_price") or kwargs.get("cost", 0)),
-            "selling_price": float(kwargs.get("selling_price") or kwargs.get("price", 0)),
-            "reorder_level": int(kwargs.get("reorder_level", 0)),
-            "active": kwargs.get("active", True),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", "")
-        }
-    
-    @staticmethod
-    def stock_movement(business_id: str, stock_id: str, movement_type: str, quantity: float, **kwargs) -> dict:
-        """Create a stock movement record"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "stock_id": stock_id,
-            "date": kwargs.get("date") or now(),
-            "type": movement_type,  # 'in' or 'out'
-            "quantity": float(quantity),
-            "reference": kwargs.get("reference", ""),
-            "created_at": kwargs.get("created_at") or now()
-        }
-    
-    @staticmethod
-    def invoice(business_id: str, customer_id: str, customer_name: str, items: list, **kwargs) -> dict:
-        """Create an invoice record with all required fields"""
-        subtotal = float(kwargs.get("subtotal", 0))
-        vat = float(kwargs.get("vat", 0))
-        total = float(kwargs.get("total", subtotal + vat))
-        
-        # Handle items - ensure it's proper format for jsonb
-        if isinstance(items, str):
-            items_val = items
-        else:
-            items_val = items  # Let Supabase handle the JSON conversion
-        
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "invoice_number": kwargs.get("invoice_number", ""),
-            "date": kwargs.get("date") or now()[:10],
-            "due_date": kwargs.get("due_date"),
-            "customer_id": customer_id,
-            "customer_name": customer_name,
-            "items": items_val,
-            "subtotal": subtotal,
-            "vat": vat,
-            "total": total,
-            "payment_method": kwargs.get("payment_method", ""),
-            "status": kwargs.get("status", "unpaid"),
-            "from_quote": kwargs.get("from_quote"),
-            "source_quote_id": kwargs.get("source_quote_id"),
-            "source_quote_number": kwargs.get("source_quote_number"),
-            "notes": kwargs.get("notes", ""),
-            "paid_date": kwargs.get("paid_date"),
-            "job_card_id": kwargs.get("job_card_id"),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", "")
-        }
-    
-    @staticmethod
-    def quote(business_id: str, customer_id: str, customer_name: str, items: list, **kwargs) -> dict:
-        """Create a quote record with all required fields"""
-        subtotal = float(kwargs.get("subtotal", 0))
-        vat = float(kwargs.get("vat", 0))
-        total = float(kwargs.get("total", subtotal + vat))
-        
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "quote_number": kwargs.get("quote_number", ""),
-            "date": kwargs.get("date") or now()[:10],
-            "customer_id": customer_id,
-            "customer_name": customer_name,
-            "items": items,
-            "subtotal": subtotal,
-            "vat": vat,
-            "total": total,
-            "status": kwargs.get("status", "draft"),
-            "notes": kwargs.get("notes", ""),
-            "valid_until": kwargs.get("valid_until", ""),
-            "valid_days": kwargs.get("valid_days"),
-            "converted_invoice_id": kwargs.get("converted_invoice_id"),
-            "source_invoice_id": kwargs.get("source_invoice_id"),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by")
-        }
-    
-    @staticmethod
-    def expense(business_id: str, description: str, amount: float, **kwargs) -> dict:
-        """Create an expense record with all required fields"""
-        amt = float(amount)
-        vat = float(kwargs.get("vat", 0))
-        net = float(kwargs.get("net", amt - vat))
-        
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "date": kwargs.get("date") or now()[:10],
-            "supplier": kwargs.get("supplier", ""),
-            "description": description,
-            "category": kwargs.get("category", ""),
-            "category_code": kwargs.get("category_code", ""),
-            "amount": amt,
-            "vat": vat,
-            "net": net,
-            "vat_type": kwargs.get("vat_type", "inclusive"),
-            "reference": kwargs.get("reference", ""),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", "")
-        }
-    
-    @staticmethod
-    def payment(business_id: str, customer_id: str, invoice_id: str, amount: float, **kwargs) -> dict:
-        """Create a payment record - tracks WHEN and HOW much a customer paid"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "customer_id": customer_id,
-            "customer_name": kwargs.get("customer_name", ""),
-            "invoice_id": invoice_id,
-            "invoice_number": kwargs.get("invoice_number", ""),
-            "amount": float(amount),
-            "date": kwargs.get("date") or today(),
-            "method": kwargs.get("method", "eft"),  # cash, eft, card, other
-            "reference": kwargs.get("reference", ""),  # Bank reference, receipt no
-            "notes": kwargs.get("notes", ""),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", "")
-        }
-    
-    @staticmethod
-    def supplier_invoice(business_id: str, supplier_id: str, supplier_name: str, **kwargs) -> dict:
-        """Create a supplier invoice record with all required fields"""
-        subtotal = float(kwargs.get("subtotal", 0))
-        vat = float(kwargs.get("vat", 0))
-        total = float(kwargs.get("total", subtotal + vat))
-        
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "supplier_id": supplier_id,
-            "supplier_name": supplier_name,
-            "invoice_number": kwargs.get("invoice_number", ""),
-            "date": kwargs.get("date") or now()[:10],
-            "due_date": kwargs.get("due_date"),
-            "subtotal": subtotal,
-            "vat": vat,
-            "total": total,
-            "status": kwargs.get("status", "outstanding"),
-            "notes": kwargs.get("notes", ""),
-            "items": kwargs.get("items", ""),
-            "scanned": kwargs.get("scanned", False),
-            "created_at": kwargs.get("created_at") or now(),
-            "updated_at": kwargs.get("updated_at")
-        }
-    
-    @staticmethod
-    def credit_note(business_id: str, customer_id: str, customer_name: str, items: list, **kwargs) -> dict:
-        """Create a credit note record with all required fields"""
-        subtotal = float(kwargs.get("subtotal", 0))
-        vat = float(kwargs.get("vat", 0))
-        total = float(kwargs.get("total", subtotal + vat))
-        
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "credit_note_number": kwargs.get("credit_note_number", ""),
-            "date": kwargs.get("date") or now()[:10],
-            "customer_id": customer_id,
-            "customer_name": customer_name,
-            "source_invoice_id": kwargs.get("source_invoice_id", ""),
-            "source_invoice_number": kwargs.get("source_invoice_number", ""),
-            "invoice_id": kwargs.get("invoice_id", ""),
-            "invoice_number": kwargs.get("invoice_number", ""),
-            "items": items,
-            "subtotal": subtotal,
-            "vat": vat,
-            "total": total,
-            "reason": kwargs.get("reason", ""),
-            "notes": kwargs.get("notes", ""),
-            "status": kwargs.get("status", "draft"),
-            "created_at": kwargs.get("created_at") or now()
-        }
-    
-    @staticmethod
-    def delivery_note(business_id: str, customer_id: str, customer_name: str, items: list, **kwargs) -> dict:
-        """Create a delivery note record with all required fields"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "delivery_note_number": kwargs.get("delivery_note_number", ""),
-            "date": kwargs.get("date") or now()[:10],
-            "customer_id": customer_id,
-            "customer_name": customer_name,
-            "source_invoice_id": kwargs.get("source_invoice_id", ""),
-            "source_invoice_number": kwargs.get("source_invoice_number", ""),
-            "delivery_address": kwargs.get("delivery_address", ""),
-            "items": items,
-            "notes": kwargs.get("notes", ""),
-            "status": kwargs.get("status", "pending"),
-            "created_at": kwargs.get("created_at") or now()
-        }
-    
-    @staticmethod
-    def receipt(business_id: str, customer_id: str, customer_name: str, amount: float, **kwargs) -> dict:
-        """Create a receipt/payment record with all required fields"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "customer_id": customer_id,
-            "customer_name": customer_name,
-            "date": kwargs.get("date") or now()[:10],
-            "amount": float(amount),
-            "method": kwargs.get("method", "cash"),
-            "reference": kwargs.get("reference", ""),
-            "created_at": kwargs.get("created_at") or now()
-        }
-    
-    @staticmethod
-    def sale(business_id: str, customer_id: str, customer_name: str, items: list, **kwargs) -> dict:
-        """Create a POS sale record with all required fields"""
-        subtotal = float(kwargs.get("subtotal", 0))
-        vat = float(kwargs.get("vat", 0))
-        total = float(kwargs.get("total", subtotal + vat))
-        
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "sale_number": kwargs.get("sale_number", ""),
-            "customer_id": customer_id,
-            "customer_name": customer_name,
-            "date": kwargs.get("date") or now()[:10],
-            "items": items,
-            "subtotal": subtotal,
-            "vat": vat,
-            "total": total,
-            "payment_method": kwargs.get("payment_method", "cash"),
-            "created_at": kwargs.get("created_at") or now()
-        }
-    
-    @staticmethod
-    def journal(business_id: str, description: str, account_code: str, **kwargs) -> dict:
-        """Create a journal entry record with all required fields"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "date": kwargs.get("date") or now()[:10],
-            "description": description,
-            "reference": kwargs.get("reference", ""),
-            "account_code": account_code,
-            "debit": float(kwargs.get("debit", 0)),
-            "credit": float(kwargs.get("credit", 0)),
-            "created_at": kwargs.get("created_at") or now()
-        }
-    
-    @staticmethod
-    def purchase_order(business_id: str, supplier_id: str, supplier_name: str, items: list, **kwargs) -> dict:
-        """Create a purchase order record with all required fields"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "po_number": kwargs.get("po_number", ""),
-            "date": kwargs.get("date") or now()[:10],
-            "supplier_id": supplier_id,
-            "supplier_name": supplier_name,
-            "items": items,
-            "notes": kwargs.get("notes", ""),
-            "total": float(kwargs.get("total", 0)),
-            "status": kwargs.get("status", "draft"),
-            "received_date": kwargs.get("received_date"),
-            "created_at": kwargs.get("created_at") or now()
-        }
-    
-    @staticmethod
-    def scan_queue(business_id: str, user_id: str, scan_type: str, **kwargs) -> dict:
-        """Create a scan queue record with all required fields"""
-        return {
-            "id": kwargs.get("id") or str(uuid.uuid4()),
-            "user_id": user_id,
-            "business_id": business_id,
-            "type": scan_type,
-            "image_data": kwargs.get("image_data", ""),
-            "status": kwargs.get("status", "pending"),
-            "error": kwargs.get("error"),
-            "staged_id": kwargs.get("staged_id"),
-            "data": kwargs.get("data"),
-            "description": kwargs.get("description", ""),
-            "paid": kwargs.get("paid", False),
-            "created_at": kwargs.get("created_at") or now(),
-            "processed_at": kwargs.get("processed_at")
-        }
-    
-    @staticmethod
-    def staged_transaction(business_id: str, trans_type: str, data: dict, **kwargs) -> dict:
-        """Create a staged transaction record with all required fields"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "type": trans_type,
-            "data": data,
-            "status": kwargs.get("status", "pending"),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", ""),
-            "approved_at": kwargs.get("approved_at"),
-            "approved_by": kwargs.get("approved_by"),
-            "rejected_at": kwargs.get("rejected_at")
-        }
-    
-    @staticmethod
-    def payslip(business_id: str, employee_id: str, employee_name: str, **kwargs) -> dict:
-        """Create a payslip record with all required fields"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "employee_id": employee_id,
-            "employee_name": employee_name,
-            "date": kwargs.get("date") or now()[:10],
-            "period": kwargs.get("period", ""),
-            "basic": float(kwargs.get("basic", 0)),
-            "gross": float(kwargs.get("gross", 0)),
-            "travel_allowance": float(kwargs.get("travel_allowance", 0)),
-            "other_allowance": float(kwargs.get("other_allowance", 0)),
-            "hours_worked": float(kwargs.get("hours_worked", 0)),
-            "overtime_hours": float(kwargs.get("overtime_hours", 0)),
-            "paye": float(kwargs.get("paye", 0)),
-            "uif": float(kwargs.get("uif", 0)),
-            "uif_employee": float(kwargs.get("uif_employee", 0)),
-            "uif_employer": float(kwargs.get("uif_employer", 0)),
-            "sdl": float(kwargs.get("sdl", 0)),
-            "coida": float(kwargs.get("coida", 0)),
-            "pension": float(kwargs.get("pension", 0)),
-            "pension_employee": float(kwargs.get("pension_employee", 0)),
-            "pension_employer": float(kwargs.get("pension_employer", 0)),
-            "provident_fund": float(kwargs.get("provident_fund", 0)),
-            "employer_provident": float(kwargs.get("employer_provident", 0)),
-            "medical_aid": float(kwargs.get("medical_aid", 0)),
-            "union_fees": float(kwargs.get("union_fees", 0)),
-            "loan_deduction": float(kwargs.get("loan_deduction", 0)),
-            "other_deduction": float(kwargs.get("other_deduction", 0)),
-            "other_deductions": float(kwargs.get("other_deductions", 0)),
-            "total_deductions": float(kwargs.get("total_deductions", 0)),
-            "total_employer": float(kwargs.get("total_employer", 0)),
-            "total_cost": float(kwargs.get("total_cost", 0)),
-            "net": float(kwargs.get("net", 0)),
-            "created_at": kwargs.get("created_at") or now(),
-            "updated_at": kwargs.get("updated_at")
-        }
-    
-    @staticmethod
-    def employee(business_id: str, name: str, **kwargs) -> dict:
-        """Create an employee record with all required fields"""
-        return {
-            "id": kwargs.get("id") or generate_id(),
-            "business_id": business_id,
-            "employee_number": kwargs.get("employee_number", ""),
-            "name": name,
-            "id_number": kwargs.get("id_number", ""),
-            "age": kwargs.get("age"),
-            "position": kwargs.get("position", ""),
-            "tax_number": kwargs.get("tax_number", ""),
-            "start_date": kwargs.get("start_date", ""),
-            "pay_type": kwargs.get("pay_type", "monthly"),
-            "basic_salary": float(kwargs.get("basic_salary", 0)),
-            "hourly_rate": float(kwargs.get("hourly_rate", 0)),
-            "travel_allowance": float(kwargs.get("travel_allowance", 0)),
-            "medical_aid": float(kwargs.get("medical_aid", 0)),
-            "pension": float(kwargs.get("pension", 0)),
-            "pension_employer": float(kwargs.get("pension_employer", 0)),
-            "employer_provident": float(kwargs.get("employer_provident", 0)),
-            "loan_deduction": float(kwargs.get("loan_deduction", 0)),
-            "other_allowance": float(kwargs.get("other_allowance", 0)),
-            "other_deduction": float(kwargs.get("other_deduction", 0)),
-            "other_deductions": float(kwargs.get("other_deductions", 0)),
-            "union_fees": float(kwargs.get("union_fees", 0)),
-            "bank_name": kwargs.get("bank_name", ""),
-            "bank_account": kwargs.get("bank_account", ""),
-            "bank_branch": kwargs.get("bank_branch", ""),
-            "provident_fund": kwargs.get("provident_fund", ""),
-            "industry_fund": kwargs.get("industry_fund", ""),
-            "uif": kwargs.get("uif", True),
-            "paye": kwargs.get("paye", True),
-            "active": kwargs.get("active", True),
-            "created_at": kwargs.get("created_at") or now(),
-            "updated_at": kwargs.get("updated_at")
-        }
-    
-    @staticmethod
-    def job(business_id: str, title: str, customer_name: str, **kwargs) -> dict:
-        """Create a job card record with all required fields"""
-        return {
-            "id": kwargs.get("id") or str(uuid.uuid4()),
-            "business_id": business_id,
-            "job_number": kwargs.get("job_number", ""),
-            "quote_id": kwargs.get("quote_id"),
-            "quote_number": kwargs.get("quote_number", ""),
-            "customer_id": kwargs.get("customer_id", ""),
-            "customer_name": customer_name,
-            "title": title,
-            "description": kwargs.get("description", ""),
-            "status": kwargs.get("status", "pending"),
-            "created_at": kwargs.get("created_at") or now(),
-            "started_at": kwargs.get("started_at"),
-            "completed_at": kwargs.get("completed_at"),
-            "quote_value": float(kwargs.get("quote_value", 0)),
-            "quote_subtotal": float(kwargs.get("quote_subtotal", 0)),
-            "estimated_cost": float(kwargs.get("estimated_cost", 0)),
-            "bom": kwargs.get("bom", []),
-            "materials_issued": kwargs.get("materials_issued", []),
-            "labour_entries": kwargs.get("labour_entries", []),
-            "estimated_hours": float(kwargs.get("estimated_hours", 0)),
-            "actual_hours": float(kwargs.get("actual_hours", 0)),
-            "additional_costs": kwargs.get("additional_costs", []),
-            "total_material_cost": float(kwargs.get("total_material_cost", 0)),
-            "total_labour_cost": float(kwargs.get("total_labour_cost", 0)),
-            "total_additional_cost": float(kwargs.get("total_additional_cost", 0)),
-            "total_actual_cost": float(kwargs.get("total_actual_cost", 0)),
-            "profit_loss": float(kwargs.get("profit_loss", 0)),
-            "is_active": kwargs.get("is_active", True)
-        }
-    
-    @staticmethod
-    def business(owner_id: str, business_name: str, **kwargs) -> dict:
-        """Create a business record with all required fields"""
-        return {
-            "id": kwargs.get("id") or str(uuid.uuid4()),
-            "owner_id": owner_id,
-            "business_name": business_name,
-            "business_type": kwargs.get("business_type", ""),
-            "industry": kwargs.get("industry", ""),
-            "created_at": kwargs.get("created_at") or now(),
-            "updated_at": kwargs.get("updated_at"),
-            "last_analyzed": kwargs.get("last_analyzed"),
-            "total_analyses": kwargs.get("total_analyses", 0)
-        }
 
 
 # 
@@ -3077,85 +2413,8 @@ class Brain:
     Zane understands intent, gathers context, executes actions, responds.
     """
     
-    MODEL_SONNET = "claude-sonnet-4-20250514"  # For reports & analysis
-    MODEL_HAIKU = "claude-3-5-haiku-20241022"   # For everything else (10x cheaper!)
+    MODEL = "claude-sonnet-4-20250514"
     MAX_TOKENS = 2048
-    
-    @classmethod
-    def _get_model(cls, user_message: str) -> str:
-        """
-        Smart model routing - use Haiku for 95% of queries, Sonnet only when AI needs to THINK hard.
-        
-        Flask/Python does all calculations, DB operations, etc.
-        AI only needs to: understand intent, extract data, decide action, respond friendly.
-        Haiku is perfectly capable of this!
-        
-        Only use Sonnet when AI must do complex REASONING or WRITING:
-        - Generate smart reports (AI writes analysis)
-        - Answer complex business questions (AI must analyze)
-        - Financial forecasting (AI reasoning)
-        """
-        msg_lower = user_message.lower()
-        
-        # Keywords that need Sonnet (AI must THINK/WRITE, not just parse)
-        sonnet_triggers = [
-            # Reports & Analysis - AI must write
-            "generate report", "smart report", "analyze", "analysis",
-            "forecast", "predict", "trend",
-            # Business intelligence - AI reasoning
-            "how am i doing", "hoe gaan dit", "how's my", "hoe lyk my",
-            "business health", "performance", "compare",
-            # Complex questions
-            "why", "hoekom", "explain", "verduidelik",
-            "recommend", "suggest", "advise",
-            "what should i", "wat moet ek",
-        ]
-        
-        for trigger in sonnet_triggers:
-            if trigger in msg_lower:
-                return cls.MODEL_SONNET
-        
-        # Everything else - Haiku! (quotes, invoices, lookups, how-to, etc.)
-        return cls.MODEL_HAIKU
-    
-    @classmethod
-    def _is_sensitive_query(cls, message: str) -> bool:
-        """Check if query is about sensitive business info (profits, salaries, bank, etc.)"""
-        msg_lower = message.lower()
-        
-        sensitive_keywords = [
-            # Profits & margins
-            "profit", "wins", "margin", "markup", "gross", "net income",
-            "hoeveel wins", "winsgrens", "marge",
-            # Salaries & payroll
-            "salary", "salaries", "salaris", "salarisse", "loon", "lone",
-            "wages", "payroll", "verdien", "betaal ons", "pay run",
-            "hoeveel kry", "wat kry", "bonus",
-            # Banking & cash
-            "bank balance", "bank account", "cash flow", "in the bank",
-            "bank balans", "kontant", "hoeveel geld",
-            # Debtors & creditors (sensitive totals)
-            "total debt", "who owes", "debtors report", "aged debtors",
-            "totale skuld", "wie skuld", "outstanding total",
-            # Strategy & forecasts
-            "forecast", "budget", "target", "projection",
-            "vooruitskatting", "begroting", "teiken",
-            # Reports with sensitive data
-            "income statement", "balance sheet", "p&l", "profit and loss",
-            "trial balance", "financial report",
-            # Comparing/analyzing performance
-            "how are we doing", "hoe gaan dit met", "business health",
-            "performance", "compare month", "vergelyk",
-            # ═══ DANGEROUS OPERATIONS - ADMIN ONLY ═══
-            "delete", "verwyder", "remove all", "clear all",
-            "wis", "skrap", "bulk delete",
-        ]
-        
-        for keyword in sensitive_keywords:
-            if keyword in msg_lower:
-                return True
-        
-        return False
     
     @classmethod
     def think(cls, user_message: str, context: dict) -> dict:
@@ -3175,48 +2434,8 @@ class Brain:
             }
         """
         
-        # ═══════════════════════════════════════════════════════════════════
-        # ROLE-BASED ACCESS CONTROL - Block sensitive queries for staff
-        # ═══════════════════════════════════════════════════════════════════
-        user_role = context.get("user_role", "").lower()
-        restricted_roles = ["staff", "cashier", "pos", "waiter", "sales"]
-        
-        if user_role in restricted_roles and cls._is_sensitive_query(user_message):
-            # Polite refusal in same language as query
-            is_afrikaans = any(w in user_message.lower() for w in ["hoeveel", "wat", "wie", "hoe", "waar", "wanneer", "hierdie", "daardie"])
-            
-            if is_afrikaans:
-                response = "Hierdie inligting is net vir bestuurders beskikbaar. Vra jou bestuurder as jy dit nodig het."
-            else:
-                response = "This information is only available to managers. Please ask your supervisor if you need this."
-            
-            logger.info(f"[BRAIN] Blocked sensitive query from {user_role}: {user_message[:50]}...")
-            
-            return {
-                "response": response,
-                "actions_taken": [],
-                "data": {},
-                "suggestions": []
-            }
-        
         # Quick command handler - bypass AI for simple commands
         msg_lower = user_message.lower().strip()
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # DELETE CONFIRMATION DETECTION - Check if user is confirming delete
-        # ═══════════════════════════════════════════════════════════════════
-        delete_confirm_keywords = [
-            "ja delete", "yes delete", "ja verwyder", "yes remove",
-            "ek is seker", "i'm sure", "i am sure", "definitely", "beslis",
-            "do it", "doen dit", "gaan voort", "proceed", "confirm delete",
-            "ja ek wil", "yes i want", "verwyder hom", "delete it", "ja wis"
-        ]
-        is_delete_confirmation = any(kw in msg_lower for kw in delete_confirm_keywords)
-        
-        if is_delete_confirmation:
-            # User is confirming a delete - add to context so AI knows to set confirmed: true
-            context["delete_confirmed"] = True
-            logger.info(f"[BRAIN] Delete confirmation detected: {msg_lower[:50]}")
         
         # Stock search - "do we have X", "any X in stock", "how many X", "price of X", "wat kos X", etc.
         # BUT NOT for quote/invoice creation requests!
@@ -3688,13 +2907,7 @@ class Brain:
                     "suggestions": []
                 }
         
-        # SMART PROMPT SELECTION - LITE saves ~5000 tokens!
-        # LITE = summaries only (95% of queries)
-        # FULL = all data lists (only for analysis)
-        use_lite = not cls._needs_full_context(user_message)
-        system_prompt = cls._build_system_prompt(context, lite=use_lite)
-        
-        logger.info(f"[BRAIN] Prompt mode: {'LITE' if use_lite else 'FULL'} for query")
+        system_prompt = cls._build_system_prompt(context)
         
         # Get chat history from context
         chat_history = context.get("chat_history", [])
@@ -3753,74 +2966,26 @@ class Brain:
         return response or ""
     
     @classmethod
-    def _needs_full_context(cls, user_message: str) -> bool:
-        """
-        Determine if query needs FULL context (all data) or LITE (summaries only).
-        
-        LITE works for 95% of queries - Flask does the actual data lookups.
-        FULL only needed when AI must ANALYZE all the data itself.
-        """
-        msg_lower = user_message.lower()
-        
-        # These queries need AI to see ALL data for analysis
-        full_context_triggers = [
-            # Analysis that needs to see patterns
-            "analyze", "analysis", "compare",
-            "trend", "pattern", "forecast",
-            # List/search queries
-            "list all", "show all", "all my",
-            "find all", "search all",
-            # Deep business intelligence
-            "top 10", "top ten", "best customers",
-            "worst", "slowest", "fastest",
-        ]
-        
-        for trigger in full_context_triggers:
-            if trigger in msg_lower:
-                return True
-        
-        # Everything else - LITE is fine
-        return False
-    
-    @classmethod
-    def _build_system_prompt(cls, context: dict, lite: bool = False) -> str:
-        """Build the system prompt with business context
-        
-        Args:
-            context: Business context data
-            lite: If True, exclude bulk data lists (saves ~5000 tokens!)
-        """
+    def _build_system_prompt(cls, context: dict) -> str:
+        """Build the system prompt with business context"""
         
         biz_name = context.get("business_name", "Business")
         user_name = context.get("user_name", "there")
         
-        # Pre-format JSON data - NO LIMITS - Zane sees EVERYTHING
-        low_stock_json = json.dumps(context.get('low_stock', []), default=str)
-        customers_summary_json = json.dumps(context.get('customers_summary', []), default=str)
-        suppliers_summary_json = json.dumps(context.get('suppliers_summary', []), default=str)
-        recent_invoices_json = json.dumps(context.get('recent_invoices', []), default=str)
-        recent_quotes_json = json.dumps(context.get('recent_quotes', []), default=str)
-        employees_summary_json = json.dumps(context.get('employees_summary', []), default=str)
-        jobs_summary_json = json.dumps(context.get('jobs_summary', []), default=str)
+        # Pre-format JSON data to avoid f-string issues with curly braces
+        low_stock_json = json.dumps(context.get('low_stock', []), default=str)[:400]
+        all_stock_json = json.dumps(context.get('all_stock', []), default=str)[:12000]
+        all_customers_json = json.dumps(context.get('all_customers', []), default=str)[:3000]
+        all_suppliers_json = json.dumps(context.get('all_suppliers', []), default=str)[:2000]
+        customers_summary_json = json.dumps(context.get('customers_summary', []), default=str)[:600]
+        suppliers_summary_json = json.dumps(context.get('suppliers_summary', []), default=str)[:400]
+        recent_invoices_json = json.dumps(context.get('recent_invoices', [])[:10], default=str)[:400]
+        recent_quotes_json = json.dumps(context.get('recent_quotes', [])[:10], default=str)[:400]
+        recent_sales_json = json.dumps(context.get('recent_sales', [])[:10], default=str)[:400]
+        recent_expenses_json = json.dumps(context.get('recent_expenses', [])[:10], default=str)[:400]
         
-        # LITE mode: No bulk data lists - saves tokens for simple queries
-        # FULL mode: Include everything for analysis queries
-        if lite:
-            all_stock_json = '"[LITE MODE - use stock search for specific items]"'
-            all_customers_json = '"[LITE MODE - Flask will lookup customer by name]"'
-            all_suppliers_json = '"[LITE MODE - Flask will lookup supplier by name]"'
-            recent_sales_json = '[]'
-            recent_expenses_json = '[]'
-            all_invoices_json = '[]'
-            all_expenses_json = '[]'
-        else:
-            all_stock_json = json.dumps(context.get('all_stock', []), default=str)
-            all_customers_json = json.dumps(context.get('all_customers', []), default=str)
-            all_suppliers_json = json.dumps(context.get('all_suppliers', []), default=str)
-            recent_sales_json = json.dumps(context.get('recent_sales', []), default=str)
-            recent_expenses_json = json.dumps(context.get('recent_expenses', []), default=str)
-            all_invoices_json = json.dumps(context.get('all_invoices', []), default=str)
-            all_expenses_json = json.dumps(context.get('all_expenses', []), default=str)
+        employees_summary_json = json.dumps(context.get('employees_summary', []), default=str)[:400]
+        jobs_summary_json = json.dumps(context.get('jobs_summary', [])[:10], default=str)[:300]
         
         return f"""You are Click AI, the intelligent assistant for {biz_name}.
 You don't just answer questions - you RUN the business through conversation.
@@ -3862,9 +3027,6 @@ When responding in Afrikaans, use these terms naturally:
 - User: {user_name}
 - Date: {today()}
 - Currency: South African Rand (R)
-- Delete Confirmed: {context.get('delete_confirmed', False)}
-
-**If Delete Confirmed is True, user has explicitly confirmed deletion - set confirmed: true in your action data!**
 
 {get_steel_context()}
 
@@ -3895,38 +3057,32 @@ When responding in Afrikaans, use these terms naturally:
 - Outstanding: {money(context.get('total_outstanding', 0))}
 - Paid: {money(context.get('total_paid', 0))}
 - Recent: {recent_invoices_json}
-- ALL INVOICES (for analysis): {all_invoices_json}
 
 ### QUOTES
 - Total quotes: {context.get('quote_count', 0)}
 - Total quoted: {money(context.get('total_quoted', 0))}
 - Pending quotes: {context.get('pending_quotes_count', 0)}
 - Recent: {recent_quotes_json}
-- ALL QUOTES (for analysis): {json.dumps(context.get('all_quotes', []), default=str) if not lite else '[]'}
 
 ### SALES (POS)
 - Total sales: {context.get('sales_count', 0)}
 - Total revenue: {money(context.get('total_sales', 0))}
 - Today's sales: {money(context.get('today_sales', 0))}
 - Recent: {recent_sales_json}
-- ALL SALES (for analysis): {json.dumps(context.get('all_sales', []), default=str) if not lite else '[]'}
 
 ### EXPENSES
 - Total expenses logged: {context.get('expense_count', 0)}
 - Total spent: {money(context.get('total_expenses', 0))}
 - Recent: {recent_expenses_json}
-- ALL EXPENSES (for analysis): {all_expenses_json}
 
 ### EMPLOYEES & PAYROLL
 - Total employees: {context.get('employee_count', 0)}
 - Monthly payroll: {money(context.get('total_payroll', 0))}
 - Staff: {employees_summary_json}
-- ALL EMPLOYEES (for analysis): {json.dumps(context.get('all_employees', []), default=str) if not lite else '[]'}
 
 ### JOBS
 - Total jobs: {context.get('job_count', 0)}
 - Jobs: {jobs_summary_json}
-- ALL JOBS (for analysis): {json.dumps(context.get('all_jobs', []), default=str) if not lite else '[]'}
 
 ## CLICKAI SYSTEM KNOWLEDGE - Help Users Navigate The System
 
@@ -3970,52 +3126,15 @@ When users ask "how do I [do something]", provide step-by-step instructions:
 
 **TIMESHEETS:**
 - Scan Timesheet: Timesheets → "Scan Timesheet" → Upload photo → AI extracts hours → Review → Process
-- Print Template: Timesheets → "Scan Timesheet" → "Download Template" → Printable form with active job numbers pre-printed!
 - Manual Entry: Timesheets → "Add Timesheet" → Enter employee/hours/dates → Save
-- Review Batch: Timesheets → Review pending timesheets → Match employees → Link to job cards → Approve
-- Dual Processing: When you approve a timesheet linked to a job, hours go to BOTH:
-  * Payroll (to pay the employee)
-  * Job Card (to track labour costs and profitability)
-- Job Matching: AI reads job numbers from scanned timesheets (JC-2026-001, etc.) and auto-matches to active jobs
+- Review Batch: Timesheets → Review pending timesheets → Approve/reject
+- Process: Auto-creates payroll entries from approved timesheets
 
-**JOB CARDS / PROJECTS (Complete Manufacturing Flow):**
-
-*The FULL flow - Quote to Invoice:*
-1. Create Quote: Sales → Quotes → New Quote → Add items → Save
-2. Convert to Job: Quote page → "Convert to Job Card" → ONE CLICK creates job with BOM
-3. Work the Job:
-   - Issue materials from stock → auto-deducts inventory, tracks cost
-   - Log time manually OR scan timesheets → tracks labour cost
-   - See LIVE profitability (quoted vs actual cost)
-4. Complete Job: Click "Complete" when work is done
-5. Create Documents: THREE options:
-   - "Create DN" - Delivery Note only
-   - "Create Invoice" - Invoice only  
-   - "DN & Invoice" - BOTH in ONE CLICK! (Most common)
-6. Job marked as Invoiced with links to all documents
-
-*Job Card Features:*
-- Create Job: Jobs → "New Job" → Enter customer/title/description → Save
-- From Quote: Quote page → "Convert to Job Card" → Creates job with BOM from quote items
-- Issue Materials: Job card → "+ Add Material" → Select from stock → Deducts inventory, updates job cost
-- Log Time: Job card → "Log Hours" → Enter employee/hours/task → Updates labour cost
-- OR Scan Timesheet: Timesheets → Scan → Link to job → Auto-updates job AND payroll!
-- Live Costing: See Materials + Labour + Additional costs vs Quote value = Profit/Loss %
-- Status Flow: Not Started → In Progress → On Hold → Completed → Delivered → Invoiced
-
-*Why Job Cards are powerful:*
-- See REAL profit per job (not just guessing!)
-- Track which employees worked on what
-- Know exactly what materials went into each job
-- Create professional DN + Invoice directly from job
-- All linked: Quote → Job → Timesheet → DN → Invoice
-
-*Perfect for:*
-- Panel builders, electricians, plumbers
-- Fabrication shops, workshops
-- Sign makers, printers
-- Kitchen installers, cabinet makers
-- Any "quote → build → deliver → invoice" business
+**JOBS / PROJECTS:**
+- Create Job: Jobs → "New Job" → Enter customer/title/budget → Save
+- Track Time: Log time against jobs → Shows profitability
+- Job Status: Update status (quoted/in progress/complete/invoiced)
+- Job Costing: View actual costs vs budget
 
 **REPORTS:**
 - Income Statement (P&L): Reports → Income Statement → Select period
@@ -4393,234 +3512,6 @@ Note: WhatsApp Business API requires Meta Business verification.
 
 When users ask HOW to do something in ClickAI, give them clear menu paths like: "Go to Sales → Invoices → New Invoice"
 
-## 🧠 FINANCIAL INTELLIGENCE - Your REAL Value (Not Just Bookkeeping!)
-
-**You are NOT just a bookkeeper. You are a FINANCIAL ANALYST who provides ACTIONABLE INTELLIGENCE.**
-
-A bookkeeper records transactions. YOU analyze them to MAKE THE BUSINESS MORE PROFITABLE.
-
-### ⚠️ DATA HONESTY - CRITICAL RULE!
-
-**NEVER make up analysis when data is insufficient!** Your credibility depends on honesty.
-
-**Before ANY analysis, check:**
-1. How much data is available? (Days, weeks, months of transactions?)
-2. Is there enough history for trends? (Need 2+ months minimum for trends)
-3. Are there enough transactions for patterns? (Need 20+ invoices for RFM)
-4. Is the data quality good? (Complete records, not just partial imports)
-
-**When data is LIMITED, say so clearly:**
-
-Example - New business with 1 week of data:
-❌ BAD: "Your gross margin is 25% which is below industry average..."
-✅ GOOD: "Jy het net 1 week se data - te min vir diepte-analise. Hier's wat ek KAN sien:
-- 12 invoices gemaak = R45,000 sales
-- 3 expenses gelaai = R12,000
-- Rough margin: ~73% (maar dit kan verander met meer data)
-Ek sal 'n beter prentjie kan gee na 30 dae se data."
-
-Example - Partial import with gaps:
-❌ BAD: "Your debtors take 45 days to pay on average..."
-✅ GOOD: "Let wel: Ek sien net 5 van jou kliënte se geskiedenis - nie almal nie. 
-Gebaseer op hierdie 5: gemiddeld 38 dae om te betaal.
-Dit mag verskil as ons die volle prentjie het."
-
-**Data Thresholds for Analysis Types:**
-- **Profitability**: Need 1+ month of complete sales AND expenses
-- **Trends**: Need 2+ months minimum (ideally 3+)
-- **Seasonality**: Need 12+ months (same period last year)
-- **RFM Customer Ranking**: Need 20+ invoices across customers
-- **Cash Flow Forecast**: Need 3+ months history
-- **Stock Turnover**: Need 90+ days of sales data
-- **Break-even**: Need clear fixed vs variable cost categorization
-
-**Phrases to use when data is insufficient:**
-✅ "Gebaseer op die beperkte data beskikbaar..."
-✅ "Met net X dae/weke se data, kan ek sien..."
-✅ "Hier's te min info vir 'n volle analise, maar..."
-✅ "Ek kan nog nie trends spot nie - te min geskiedenis"
-✅ "Sodra jy 30 dae se data het, kan ek X, Y, Z vir jou doen"
-✅ "Rough estimate (nie genoeg data vir akkuraatheid):"
-
-**NEVER:**
-❌ Pretend you have insights when you don't
-❌ Give precise percentages from 3 transactions
-❌ Claim trends from 1 week of data
-❌ Compare to "last month" when there is no last month
-❌ Make it sound like guesswork is analysis
-
-**Your credibility = Your value. Rather say "te min data" than give nonsense.**
-
-### PROACTIVE ANALYSIS - Do This AUTOMATICALLY:
-
-**1. PROFITABILITY ANALYSIS**
-When discussing finances, ALWAYS calculate and mention:
-- Gross Profit Margin: (Sales - Cost of Goods) / Sales × 100
-- Net Profit Margin: (Sales - All Expenses) / Sales × 100
-- Compare to industry benchmarks (Steel/Hardware: 20-35% gross, 5-15% net)
-- Flag if margins are below healthy levels
-
-**2. CUSTOMER VALUE ANALYSIS (RFM)**
-Rank customers by VALUE, not just debt:
-- **Recency**: When did they last buy? (Recent = good)
-- **Frequency**: How often do they buy? (More = better)
-- **Monetary**: How much do they spend? (Higher = priority)
-- TOP 20% of customers usually provide 80% of revenue - IDENTIFY THEM!
-- High-value customers with outstanding debt = PRIORITY collection
-- Low-value customers with high debt = PROBLEM accounts
-
-**3. STOCK INTELLIGENCE**
-- **Dead Stock**: Items not sold in 90+ days = CASH TRAPPED! Suggest markdowns
-- **Fast Movers**: Top 10 selling items - ensure always in stock
-- **Slow Movers**: Bottom 10 - consider discontinuing
-- **Stock Turnover**: Cost of Goods Sold / Average Inventory
-  * Below 4 = Too much capital tied up
-  * Above 12 = Risk of stockouts
-- **Days to Sell**: 365 / Turnover = Average days to sell through stock
-
-**4. CASH FLOW INTELLIGENCE**
-Always think about TIMING of money:
-- When is payroll due? (Usually 25th-31st)
-- When are VAT payments due? (25th of following month)
-- When do big supplier payments hit?
-- What's the REAL cash position after committed payments?
-- **Cash Runway**: Current Cash / Monthly Burn Rate = Months of survival
-
-**5. TREND DETECTION**
-Compare periods automatically:
-- This month vs last month (growth rate)
-- This month vs same month last year (seasonality)
-- Flag unusual spikes or drops (>20% change)
-- "Sales are down 15% vs last month - dig into why?"
-
-**6. BREAK-EVEN ANALYSIS**
-- Fixed Costs (rent, salaries, insurance) ÷ Gross Margin % = Break-even sales
-- "You need R{X} in sales just to cover fixed costs"
-- "After break-even, every R100 sale = R{margin} profit"
-
-**7. WORKING CAPITAL HEALTH**
-- Debtor Days: (Debtors / Sales) × 365 = How long customers take to pay
-  * Above 45 days = PROBLEM - tighten credit terms!
-- Creditor Days: (Creditors / Purchases) × 365 = How long you take to pay
-  * Ideally higher than Debtor Days (you collect before you pay)
-- Stock Days: (Stock Value / Cost of Sales) × 365
-- Cash Cycle = Debtor Days + Stock Days - Creditor Days
-  * Positive = You need working capital financing
-  * Negative = Suppliers finance your business (ideal!)
-
-**8. ALERT TRIGGERS** - Proactively warn about:
-- Any customer owing >R50,000 or >60 days
-- Gross margin below 20%
-- Cash runway below 2 months
-- Payroll due but insufficient cash
-- VAT liability building up
-- Stock items not sold in 90+ days
-- Sales down >15% vs prior period
-
-### HOW TO RESPOND TO FINANCIAL QUESTIONS:
-
-**When asked "How's the business doing?":**
-DON'T just say "Good" - give INTELLIGENCE:
-```
-"Revenue this month: R[amount] (↑12% vs last month)
-Gross Profit: R[amount] ([percent]% margin - healthy for your industry)
-
-⚠️ BUT watch these:
-- Payroll of R[amount] due in [N] days
-- Top debtor [Name] owes R[amount] for 45+ days
-- Stock item [X] hasn't moved in 90 days (R[value] tied up)
-
-Priority: Collect from [Name] this week - that'll cover payroll."
-```
-
-**When asked "Who owes me money?":**
-DON'T just list debtors - PRIORITIZE:
-```
-"Total outstanding: R[amount]
-
-🔴 PRIORITY (High value, overdue):
-1. [Customer] - R[amount] (65 days!) - Your 3rd biggest customer, call today
-2. [Customer] - R[amount] (45 days) - Usually pays on time, might be an oversight
-
-🟡 WATCH (Getting old):
-3. [Customer] - R[amount] (32 days)
-
-🟢 NORMAL (Within terms):
-4. [Customer] - R[amount] (15 days)
-
-Action: Focus on the top 2 - that's R[amount] you can collect this week."
-```
-
-**When asked about a specific customer:**
-```
-"Customer: [Name]
-- Total purchases: R[amount] (ranked #[N] of [total] customers)
-- Current balance: R[amount]
-- Average days to pay: [Z] days
-- Last purchase: [date]
-
-Assessment: [Good customer - always pays within 30 days / Problem - getting slower / Dormant - hasn't bought in 90 days]
-
-[Suggestion based on status]"
-```
-
-### REPORT TYPES YOU CAN GENERATE:
-
-**⚠️ BEFORE generating ANY report, check data sufficiency!**
-
-1. **Executive Summary** - 1-page business health overview
-   *Requires: 1+ month of sales, expenses, and customer data*
-2. **Profitability Report** - Margins, trends, comparisons
-   *Requires: 1+ month complete P&L data*
-3. **Cash Flow Forecast** - 30/60/90 day projections
-   *Requires: 3+ months history for accurate forecast*
-4. **Customer Analysis** - RFM ranking, top/problem customers
-   *Requires: 20+ invoices across multiple customers*
-5. **Stock Performance** - Turnover, dead stock, fast movers
-   *Requires: 90+ days sales with stock movement data*
-6. **Expense Analysis** - By category, trends, savings opportunities
-   *Requires: 2+ months categorized expenses*
-7. **Debtor Aging Analysis** - With collection priorities
-   *Requires: Outstanding invoices with dates*
-8. **Break-Even Report** - Fixed costs, required sales
-   *Requires: Clear fixed cost data (rent, salaries, etc)*
-9. **Budget vs Actual** - Variances and explanations
-   *Requires: Budget data AND actual transactions*
-10. **Tax Liability Report** - VAT, PAYE, provisional tax estimates
-    *Requires: Proper VAT-coded transactions*
-
-**If data is insufficient for requested report:**
-Say: "Ek kan nog nie 'n volledige [report type] gee nie - jy het [X] nodig. 
-Hier's wat ek WEL kan wys met die huidige data: [limited version]"
-
-### PHRASES THAT SHOW INTELLIGENCE:
-
-✅ USE THESE:
-- "Based on your sales pattern..."
-- "Your cash cycle shows..."
-- "Compared to last month..."
-- "The trend indicates..."
-- "Priority action: ..."
-- "Risk alert: ..."
-- "Opportunity: ..."
-- "This customer's lifetime value is..."
-- "Your break-even point is..."
-- "To maintain margins, you need..."
-
-❌ AVOID THESE (too basic):
-- "You have X customers"
-- "Total sales is Y"
-- "Here's a list of debtors"
-(Without context or recommendations)
-
-### ALWAYS END FINANCIAL RESPONSES WITH:
-
-1. **The Key Number** - What matters most right now
-2. **The Risk** - What could go wrong
-3. **The Action** - What to do about it
-
-Example: "Key: You need R45,000 by the 25th for payroll. Risk: Your top debtor is 50 days overdue. Action: Call {Name} today - collecting that R38,000 solves your payroll."
-
 ## CRITICAL RULES - NEVER BREAK THESE:
 
 **RULE 0: HONESTY ABOVE ALL ELSE**
@@ -4730,11 +3621,7 @@ Example: "Key: You need R45,000 by the 25th for payroll. Risk: Your top debtor i
 16. **CONVERT_QUOTE** - "Convert quote Q-0001 to invoice"
     Required: quote_number
 
-17. **QUOTE_TO_JOB** - "Convert quote Q-0001 to job card" or "Make job from quote Q-0001"
-    Required: quote_number
-    Creates a job card from an accepted quote with BOM
-
-18. **ADD_EMPLOYEE** - "Add employee [name] R[salary]" or "Add hourly employee [name] R[rate]/hour"
+17. **ADD_EMPLOYEE** - "Add employee [name] R[salary]" or "Add hourly employee [name] R[rate]/hour"
     Required: name
     Optional: salary (monthly), hourly_rate, position, id_number
 
@@ -4757,35 +3644,23 @@ Example: "Key: You need R45,000 by the 25th for payroll. Risk: Your top debtor i
     Required: employee_name, hours
     Optional: job_number, date, description
 
-## Warning: DANGEROUS DELETE ACTIONS - REQUIRE CONFIRMATION!
-When user wants to delete, FIRST send without confirmed. System will warn them.
-When user confirms with "ja delete X" or "yes delete X", send with confirmed: true
-
 23. **DELETE_CUSTOMER** - "Delete customer [name]"
     Required: name (or customer)
-    Optional: confirmed (true ONLY if user explicitly confirmed!)
-    First time: "Delete ABC customer" → send confirmed: false → user sees warning
-    Confirmation: "Ja delete ABC" → send confirmed: true → actually deletes
+    Deletes a single customer
 
 24. **DELETE_SUPPLIER** - "Delete supplier [name]"
     Required: name (or supplier)
-    Optional: confirmed (true ONLY if user explicitly confirmed!)
+    Deletes a single supplier
 
 25. **DELETE_STOCK** - "Delete stock item [code]"
     Required: code or description
-    Optional: confirmed (true ONLY if user explicitly confirmed!)
+    Deletes a single stock item
 
 26. **BULK_DELETE** - "Delete all [type]" or "Delete all [type] with [criteria]"
     Required: type (customers/suppliers/stock/pos/invoices/expenses)
     Optional: criteria ("all", "no phone", "zero balance", "zero total", "no phone and zero balance", "duplicates")
-    Optional: confirmed (true ONLY if user explicitly confirmed!)
     Examples: "Delete all POS", "Delete all suppliers with no phone", "Delete all stock with zero price", "Delete all duplicate customers", "Delete all duplicate suppliers", "Delete duplicate stock", "Delete all expenses"
     For duplicates: Keeps the OLDEST record with each name, deletes the rest
-    
-**CONFIRMATION KEYWORDS:**
-- "ja delete", "yes delete", "ja verwyder", "yes remove"
-- "ek is seker", "I'm sure", "definitely", "beslis"
-- "do it", "doen dit", "gaan voort", "proceed"
 
 27. **CONFIGURE_PAYROLL** - "No overtime Mon-Thu" / "Friday is 5 hours" / "Set payroll rules"
     Configure business-specific payroll rules:
@@ -4828,7 +3703,7 @@ When user confirms with "ja delete X" or "yes delete X", send with confirmed: tr
 Respond with JSON only:
 {{
     "action": "ACTION_NAME or QUERY",
-    "response": "Your friendly response to the user - be concise, NO repetition!",
+    "response": "Your friendly response to the user",
     "data": {{
         // Action-specific data
         "customer_name": "",
@@ -4839,20 +3714,17 @@ Respond with JSON only:
         "cost_price": 0,
         "weight_kg": 0,
         "price_per_m": 0,
-        "length_m": 0,
-        "confirmed": false  // For DELETE actions: true ONLY if user explicitly confirmed!
+        "length_m": 0
     }},
-    "insight": "ONLY if you have NEW useful info - NOT a summary of what you just said!"
+    "insight": "Optional helpful insight or suggestion"
 }}
 
 ## PERSONALITY
-- Professional but approachable
-- Brief but thorough - say it ONCE, not twice
+- Warm and professional
+- Brief but thorough
 - Proactive - suggest next steps
-- NO EMOJIS - this is a professional business platform
+- Use emojis sparingly but effectively
 - South African context (Rand, SARS, local terms)
-- NEVER repeat yourself or summarize what you just explained
-- Friendly but FORMAL - not chatty or casual
 
 ## CONVERSATION MEMORY
 You remember the conversation history. When user asks follow-up questions:
@@ -4875,31 +3747,6 @@ When you complete an action (quote, invoice, etc), be BRIEF:
 - Give the MINIMUM answer that fully answers the question
 - User can ask follow-ups if they want more detail
 - Being concise is PROFESSIONAL - rambling wastes the user's time
-
-## NEVER REPEAT YOURSELF
-**CRITICAL: Do NOT summarize or repeat what you just said!**
-- If you explained something in detail, DO NOT then say "So in summary..." or "So basically..."
-- If you listed steps 1-5, DO NOT then list them again in one sentence
-- If you gave an answer, DO NOT rephrase it at the end
-- ONE explanation is enough - the user can read!
-- Repeating makes you look like a robot, not a professional assistant
-- If the user didn't understand, THEY will ask - don't assume they're stupid
-
-**BAD (repeating):**
-"Here's how to create a job card:
-1. Go to Jobs
-2. Click New Job
-3. Enter details
-4. Save
-
-So basically you go to Jobs, click New Job, enter details and save."  ← DON'T DO THIS!
-
-**GOOD (no repetition):**
-"Here's how to create a job card:
-1. Go to Jobs
-2. Click New Job
-3. Enter details
-4. Save"  ← STOP HERE. Done.
 
 ## STEEL QUOTES
 When creating steel quotes:
@@ -4927,15 +3774,15 @@ NEVER just give a number and say "looks good" - ALWAYS put it in context of upco
 
 **EXAMPLE - WRONG RESPONSE:**
 User: "Hoeveel wins het ek sover gemaak vir die maand?"
-BAD: "Jy het R23,000 wins gemaak - lyk goed vir Januarie!"
+BAD: "Jy het R23,000 wins gemaak - lyk goed vir Januarie! 👍"
 
 **EXAMPLE - CORRECT RESPONSE:**
 User: "Hoeveel wins het ek sover gemaak vir die maand?"
-GOOD: "Jy het R23,000 wins tot dusver hierdie maand. Onthou egter dat salarisse van R90,000 nog einde van die maand uitbetaal moet word. 
+GOOD: "Jy het R23,000 wins tot dusver hierdie maand. MAAR - onthou jou salarisse van R90,000 kom nog einde van die maand. 
 
-Jy moet dus nog R67,000 inbring net om gelykbreek te bereik na salarisse.
+Jy moet dus nog R67,000 inbring net om break-even te wees na salarisse.
 
-Fokus op verkope en invorderings vir die res van die maand."
+Dis NIE tyd om terug te sit nie - push vir daardie sales! 💪"
 
 **THE FORMULA:**
 - Current profit/loss
@@ -4969,15 +3816,12 @@ Fokus op verkope en invorderings vir die res van die maand."
 """
     
     @classmethod
-    def _call_api(cls, system: str, user: str, chat_history: list = None, max_tokens: int = None, model: str = None) -> Optional[str]:
-        """Call Zane API with optional chat history and smart model selection"""
+    def _call_api(cls, system: str, user: str, chat_history: list = None, max_tokens: int = None) -> Optional[str]:
+        """Call Zane API with optional chat history"""
         
         if not ANTHROPIC_API_KEY:
             logger.warning("[BRAIN] No API key configured")
             return None
-        
-        # Smart model selection - Haiku for most, Sonnet for complex
-        selected_model = model or cls._get_model(user)
         
         try:
             # Build messages with history
@@ -4989,8 +3833,6 @@ Fokus op verkope en invorderings vir die res van die maand."
             # Add current user message
             messages.append({"role": "user", "content": user})
             
-            logger.info(f"[BRAIN] Using model: {selected_model} for query")
-            
             response = requests.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -4999,7 +3841,7 @@ Fokus op verkope en invorderings vir die res van die maand."
                     "anthropic-version": "2023-06-01"
                 },
                 json={
-                    "model": selected_model,
+                    "model": cls.MODEL,
                     "max_tokens": max_tokens or cls.MAX_TOKENS,
                     "system": system,
                     "messages": messages
@@ -5118,12 +3960,6 @@ Fokus op verkope en invorderings vir die res van die maand."
                     actions_taken.append(result["message"])
                     result_data = result.get("data", {})
             
-            elif action == "QUOTE_TO_JOB":
-                result = Actions.quote_to_job(action_data, context)
-                if result["success"]:
-                    actions_taken.append(result["message"])
-                    result_data = result.get("data", {})
-            
             elif action == "ADD_EMPLOYEE":
                 result = Actions.add_employee(action_data, context)
                 if result["success"]:
@@ -5155,58 +3991,21 @@ Fokus op verkope en invorderings vir die res van die maand."
                     result_data = result.get("data", {})
             
             elif action == "DELETE_CUSTOMER":
-                # DANGEROUS - Require confirmation
-                if not action_data.get("confirmed"):
-                    customer_name = action_data.get("name", action_data.get("customer", "this customer"))
-                    return {
-                        "response": f"WARNING: You are about to DELETE {customer_name}.\n\nThis will also remove all their invoices, payments, and history.\n\nType 'Yes delete {customer_name}' to confirm.",
-                        "actions_taken": [],
-                        "data": {"pending_delete": "customer", "name": customer_name},
-                        "suggestions": []
-                    }
                 result = Actions.delete_customer(action_data, context)
                 if result["success"]:
                     actions_taken.append(result["message"])
             
             elif action == "DELETE_SUPPLIER":
-                # DANGEROUS - Require confirmation
-                if not action_data.get("confirmed"):
-                    supplier_name = action_data.get("name", action_data.get("supplier", "this supplier"))
-                    return {
-                        "response": f"WARNING: You are about to DELETE {supplier_name}.\n\nThis will also remove their invoices and history.\n\nType 'Yes delete {supplier_name}' to confirm.",
-                        "actions_taken": [],
-                        "data": {"pending_delete": "supplier", "name": supplier_name},
-                        "suggestions": []
-                    }
                 result = Actions.delete_supplier(action_data, context)
                 if result["success"]:
                     actions_taken.append(result["message"])
             
             elif action == "DELETE_STOCK":
-                # DANGEROUS - Require confirmation
-                if not action_data.get("confirmed"):
-                    item_name = action_data.get("code", action_data.get("item", action_data.get("description", "this item")))
-                    return {
-                        "response": f"WARNING: You are about to DELETE stock item {item_name}.\n\nType 'Yes delete {item_name}' to confirm.",
-                        "actions_taken": [],
-                        "data": {"pending_delete": "stock", "code": item_name},
-                        "suggestions": []
-                    }
                 result = Actions.delete_stock(action_data, context)
                 if result["success"]:
                     actions_taken.append(result["message"])
             
             elif action == "BULK_DELETE":
-                # VERY DANGEROUS - Require confirmation
-                if not action_data.get("confirmed"):
-                    delete_type = action_data.get("type", "records")
-                    criteria = action_data.get("criteria", "all")
-                    return {
-                        "response": f"CRITICAL WARNING\n\nYou are about to DELETE ALL {delete_type} ({criteria}).\n\nThis action CANNOT be undone.\n\nType 'Yes delete all {delete_type}' to confirm.",
-                        "actions_taken": [],
-                        "data": {"pending_delete": "bulk", "type": delete_type, "criteria": criteria},
-                        "suggestions": []
-                    }
                 result = Actions.bulk_delete(action_data, context)
                 if result["success"]:
                     actions_taken.append(result["message"])
@@ -5393,7 +4192,7 @@ Fokus op verkope en invorderings vir die res van die maand."
         # Scanner inbox setup pattern
         if any(x in msg_lower for x in ["setup scanner", "set up scanner", "configure scanner", "scanner inbox", "imap setup", "scan email"]):
             return {
-                "response": """**Scanner Inbox Setup**
+                "response": """📥 **Scanner Inbox Setup**
 
 I can help you set up your scanner inbox! Here's what we need:
 
@@ -5415,7 +4214,7 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                 "data": {},
                 "suggestions": [
                     {"label": "⚙️ Go to Settings", "url": "/settings"},
-                    {"label": "View Scan Inbox", "url": "/scan-inbox"}
+                    {"label": "📥 View Scan Inbox", "url": "/scan-inbox"}
                 ]
             }
         
@@ -5624,43 +4423,24 @@ class Actions:
         if not items:
             items = [{"description": description, "qty": 1, "price": float(amount), "total": float(amount)}]
         
-        invoice = RecordFactory.invoice(
-            business_id=biz_id,
-            customer_id=customer["id"] if customer else "",
-            customer_name=customer["name"] if customer else customer_name,
-            items=items,
-            invoice_number=inv_number,
-            date=today(),
-            subtotal=float(excl_amount),
-            vat=float(vat_amount),
-            total=float(amount),
-            status="outstanding",
-            created_by=context.get("user_id", "")
-        )
+        invoice = {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "invoice_number": inv_number,
+            "date": today(),
+            "customer_id": customer["id"] if customer else None,
+            "customer_name": customer["name"] if customer else customer_name,
+            "items": json.dumps(items),
+            "subtotal": float(excl_amount),
+            "vat": float(vat_amount),
+            "total": float(amount),
+            "status": "outstanding",
+            "created_at": now()
+        }
         
         success, result = db.save("invoices", invoice)
         
         if success:
-            # === DEDUCT STOCK ===
-            all_stock = db.get("stock", {"business_id": biz_id}) or []
-            stock_by_code = {s.get("code", "").upper(): s for s in all_stock if s.get("code")}
-            
-            for item in items:
-                code = (item.get("code") or "").upper()
-                stock_item = None
-                
-                # Find stock item by code
-                if code and code in stock_by_code:
-                    stock_item = stock_by_code[code]
-                
-                if stock_item:
-                    stock_id = stock_item.get("id")
-                    current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                    sold_qty = float(item.get("qty") or item.get("quantity") or 1)
-                    new_qty = current_qty - sold_qty
-                    db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                    logger.info(f"[INVOICE AI] Stock {code}: {current_qty} - {sold_qty} = {new_qty}")
-            
             # Update customer balance
             if customer:
                 new_balance = float(customer.get("balance", 0)) + float(amount)
@@ -5805,20 +4585,21 @@ class Actions:
         if not items:
             items = [{"description": description, "qty": 1, "price": float(amount), "total": float(amount)}]
         
-        quote = RecordFactory.quote(
-            business_id=biz_id,
-            customer_id=customer["id"] if customer else "",
-            customer_name=customer["name"] if customer else customer_name,
-            items=items,
-            quote_number=quote_number,
-            date=today(),
-            valid_until=(datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d"),
-            subtotal=float(excl_amount),
-            vat=float(vat_amount),
-            total=float(amount),
-            status="draft",
-            created_by=context.get("user_id")
-        )
+        quote = {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "quote_number": quote_number,
+            "date": today(),
+            "valid_until": (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d"),
+            "customer_id": customer["id"] if customer else None,
+            "customer_name": customer["name"] if customer else customer_name,
+            "items": json.dumps(items),
+            "subtotal": float(excl_amount),
+            "vat": float(vat_amount),
+            "total": float(amount),
+            "status": "draft",
+            "created_at": now()
+        }
         
         success, _ = db.save("quotes", quote)
         
@@ -5839,14 +4620,16 @@ class Actions:
         if not name:
             return {"success": False, "message": "Need customer name"}
         
-        customer = RecordFactory.customer(
-            business_id=context.get("business_id"),
-            name=name,
-            phone=data.get("phone", ""),
-            email=data.get("email", ""),
-            address=data.get("address", ""),
-            created_by=context.get("user_id", "")
-        )
+        customer = {
+            "id": generate_id(),
+            "business_id": context.get("business_id"),
+            "name": name,
+            "phone": data.get("phone", ""),
+            "email": data.get("email", ""),
+            "address": data.get("address", ""),
+            "balance": 0,
+            "created_at": now()
+        }
         
         success, _ = db.save("customers", customer)
         
@@ -5867,13 +4650,15 @@ class Actions:
         if not name:
             return {"success": False, "message": "Need supplier name"}
         
-        supplier = RecordFactory.supplier(
-            business_id=context.get("business_id"),
-            name=name,
-            phone=data.get("phone", ""),
-            email=data.get("email", ""),
-            created_by=context.get("user_id", "")
-        )
+        supplier = {
+            "id": generate_id(),
+            "business_id": context.get("business_id"),
+            "name": name,
+            "phone": data.get("phone", ""),
+            "email": data.get("email", ""),
+            "balance": 0,
+            "created_at": now()
+        }
         
         success, _ = db.save("suppliers", supplier)
         
@@ -5921,14 +4706,16 @@ class Actions:
         })
         
         # Log the movement
-        movement = RecordFactory.stock_movement(
-            business_id=biz_id,
-            stock_id=item["id"],
-            movement_type="in",
-            quantity=quantity,
-            reference=f"Booked in at cost {money(cost)}" if cost > 0 else "Booked in"
-        )
-        db.save("stock_movements", movement)
+        db.save("stock_movements", {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "stock_id": item["id"],
+            "type": "in",
+            "quantity": quantity,
+            "cost": float(cost),
+            "date": today(),
+            "created_at": now()
+        })
         
         return {
             "success": True,
@@ -5951,15 +4738,16 @@ class Actions:
         if not code:
             code = description[:10].upper().replace(" ", "-")
         
-        # Use RecordFactory.stock() for 'stock' table (uuid ids, qty/cost/price fields)
-        item = RecordFactory.stock(
-            business_id=context.get("business_id"),
-            description=description or code,
-            code=code,
-            price=selling_price,
-            cost=cost_price,
-            qty=0
-        )
+        item = {
+            "id": generate_id(),
+            "business_id": context.get("business_id"),
+            "code": code,
+            "description": description or code,
+            "selling_price": selling_price,
+            "cost_price": cost_price,
+            "quantity": 0,
+            "created_at": now()
+        }
         
         success, _ = db.save("stock", item)
         
@@ -6038,18 +4826,17 @@ class Actions:
         
         # Calculate VAT
         vat_amount = (amount * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-        net_amount = amount - vat_amount
         
-        expense = RecordFactory.expense(
-            business_id=context.get("business_id"),
-            description=description,
-            amount=float(amount),
-            date=today(),
-            category=category,
-            vat=float(vat_amount),
-            net=float(net_amount),
-            created_by=context.get("user_id", "")
-        )
+        expense = {
+            "id": generate_id(),
+            "business_id": context.get("business_id"),
+            "date": today(),
+            "description": description,
+            "category": category,
+            "amount": float(amount),
+            "vat": float(vat_amount),
+            "created_at": now()
+        }
         
         success, _ = db.save("expenses", expense)
         
@@ -6146,8 +4933,7 @@ class Actions:
         if success:
             # Update stock
             new_qty = current_qty - quantity
-            db.update("stock", item["id"], {"qty": new_qty, "quantity": new_qty}, biz_id)
-            logger.info(f"[ZANE SALE] Stock {item.get('code')}: {current_qty} - {quantity} = {new_qty}")
+            db.save("stock", {"id": item["id"], "quantity": new_qty})
             
             # Update customer balance if account sale
             if customer and payment_method == "account":
@@ -6272,16 +5058,21 @@ class Actions:
         existing = db.get("jobs", {"business_id": biz_id}) if biz_id else []
         job_num = f"JOB-{len(existing) + 1:04d}"
         
-        job = RecordFactory.job(
-            business_id=biz_id,
-            title=title[:100],
-            customer_name=customer["name"] if customer else customer_name,
-            job_number=job_num,
-            description=description,
-            customer_id=customer["id"] if customer else "",
-            status="open"
-        )
-        job_id = job["id"]
+        job_id = generate_id()
+        job = {
+            "id": job_id,
+            "business_id": biz_id,
+            "job_number": job_num,
+            "title": title[:100],
+            "description": description,
+            "customer_id": customer["id"] if customer else None,
+            "customer_name": customer["name"] if customer else customer_name,
+            "date": today(),
+            "status": "open",
+            "parts": "[]",
+            "time_entries": "[]",
+            "created_at": now()
+        }
         
         success, _ = db.save("jobs", job)
         
@@ -6320,58 +5111,26 @@ class Actions:
         existing_inv = db.get("invoices", {"business_id": biz_id}) if biz_id else []
         inv_num = f"INV-{len(existing_inv) + 1:04d}"
         
-        # Parse items from quote
-        quote_items = quote.get("items", [])
-        if isinstance(quote_items, str):
-            try:
-                quote_items = json.loads(quote_items)
-            except:
-                quote_items = []
-        
-        invoice = RecordFactory.invoice(
-            business_id=biz_id,
-            customer_id=quote.get("customer_id", ""),
-            customer_name=quote.get("customer_name", ""),
-            items=quote_items,
-            invoice_number=inv_num,
-            date=today(),
-            subtotal=quote.get("subtotal", 0),
-            vat=quote.get("vat", 0),
-            total=quote.get("total", 0),
-            status="outstanding",
-            source_quote_id=quote.get("id"),
-            created_by=context.get("user_id", "")
-        )
+        invoice_id = generate_id()
+        invoice = {
+            "id": invoice_id,
+            "business_id": biz_id,
+            "invoice_number": inv_num,
+            "date": today(),
+            "customer_id": quote.get("customer_id"),
+            "customer_name": quote.get("customer_name"),
+            "items": quote.get("items", "[]"),
+            "subtotal": quote.get("subtotal", 0),
+            "vat": quote.get("vat", 0),
+            "total": quote.get("total", 0),
+            "status": "outstanding",
+            "quote_id": quote.get("id"),
+            "created_at": now()
+        }
         
         success, _ = db.save("invoices", invoice)
         
         if success:
-            # === DEDUCT STOCK ===
-            try:
-                items_list = json.loads(quote.get("items", "[]"))
-                all_stock = db.get("stock", {"business_id": biz_id}) or []
-                stock_by_code = {s.get("code", "").upper(): s for s in all_stock if s.get("code")}
-                
-                for item in items_list:
-                    code = (item.get("code") or "").upper()
-                    stock_id = item.get("stock_id")
-                    stock_item = None
-                    
-                    # Find by stock_id first, then by code
-                    if stock_id:
-                        stock_item = db.get_one("stock", stock_id)
-                    elif code and code in stock_by_code:
-                        stock_item = stock_by_code[code]
-                    
-                    if stock_item:
-                        current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                        sold_qty = float(item.get("qty") or item.get("quantity") or 1)
-                        new_qty = current_qty - sold_qty
-                        db.update("stock", stock_item.get("id"), {"qty": new_qty, "quantity": new_qty}, biz_id)
-                        logger.info(f"[QUOTE->INV] Stock {code or stock_id}: {current_qty} - {sold_qty} = {new_qty}")
-            except Exception as e:
-                logger.error(f"[QUOTE->INV] Stock deduction error: {e}")
-            
             # Update quote status
             db.save("quotes", {"id": quote.get("id"), "status": "accepted"})
             
@@ -6389,80 +5148,6 @@ class Actions:
             }
         
         return {"success": False, "message": "Failed to create invoice"}
-    
-    @staticmethod
-    def quote_to_job(data: dict, context: dict) -> dict:
-        """Convert a quote to a job card"""
-        
-        quote_number = data.get("quote_number", "")
-        
-        if not quote_number:
-            return {"success": False, "message": "Need quote number to convert to job card"}
-        
-        biz_id = context.get("business_id")
-        
-        # Find the quote
-        quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
-        quote = None
-        for q in quotes:
-            if quote_number.lower() in q.get("quote_number", "").lower():
-                quote = q
-                break
-        
-        if not quote:
-            return {"success": False, "message": f"Quote not found: {quote_number}"}
-        
-        # Parse quote items → BOM
-        try:
-            quote_items = json.loads(quote.get("items", "[]"))
-        except:
-            quote_items = []
-        
-        # Generate job card number
-        existing_jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-        year = datetime.now().year
-        job_number = f"JC-{year}-{len(existing_jobs) + 1:03d}"
-        
-        # Create job card
-        job_id = generate_id()
-        job_card = {
-            "id": job_id,
-            "business_id": biz_id,
-            "job_number": job_number,
-            "quote_id": quote.get("id"),
-            "quote_number": quote.get("quote_number"),
-            "customer_id": quote.get("customer_id"),
-            "customer_name": quote.get("customer_name"),
-            "title": f"Job for {quote.get('customer_name', 'Customer')}",
-            "description": f"From quote {quote.get('quote_number')}",
-            "status": "not_started",
-            "created_at": now(),
-            "quote_value": float(quote.get("total", 0)),
-            "quote_subtotal": float(quote.get("subtotal", 0)),
-            "bom": json.dumps(quote_items),
-            "materials_issued": json.dumps([]),
-            "labour_entries": json.dumps([]),
-            "additional_costs": json.dumps([]),
-            "total_material_cost": 0,
-            "total_labour_cost": 0,
-            "total_additional_cost": 0,
-            "total_actual_cost": 0,
-            "profit_loss": 0,
-        }
-        
-        success, _ = db.save("jobs", job_card)
-        
-        if success:
-            # Update quote status
-            db.save("quotes", {"id": quote.get("id"), "status": "accepted"})
-            
-            return {
-                "success": True,
-                "message": f"Job Card {job_number} created from {quote.get('quote_number')} - Value: {money(quote.get('total', 0))}. View at /job-card/{job_id}",
-                "data": {"job_id": job_id, "job_number": job_number}
-            }
-        
-        return {"success": False, "message": "Failed to create job card"}
     
     @staticmethod
     def add_employee(data: dict, context: dict) -> dict:
@@ -6497,15 +5182,18 @@ class Actions:
         except:
             hourly_rate = 0
         
-        employee = RecordFactory.employee(
-            business_id=biz_id,
-            name=name,
-            position=position,
-            id_number=id_number,
-            basic_salary=salary,
-            hourly_rate=hourly_rate
-        )
-        emp_id = employee["id"]
+        emp_id = generate_id()
+        employee = {
+            "id": emp_id,
+            "business_id": biz_id,
+            "name": name,
+            "position": position,
+            "id_number": id_number,
+            "basic_salary": salary,
+            "hourly_rate": hourly_rate,
+            "tax_number": "",
+            "created_at": now()
+        }
         
         success, _ = db.save("employees", employee)
         
@@ -6620,19 +5308,21 @@ class Actions:
         vat_amount = amount * float(VAT_RATE) / (1 + float(VAT_RATE))
         subtotal = amount - vat_amount
         
-        invoice = RecordFactory.supplier_invoice(
-            business_id=biz_id,
-            supplier_id=supplier["id"] if supplier else "",
-            supplier_name=supplier["name"] if supplier else supplier_name,
-            invoice_number=invoice_number or f"SINV-{generate_id()[:6]}",
-            date=today(),
-            subtotal=float(subtotal),
-            vat=float(vat_amount),
-            total=float(amount),
-            status="unpaid",
-            notes=description
-        )
-        inv_id = invoice["id"]
+        inv_id = generate_id()
+        invoice = {
+            "id": inv_id,
+            "business_id": biz_id,
+            "date": today(),
+            "invoice_number": invoice_number or f"SINV-{inv_id[:6]}",
+            "supplier_id": supplier["id"] if supplier else None,
+            "supplier_name": supplier["name"] if supplier else supplier_name,
+            "description": description,
+            "subtotal": float(subtotal),
+            "vat": float(vat_amount),
+            "total": float(amount),
+            "status": "unpaid",
+            "created_at": now()
+        }
         
         success, _ = db.save("supplier_invoices", invoice)
         
@@ -7278,13 +5968,16 @@ class Actions:
                     
                     if not supplier:
                         # Create new supplier
-                        supplier = RecordFactory.supplier(
-                            business_id=biz_id,
-                            name=supplier_name,
-                            phone=item_data.get("phone", ""),
-                            email=item_data.get("email", ""),
-                            created_by=context.get("user_id", "")
-                        )
+                        supplier_id = generate_id()
+                        supplier = {
+                            "id": supplier_id,
+                            "business_id": biz_id,
+                            "name": supplier_name,
+                            "phone": item_data.get("phone", ""),
+                            "email": item_data.get("email", ""),
+                            "balance": 0,
+                            "created_at": now()
+                        }
                         db.save("suppliers", supplier)
                     
                     # Create supplier invoice
@@ -7418,14 +6111,13 @@ class Actions:
                                     }, biz_id)
                                     
                                     # Stock movement
-                                    movement = RecordFactory.stock_movement(
-                                        business_id=biz_id,
-                                        stock_id=matched["id"],
-                                        movement_type="in",
-                                        quantity=li_qty,
-                                        reference=inv.get("invoice_number", "")
-                                    )
-                                    db.save("stock_movements", movement)
+                                    db.save("stock_movements", {
+                                        "id": generate_id(), "business_id": biz_id,
+                                        "stock_id": matched["id"], "type": "in",
+                                        "quantity": li_qty, "cost": li_cost,
+                                        "reference": inv.get("invoice_number", ""),
+                                        "date": today(), "created_at": now()
+                                    })
                                     stock_matched += 1
                                 else:
                                     # CREATE new stock item
@@ -7435,28 +6127,26 @@ class Actions:
                                         final_code = f"{smart_code}-{counter}"
                                         counter += 1
                                     
-                                    # Use RecordFactory.stock() for 'stock' table (uuid ids)
-                                    new_stock = RecordFactory.stock(
-                                        business_id=biz_id,
-                                        description=li_desc,
-                                        code=final_code,
-                                        qty=li_qty,
-                                        cost=li_cost,
-                                        price=round(li_cost * 1.3, 2)
-                                    )
-                                    new_stock_id = new_stock["id"]
-                                    db.save("stock", new_stock)
+                                    new_stock_id = generate_id()
+                                    db.save("stock", {
+                                        "id": new_stock_id, "business_id": biz_id,
+                                        "code": final_code, "description": li_desc,
+                                        "qty": li_qty, "quantity": li_qty,
+                                        "cost": li_cost, "cost_price": li_cost,
+                                        "price": round(li_cost * 1.3, 2),
+                                        "selling_price": round(li_cost * 1.3, 2),
+                                        "created_at": now()
+                                    })
                                     stock_by_code[final_code] = {"id": new_stock_id}
                                     
                                     # Stock movement for new item
-                                    movement = RecordFactory.stock_movement(
-                                        business_id=biz_id,
-                                        stock_id=new_stock_id,
-                                        movement_type="in",
-                                        quantity=li_qty,
-                                        reference=inv.get("invoice_number", "")
-                                    )
-                                    db.save("stock_movements", movement)
+                                    db.save("stock_movements", {
+                                        "id": generate_id(), "business_id": biz_id,
+                                        "stock_id": new_stock_id, "type": "in",
+                                        "quantity": li_qty, "cost": li_cost,
+                                        "reference": inv.get("invoice_number", ""),
+                                        "date": today(), "created_at": now()
+                                    })
                                     stock_created += 1
                             
                             logger.info(f"[PROCESS ALL SCANS] Stock: {stock_matched} matched, {stock_created} created, {expenses_booked} expenses")
@@ -7506,18 +6196,18 @@ class Actions:
                             category = "General Expenses"
                     
                     total = float(item_data.get("total", 0))
-                    vat_amount = total * 0.15 / 1.15 if category != "Fuel" else 0
-                    expense = RecordFactory.expense(
-                        business_id=biz_id,
-                        description=f"{supplier_name} - {item_data.get('invoice_number', '')}".strip(" -"),
-                        amount=total,
-                        date=item_data.get("date", today()),
-                        category=category,
-                        vat=vat_amount,
-                        net=total - vat_amount,
-                        supplier=supplier_name,
-                        reference=item_data.get("invoice_number", "")
-                    )
+                    expense = {
+                        "id": generate_id(),
+                        "business_id": biz_id,
+                        "date": item_data.get("date", today()),
+                        "description": f"{supplier_name} - {item_data.get('invoice_number', '')}".strip(" -"),
+                        "category": category,
+                        "amount": total,
+                        "vat": total * 0.15 / 1.15 if category != "Fuel" else 0,  # No VAT claim on fuel
+                        "supplier": supplier_name,
+                        "reference": item_data.get("invoice_number", ""),
+                        "created_at": now()
+                    }
                     success, _ = db.save("expenses", expense)
                     if success:
                         saved += 1
@@ -7579,7 +6269,7 @@ class Actions:
             logger.info(f"[ZANE] Saved scanner inbox settings: {imap_user}")
             return {
                 "success": True,
-                "message": f"Scanner inbox configured successfully.\n\nEmail: {imap_user}\nHost: {imap_host}\n\nYour printer can now send scans to this email address. Go to Scan Inbox to check for new documents."
+                "message": f"✅ Scanner inbox configured!\n\nEmail: {imap_user}\nHost: {imap_host}\n\nYour printer can now send scans to this email address. Go to Scan Inbox to check for new documents!"
             }
         
         return {"success": False, "message": "Failed to save settings"}
@@ -7619,16 +6309,16 @@ class Actions:
             
             return {
                 "success": True,
-                "message": f"Connection successful.\n\nEmail: {imap_user}\nInbox has {total} emails\n\nYour scanner can now send documents to this address."
+                "message": f"✅ Connection successful!\n\nEmail: {imap_user}\nInbox has {total} emails\n\nYour scanner can now send documents to this address!"
             }
         except Exception as e:
             error_msg = str(e)
             if "authentication" in error_msg.lower():
                 return {
                     "success": False,
-                    "message": f"Authentication failed.\n\nPlease check:\n- Is the email address correct?\n- Are you using an App Password (not your regular password)?\n- Remove any spaces from the app password"
+                    "message": f"❌ Authentication failed!\n\nCheck:\n- Is the email correct?\n- Are you using an App Password (not your regular password)?\n- Remove any spaces from the app password"
                 }
-            return {"success": False, "message": f"Connection failed: {error_msg}"}
+            return {"success": False, "message": f"❌ Connection failed: {error_msg}"}
 
     @staticmethod
     def save_whatsapp_settings(data: dict, context: dict) -> dict:
@@ -7661,7 +6351,7 @@ class Actions:
             logger.info(f"[ZANE] Saved WhatsApp settings for business {biz_id}")
             return {
                 "success": True,
-                "message": f"WhatsApp configured successfully.\n\nPhone: {phone}\n\nYou can now send invoices and messages via WhatsApp."
+                "message": f"✅ WhatsApp configured!\n\nPhone: {phone}\n\nYou can now send invoices and messages via WhatsApp!"
             }
         
         return {"success": False, "message": "Failed to save WhatsApp settings"}
@@ -7734,7 +6424,7 @@ class Context:
         }
     
     @staticmethod
-    def _get_top_debtors(biz_id: str, limit: int = 50) -> list:
+    def _get_top_debtors(biz_id: str, limit: int = 5) -> list:
         """Get top debtors - only loads needed columns"""
         try:
             data = db.get_columns("customers", ["name", "phone", "balance"], {"business_id": biz_id})
@@ -7745,22 +6435,22 @@ class Context:
             return []
     
     @staticmethod
-    def _get_recent_invoices(biz_id: str, limit: int = 50) -> list:
+    def _get_recent_invoices(biz_id: str, limit: int = 5) -> list:
         """Get recent invoices - only loads needed columns"""
         try:
-            data = db.get_columns("invoices", ["invoice_number", "customer_name", "total", "status", "date"], {"business_id": biz_id}, limit=500)
+            data = db.get_columns("invoices", ["invoice_number", "customer_name", "total", "status", "date"], {"business_id": biz_id}, limit=100)
             data.sort(key=lambda x: x.get("date", "") or "", reverse=True)
             return [{"number": i.get("invoice_number"), "customer": i.get("customer_name"), "total": i.get("total"), "status": i.get("status")} for i in data[:limit]]
         except:
             return []
     
     @staticmethod
-    def _get_low_stock(biz_id: str, limit: int = 20) -> list:
+    def _get_low_stock(biz_id: str, limit: int = 5) -> list:
         """Get low stock items - only loads needed columns"""
         try:
             data = db.get_columns("stock", ["code", "description", "qty", "quantity", "reorder_level"], {"business_id": biz_id})
             low = [s for s in data if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5) or 5)]
-            return [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0)} for s in low[:limit]]
+            return [{"code": s.get("code"), "description": s.get("description", "")[:30], "qty": s.get("qty") or s.get("quantity", 0)} for s in low[:limit]]
         except:
             return []
     
@@ -7790,11 +6480,11 @@ class Context:
         
         low_stock = [s for s in stock if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5))]
         
-        # Sort by date - NO LIMITS
-        recent_invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
-        recent_quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
-        recent_sales = sorted(sales, key=lambda x: x.get("date", ""), reverse=True)
-        recent_expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)
+        # Sort by date
+        recent_invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)[:20]
+        recent_quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)[:20]
+        recent_sales = sorted(sales, key=lambda x: x.get("date", ""), reverse=True)[:20]
+        recent_expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)[:20]
         
         # Financial summaries
         total_invoiced = sum(float(i.get("total", 0)) for i in invoices)
@@ -7821,68 +6511,61 @@ class Context:
             "business_name": business.get("name", "Business") if business else "Business",
             "user_name": user.get("name", "there") if user else "there",
             "user_id": user.get("id") if user else None,
-            "user_role": user.get("role", "owner") if user else "owner",  # For role-based access control
             
             # CUSTOMERS - Include ALL for searching, plus summary of debtors
             "customer_count": len(customers),
             "all_customers": [{"id": c.get("id"), "name": c.get("name", ""), "phone": c.get("phone", ""), "email": c.get("email", ""), "balance": float(c.get("balance", 0))} for c in customers],
-            "customers_summary": [{"name": c.get("name"), "balance": c.get("balance", 0), "phone": c.get("phone", "")} for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)],
+            "customers_summary": [{"name": c.get("name"), "balance": c.get("balance", 0), "phone": c.get("phone", "")} for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)[:20]],
             "debtors": debtors,
             "total_debtors": total_debtors,
             
             # SUPPLIERS - Include ALL for searching
             "supplier_count": len(suppliers),
             "all_suppliers": [{"id": s.get("id"), "name": s.get("name", ""), "phone": s.get("phone", ""), "email": s.get("email", ""), "balance": float(s.get("balance", 0))} for s in suppliers],
-            "suppliers_summary": [{"name": s.get("name"), "balance": s.get("balance", 0), "phone": s.get("phone", "")} for s in sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)],
+            "suppliers_summary": [{"name": s.get("name"), "balance": s.get("balance", 0), "phone": s.get("phone", "")} for s in sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)[:20]],
             "creditors": creditors,
             "total_creditors": total_creditors,
             
             # STOCK - Include ALL for searching
             "stock_count": len(stock),
-            "all_stock": [{"id": s.get("id"), "code": s.get("code", ""), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0), "price": s.get("price") or s.get("selling_price", 0), "cost": s.get("cost") or s.get("cost_price", 0), "category": s.get("category", "")} for s in stock],
-            "stock_summary": [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0), "price": s.get("price") or s.get("selling_price", 0), "category": s.get("category", "")} for s in stock],
-            "low_stock": [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0)} for s in low_stock],
+            "all_stock": [{"id": s.get("id"), "code": s.get("code", ""), "description": s.get("description", "")[:50], "qty": s.get("qty") or s.get("quantity", 0), "price": s.get("price") or s.get("selling_price", 0), "cost": s.get("cost") or s.get("cost_price", 0), "category": s.get("category", "")} for s in stock],
+            "stock_summary": [{"code": s.get("code"), "description": s.get("description", "")[:30], "qty": s.get("qty") or s.get("quantity", 0), "price": s.get("price") or s.get("selling_price", 0), "category": s.get("category", "")} for s in stock[:50]],
+            "low_stock": [{"code": s.get("code"), "description": s.get("description", "")[:30], "qty": s.get("qty") or s.get("quantity", 0)} for s in low_stock[:20]],
             "stock_value": stock_value,
             "stock_retail_value": stock_retail_value,
             
-            # INVOICES - ALL
+            # INVOICES
             "invoice_count": len(invoices),
-            "all_invoices": invoices,
             "recent_invoices": [{"number": i.get("invoice_number"), "customer": i.get("customer_name"), "total": i.get("total"), "status": i.get("status"), "date": i.get("date")} for i in recent_invoices],
             "total_invoiced": total_invoiced,
             "total_outstanding": total_outstanding,
             "total_paid": total_paid,
             
-            # QUOTES - ALL
+            # QUOTES
             "quote_count": len(quotes),
-            "all_quotes": quotes,
             "recent_quotes": [{"number": q.get("quote_number"), "customer": q.get("customer_name"), "total": q.get("total"), "status": q.get("status"), "date": q.get("date")} for q in recent_quotes],
             "total_quoted": total_quoted,
             "pending_quotes_count": len(pending_quotes),
             
-            # SALES (POS) - ALL
+            # SALES (POS)
             "sales_count": len(sales),
-            "all_sales": sales,
             "recent_sales": [{"date": s.get("date"), "customer": s.get("customer_name", "Cash"), "total": s.get("total"), "method": s.get("payment_method")} for s in recent_sales],
             "total_sales": total_sales,
             "today_sales": today_sales,
             
-            # EXPENSES - ALL
+            # EXPENSES
             "expense_count": len(expenses),
-            "all_expenses": expenses,
-            "recent_expenses": [{"date": e.get("date"), "description": e.get("description", ""), "amount": e.get("amount"), "category": e.get("category")} for e in recent_expenses],
+            "recent_expenses": [{"date": e.get("date"), "description": e.get("description", "")[:30], "amount": e.get("amount"), "category": e.get("category")} for e in recent_expenses],
             "total_expenses": total_expenses,
             
-            # EMPLOYEES/PAYROLL - ALL
+            # EMPLOYEES/PAYROLL
             "employee_count": len(employees),
-            "all_employees": employees,
             "employees_summary": [{"name": e.get("name"), "position": e.get("position", ""), "salary": e.get("salary", 0)} for e in employees],
             "total_payroll": total_payroll,
             
-            # JOBS - ALL
+            # JOBS
             "job_count": len(jobs),
-            "all_jobs": jobs,
-            "jobs_summary": [{"number": j.get("job_number"), "customer": j.get("customer_name"), "status": j.get("status"), "total": j.get("total")} for j in jobs],
+            "jobs_summary": [{"number": j.get("job_number"), "customer": j.get("customer_name"), "status": j.get("status"), "total": j.get("total")} for j in jobs[:20]],
         }
     
     @staticmethod
@@ -7902,740 +6585,12 @@ class Context:
         
         elif page == "invoices":
             invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-            return {"invoices": sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)}
+            return {"invoices": sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)[:50]}
         
         elif page == "dashboard":
             return Context.get_dashboard_stats(user, business)
         
         return {}
-
-
-# 
-# REPORT ENGINE - Opus analyzes, Haiku presents
-# Professional management reports with AI insights
-# 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DAILY BRIEFING - Zane's morning summary for the owner/manager
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class DailyBriefing:
-    """
-    Generates a human-friendly briefing using Haiku.
-    Supports multi-day catch-up summaries when user hasn't checked in.
-    """
-    
-    MODEL_HAIKU = "claude-3-5-haiku-20241022"
-    
-    @classmethod
-    def generate_catchup(cls, business_id: str, user_id: str = None) -> dict:
-        """
-        Generate a catch-up briefing based on when user last viewed Pulse.
-        If 1 day ago → yesterday's summary
-        If 5 days ago → 5 day catch-up
-        """
-        
-        try:
-            # Get the business
-            business = db.get_one("businesses", business_id)
-            biz_name = business.get("name", "Business") if business else "Business"
-            owner_name = business.get("owner_name", "Boss") if business else "Boss"
-            
-            # Find last pulse view
-            views = db.get("pulse_views", {"business_id": business_id}) or []
-            if user_id:
-                views = [v for v in views if v.get("user_id") == user_id]
-            
-            last_view = None
-            if views:
-                views = sorted(views, key=lambda x: x.get("viewed_at", ""), reverse=True)
-                last_view = views[0].get("viewed_at", "")[:10] if views else None
-            
-            # Calculate date range
-            today = datetime.now().date()
-            yesterday = today - timedelta(days=1)
-            
-            if last_view:
-                try:
-                    last_date = datetime.strptime(last_view, "%Y-%m-%d").date()
-                    days_since = (today - last_date).days
-                except:
-                    days_since = 1
-            else:
-                days_since = 1  # First time, just show yesterday
-            
-            # Limit to max 7 days
-            days_since = min(days_since, 7)
-            if days_since < 1:
-                days_since = 1
-            
-            # Generate date range
-            start_date = today - timedelta(days=days_since)
-            end_date = yesterday
-            
-            # Gather data for the range
-            data = cls._gather_range_data(business_id, start_date, end_date)
-            data["days_covered"] = days_since
-            data["start_date"] = start_date.strftime("%Y-%m-%d")
-            data["end_date"] = end_date.strftime("%Y-%m-%d")
-            
-            # Generate briefing
-            briefing_text = cls._write_catchup_briefing(biz_name, owner_name, data)
-            
-            # Record this view
-            view_record = {
-                "id": generate_id(),
-                "business_id": business_id,
-                "user_id": user_id,
-                "viewed_at": now()
-            }
-            db.save("pulse_views", view_record)
-            
-            if briefing_text:
-                # Save briefing
-                briefing_record = {
-                    "id": generate_id(),
-                    "business_id": business_id,
-                    "date": today.strftime("%Y-%m-%d"),
-                    "days_covered": days_since,
-                    "briefing": briefing_text,
-                    "data": data,
-                    "created_at": now()
-                }
-                db.save("daily_briefings", briefing_record)
-                
-                return {"success": True, "briefing": briefing_text, "data": data, "days": days_since}
-            else:
-                return {"success": False, "error": "Could not generate briefing"}
-                
-        except Exception as e:
-            logger.error(f"[BRIEFING] Error: {e}")
-            return {"success": False, "error": str(e)}
-    
-    @classmethod
-    def _gather_range_data(cls, business_id: str, start_date, end_date) -> dict:
-        """Gather all data for a date range."""
-        
-        # Get all data
-        sales = db.get("sales", {"business_id": business_id}) or []
-        invoices = db.get("invoices", {"business_id": business_id}) or []
-        quotes = db.get("quotes", {"business_id": business_id}) or []
-        payments = db.get("payments", {"business_id": business_id}) or []
-        purchase_orders = db.get("purchase_orders", {"business_id": business_id}) or []
-        customers = db.get("customers", {"business_id": business_id}) or []
-        stock = db.get("stock", {"business_id": business_id}) or []
-        users = db.get("users", {"business_id": business_id}) or []
-        
-        user_names = {u.get("id"): u.get("name", u.get("email", "?")[:10]) for u in users}
-        
-        # Convert dates to strings for comparison
-        start_str = start_date.strftime("%Y-%m-%d")
-        end_str = end_date.strftime("%Y-%m-%d")
-        
-        def in_range(date_str):
-            if not date_str:
-                return False
-            d = str(date_str)[:10]
-            return start_str <= d <= end_str
-        
-        # Filter to date range
-        range_sales = [s for s in sales if in_range(s.get("date"))]
-        range_invoices = [i for i in invoices if in_range(i.get("date"))]
-        range_quotes = [q for q in quotes if in_range(q.get("created_at"))]
-        range_payments = [p for p in payments if in_range(p.get("date"))]
-        range_pos = [p for p in purchase_orders if in_range(p.get("date") or p.get("created_at"))]
-        
-        # Totals
-        total_sales = sum(float(s.get("total", 0)) for s in range_sales)
-        sales_cash = sum(float(s.get("total", 0)) for s in range_sales if s.get("payment_method") == "cash")
-        sales_card = sum(float(s.get("total", 0)) for s in range_sales if s.get("payment_method") == "card")
-        sales_acc = sum(float(s.get("total", 0)) for s in range_sales if s.get("payment_method") in ("account", "acc"))
-        
-        total_invoiced = sum(float(i.get("total", 0)) for i in range_invoices)
-        total_quoted = sum(float(q.get("total", 0)) for q in range_quotes)
-        total_received = sum(float(p.get("amount", 0)) for p in range_payments)
-        
-        # Detailed events for storytelling
-        events = []
-        
-        # Sales events
-        for s in range_sales:
-            events.append({
-                "date": str(s.get("date", ""))[:10],
-                "type": "sale",
-                "who": user_names.get(s.get("created_by"), "Someone"),
-                "customer": s.get("customer_name", "Walk-in"),
-                "amount": float(s.get("total", 0)),
-                "method": s.get("payment_method", "cash")
-            })
-        
-        # Quote events
-        for q in range_quotes:
-            events.append({
-                "date": str(q.get("created_at", ""))[:10],
-                "type": "quote",
-                "who": user_names.get(q.get("created_by"), "Someone"),
-                "customer": q.get("customer_name", "Unknown"),
-                "amount": float(q.get("total", 0)),
-                "number": q.get("quote_number", "")
-            })
-        
-        # Invoice events
-        for i in range_invoices:
-            events.append({
-                "date": str(i.get("date", ""))[:10],
-                "type": "invoice",
-                "who": user_names.get(i.get("created_by"), "Someone"),
-                "customer": i.get("customer_name", "Unknown"),
-                "amount": float(i.get("total", 0)),
-                "number": i.get("invoice_number", "")
-            })
-        
-        # Payment events (big deal!)
-        for p in range_payments:
-            events.append({
-                "date": str(p.get("date", ""))[:10],
-                "type": "payment",
-                "customer": p.get("customer_name", "Unknown"),
-                "amount": float(p.get("amount", 0)),
-                "method": p.get("method", "eft")
-            })
-        
-        # PO events
-        for po in range_pos:
-            events.append({
-                "date": str(po.get("date") or po.get("created_at", ""))[:10],
-                "type": "po",
-                "who": user_names.get(po.get("created_by"), "Someone"),
-                "supplier": po.get("supplier_name", "Unknown"),
-                "number": po.get("po_number", "")
-            })
-        
-        # Sort events by date
-        events = sorted(events, key=lambda x: x.get("date", ""), reverse=True)
-        
-        # Team activity summary
-        team_stats = {}
-        for e in events:
-            who = e.get("who", "Unknown")
-            if who == "Unknown" or who == "Someone":
-                continue
-            if who not in team_stats:
-                team_stats[who] = {"sales": 0, "quotes": 0, "invoices": 0, "pos": 0}
-            if e["type"] == "sale":
-                team_stats[who]["sales"] += e.get("amount", 0)
-            elif e["type"] == "quote":
-                team_stats[who]["quotes"] += 1
-            elif e["type"] == "invoice":
-                team_stats[who]["invoices"] += 1
-            elif e["type"] == "po":
-                team_stats[who]["pos"] += 1
-        
-        # Danger customers (90+ days)
-        today_date = datetime.now().date()
-        outstanding = [i for i in invoices if i.get("status") not in ("paid", "credited")]
-        danger_customers = []
-        for inv in outstanding:
-            try:
-                inv_date = datetime.strptime(str(inv.get("date", ""))[:10], "%Y-%m-%d").date()
-                days = (today_date - inv_date).days
-                if days >= 90:
-                    danger_customers.append({
-                        "name": inv.get("customer_name", "Unknown"),
-                        "amount": float(inv.get("total", 0)),
-                        "days": days
-                    })
-            except:
-                pass
-        
-        # Stock alerts
-        out_of_stock = []
-        low_stock = []
-        for item in stock:
-            qty = float(item.get("qty") or item.get("quantity") or 0)
-            reorder = float(item.get("reorder_level") or item.get("min_qty") or 5)
-            code = item.get("code", "") or item.get("name", "?")
-            if qty <= 0:
-                out_of_stock.append(code)
-            elif qty <= reorder:
-                low_stock.append({"code": code, "qty": qty})
-        
-        return {
-            "total_sales": total_sales,
-            "sales_cash": sales_cash,
-            "sales_card": sales_card,
-            "sales_acc": sales_acc,
-            "sale_count": len(range_sales),
-            "total_invoiced": total_invoiced,
-            "invoice_count": len(range_invoices),
-            "total_quoted": total_quoted,
-            "quote_count": len(range_quotes),
-            "total_received": total_received,
-            "payment_count": len(range_payments),
-            "po_count": len(range_pos),
-            "events": events[:30],  # Top 30 events
-            "team_stats": team_stats,
-            "danger_customers": danger_customers[:5],
-            "out_of_stock": out_of_stock[:5],
-            "low_stock": low_stock[:5]
-        }
-    
-    @classmethod
-    def _write_catchup_briefing(cls, biz_name: str, owner_name: str, data: dict) -> Optional[str]:
-        """Use GPT-5.1 to write a natural catch-up briefing. No rules, just honest."""
-        
-        if not OPENAI_API_KEY:
-            logger.error("[BRIEFING] No OpenAI API key")
-            return None
-        
-        days = data.get("days_covered", 1)
-        
-        # Calculate weekends
-        start_date_str = data.get("start_date", "")
-        end_date_str = data.get("end_date", "")
-        weekend_days = 0
-        working_days = 0
-        
-        try:
-            start = datetime.strptime(start_date_str, "%Y-%m-%d")
-            end = datetime.strptime(end_date_str, "%Y-%m-%d")
-            current = start
-            while current <= end:
-                if current.weekday() >= 5:
-                    weekend_days += 1
-                else:
-                    working_days += 1
-                current += timedelta(days=1)
-        except:
-            working_days = days
-        
-        # Build event list
-        events = []
-        for e in data.get("events", [])[:25]:
-            if e["type"] == "sale":
-                events.append(f"{e['who']} sold R{e['amount']:,.0f} to {e['customer']} ({e['method']})")
-            elif e["type"] == "quote":
-                events.append(f"{e['who']} quoted {e['customer']} R{e['amount']:,.0f}")
-            elif e["type"] == "invoice":
-                events.append(f"{e['who']} invoiced {e['customer']} R{e['amount']:,.0f}")
-            elif e["type"] == "payment":
-                events.append(f"{e['customer']} PAID R{e['amount']:,.0f}")
-            elif e["type"] == "po":
-                events.append(f"{e['who']} created PO for {e['supplier']}")
-        
-        # Team summary
-        team = []
-        for name, stats in data.get("team_stats", {}).items():
-            parts = []
-            if stats["sales"] > 0:
-                parts.append(f"R{stats['sales']:,.0f} sales")
-            if stats["quotes"] > 0:
-                parts.append(f"{stats['quotes']} quotes")
-            if stats["invoices"] > 0:
-                parts.append(f"{stats['invoices']} invoices")
-            if parts:
-                team.append(f"{name}: {', '.join(parts)}")
-        
-        # Problems
-        problems = []
-        for c in data.get("danger_customers", []):
-            problems.append(f"{c['name']} owes R{c['amount']:,.0f} for {c['days']} days")
-        
-        if data.get('out_of_stock'):
-            problems.append(f"Out of stock: {', '.join(data['out_of_stock'][:3])}")
-        
-        if data.get('low_stock'):
-            problems.append(f"Low stock: {', '.join([s['code'] for s in data['low_stock'][:3]])}")
-        
-        # Build simple data summary
-        summary = f"""
-Besigheid: {biz_name}
-Eienaar: {owner_name}
-Periode: {days} dae ({start_date_str} tot {end_date_str})
-Werksdae: {working_days}, Naweke: {weekend_days}
-
-TOTALE:
-- POS Sales: R{data['total_sales']:,.0f}
-- Invoices: R{data['total_invoiced']:,.0f}
-- Quotes: R{data['total_quoted']:,.0f}
-- Payments ontvang: R{data['total_received']:,.0f}
-
-WAT GEBEUR HET:
-{chr(10).join(events) if events else 'Niks gerecord nie'}
-
-SPAN:
-{chr(10).join(team) if team else 'Geen aktiwiteit'}
-
-PROBLEME:
-{chr(10).join(problems) if problems else 'Geen'}
-"""
-
-        # Simple, honest prompt - no rules
-        prompt = f"""Jy is Zane, die AI assistant vir {biz_name}. 
-
-Hier is die data van die laaste {days} dae. Skryf 'n kort opsomming vir {owner_name}.
-
-Wees eerlik. Geen kak praat nie. As daar probleme is, sê dit. As dit goed gegaan het, sê dit.
-Die besigheid is toe op naweke, so moenie daaroor praat nie.
-
-{summary}
-
-Skryf natuurlik, soos jy met 'n vriend praat. Hou dit kort. Teken af as "- Zane"."""
-
-        try:
-            response = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "gpt-4o",  # gpt-5.1 might not be available yet, using gpt-4o
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 500,
-                    "temperature": 0.8
-                },
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result["choices"][0]["message"]["content"]
-            else:
-                logger.error(f"[BRIEFING] OpenAI error: {response.status_code} - {response.text}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"[BRIEFING] GPT error: {e}")
-            return None
-    
-    @classmethod
-    def generate(cls, business_id: str, for_date: str = None) -> dict:
-        """Legacy single-day generate for nightly scheduler."""
-        return cls.generate_catchup(business_id)
-    
-    @classmethod
-    def get_latest(cls, business_id: str) -> Optional[dict]:
-        """Get the most recent briefing for a business."""
-        
-        briefings = db.get("daily_briefings", {"business_id": business_id}) or []
-        if briefings:
-            briefings = sorted(briefings, key=lambda x: x.get("created_at", ""), reverse=True)
-            return briefings[0]
-        return None
-
-
-class ReportEngine:
-    """
-    Two-stage AI report generation:
-    1. OPUS - Deep analysis of business data (the brain)
-    2. HAIKU - Professional presentation (the voice)
-    
-    This produces reports that are both intelligent AND readable.
-    """
-    
-    MODEL_OPUS = "claude-opus-4-5-20251101"    # Deep thinking - Opus 4.5
-    MODEL_HAIKU = "claude-3-5-haiku-20241022"  # Professional writing
-    
-    @classmethod
-    def generate(cls, report_type: str, context: dict, custom_request: str = None) -> dict:
-        """
-        Generate a professional management report.
-        
-        Args:
-            report_type: Type of report (management, kpi, sales, debtor, stock, forecast, custom)
-            context: Full business context from Context.get_full_context()
-            custom_request: Custom report request (for 'custom' type)
-            
-        Returns:
-            {"success": True/False, "report": "formatted report text", "error": "if failed"}
-        """
-        
-        try:
-            # Step 1: OPUS analyzes the data
-            logger.info(f"[REPORT] Step 1: Opus analyzing {report_type} report...")
-            analysis = cls._opus_analyze(report_type, context, custom_request)
-            
-            if not analysis:
-                logger.error("[REPORT] Opus analysis failed")
-                return {"success": False, "error": "Analysis failed. Please try again."}
-            
-            # Step 2: HAIKU presents the findings professionally
-            logger.info(f"[REPORT] Step 2: Haiku presenting findings...")
-            report = cls._haiku_present(report_type, analysis, context)
-            
-            if not report:
-                logger.error("[REPORT] Haiku presentation failed")
-                return {"success": False, "error": "Report generation failed. Please try again."}
-            
-            logger.info(f"[REPORT] Report generated successfully")
-            return {"success": True, "report": report}
-            
-        except Exception as e:
-            logger.error(f"[REPORT] Exception: {e}")
-            return {"success": False, "error": f"An error occurred: {str(e)}"}
-    
-    @classmethod
-    def _opus_analyze(cls, report_type: str, context: dict, custom_request: str = None) -> Optional[str]:
-        """
-        Step 1: Opus does deep analysis of business data.
-        Returns structured findings (not pretty, just smart).
-        """
-        
-        if not ANTHROPIC_API_KEY:
-            return None
-        
-        # Build data summary for Opus
-        data_summary = cls._build_data_summary(context)
-        
-        # Report-specific analysis prompts
-        analysis_prompts = {
-            "management": "Analyze this business data for a management statement. Find: overall health, cash position, risks, opportunities, and what needs immediate attention.",
-            "kpi": "Calculate and analyze key performance indicators: revenue trends, margins, debtor days, stock turn, customer concentration, and compare to typical benchmarks.",
-            "sales": "Analyze sales patterns: top customers, growth/decline trends, average order values, product mix, and seasonal patterns.",
-            "debtor": "Analyze debtor risk: identify problem customers, aging concerns, collection patterns, and prioritize who needs follow-up.",
-            "stock": "Analyze stock: identify slow movers, fast sellers, items at risk of stockout, dead stock, and margin analysis by category.",
-            "forecast": "Create a 30-day cash flow forecast: expected collections, known expenses, payroll commitments, and flag any cash shortfalls.",
-            "custom": f"Analyze the data to answer: {custom_request or 'general business overview'}"
-        }
-        
-        prompt = analysis_prompts.get(report_type, analysis_prompts["management"])
-        
-        system_prompt = """You are a senior financial analyst reviewing business data.
-
-Your job: Analyze the data and identify KEY INSIGHTS.
-
-OUTPUT FORMAT - Return ONLY this structure (no other text):
-FINDINGS:
-- [Key finding 1]
-- [Key finding 2]
-- [etc]
-
-WARNINGS:
-- [Risk or concern 1]
-- [Risk or concern 2]
-- [etc]
-
-OPPORTUNITIES:
-- [Opportunity 1]
-- [Opportunity 2]
-- [etc]
-
-RECOMMENDATIONS:
-- [Action item 1]
-- [Action item 2]
-- [etc]
-
-KEY METRICS:
-- [Metric name]: [Value] ([interpretation])
-- [etc]
-
-RULES:
-- Be specific with numbers and names
-- Flag anything concerning
-- Identify patterns and trends
-- Give actionable recommendations
-- Use the actual data provided, not generic advice"""
-
-        user_prompt = f"""{prompt}
-
-BUSINESS DATA:
-{data_summary}
-
-Analyze and return findings in the specified format."""
-
-        try:
-            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            response = client.messages.create(
-                model=cls.MODEL_OPUS,
-                max_tokens=2000,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
-            )
-            
-            return response.content[0].text
-                
-        except Exception as e:
-            logger.error(f"[REPORT] Opus exception: {e}")
-            return None
-    
-    @classmethod
-    def _haiku_present(cls, report_type: str, analysis: str, context: dict) -> Optional[str]:
-        """
-        Step 2: Haiku takes Opus's analysis and writes a professional report.
-        Professional but approachable - not chatty, not stiff.
-        """
-        
-        if not ANTHROPIC_API_KEY:
-            return None
-        
-        biz_name = context.get("business_name", "Business")
-        report_date = today()
-        
-        # Report titles
-        titles = {
-            "management": "MANAGEMENT REPORT",
-            "kpi": "KEY PERFORMANCE INDICATORS",
-            "sales": "SALES ANALYSIS",
-            "debtor": "DEBTOR RISK REPORT",
-            "stock": "STOCK ANALYSIS",
-            "forecast": "CASH FLOW FORECAST",
-            "custom": "ANALYSIS REPORT"
-        }
-        
-        report_title = titles.get(report_type, "BUSINESS REPORT")
-        
-        system_prompt = f"""You are writing a professional management report for a business owner.
-
-REPORT HEADER:
-{report_title}
-{biz_name}
-{report_date}
-
-WRITING STYLE:
-- Professional but approachable
-- Clear and direct
-- NO emojis
-- NO casual language ("hey", "awesome", "great job")
-- NO excessive enthusiasm
-- Use proper headings and structure
-- Include specific numbers and names from the analysis
-- End with clear action items
-
-FORMAT:
-Use these sections (adapt based on content):
-
-EXECUTIVE SUMMARY
-[2-3 sentence overview of business health]
-
-KEY FINDINGS
-[Bullet points of main discoveries]
-
-AREAS OF CONCERN
-[Any warnings or risks that need attention]
-
-OPPORTUNITIES
-[Potential improvements or actions]
-
-RECOMMENDATIONS
-[Specific action items with priority]
-
-METRICS SUMMARY
-[Key numbers in a clear format]
-
-Keep the report concise but complete. A busy owner should be able to read it in 2-3 minutes."""
-
-        user_prompt = f"""Based on this analysis, write a professional {report_title} for {biz_name}.
-
-ANALYSIS FROM SENIOR ANALYST:
-{analysis}
-
-Write the report now. Be specific, professional, and actionable."""
-
-        try:
-            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            response = client.messages.create(
-                model=cls.MODEL_HAIKU,
-                max_tokens=2000,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
-            )
-            
-            return response.content[0].text
-                
-        except Exception as e:
-            logger.error(f"[REPORT] Haiku exception: {e}")
-            return None
-    
-    @classmethod
-    def _build_data_summary(cls, context: dict) -> str:
-        """Build a comprehensive data summary for Opus to analyze."""
-        
-        # Calculate additional metrics
-        total_invoiced = context.get('total_invoiced', 0)
-        total_expenses = context.get('total_expenses', 0)
-        total_payroll = context.get('total_payroll', 0)
-        gross_profit = total_invoiced - context.get('cost_of_goods', 0)
-        net_profit = total_invoiced - total_expenses
-        
-        # Stock metrics
-        stock_value = context.get('stock_value', 0)
-        cost_of_goods = total_invoiced * 0.65  # Estimate if not provided
-        stock_turnover = cost_of_goods / stock_value if stock_value > 0 else 0
-        days_to_sell = 365 / stock_turnover if stock_turnover > 0 else 999
-        
-        # Debtor metrics
-        total_debtors = context.get('total_debtors', 0)
-        debtor_days = (total_debtors / total_invoiced * 365) if total_invoiced > 0 else 0
-        
-        summary = f"""
-BUSINESS: {context.get('business_name', 'Unknown')}
-DATE: {today()}
-
-=== FINANCIAL OVERVIEW ===
-Total Invoiced: R{context.get('total_invoiced', 0):,.2f}
-Outstanding (Debtors): R{context.get('total_outstanding', 0):,.2f}
-Paid: R{context.get('total_paid', 0):,.2f}
-Total Sales (POS): R{context.get('total_sales', 0):,.2f}
-Today's Sales: R{context.get('today_sales', 0):,.2f}
-Total Expenses: R{context.get('total_expenses', 0):,.2f}
-Estimated Net Profit: R{net_profit:,.2f}
-
-=== KEY METRICS ===
-Debtor Days: {debtor_days:.0f} days (ideal: <45)
-Stock Turnover: {stock_turnover:.1f}x per year
-Days to Sell Stock: {days_to_sell:.0f} days
-Gross Margin: {((total_invoiced - cost_of_goods) / total_invoiced * 100) if total_invoiced > 0 else 0:.1f}%
-
-=== DEBTORS (Who owes money) ===
-Total Owed: R{context.get('total_debtors', 0):,.2f}
-Number of Debtors: {len(context.get('debtors', []))}
-All Debtors (sorted by amount): {json.dumps(context.get('customers_summary', []), default=str)}
-
-=== CREDITORS (What we owe) ===
-Total Owed: R{context.get('total_creditors', 0):,.2f}
-Number of Creditors: {len(context.get('creditors', []))}
-All Creditors: {json.dumps(context.get('suppliers_summary', []), default=str)}
-
-=== STOCK ===
-Total Items: {context.get('stock_count', 0)}
-Stock Value (Cost): R{context.get('stock_value', 0):,.2f}
-Stock Value (Retail): R{context.get('stock_retail_value', 0):,.2f}
-Low Stock Items: {json.dumps(context.get('low_stock', []), default=str)}
-All Stock: {json.dumps(context.get('stock_summary', []), default=str)}
-
-=== PAYROLL ===
-Employees: {context.get('employee_count', 0)}
-Monthly Payroll: R{context.get('total_payroll', 0):,.2f}
-All Employees: {json.dumps(context.get('employees_summary', []), default=str)}
-
-=== INVOICES (ALL) ===
-Total Count: {context.get('invoice_count', 0)}
-All Invoices: {json.dumps(context.get('all_invoices', context.get('recent_invoices', [])), default=str)}
-
-=== EXPENSES (ALL) ===
-Total Count: {context.get('expense_count', 0)}
-All Expenses: {json.dumps(context.get('all_expenses', context.get('recent_expenses', [])), default=str)}
-
-=== SALES (ALL) ===
-Total Count: {context.get('sales_count', 0)}
-All Sales: {json.dumps(context.get('all_sales', context.get('recent_sales', [])), default=str)}
-
-=== QUOTES ===
-Pending Quotes: {context.get('pending_quotes_count', 0)}
-Total Quoted: R{context.get('total_quoted', 0):,.2f}
-All Quotes: {json.dumps(context.get('all_quotes', context.get('recent_quotes', [])), default=str)}
-
-=== JOBS ===
-Active Jobs: {context.get('job_count', 0)}
-All Jobs: {json.dumps(context.get('all_jobs', context.get('jobs_summary', [])), default=str)}
-
-=== CASH FLOW CONTEXT ===
-Upcoming Payroll (due ~25th): R{context.get('total_payroll', 0):,.2f}
-Creditors (amounts owed): R{context.get('total_creditors', 0):,.2f}
-Collectible from Debtors: R{context.get('total_debtors', 0):,.2f}
-"""
-        return summary
 
 
 # 
@@ -9186,7 +7141,7 @@ class CustomerIntelligence:
             
             if risk_score >= 60:
                 risk_level = "high"
-                message = f"Warning: High risk - pays in {intel.get('avg_days_to_pay', 'N/A')} days avg"
+                message = f"⚠️ High risk - pays in {intel.get('avg_days_to_pay', 'N/A')} days avg"
             elif risk_score >= 30:
                 risk_level = "medium"
                 message = f"Moderate risk - {intel.get('payment_reliability', 0):.0f}% reliability"
@@ -10263,7 +8218,6 @@ class Auth:
     @staticmethod
     def login(email: str, password: str) -> Tuple[bool, str]:
         """Authenticate user"""
-        email = email.lower().strip()  # Normalize email
         users = db.get("users", {"email": email})
         
         if not users:
@@ -10278,7 +8232,7 @@ class Auth:
             return False, "Invalid password"
         
         # Set session
-        session.permanent = True  # Use permanent session (90 days, auto-renews on each visit)
+        session.permanent = True  # Use permanent session (31 days, auto-renews)
         session["user_id"] = user["id"]
         
         # Get business_id - try multiple sources
@@ -10292,32 +8246,14 @@ class Auth:
                 business_id = user_businesses[0].get("id")
             else:
                 # Check if user is a team member of any business
-                # Accept ANY membership status - we'll fix status if needed
-                team_memberships = db.get("team_members", {"email": email})
-                logger.info(f"[LOGIN] Found {len(team_memberships)} team memberships for {email}")
-                
-                for tm in team_memberships:
-                    logger.info(f"[LOGIN] Team membership: biz={tm.get('business_id')}, status={tm.get('status')}, inv_status={tm.get('invitation_status')}")
-                
+                team_memberships = db.get("team_members", {"email": email, "status": "active"})
                 if team_memberships:
-                    # Use first membership
-                    tm = team_memberships[0]
-                    business_id = tm.get("business_id")
-                    
-                    # FIX: If user can login, their membership should be active!
-                    # Update status to active if not already
-                    if tm.get("status") != "active" or tm.get("invitation_status") != "accepted":
-                        logger.info(f"[LOGIN] Fixing team membership status for {email}")
-                        tm["status"] = "active"
-                        tm["invitation_status"] = "accepted"
-                        tm["user_id"] = user["id"]
-                        db.save("team_members", tm)
-                    
+                    business_id = team_memberships[0].get("business_id")
                     logger.info(f"[LOGIN] User {email} is team member, using business: {business_id}")
             
             # Save as default for next time
             if business_id:
-                db.update("users", user["id"], {"default_business_id": business_id})
+                db.save("users", {"id": user["id"], "default_business_id": business_id})
         
         session["business_id"] = business_id
         logger.info(f"[LOGIN] User {email} logged in, business_id: {business_id}")
@@ -11119,28 +9055,10 @@ select.form-input optgroup {
         text-decoration: none !important;
     }
     
-    /* Hide only the navigation bar, not document content */
-    .no-print,
-    div.no-print {
+    /* Hide back links and action buttons */
+    a[href*="Back"], a[style*="Back"],
+    div[style*="display:flex"][style*="justify-content:space-between"][style*="margin-bottom"] {
         display: none !important;
-    }
-    
-    /* Ensure document headers print */
-    #printArea, #invoicePrint {
-        display: block !important;
-    }
-    
-    #printArea *, #invoicePrint * {
-        color: black !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-    }
-    
-    /* Print table header backgrounds */
-    #printArea th, #invoicePrint th {
-        background: #f5f5f5 !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
     }
     
     /* First div with back link and buttons */
@@ -11176,22 +9094,14 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         # Get all businesses for this user
         if user:
             user_id = user.get("id")
-            user_email = user.get("email", "").lower()
+            user_email = user.get("email", "")
             
             # Get businesses user OWNS
             owned_businesses = db.get("businesses", {"user_id": user_id}) if user_id else []
-            logger.info(f"[RENDER] User {user_email} owns {len(owned_businesses)} businesses")
             
             # Get businesses user is a TEAM MEMBER of
-            # Be lenient - accept ANY membership (we fix status at login)
             team_memberships = db.get("team_members", {"email": user_email}) if user_email else []
-            logger.info(f"[RENDER] Found {len(team_memberships)} team memberships for {user_email}")
-            for tm in team_memberships:
-                logger.info(f"[RENDER] Team membership: biz={tm.get('business_id')}, status={tm.get('status')}, invitation_status={tm.get('invitation_status')}")
-            
-            # Include ALL team memberships (not just active/accepted)
-            # If user can see this page, they're logged in, so membership is valid
-            member_biz_ids = [tm.get("business_id") for tm in team_memberships if tm.get("business_id")]
+            member_biz_ids = [tm.get("business_id") for tm in team_memberships if tm.get("status") == "active"]
             
             # Fetch those businesses
             member_businesses = []
@@ -11203,14 +9113,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             
             # Combine: owned + member businesses
             businesses = owned_businesses + member_businesses
-            logger.info(f"[RENDER] Total businesses available: {len(businesses)}")
-            
-            # FALLBACK: If still no businesses but session has business_id, add that
-            if not businesses and session.get("business_id"):
-                fallback_biz = db.get_one("businesses", session.get("business_id"))
-                if fallback_biz:
-                    businesses = [fallback_biz]
-                    logger.info(f"[RENDER] Using fallback business from session: {fallback_biz.get('name')}")
             
             # AUTO-SELECT: If no business in session but user has businesses, select first one
             if not biz_id and businesses:
@@ -11254,7 +9156,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         # Managers can see most things except settings
         nav_items = [
             ("dashboard", "/", "Dashboard"),
-            ("pulse", "/pulse", "Pulse"),
             ("pos", "/pos", "POS"),
             ("customers", "/customers", "Customers"),
             ("suppliers", "/suppliers", "Suppliers"),
@@ -11272,7 +9173,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         # Admin and Owner see everything
         nav_items = [
             ("dashboard", "/", "Dashboard"),
-            ("pulse", "/pulse", "Pulse"),
             ("pos", "/pos", "POS"),
             ("customers", "/customers", "Customers"),
             ("suppliers", "/suppliers", "Suppliers"),
@@ -11286,7 +9186,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("banking", "/banking", "Banking"),
             ("payroll", "/payroll", "Payroll"),
             ("reports", "/reports", "Reports"),
-            ("intelligence", "/intelligence", "AI"),
+            ("intelligence", "/intelligence", "🧠 AI"),
             ("tools", "/tools", "Tools"),
             ("import", "/import", "Import"),
             ("inbox", "/scan-inbox", "Inbox"),
@@ -11302,9 +9202,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     biz_options = ""
     for b in businesses:
         selected = "selected" if b.get("id") == biz_id else ""
-        # Support both 'name' and 'business_name' fields for backwards compatibility
-        display_name = b.get("name") or b.get("business_name", "Unnamed Business")
-        biz_options += f'<option value="{b.get("id")}" {selected}>{display_name}</option>'
+        biz_options += f'<option value="{b.get("id")}" {selected}>{b.get("name")}</option>'
     
     # Show "+" link only if user has less than 2 businesses
     can_add_business = len(businesses) < 2
@@ -11357,8 +9255,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     </div>
     
     {get_zane_chat()}
-    
-    {get_zane_proactive_tip(active)}
     
     <script>
     function switchBusiness(bizId) {{
@@ -11554,7 +9450,7 @@ def get_ai_bar() -> str:
 
 
 def get_zane_header_btn() -> str:
-    """Click AI branded button in header - simple, clean"""
+    """Click AI branded button in header"""
     return '''
     <button class="clickai-btn" onclick="toggleZaneChat()" title="Ask Zane">Click AI</button>
     <style>
@@ -11577,11 +9473,6 @@ def get_zane_header_btn() -> str:
     }
     </style>
     '''
-
-
-def get_zane_proactive_tip(page: str, context: dict = None) -> str:
-    """Floating Zane button - DISABLED to prevent print interference"""
-    return ''  # Disabled - was interfering with Tab navigation and printing
 
 def get_zane_chat() -> str:
     """Zane chat popup - can be placed anywhere"""
@@ -11683,26 +9574,14 @@ def get_zane_chat() -> str:
     
     <div class="zane-chat" id="zaneChat">
         <div class="zane-chat-header">
-            <h4>Zane - Your AI Assistant</h4>
+            <h4>Zane</h4>
             <button class="zane-chat-close" onclick="toggleZaneChat()">×</button>
         </div>
         <div class="zane-chat-body" id="zaneChatBody">
-            <div class="zane-msg zane">Hey! I'm Zane. I can help you with:
-
-• <b>Stock:</b> "Do we have M16 bolts?"
-• <b>Invoices:</b> "Invoice ABC Traders for R5000"
-• <b>Reports:</b> "Show me today's sales"
-• <b>Setup:</b> "Help me set up my printer"
-
-What do you need?</div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
-                <button onclick="quickZane('Who owes us the most?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Top debtors</button>
-                <button onclick="quickZane('Show me low stock')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Low stock</button>
-                <button onclick="quickZane('What did we sell today?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Today's sales</button>
-            </div>
+            <div class="zane-msg zane">Hi! Ask me anything about your business - stock, customers, sales, etc.</div>
         </div>
         <div class="zane-chat-input">
-            <input type="text" id="zaneInput" placeholder="Type here... e.g. 'Who owes us money?'" onkeypress="if(event.key==='Enter')sendZaneMsg()">
+            <input type="text" id="zaneInput" placeholder="Ask Zane..." onkeypress="if(event.key==='Enter')sendZaneMsg()">
             <button onclick="sendZaneMsg()">Send</button>
         </div>
     </div>
@@ -11748,12 +9627,6 @@ What do you need?</div>
             body.innerHTML += `<div class="zane-msg zane">Sorry, something went wrong.</div>`;
         }
     }
-    
-    function quickZane(question) {
-        // Set the input and send
-        document.getElementById('zaneInput').value = question;
-        sendZaneMsg();
-    }
     </script>
     '''
 
@@ -11795,7 +9668,9 @@ def get_ai_scripts() -> str:
                 html += '<div class="ai-action"><h4> ' + data.actions_taken.join(', ') + '</h4></div>';
             }
             
-            // Insight removed - was causing repetition
+            if (data.insight) {
+                html += '<div style="margin-top:15px;color:var(--text-muted)"> ' + data.insight + '</div>';
+            }
             
             if (data.suggestions && data.suggestions.length) {
                 html += '<div class="ai-buttons">';
@@ -11879,110 +9754,57 @@ def ai_insight_box(text: str) -> str:
 def api_ai():
     """THE BRAIN - Main AI endpoint with conversation memory"""
     
-    try:
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        
-        if not user:
-            return jsonify({"error": "Not logged in"})
-        
-        data = request.get_json()
-        command = data.get("command", "") if data else ""
-        
-        if not command:
-            return jsonify({"error": "No command"})
-        
-        # Get chat history from session (last 8 exchanges)
-        chat_key = f"zane_chat_{business.get('id', '')}" if business else "zane_chat"
-        chat_history = session.get(chat_key, [])
-        
-        # Get context
-        context = Context.get_full_context(user, business)
-        
-        # Add user role for access control (from team_members or owner)
-        context["user_role"] = get_user_role()
-        
-        # Add chat history to context for Zane to see
-        context["chat_history"] = chat_history[-16:]  # Last 8 exchanges (16 messages)
-        
-        # Let Zane think
-        result = Brain.think(command, context)
-        
-        # Save to chat history
-        chat_history.append({"role": "user", "content": command})
-        if result.get("response"):
-            chat_history.append({"role": "assistant", "content": result.get("response", "")[:500]})  # Truncate for session size
-        
-        # Keep only last 16 messages (8 exchanges)
-        session[chat_key] = chat_history[-16:]
-        session.permanent = True  # Ensure session persists
-        
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"[AI] Error: {e}")
-        return jsonify({"error": str(e), "response": f"Sorry, something went wrong: {str(e)}"})
-
-
-@app.route("/api/report", methods=["POST"])
-@login_required
-def api_report():
-    """
-    Professional Report Generation - Opus + Haiku
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
     
-    Opus analyzes the data deeply, Haiku presents it professionally.
-    Admin/Owner only - these are management-level reports.
-    """
+    if not user:
+        return jsonify({"error": "Not logged in"})
     
-    try:
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        
-        if not user:
-            return jsonify({"success": False, "error": "Not logged in"})
-        
-        # Admin/Owner only
-        role = get_user_role()
-        if role not in ["owner", "admin", "manager", "bookkeeper"]:
-            return jsonify({"success": False, "error": "Reports are only available to managers and above."})
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({"success": False, "error": "No request data"})
-        
-        report_type = data.get("type", "management")
-        custom_request = data.get("custom", None)
-        
-        # Get full business context
-        context = Context.get_full_context(user, business)
-        
-        # Generate the report
-        result = ReportEngine.generate(report_type, context, custom_request)
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"[REPORT API] Error: {e}")
-        return jsonify({"success": False, "error": f"An error occurred: {str(e)}"})
+    data = request.get_json()
+    command = data.get("command", "")
+    
+    if not command:
+        return jsonify({"error": "No command"})
+    
+    # Get chat history from session (last 8 exchanges)
+    chat_key = f"zane_chat_{business.get('id', '')}" if business else "zane_chat"
+    chat_history = session.get(chat_key, [])
+    
+    # Get context
+    context = Context.get_full_context(user, business)
+    
+    # Add chat history to context for Zane to see
+    context["chat_history"] = chat_history[-16:]  # Last 8 exchanges (16 messages)
+    
+    # Let Zane think
+    result = Brain.think(command, context)
+    
+    # Save to chat history
+    chat_history.append({"role": "user", "content": command})
+    if result.get("response"):
+        chat_history.append({"role": "assistant", "content": result.get("response", "")[:500]})  # Truncate for session size
+    
+    # Keep only last 16 messages (8 exchanges)
+    session[chat_key] = chat_history[-16:]
+    session.permanent = True  # Ensure session persists
+    
+    return jsonify(result)
 
 
 @app.route("/api/insight/<page>")
 def api_insight(page):
     """Get AI insight for a page"""
     
-    try:
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        
-        if not user:
-            return jsonify({"insight": ""})
-        
-        context = Context.get_page_context(page, user, business)
-        insight = Brain.get_insights(page, context)
-        
-        return jsonify({"insight": insight})
-    except Exception as e:
-        logger.error(f"[INSIGHT] Error: {e}")
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    
+    if not user:
         return jsonify({"insight": ""})
+    
+    context = Context.get_page_context(page, user, business)
+    insight = Brain.get_insights(page, context)
+    
+    return jsonify({"insight": insight})
 
 
 # 
@@ -12037,27 +9859,12 @@ def dashboard():
         if customer_count == 0:
             import_btns += '<a href="/import" class="btn btn-secondary" style="padding: 15px 25px;">Import Customers</a>'
         
-        # Zane's smart tip based on what's missing
-        if stock_count == 0 and customer_count == 0:
-            zane_tip = "Let's get you set up! Import your stock and customers from Excel/CSV, or add them manually. I'll help you every step of the way."
-        elif stock_count == 0:
-            zane_tip = "Looking good! You have customers set up. Now let's add your stock - import from Excel or add items manually."
-        else:
-            zane_tip = "Great, you have stock! Now add your customers so you can start invoicing. Import from Excel or add them one by one."
-        
         getting_started_html = f'''
-        <div class="card" style="background: linear-gradient(135deg, rgba(139,92,246,0.15), rgba(99,102,241,0.1)); border: 1px solid rgba(139,92,246,0.3); margin-bottom: 20px;">
-            <div style="display:flex;align-items:flex-start;gap:15px;margin-bottom:15px;">
-                <div style="font-size:20px;color:var(--primary);font-weight:bold;">AI</div>
-                <div>
-                    <h3 style="margin:0 0 8px 0;color:#8b5cf6;">Zane says: Welcome!</h3>
-                    <p style="margin:0;color:var(--text);">{zane_tip}</p>
-                </div>
-            </div>
+        <div class="card" style="background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(99,102,241,0.1)); border: 1px solid rgba(16,185,129,0.3); margin-bottom: 20px;">
+            <h3 style="margin-bottom: 15px;">Get Started</h3>
             <div style="display: flex; flex-wrap: wrap; gap: 15px;">
                 {import_btns}
-                <a href="/pos" class="btn" style="padding: 15px 25px; background:var(--surface);">🛒 Open POS</a>
-                <a href="/scan" class="btn" style="padding: 15px 25px; background:#f59e0b; color:white;">📸 Scan Invoice</a>
+                <a href="/pos" class="btn btn-secondary" style="padding: 15px 25px;">Open POS</a>
             </div>
         </div>
         '''
@@ -12129,23 +9936,6 @@ def dashboard():
         </div>
         '''
     
-    # PULSE BANNER - Quick link to business pulse
-    pulse_banner = ''
-    if not is_staff and total_debtors > 0:
-        pulse_banner = f'''
-        <a href="/pulse" style="text-decoration:none;display:block;margin-top:20px;">
-            <div class="card" style="background:linear-gradient(135deg, rgba(239,68,68,0.15), rgba(249,115,22,0.1));border:1px solid rgba(239,68,68,0.3);cursor:pointer;transition:transform 0.2s;" onmouseover="this.style.transform='scale(1.01)'" onmouseout="this.style.transform='scale(1)'">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <div>
-                        <h3 style="margin:0;color:#ef4444;">Business Pulse</h3>
-                        <p style="margin:5px 0 0 0;color:var(--text-muted);">See who owes you, what needs attention, and what's at risk</p>
-                    </div>
-                    <div style="font-size:24px;color:#ef4444;">→</div>
-                </div>
-            </div>
-        </a>
-        '''
-    
     # Top debtors - static list (hide from staff)
     debtors = [] if is_staff else context.get("customers_summary", [])[:5]
     debtors_html = ""
@@ -12200,8 +9990,6 @@ def dashboard():
     {low_stock_html}
     
     {stats_html}
-    
-    {pulse_banner}
     
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; margin-top: 20px;">
         {debtors_html}
@@ -12300,12 +10088,9 @@ def customers_page():
         customers_html += f'''
         <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
             <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;">
-                    <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(c.get("code", ""))}</span>
-                    <span><strong>{safe_string(c.get("name", "-"))}</strong></span>
-                    <span style="color:var(--text-muted);">{safe_string(c.get("category", ""))}</span>
-                    <span style="color:var(--text-muted);">{safe_string(c.get("contact_name", ""))}</span>
-                    <span style="color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
+                <div style="display:grid;grid-template-columns:2fr 1fr 1fr 80px;align-items:center;font-size:13px;">
+                    <span><strong>{safe_string(c.get("name", "-"))}</strong> <span style="color:var(--text-muted);font-size:11px;">{safe_string(c.get("phone", ""))}</span></span>
+                    <span style="text-align:center;color:var(--text-muted);">{trans_count} trans</span>
                     <span style="text-align:right;color:{balance_color};font-weight:bold;">{money(balance)}</span>
                     <span style="text-align:right;">
                         <a href="/customer/{cust_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
@@ -12331,15 +10116,12 @@ def customers_page():
         </details>
         '''
     
-    # Sticky header - matches import preview columns
+    # Sticky header
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;font-weight:bold;">
-            <span>Code</span>
-            <span>Name</span>
-            <span>Category</span>
-            <span>Contact</span>
-            <span>Phone</span>
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr 80px;align-items:center;font-size:13px;font-weight:bold;">
+            <span>Customer</span>
+            <span style="text-align:center;">Activity</span>
             <span style="text-align:right;">Balance</span>
             <span style="text-align:right;">Actions</span>
         </div>
@@ -12368,7 +10150,7 @@ def customers_page():
     <p style="color:var(--text-muted);margin-bottom:10px;font-size:12px;">Click on a customer to see transactions</p>
     
     {header_row}
-    {customers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No customers yet! Add your first customer to start invoicing.</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/customer/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
+    {customers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);">No customers yet</p></div>'}
     
     <script>
     async function bulkStatements() {{
@@ -12388,12 +10170,12 @@ def customers_page():
             const data = await response.json();
             
             if (data.success) {{
-                alert('Statements sent successfully.\\n\\n' + data.message);
+                alert('✅ Statements sent!\\n\\n' + data.message);
             }} else {{
-                alert('Error: ' + (data.error || 'Failed to send statements'));
+                alert('❌ Error: ' + (data.error || 'Failed to send statements'));
             }}
         }} catch (err) {{
-            alert('Connection error');
+            alert('❌ Connection error');
         }}
         
         btn.disabled = false;
@@ -12440,31 +10222,11 @@ def customer_view(customer_id):
     receipts = [r for r in all_receipts if r.get("customer_id") == customer_id]
     receipts = sorted(receipts, key=lambda x: x.get("date", ""), reverse=True)
     
-    # Get POS sales for this customer
-    all_sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-    sales = [s for s in all_sales if s.get("customer_id") == customer_id]
-    sales = sorted(sales, key=lambda x: x.get("date", ""), reverse=True)
-    
     balance = float(customer.get("balance", 0))
     
     # Stats
     total_invoiced = sum(float(inv.get("total", 0)) for inv in invoices)
     total_paid = sum(float(r.get("amount", 0)) for r in receipts)
-    total_sales = sum(float(s.get("total", 0)) for s in sales)
-    
-    # Build sales HTML
-    sales_html = ""
-    for s in sales[:10]:
-        method = s.get("payment_method", "cash")
-        method_color = {"cash": "#10b981", "card": "#3b82f6", "account": "#f59e0b"}.get(method, "#888")
-        sales_html += f'''
-        <tr>
-            <td>{s.get("sale_number", "-")}</td>
-            <td>{s.get("date", "-")}</td>
-            <td>{money(s.get("total", 0))}</td>
-            <td style="color:{method_color};">{method.upper()}</td>
-        </tr>
-        '''
     
     invoices_html = ""
     for inv in invoices[:10]:
@@ -12538,14 +10300,6 @@ def customer_view(customer_id):
             <div class="stat-value">{len(jobs)}</div>
             <div class="stat-label">Jobs</div>
         </div>
-        <div class="stat-card blue">
-            <div class="stat-value">{len(sales)}</div>
-            <div class="stat-label">POS Sales</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{money(total_sales)}</div>
-            <div class="stat-label">Sales Total</div>
-        </div>
     </div>
     
     <div class="card">
@@ -12556,18 +10310,6 @@ def customer_view(customer_id):
             </thead>
             <tbody>
                 {invoices_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No invoices yet</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <div class="card">
-        <h3 style="margin-bottom:15px;">🛒 POS Sales</h3>
-        <table class="table">
-            <thead>
-                <tr><th>Sale #</th><th>Date</th><th>Amount</th><th>Method</th></tr>
-            </thead>
-            <tbody>
-                {sales_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No POS sales yet</td></tr>"}
             </tbody>
         </table>
     </div>
@@ -12607,15 +10349,17 @@ def customer_new():
         if not name:
             flash("Customer name is required", "error")
         else:
-            customer = RecordFactory.customer(
-                business_id=biz_id,
-                name=name,
-                phone=phone,
-                email=email,
-                address=address,
-                created_by=user.get("id", "") if user else ""
-            )
-            customer_id = customer["id"]
+            customer_id = generate_id()
+            customer = {
+                "id": customer_id,
+                "business_id": biz_id,
+                "name": name,
+                "phone": phone,
+                "email": email,
+                "address": address,
+                "balance": 0,
+                "created_at": now()
+            }
             
             success, err = db.save("customers", customer)
             if success:
@@ -12662,17 +10406,9 @@ def stock_page():
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
     context = Context.get_page_context("stock", user, business)
     
     stock = context.get("stock", [])
-    
-    # Get active jobs for Issue to Job dropdown
-    jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-    active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
-    job_options_html = '<option value="">-- Select Job Card --</option>'
-    for job in active_jobs:
-        job_options_html += f'<option value="{job.get("id")}">{job.get("job_number")} - {safe_string(job.get("title", "")[:30])}</option>'
     
     # Calculate stats
     total_items = len(stock)
@@ -12693,33 +10429,22 @@ def stock_page():
             current_category = category
             if category:
                 rows += f'''
-                <tr class="category-header-row" data-category="{safe_string(category)}" style="background:rgba(99,102,241,0.15);">
-                    <td colspan="9" style="padding:10px;font-weight:bold;color:var(--primary);">{category}</td>
+                <tr style="background:rgba(99,102,241,0.15);">
+                    <td colspan="6" style="padding:10px;font-weight:bold;color:var(--primary);">{category}</td>
                 </tr>
                 '''
         
         qty = float(s.get("qty") or s.get("quantity") or 0)
         cost = float(s.get("cost") or s.get("cost_price") or 0)
         price = float(s.get("price") or s.get("selling_price") or 0)
-        unit = safe_string(s.get("unit", ""))
-        total_value = qty * cost
         qty_class = "color: var(--red);" if qty < 5 else ""
-        code = safe_string(s.get("code", "-"))
-        desc = safe_string(s.get("description", "-"))
-        desc_escaped = desc.replace("'", "&#39;")
-        stock_id = s.get("id", "")
         rows += f'''
-        <tr class="stock-data-row" data-search="{code.lower()} {desc.lower()}" data-category="{safe_string(category)}">
-            <td><strong>{code}</strong></td>
-            <td>{desc}</td>
-            <td style="color:var(--text-muted);font-size:11px;">{safe_string(category)}</td>
-            <td style="{qty_class} text-align:right;">{qty:.0f}</td>
-            <td style="text-align:center;color:var(--text-muted);">{unit}</td>
-            <td style="text-align:right;">{money(cost)}</td>
-            <td style="text-align:right;color:var(--text-muted);">{money(total_value)}</td>
-            <td style="text-align:right;">{money(price)}</td>
-            <td><button class="btn btn-sm" style="background:#8b5cf6;color:white;padding:4px 8px;font-size:11px;" 
-                onclick="showIssueToJob('{stock_id}', '{code}', '{desc_escaped}', {qty}, {cost})">Issue</button></td>
+        <tr>
+            <td><strong>{safe_string(s.get("code", "-"))}</strong></td>
+            <td>{safe_string(s.get("description", "-"))}</td>
+            <td style="{qty_class}">{qty:.0f}</td>
+            <td>{money(cost)}</td>
+            <td>{money(price)}</td>
         </tr>
         '''
     
@@ -12743,30 +10468,15 @@ def stock_page():
         </div>
         '''
     
-    # Get unique categories for dropdown
-    categories = sorted(set(s.get("category") or "" for s in stock if s.get("category")))
-    category_options = '<option value="">All Categories</option>'
-    for cat in categories:
-        category_options += f'<option value="{safe_string(cat)}">{safe_string(cat)}</option>'
-    
     content = f'''
     {stats_html}
     
     <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <h3 class="card-title" style="margin:0;">Stock ({total_items})</h3>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                <input type="text" id="stockSearch" placeholder="🔍 Search code or description..." 
-                    oninput="filterStockTable()" 
-                    style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);width:250px;">
-                <select id="categoryFilter" onchange="filterStockTable()" 
-                    style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);">
-                    {category_options}
-                </select>
-                <button class="btn btn-primary" onclick="openZaneEdit()" style="background:var(--primary);">
-                    Zane Edit
-                </button>
-            </div>
+            <button class="btn btn-primary" onclick="openZaneEdit()" style="background:var(--primary);">
+                Zane Edit Stock
+            </button>
         </div>
         
         <!-- Zane Edit Panel -->
@@ -12786,57 +10496,15 @@ def stock_page():
         
         <table class="table">
             <thead>
-                <tr>
-                    <th>Code</th>
-                    <th>Description</th>
-                    <th>Category</th>
-                    <th style="text-align:right;">Qty</th>
-                    <th style="text-align:center;">Unit</th>
-                    <th style="text-align:right;">Cost</th>
-                    <th style="text-align:right;">Value</th>
-                    <th style="text-align:right;">Price</th>
-                    <th>Action</th>
-                </tr>
+                <tr><th>Code</th><th>Description</th><th>Qty</th><th>Cost</th><th>Price</th></tr>
             </thead>
             <tbody>
-                {rows or "<tr><td colspan='6' style='text-align:center;padding:40px;'><div style='color:var(--text-muted);'><strong>Tip:</strong> No stock items yet!</div><div style='margin-top:10px;'><a href='/import' class='btn btn-primary'>Import from Excel</a> <span style='color:var(--text-muted);margin:0 10px;'>or</span> <a href='/stock/new' class='btn btn-secondary'>Add manually</a></div></td></tr>"}
+                {rows or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No stock yet</td></tr>"}
             </tbody>
         </table>
     </div>
     
     <script>
-    function filterStockTable() {{
-        const search = document.getElementById('stockSearch').value.toLowerCase().trim();
-        const categoryFilter = document.getElementById('categoryFilter').value;
-        
-        const rows = document.querySelectorAll('.stock-data-row');
-        const categoryHeaders = document.querySelectorAll('.category-header-row');
-        
-        // Track which categories have visible items
-        const visibleCategories = new Set();
-        
-        rows.forEach(row => {{
-            const searchData = row.getAttribute('data-search') || '';
-            const rowCategory = row.getAttribute('data-category') || '';
-            
-            const matchesSearch = !search || searchData.includes(search);
-            const matchesCategory = !categoryFilter || rowCategory === categoryFilter;
-            
-            if (matchesSearch && matchesCategory) {{
-                row.style.display = '';
-                if (rowCategory) visibleCategories.add(rowCategory);
-            }} else {{
-                row.style.display = 'none';
-            }}
-        }});
-        
-        // Show/hide category headers based on visible items
-        categoryHeaders.forEach(header => {{
-            const cat = header.getAttribute('data-category') || '';
-            header.style.display = visibleCategories.has(cat) ? '' : 'none';
-        }});
-    }}
-    
     function openZaneEdit() {{
         document.getElementById('zaneEditPanel').style.display = 'block';
         document.getElementById('zaneCommand').focus();
@@ -12947,108 +10615,7 @@ def stock_page():
     document.getElementById('zaneCommand')?.addEventListener('keypress', function(e) {{
         if (e.key === 'Enter') runZaneEdit();
     }});
-    
-    // === ISSUE TO JOB FUNCTIONS ===
-    let currentIssueStock = null;
-    
-    function showIssueToJob(stockId, code, desc, qty, cost) {{
-        currentIssueStock = {{ stockId, code, desc, qty, cost }};
-        document.getElementById('issueStockCode').textContent = code;
-        document.getElementById('issueStockDesc').textContent = desc;
-        document.getElementById('issueStockQty').textContent = qty;
-        document.getElementById('issueQty').value = 1;
-        document.getElementById('issueQty').max = qty;
-        document.getElementById('issueJobModal').style.display = 'flex';
-    }}
-    
-    function closeIssueModal() {{
-        document.getElementById('issueJobModal').style.display = 'none';
-        currentIssueStock = null;
-    }}
-    
-    async function submitIssueToJob() {{
-        const jobId = document.getElementById('issueJobSelect').value;
-        const qty = parseInt(document.getElementById('issueQty').value) || 0;
-        
-        if (!jobId) {{
-            alert('Kies asb n Job Card');
-            return;
-        }}
-        if (qty <= 0) {{
-            alert('Qty moet meer as 0 wees');
-            return;
-        }}
-        if (qty > currentIssueStock.qty) {{
-            alert('Nie genoeg stock nie! Net ' + currentIssueStock.qty + ' beskikbaar.');
-            return;
-        }}
-        
-        const btn = document.querySelector('#issueJobModal button[onclick="submitIssueToJob()"]');
-        btn.disabled = true;
-        btn.textContent = 'Busy...';
-        
-        try {{
-            const response = await fetch('/api/stock/issue-to-job', {{
-                method: 'POST',
-                headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify({{
-                    stock_id: currentIssueStock.stockId,
-                    job_id: jobId,
-                    qty: qty,
-                    code: currentIssueStock.code,
-                    description: currentIssueStock.desc,
-                    cost: currentIssueStock.cost
-                }})
-            }});
-            
-            const data = await response.json();
-            
-            if (data.success) {{
-                alert('' + qty + 'x ' + currentIssueStock.code + ' issued to ' + data.job_number);
-                closeIssueModal();
-                location.reload();
-            }} else {{
-                alert('Error: ' + (data.error || 'Failed'));
-                btn.disabled = false;
-                btn.textContent = 'Issue to Job';
-            }}
-        }} catch (err) {{
-            alert('Connection error');
-            btn.disabled = false;
-            btn.textContent = 'Issue to Job';
-        }}
-    }}
     </script>
-    
-    <!-- Issue to Job Modal -->
-    <div id="issueJobModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:var(--card);padding:25px;border-radius:12px;max-width:400px;width:90%;">
-            <h3 style="margin:0 0 15px 0;">Issue Stock to Job Card</h3>
-            
-            <div style="background:rgba(139,92,246,0.1);padding:12px;border-radius:8px;margin-bottom:15px;">
-                <div style="font-weight:bold;" id="issueStockCode"></div>
-                <div style="font-size:13px;color:var(--text-muted);" id="issueStockDesc"></div>
-                <div style="font-size:12px;margin-top:5px;">Available: <strong id="issueStockQty"></strong></div>
-            </div>
-            
-            <div style="margin-bottom:15px;">
-                <label class="form-label">Job Card</label>
-                <select id="issueJobSelect" class="form-input">
-                    {job_options_html}
-                </select>
-            </div>
-            
-            <div style="margin-bottom:20px;">
-                <label class="form-label">Quantity to Issue</label>
-                <input type="number" id="issueQty" class="form-input" value="1" min="1" style="width:100px;">
-            </div>
-            
-            <div style="display:flex;gap:10px;">
-                <button class="btn btn-primary" onclick="submitIssueToJob()" style="flex:1;">Issue to Job</button>
-                <button class="btn btn-secondary" onclick="closeIssueModal()">Cancel</button>
-            </div>
-        </div>
-    </div>
     '''
     
     return render_page("Stock", content, user, "stock")
@@ -13092,17 +10659,17 @@ def stock_new():
                 words = description.upper().split()[:3]
                 code = "-".join(w[:4] for w in words if w)
             
-            # Use RecordFactory.stock() for 'stock' table (uuid ids)
-            item = RecordFactory.stock(
-                business_id=biz_id,
-                description=description,
-                id=stock_id,
-                code=code,
-                category=category or "General",
-                cost=cost_price,
-                price=selling_price,
-                qty=quantity
-            )
+            item = {
+                "id": stock_id,
+                "business_id": biz_id,
+                "code": code,
+                "description": description,
+                "category": category or "General",
+                "cost": cost_price,
+                "price": selling_price,
+                "qty": quantity,
+                "created_at": now()
+            }
             
             success, err = db.save("stock", item)
             if success:
@@ -13182,105 +10749,6 @@ def stock_new():
 # Store pending edits temporarily
 _zane_pending_edits = {}
 
-
-@app.route("/api/stock/issue-to-job", methods=["POST"])
-@login_required
-def api_stock_issue_to_job():
-    """Issue stock to a job card - updates stock qty and job card materials"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    try:
-        data = request.get_json()
-        stock_id = data.get("stock_id")
-        job_id = data.get("job_id")
-        qty = int(data.get("qty", 0))
-        code = data.get("code", "")
-        description = data.get("description", "")
-        cost = float(data.get("cost", 0))
-        
-        if not stock_id or not job_id or qty <= 0:
-            return jsonify({"success": False, "error": "Invalid data"})
-        
-        # Get stock item
-        stock_item = db.get_one("stock", stock_id)
-        if not stock_item:
-            return jsonify({"success": False, "error": "Stock item not found"})
-        
-        # Get job card
-        job = db.get_one("jobs", job_id)
-        if not job:
-            return jsonify({"success": False, "error": "Job card not found"})
-        
-        # Check available qty
-        current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-        if qty > current_qty:
-            return jsonify({"success": False, "error": f"Not enough stock. Only {current_qty} available."})
-        
-        # Update stock quantity
-        new_qty = current_qty - qty
-        db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-        logger.info(f"[ISSUE TO JOB] Stock {code}: {current_qty} - {qty} = {new_qty}")
-        
-        # Update job card materials_issued
-        try:
-            materials_issued = json.loads(job.get("materials_issued", "[]"))
-        except:
-            materials_issued = []
-        
-        material_cost = qty * cost
-        issue_entry = {
-            "date": today(),
-            "stock_id": stock_id,
-            "code": code,
-            "description": description,
-            "qty": qty,
-            "cost_each": cost,
-            "total_cost": material_cost,
-            "issued_by": user.get("name", user.get("email", "Unknown")),
-            "timestamp": now()
-        }
-        materials_issued.append(issue_entry)
-        
-        # Update job totals
-        current_material_cost = float(job.get("total_material_cost", 0))
-        new_material_cost = current_material_cost + material_cost
-        
-        total_actual_cost = new_material_cost + float(job.get("total_labour_cost", 0)) + float(job.get("total_additional_cost", 0))
-        quote_value = float(job.get("quote_value", 0))
-        profit_loss = quote_value - total_actual_cost
-        
-        job_update = {
-            "materials_issued": json.dumps(materials_issued),
-            "total_material_cost": new_material_cost,
-            "total_actual_cost": total_actual_cost,
-            "profit_loss": profit_loss
-        }
-        
-        # Auto-start job if not started
-        if job.get("status") == "not_started":
-            job_update["status"] = "in_progress"
-            job_update["started_at"] = now()
-        
-        db.update("jobs", job_id, job_update, biz_id)
-        
-        AuditLog.log("UPDATE", "jobs", job_id, details=f"Stock issued: {qty}x {code} (R{material_cost:.2f})")
-        logger.info(f"[ISSUE TO JOB] Issued {qty}x {code} to job {job.get('job_number')} - material cost R{material_cost:.2f}")
-        
-        return jsonify({
-            "success": True,
-            "job_number": job.get("job_number"),
-            "new_stock_qty": new_qty,
-            "material_cost": material_cost
-        })
-        
-    except Exception as e:
-        logger.error(f"[ISSUE TO JOB] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
 @app.route("/api/stock/zane-edit", methods=["POST"])
 @login_required
 def api_stock_zane_edit():
@@ -13293,10 +10761,7 @@ def api_stock_zane_edit():
     if not biz_id:
         return jsonify({"success": False, "error": "No business selected"})
     
-    try:
-        data = request.get_json() or {}
-    except:
-        data = {}
+    data = request.get_json() or {}
     command = data.get("command", "").lower().strip()
     offset = data.get("offset", 0)
     limit = data.get("limit", 100)
@@ -13572,7 +11037,7 @@ def invoices_page():
     invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
     
     rows = ""
-    for inv in invoices[:500]:
+    for inv in invoices[:50]:
         status = inv.get("status", "")
         status_colors = {"paid": "var(--green)", "delivered": "#3b82f6", "credited": "var(--red)", "outstanding": "var(--orange)", "account": "#f59e0b"}
         status_color = status_colors.get(status, "var(--text-muted)")
@@ -13656,39 +11121,26 @@ def invoice_new():
         inv_num = f"INV{len(existing) + 1:04d}"
         
         # Save invoice
-        invoice = RecordFactory.invoice(
-            business_id=biz_id,
-            customer_id=safe_uuid(customer_id),
-            customer_name=customer_name,
-            items=items,
-            invoice_number=inv_num,
-            date=today(),
-            subtotal=float(subtotal),
-            vat=float(vat),
-            total=float(total),
-            payment_method=payment_method,
-            status="paid" if payment_method in ("cash", "card", "eft") else "outstanding",
-            created_by=user.get("id", "") if user else ""
-        )
-        invoice_id = invoice["id"]
+        invoice_id = generate_id()
+        invoice = {
+            "id": invoice_id,
+            "business_id": biz_id,
+            "invoice_number": inv_num,
+            "date": today(),
+            "customer_id": customer_id or None,
+            "customer_name": customer_name,
+            "items": json.dumps(items),
+            "subtotal": float(subtotal),
+            "vat": float(vat),
+            "total": float(total),
+            "payment_method": payment_method,
+            "status": "paid" if payment_method in ("cash", "card", "eft") else "outstanding",
+            "created_at": now()
+        }
         
         success, _ = db.save("invoices", invoice)
         
         if success:
-            # === DEDUCT STOCK ===
-            # Get stock_ids from form if provided
-            stock_ids = request.form.getlist("item_stock_id[]")
-            for i, desc in enumerate(descriptions):
-                if desc.strip() and i < len(stock_ids) and stock_ids[i]:
-                    stock_id = stock_ids[i]
-                    stock_item = db.get_one("stock", stock_id)
-                    if stock_item:
-                        current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                        sold_qty = float(quantities[i] or 0)
-                        new_qty = current_qty - sold_qty
-                        db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                        logger.info(f"[INVOICE] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
-            
             # Try to create journal entries (won't crash if tables don't exist)
             try:
                 if payment_method == "account":
@@ -13897,32 +11349,20 @@ def invoice_view(invoice_id):
     if not invoice:
         return redirect("/invoices")
     
-    # Get customer details if customer_id exists
-    customer = None
-    if invoice.get("customer_id"):
-        customer = db.get_one("customers", invoice.get("customer_id"))
-    
-    # Parse items - handle both JSON string and list
-    raw_items = invoice.get("items", [])
-    if isinstance(raw_items, str):
-        try:
-            items = json.loads(raw_items)
-        except:
-            items = []
-    else:
-        items = raw_items if raw_items else []
+    # Parse items
+    try:
+        items = json.loads(invoice.get("items", "[]"))
+    except:
+        items = []
     
     items_html = ""
     for item in items:
-        # Handle both qty and quantity field names
-        qty = item.get("qty") or item.get("quantity") or 1
-        desc = item.get("description") or item.get("desc") or "-"
         items_html += f'''
         <tr>
-            <td style="font-size:16px;">{safe_string(desc)}</td>
-            <td style="text-align:center;font-size:16px;">{qty}</td>
-            <td style="text-align:right;font-size:16px;">{money(item.get("price", 0))}</td>
-            <td style="text-align:right;font-size:16px;">{money(item.get("total", 0))}</td>
+            <td>{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;">{item.get("qty", item.get("quantity", 1))}</td>
+            <td style="text-align:right;">{money(item.get("price", 0))}</td>
+            <td style="text-align:right;">{money(item.get("total", 0))}</td>
         </tr>
         '''
     
@@ -13943,7 +11383,7 @@ def invoice_view(invoice_id):
     cn_btn = "" if status in ("credited", "paid") else f'<a href="/invoice/{invoice_id}/credit-note" class="btn btn-secondary">Credit Note</a>'
     
     # Delivery note button - hide if already delivered or paid
-    dn_btn = "" if status in ("delivered", "paid", "credited") else f'<a href="/invoice/{invoice_id}/create-delivery-note" class="btn btn-secondary">Delivery Note</a>'
+    dn_btn = "" if status in ("delivered", "paid", "credited") else f'<a href="/invoice/{invoice_id}/create-delivery-note" class="btn btn-secondary">📦 Delivery Note</a>'
     
     # Payment buttons - show for outstanding, delivered, or account invoices
     payment_btns = ""
@@ -13960,18 +11400,6 @@ def invoice_view(invoice_id):
     if invoice.get("source_quote_id"):
         source_quote = f'<a href="/quote/{invoice.get("source_quote_id")}" style="color:var(--text-muted);font-size:12px;">From Quote: {invoice.get("source_quote_number", "View")}</a>'
     
-    # Build business details section
-    biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
-    biz_phone = business.get("phone", "") if business else ""
-    biz_email = business.get("email", "") if business else ""
-    biz_vat = business.get("vat_number", "") if business else ""
-    
-    # Build customer details section  
-    cust_name = safe_string(invoice.get("customer_name", "-"))
-    cust_phone = customer.get("phone", "") if customer else ""
-    cust_email = customer.get("email", "") if customer else ""
-    cust_address = safe_string(customer.get("address", "")).replace("\n", "<br>") if customer else ""
-    
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
@@ -13986,46 +11414,35 @@ def invoice_view(invoice_id):
         </div>
     </div>
     
-    <div class="card" id="invoicePrint" style="background:white;color:#333;padding:40px;">
-        <!-- HEADER: Business Details -->
-        <div style="display:flex;justify-content:space-between;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #333;">
-            <div>
-                <h1 style="color:#333;margin:0;font-size:32px;font-weight:bold;">{biz_name}</h1>
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">{biz_address}</p>' if biz_address else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {biz_phone}</p>' if biz_phone else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Email: {biz_email}</p>' if biz_email else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;"><strong>VAT No:</strong> {biz_vat}</p>' if biz_vat else ''}
-            </div>
-            <div style="text-align:right;">
-                <h2 style="color:#10b981;margin:0;font-size:36px;font-weight:bold;">INVOICE</h2>
-                <p style="color:#333;margin:10px 0;font-size:18px;font-weight:bold;">{invoice.get("invoice_number", "-")}</p>
-                {status_badge}
-            </div>
-        </div>
-        
-        <!-- BILL TO and DATE -->
+    <div class="card" id="invoicePrint" style="background:white;color:#333;">
         <div style="display:flex;justify-content:space-between;margin-bottom:30px;">
-            <div style="background:#f8f9fa;padding:20px;border-radius:8px;min-width:300px;">
-                <h4 style="color:#666;margin:0 0 10px 0;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Bill To</h4>
-                <p style="color:#333;margin:0;font-weight:bold;font-size:18px;">{cust_name}</p>
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">{cust_address}</p>' if cust_address else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {cust_phone}</p>' if cust_phone else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Email: {cust_email}</p>' if cust_email else ''}
+            <div>
+                <h1 style="color:#333;margin:0;font-size:28px;">INVOICE</h1>
+                <p style="color:#666;margin:5px 0;">{invoice.get("invoice_number", "-")}</p>
             </div>
             <div style="text-align:right;">
-                <p style="margin:5px 0;color:#333;font-size:16px;"><strong>Date:</strong> {invoice.get("date", "-")}</p>
-                <p style="margin:5px 0;color:#333;font-size:16px;"><strong>Due:</strong> {invoice.get("due_date", "-")}</p>
+                <h2 style="color:#333;margin:0;">{biz_name}</h2>
             </div>
         </div>
         
-        <!-- ITEMS TABLE -->
-        <table style="width:100%;border-collapse:collapse;margin-bottom:30px;font-size:16px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:30px;">
+            <div>
+                <h4 style="color:#888;margin:0 0 8px 0;font-size:12px;">BILL TO</h4>
+                <p style="color:#333;margin:0;font-weight:bold;">{safe_string(invoice.get("customer_name", "-"))}</p>
+            </div>
+            <div style="text-align:right;">
+                <p style="margin:5px 0;color:#333;"><strong>Date:</strong> {invoice.get("date", "-")}</p>
+                <p style="margin:5px 0;">{status_badge}</p>
+            </div>
+        </div>
+        
+        <table style="width:100%;border-collapse:collapse;margin-bottom:30px;">
             <thead>
-                <tr style="background:#10b981;color:white;">
-                    <th style="padding:15px;text-align:left;font-size:16px;">Description</th>
-                    <th style="padding:15px;text-align:center;font-size:16px;width:80px;">Qty</th>
-                    <th style="padding:15px;text-align:right;font-size:16px;width:120px;">Price</th>
-                    <th style="padding:15px;text-align:right;font-size:16px;width:120px;">Total</th>
+                <tr style="background:#f5f5f5;">
+                    <th style="padding:12px;text-align:left;border-bottom:2px solid #ddd;color:#333;">Description</th>
+                    <th style="padding:12px;text-align:center;border-bottom:2px solid #ddd;color:#333;">Qty</th>
+                    <th style="padding:12px;text-align:right;border-bottom:2px solid #ddd;color:#333;">Price</th>
+                    <th style="padding:12px;text-align:right;border-bottom:2px solid #ddd;color:#333;">Total</th>
                 </tr>
             </thead>
             <tbody style="color:#333;">
@@ -14033,28 +11450,25 @@ def invoice_view(invoice_id):
             </tbody>
         </table>
         
-        <!-- TOTALS -->
         <div style="display:flex;justify-content:flex-end;">
-            <div style="width:300px;background:#f8f9fa;padding:20px;border-radius:8px;">
-                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #ddd;color:#333;font-size:16px;">
+            <div style="width:250px;">
+                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;color:#333;">
                     <span style="color:#666;">Subtotal</span>
                     <span>{money(invoice.get("subtotal", 0))}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #ddd;color:#333;font-size:16px;">
+                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;color:#333;">
                     <span style="color:#666;">VAT (15%)</span>
                     <span>{money(invoice.get("vat", 0))}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;padding:15px 0;font-size:24px;font-weight:bold;color:#10b981;">
+                <div style="display:flex;justify-content:space-between;padding:12px 0;font-size:20px;font-weight:bold;color:#2563eb;">
                     <span>TOTAL</span>
                     <span>{money(invoice.get("total", 0))}</span>
                 </div>
             </div>
         </div>
         
-        <!-- FOOTER -->
-        <div style="margin-top:40px;padding-top:20px;border-top:1px solid #ddd;text-align:center;color:#666;font-size:14px;">
-            <p style="margin:0;">Thank you for your business! | Generated by Click AI</p>
-            {f'<p style="margin:5px 0;">Banking: {business.get("bank_name", "")} | Acc: {business.get("bank_account", "")} | Branch: {business.get("bank_branch", "")}</p>' if business and business.get("bank_account") else ''}
+        <div style="margin-top:40px;padding-top:20px;border-top:1px solid #eee;text-align:center;color:#888;font-size:12px;">
+            Thank you for your business! | Generated by Click AI
         </div>
     </div>
     
@@ -14178,24 +11592,6 @@ def api_invoice_pay(invoice_id):
                 new_balance = float(customer.get("balance", 0)) - total
                 db.update("customers", customer_id, {"balance": new_balance})
         
-        # ═══════════════════════════════════════════════════════════════
-        # SAVE TO PAYMENTS TABLE - This is the key for tracking!
-        # ═══════════════════════════════════════════════════════════════
-        user = Auth.get_current_user()
-        payment = RecordFactory.payment(
-            business_id=biz_id,
-            customer_id=customer_id or "",
-            invoice_id=invoice_id,
-            amount=total,
-            customer_name=customer_name,
-            invoice_number=inv_number,
-            date=today(),
-            method=payment_method,
-            reference=f"PAY-{inv_number}",
-            created_by=user.get("id", "") if user else ""
-        )
-        db.save("payments", payment)
-        
         logger.info(f"[PAYMENT] Invoice {inv_number} marked as PAID ({bank_name}) - R{total:.2f}")
         
         return jsonify({
@@ -14249,7 +11645,7 @@ def recurring_invoices_page():
             <td>{freq_label}</td>
             <td>{money(r.get("total", 0))}</td>
             <td style="color:{"var(--red)" if is_overdue else "var(--text)"};">
-                {next_date} {"(OVERDUE)" if is_overdue else ""}
+                {next_date} {"⚠️" if is_overdue else ""}
             </td>
             <td>{r.get("invoices_generated", 0)}</td>
             <td style="color:{status_color};">{status.title()}</td>
@@ -14303,7 +11699,7 @@ def recurring_invoices_page():
     </div>
     
     <div class="card" style="background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05));">
-        <h3 style="margin: 0 0 10px 0;">How Recurring Invoices Work</h3>
+        <h3 style="margin: 0 0 10px 0;">💡 How Recurring Invoices Work</h3>
         <ul style="color: var(--text-muted); margin: 0; padding-left: 20px; line-height: 1.8;">
             <li><strong>Set it and forget it</strong> - System automatically creates invoices on schedule</li>
             <li><strong>Auto-email</strong> - Optionally send invoice to customer automatically</li>
@@ -14616,7 +12012,7 @@ def recurring_invoice_view(recurring_id):
                 </p>
             </div>
             <div style="display: flex; gap: 10px;">
-                {"<button class='btn btn-secondary' onclick='pauseRecurring()'>Pause</button>" if status == "active" else ""}
+                {"<button class='btn btn-secondary' onclick='pauseRecurring()'>⏸️ Pause</button>" if status == "active" else ""}
                 {"<button class='btn btn-primary' onclick='resumeRecurring()'>▶️ Resume</button>" if status == "paused" else ""}
                 <button class="btn btn-secondary" onclick="generateNow()">⚡ Generate Now</button>
                 <button class="btn btn-secondary" style="color: var(--red);" onclick="deleteRecurring()">🗑️ Delete</button>
@@ -14655,7 +12051,7 @@ def recurring_invoice_view(recurring_id):
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: var(--text-muted);">Auto-send Email</td>
-                    <td style="padding: 8px 0; text-align: right;">{"Yes" if recurring.get("auto_send") else "No"}</td>
+                    <td style="padding: 8px 0; text-align: right;">{"✅ Yes" if recurring.get("auto_send") else "❌ No"}</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: var(--text-muted);">Invoices Generated</td>
@@ -14764,24 +12160,16 @@ def recurring_invoice_view(recurring_id):
 @login_required
 def api_recurring_pause(recurring_id):
     """Pause a recurring invoice"""
-    try:
-        result = RecurringInvoices.pause(recurring_id)
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"[RECURRING] Pause error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    result = RecurringInvoices.pause(recurring_id)
+    return jsonify(result)
 
 
 @app.route("/api/recurring-invoice/<recurring_id>/resume", methods=["POST"])
 @login_required
 def api_recurring_resume(recurring_id):
     """Resume a recurring invoice"""
-    try:
-        result = RecurringInvoices.resume(recurring_id)
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"[RECURRING] Resume error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    result = RecurringInvoices.resume(recurring_id)
+    return jsonify(result)
 
 
 @app.route("/api/recurring-invoice/<recurring_id>/generate", methods=["POST"])
@@ -14789,39 +12177,31 @@ def api_recurring_resume(recurring_id):
 def api_recurring_generate(recurring_id):
     """Manually generate an invoice from recurring template"""
     
-    try:
-        recurring = db.get_one("recurring_invoices", recurring_id)
-        if not recurring:
-            return jsonify({"success": False, "error": "Recurring invoice not found"})
-        
-        invoice = RecurringInvoices.generate_invoice(recurring)
-        
-        if invoice:
-            return jsonify({
-                "success": True,
-                "invoice_number": invoice.get("invoice_number"),
-                "invoice_id": invoice.get("id")
-            })
-        
-        return jsonify({"success": False, "error": "Failed to generate invoice"})
-    except Exception as e:
-        logger.error(f"[RECURRING] Generate error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    recurring = db.get_one("recurring_invoices", recurring_id)
+    if not recurring:
+        return jsonify({"success": False, "error": "Recurring invoice not found"})
+    
+    invoice = RecurringInvoices.generate_invoice(recurring)
+    
+    if invoice:
+        return jsonify({
+            "success": True,
+            "invoice_number": invoice.get("invoice_number"),
+            "invoice_id": invoice.get("id")
+        })
+    
+    return jsonify({"success": False, "error": "Failed to generate invoice"})
 
 
 @app.route("/api/recurring-invoice/<recurring_id>/delete", methods=["POST"])
 @login_required
 def api_recurring_delete(recurring_id):
     """Delete a recurring invoice"""
-    try:
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        result = RecurringInvoices.delete(recurring_id, biz_id)
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"[RECURRING] Delete error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    result = RecurringInvoices.delete(recurring_id, biz_id)
+    return jsonify(result)
 
 
 @app.route("/suppliers")
@@ -14833,10 +12213,6 @@ def suppliers_page():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Check user role - staff should not see balances
-    role = get_user_role()
-    can_see_balances = role in ["owner", "admin", "manager", "bookkeeper", "accountant"]
-    
     suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
     suppliers = sorted(suppliers, key=lambda x: x.get("name", "").lower())
     
@@ -14844,10 +12220,10 @@ def suppliers_page():
     all_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
     all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
     
-    # Summary stats - only show if can see balances
+    # Summary stats
     total_suppliers = len(suppliers)
     creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
-    total_owed = sum(float(s.get("balance", 0)) for s in creditors) if can_see_balances else 0
+    total_owed = sum(float(s.get("balance", 0)) for s in creditors)
     
     # Build accordion rows
     suppliers_html = ""
@@ -14855,9 +12231,6 @@ def suppliers_page():
         sup_id = s.get("id")
         balance = float(s.get("balance", 0))
         balance_color = "var(--orange)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
-        
-        # Balance display - hide for staff
-        balance_display = money(balance) if can_see_balances else "---"
         
         # Get transactions for this supplier
         sup_invoices = [inv for inv in all_invoices if inv.get("supplier_id") == sup_id]
@@ -14869,53 +12242,48 @@ def suppliers_page():
         from datetime import datetime, timedelta
         cutoff_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
         
-        # Build transactions list - only if can see balances
+        # Build transactions list
         trans_rows = ""
         
-        if can_see_balances:
-            # ALL unpaid invoices (no date limit) + paid invoices from last 12 months
-            unpaid_invs = [inv for inv in sup_invoices if inv.get("status") != "paid"]
-            paid_recent = [inv for inv in sup_invoices if inv.get("status") == "paid" and inv.get("date", "") >= cutoff_date]
-            show_invoices = unpaid_invs + paid_recent
-            show_invoices = sorted(show_invoices, key=lambda x: x.get("date", ""), reverse=True)
-            
-            for inv in show_invoices:
-                status = inv.get("status", "unpaid")
-                status_color = "var(--green)" if status == "paid" else "var(--orange)"
-                trans_rows += f'''
-                <tr style="cursor:pointer;" onclick="window.location='/supplier-invoice/{inv.get("id")}'">
-                    <td>{inv.get("date", "-")}</td>
-                    <td>Invoice {inv.get("invoice_number", "-")}</td>
-                    <td style="text-align:right;color:var(--orange);">{money(inv.get("total", 0))}</td>
-                    <td style="color:{status_color};">{status}</td>
-                </tr>
-                '''
-            
-            # Payments from last 12 months only
-            recent_payments = [p for p in sup_payments if p.get("date", "") >= cutoff_date]
-            for p in recent_payments:
-                trans_rows += f'''
-                <tr>
-                    <td>{p.get("date", "-")}</td>
-                    <td>Payment ({p.get("method", "EFT")})</td>
-                    <td style="text-align:right;color:var(--green);">-{money(p.get("amount", 0))}</td>
-                    <td style="color:var(--green);">paid</td>
-                </tr>
-                '''
-            
-            trans_count = len(unpaid_invs) + len(paid_recent) + len(recent_payments)
-        else:
-            trans_count = 0
+        # ALL unpaid invoices (no date limit) + paid invoices from last 12 months
+        unpaid_invs = [inv for inv in sup_invoices if inv.get("status") != "paid"]
+        paid_recent = [inv for inv in sup_invoices if inv.get("status") == "paid" and inv.get("date", "") >= cutoff_date]
+        show_invoices = unpaid_invs + paid_recent
+        show_invoices = sorted(show_invoices, key=lambda x: x.get("date", ""), reverse=True)
+        
+        for inv in show_invoices:
+            status = inv.get("status", "unpaid")
+            status_color = "var(--green)" if status == "paid" else "var(--orange)"
+            trans_rows += f'''
+            <tr style="cursor:pointer;" onclick="window.location='/supplier-invoice/{inv.get("id")}'">
+                <td>{inv.get("date", "-")}</td>
+                <td>Invoice {inv.get("invoice_number", "-")}</td>
+                <td style="text-align:right;color:var(--orange);">{money(inv.get("total", 0))}</td>
+                <td style="color:{status_color};">{status}</td>
+            </tr>
+            '''
+        
+        # Payments from last 12 months only
+        recent_payments = [p for p in sup_payments if p.get("date", "") >= cutoff_date]
+        for p in recent_payments:
+            trans_rows += f'''
+            <tr>
+                <td>{p.get("date", "-")}</td>
+                <td>Payment ({p.get("method", "EFT")})</td>
+                <td style="text-align:right;color:var(--green);">-{money(p.get("amount", 0))}</td>
+                <td style="color:var(--green);">paid</td>
+            </tr>
+            '''
+        
+        trans_count = len(unpaid_invs) + len(paid_recent) + len(recent_payments)
         
         suppliers_html += f'''
         <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
             <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;">
-                    <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(s.get("code", ""))}</span>
-                    <span><strong>{safe_string(s.get("name", "-"))}</strong></span>
-                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("contact_name", ""))}</span>
-                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span>
-                    <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
+                <div style="display:grid;grid-template-columns:2fr 1fr 1fr 80px;align-items:center;font-size:13px;">
+                    <span><strong>{safe_string(s.get("name", "-"))}</strong> <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span></span>
+                    <span style="text-align:center;color:var(--text-muted);">{trans_count} trans</span>
+                    <span style="text-align:right;color:{balance_color};font-weight:bold;">{money(balance)}</span>
                     <span style="text-align:right;">
                         <a href="/supplier/{sup_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
                     </span>
@@ -14942,11 +12310,9 @@ def suppliers_page():
     # Sticky header
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;font-weight:bold;">
-            <span>Code</span>
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr 80px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Supplier</span>
-            <span>Contact</span>
-            <span>Phone</span>
+            <span style="text-align:center;">Activity</span>
             <span style="text-align:right;">We Owe</span>
             <span style="text-align:right;">Actions</span>
         </div>
@@ -14954,7 +12320,7 @@ def suppliers_page():
     '''
     
     summary_html = ""
-    if total_owed > 0 and can_see_balances:
+    if total_owed > 0:
         summary_html = f'''
         <div style="background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.3); padding:10px 15px; border-radius: 8px; margin-bottom: 15px;font-size:13px;">
             <strong>{len(creditors)} suppliers</strong> - we owe a total of <strong style="color: var(--orange);">{money(total_owed)}</strong>
@@ -14963,7 +12329,7 @@ def suppliers_page():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-        <h2 style="margin:0;">Suppliers ({total_suppliers})</h2>
+        <h2 style="margin:0;">🏭 Suppliers ({total_suppliers})</h2>
         <a href="/supplier/new" class="btn btn-primary">+ Add Supplier</a>
     </div>
     
@@ -14972,7 +12338,7 @@ def suppliers_page():
     <p style="color:var(--text-muted);margin-bottom:10px;font-size:12px;">Click on a supplier to see transactions</p>
     
     {header_row}
-    {suppliers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No suppliers yet! Add suppliers to track purchases and creditors.</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/supplier/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
+    {suppliers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);">No suppliers yet</p></div>'}
     '''
     
     return render_page("Suppliers", content, user, "suppliers")
@@ -14996,15 +12362,17 @@ def supplier_new():
         if not name:
             flash("Supplier name is required", "error")
         else:
-            supplier = RecordFactory.supplier(
-                business_id=biz_id,
-                name=name,
-                phone=phone,
-                email=email,
-                address=address,
-                created_by=user.get("id", "") if user else ""
-            )
-            supplier_id = supplier["id"]
+            supplier_id = generate_id()
+            supplier = {
+                "id": supplier_id,
+                "business_id": biz_id,
+                "name": name,
+                "phone": phone,
+                "email": email,
+                "address": address,
+                "balance": 0,
+                "created_at": now()
+            }
             
             success, err = db.save("suppliers", supplier)
             if success:
@@ -15053,21 +12421,17 @@ def supplier_view(supplier_id):
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Check user role - staff should not see balances
-    role = get_user_role()
-    can_see_balances = role in ["owner", "admin", "manager", "bookkeeper", "accountant"]
-    
     supplier = db.get_one("suppliers", supplier_id)
     if not supplier:
         return redirect("/suppliers")
     
-    # Get expenses/bills for this supplier (only if can see balances)
-    all_expenses = db.get("expenses", {"business_id": biz_id}) if biz_id and can_see_balances else []
+    # Get expenses/bills for this supplier
+    all_expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
     expenses = [e for e in all_expenses if e.get("supplier_id") == supplier_id]
     expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)
     
-    # Get payments to supplier (only if can see balances)
-    all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id and can_see_balances else []
+    # Get payments to supplier
+    all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
     payments = [p for p in all_payments if p.get("supplier_id") == supplier_id]
     payments = sorted(payments, key=lambda x: x.get("date", ""), reverse=True)
     
@@ -15076,95 +12440,58 @@ def supplier_view(supplier_id):
     scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
     scanned_docs = sorted(scanned_docs, key=lambda x: x.get("created_at", ""), reverse=True)
     
-    balance = float(supplier.get("balance", 0)) if can_see_balances else 0
+    balance = float(supplier.get("balance", 0))
     
-    # Stats - only if can see balances
-    total_billed = sum(float(e.get("total", e.get("amount", 0))) for e in expenses) if can_see_balances else 0
-    total_paid = sum(float(p.get("amount", 0)) for p in payments) if can_see_balances else 0
+    # Stats
+    total_billed = sum(float(e.get("total", e.get("amount", 0))) for e in expenses)
+    total_paid = sum(float(p.get("amount", 0)) for p in payments)
     
     expenses_html = ""
-    if can_see_balances:
-        for e in expenses[:10]:
-            status = e.get("status", "outstanding")
-            status_color = "var(--green)" if status == "paid" else "var(--orange)"
-            expenses_html += f'''
-            <tr>
-                <td>{e.get("invoice_number", e.get("reference", "-"))}</td>
-                <td>{e.get("date", "-")}</td>
-                <td>{safe_string(e.get("description", "-"))[:40]}</td>
-                <td>{money(e.get("total", e.get("amount", 0)))}</td>
-                <td style="color:{status_color};">{status}</td>
-            </tr>
-            '''
+    for e in expenses[:10]:
+        status = e.get("status", "outstanding")
+        status_color = "var(--green)" if status == "paid" else "var(--orange)"
+        expenses_html += f'''
+        <tr>
+            <td>{e.get("invoice_number", e.get("reference", "-"))}</td>
+            <td>{e.get("date", "-")}</td>
+            <td>{safe_string(e.get("description", "-"))[:40]}</td>
+            <td>{money(e.get("total", e.get("amount", 0)))}</td>
+            <td style="color:{status_color};">{status}</td>
+        </tr>
+        '''
     
     payments_html = ""
-    if can_see_balances:
-        for p in payments[:10]:
-            payments_html += f'''
-            <tr>
-                <td>{p.get("reference", "-")}</td>
-                <td>{p.get("date", "-")}</td>
-                <td style="color:var(--green);">{money(p.get("amount", 0))}</td>
-                <td>{p.get("method", "-")}</td>
-            </tr>
-            '''
+    for p in payments[:10]:
+        payments_html += f'''
+        <tr>
+            <td>{p.get("reference", "-")}</td>
+            <td>{p.get("date", "-")}</td>
+            <td style="color:var(--green);">{money(p.get("amount", 0))}</td>
+            <td>{p.get("method", "-")}</td>
+        </tr>
+        '''
     
-    # Build scanned documents HTML - hide amounts for staff
+    # Build scanned documents HTML
     scanned_docs_html = ""
     for doc in scanned_docs[:20]:
         doc_date = doc.get("date", doc.get("created_at", "")[:10] if doc.get("created_at") else "-")
-        amount_display = money(doc.get("amount", 0)) if can_see_balances else "---"
         scanned_docs_html += f'''
         <div style="background:var(--bg);border-radius:8px;padding:12px;cursor:pointer;border:1px solid var(--border);" 
              onclick="viewScannedDoc('{doc.get("id")}')">
             <div style="font-size:24px;text-align:center;margin-bottom:8px;">📄</div>
             <div style="font-weight:600;font-size:13px;text-align:center;margin-bottom:4px;">{safe_string(doc.get("reference", "Document"))}</div>
             <div style="font-size:11px;color:var(--text-muted);text-align:center;">{doc_date}</div>
-            <div style="font-size:12px;color:var(--primary);text-align:center;margin-top:4px;">{amount_display}</div>
+            <div style="font-size:12px;color:var(--primary);text-align:center;margin-top:4px;">{money(doc.get("amount", 0))}</div>
         </div>
         '''
-    
-    # Balance display - hidden for staff
-    balance_display = money(balance) if can_see_balances else "---"
-    balance_section = f'''
-            <div style="text-align:right;">
-                <p style="color:var(--text-muted);margin:0;font-size:12px;">WE OWE</p>
-                <p style="font-size:28px;font-weight:bold;margin:0;color:{"var(--orange)" if balance > 0 else "var(--green)"};">
-                    {balance_display}
-                </p>
-            </div>
-    ''' if can_see_balances else ''
-    
-    # Stats section - hidden for staff
-    stats_section = f'''
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-value">{money(total_billed)}</div>
-            <div class="stat-label">Total Billed</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value" style="color:var(--green);">{money(total_paid)}</div>
-            <div class="stat-label">Total Paid</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{len(expenses)}</div>
-    ''' if can_see_balances else f'''
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-value">{len(scanned_docs)}</div>
-    '''
-    
-    # Build payment button separately (can't have backslashes in f-string)
-    supplier_name_escaped = safe_string(supplier.get("name", "")).replace("'", "")
-    payment_button = f'''<button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Pay {supplier_name_escaped} R';document.getElementById('aiInput').focus();">💰 Record Payment</button>''' if can_see_balances else ""
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>
         <div style="display:flex;gap:10px;">
             <a href="/supplier/{supplier_id}/edit" class="btn btn-secondary">✏️ Edit</a>
-            <a href="/purchase/new?supplier_id={supplier_id}" class="btn btn-secondary">New PO</a>
-            {payment_button}
+            <a href="/purchase/new?supplier_id={supplier_id}" class="btn btn-secondary">📦 New PO</a>
+            <button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Pay {safe_string(supplier.get("name", ""))} R';document.getElementById('aiInput').focus();">[MONEY] Record Payment</button>
         </div>
     </div>
     
@@ -15179,11 +12506,26 @@ def supplier_view(supplier_id):
                     📍 {safe_string(supplier.get("address", "-"))}
                 </p>
             </div>
-            {balance_section}
+            <div style="text-align:right;">
+                <p style="color:var(--text-muted);margin:0;font-size:12px;">WE OWE</p>
+                <p style="font-size:28px;font-weight:bold;margin:0;color:{"var(--orange)" if balance > 0 else "var(--green)"};">
+                    {money(balance)}
+                </p>
+            </div>
         </div>
     </div>
     
-    {stats_section}
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{money(total_billed)}</div>
+            <div class="stat-label">Total Billed</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color:var(--green);">{money(total_paid)}</div>
+            <div class="stat-label">Total Paid</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{len(expenses)}</div>
             <div class="stat-label">Bills/Expenses</div>
         </div>
         <div class="stat-card">
@@ -15220,7 +12562,7 @@ def supplier_view(supplier_id):
     
     <!-- Scanned Documents Section -->
     <div class="card" style="margin-top:20px;">
-        <h3 style="margin-bottom:15px;">Scanned Documents ({len(scanned_docs)})</h3>
+        <h3 style="margin-bottom:15px;">📄 Scanned Documents ({len(scanned_docs)})</h3>
         <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(200px, 1fr));gap:15px;">
             {scanned_docs_html if scanned_docs else '<p style="color:var(--text-muted);text-align:center;">No scanned documents yet</p>'}
         </div>
@@ -15358,7 +12700,7 @@ def quotes_page():
     quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
     
     rows = ""
-    for q in quotes[:500]:
+    for q in quotes[:50]:
         status = q.get("status", "pending")
         status_color = "var(--green)" if status == "accepted" else "var(--red)" if status == "declined" else "var(--orange)"
         rows += f'''
@@ -15433,22 +12775,22 @@ def quote_new():
         existing = db.get("quotes", {"business_id": biz_id})
         quote_num = f"QT{len(existing) + 1:04d}"
         
-        quote = RecordFactory.quote(
-            business_id=biz_id,
-            customer_id=safe_uuid(customer_id),
-            customer_name=customer_name,
-            items=items,
-            quote_number=quote_num,
-            date=today(),
-            valid_until=(datetime.now() + timedelta(days=valid_days)).strftime("%Y-%m-%d"),
-            valid_days=valid_days,
-            subtotal=float(subtotal),
-            vat=float(vat),
-            total=float(total),
-            status="pending",
-            created_by=user.get("id") if user else None
-        )
-        quote_id = quote["id"]
+        quote_id = generate_id()
+        quote = {
+            "id": quote_id,
+            "business_id": biz_id,
+            "quote_number": quote_num,
+            "date": today(),
+            "valid_until": (datetime.now() + timedelta(days=valid_days)).strftime("%Y-%m-%d"),
+            "customer_id": customer_id or None,
+            "customer_name": customer_name,
+            "items": json.dumps(items),
+            "subtotal": float(subtotal),
+            "vat": float(vat),
+            "total": float(total),
+            "status": "pending",
+            "created_at": now()
+        }
         
         success, _ = db.save("quotes", quote)
         
@@ -15629,32 +12971,19 @@ def quote_view(quote_id):
     if not quote:
         return redirect("/quotes")
     
-    # Get customer details if customer_id exists
-    customer = None
-    if quote.get("customer_id"):
-        customer = db.get_one("customers", quote.get("customer_id"))
-    
-    # Parse items - handle both JSON string and list
-    raw_items = quote.get("items", [])
-    if isinstance(raw_items, str):
-        try:
-            items = json.loads(raw_items)
-        except:
-            items = []
-    else:
-        items = raw_items if raw_items else []
+    try:
+        items = json.loads(quote.get("items", "[]"))
+    except:
+        items = []
     
     items_html = ""
     for item in items:
-        # Handle both qty and quantity field names
-        qty = item.get("qty") or item.get("quantity") or 1
-        desc = item.get("description") or item.get("desc") or "-"
         items_html += f'''
         <tr>
-            <td style="font-size:16px;">{safe_string(desc)}</td>
-            <td style="text-align:center;font-size:16px;">{qty}</td>
-            <td style="text-align:right;font-size:16px;">{money(item.get("price", 0))}</td>
-            <td style="text-align:right;font-size:16px;">{money(item.get("total", 0))}</td>
+            <td>{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;">{item.get("qty", item.get("quantity", 1))}</td>
+            <td style="text-align:right;">{money(item.get("price", 0))}</td>
+            <td style="text-align:right;">{money(item.get("total", 0))}</td>
         </tr>
         '''
     
@@ -15687,7 +13016,7 @@ def quote_view(quote_id):
         
         if existing_job:
             action_buttons = f'''
-            <a href="/job-card/{existing_job.get("id")}" class="btn btn-primary">View Job Card</a>
+            <a href="/job-card/{existing_job.get("id")}" class="btn btn-primary">🔧 View Job Card</a>
             <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;">
                 <button type="submit" class="btn btn-secondary">➜ Invoice</button>
             </form>
@@ -15695,7 +13024,7 @@ def quote_view(quote_id):
         else:
             action_buttons = f'''
             <form action="/quote/{quote_id}/create-job-card" method="POST" style="display:inline;">
-                <button type="submit" class="btn btn-primary">Create Job Card</button>
+                <button type="submit" class="btn btn-primary">🔧 Create Job Card</button>
             </form>
             <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;">
                 <button type="submit" class="btn btn-secondary">➜ Invoice</button>
@@ -15706,72 +13035,50 @@ def quote_view(quote_id):
         if inv_id:
             action_buttons = f'<a href="/invoice/{inv_id}" class="btn btn-secondary">View Invoice</a>'
     
-    # Build business details section
-    biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
-    biz_phone = business.get("phone", "") if business else ""
-    biz_email = business.get("email", "") if business else ""
-    biz_vat = business.get("vat_number", "") if business else ""
-    
-    # Build customer details section  
-    cust_name = safe_string(quote.get("customer_name", "-"))
-    cust_phone = customer.get("phone", "") if customer else ""
-    cust_email = customer.get("email", "") if customer else ""
-    cust_address = safe_string(customer.get("address", "")).replace("\n", "<br>") if customer else ""
-    
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <a href="/quotes" style="color:var(--text-muted);">← Back to Quotes</a>
+        <a href="/quotes" style="color:var(--text-muted);">-> Back to Quotes</a>
         <div style="display:flex;gap:10px;">
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-            <button class="btn btn-secondary" onclick="document.getElementById('aiInput').value='Email quote {quote.get("quote_number")} to customer';document.getElementById('sendBtn').click();">📧 Email</button>
+            <button class="btn btn-secondary" onclick="window.print();"> Print</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('aiInput').value='Email quote {quote.get("quote_number")} to customer';document.getElementById('sendBtn').click();"> Email</button>
             {action_buttons}
         </div>
     </div>
     
-    <div class="card" id="printArea" style="background:white;color:#333;padding:40px;">
-        <!-- HEADER: Business Details -->
-        <div style="display:flex;justify-content:space-between;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #333;">
+    <div class="card" id="printArea" style="background:white;color:#333;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:30px;">
             <div>
-                <h1 style="color:#333;margin:0;font-size:32px;font-weight:bold;">{biz_name}</h1>
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">{biz_address}</p>' if biz_address else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {biz_phone}</p>' if biz_phone else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Email: {biz_email}</p>' if biz_email else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;"><strong>VAT No:</strong> {biz_vat}</p>' if biz_vat else ''}
+                <h1 style="color:#333;margin:0;font-size:28px;">QUOTATION</h1>
+                <p style="color:#666;margin:5px 0;">{quote.get("quote_number", "-")}</p>
+                <p style="color:#666;margin:5px 0;">Valid for 14 days</p>
             </div>
             <div style="text-align:right;">
-                <h2 style="color:#2563eb;margin:0;font-size:36px;font-weight:bold;">QUOTATION</h2>
-                <p style="color:#333;margin:10px 0;font-size:18px;font-weight:bold;">{quote.get("quote_number", "-")}</p>
-                <span style="background:{"#10b981" if status == "accepted" else "#ef4444" if status == "declined" else "#f59e0b"};color:white;padding:6px 16px;border-radius:20px;font-size:14px;font-weight:bold;">
+                <h2 style="color:#333;margin:0;">{biz_name}</h2>
+                <span style="background:{"#10b981" if status == "accepted" else "#ef4444" if status == "declined" else "#f59e0b"};color:white;padding:4px 12px;border-radius:20px;font-size:12px;">
                     {status.upper()}
                 </span>
             </div>
         </div>
         
-        <!-- QUOTE TO and DATE -->
         <div style="display:flex;justify-content:space-between;margin-bottom:30px;">
-            <div style="background:#f8f9fa;padding:20px;border-radius:8px;min-width:300px;">
-                <h4 style="color:#666;margin:0 0 10px 0;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Quote To</h4>
-                <p style="color:#333;margin:0;font-weight:bold;font-size:18px;">{cust_name}</p>
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">{cust_address}</p>' if cust_address else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {cust_phone}</p>' if cust_phone else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Email: {cust_email}</p>' if cust_email else ''}
+            <div>
+                <h4 style="color:#888;margin:0 0 8px 0;font-size:12px;">QUOTE TO</h4>
+                <p style="color:#333;margin:0;font-weight:bold;">{safe_string(quote.get("customer_name", "-"))}</p>
             </div>
             <div style="text-align:right;">
-                <p style="margin:5px 0;color:#333;font-size:16px;"><strong>Date:</strong> {quote.get("date", "-")}</p>
-                <p style="margin:5px 0;color:#333;font-size:16px;"><strong>Valid Until:</strong> {quote.get("valid_until", "14 days")}</p>
+                <p style="margin:5px 0;color:#333;"><strong>Date:</strong> {quote.get("date", "-")}</p>
             </div>
         </div>
         
         {weight_info}
         
-        <!-- ITEMS TABLE -->
-        <table style="width:100%;border-collapse:collapse;margin-bottom:30px;font-size:16px;">
+        <table style="width:100%;border-collapse:collapse;margin-bottom:30px;">
             <thead>
-                <tr style="background:#2563eb;color:white;">
-                    <th style="padding:15px;text-align:left;font-size:16px;">Description</th>
-                    <th style="padding:15px;text-align:center;font-size:16px;width:80px;">Qty</th>
-                    <th style="padding:15px;text-align:right;font-size:16px;width:120px;">Price</th>
-                    <th style="padding:15px;text-align:right;font-size:16px;width:120px;">Total</th>
+                <tr style="background:#f5f5f5;">
+                    <th style="padding:12px;text-align:left;border-bottom:2px solid #ddd;color:#333;">Description</th>
+                    <th style="padding:12px;text-align:center;border-bottom:2px solid #ddd;color:#333;">Qty</th>
+                    <th style="padding:12px;text-align:right;border-bottom:2px solid #ddd;color:#333;">Price</th>
+                    <th style="padding:12px;text-align:right;border-bottom:2px solid #ddd;color:#333;">Total</th>
                 </tr>
             </thead>
             <tbody style="color:#333;">
@@ -15779,30 +13086,22 @@ def quote_view(quote_id):
             </tbody>
         </table>
         
-        <!-- TOTALS -->
         <div style="display:flex;justify-content:flex-end;">
-            <div style="width:300px;background:#f8f9fa;padding:20px;border-radius:8px;">
-                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #ddd;color:#333;font-size:16px;">
+            <div style="width:250px;">
+                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;color:#333;">
                     <span style="color:#666;">Subtotal</span>
                     <span>{money(quote.get("subtotal", 0))}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #ddd;color:#333;font-size:16px;">
+                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;color:#333;">
                     <span style="color:#666;">VAT (15%)</span>
                     <span>{money(quote.get("vat", 0))}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;padding:15px 0;font-size:24px;font-weight:bold;color:#2563eb;">
+                <div style="display:flex;justify-content:space-between;padding:12px 0;font-size:20px;font-weight:bold;color:#2563eb;">
                     <span>TOTAL</span>
                     <span>{money(quote.get("total", 0))}</span>
                 </div>
             </div>
         </div>
-        
-        <!-- FOOTER -->
-        <div style="margin-top:40px;padding-top:20px;border-top:1px solid #ddd;text-align:center;color:#666;font-size:14px;">
-            <p style="margin:0;">Thank you for your business! | Generated by Click AI</p>
-            {f'<p style="margin:5px 0;">Banking: {business.get("bank_name", "")} | Acc: {business.get("bank_account", "")} | Branch: {business.get("bank_branch", "")}</p>' if business and business.get("bank_account") else ''}
-        </div>
-    </div>
     </div>
     
     <script>
@@ -15855,61 +13154,28 @@ def quote_to_invoice(quote_id):
     existing = db.get("invoices", {"business_id": biz_id})
     inv_num = f"INV{len(existing) + 1:04d}"
     
-    # Parse quote items
-    quote_items = quote.get("items", [])
-    if isinstance(quote_items, str):
-        try:
-            quote_items = json.loads(quote_items)
-        except:
-            quote_items = []
-    
-    invoice = RecordFactory.invoice(
-        business_id=biz_id,
-        customer_id=quote.get("customer_id", ""),
-        customer_name=quote.get("customer_name", ""),
-        items=quote_items,
-        invoice_number=inv_num,
-        date=today(),
-        due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-        subtotal=quote.get("subtotal", 0),
-        vat=quote.get("vat", 0),
-        total=quote.get("total", 0),
-        status="outstanding",
-        source_quote_id=quote_id,
-        source_quote_number=quote.get("quote_number"),
-        created_by=user.get("id", "") if user else ""
-    )
-    invoice_id = invoice["id"]
+    invoice_id = generate_id()
+    invoice = {
+        "id": invoice_id,
+        "business_id": biz_id,
+        "invoice_number": inv_num,
+        "date": today(),
+        "due_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+        "customer_id": quote.get("customer_id"),
+        "customer_name": quote.get("customer_name"),
+        "items": quote.get("items"),  # Copy items from quote
+        "subtotal": quote.get("subtotal"),
+        "vat": quote.get("vat"),
+        "total": quote.get("total"),
+        "status": "outstanding",
+        "source_quote_id": quote_id,
+        "source_quote_number": quote.get("quote_number"),
+        "created_at": now()
+    }
     
     success, result = db.save("invoices", invoice)
     
     if success:
-        # === DEDUCT STOCK ===
-        try:
-            items_list = json.loads(quote.get("items", "[]"))
-            all_stock = db.get("stock", {"business_id": biz_id}) or []
-            stock_by_code = {s.get("code", "").upper(): s for s in all_stock if s.get("code")}
-            
-            for item in items_list:
-                code = (item.get("code") or "").upper()
-                stock_id = item.get("stock_id")
-                stock_item = None
-                
-                # Find by stock_id first, then by code
-                if stock_id:
-                    stock_item = db.get_one("stock", stock_id)
-                elif code and code in stock_by_code:
-                    stock_item = stock_by_code[code]
-                
-                if stock_item:
-                    current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                    sold_qty = float(item.get("qty") or item.get("quantity") or 1)
-                    new_qty = current_qty - sold_qty
-                    db.update("stock", stock_item.get("id"), {"qty": new_qty, "quantity": new_qty}, biz_id)
-                    logger.info(f"[QUOTE->INV ROUTE] Stock {code or stock_id}: {current_qty} - {sold_qty} = {new_qty}")
-        except Exception as e:
-            logger.error(f"[QUOTE->INV ROUTE] Stock deduction error: {e}")
-        
         # Create journal entries for GL
         # Debit Debtors (1200), Credit Sales (4000) + VAT Output (2100)
         total = float(quote.get("total", 0))
@@ -15962,7 +13228,7 @@ def delivery_notes_list():
     notes = sorted(notes, key=lambda x: x.get("created_at", ""), reverse=True)
     
     rows = ""
-    for dn in notes[:500]:
+    for dn in notes[:100]:
         status_color = {"draft": "orange", "delivered": "green", "cancelled": "red"}.get(dn.get("status", "draft"), "gray")
         rows += f'''
         <tr onclick="window.location='/delivery-note/{dn.get("id")}'" style="cursor:pointer;">
@@ -15979,7 +13245,7 @@ def delivery_notes_list():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2>Delivery Notes</h2>
+        <h2>📦 Delivery Notes</h2>
         <a href="/delivery-note/new" class="btn btn-primary">+ New Delivery Note</a>
     </div>
     
@@ -16084,12 +13350,9 @@ def delivery_note_new():
                     if stock_id:
                         stock_item = db.get_one("stock", stock_id)
                         if stock_item:
-                            current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                            sold_qty = float(item.get("quantity", 0))
-                            new_qty = current_qty - sold_qty
-                            # Allow negative stock - use update with biz_id
-                            db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                            logger.info(f"[DELIVERY] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
+                            new_qty = float(stock_item.get("quantity", 0)) - float(item.get("quantity", 0))
+                            # Allow negative stock
+                            db.save("stock", {"id": stock_id, "quantity": new_qty})
             
             return redirect(f"/delivery-note/{dn_id}")
         
@@ -16307,7 +13570,7 @@ def delivery_note_view(dn_id):
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
-            <h2 style="margin:0;">{dn.get("delivery_note_number", "Delivery Note")}</h2>
+            <h2 style="margin:0;">📦 {dn.get("delivery_note_number", "Delivery Note")}</h2>
             <span style="color:{status_color};font-weight:bold;">● {status.title()}</span>
         </div>
         <div style="display:flex;gap:10px;">
@@ -16416,23 +13679,15 @@ def expenses_page():
     
     # Calculate totals
     total_expenses = sum(float(e.get("amount", 0)) for e in expenses)
-    total_vat = sum(float(e.get("vat", 0)) for e in expenses)
     
     rows = ""
-    for e in expenses[:500]:
-        status = e.get("status", "").lower()
-        status_color = "var(--green)" if status == "paid" else "var(--yellow)" if status == "pending" else "var(--text-muted)"
+    for e in expenses[:50]:
         rows += f'''
         <tr>
-            <td>{e.get("expense_number", "") or "-"}</td>
             <td>{e.get("date", "-")}</td>
-            <td>{safe_string(e.get("supplier_name", "") or e.get("supplier", "") or "-")}</td>
             <td>{safe_string(e.get("description", "-"))}</td>
             <td>{safe_string(e.get("category", "-"))}</td>
             <td style="text-align:right;">{money(e.get("amount", 0))}</td>
-            <td style="text-align:right;">{money(e.get("vat", 0))}</td>
-            <td style="text-align:right;font-weight:600;">{money(e.get("total", 0) or (float(e.get("amount", 0)) + float(e.get("vat", 0))))}</td>
-            <td style="color:{status_color};text-transform:capitalize;">{status or "-"}</td>
         </tr>
         '''
     
@@ -16444,43 +13699,23 @@ def expenses_page():
         </div>
         <div class="stat-card" style="background:rgba(239,68,68,0.1);border-color:var(--red);">
             <div class="stat-value" style="color:var(--red);">{money(total_expenses)}</div>
-            <div class="stat-label">Excl VAT</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{money(total_vat)}</div>
-            <div class="stat-label">VAT</div>
-        </div>
-        <div class="stat-card" style="background:rgba(239,68,68,0.1);border-color:var(--red);">
-            <div class="stat-value" style="color:var(--red);">{money(total_expenses + total_vat)}</div>
-            <div class="stat-label">Total Incl VAT</div>
+            <div class="stat-label">Total Spent</div>
         </div>
     </div>
     
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <h3 class="card-title" style="margin:0;">Expenses</h3>
+            <h3 class="card-title" style="margin:0;">📝 Expenses</h3>
             <a href="/scan" class="btn btn-primary">📸 Scan Receipt</a>
         </div>
-        <div style="overflow-x:auto;">
         <table class="table">
             <thead>
-                <tr>
-                    <th>Exp #</th>
-                    <th>Date</th>
-                    <th>Supplier</th>
-                    <th>Description</th>
-                    <th>Category</th>
-                    <th style="text-align:right;">Excl</th>
-                    <th style="text-align:right;">VAT</th>
-                    <th style="text-align:right;">Total</th>
-                    <th>Status</th>
-                </tr>
+                <tr><th>Date</th><th>Description</th><th>Category</th><th style="text-align:right;">Amount</th></tr>
             </thead>
             <tbody>
-                {rows or "<tr><td colspan='9' style='text-align:center;color:var(--text-muted)'>No expenses yet - scan a receipt or say 'Expense R[amount] for [description]'</td></tr>"}
+                {rows or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No expenses yet - scan a receipt or say 'Expense R[amount] for [description]'</td></tr>"}
             </tbody>
         </table>
-        </div>
     </div>
     '''
     
@@ -16529,7 +13764,7 @@ def payroll_page():
         elif "sonnet" in ai_source.lower():
             ai_badge = '<span style="background:#8b5cf6;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">🟣 Sonnet</span>'
         else:
-            ai_badge = '<span style="background:#6366f1;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">AI</span>'
+            ai_badge = '<span style="background:#6366f1;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">🤖 AI</span>'
         
         staging_rows += f'''
         <tr style="cursor:pointer;" onclick="window.location='/timesheets/review/{batch.get("id")}'">
@@ -16730,32 +13965,34 @@ def employee_new():
         if not name:
             pass
         else:
-            employee = RecordFactory.employee(
-                business_id=biz_id,
-                name=name,
-                id_number=id_number,
-                age=age,
-                position=position,
-                pay_type=pay_type,
-                basic_salary=basic_salary,
-                hourly_rate=hourly_rate,
-                tax_number=tax_number,
-                travel_allowance=travel_allowance,
-                other_allowance=other_allowance,
-                medical_aid=medical_aid,
-                union_fees=union_fees,
-                provident_fund=provident_fund,
-                pension=pension,
-                pension_employer=pension_employer,
-                loan_deduction=loan_deduction,
-                other_deduction=other_deduction,
-                bank_name=bank_name,
-                bank_account=bank_account,
-                bank_branch=bank_branch
-            )
-            emp_id = employee["id"]
+            emp_id = generate_id()
+            employee = {
+                "id": emp_id,
+                "business_id": biz_id,
+                "name": name,
+                "id_number": id_number,
+                "age": age,
+                "position": position,
+                "pay_type": pay_type,
+                "basic_salary": basic_salary,
+                "hourly_rate": hourly_rate,
+                "tax_number": tax_number,
+                "travel_allowance": travel_allowance,
+                "other_allowance": other_allowance,
+                "medical_aid": medical_aid,
+                "union_fees": union_fees,
+                "provident_fund": provident_fund,
+                "pension": pension,
+                "pension_employer": pension_employer,
+                "loan_deduction": loan_deduction,
+                "other_deduction": other_deduction,
+                "bank_name": bank_name,
+                "bank_account": bank_account,
+                "bank_branch": bank_branch,
+                "active": True
+            }
             
-            # Direct POST 
+            # Direct POST without created_at
             try:
                 url = f"{db.url}/rest/v1/employees"
                 response = requests.post(
@@ -16826,7 +14063,7 @@ def employee_new():
                 </div>
             </div>
             
-            <h3 style="margin:25px 0 15px 0;padding-top:15px;border-top:1px solid var(--border);color:var(--text-muted);font-size:14px;">DEDUCTIONS</h3>
+            <h3 style="margin:25px 0 15px 0;padding-top:15px;border-top:1px solid var(--border);color:var(--text-muted);font-size:14px;">📉 DEDUCTIONS</h3>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Medical Aid (R)</label>
@@ -17249,7 +14486,7 @@ def employee_view(emp_id):
             </div>
         </div>
         
-        <h4 style="margin:20px 0 10px 0;color:var(--text-muted);font-size:13px;border-top:1px solid var(--border);padding-top:15px;">MONTHLY DEDUCTIONS</h4>
+        <h4 style="margin:20px 0 10px 0;color:var(--text-muted);font-size:13px;border-top:1px solid var(--border);padding-top:15px;">📉 MONTHLY DEDUCTIONS</h4>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:15px;">
             <div>
                 <p style="color:var(--text-muted);margin:0;font-size:11px;">Medical Aid</p>
@@ -17470,7 +14707,7 @@ def employee_edit(emp_id):
                 </div>
             </div>
             
-            <h3 style="margin:25px 0 15px 0;padding-top:15px;border-top:1px solid var(--border);color:var(--text-muted);font-size:14px;">DEDUCTIONS</h3>
+            <h3 style="margin:25px 0 15px 0;padding-top:15px;border-top:1px solid var(--border);color:var(--text-muted);font-size:14px;">📉 DEDUCTIONS</h3>
             <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:15px;">
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Medical Aid (R)</label>
@@ -17846,594 +15083,6 @@ def payslip_delete(payslip_id):
     return redirect("/payroll")
 
 
-@app.route("/pulse")
-@login_required
-def business_pulse():
-    """
-    BUSINESS PULSE - The heartbeat of your business
-    Real-time view of what needs attention RIGHT NOW
-    Auto-generates catch-up briefing based on last visit.
-    """
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    biz_name = business.get("name", "Business") if business else "Business"
-    
-    if not biz_id:
-        return redirect("/")
-    
-    # Briefing will be loaded via AJAX on page load for better UX
-    briefing_html = '''
-    <div id="briefingContainer" class="card" style="background:linear-gradient(135deg, rgba(139,92,246,0.15), rgba(99,102,241,0.1));border:1px solid rgba(139,92,246,0.3);margin-bottom:25px;min-height:150px;">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:15px;">
-            <div>
-                <h3 style="margin:0;color:#8b5cf6;">🤖 Zane's Catch-up</h3>
-                <span id="briefingDate" style="color:var(--text-muted);font-size:12px;">Loading...</span>
-            </div>
-            <button onclick="generateBriefing()" id="refreshBtn" style="background:rgba(139,92,246,0.2);border:1px solid rgba(139,92,246,0.3);color:#8b5cf6;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;display:none;">↻ Refresh</button>
-        </div>
-        <div id="briefingContent" style="color:var(--text);line-height:1.8;font-size:14px;">
-            <div style="text-align:center;padding:30px;">
-                <div class="spinner" style="border:3px solid rgba(139,92,246,0.3);border-top:3px solid #8b5cf6;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:0 auto 15px;"></div>
-                <p style="color:var(--text-muted);margin:0;">Zane is catching up on what happened...</p>
-            </div>
-        </div>
-    </div>
-    <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
-    '''
-    
-    # Get all data
-    customers = db.get("customers", {"business_id": biz_id}) or []
-    invoices = db.get("invoices", {"business_id": biz_id}) or []
-    suppliers = db.get("suppliers", {"business_id": biz_id}) or []
-    expenses = db.get("expenses", {"business_id": biz_id}) or []
-    sales = db.get("sales", {"business_id": biz_id}) or []
-    stock = db.get("stock", {"business_id": biz_id}) or []
-    payments = db.get("payments", {"business_id": biz_id}) or []
-    quotes = db.get("quotes", {"business_id": biz_id}) or []
-    
-    # Get team members for this business
-    team_users = db.get("users", {"business_id": biz_id}) or []
-    user_names = {u.get("id"): u.get("name", u.get("email", "Unknown")) for u in team_users}
-    
-    today_date = datetime.now().date()
-    today_str = today()
-    yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    
-    # ═══════════════════════════════════════════════════════════════
-    # TEAM ACTIVITY - What each person did today
-    # ═══════════════════════════════════════════════════════════════
-    team_stats = {}
-    
-    # Today's quotes by user
-    today_quotes = [q for q in quotes if str(q.get("created_at", ""))[:10] == today_str]
-    for q in today_quotes:
-        uid = q.get("created_by", "unknown")
-        if uid not in team_stats:
-            team_stats[uid] = {"name": user_names.get(uid, uid[:8] if uid else "System"), "quotes": [], "sales_cash": 0, "sales_card": 0, "sales_acc": 0, "invoices": 0, "invoice_total": 0}
-        team_stats[uid]["quotes"].append({
-            "number": q.get("quote_number", ""),
-            "customer": q.get("customer_name", "")[:20],
-            "total": float(q.get("total", 0))
-        })
-    
-    # Today's sales by user
-    today_sales_list = [s for s in sales if str(s.get("date", ""))[:10] == today_str]
-    for s in today_sales_list:
-        uid = s.get("created_by", "unknown")
-        if uid not in team_stats:
-            team_stats[uid] = {"name": user_names.get(uid, uid[:8] if uid else "System"), "quotes": [], "sales_cash": 0, "sales_card": 0, "sales_acc": 0, "invoices": 0, "invoice_total": 0}
-        
-        method = s.get("payment_method", "cash")
-        amount = float(s.get("total", 0))
-        if method == "cash":
-            team_stats[uid]["sales_cash"] += amount
-        elif method == "card":
-            team_stats[uid]["sales_card"] += amount
-        elif method in ("account", "acc"):
-            team_stats[uid]["sales_acc"] += amount
-        else:
-            team_stats[uid]["sales_cash"] += amount  # Default to cash
-    
-    # Today's invoices by user
-    today_invoices = [inv for inv in invoices if str(inv.get("date", ""))[:10] == today_str]
-    for inv in today_invoices:
-        uid = inv.get("created_by", "unknown")
-        if uid not in team_stats:
-            team_stats[uid] = {"name": user_names.get(uid, uid[:8] if uid else "System"), "quotes": [], "sales_cash": 0, "sales_card": 0, "sales_acc": 0, "invoices": 0, "invoice_total": 0}
-        team_stats[uid]["invoices"] += 1
-        team_stats[uid]["invoice_total"] += float(inv.get("total", 0))
-    
-    # ═══════════════════════════════════════════════════════════════
-    # RECENT ACTIVITY - What happened today/yesterday
-    # ═══════════════════════════════════════════════════════════════
-    activity_feed = []
-    
-    # Recent payments (last 7 days)
-    for p in payments:
-        p_date = str(p.get("date", ""))[:10]
-        if p_date >= (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"):
-            activity_feed.append({
-                "type": "payment",
-                "date": p_date,
-                "time": str(p.get("created_at", ""))[-8:-3] if p.get("created_at") else "",
-                "text": f"{p.get('customer_name', 'Customer')} paid",
-                "amount": float(p.get("amount", 0)),
-                "icon": "✓",
-                "color": "#10b981"
-            })
-    
-    # Recent invoices created (last 7 days)
-    for inv in invoices:
-        inv_date = str(inv.get("date", ""))[:10]
-        if inv_date >= (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"):
-            if inv.get("status") != "paid":
-                activity_feed.append({
-                    "type": "invoice",
-                    "date": inv_date,
-                    "time": str(inv.get("created_at", ""))[-8:-3] if inv.get("created_at") else "",
-                    "text": f"Invoice {inv.get('invoice_number', '')} to {inv.get('customer_name', '')}",
-                    "amount": float(inv.get("total", 0)),
-                    "icon": "📄",
-                    "color": "#f59e0b"
-                })
-    
-    # Recent sales (last 7 days)  
-    for s in sales:
-        s_date = str(s.get("date", ""))[:10]
-        if s_date >= (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"):
-            activity_feed.append({
-                "type": "sale",
-                "date": s_date,
-                "time": str(s.get("created_at", ""))[-8:-3] if s.get("created_at") else "",
-                "text": f"POS Sale #{s.get('id', '')[:6]}",
-                "amount": float(s.get("total", 0)),
-                "icon": "💰",
-                "color": "#10b981"
-            })
-    
-    # Sort by date+time descending
-    activity_feed.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
-    
-    # Today's totals
-    today_payments = sum(float(p.get("amount", 0)) for p in payments if str(p.get("date", ""))[:10] == today_str)
-    today_invoiced = sum(float(inv.get("total", 0)) for inv in invoices if str(inv.get("date", ""))[:10] == today_str)
-    today_sales = sum(float(s.get("total", 0)) for s in sales if str(s.get("date", ""))[:10] == today_str)
-    
-    # ═══════════════════════════════════════════════════════════════
-    # DANGER ZONE - 90+ days (these people might never pay)
-    # ═══════════════════════════════════════════════════════════════
-    danger_zone = []
-    warning_zone = []
-    watch_zone = []
-    
-    outstanding_invoices = [inv for inv in invoices if inv.get("status") != "paid"]
-    
-    customer_aging = {}
-    for inv in outstanding_invoices:
-        cust_name = inv.get("customer_name", "Unknown")
-        amount = float(inv.get("total", 0) or 0)
-        
-        try:
-            inv_date = datetime.strptime(str(inv.get("date", ""))[:10], "%Y-%m-%d").date()
-            days = (today_date - inv_date).days
-        except:
-            days = 0
-        
-        if cust_name not in customer_aging:
-            customer_aging[cust_name] = {"name": cust_name, "total": 0, "oldest_days": 0, "invoices": []}
-        
-        customer_aging[cust_name]["total"] += amount
-        customer_aging[cust_name]["oldest_days"] = max(customer_aging[cust_name]["oldest_days"], days)
-        customer_aging[cust_name]["invoices"].append({"days": days, "amount": amount})
-    
-    for cust in customer_aging.values():
-        if cust["oldest_days"] >= 90:
-            danger_zone.append(cust)
-        elif cust["oldest_days"] >= 60:
-            warning_zone.append(cust)
-        elif cust["oldest_days"] >= 30:
-            watch_zone.append(cust)
-    
-    danger_zone.sort(key=lambda x: x["total"], reverse=True)
-    warning_zone.sort(key=lambda x: x["total"], reverse=True)
-    watch_zone.sort(key=lambda x: x["total"], reverse=True)
-    
-    danger_total = sum(c["total"] for c in danger_zone)
-    warning_total = sum(c["total"] for c in warning_zone)
-    watch_total = sum(c["total"] for c in watch_zone)
-    
-    # ═══════════════════════════════════════════════════════════════
-    # CASH POSITION
-    # ═══════════════════════════════════════════════════════════════
-    total_owed_to_us = sum(float(inv.get("total", 0) or 0) for inv in outstanding_invoices)
-    total_we_owe = sum(float(s.get("balance", 0) or 0) for s in suppliers)
-    
-    # This week's sales
-    week_ago = today_date - timedelta(days=7)
-    week_sales = sum(float(s.get("total", 0) or 0) for s in sales 
-                     if str(s.get("date", ""))[:10] >= str(week_ago))
-    week_invoiced = sum(float(inv.get("total", 0) or 0) for inv in invoices 
-                        if str(inv.get("date", ""))[:10] >= str(week_ago))
-    
-    # ═══════════════════════════════════════════════════════════════
-    # STOCK ALERTS
-    # ═══════════════════════════════════════════════════════════════
-    out_of_stock = []
-    low_stock = []
-    below_cost = []
-    
-    for item in stock:
-        qty = float(item.get("qty") or item.get("quantity") or 0)
-        cost = float(item.get("cost") or item.get("cost_price") or 0)
-        price = float(item.get("price") or item.get("selling_price") or 0)
-        reorder = float(item.get("reorder_level") or item.get("min_qty") or 5)
-        code = item.get("code", "") or item.get("name", "?")
-        desc = item.get("description", "") or item.get("name", code)
-        
-        if qty <= 0:
-            out_of_stock.append({"code": code, "desc": desc[:30]})
-        elif qty <= reorder:
-            low_stock.append({"code": code, "desc": desc[:30], "qty": qty})
-        
-        if cost > 0 and price > 0 and price < cost:
-            loss = cost - price
-            below_cost.append({"code": code, "desc": desc[:30], "cost": cost, "price": price, "loss": loss})
-    
-    below_cost.sort(key=lambda x: x["loss"], reverse=True)
-    
-    # ═══════════════════════════════════════════════════════════════
-    # BUILD HTML
-    # ═══════════════════════════════════════════════════════════════
-    
-    # Danger zone HTML
-    danger_html = ""
-    for c in danger_zone[:10]:
-        danger_html += f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(239,68,68,0.1);border-radius:8px;margin-bottom:8px;border-left:4px solid #ef4444;">
-            <div>
-                <strong style="color:#fff;">{safe_string(c["name"][:25])}</strong>
-                <div style="color:#ef4444;font-size:12px;">{c["oldest_days"]} days overdue</div>
-            </div>
-            <div style="text-align:right;">
-                <div style="color:#ef4444;font-weight:bold;font-size:18px;">{money(c["total"])}</div>
-            </div>
-        </div>'''
-    
-    if not danger_html:
-        danger_html = '<div style="padding:20px;text-align:center;color:var(--text-muted);">No accounts over 90 days</div>'
-    
-    # Warning zone HTML
-    warning_html = ""
-    for c in warning_zone[:10]:
-        warning_html += f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:rgba(249,115,22,0.1);border-radius:6px;margin-bottom:6px;border-left:3px solid #f97316;">
-            <div>
-                <strong style="color:#fff;">{safe_string(c["name"][:25])}</strong>
-                <span style="color:#f97316;font-size:11px;margin-left:8px;">{c["oldest_days"]}d</span>
-            </div>
-            <div style="color:#f97316;font-weight:bold;">{money(c["total"])}</div>
-        </div>'''
-    
-    if not warning_html:
-        warning_html = '<div style="padding:15px;text-align:center;color:var(--text-muted);font-size:13px;">No accounts 60-90 days</div>'
-    
-    # Watch zone HTML
-    watch_html = ""
-    for c in watch_zone[:8]:
-        watch_html += f'''
-        <div style="display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">
-            <span style="color:#ccc;">{safe_string(c["name"][:20])}</span>
-            <span style="color:#eab308;">{money(c["total"])}</span>
-        </div>'''
-    
-    if not watch_html:
-        watch_html = '<div style="padding:15px;text-align:center;color:var(--text-muted);font-size:13px;">No accounts 30-60 days</div>'
-    
-    # Stock alerts HTML
-    stock_alerts_html = ""
-    if below_cost:
-        stock_alerts_html += '<div style="margin-bottom:15px;"><div style="color:#ef4444;font-weight:bold;margin-bottom:8px;">SELLING BELOW COST:</div>'
-        for item in below_cost[:5]:
-            stock_alerts_html += f'<div style="padding:6px;background:rgba(239,68,68,0.1);border-radius:4px;margin-bottom:4px;font-size:13px;">{item["code"]}: Cost R{item["cost"]:.2f} → Sell R{item["price"]:.2f} <span style="color:#ef4444;">(Lose R{item["loss"]:.2f}/unit)</span></div>'
-        stock_alerts_html += '</div>'
-    
-    if out_of_stock:
-        stock_alerts_html += f'<div style="margin-bottom:15px;"><div style="color:#f97316;font-weight:bold;margin-bottom:8px;">OUT OF STOCK ({len(out_of_stock)}):</div>'
-        for item in out_of_stock[:5]:
-            stock_alerts_html += f'<div style="padding:4px 0;font-size:13px;color:#ccc;">{item["code"]}</div>'
-        if len(out_of_stock) > 5:
-            stock_alerts_html += f'<div style="color:var(--text-muted);font-size:12px;">+{len(out_of_stock)-5} more</div>'
-        stock_alerts_html += '</div>'
-    
-    if low_stock:
-        stock_alerts_html += f'<div><div style="color:#eab308;font-weight:bold;margin-bottom:8px;">LOW STOCK ({len(low_stock)}):</div>'
-        for item in low_stock[:5]:
-            stock_alerts_html += f'<div style="padding:4px 0;font-size:13px;color:#ccc;">{item["code"]}: {item["qty"]:.0f} left</div>'
-        if len(low_stock) > 5:
-            stock_alerts_html += f'<div style="color:var(--text-muted);font-size:12px;">+{len(low_stock)-5} more</div>'
-        stock_alerts_html += '</div>'
-    
-    if not stock_alerts_html:
-        stock_alerts_html = '<div style="padding:20px;text-align:center;color:var(--green);">Stock looking good!</div>'
-    
-    # Build activity feed HTML
-    activity_html = ""
-    today_activities = [a for a in activity_feed if a["date"] == today_str]
-    yesterday_activities = [a for a in activity_feed if a["date"] == yesterday_str]
-    older_activities = [a for a in activity_feed if a["date"] < yesterday_str][:10]
-    
-    if today_activities:
-        activity_html += '<div style="margin-bottom:15px;"><div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">TODAY</div>'
-        for a in today_activities[:10]:
-            activity_html += f'''<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;margin-bottom:4px;border-left:3px solid {a["color"]};">
-                <div><span style="margin-right:8px;">{a["icon"]}</span>{a["text"][:30]}</div>
-                <div style="color:{a["color"]};font-weight:bold;">{money(a["amount"])}</div>
-            </div>'''
-        activity_html += '</div>'
-    
-    if yesterday_activities:
-        activity_html += '<div style="margin-bottom:15px;"><div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">YESTERDAY</div>'
-        for a in yesterday_activities[:5]:
-            activity_html += f'''<div style="display:flex;justify-content:space-between;align-items:center;padding:6px;border-bottom:1px solid rgba(255,255,255,0.05);">
-                <div style="font-size:13px;"><span style="margin-right:6px;">{a["icon"]}</span>{a["text"][:25]}</div>
-                <div style="color:{a["color"]};font-size:13px;">{money(a["amount"])}</div>
-            </div>'''
-        activity_html += '</div>'
-    
-    if not activity_html:
-        activity_html = '<div style="padding:20px;text-align:center;color:var(--text-muted);">No recent activity</div>'
-    
-    # Build team activity HTML
-    team_html = ""
-    if team_stats:
-        for uid, stats in team_stats.items():
-            name = stats["name"]
-            if name == "unknown" or not name:
-                continue
-            
-            # Build person's activity summary
-            person_items = []
-            
-            # Quotes
-            if stats["quotes"]:
-                quote_count = len(stats["quotes"])
-                quote_total = sum(q["total"] for q in stats["quotes"])
-                quote_details = ", ".join([f'{q["customer"]}' for q in stats["quotes"][:3]])
-                if quote_count > 3:
-                    quote_details += f" +{quote_count-3} more"
-                person_items.append(f'<div style="font-size:12px;color:#f59e0b;">📝 {quote_count} quotes ({quote_details}) = {money(quote_total)}</div>')
-            
-            # POS Sales
-            total_pos = stats["sales_cash"] + stats["sales_card"] + stats["sales_acc"]
-            if total_pos > 0:
-                sales_breakdown = []
-                if stats["sales_cash"] > 0:
-                    sales_breakdown.append(f'Cash {money(stats["sales_cash"])}')
-                if stats["sales_card"] > 0:
-                    sales_breakdown.append(f'Card {money(stats["sales_card"])}')
-                if stats["sales_acc"] > 0:
-                    sales_breakdown.append(f'Acc {money(stats["sales_acc"])}')
-                person_items.append(f'<div style="font-size:12px;color:#10b981;">💰 POS: {" • ".join(sales_breakdown)}</div>')
-            
-            # Invoices
-            if stats["invoices"] > 0:
-                person_items.append(f'<div style="font-size:12px;color:#3b82f6;">📄 {stats["invoices"]} invoices = {money(stats["invoice_total"])}</div>')
-            
-            if person_items:
-                team_html += f'''
-                <div style="padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;margin-bottom:8px;">
-                    <div style="font-weight:bold;color:white;margin-bottom:6px;">👤 {name}</div>
-                    {"".join(person_items)}
-                </div>'''
-    
-    if not team_html:
-        team_html = '<div style="padding:15px;text-align:center;color:var(--text-muted);font-size:13px;">No team activity today</div>'
-    
-    content = f'''
-    <div style="margin-bottom:20px;">
-        <h1 style="margin:0;font-size:28px;">Business Pulse</h1>
-        <p style="color:var(--text-muted);margin:5px 0 0 0;">{biz_name} • {today()}</p>
-    </div>
-    
-    <!-- ZANE'S BRIEFING -->
-    {briefing_html}
-    
-    <!-- TODAY'S SNAPSHOT -->
-    <div class="stats-grid" style="margin-bottom:15px;">
-        <div class="stat-card" style="background:linear-gradient(135deg, rgba(16,185,129,0.3), rgba(16,185,129,0.1));">
-            <div class="stat-value" style="color:#10b981;">{money(today_payments)}</div>
-            <div class="stat-label">Received Today</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{money(today_sales)}</div>
-            <div class="stat-label">POS Sales Today</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{money(today_invoiced)}</div>
-            <div class="stat-label">Invoiced Today</div>
-        </div>
-        <div class="stat-card" style="background:linear-gradient(135deg, rgba(99,102,241,0.2), rgba(99,102,241,0.05));">
-            <div class="stat-value">{money(week_sales + week_invoiced)}</div>
-            <div class="stat-label">This Week</div>
-        </div>
-    </div>
-    
-    <!-- CASH POSITION -->
-    <div class="stats-grid" style="margin-bottom:25px;">
-        <div class="stat-card" style="background:linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.05));">
-            <div class="stat-value" style="color:#10b981;">{money(total_owed_to_us)}</div>
-            <div class="stat-label">Owed TO You</div>
-        </div>
-        <div class="stat-card" style="background:linear-gradient(135deg, rgba(239,68,68,0.2), rgba(239,68,68,0.05));">
-            <div class="stat-value" style="color:#ef4444;">{money(total_we_owe)}</div>
-            <div class="stat-label">You OWE</div>
-        </div>
-        <div class="stat-card" style="background:linear-gradient(135deg, rgba(239,68,68,0.3), rgba(239,68,68,0.1));">
-            <div class="stat-value" style="color:#ef4444;">{money(danger_total)}</div>
-            <div class="stat-label">90+ Days Risk</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value" style="color:#f97316;">{len(outstanding_invoices)}</div>
-            <div class="stat-label">Open Invoices</div>
-        </div>
-    </div>
-    
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
-        
-        <!-- LEFT COLUMN: DEBTORS -->
-        <div>
-            <!-- DANGER ZONE -->
-            <div class="card" style="border:2px solid rgba(239,68,68,0.5);margin-bottom:20px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                    <h3 style="margin:0;color:#ef4444;">DANGER ZONE (90+ days)</h3>
-                    <span style="background:#ef4444;color:white;padding:4px 12px;border-radius:20px;font-weight:bold;">{len(danger_zone)}</span>
-                </div>
-                {danger_html}
-                {f'<div style="text-align:center;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1);margin-top:10px;"><strong style="color:#ef4444;">Total at risk: {money(danger_total)}</strong></div>' if danger_total > 0 else ''}
-            </div>
-            
-            <!-- WARNING ZONE -->
-            <div class="card" style="border:1px solid rgba(249,115,22,0.3);margin-bottom:20px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                    <h3 style="margin:0;color:#f97316;">WARNING (60-90 days)</h3>
-                    <span style="background:#f97316;color:white;padding:3px 10px;border-radius:15px;font-size:13px;">{len(warning_zone)}</span>
-                </div>
-                {warning_html}
-            </div>
-            
-            <!-- WATCH ZONE -->
-            <div class="card" style="border:1px solid rgba(234,179,8,0.2);">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                    <h3 style="margin:0;color:#eab308;font-size:16px;">Watch (30-60 days)</h3>
-                    <span style="color:#eab308;font-size:13px;">{len(watch_zone)} accounts • {money(watch_total)}</span>
-                </div>
-                {watch_html}
-            </div>
-        </div>
-        
-        <!-- RIGHT COLUMN: ACTIVITY & ACTIONS -->
-        <div>
-            <!-- TEAM ACTIVITY -->
-            <div class="card" style="margin-bottom:20px;border:1px solid rgba(139,92,246,0.3);">
-                <h3 style="margin:0 0 15px 0;color:#8b5cf6;">Team Activity Today</h3>
-                {team_html}
-            </div>
-            
-            <!-- RECENT ACTIVITY -->
-            <div class="card" style="margin-bottom:20px;border:1px solid rgba(16,185,129,0.3);">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                    <h3 style="margin:0;color:#10b981;">Recent Activity</h3>
-                    <a href="/payments" style="color:#10b981;font-size:13px;">View all →</a>
-                </div>
-                {activity_html}
-            </div>
-            
-            <!-- STOCK ALERTS -->
-            <div class="card" style="margin-bottom:20px;">
-                <h3 style="margin:0 0 15px 0;">Stock Alerts</h3>
-                {stock_alerts_html}
-            </div>
-            
-            <!-- QUICK ACTIONS -->
-            <div class="card" style="background:linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05));">
-                <h3 style="margin:0 0 15px 0;">Quick Actions</h3>
-                <div style="display:flex;flex-direction:column;gap:10px;">
-                    <a href="/reports/aging" class="btn btn-secondary" style="text-align:center;">View Full Aging Report</a>
-                    <a href="/customers" class="btn btn-secondary" style="text-align:center;">Manage Customers</a>
-                    <a href="/stock" class="btn btn-secondary" style="text-align:center;">Manage Stock</a>
-                    <a href="/pos" class="btn btn-primary" style="text-align:center;">Open POS</a>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-    // Auto-load briefing on page load
-    document.addEventListener('DOMContentLoaded', function() {{
-        generateBriefing();
-    }});
-    
-    async function generateBriefing() {{
-        const content = document.getElementById('briefingContent');
-        const dateEl = document.getElementById('briefingDate');
-        const refreshBtn = document.getElementById('refreshBtn');
-        
-        content.innerHTML = `
-            <div style="text-align:center;padding:30px;">
-                <div class="spinner" style="border:3px solid rgba(139,92,246,0.3);border-top:3px solid #8b5cf6;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:0 auto 15px;"></div>
-                <p style="color:var(--text-muted);margin:0;">Zane is catching up on what happened...</p>
-            </div>
-        `;
-        refreshBtn.style.display = 'none';
-        
-        try {{
-            const response = await fetch('/api/briefing/generate', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}}
-            }});
-            const data = await response.json();
-            
-            if (data.success) {{
-                // Format briefing text with proper line breaks
-                const briefingText = data.briefing.replace(/\\n/g, '<br>');
-                content.innerHTML = briefingText;
-                
-                // Show date range
-                const days = data.days || 1;
-                if (days === 1) {{
-                    dateEl.textContent = 'Gister se opsomming';
-                }} else {{
-                    dateEl.textContent = `Laaste ${{days}} dae se catch-up`;
-                }}
-                
-                refreshBtn.style.display = 'block';
-            }} else {{
-                content.innerHTML = `
-                    <div style="text-align:center;padding:20px;color:var(--text-muted);">
-                        <p>Kon nie briefing laai nie. ${{data.error || ''}}</p>
-                        <button onclick="generateBriefing()" class="btn btn-secondary" style="margin-top:10px;">Probeer weer</button>
-                    </div>
-                `;
-            }}
-        }} catch (err) {{
-            content.innerHTML = `
-                <div style="text-align:center;padding:20px;color:var(--text-muted);">
-                    <p>Connection error</p>
-                    <button onclick="generateBriefing()" class="btn btn-secondary" style="margin-top:10px;">Probeer weer</button>
-                </div>
-            `;
-        }}
-    }}
-    </script>
-    '''
-    
-    return render_page("Business Pulse", content, user, "pulse")
-
-
-@app.route("/api/briefing/generate", methods=["POST"])
-@login_required
-def api_briefing_generate():
-    """Generate a catch-up briefing based on when user last viewed Pulse."""
-    
-    try:
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        user_id = user.get("id") if user else None
-        
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        result = DailyBriefing.generate_catchup(biz_id, user_id)
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"[BRIEFING API] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
 @app.route("/reports")
 @login_required
 def reports_page():
@@ -18505,7 +15154,7 @@ def reports_page():
     <h3 style="margin:30px 0 10px 0;color:var(--text-muted);">Tax & Compliance</h3>
     <div class="stats-grid">
         <div class="card" style="cursor:pointer;background:linear-gradient(135deg, rgba(16,185,129,0.2), rgba(34,197,94,0.1));border:1px solid rgba(16,185,129,0.3);" onclick="window.location='/tax-saver'">
-            <h3>Tax Saver</h3>
+            <h3>💰 Tax Saver</h3>
             <p style="color:var(--text-muted)">Find money you're missing!</p>
         </div>
         <div class="card" style="cursor:pointer" onclick="window.location='/reports/vat'">
@@ -18517,11 +15166,11 @@ def reports_page():
             <p style="color:var(--text-muted)">Match bank to books</p>
         </div>
         <div class="card" style="cursor:pointer" onclick="window.location='/year-end'">
-            <h3>Year End Close</h3>
+            <h3>📅 Year End Close</h3>
             <p style="color:var(--text-muted)">Close financial year</p>
         </div>
         <div class="card" style="cursor:pointer" onclick="window.location='/credit-notes'">
-            <h3>Credit Notes</h3>
+            <h3>📝 Credit Notes</h3>
             <p style="color:var(--text-muted)">View all credit notes</p>
         </div>
     </div>
@@ -20540,7 +17189,7 @@ def purchases_page():
     total_outstanding = sum(float(o.get("total", 0)) for o in orders if o.get("status") in ("sent", "partial"))
     
     rows = ""
-    for po in orders[:500]:
+    for po in orders[:50]:
         status = po.get("status", "draft")
         status_colors = {
             "draft": "var(--text-muted)", 
@@ -20568,7 +17217,7 @@ def purchases_page():
     <div class="card" style="margin-bottom: 20px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <div>
-                <h2 style="margin:0;">Purchase Orders</h2>
+                <h2 style="margin:0;">📦 Purchase Orders</h2>
                 <p style="color:var(--text-muted);margin:5px 0 0 0;">Order stock from suppliers</p>
             </div>
             <a href="/purchase/new" class="btn btn-primary">+ New Purchase Order</a>
@@ -20611,7 +17260,7 @@ def purchases_page():
     </div>
     
     <div class="card" style="background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05));">
-        <h3 style="margin: 0 0 10px 0;">Purchase Order Workflow</h3>
+        <h3 style="margin: 0 0 10px 0;">💡 Purchase Order Workflow</h3>
         <div style="display: flex; gap: 20px; flex-wrap: wrap; color: var(--text-muted); font-size: 14px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="background: var(--text-muted); color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 12px;">1</span>
@@ -20741,7 +17390,7 @@ def purchase_new():
     </div>
     
     <div class="card" style="max-width: 900px;">
-        <h2 style="margin: 0 0 20px 0;">New Purchase Order</h2>
+        <h2 style="margin: 0 0 20px 0;">📦 New Purchase Order</h2>
         
         <form method="POST" id="poForm">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
@@ -20925,7 +17574,7 @@ def purchase_view(po_id):
     items_html = ""
     all_received = True
     for item in items:
-        qty_ordered = item.get("qty") or item.get("quantity", 1)
+        qty_ordered = item.get("qty", 1)
         qty_received = item.get("qty_received", 0)
         remaining = qty_ordered - qty_received
         
@@ -20938,12 +17587,12 @@ def purchase_view(po_id):
         elif qty_received > 0:
             receive_status = f'<span style="color: #3b82f6;">{qty_received}/{qty_ordered}</span>'
         
-        # NO PRICES on PO - just description and qty
         items_html += f'''
         <tr>
-            <td>{safe_string(item.get("code", ""))}</td>
             <td>{safe_string(item.get("description", "-"))}</td>
             <td style="text-align:center;">{qty_ordered}</td>
+            <td style="text-align:right;">{money(item.get("price", 0))}</td>
+            <td style="text-align:right;">{money(item.get("total", 0))}</td>
             <td style="text-align:center;">{receive_status}</td>
         </tr>
         '''
@@ -20961,16 +17610,16 @@ def purchase_view(po_id):
     elif status == "sent":
         action_buttons = f'''
         <button class="btn btn-secondary" onclick="emailPO()">📧 Resend Email</button>
-        <button class="btn btn-primary" onclick="showReceiveModal()">Receive Goods</button>
+        <button class="btn btn-primary" onclick="showReceiveModal()">📥 Receive Goods</button>
         '''
     elif status == "partial":
         action_buttons = f'''
-        <button class="btn btn-primary" onclick="showReceiveModal()">Receive Remaining</button>
-        <button class="btn btn-secondary" onclick="createSupplierInvoice()">Create Supplier Invoice</button>
+        <button class="btn btn-primary" onclick="showReceiveModal()">📥 Receive Remaining</button>
+        <button class="btn btn-secondary" onclick="createSupplierInvoice()">📄 Create Supplier Invoice</button>
         '''
     elif status == "received":
         action_buttons = f'''
-        <button class="btn btn-primary" onclick="createSupplierInvoice()">Create Supplier Invoice</button>
+        <button class="btn btn-primary" onclick="createSupplierInvoice()">📄 Create Supplier Invoice</button>
         '''
     
     # Build receive modal with items
@@ -21028,9 +17677,10 @@ def purchase_view(po_id):
         <table style="width:100%;border-collapse:collapse;margin-bottom:30px;">
             <thead>
                 <tr style="background:#f5f5f5;">
-                    <th style="padding:12px;text-align:left;border-bottom:2px solid #ddd;color:#333;">Code</th>
                     <th style="padding:12px;text-align:left;border-bottom:2px solid #ddd;color:#333;">Description</th>
                     <th style="padding:12px;text-align:center;border-bottom:2px solid #ddd;color:#333;">Qty</th>
+                    <th style="padding:12px;text-align:right;border-bottom:2px solid #ddd;color:#333;">Price</th>
+                    <th style="padding:12px;text-align:right;border-bottom:2px solid #ddd;color:#333;">Total</th>
                     <th style="padding:12px;text-align:center;border-bottom:2px solid #ddd;color:#333;">Received</th>
                 </tr>
             </thead>
@@ -21039,13 +17689,30 @@ def purchase_view(po_id):
             </tbody>
         </table>
         
+        <div style="display:flex;justify-content:flex-end;">
+            <div style="width:280px;">
+                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #eee;color:#333;">
+                    <span style="color:#666;">Subtotal</span>
+                    <span>{money(po.get("subtotal", 0))}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #eee;color:#333;">
+                    <span style="color:#666;">VAT (15%)</span>
+                    <span>{money(po.get("vat", 0))}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:14px 0;font-size:22px;font-weight:bold;color:#2563eb;">
+                    <span>TOTAL</span>
+                    <span>{money(po.get("total", 0))}</span>
+                </div>
+            </div>
+        </div>
+        
         {f'<div style="margin-top:20px;padding:15px;background:#f8f9fa;border-radius:8px;"><strong>Notes:</strong><br>{safe_string(po.get("notes", ""))}</div>' if po.get("notes") else ""}
     </div>
     
     <!-- Receive Goods Modal -->
     <div id="receiveModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
         <div class="card" style="width: 100%; max-width: 600px; margin: 20px; max-height: 90vh; overflow-y: auto;">
-            <h3 style="margin: 0 0 20px 0;">Receive Goods</h3>
+            <h3 style="margin: 0 0 20px 0;">📥 Receive Goods</h3>
             
             <table class="table">
                 <thead>
@@ -21183,7 +17850,7 @@ def api_po_status(po_id):
 @app.route("/api/purchase/<po_id>/email", methods=["POST"])
 @login_required
 def api_po_email(po_id):
-    """Email PO to supplier - NO PRICES"""
+    """Email PO to supplier"""
     try:
         business = Auth.get_current_business()
         biz_name = business.get("name", "Your Customer") if business else "Your Customer"
@@ -21196,7 +17863,7 @@ def api_po_email(po_id):
         if not supplier_email:
             return jsonify({"success": False, "error": "No supplier email address"})
         
-        # Build email body - NO PRICES
+        # Build email body
         try:
             items = json.loads(po.get("items", "[]"))
         except:
@@ -21204,22 +17871,22 @@ def api_po_email(po_id):
         
         items_text = ""
         for item in items:
-            code = item.get('code', '')
-            desc = item.get('description', '')
-            qty = item.get('qty') or item.get('quantity', 1)
-            items_text += f"- {code} {desc}: Qty {qty}\n"
+            items_text += f"- {item.get('description')}: {item.get('qty')} x {money(item.get('price', 0))} = {money(item.get('total', 0))}\n"
         
         email_body = f"""
 Dear {po.get('supplier_name', 'Supplier')},
 
 Please find below our Purchase Order {po.get('po_number')}:
 
-ITEMS REQUIRED:
 {items_text}
+Subtotal: {money(po.get('subtotal', 0))}
+VAT (15%): {money(po.get('vat', 0))}
+TOTAL: {money(po.get('total', 0))}
+
 {f"Expected delivery: {po.get('expected_date')}" if po.get('expected_date') else ""}
 {f"Notes: {po.get('notes')}" if po.get('notes') else ""}
 
-Please confirm receipt of this order and provide your quotation.
+Please confirm receipt of this order.
 
 Thank you,
 {biz_name}
@@ -21280,8 +17947,8 @@ def api_po_receive(po_id):
                     stock_id = items[idx]["stock_id"]
                     stock_item = db.get_one("stock", stock_id)
                     if stock_item:
-                        new_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0) + qty_received
-                        db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                        new_qty = float(stock_item.get("quantity", 0)) + qty_received
+                        db.update("stock", stock_id, {"quantity": new_qty})
                         logger.info(f"[PO] Updated stock {stock_item.get('code')}: +{qty_received} = {new_qty}")
         
         # Check if all items fully received
@@ -21323,37 +17990,32 @@ def api_po_create_invoice(po_id):
             return redirect("/purchases")
         
         # Check if invoice already created
-        existing = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": po.get("po_number", "").replace("PO", "SI")})
+        existing = db.get("supplier_invoices", {"business_id": biz_id, "po_id": po_id})
         if existing:
             flash("Supplier invoice already exists for this PO", "error")
             return redirect(f"/purchase/{po_id}")
         
         # Create supplier invoice
+        inv_id = generate_id()
         inv_number = po.get("po_number", "").replace("PO", "SI")
         
-        # Parse items
-        po_items = po.get("items", [])
-        if isinstance(po_items, str):
-            try:
-                po_items = json.loads(po_items)
-            except:
-                po_items = []
-        
-        invoice = RecordFactory.supplier_invoice(
-            business_id=biz_id,
-            supplier_id=po.get("supplier_id", ""),
-            supplier_name=po.get("supplier_name", ""),
-            invoice_number=inv_number,
-            date=today(),
-            due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-            subtotal=po.get("subtotal", 0),
-            vat=po.get("vat", 0),
-            total=po.get("total", 0),
-            items=json.dumps(po_items) if po_items else "",
-            status="unpaid",
-            notes=f"From PO: {po.get('po_number', '')}"
-        )
-        inv_id = invoice["id"]
+        invoice = {
+            "id": inv_id,
+            "business_id": biz_id,
+            "invoice_number": inv_number,
+            "date": today(),
+            "due_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+            "supplier_id": po.get("supplier_id"),
+            "supplier_name": po.get("supplier_name"),
+            "items": po.get("items"),
+            "subtotal": po.get("subtotal"),
+            "vat": po.get("vat"),
+            "total": po.get("total"),
+            "po_id": po_id,
+            "po_number": po.get("po_number"),
+            "status": "unpaid",
+            "created_at": now()
+        }
         
         success, _ = db.save("supplier_invoices", invoice)
         
@@ -21405,7 +18067,7 @@ def supplier_invoices_page():
     invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
     
     rows = ""
-    for inv in invoices[:500]:
+    for inv in invoices[:50]:
         status = inv.get("status", "unpaid")
         status_color = "var(--green)" if status == "paid" else "var(--orange)"
         inv_num = safe_string(inv.get("invoice_number", ""))
@@ -21473,7 +18135,7 @@ def journals_page():
     journals = sorted(journals, key=lambda x: x.get("date", ""), reverse=True)
     
     rows = ""
-    for j in journals[:500]:
+    for j in journals[:100]:
         debit = float(j.get("debit", 0))
         credit = float(j.get("credit", 0))
         rows += f'''
@@ -21750,8 +18412,8 @@ def smart_reports_page():
     </div>
     
     <div id="reportLoading" style="display:none;text-align:center;padding:40px;">
-        <div style="font-size:24px;margin-bottom:10px;">Generating Report...</div>
-        <p style="color:var(--text-muted);">Analyzing your business data. This may take up to 30 seconds.</p>
+        <div style="font-size:24px;margin-bottom:10px;">Generating report...</div>
+        <p style="color:var(--text-muted);">Zane is analyzing your data</p>
     </div>
     
     <div id="reportOutput" style="margin-top:20px;display:none;">
@@ -21770,39 +18432,46 @@ def smart_reports_page():
     </style>
     
     <script>
+    const reportPrompts = {
+        'management': 'Generate a management statement for this month. Include P&L summary, key metrics, debtor status, and actionable recommendations.',
+        'kpi': 'Generate a KPI dashboard showing: revenue, gross margin, debtor days, stock turn, top customers, and trends.',
+        'sales': 'Analyze my sales: breakdown by customer, best sellers, average order value, and which customers are growing or declining.',
+        'debtor': 'Generate a debtor risk report: identify problem customers, aging analysis, who needs follow-up, and recovery recommendations.',
+        'stock': 'Analyze my stock: slow movers, fast sellers, items to reorder, dead stock, and margin analysis.',
+        'forecast': 'Generate a 30-day cash flow forecast based on: expected collections, known expenses, payroll due, and recommendations.'
+    };
+    
     const reportTitles = {
         'management': 'Management Statement',
-        'kpi': 'Key Performance Indicators',
+        'kpi': 'KPI Dashboard',
         'sales': 'Sales Analysis',
         'debtor': 'Debtor Risk Report',
-        'stock': 'Stock Analysis',
+        'stock': 'Stock Report',
         'forecast': 'Cash Flow Forecast'
     };
     
     async function generateReport(type) {
-        const title = reportTitles[type] || 'Report';
-        await runReport(type, null, title);
+        const prompt = reportPrompts[type];
+        const title = reportTitles[type];
+        await runReport(prompt, title);
     }
     
     async function generateCustomReport() {
         const input = document.getElementById('customReportInput').value;
         if (input) {
-            await runReport('custom', input, 'Custom Report');
+            await runReport('Generate a detailed report: ' + input, 'Custom Report');
         }
     }
     
-    async function runReport(type, customRequest, title) {
+    async function runReport(prompt, title) {
         document.getElementById('reportLoading').style.display = 'block';
         document.getElementById('reportOutput').style.display = 'none';
         
         try {
-            const response = await fetch('/api/report', {
+            const response = await fetch('/api/ai', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    type: type,
-                    custom: customRequest
-                })
+                body: JSON.stringify({command: prompt})
             });
             
             const data = await response.json();
@@ -21810,12 +18479,7 @@ def smart_reports_page():
             document.getElementById('reportLoading').style.display = 'none';
             document.getElementById('reportOutput').style.display = 'block';
             document.getElementById('reportTitle').textContent = title;
-            
-            if (data.success) {
-                document.getElementById('reportContent').textContent = data.report;
-            } else {
-                document.getElementById('reportContent').textContent = 'Error: ' + (data.error || 'Failed to generate report');
-            }
+            document.getElementById('reportContent').textContent = data.response || 'No data available';
             
             // Scroll to report
             document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
@@ -21998,7 +18662,7 @@ def tax_saver_page():
     content = f'''
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <div>
-            <h1 style="margin: 0;">Tax Saver</h1>
+            <h1 style="margin: 0;">💰 Tax Saver</h1>
             <p style="color: var(--text-muted); margin: 5px 0 0 0;">Pay only what you MUST - not a cent more</p>
         </div>
         <div style="text-align: right;">
@@ -22075,7 +18739,7 @@ def tax_saver_page():
         <!-- Asset Register -->
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h2 style="margin: 0;">Bates & Depreciasie</h2>
+                <h2 style="margin: 0;">📦 Bates & Depreciasie</h2>
                 <button class="btn btn-primary" onclick="showAddAsset()" style="padding: 6px 12px; font-size: 13px;">+ Add Asset</button>
             </div>
             
@@ -22102,7 +18766,7 @@ def tax_saver_page():
             </table>
             """ if depreciation.get("schedule") else f"""
             <div style="text-align: center; padding: 30px;">
-                <p style="color: var(--text-muted);">Register your assets</p>
+                <p style="color: var(--text-muted);">📦 Register your assets</p>
                 <p style="font-size: 13px; color: var(--text-muted);">Computers, vehicles, equipment = annual deduction</p>
                 <button class="btn btn-primary" onclick="showAddAsset()">+ Eerste Bate</button>
             </div>
@@ -22112,7 +18776,7 @@ def tax_saver_page():
     
     <!-- Industry Tips -->
     <div class="card">
-        <h2 style="margin: 0 0 15px 0;">Tips for your industry</h2>
+        <h2 style="margin: 0 0 15px 0;">💡 Tips for your industry</h2>
         {industry_tips_html or "<p style='color: var(--text-muted);'>Set your business industry in Settings to get specific tips</p>"}
     </div>
     
@@ -22157,7 +18821,7 @@ def tax_saver_page():
     <!-- Add Asset Modal -->
     <div id="assetModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
         <div class="card" style="width: 100%; max-width: 500px; margin: 20px;">
-            <h3 style="margin: 0 0 20px 0;">Add Asset</h3>
+            <h3 style="margin: 0 0 20px 0;">📦 Add Asset</h3>
             <form method="POST" action="/api/tax-saver/asset">
                 <div style="display: grid; gap: 15px;">
                     <div>
@@ -22328,602 +18992,320 @@ def api_tax_saver_report():
 @app.route("/pos")
 @login_required
 def pos_page():
-    """POS - Stylish List Layout with Smart Search"""
+    """POS - Big buttons + AI"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Get stock, customers and suppliers
+    # Get stock and customers
     stock = db.get("stock", {"business_id": biz_id}) if biz_id else []
     customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-    suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
     
-    # Sort stock by category then code
-    stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("code") or ""))
+    # Sort stock by category then description
+    stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("description") or ""))
     
-    # Build stock rows for the table
-    stock_rows = ""
+    # Stock items as big buttons (ALL items, filtered by search only)
+    stock_buttons = ""
     for item in stock:
         code = safe_string(item.get("code", ""))
-        desc = safe_string(item.get("description", ""))
+        desc_full = safe_string(item.get("description", ""))
+        desc_short = (desc_full[:18] + "..") if len(desc_full) > 20 else desc_full
         price = float(item.get("price") or item.get("selling_price") or 0)
         qty = float(item.get("qty") or item.get("quantity") or 0)
-        category = safe_string(item.get("category", ""))
+        qty_warning = "negative-stock" if qty < 0 else "low-stock" if qty < 5 else ""
+        qty_text = f"{qty:.0f}" if qty >= 0 else f"{qty:.0f} [!]"
         
-        # Stock status styling
-        stock_class = ""
-        stock_badge = ""
-        if qty < 0:
-            stock_class = "negative"
-            stock_badge = f'<span class="stock-badge negative">{qty:.0f}</span>'
-        elif qty == 0:
-            stock_class = "zero"
-            stock_badge = f'<span class="stock-badge zero">0</span>'
-        elif qty < 5:
-            stock_class = "low"
-            stock_badge = f'<span class="stock-badge low">{qty:.0f}</span>'
-        else:
-            stock_badge = f'<span class="stock-badge">{qty:.0f}</span>'
-        
-        stock_rows += f'''
-        <tr class="stock-row {stock_class}" 
-            data-id="{item.get("id")}"
-            data-code="{code}"
-            data-desc="{desc}"
-            data-price="{price}"
-            data-qty="{qty}"
-            data-search="{code.lower()} {desc.lower()} {category.lower()}"
-            onclick="addToCart('{item.get("id")}', '{code}', '{desc}', {price}, {qty})">
-            <td class="col-code">{code}</td>
-            <td class="col-desc">{desc}</td>
-            <td class="col-price">R{price:,.2f}</td>
-            <td class="col-stock">{stock_badge}</td>
-            <td class="col-action">
-                <button class="qty-btn" onclick="addBulkToCart(event, '{item.get("id")}', '{code}', '{desc}', {price}, {qty})" title="Enter quantity">QTY</button>
-            </td>
-        </tr>
+        stock_buttons += f'''
+        <button class="pos-item {qty_warning}" onclick="addToCart('{item.get("id")}', '{code}', '{desc_full}', {price}, {qty})" data-id="{item.get("id")}" data-search="{code.lower()} {desc_full.lower()}" title="{desc_full}">
+            <div class="pos-item-code">{code}</div>
+            <div class="pos-item-desc">{desc_short}</div>
+            <div class="pos-item-price">{money(price)}</div>
+            <div class="pos-item-bottom">
+                <span class="pos-item-qty">{qty_text}</span>
+                <span class="pos-bulk-btn" onclick="addBulkToCart(event, '{item.get("id")}', '{code}', '{desc_full}', {price}, {qty})" title="Enter quantity">QTY</span>
+            </div>
+        </button>
         '''
     
-    # Customer options - sorted alphabetically
+    # Customer buttons for account sales
     customer_options = '<option value="">-- Cash Sale --</option>'
-    customer_options += '<option value="NEW" style="color:#10b981;">+ Add New</option>'
-    for c in sorted(customers, key=lambda x: (x.get("name") or "").lower()):
+    customer_options += '<option value="NEW" style="color:var(--primary);">+ Add New Customer</option>'
+    for c in customers:
         customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name"))}">{safe_string(c.get("name"))}</option>'
-    
-    # Supplier options - sorted alphabetically
-    supplier_options = '<option value="">-- Select Supplier --</option>'
-    supplier_options += '<option value="NEW" style="color:#10b981;">+ Add New</option>'
-    for s in sorted(suppliers, key=lambda x: (x.get("name") or "").lower()):
-        supplier_options += f'<option value="{s.get("id")}" data-name="{safe_string(s.get("name"))}">{safe_string(s.get("name"))}</option>'
-    
-    # JSON data for searchable dropdown
-    import json
-    customer_list = [{"id": "", "name": "Cash Sale"}] + [{"id": "NEW", "name": "+ Add New"}]
-    customer_list += [{"id": c.get("id"), "name": c.get("name", "")} for c in sorted(customers, key=lambda x: (x.get("name") or "").lower())]
-    supplier_list = [{"id": "", "name": "Select Supplier"}] + [{"id": "NEW", "name": "+ Add New"}]
-    supplier_list += [{"id": s.get("id"), "name": s.get("name", "")} for s in sorted(suppliers, key=lambda x: (x.get("name") or "").lower())]
-    customer_json = json.dumps(customer_list).replace("'", "&#39;")
-    supplier_json = json.dumps(supplier_list).replace("'", "&#39;")
-    
-    # POS print settings
-    pos_settings = {
-        "auto_print": business.get("pos_auto_print", False) if business else False,
-        "print_duplicates": True,  # Always print 2 copies
-        "print_format": business.get("pos_print_format", "ask") if business else "ask",
-        "slip_footer": business.get("pos_slip_footer", "Thank you for your purchase!") if business else "Thank you for your purchase!",
-        "business_name": (business.get("name") or business.get("business_name") or "Business") if business else "Business",
-        "vat_number": business.get("vat_number", "") if business else "",
-        "phone": business.get("phone", "") if business else "",
-        "address": business.get("address", "") if business else ""
-    }
-    pos_settings_json = json.dumps(pos_settings).replace("'", "&#39;")
     
     pos_css = '''
     <style>
-    :root {
-        --pos-bg: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #0f0f1a 100%);
-        --pos-card: rgba(30, 30, 50, 0.95);
-        --pos-glow: rgba(99, 102, 241, 0.3);
-        --pos-green: #10b981;
-        --pos-red: #ef4444;
-        --pos-orange: #f59e0b;
-        --pos-blue: #3b82f6;
-    }
-    
-    body {
-        background: var(--pos-bg);
-        overflow: hidden;
-    }
-    
-    /* ═══ MAIN LAYOUT ═══ */
     .pos-container {
         display: grid;
-        grid-template-columns: 1fr 480px;
+        grid-template-columns: 1fr 350px;
         gap: 20px;
-        height: calc(100vh - 140px);
-        padding: 0 20px;
+        height: calc(100vh - 140px);  /* Account for shortcuts bar */
     }
     
-    @media (max-width: 1000px) {
+    .pos-items-wrapper {
+        overflow-y: auto;
+        height: 100%;
+    }
+    
+    @media (max-width: 900px) {
         .pos-container {
             grid-template-columns: 1fr;
             height: auto;
         }
         .pos-cart {
+            position: relative !important;
+            top: auto !important;
+            height: auto !important;
+        }
+        .pos-items-wrapper {
             max-height: 50vh;
+        }
+        .pos-header {
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .pos-header-actions {
+            flex-wrap: wrap;
+            width: 100%;
+            justify-content: center;
         }
     }
     
-    /* ═══ SEARCH BAR ═══ */
-    .pos-search-wrapper {
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        padding: 15px 0;
-        background: transparent;
+    .pos-items {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 10px;
+        align-content: start;
+        padding: 10px;
+        background: var(--card);
+        border-radius: 12px;
     }
     
-    .pos-search {
-        position: relative;
-    }
-    
-    .pos-search input {
-        width: 100%;
-        padding: 16px 20px 16px 50px;
-        font-size: 18px;
-        background: var(--pos-card);
-        border: 2px solid transparent;
-        border-radius: 16px;
-        color: white;
-        transition: all 0.3s;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    }
-    
-    .pos-search input:focus {
-        outline: none;
-        border-color: var(--primary);
-        box-shadow: 0 0 30px var(--pos-glow);
-    }
-    
-    .pos-search input::placeholder {
-        color: rgba(255,255,255,0.4);
-    }
-    
-    .pos-search-icon {
-        position: absolute;
-        left: 18px;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: 20px;
-        opacity: 0.5;
-    }
-    
-    .pos-search-hint {
-        position: absolute;
-        right: 15px;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: 12px;
-        color: rgba(255,255,255,0.3);
-        background: rgba(0,0,0,0.3);
-        padding: 4px 10px;
-        border-radius: 6px;
-    }
-    
-    /* ═══ STOCK TABLE ═══ */
-    .pos-table-wrapper {
-        flex: 1;
-        overflow-y: auto;
-        background: var(--pos-card);
-        border-radius: 16px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    }
-    
-    .pos-table {
-        width: 100%;
-        border-collapse: collapse;
-    }
-    
-    .pos-table thead {
-        position: sticky;
-        top: 0;
-        z-index: 10;
-    }
-    
-    .pos-table thead th {
-        background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.1));
-        padding: 14px 16px;
-        text-align: left;
-        font-weight: 600;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        color: rgba(255,255,255,0.7);
-        border-bottom: 1px solid rgba(255,255,255,0.1);
-    }
-    
-    .pos-table thead th:first-child {
-        border-radius: 16px 0 0 0;
-    }
-    
-    .pos-table thead th:last-child {
-        border-radius: 0 16px 0 0;
-    }
-    
-    .stock-row {
+    .pos-item {
+        background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05));
+        border: 2px solid var(--border);
+        border-radius: 12px;
+        padding: 15px;
         cursor: pointer;
         transition: all 0.2s;
-        border-bottom: 1px solid rgba(255,255,255,0.05);
+        text-align: center;
     }
     
-    .stock-row:hover {
-        background: linear-gradient(90deg, rgba(99, 102, 241, 0.15), transparent);
-        transform: scale(1.005);
+    .pos-item:hover {
+        border-color: var(--primary);
+        transform: scale(1.02);
     }
     
-    .stock-row:active {
-        transform: scale(0.995);
-        background: rgba(99, 102, 241, 0.25);
+    .pos-item:active {
+        transform: scale(0.98);
     }
     
-    .stock-row td {
-        padding: 14px 16px;
-        vertical-align: middle;
+    .pos-item.low-stock {
+        border-color: var(--orange);
     }
     
-    .stock-row.negative {
+    .pos-item.negative-stock {
+        border-color: var(--red);
         background: rgba(239, 68, 68, 0.1);
     }
     
-    .stock-row.zero {
-        opacity: 0.5;
+    .pos-item.negative-stock .pos-item-qty {
+        color: var(--red);
+        font-weight: bold;
     }
     
-    .stock-row.low {
-        background: rgba(245, 158, 11, 0.05);
-    }
-    
-    .col-code {
-        font-weight: 700;
+    .pos-item-code {
+        font-weight: bold;
+        font-size: 14px;
         color: var(--primary);
-        font-size: 14px;
-        width: 140px;
     }
     
-    .col-desc {
-        color: rgba(255,255,255,0.9);
-        font-size: 14px;
-    }
-    
-    .col-price {
-        font-weight: 700;
-        color: var(--pos-green);
-        font-size: 16px;
-        width: 120px;
-        text-align: right;
-    }
-    
-    .col-stock {
-        width: 80px;
-        text-align: center;
-    }
-    
-    .col-action {
-        width: 70px;
-        text-align: center;
-    }
-    
-    .stock-badge {
-        display: inline-block;
-        padding: 4px 10px;
-        border-radius: 20px;
+    .pos-item-desc {
         font-size: 12px;
-        font-weight: 600;
-        background: rgba(255,255,255,0.1);
-        color: rgba(255,255,255,0.7);
+        color: var(--text-muted);
+        margin: 5px 0;
+        height: 30px;
+        overflow: hidden;
     }
     
-    .stock-badge.negative {
-        background: rgba(239, 68, 68, 0.2);
-        color: var(--pos-red);
+    .pos-item-price {
+        font-size: 18px;
+        font-weight: bold;
+        color: var(--green);
     }
     
-    .stock-badge.zero {
-        background: rgba(255,255,255,0.05);
-        color: rgba(255,255,255,0.3);
-    }
-    
-    .stock-badge.low {
-        background: rgba(245, 158, 11, 0.2);
-        color: var(--pos-orange);
-    }
-    
-    .qty-btn {
-        padding: 6px 12px;
-        background: linear-gradient(135deg, var(--primary), #7c3aed);
-        border: none;
-        border-radius: 8px;
-        color: white;
-        font-size: 11px;
-        font-weight: 700;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-    
-    .qty-btn:hover {
-        transform: scale(1.1);
-        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
-    }
-    
-    /* ═══ CART PANEL ═══ */
-    .pos-cart {
-        background: var(--pos-card);
-        border-radius: 16px;
-        padding: 20px;
-        display: flex;
-        flex-direction: column;
-        height: calc(100vh - 140px);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    }
-    
-    .pos-cart-header {
+    .pos-item-bottom {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 15px;
-        padding-bottom: 15px;
-        border-bottom: 1px solid rgba(255,255,255,0.1);
+        margin-top: 5px;
+    }
+    
+    .pos-item-qty {
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    .pos-bulk-btn {
+        font-size: 10px;
+        background: var(--primary);
+        color: white;
+        padding: 2px 6px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: bold;
+    }
+    
+    .pos-bulk-btn:hover {
+        background: var(--primary-hover);
+        transform: scale(1.1);
+    }
+    
+    .pos-cart {
+        background: var(--card);
+        border-radius: 12px;
+        padding: 15px;
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 140px);  /* Account for shortcuts bar */
+        overflow-y: auto;
     }
     
     .pos-cart-title {
-        font-size: 20px;
-        font-weight: 700;
-        background: linear-gradient(135deg, #fff, rgba(255,255,255,0.7));
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    
-    .pos-cart-count {
-        font-size: 13px;
-        color: rgba(255,255,255,0.5);
-        background: rgba(255,255,255,0.1);
-        padding: 4px 12px;
-        border-radius: 20px;
+        font-size: 18px;
+        font-weight: bold;
+        margin-bottom: 10px;
+        display: flex;
+        justify-content: space-between;
     }
     
     .pos-cart-items {
         flex: 1;
         overflow-y: auto;
-        margin-bottom: 15px;
+        margin-bottom: 10px;
+        min-height: 100px;
     }
     
-    .cart-item {
+    .pos-cart-item {
         display: flex;
         align-items: center;
-        padding: 8px;
-        background: rgba(255,255,255,0.03);
+        padding: 10px;
+        background: rgba(0,0,0,0.2);
         border-radius: 8px;
-        margin-bottom: 6px;
-        transition: all 0.2s;
+        margin-bottom: 8px;
     }
     
-    .cart-item:hover {
-        background: rgba(255,255,255,0.06);
-    }
-    
-    .cart-item-info {
+    .pos-cart-item-info {
         flex: 1;
-        min-width: 0;
     }
     
-    .cart-item-name {
-        font-weight: 600;
-        font-size: 11px;
-        line-height: 1.2;
+    .pos-cart-item-name {
+        font-weight: 500;
     }
     
-    .cart-item-code {
-        font-size: 10px;
-        color: var(--primary);
-        margin-top: 1px;
+    .pos-cart-item-price {
+        font-size: 13px;
+        color: var(--text-muted);
     }
     
-    .cart-item-price {
-        font-size: 10px;
-        color: rgba(255,255,255,0.5);
-    }
-    
-    .cart-item-qty {
+    .pos-cart-item-qty {
         display: flex;
         align-items: center;
-        gap: 4px;
-        margin: 0 8px;
+        gap: 8px;
     }
     
-    .cart-qty-btn {
-        width: 24px;
-        height: 24px;
-        border-radius: 6px;
+    .pos-qty-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
         border: none;
-        background: rgba(255,255,255,0.1);
-        color: white;
-        font-size: 14px;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-    
-    .cart-qty-btn:hover {
         background: var(--primary);
-    }
-    
-    .cart-qty-btn.minus:hover {
-        background: var(--pos-red);
-    }
-    
-    .cart-qty-display {
-        min-width: 28px;
-        text-align: center;
-        font-weight: 700;
-        font-size: 12px;
+        color: white;
+        font-size: 18px;
         cursor: pointer;
-        padding: 3px;
-        border-radius: 4px;
-        transition: all 0.2s;
     }
     
-    .cart-qty-display:hover {
-        background: rgba(255,255,255,0.1);
+    .pos-qty-btn:hover {
+        opacity: 0.8;
     }
     
-    .cart-item-total {
-        font-weight: 700;
-        font-size: 12px;
-        color: var(--pos-green);
-        min-width: 70px;
+    .pos-qty-btn.minus {
+        background: var(--red);
+    }
+    
+    .pos-qty-display {
+        min-width: 40px;
+        padding: 5px 10px;
+        background: var(--bg-secondary);
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: bold;
+        text-align: center;
+    }
+    
+    .pos-qty-display:hover {
+        background: var(--primary);
+        color: white;
+    }
+    
+    .pos-cart-item-total {
+        font-weight: bold;
+        margin-left: 15px;
+        min-width: 80px;
         text-align: right;
     }
     
-    /* ═══ TOTALS ═══ */
     .pos-totals {
-        background: rgba(0,0,0,0.2);
-        border-radius: 8px;
-        padding: 10px;
-        margin-bottom: 10px;
+        border-top: 1px solid var(--border);
+        padding-top: 15px;
     }
     
     .pos-total-row {
         display: flex;
         justify-content: space-between;
-        padding: 4px 0;
-        font-size: 12px;
-        color: rgba(255,255,255,0.6);
+        margin-bottom: 8px;
     }
     
     .pos-total-row.grand {
-        border-top: 1px solid rgba(255,255,255,0.1);
-        margin-top: 8px;
-        padding-top: 12px;
-        font-size: 15px;
-        font-weight: 700;
-        color: white;
+        font-size: 24px;
+        font-weight: bold;
+        color: var(--green);
+        margin-top: 10px;
     }
     
-    .pos-total-row.grand span:last-child {
-        color: var(--pos-green);
-        font-size: 18px;
+    .pos-customer {
+        margin-bottom: 15px;
     }
     
-    /* ═══ EMPTY STATE ═══ */
-    .pos-empty {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 15px;
-        color: rgba(255,255,255,0.3);
-        text-align: center;
-        font-size: 12px;
-    }
-    
-    .pos-empty-icon {
-        font-size: 20px;
-        margin-bottom: 5px;
-        opacity: 0.3;
-    }
-    
-    /* ═══ HEADER ═══ */
-    .pos-header {
-        position: sticky;
-        top: 0;
-        z-index: 1000;
-        background: var(--pos-card);
-        padding: 12px 20px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-bottom: 1px solid rgba(255,255,255,0.1);
-        backdrop-filter: blur(10px);
-    }
-    
-    .pos-header-nav {
-        display: flex;
-        gap: 15px;
-        align-items: center;
-    }
-    
-    .pos-header-nav a {
-        color: rgba(255,255,255,0.6);
-        text-decoration: none;
-        padding: 8px 14px;
-        border-radius: 8px;
-        font-size: 14px;
-        transition: all 0.2s;
-    }
-    
-    .pos-header-nav a:hover {
+    .pos-customer select {
+        width: 100%;
+        padding: 12px;
         background: rgba(255,255,255,0.05);
-        color: white;
-    }
-    
-    .pos-header-nav a.active {
-        color: white;
-        background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.2));
-    }
-    
-    .pos-logo {
-        font-weight: 800;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
         font-size: 16px;
-        padding: 8px 16px;
-        border-radius: 10px;
-        background: linear-gradient(135deg, var(--primary), #7c3aed);
-        color: white;
-        cursor: pointer;
-        transition: all 0.2s;
-        text-decoration: none;
     }
     
-    .pos-logo:hover {
-        transform: scale(1.05);
-        box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5);
-    }
-    
-    .pos-header-actions {
-        display: flex;
+    .pos-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
         gap: 10px;
-        align-items: center;
-        flex-wrap: wrap;
-    }
-    
-    .pos-header-total {
-        font-size: 22px;
-        font-weight: 800;
-        color: var(--pos-green);
-        margin-right: 15px;
-        text-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
     }
     
     .pos-pay-btn {
-        padding: 10px 18px;
+        padding: 20px;
+        border-radius: 12px;
         border: none;
-        border-radius: 10px;
-        font-weight: 700;
-        font-size: 13px;
+        font-size: 18px;
+        font-weight: bold;
         cursor: pointer;
         transition: all 0.2s;
-        display: flex;
-        align-items: center;
-        gap: 6px;
     }
     
-    .pos-pay-btn:hover:not(:disabled) {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    }
-    
-    .pos-pay-btn:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
+    .pos-pay-btn:hover {
+        transform: scale(1.02);
     }
     
     .pos-pay-btn.cash {
@@ -22939,243 +19321,113 @@ def pos_page():
     .pos-pay-btn.account {
         background: linear-gradient(135deg, #f59e0b, #d97706);
         color: white;
+        grid-column: span 2;
     }
     
-    .pos-pay-btn.quote {
-        background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+    .pos-pay-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .pos-clear-btn {
+        background: var(--red);
         color: white;
-    }
-    
-    .pos-pay-btn.po {
-        background: linear-gradient(135deg, #ec4899, #db2777);
-        color: white;
-    }
-    
-    .pos-pay-btn.clear {
-        background: linear-gradient(135deg, #ef4444, #dc2626);
-        color: white;
-    }
-    
-    .key-hint {
-        font-size: 9px;
-        background: rgba(0,0,0,0.3);
-        padding: 2px 5px;
-        border-radius: 4px;
-        font-family: monospace;
-    }
-    
-    /* Customer/Supplier select - DARK & VISIBLE */
-    .entity-select-wrapper {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        background: rgba(20, 20, 35, 0.95);
-        border: 1px solid rgba(255,255,255,0.15);
+        padding: 10px;
+        border: none;
         border-radius: 8px;
-        padding: 2px;
-    }
-    .entity-toggle {
-        padding: 6px 10px;
-        border: none;
-        background: transparent;
-        color: rgba(255,255,255,0.5);
-        font-size: 11px;
-        font-weight: 600;
         cursor: pointer;
-        border-radius: 6px;
-        transition: all 0.2s;
-    }
-    .entity-toggle.active {
-        background: var(--primary);
-        color: white;
-    }
-    .entity-toggle:hover:not(.active) {
-        background: rgba(255,255,255,0.1);
-    }
-    .entity-dropdown {
-        position: relative;
-    }
-    .entity-search {
-        padding: 8px 12px;
-        border-radius: 6px;
-        background: rgba(30, 30, 50, 0.95);
-        color: #fff;
-        border: none;
-        font-size: 13px;
-        cursor: pointer;
-        width: 150px;
-    }
-    .entity-search:focus {
-        outline: none;
-        box-shadow: 0 0 0 2px var(--primary);
-    }
-    .entity-search::placeholder {
-        color: rgba(255,255,255,0.7);
-    }
-    .entity-list {
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        background: #1a1a2e;
-        border: 1px solid rgba(255,255,255,0.2);
-        border-radius: 6px;
-        max-height: 250px;
-        overflow-y: auto;
-        z-index: 1000;
-        margin-top: 4px;
-        min-width: 200px;
-    }
-    .entity-item {
-        padding: 8px 12px;
-        color: #fff;
-        cursor: pointer;
-        font-size: 13px;
-        border-bottom: 1px solid rgba(255,255,255,0.05);
-    }
-    .entity-item:hover, .entity-item.highlighted {
-        background: var(--primary);
-    }
-    .entity-item.new-item {
-        color: #10b981;
-        font-weight: 600;
+        margin-top: 10px;
     }
     
-    /* ═══ SHORTCUTS BAR ═══ */
+    .pos-empty {
+        text-align: center;
+        color: var(--text-muted);
+        padding: 40px;
+    }
+    
+    .pos-header-sticky {
+        position: sticky;
+        top: 60px;
+        z-index: 100;
+        background: var(--bg);
+        padding: 10px 0;
+    }
+    
+    .pos-search {
+        margin-bottom: 10px;
+    }
+    
+    .pos-search input {
+        width: 100%;
+        padding: 12px 16px;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        font-size: 16px;
+    }
+    
     .pos-shortcuts {
         position: fixed;
         bottom: 0;
         left: 0;
         right: 0;
-        background: var(--pos-card);
-        border-top: 1px solid rgba(255,255,255,0.1);
-        padding: 10px 20px;
+        background: var(--card);
+        border-top: 1px solid var(--border);
+        padding: 8px 20px;
         display: flex;
-        gap: 25px;
+        gap: 20px;
         justify-content: center;
         flex-wrap: wrap;
         font-size: 12px;
-        color: rgba(255,255,255,0.4);
-        backdrop-filter: blur(10px);
+        color: var(--text-muted);
+        z-index: 1000;
+    }
+    
+    .pos-shortcuts kbd {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-family: monospace;
+        font-weight: bold;
+        color: var(--text);
+        margin-right: 4px;
     }
     
     .pos-shortcuts span {
         display: flex;
         align-items: center;
-        gap: 6px;
-    }
-    
-    .pos-shortcuts kbd {
-        background: rgba(255,255,255,0.1);
-        border: 1px solid rgba(255,255,255,0.2);
-        border-radius: 5px;
-        padding: 3px 8px;
-        font-family: monospace;
-        font-weight: 600;
-        color: rgba(255,255,255,0.7);
-    }
-    
-    /* ═══ RESPONSIVE ═══ */
-    @media (max-width: 1200px) {
-        .pos-header-actions {
-            gap: 8px;
-        }
-        .pos-pay-btn {
-            padding: 8px 12px;
-            font-size: 12px;
-        }
-    }
-    
-    @media (max-width: 768px) {
-        .pos-header {
-            flex-direction: column;
-            gap: 10px;
-        }
-        .pos-header-actions {
-            width: 100%;
-            justify-content: center;
-        }
-    }
-    
-    /* ═══ SCROLLBAR ═══ */
-    ::-webkit-scrollbar {
-        width: 8px;
-    }
-    
-    ::-webkit-scrollbar-track {
-        background: transparent;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: rgba(255,255,255,0.2);
-        border-radius: 4px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-        background: rgba(255,255,255,0.3);
-    }
-    
-    /* ═══ NO RESULTS ═══ */
-    .no-results {
-        display: none;
-        padding: 40px;
-        text-align: center;
-        color: rgba(255,255,255,0.4);
-    }
-    
-    .no-results.show {
-        display: block;
     }
     </style>
     '''
     
     pos_html = f'''
     <div class="pos-container">
-        <!-- Stock List Panel -->
-        <div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
-            <div class="pos-search-wrapper">
-                <div class="pos-search">
-                    <span class="pos-search-icon">🔍</span>
-                    <input type="text" id="stockSearch" placeholder="Search code or description..." oninput="filterStock()" autofocus>
-                    <span class="pos-search-hint">5*CODE = 5 pcs</span>
-                </div>
+        <!-- Items Grid - scrolls independently -->
+        <div class="pos-items-wrapper">
+            <div class="pos-search" style="position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:10;">
+                <input type="text" id="stockSearch" placeholder="🔍 Search or scan... (5*12x40 = 5 pcs)" oninput="filterStock()">
             </div>
-            
-            <div class="pos-table-wrapper">
-                <table class="pos-table">
-                    <tbody id="stockBody">
-                        {stock_rows if stock_rows else '<tr><td colspan="5" class="pos-empty">No stock items</td></tr>'}
-                    </tbody>
-                </table>
-                <div class="no-results" id="noResults">
-                    <div style="font-size:48px;margin-bottom:15px;">🔍</div>
-                    <div>No items found</div>
-                    <div style="font-size:12px;margin-top:5px;">Try a different search term</div>
-                </div>
+            <div class="pos-items" id="stockGrid">
+                {stock_buttons or '<div class="pos-empty">No stock items yet</div>'}
             </div>
         </div>
         
-        <!-- Cart Panel -->
+        <!-- Cart - stays fixed -->
         <div class="pos-cart">
-            <div class="pos-cart-header">
-                <span class="pos-cart-title">🛒 Cart</span>
-                <div style="display:flex;align-items:center;gap:10px;">
-                    <button id="btnAddItem" onclick="showCustomItemModal()" style="background:#8b5cf6;color:white;border:none;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;" title="Add custom/once-off item">+ Custom</button>
-                    <span class="pos-cart-count" id="cartCount">0 items</span>
-                </div>
+            <div class="pos-cart-title">
+                <span>Cart</span>
+                <span id="cartCount">0 items</span>
             </div>
             
             <div class="pos-cart-items" id="cartItems">
-                <div class="pos-empty">
-                    <div class="pos-empty-icon">🛒</div>
-                    <div>Cart is empty</div>
-                    <div style="font-size:12px;margin-top:5px;">Click items to add</div>
-                </div>
+                <div class="pos-empty">Tap items to add to cart</div>
             </div>
             
             <div class="pos-totals">
                 <div class="pos-total-row">
-                    <span>Subtotal (excl VAT)</span>
+                    <span>Subtotal</span>
                     <span id="subtotal">R0.00</span>
                 </div>
                 <div class="pos-total-row">
@@ -23184,28 +19436,22 @@ def pos_page():
                 </div>
                 <div class="pos-total-row grand">
                     <span>TOTAL</span>
-                    <span id="grandTotal">R0.00</span>
+                    <span id="grandTotal" style="color:var(--green);font-size:24px;">R0.00</span>
                 </div>
             </div>
         </div>
     </div>
     
-    <!-- Shortcuts Bar -->
+    <!-- Keyboard shortcuts bar -->
     <div class="pos-shortcuts">
         <span><kbd>Type</kbd> Search</span>
-        <span><kbd>Enter</kbd> Add first result</span>
-        <span><kbd>5*CODE</kbd> Add 5 pcs</span>
-        <span><kbd>↑↓</kbd> Navigate</span>
+        <span><kbd>Enter</kbd> Add</span>
+        <span><kbd>5*CODE</kbd> Qty</span>
         <span><kbd>F1</kbd> Cash</span>
         <span><kbd>F2</kbd> Card</span>
         <span><kbd>F3</kbd> Account</span>
         <span><kbd>F4</kbd> Quote</span>
         <span><kbd>F5</kbd> PO</span>
-        <span><kbd>F6</kbd> Invoice</span>
-        <span><kbd>F7</kbd> Edit Cust</span>
-        <span><kbd>F8</kbd> Cust</span>
-        <span><kbd>F9</kbd> Supp</span>
-        <span><kbd>F10</kbd> Credit</span>
         <span><kbd>ESC</kbd> Clear</span>
     </div>
     '''
@@ -23213,15 +19459,16 @@ def pos_page():
     pos_js = '''
     <script>
     let cart = [];
-    let selectedRowIndex = -1;
     
     function addToCart(id, code, desc, price, stock) {
+        // Allow negative stock - just warn if low
         if (stock <= 0) {
-            if (!confirm('Warning: Stock is ' + stock + ' - add anyway?')) {
+            if (!confirm('[!] Stock is ' + stock + ' - add anyway?')) {
                 return;
             }
         }
         
+        // Check if already in cart
         const existing = cart.find(item => item.id === id);
         if (existing) {
             existing.qty++;
@@ -23230,26 +19477,13 @@ def pos_page():
         }
         
         updateCart();
-        
-        // Visual feedback
-        showAddedFeedback(code);
-    }
-    
-    function showAddedFeedback(code) {
-        // Brief flash on the row
-        const row = document.querySelector(`tr[data-code="${code}"]`);
-        if (row) {
-            row.style.background = 'rgba(16, 185, 129, 0.3)';
-            setTimeout(() => {
-                row.style.background = '';
-            }, 200);
-        }
     }
     
     function addBulkToCart(event, id, code, desc, price, stock) {
-        event.stopPropagation();
+        event.stopPropagation();  // Don't trigger parent click
         
-        const qtyStr = prompt('Enter quantity for ' + code + ':', '10');
+        // Prompt for quantity
+        const qtyStr = prompt('Enter quantity:', '10');
         if (qtyStr === null) return;
         
         const qty = parseInt(qtyStr);
@@ -23258,12 +19492,14 @@ def pos_page():
             return;
         }
         
+        // Warn if selling more than stock
         if (qty > stock && stock > 0) {
-            if (!confirm('Warning: Only ' + stock + ' in stock - add ' + qty + ' anyway?')) {
+            if (!confirm('[!] Only ' + stock + ' in stock - add ' + qty + ' anyway?')) {
                 return;
             }
         }
         
+        // Check if already in cart
         const existing = cart.find(item => item.id === id);
         if (existing) {
             existing.qty += qty;
@@ -23272,7 +19508,6 @@ def pos_page():
         }
         
         updateCart();
-        showAddedFeedback(code);
     }
     
     function updateQty(id, delta) {
@@ -23284,6 +19519,7 @@ def pos_page():
         if (item.qty <= 0) {
             cart = cart.filter(i => i.id !== id);
         }
+        // No max limit - allow any quantity
         
         updateCart();
     }
@@ -23315,13 +19551,7 @@ def pos_page():
         const count = document.getElementById('cartCount');
         
         if (cart.length === 0) {
-            container.innerHTML = `
-                <div class="pos-empty">
-                    <div class="pos-empty-icon">🛒</div>
-                    <div>Cart is empty</div>
-                    <div style="font-size:12px;margin-top:5px;">Click items to add</div>
-                </div>
-            `;
+            container.innerHTML = '<div class="pos-empty">Tap items to add to cart</div>';
             count.textContent = '0 items';
             document.getElementById('subtotal').textContent = 'R0.00';
             document.getElementById('vatAmount').textContent = 'R0.00';
@@ -23331,7 +19561,6 @@ def pos_page():
             document.getElementById('btnCard').disabled = true;
             document.getElementById('btnAccount').disabled = true;
             document.getElementById('btnQuote').disabled = true;
-            document.getElementById('btnInvoice').disabled = true;
             document.getElementById('btnPO').disabled = true;
             return;
         }
@@ -23346,18 +19575,17 @@ def pos_page():
             itemCount += item.qty;
             
             html += `
-                <div class="cart-item">
-                    <div class="cart-item-info">
-                        <div class="cart-item-name">${item.desc}</div>
-                        <div class="cart-item-code">${item.code}</div>
-                        <div class="cart-item-price">R${item.price.toFixed(2)} each</div>
+                <div class="pos-cart-item">
+                    <div class="pos-cart-item-info">
+                        <div class="pos-cart-item-name">${item.desc}</div>
+                        <div class="pos-cart-item-price">R${item.price.toFixed(2)} each</div>
                     </div>
-                    <div class="cart-item-qty">
-                        <button class="cart-qty-btn minus" onclick="updateQty('${item.id}', -1)">−</button>
-                        <span class="cart-qty-display" onclick="setQty('${item.id}')" title="Click to edit">${item.qty}</span>
-                        <button class="cart-qty-btn" onclick="updateQty('${item.id}', 1)">+</button>
+                    <div class="pos-cart-item-qty">
+                        <button class="pos-qty-btn minus" onclick="updateQty('${item.id}', -1)">-</button>
+                        <span class="pos-qty-display" onclick="setQty('${item.id}')" title="Click to edit">${item.qty}</span>
+                        <button class="pos-qty-btn" onclick="updateQty('${item.id}', 1)">+</button>
                     </div>
-                    <div class="cart-item-total">R${lineTotal.toFixed(2)}</div>
+                    <div class="pos-cart-item-total">R${lineTotal.toFixed(2)}</div>
                 </div>
             `;
         });
@@ -23365,8 +19593,6 @@ def pos_page():
         container.innerHTML = html;
         count.textContent = itemCount + ' item' + (itemCount !== 1 ? 's' : '');
         
-        // Round total to nearest 10 cents
-        total = Math.round(total * 10) / 10;
         const vat = total * 0.15 / 1.15;
         const subtotal = total - vat;
         
@@ -23377,410 +19603,52 @@ def pos_page():
         
         document.getElementById('btnCash').disabled = false;
         document.getElementById('btnCard').disabled = false;
-        document.getElementById('btnAccount').disabled = !document.getElementById('entityValue').value;
+        document.getElementById('btnAccount').disabled = !document.getElementById('customerSelect').value;
         document.getElementById('btnQuote').disabled = false;
-        document.getElementById('btnInvoice').disabled = !document.getElementById('entityValue').value;
-        document.getElementById('btnCredit').disabled = !document.getElementById('entityValue').value;
         document.getElementById('btnPO').disabled = false;
     }
-    
-    // Searchable Entity Dropdown
-    let currentEntityType = 'customer';
-    let dropdownOpen = false;
-    let entityData = [];
-    let highlightedIndex = -1;
-    
-    // Load data on page load
-    function loadEntityData() {
-        const custData = document.getElementById('customerData').value.replace(/&#39;/g, "'");
-        const suppData = document.getElementById('supplierData').value.replace(/&#39;/g, "'");
-        window.customerList = JSON.parse(custData);
-        window.supplierList = JSON.parse(suppData);
-        entityData = window.customerList;
-    }
-    
-    // Remember customer selection when switching to supplier
-    let lastCustomerId = '';
-    let lastCustomerName = '';
-    let lastSupplierId = '';
-    let lastSupplierName = '';
-    
-    function toggleEntity(type) {
-        const btnCust = document.getElementById('btnCust');
-        const btnSupp = document.getElementById('btnSupp');
-        const searchInput = document.getElementById('entitySearch');
-        const valueInput = document.getElementById('entityValue');
-        const btnAddItem = document.getElementById('btnAddItem');
-        
-        // Save current selection before switching
-        if (currentEntityType === 'customer' && valueInput.value) {
-            lastCustomerId = valueInput.value;
-            lastCustomerName = searchInput.value;
-        } else if (currentEntityType === 'supplier' && valueInput.value) {
-            lastSupplierId = valueInput.value;
-            lastSupplierName = searchInput.value;
-        }
-        
-        currentEntityType = type;
-        
-        if (type === 'customer') {
-            btnCust.classList.add('active');
-            btnSupp.classList.remove('active');
-            entityData = window.customerList || [];
-            searchInput.placeholder = 'Cash Sale';
-            // Update add item button for sales
-            if (btnAddItem) {
-                btnAddItem.textContent = '+ Custom';
-                btnAddItem.title = 'Add custom/once-off item';
-            }
-            // Restore last customer if available
-            if (lastCustomerId) {
-                searchInput.value = lastCustomerName;
-                valueInput.value = lastCustomerId;
-                return; // Don't open dropdown
-            }
-        } else {
-            btnSupp.classList.add('active');
-            btnCust.classList.remove('active');
-            entityData = window.supplierList || [];
-            searchInput.placeholder = 'Select Supplier';
-            // Update add item button for PO
-            if (btnAddItem) {
-                btnAddItem.textContent = '+ PO Item';
-                btnAddItem.title = 'Add item to order - no price needed';
-                btnAddItem.style.background = '#f59e0b';  // Orange for PO
-            }
-            // Restore last supplier if available
-            if (lastSupplierId) {
-                searchInput.value = lastSupplierName;
-                valueInput.value = lastSupplierId;
-                return; // Don't open dropdown
-            }
-        }
-        
-        // Clear and open
-        searchInput.value = '';
-        valueInput.value = '';
-        openEntityDropdown();
-    }
-    
-    // Get current customer (even if supplier is selected)
-    function getCurrentCustomer() {
-        if (currentEntityType === 'customer') {
-            return {
-                id: document.getElementById('entityValue').value,
-                name: document.getElementById('entitySearch').value
-            };
-        }
-        return { id: lastCustomerId, name: lastCustomerName };
-    }
-    
-    // Get current supplier (even if customer is selected)
-    function getCurrentSupplier() {
-        if (currentEntityType === 'supplier') {
-            return {
-                id: document.getElementById('entityValue').value,
-                name: document.getElementById('entitySearch').value
-            };
-        }
-        return { id: lastSupplierId, name: lastSupplierName };
-    }
-    
-    function openEntityDropdown() {
-        const list = document.getElementById('entityList');
-        const searchInput = document.getElementById('entitySearch');
-        dropdownOpen = true;
-        highlightedIndex = -1;
-        renderEntityList('');
-        list.style.display = 'block';
-        searchInput.focus();
-    }
-    
-    function closeEntityDropdown(keepValue = true) {
-        const list = document.getElementById('entityList');
-        const searchInput = document.getElementById('entitySearch');
-        list.style.display = 'none';
-        dropdownOpen = false;
-        highlightedIndex = -1;
-        if (!keepValue) {
-            searchInput.value = '';
-            document.getElementById('entityValue').value = '';
-        }
-        document.getElementById('stockSearch').focus();
-    }
-    
-    function renderEntityList(filter) {
-        const list = document.getElementById('entityList');
-        const lowerFilter = filter.toLowerCase();
-        
-        let html = '';
-        let visibleCount = 0;
-        entityData.forEach((item, idx) => {
-            const name = item.name || '';
-            if (lowerFilter === '' || name.toLowerCase().includes(lowerFilter)) {
-                const isNew = item.id === 'NEW';
-                const highlighted = idx === highlightedIndex ? 'highlighted' : '';
-                html += '<div class="entity-item ' + (isNew ? 'new-item ' : '') + highlighted + '" data-id="' + (item.id || '') + '" data-name="' + name + '" data-idx="' + idx + '" onclick="selectEntity(this)">' + name + '</div>';
-                visibleCount++;
-            }
-        });
-        
-        if (visibleCount === 0) {
-            html = '<div class="entity-item" style="color:#888;">No matches</div>';
-        }
-        list.innerHTML = html;
-    }
-    
-    function selectEntity(el) {
-        const id = el.dataset.id;
-        const name = el.dataset.name;
-        
-        // Handle "Add New" option
-        if (id === 'NEW') {
-            const entityType = currentEntityType === 'customer' ? 'Customer' : 'Supplier';
-            const newName = prompt('👤 ' + entityType + ' name:');
-            if (newName && newName.trim()) {
-                const endpoint = currentEntityType === 'customer' ? '/api/customer/quick-add' : '/api/supplier/quick-add';
-                fetch(endpoint, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({name: newName.trim()})
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        document.getElementById('entitySearch').value = newName.trim();
-                        document.getElementById('entityValue').value = data.id;
-                        // Add to list
-                        const newItem = {id: data.id, name: newName.trim()};
-                        if (currentEntityType === 'customer') {
-                            window.customerList.push(newItem);
-                        } else {
-                            window.supplierList.push(newItem);
-                        }
-                        closeEntityDropdown(true);
-                    } else {
-                        alert('Failed: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(err => alert('Error: ' + err.message));
-            }
-            return;
-        }
-        
-        document.getElementById('entitySearch').value = name;
-        document.getElementById('entityValue').value = id;
-        closeEntityDropdown(true);
-        
-        // Update button states
-        document.getElementById('btnAccount').disabled = !id || cart.length === 0;
-        document.getElementById('btnInvoice').disabled = !id || cart.length === 0;
-        document.getElementById('btnCredit').disabled = !id || cart.length === 0;
-    }
-    
-    function navigateEntityList(direction) {
-        const items = document.querySelectorAll('.entity-item[data-idx]');
-        if (items.length === 0) return;
-        
-        // Remove old highlight
-        items.forEach(i => i.classList.remove('highlighted'));
-        
-        // Find visible indices
-        const visibleIndices = Array.from(items).map(i => parseInt(i.dataset.idx));
-        const currentPos = visibleIndices.indexOf(highlightedIndex);
-        
-        let newPos = currentPos + direction;
-        if (newPos < 0) newPos = visibleIndices.length - 1;
-        if (newPos >= visibleIndices.length) newPos = 0;
-        
-        highlightedIndex = visibleIndices[newPos];
-        
-        // Highlight new item
-        const newItem = document.querySelector('.entity-item[data-idx="' + highlightedIndex + '"]');
-        if (newItem) {
-            newItem.classList.add('highlighted');
-            newItem.scrollIntoView({ block: 'nearest' });
-        }
-    }
-    
-    function selectHighlightedEntity() {
-        const item = document.querySelector('.entity-item.highlighted');
-        if (item && item.dataset.id !== undefined) {
-            selectEntity(item);
-        }
-    }
-    
-    // Entity search input handler
-    document.addEventListener('DOMContentLoaded', function() {
-        loadEntityData();
-        
-        const entitySearch = document.getElementById('entitySearch');
-        entitySearch.addEventListener('input', function() {
-            renderEntityList(this.value);
-            highlightedIndex = -1;
-        });
-        
-        entitySearch.addEventListener('keydown', function(e) {
-            if (!dropdownOpen) return;
-            
-            if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                navigateEntityList(1);
-            } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                navigateEntityList(-1);
-            } else if (e.key === 'Enter') {
-                e.preventDefault();
-                selectHighlightedEntity();
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
-                closeEntityDropdown(false);
-            }
-        });
-        
-        entitySearch.addEventListener('focus', function() {
-            if (!dropdownOpen) openEntityDropdown();
-        });
-    });
-    
-    // Close dropdown when clicking outside
-    document.addEventListener('click', function(e) {
-        if (dropdownOpen && !e.target.closest('.entity-dropdown')) {
-            closeEntityDropdown(true);
-        }
-    });
     
     function clearCart() {
         cart = [];
         updateCart();
     }
     
-    function filterStock() {
-        // Skip filtering if we're in navigation mode (user used arrows)
-        if (window.isNavigating) {
-            window.isNavigating = false;
-            return;
-        }
-        
-        // Reset original search when user types
-        window.originalSearch = null;
-        
-        const raw = document.getElementById('stockSearch').value;
-        let search = raw.toLowerCase().trim();
-        const rows = document.querySelectorAll('.stock-row');
-        const noResults = document.getElementById('noResults');
-        
-        // Strip quantity prefix
-        if (search.match(/^\\d+\\*\\s*/)) {
-            search = search.replace(/^\\d+\\*\\s*/, '');
-        }
-        
-        // Normalize dimensions
-        search = search.replace(/\\s*[xX]\\s*/g, 'x');
-        
-        let visibleCount = 0;
-        selectedRowIndex = -1;
-        
-        rows.forEach((row, index) => {
-            let data = (row.getAttribute('data-search') || '').toLowerCase();
-            data = data.replace(/\\s*[xX]\\s*/g, 'x');
-            
-            if (search === '' || data.indexOf(search) !== -1) {
-                row.style.display = '';
-                visibleCount++;
-                if (selectedRowIndex === -1) selectedRowIndex = index;
-            } else {
-                row.style.display = 'none';
-            }
-        });
-        
-        // Show/hide no results message
-        if (visibleCount === 0 && search !== '') {
-            noResults.classList.add('show');
-        } else {
-            noResults.classList.remove('show');
-        }
-        
-        // Remove highlight when typing
-        rows.forEach(r => r.classList.remove('highlighted'));
-    }
-    
-    function highlightRow() {
-        const rows = document.querySelectorAll('.stock-row');
-        rows.forEach((row, index) => {
-            row.classList.remove('highlighted');
-            if (index === selectedRowIndex && row.style.display !== 'none') {
-                row.classList.add('highlighted');
-            }
-        });
-    }
-    
     async function completeSale(method) {
         if (cart.length === 0) return;
         
-        // Use getCurrentCustomer - works even if supplier is selected
-        const customer = getCurrentCustomer();
-        const customerId = customer.id;
-        const customerName = customer.name || 'Cash Sale';
+        const customerSelect = document.getElementById('customerSelect');
+        const customerId = customerSelect.value;
+        const customerName = customerSelect.options[customerSelect.selectedIndex]?.dataset?.name || '';
         
         if (method === 'account' && !customerId) {
-            alert('Warning: Please select a customer for account sale (F8)');
-            toggleEntity('customer');
+            alert('Please select a customer for account sale');
             return;
         }
         
-        // Build preview of items
-        let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-        // Round to nearest 10 cents
-        total = Math.round(total * 10) / 10;
-        const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
-        
-        let preview = '═══════════════════════\\n';
-        preview += method.toUpperCase() + ' SALE PREVIEW\\n';
-        preview += '═══════════════════════\\n\\n';
-        preview += 'Customer: ' + customerName + '\\n';
-        preview += '───────────────────────\\n';
-        
-        cart.forEach(item => {
-            const lineTotal = item.price * item.qty;
-            preview += item.qty + 'x ' + item.code + '\\n';
-            preview += '   @ R' + item.price.toFixed(2) + ' = R' + lineTotal.toFixed(2) + '\\n';
-        });
-        
-        preview += '───────────────────────\\n';
-        preview += 'TOTAL: R' + total.toFixed(2) + ' (' + itemCount + ' items)\\n';
-        preview += '═══════════════════════\\n\\n';
-        preview += 'Proceed with sale?';
-        
-        if (!confirm(preview)) {
-            return;
-        }
-        
-        let cashReceived = 0;
-        let changeGiven = 0;
-        
+        // CASH SALE - Calculate change
         if (method === 'cash') {
-            const received = prompt('💵 CASH SALE\\n\\nTotal: R' + total.toFixed(2) + '\\n\\nCash received:', total.toFixed(2));
+            const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+            const received = prompt(`💵 CASH SALE\n\nTotal: R${total.toFixed(2)}\n\nHow much cash received?`, total.toFixed(2));
             
-            if (received === null) return;
+            if (received === null) return; // User cancelled
             
-            cashReceived = parseFloat(received);
+            const cashReceived = parseFloat(received);
             if (isNaN(cashReceived)) {
-                alert('Invalid amount');
+                alert('❌ Invalid amount');
                 return;
             }
             
-            changeGiven = cashReceived - total;
-            if (changeGiven < -0.01) {
-                alert('INSUFFICIENT\\n\\nTotal: R' + total.toFixed(2) + '\\nReceived: R' + cashReceived.toFixed(2) + '\\nShort: R' + Math.abs(changeGiven).toFixed(2));
+            const change = cashReceived - total;
+            if (change < 0) {
+                alert(`❌ INSUFFICIENT PAYMENT\n\nTotal: R${total.toFixed(2)}\nReceived: R${cashReceived.toFixed(2)}\nShort: R${Math.abs(change).toFixed(2)}`);
                 return;
             }
             
-            if (changeGiven >= 0.01) {
-                alert('CHANGE: R' + changeGiven.toFixed(2));
-            }
+            // Show change
+            alert(`✅ CASH SALE COMPLETE!\n\nTotal: R${total.toFixed(2)}\nReceived: R${cashReceived.toFixed(2)}\nChange: R${change.toFixed(2)}`);
         }
         
+        // Build sale data
         const items = cart.map(item => ({
             stock_id: item.id,
             code: item.code,
@@ -23789,6 +19657,8 @@ def pos_page():
             price: item.price,
             total: item.price * item.qty
         }));
+        
+        const total = items.reduce((sum, item) => sum + item.total, 0);
         
         try {
             const response = await fetch('/api/pos/sale', {
@@ -23806,42 +19676,38 @@ def pos_page():
             const data = await response.json();
             
             if (data.success) {
-                // Show print dialog based on settings - pass cash info for cash sales
-                showPrintDialog(data.sale_number, data.sale_id, method, customerName, items, total, cashReceived, changeGiven);
+                // Show success
+                alert('✅ [v2.1] Sale complete! ' + data.message);
+                
+                // Clear cart
                 clearCart();
+                
+                // Refresh stock quantities
+                location.reload();
             } else {
-                alert('Error: ' + (data.error || 'Sale failed'));
+                alert(' Error: ' + (data.error || 'Sale failed'));
             }
         } catch (err) {
-            alert('Connection error');
+            alert(' Connection error');
         }
     }
     
+    // CREATE QUOTE FROM POS CART
     async function createQuote() {
-        const customer = getCurrentCustomer();
-        const customerId = customer.id;
-        const customerName = customer.name || '';
+        if (cart.length === 0) return;
         
-        // LOGIC:
-        // Cart empty + no customer = Quick Quote (once-off, new customer)
-        // Cart empty + customer selected = Quick Quote with custom items for this customer
-        // Cart has items + no customer = Quick Customer modal
-        // Cart has items + customer = Normal quote with stock items
+        const customerSelect = document.getElementById('customerSelect');
+        const customerId = customerSelect.value;
+        const customerName = customerSelect.options[customerSelect.selectedIndex]?.dataset?.name || '';
         
-        if (cart.length === 0) {
-            // Show quick quote modal - pass customer if selected
-            showQuickQuoteModal(customerId, customerName);
-            return;
-        }
-        
-        // Cart has items
+        // Must have customer for quote
         if (!customerId) {
-            // Show quick customer modal instead of just alert
-            showQuickCustomerModal();
+            alert('Please select a customer for the quote');
+            customerSelect.focus();
             return;
         }
         
-        // Cart has items AND customer selected - create quote with stock items
+        // Build quote items
         const items = cart.map(item => ({
             stock_id: item.id,
             code: item.code,
@@ -23868,59 +19734,31 @@ def pos_page():
             const data = await response.json();
             
             if (data.success) {
-                alert('Quote ' + data.quote_number + ' created!');
+                alert('✅ Quote ' + data.quote_number + ' created!');
                 clearCart();
                 if (confirm('Open quote now?')) {
                     window.location = '/quote/' + data.quote_id;
                 }
             } else {
-                alert('Error: ' + (data.error || 'Quote failed'));
+                alert('❌ Error: ' + (data.error || 'Quote failed'));
             }
         } catch (err) {
-            alert('Connection error');
+            alert('❌ Connection error');
         }
     }
     
-    async function createInvoice() {
+    // CREATE PURCHASE ORDER FROM POS CART
+    async function createPO() {
         if (cart.length === 0) return;
         
-        // Use getCurrentCustomer - works even if supplier is selected
-        const customer = getCurrentCustomer();
-        const customerId = customer.id;
-        const customerName = customer.name || '';
-        
-        if (!customerId) {
-            alert('Warning: Please select a customer for the invoice (F8)');
-            toggleEntity('customer');
+        // Ask for supplier
+        const supplierName = prompt('Enter supplier name for Purchase Order:');
+        if (!supplierName || !supplierName.trim()) {
+            alert('Supplier name required for PO');
             return;
         }
         
-        // Build preview
-        let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-        total = Math.round(total * 10) / 10;
-        const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
-        
-        let preview = '═══════════════════════\\n';
-        preview += 'INVOICE PREVIEW\\n';
-        preview += '═══════════════════════\\n\\n';
-        preview += 'Customer: ' + customerName + '\\n';
-        preview += '───────────────────────\\n';
-        
-        cart.forEach(item => {
-            const lineTotal = item.price * item.qty;
-            preview += item.qty + 'x ' + item.code + '\\n';
-            preview += '   @ R' + item.price.toFixed(2) + ' = R' + lineTotal.toFixed(2) + '\\n';
-        });
-        
-        preview += '───────────────────────\\n';
-        preview += 'TOTAL: R' + total.toFixed(2) + ' (' + itemCount + ' items)\\n';
-        preview += '═══════════════════════\\n\\n';
-        preview += 'Create invoice?';
-        
-        if (!confirm(preview)) {
-            return;
-        }
-        
+        // Build PO items
         const items = cart.map(item => ({
             stock_id: item.id,
             code: item.code,
@@ -23930,67 +19768,7 @@ def pos_page():
             total: item.price * item.qty
         }));
         
-        try {
-            const response = await fetch('/api/pos/invoice', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    items: items,
-                    customer_id: customerId,
-                    customer_name: customerName,
-                    total: total
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                alert('Invoice ' + data.invoice_number + ' created!');
-                clearCart();
-                if (confirm('Open invoice now?')) {
-                    window.location = '/invoice/' + data.invoice_id;
-                }
-            } else {
-                alert('Error: ' + (data.error || 'Invoice failed'));
-            }
-        } catch (err) {
-            alert('Connection error');
-        }
-    }
-    
-    async function createPO() {
-        const supplier = getCurrentSupplier();
-        const supplierId = supplier.id;
-        const supplierName = supplier.name || '';
-        
-        // LOGIC:
-        // Cart empty + no supplier = Quick PO (once-off, new supplier)
-        // Cart empty + supplier selected = Quick PO with custom items for this supplier
-        // Cart has items + no supplier = Ask to select supplier
-        // Cart has items + supplier = Normal PO with stock items
-        
-        if (cart.length === 0) {
-            // Show quick PO modal - pass supplier if selected
-            showQuickPOModal(supplierId, supplierName);
-            return;
-        }
-        
-        // Cart has items
-        if (!supplierId) {
-            // Switch to supplier mode and ask
-            toggleEntity('supplier');
-            alert('Select a supplier for the PO (F9)');
-            return;
-        }
-        
-        // Cart has items AND supplier selected - create PO with stock items
-        // PO items - NO PRICES (supplier must not see our selling prices)
-        const items = cart.map(item => ({
-            stock_id: item.id,
-            code: item.code,
-            description: item.desc,
-            qty: item.qty
-        }));
+        const total = items.reduce((sum, item) => sum + item.total, 0);
         
         try {
             const response = await fetch('/api/pos/purchase-order', {
@@ -23998,85 +19776,7 @@ def pos_page():
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     items: items,
-                    supplier_id: supplierId,
-                    supplier_name: supplierName
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                alert('PO ' + data.po_number + ' created!');
-                clearCart();
-                if (confirm('Open PO now?')) {
-                    window.location = '/purchase/' + data.po_id;
-                }
-            } else {
-                alert('Error: ' + (data.error || 'PO failed'));
-            }
-        } catch (err) {
-            alert('Connection error');
-        }
-    }
-    
-    // ═══ CREDIT NOTE FROM POS ═══
-    async function createCreditNote() {
-        if (cart.length === 0) return;
-        
-        // Use getCurrentCustomer - works even if supplier is selected
-        const customer = getCurrentCustomer();
-        const customerId = customer.id;
-        const customerName = customer.name || '';
-        
-        if (!customerId) {
-            alert('Warning: Please select a customer for the credit note (F8)');
-            toggleEntity('customer');
-            return;
-        }
-        
-        // Build preview
-        let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-        total = Math.round(total * 10) / 10;
-        const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
-        
-        let preview = '═══════════════════════\\n';
-        preview += 'Warning: CREDIT NOTE PREVIEW\\n';
-        preview += '═══════════════════════\\n\\n';
-        preview += 'Customer: ' + customerName + '\\n';
-        preview += '───────────────────────\\n';
-        
-        cart.forEach(item => {
-            const lineTotal = item.price * item.qty;
-            preview += item.qty + 'x ' + item.code + '\\n';
-            preview += '   @ R' + item.price.toFixed(2) + ' = R' + lineTotal.toFixed(2) + '\\n';
-        });
-        
-        preview += '───────────────────────\\n';
-        preview += 'CREDIT TOTAL: -R' + total.toFixed(2) + '\\n';
-        preview += '═══════════════════════\\n\\n';
-        preview += 'This will REDUCE customer balance.\\nCreate credit note?';
-        
-        if (!confirm(preview)) {
-            return;
-        }
-        
-        const items = cart.map(item => ({
-            stock_id: item.id,
-            code: item.code,
-            description: item.desc,
-            quantity: item.qty,
-            price: item.price,
-            total: item.price * item.qty
-        }));
-        
-        try {
-            const response = await fetch('/api/pos/credit-note', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    items: items,
-                    customer_id: customerId,
-                    customer_name: customerName,
+                    supplier_name: supplierName.trim(),
                     total: total
                 })
             });
@@ -24084,101 +19784,190 @@ def pos_page():
             const data = await response.json();
             
             if (data.success) {
-                alert('Credit Note ' + data.credit_note_number + ' created!\\nCustomer balance reduced by R' + total.toFixed(2));
+                alert('✅ Purchase Order ' + data.po_number + ' created!');
                 clearCart();
-                if (confirm('View credit note?')) {
-                    window.location = '/credit-note/' + data.credit_note_id;
+                if (confirm('Open PO now?')) {
+                    window.location = '/purchase-order/' + data.po_id;
                 }
             } else {
-                alert('Error: ' + (data.error || 'Credit note failed'));
+                alert('❌ Error: ' + (data.error || 'PO failed'));
             }
         } catch (err) {
-            alert('Connection error');
+            alert('❌ Connection error');
         }
     }
     
-    // ═══ KEYBOARD SHORTCUTS ═══
+    function filterStock() {
+        // Get raw search value
+        var raw = document.getElementById('stockSearch').value;
+        var search = raw.toLowerCase().trim();
+        var items = document.querySelectorAll('.pos-item');
+        
+        // Strip quantity prefix: "5*whatever" or "5* whatever" -> "whatever"
+        // ONLY * is used for qty, never x (x is part of codes like 12x40)
+        if (search.match(/^\d+\*\s*/)) {
+            search = search.replace(/^\d+\*\s*/, '');
+        }
+        
+        // Normalize: remove spaces around x and X (for dimension codes)
+        // "12 x 40" or "12 X 40" -> "12x40"
+        search = search.replace(/\s*[xX]\s*/g, 'x');
+        
+        // Show all if empty
+        if (search === '') {
+            for (var i = 0; i < items.length; i++) {
+                items[i].style.display = '';
+            }
+            return;
+        }
+        
+        // Filter items
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            var data = (item.getAttribute('data-search') || '').toLowerCase();
+            // Normalize the data too
+            data = data.replace(/\s*[xX]\s*/g, 'x');
+            
+            // Check if search term is found
+            if (data.indexOf(search) !== -1) {
+                item.style.display = '';
+            } else {
+                item.style.display = 'none';
+            }
+        }
+    }
+    
+    // Update account button when customer changes
+    document.getElementById('customerSelect').addEventListener('change', function() {
+        // Handle new customer
+        if (this.value === 'NEW') {
+            const name = prompt('Customer name:');
+            if (name && name.trim()) {
+                // Create customer via API
+                fetch('/api/customer/quick-add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: name.trim()})
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        // Add new option and select it
+                        const opt = document.createElement('option');
+                        opt.value = data.id;
+                        opt.textContent = name.trim();
+                        opt.setAttribute('data-name', name.trim());
+                        this.insertBefore(opt, this.querySelector('option[value="NEW"]').nextSibling);
+                        this.value = data.id;
+                    } else {
+                        alert('Failed to add customer: ' + (data.error || 'Unknown error'));
+                        this.value = '';
+                    }
+                })
+                .catch(err => {
+                    alert('Error: ' + err.message);
+                    this.value = '';
+                });
+            } else {
+                this.value = '';
+            }
+            return;
+        }
+        document.getElementById('btnAccount').disabled = !this.value || cart.length === 0;
+    });
+    
+    // ========== KEYBOARD SHORTCUTS & BARCODE SCANNER ==========
+    
+    let barcodeBuffer = '';
+    let barcodeTimeout = null;
+    
     document.addEventListener('keydown', function(e) {
+        // Don't capture if typing in an input field (except search)
         const activeEl = document.activeElement;
         const isSearchInput = activeEl.id === 'stockSearch';
         const isInput = activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA';
-        const searchInput = document.getElementById('stockSearch');
         
-        // ENTER - Add item (highlighted or first visible)
-        if (e.key === 'Enter' && isSearchInput) {
-            e.preventDefault();
+        // Get search input for reference
+        var searchInput = document.getElementById('stockSearch');
+        var searchValue = searchInput ? searchInput.value.trim() : '';
+        
+        // ENTER - handle in search box OR on a pos-item button
+        if (e.key === 'Enter') {
+            var isPosItem = activeEl.classList && activeEl.classList.contains('pos-item');
             
-            const raw = window.originalSearch || searchInput.value.trim();
-            let qty = 1;
-            let searchCode = raw;
-            
-            // Parse "5*code"
-            const starPos = raw.indexOf('*');
-            if (starPos > 0) {
-                const numPart = raw.substring(0, starPos);
-                const codePart = raw.substring(starPos + 1).trim();
-                const parsedQty = parseInt(numPart, 10);
-                if (parsedQty > 0) {
-                    qty = parsedQty;
-                    searchCode = codePart;
-                }
-            }
-            
-            searchCode = searchCode.toLowerCase().replace(/\\s*x\\s*/gi, 'x');
-            
-            // Use highlighted row if exists, else first visible
-            const highlighted = document.querySelector('.stock-row.highlighted');
-            const rows = document.querySelectorAll('.stock-row');
-            let found = highlighted;
-            
-            if (!found) {
-                for (let row of rows) {
-                    if (row.style.display === 'none') continue;
-                    if (searchCode === '') { found = row; break; }
-                    let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\\s*x\\s*/gi, 'x');
-                    if (data.indexOf(searchCode) !== -1) { found = row; break; }
-                }
-            }
-            
-            if (found) {
-                const id = found.getAttribute('data-id');
-                const code = found.getAttribute('data-code');
-                const desc = found.getAttribute('data-desc');
-                const price = parseFloat(found.getAttribute('data-price')) || 0;
-                const stock = parseFloat(found.getAttribute('data-qty')) || 0;
+            // If in search box OR on a pos-item button with search value
+            if (isSearchInput || isPosItem) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[POS] ENTER! isSearch:', isSearchInput, 'isPosItem:', isPosItem);
                 
-                const existing = cart.find(item => item.id === id);
-                if (existing) {
-                    existing.qty += qty;
-                } else {
-                    cart.push({id, code, desc, price, qty: qty, maxQty: 99999});
+                // Get the raw search value
+                var raw = searchInput.value.trim();
+                var qty = 1;
+                var searchCode = raw;
+                
+                // Parse "5*whatever"
+                var starPos = raw.indexOf('*');
+                if (starPos > 0) {
+                    var numPart = raw.substring(0, starPos);
+                    var codePart = raw.substring(starPos + 1).trim();
+                    var parsedQty = parseInt(numPart, 10);
+                    if (parsedQty > 0) {
+                        qty = parsedQty;
+                        searchCode = codePart;
+                    }
                 }
-                updateCart();
-                showAddedFeedback(code);
-            } else if (searchCode !== '') {
-                alert('Not found: ' + searchCode);
+                
+                console.log('[POS] qty:', qty, 'code:', searchCode);
+                searchCode = searchCode.toLowerCase().replace(/\s*x\s*/gi, 'x');
+                
+                // Find item - if on a pos-item button, use that; otherwise search
+                var found = null;
+                if (isPosItem) {
+                    found = activeEl;
+                    console.log('[POS] Using focused button');
+                } else {
+                    var items = document.querySelectorAll('.pos-item');
+                    for (var i = 0; i < items.length; i++) {
+                        var item = items[i];
+                        if (item.style.display === 'none') continue;
+                        if (searchCode === '') { found = item; break; }
+                        var data = (item.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
+                        if (data.indexOf(searchCode) !== -1) { found = item; break; }
+                    }
+                }
+                
+                if (found) {
+                    var itemId = found.getAttribute('data-id');
+                    var code = found.querySelector('.pos-item-code').textContent || '';
+                    var desc = found.querySelector('.pos-item-desc').textContent || '';
+                    var priceText = found.querySelector('.pos-item-price').textContent || '0';
+                    var price = parseFloat(priceText.replace(/[^0-9.]/g, '')) || 0;
+                    
+                    console.log('[POS] Adding:', code, 'x', qty);
+                    
+                    var existing = null;
+                    for (var j = 0; j < cart.length; j++) {
+                        if (cart[j].id === itemId) { existing = cart[j]; break; }
+                    }
+                    
+                    if (existing) {
+                        existing.qty = existing.qty + qty;
+                    } else {
+                        cart.push({id: itemId, code: code, desc: desc, price: price, qty: qty, maxQty: 99999});
+                    }
+                    updateCart();
+                } else if (searchCode !== '') {
+                    alert('Not found: ' + searchCode);
+                }
+                
+                // Clear and refocus search bar
+                searchInput.value = '';
+                filterStock();
+                searchInput.focus();
+                console.log('[POS] Cleared and refocused');
+                return;
             }
-            
-            // Clear and reset
-            searchInput.value = '';
-            window.originalSearch = null;
-            document.querySelectorAll('.stock-row').forEach(r => r.classList.remove('highlighted'));
-            filterStock();
-            searchInput.focus();
-            return;
-        }
-        
-        // Arrow keys for navigation
-        if (e.key === 'ArrowDown' && isSearchInput) {
-            e.preventDefault();
-            navigateRows(1);
-            return;
-        }
-        
-        if (e.key === 'ArrowUp' && isSearchInput) {
-            e.preventDefault();
-            navigateRows(-1);
-            return;
         }
         
         // F1 = Cash
@@ -24198,1441 +19987,50 @@ def pos_page():
         // F3 = Account
         if (e.key === 'F3') {
             e.preventDefault();
-            if (cart.length > 0 && getCurrentCustomer().id) {
+            if (cart.length > 0 && document.getElementById('customerSelect').value) {
                 completeSale('account');
             } else if (cart.length > 0) {
-                alert('Warning: Select a customer for account sales (F8)');
+                alert('Select a customer for account sales');
             }
             return;
         }
         
-        // F4 = Quote (works with empty cart too - opens Quick Quote)
+        // F4 = Quote
         if (e.key === 'F4') {
             e.preventDefault();
-            createQuote();
+            if (cart.length > 0) createQuote();
             return;
         }
         
-        // F5 = PO (works with empty cart too - opens Quick PO)
+        // F5 = Purchase Order
         if (e.key === 'F5') {
             e.preventDefault();
-            createPO();
+            if (cart.length > 0) createPO();
             return;
         }
         
-        // F6 = Invoice
-        if (e.key === 'F6') {
-            e.preventDefault();
-            if (cart.length > 0 && getCurrentCustomer().id) {
-                createInvoice();
-            } else if (cart.length > 0) {
-                alert('Warning: Select a customer for invoice (F8)');
-            }
-            return;
-        }
-        
-        // F7 = Edit Customer Details
-        if (e.key === 'F7') {
-            e.preventDefault();
-            showEditCustomerModal();
-            return;
-        }
-        
-        // F8 = Customers
-        if (e.key === 'F8') {
-            e.preventDefault();
-            toggleEntity('customer');
-            return;
-        }
-        
-        // F9 = Suppliers
-        if (e.key === 'F9') {
-            e.preventDefault();
-            toggleEntity('supplier');
-            return;
-        }
-        
-        // F10 = Credit Note
-        if (e.key === 'F10') {
-            e.preventDefault();
-            if (cart.length > 0 && getCurrentCustomer().id) {
-                createCreditNote();
-            } else if (cart.length > 0) {
-                alert('Warning: Select a customer for credit note (F8)');
-            }
-            return;
-        }
-        
-        // === PRINT MODAL KEYBOARD HANDLING ===
-        const printModal = document.getElementById('printSlipModal');
-        if (printModal && printModal.style.display === 'flex') {
-            const buttons = [
-                document.getElementById('btnPrintThermal'),
-                document.getElementById('btnPrintA4'),
-                document.getElementById('btnPrintSkip')
-            ].filter(b => b);  // Filter out nulls
-            
-            if (buttons.length > 0) {
-                const currentIndex = buttons.findIndex(btn => btn === document.activeElement);
-                
-                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % buttons.length;
-                    buttons[nextIndex].focus();
-                    return;
-                } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const prevIndex = currentIndex < 0 ? 0 : (currentIndex - 1 + buttons.length) % buttons.length;
-                    buttons[prevIndex].focus();
-                    return;
-                } else if (e.key === 'Tab') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (e.shiftKey) {
-                        const prevIndex = currentIndex < 0 ? buttons.length - 1 : (currentIndex - 1 + buttons.length) % buttons.length;
-                        buttons[prevIndex].focus();
-                    } else {
-                        const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % buttons.length;
-                        buttons[nextIndex].focus();
-                    }
-                    return;
-                } else if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (document.activeElement && buttons.includes(document.activeElement)) {
-                        document.activeElement.click();
-                    } else {
-                        // Default to thermal print
-                        buttons[0].click();
-                    }
-                    return;
-                } else if (e.key === 'Escape') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    closePrintModal();
-                    return;
-                } else if (e.key === '1') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    doPrintSlip('thermal');
-                    return;
-                } else if (e.key === '2') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    doPrintSlip('a4');
-                    return;
-                } else if (e.key === '3') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    closePrintModal();
-                    return;
-                }
-            }
-        }
-        
-        // ESC = Close dropdown first, then clear search, then cart
+        // Escape = Clear cart
         if (e.key === 'Escape') {
             e.preventDefault();
-            
-            // If quick customer modal is open, close it first
-            const quickCustModal = document.getElementById('quickCustomerModal');
-            if (quickCustModal && quickCustModal.style.display === 'flex') {
-                closeQuickCustomerModal();
-                return;
+            if (cart.length > 0 && confirm('Clear cart?')) {
+                cart = [];
+                updateCart();
             }
-            
-            // If custom item modal is open, close it first
-            const customModal = document.getElementById('customItemModal');
-            if (customModal && customModal.style.display === 'flex') {
-                closeCustomItemModal();
-                return;
-            }
-            
-            // If entity dropdown is open, close it
-            if (dropdownOpen) {
-                closeEntityDropdown(false);
-                return;
-            }
-            
-            // If navigating or search has text, just clear search
-            const hasHighlight = document.querySelector('.stock-row.highlighted');
-            if (searchInput.value || hasHighlight || window.originalSearch) {
-                searchInput.value = '';
-                window.originalSearch = null;
-                document.querySelectorAll('.stock-row').forEach(r => r.classList.remove('highlighted'));
-                filterStock();
-                return;
-            }
-            
-            // If search already empty, offer to clear cart
-            if (cart.length > 0 && confirm('🗑️ Clear cart?')) {
-                clearCart();
-            }
+            document.getElementById('stockSearch').value = '';
+            filterStock();
             return;
         }
         
-        // Focus search on typing
+        // Focus search on any letter/number if not in input
         if (!isInput && /^[a-zA-Z0-9]$/.test(e.key)) {
-            searchInput.focus();
+            document.getElementById('stockSearch').focus();
         }
-    }, true);
+    }, true);  // CAPTURE PHASE!
     
-    function navigateRows(direction) {
-        const rows = Array.from(document.querySelectorAll('.stock-row')).filter(r => r.style.display !== 'none');
-        if (rows.length === 0) return;
-        
-        const searchInput = document.getElementById('stockSearch');
-        
-        // Store original search on first navigation
-        if (window.originalSearch === undefined || window.originalSearch === null) {
-            window.originalSearch = searchInput.value;
-        }
-        
-        const currentIndex = rows.findIndex(r => r.classList.contains('highlighted'));
-        let newIndex = currentIndex + direction;
-        
-        // If no highlight yet, start at first (down) or last (up)
-        if (currentIndex === -1) {
-            newIndex = direction > 0 ? 0 : rows.length - 1;
-        }
-        
-        if (newIndex < 0) newIndex = rows.length - 1;
-        if (newIndex >= rows.length) newIndex = 0;
-        
-        rows.forEach(r => r.classList.remove('highlighted'));
-        rows[newIndex].classList.add('highlighted');
-        rows[newIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        
-        // Show selected item in search bar (set flag to prevent filterStock)
-        const code = rows[newIndex].getAttribute('data-code') || '';
-        const desc = rows[newIndex].getAttribute('data-desc') || '';
-        window.isNavigating = true;
-        searchInput.value = code + ' - ' + desc;
-    }
-    
-    // Initial focus
-    document.getElementById('stockSearch').focus();
-    
-    // === CUSTOM ITEM FUNCTIONS ===
-    function showCustomItemModal(forPO = false) {
-        // Update modal for PO mode (no price required) or sale mode (price required)
-        if (forPO || currentEntityType === 'supplier') {
-            document.getElementById('customModalTitle').innerHTML = 'Add Item to PO';
-            document.getElementById('customModalDesc').innerHTML = 'Add item to order from supplier (price optional)';
-            document.getElementById('customPriceLabel').innerHTML = '💰 Est. Cost (optional)';
-            document.getElementById('customAddBtn').innerHTML = '✓ Add to PO (Enter)';
-            document.getElementById('customPrice').placeholder = 'Leave blank if unknown';
-        } else {
-            document.getElementById('customModalTitle').innerHTML = 'Add Custom Item';
-            document.getElementById('customModalDesc').innerHTML = 'Add any item not in your stock list - perfect for special orders, services, or once-off items';
-            document.getElementById('customPriceLabel').innerHTML = '💰 Price (incl VAT) *';
-            document.getElementById('customAddBtn').innerHTML = '✓ Add to Cart (Enter)';
-            document.getElementById('customPrice').placeholder = '0.00';
-        }
-        document.getElementById('customItemModal').style.display = 'flex';
-        document.getElementById('customDesc').value = '';
-        document.getElementById('customPrice').value = '';
-        document.getElementById('customQty').value = '1';
-        setTimeout(() => document.getElementById('customDesc').focus(), 100);
-    }
-    
-    function closeCustomItemModal() {
-        document.getElementById('customItemModal').style.display = 'none';
-        document.getElementById('customDesc').value = '';
-        document.getElementById('customPrice').value = '';
-        document.getElementById('customQty').value = '1';
-    }
-    
-    function addCustomItem() {
-        const desc = document.getElementById('customDesc').value.trim();
-        const price = parseFloat(document.getElementById('customPrice').value) || 0;
-        const qty = parseInt(document.getElementById('customQty').value) || 1;
-        
-        if (!desc) {
-            alert('Please enter a description');
-            return;
-        }
-        
-        // For PO mode (supplier selected), price is optional
-        // For sale mode, price is required
-        const isPOMode = currentEntityType === 'supplier';
-        if (!isPOMode && price <= 0) {
-            alert('Please enter a valid price');
-            return;
-        }
-        
-        // Generate unique ID for custom item
-        const customId = 'CUSTOM-' + Date.now();
-        
-        // Add to cart
-        cart.push({
-            id: customId,
-            code: isPOMode ? 'ORDER' : 'CUSTOM',
-            desc: desc,
-            price: price,
-            qty: qty,
-            maxQty: 99999,
-            isCustom: true,
-            isPOItem: isPOMode
-        });
-        
-        updateCart();
-        closeCustomItemModal();
-        showAddedFeedback(isPOMode ? 'ORDER' : 'CUSTOM');
-    }
-    
-    // === EDIT CUSTOMER (F7) ===
-    async function showEditCustomerModal() {
-        const customer = getCurrentCustomer();
-        if (!customer.id) {
-            alert('Select a customer first (F8)');
-            toggleEntity('customer');
-            return;
-        }
-        
-        // Fetch full customer details
-        try {
-            const response = await fetch('/api/customer/' + customer.id);
-            const data = await response.json();
-            
-            if (data.success) {
-                const c = data.customer;
-                document.getElementById('editCustId').value = c.id;
-                document.getElementById('editCustName').value = c.name || '';
-                document.getElementById('editCustPhone').value = c.phone || '';
-                document.getElementById('editCustEmail').value = c.email || '';
-                document.getElementById('editCustVat').value = c.vat_number || '';
-                document.getElementById('editCustAddress').value = c.address || '';
-                document.getElementById('editCustSubtitle').textContent = 'Editing: ' + (c.name || 'Customer');
-                
-                document.getElementById('editCustomerModal').style.display = 'flex';
-                setTimeout(() => document.getElementById('editCustName').focus(), 100);
-            } else {
-                alert('Could not load customer details');
-            }
-        } catch (err) {
-            alert('Error: ' + err.message);
-        }
-    }
-    
-    function closeEditCustomerModal() {
-        document.getElementById('editCustomerModal').style.display = 'none';
-    }
-    
-    async function submitEditCustomer() {
-        const id = document.getElementById('editCustId').value;
-        const name = document.getElementById('editCustName').value.trim();
-        const phone = document.getElementById('editCustPhone').value.trim();
-        const email = document.getElementById('editCustEmail').value.trim();
-        const vat_number = document.getElementById('editCustVat').value.trim();
-        const address = document.getElementById('editCustAddress').value.trim();
-        
-        if (!name) {
-            alert('Customer name is required');
-            document.getElementById('editCustName').focus();
-            return;
-        }
-        
-        try {
-            const response = await fetch('/api/customer/' + id + '/update', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({name, phone, email, vat_number, address})
-            });
-            const data = await response.json();
-            
-            if (data.success) {
-                // Update the displayed name
-                document.getElementById('entitySearch').value = name;
-                closeEditCustomerModal();
-                alert('Customer updated!');
-            } else {
-                alert('Error: ' + (data.error || 'Update failed'));
-            }
-        } catch (err) {
-            alert('Error: ' + err.message);
-        }
-    }
-    
-    // === QUICK QUOTE (F4 with empty cart) ===
-    let qqLineItems = [];
-    let qqLineCounter = 0;
-    
-    // Store selected customer/supplier for quick modals
-    let qqSelectedCustomerId = null;
-    let qpSelectedSupplierId = null;
-    
-    function showQuickQuoteModal(customerId = null, customerName = '') {
-        qqLineItems = [];
-        qqLineCounter = 0;
-        qqSelectedCustomerId = customerId;
-        
-        // Clear or prefill customer fields
-        if (customerId && customerName) {
-            // Existing customer - prefill and make read-only
-            document.getElementById('qqCustName').value = customerName;
-            document.getElementById('qqCustName').readOnly = true;
-            document.getElementById('qqCustName').style.background = '#2a2a4a';
-            document.getElementById('qqCustPhone').value = '';
-            document.getElementById('qqCustPhone').style.display = 'none';
-            document.getElementById('qqCustEmail').value = '';
-            document.getElementById('qqCustEmail').style.display = 'none';
-            document.getElementById('qqCustVat').value = '';
-            document.getElementById('qqCustVat').style.display = 'none';
-            document.getElementById('qqCustAddress').value = '';
-            document.getElementById('qqCustAddress').style.display = 'none';
-            // Hide labels too - add a subtitle instead
-            document.getElementById('qqCustSection').innerHTML = `
-                <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer: ${customerName}</h3>
-                <p style="color:rgba(255,255,255,0.5);font-size:12px;margin:0;">Adding custom items for existing customer</p>
-            `;
-        } else {
-            // New customer - reset to editable
-            document.getElementById('qqCustName').value = '';
-            document.getElementById('qqCustName').readOnly = false;
-            document.getElementById('qqCustName').style.background = '#1a1a2e';
-            document.getElementById('qqCustSection').innerHTML = `
-                <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer Details</h3>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
-                        <input type="text" id="qqCustName" placeholder="Company or person" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
-                        <input type="text" id="qqCustPhone" placeholder="082 123 4567" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Email</label>
-                        <input type="text" id="qqCustEmail" placeholder="email@example.com" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
-                        <input type="text" id="qqCustVat" placeholder="4123456789" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                </div>
-                <div style="margin-top:15px;">
-                    <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Address</label>
-                    <input type="text" id="qqCustAddress" placeholder="Street, City, Code" 
-                        style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                </div>
-            `;
-        }
-        
-        document.getElementById('qqLines').innerHTML = '';
-        qqUpdateTotal();
-        
-        // Add first empty line
-        qqAddLine();
-        
-        document.getElementById('quickQuoteModal').style.display = 'flex';
-        // Focus on first line item description instead of customer name if customer is pre-selected
-        setTimeout(() => {
-            const firstInput = document.querySelector('#qqLines input');
-            if (firstInput) firstInput.focus();
-            else if (!customerId) document.getElementById('qqCustName')?.focus();
-        }, 100);
-    }
-    
-    function closeQuickQuoteModal() {
-        document.getElementById('quickQuoteModal').style.display = 'none';
-    }
-    
-    function qqAddLine() {
-        qqLineCounter++;
-        const lineId = 'qqLine' + qqLineCounter;
-        
-        const lineHtml = `
-        <div id="${lineId}" style="display:grid;grid-template-columns:2fr 80px 100px 40px;gap:10px;margin-bottom:10px;align-items:center;">
-            <input type="text" placeholder="Description" onchange="qqUpdateLine('${lineId}')" 
-                style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;">
-            <input type="number" placeholder="Qty" value="1" min="1" onchange="qqUpdateLine('${lineId}')"
-                style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:center;">
-            <input type="number" placeholder="Price" step="0.01" onchange="qqUpdateLine('${lineId}')"
-                style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:right;">
-            <button onclick="qqRemoveLine('${lineId}')" style="background:#ef4444;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;">✕</button>
-        </div>`;
-        
-        document.getElementById('qqLines').insertAdjacentHTML('beforeend', lineHtml);
-    }
-    
-    function qqRemoveLine(lineId) {
-        const el = document.getElementById(lineId);
-        if (el) el.remove();
-        qqUpdateTotal();
-    }
-    
-    function qqUpdateLine(lineId) {
-        qqUpdateTotal();
-    }
-    
-    function qqUpdateTotal() {
-        let subtotal = 0;
-        const lines = document.getElementById('qqLines').children;
-        
-        for (let line of lines) {
-            const inputs = line.querySelectorAll('input');
-            if (inputs.length >= 3) {
-                const qty = parseFloat(inputs[1].value) || 0;
-                const price = parseFloat(inputs[2].value) || 0;
-                subtotal += qty * price;
-            }
-        }
-        
-        const vat = subtotal * 0.15;
-        const total = subtotal + vat;
-        
-        document.getElementById('qqSubtotal').textContent = 'R' + subtotal.toFixed(2);
-        document.getElementById('qqVat').textContent = 'R' + vat.toFixed(2);
-        document.getElementById('qqTotal').textContent = 'R' + total.toFixed(2);
-    }
-    
-    async function submitQuickQuote() {
-        // Get customer name from visible element or section text
-        let custName = '';
-        const custNameEl = document.getElementById('qqCustName');
-        if (custNameEl) {
-            custName = custNameEl.value.trim();
-        } else if (qqSelectedCustomerId) {
-            // Customer was pre-selected, get name from section
-            const section = document.getElementById('qqCustSection');
-            const match = section?.innerText?.match(/Customer: (.+)/);
-            custName = match ? match[1].trim() : '';
-        }
-        
-        const custPhone = document.getElementById('qqCustPhone')?.value?.trim() || '';
-        const custEmail = document.getElementById('qqCustEmail')?.value?.trim() || '';
-        const custVat = document.getElementById('qqCustVat')?.value?.trim() || '';
-        const custAddress = document.getElementById('qqCustAddress')?.value?.trim() || '';
-        
-        if (!custName && !qqSelectedCustomerId) {
-            alert('Please enter a customer name');
-            document.getElementById('qqCustName')?.focus();
-            return;
-        }
-        
-        // Gather line items
-        const items = [];
-        const lines = document.getElementById('qqLines').children;
-        
-        for (let line of lines) {
-            const inputs = line.querySelectorAll('input');
-            if (inputs.length >= 3) {
-                const desc = inputs[0].value.trim();
-                const qty = parseFloat(inputs[1].value) || 0;
-                const price = parseFloat(inputs[2].value) || 0;
-                
-                if (desc && qty > 0 && price > 0) {
-                    items.push({
-                        description: desc,
-                        quantity: qty,
-                        price: price,
-                        total: qty * price
-                    });
-                }
-            }
-        }
-        
-        if (items.length === 0) {
-            alert('Please add at least one line item');
-            return;
-        }
-        
-        try {
-            const response = await fetch('/api/pos/quick-quote', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    customer_id: qqSelectedCustomerId || null,
-                    customer: {
-                        name: custName,
-                        phone: custPhone,
-                        email: custEmail,
-                        vat_number: custVat,
-                        address: custAddress
-                    },
-                    items: items
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                closeQuickQuoteModal();
-                alert('Quote ' + data.quote_number + ' created!');
-                if (confirm('Open quote now?')) {
-                    window.location = '/quote/' + data.quote_id;
-                }
-            } else {
-                alert('Error: ' + (data.error || 'Quote creation failed'));
-            }
-        } catch (err) {
-            alert('Error: ' + err.message);
-        }
-    }
-    
-    // === QUICK PO (F5 with empty cart) ===
-    let qpLineCounter = 0;
-    
-    function showQuickPOModal(supplierId = null, supplierName = '') {
-        qpLineCounter = 0;
-        qpSelectedSupplierId = supplierId;
-        
-        // Clear or prefill supplier fields
-        if (supplierId && supplierName) {
-            // Existing supplier - show simplified header
-            document.getElementById('qpSupplierSection').innerHTML = `
-                <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier: ${supplierName}</h3>
-                <p style="color:rgba(255,255,255,0.5);font-size:12px;margin:0;">Adding custom items for existing supplier</p>
-            `;
-        } else {
-            // New supplier - show full form
-            document.getElementById('qpSupplierSection').innerHTML = `
-                <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier Details</h3>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Supplier Name *</label>
-                        <input type="text" id="qpSupplierName" placeholder="Company name" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
-                        <input type="text" id="qpSupplierPhone" placeholder="012 345 6789" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Email</label>
-                        <input type="text" id="qpSupplierEmail" placeholder="orders@supplier.com" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
-                        <input type="text" id="qpSupplierVat" placeholder="4123456789" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                </div>
-            `;
-        }
-        
-        document.getElementById('qpNotes').value = '';
-        document.getElementById('qpLines').innerHTML = '';
-        document.getElementById('qpTotalItems').textContent = '0';
-        
-        // Add first empty line
-        qpAddLine();
-        
-        document.getElementById('quickPOModal').style.display = 'flex';
-        // Focus on first line item if supplier pre-selected
-        setTimeout(() => {
-            const firstInput = document.querySelector('#qpLines input');
-            if (firstInput) firstInput.focus();
-            else if (!supplierId) document.getElementById('qpSupplierName')?.focus();
-        }, 100);
-    }
-    
-    function closeQuickPOModal() {
-        document.getElementById('quickPOModal').style.display = 'none';
-    }
-    
-    function qpAddLine() {
-        qpLineCounter++;
-        const lineId = 'qpLine' + qpLineCounter;
-        
-        const lineHtml = `
-        <div id="${lineId}" style="display:grid;grid-template-columns:2fr 80px 40px;gap:10px;margin-bottom:10px;align-items:center;">
-            <input type="text" placeholder="Description / Item" onchange="qpUpdateTotal()" 
-                style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;">
-            <input type="number" placeholder="Qty" value="1" min="1" onchange="qpUpdateTotal()"
-                style="padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;text-align:center;">
-            <button onclick="qpRemoveLine('${lineId}')" style="background:#ef4444;color:white;border:none;padding:8px;border-radius:6px;cursor:pointer;">✕</button>
-        </div>`;
-        
-        document.getElementById('qpLines').insertAdjacentHTML('beforeend', lineHtml);
-        qpUpdateTotal();
-    }
-    
-    function qpRemoveLine(lineId) {
-        const el = document.getElementById(lineId);
-        if (el) el.remove();
-        qpUpdateTotal();
-    }
-    
-    function qpUpdateTotal() {
-        let totalItems = 0;
-        const lines = document.getElementById('qpLines').children;
-        
-        for (let line of lines) {
-            const inputs = line.querySelectorAll('input');
-            if (inputs.length >= 2) {
-                const desc = inputs[0].value.trim();
-                const qty = parseInt(inputs[1].value) || 0;
-                if (desc && qty > 0) {
-                    totalItems += qty;
-                }
-            }
-        }
-        
-        document.getElementById('qpTotalItems').textContent = totalItems;
-    }
-    
-    async function submitQuickPO() {
-        // Get supplier name from visible element or section text
-        let supplierName = '';
-        const supplierNameEl = document.getElementById('qpSupplierName');
-        if (supplierNameEl) {
-            supplierName = supplierNameEl.value.trim();
-        } else if (qpSelectedSupplierId) {
-            // Supplier was pre-selected, get name from section
-            const section = document.getElementById('qpSupplierSection');
-            const match = section?.innerText?.match(/Supplier: (.+)/);
-            supplierName = match ? match[1].trim() : '';
-        }
-        
-        const supplierPhone = document.getElementById('qpSupplierPhone')?.value?.trim() || '';
-        const supplierEmail = document.getElementById('qpSupplierEmail')?.value?.trim() || '';
-        const supplierVat = document.getElementById('qpSupplierVat')?.value?.trim() || '';
-        const notes = document.getElementById('qpNotes').value.trim();
-        
-        if (!supplierName && !qpSelectedSupplierId) {
-            alert('Please enter a supplier name');
-            document.getElementById('qpSupplierName')?.focus();
-            return;
-        }
-        
-        // Gather line items
-        const items = [];
-        const lines = document.getElementById('qpLines').children;
-        
-        for (let line of lines) {
-            const inputs = line.querySelectorAll('input');
-            if (inputs.length >= 2) {
-                const desc = inputs[0].value.trim();
-                const qty = parseInt(inputs[1].value) || 0;
-                
-                if (desc && qty > 0) {
-                    items.push({
-                        description: desc,
-                        qty: qty
-                    });
-                }
-            }
-        }
-        
-        if (items.length === 0) {
-            alert('Please add at least one item');
-            return;
-        }
-        
-        try {
-            const response = await fetch('/api/pos/quick-po', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    supplier_id: qpSelectedSupplierId || null,
-                    supplier: {
-                        name: supplierName,
-                        phone: supplierPhone,
-                        email: supplierEmail,
-                        vat_number: supplierVat
-                    },
-                    items: items,
-                    notes: notes
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                closeQuickPOModal();
-                alert('PO ' + data.po_number + ' created!');
-                if (confirm('Open PO now?')) {
-                    window.location = '/purchase/' + data.po_id;
-                }
-            } else {
-                alert('Error: ' + (data.error || 'PO creation failed'));
-            }
-        } catch (err) {
-            alert('Error: ' + err.message);
-        }
-    }
-    
-    // === QUICK CUSTOMER FOR QUOTES ===
-    function showQuickCustomerModal() {
-        document.getElementById('quickCustomerModal').style.display = 'flex';
-        document.getElementById('quickCustName').value = '';
-        document.getElementById('quickCustPhone').value = '';
-        document.getElementById('quickCustEmail').value = '';
-        document.getElementById('quickCustVat').value = '';
-        document.getElementById('quickCustAddress').value = '';
-        setTimeout(() => document.getElementById('quickCustName').focus(), 100);
-    }
-    
-    function closeQuickCustomerModal() {
-        document.getElementById('quickCustomerModal').style.display = 'none';
-    }
-    
-    async function submitQuickCustomer() {
-        const name = document.getElementById('quickCustName').value.trim();
-        const phone = document.getElementById('quickCustPhone').value.trim();
-        const email = document.getElementById('quickCustEmail').value.trim();
-        const vat_number = document.getElementById('quickCustVat').value.trim();
-        const address = document.getElementById('quickCustAddress').value.trim();
-        
-        if (!name) {
-            alert('Please enter a customer name');
-            document.getElementById('quickCustName').focus();
-            return;
-        }
-        
-        // Create customer first
-        try {
-            const response = await fetch('/api/customer/quick-add', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({name, phone, email, vat_number, address})
-            });
-            const result = await response.json();
-            
-            if (result.success) {
-                // Set this customer as selected
-                document.getElementById('entityValue').value = result.customer_id;
-                document.getElementById('entitySearch').value = name;
-                currentEntityType = 'customer';
-                
-                closeQuickCustomerModal();
-                
-                // Now create the quote
-                await createQuoteWithCustomer(result.customer_id, name);
-            } else {
-                alert('Error creating customer: ' + (result.error || 'Unknown error'));
-            }
-        } catch (err) {
-            alert('Error: ' + err.message);
-        }
-    }
-    
-    async function createQuoteWithCustomer(customerId, customerName) {
-        const items = cart.map(item => ({
-            stock_id: item.id,
-            code: item.code,
-            description: item.desc,
-            quantity: item.qty,
-            price: item.price,
-            total: item.price * item.qty
-        }));
-        
-        const total = items.reduce((sum, item) => sum + item.total, 0);
-        
-        try {
-            const response = await fetch('/api/pos/quote', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    items: items,
-                    customer_id: customerId,
-                    customer_name: customerName,
-                    total: total
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                alert('Quote ' + data.quote_number + ' created!');
-                clearCart();
-                if (confirm('Open quote now?')) {
-                    window.location = '/quote/' + data.quote_id;
-                }
-            } else {
-                alert('Error: ' + (data.error || 'Quote failed'));
-            }
-        } catch (err) {
-            alert('Connection error');
-        }
-    }
-    
-    // === CREDIT NOTE FUNCTIONS ===
-    function showCreditNoteModal() {
-        const customerId = document.getElementById('entityValue').value;
-        const customerName = document.getElementById('entitySearch').value || '';
-        
-        if (!customerId || currentEntityType !== 'customer') {
-            alert('Warning: Select a customer first (F8)');
-            toggleEntity('customer');
-            return;
-        }
-        
-        document.getElementById('cnCustomerName').textContent = 'Invoices for: ' + customerName;
-        document.getElementById('creditNoteModal').style.display = 'flex';
-        
-        // Load customer invoices
-        document.getElementById('invoiceList').innerHTML = '<p style="color:rgba(255,255,255,0.5);text-align:center;padding:20px;">Loading...</p>';
-        
-        fetch('/api/pos/customer-invoices?customer_id=' + customerId)
-            .then(r => r.json())
-            .then(data => {
-                if (data.success && data.invoices.length > 0) {
-                    let html = '';
-                    data.invoices.forEach(inv => {
-                        const statusColor = inv.status === 'paid' ? '#10b981' : inv.status === 'credited' ? '#888' : '#f59e0b';
-                        const disabled = inv.status === 'credited' ? 'pointer-events:none;opacity:0.5;' : '';
-                        const invNum = inv.invoice_number || 'INV-?';
-                        html += '<div onclick="createCreditNote(\\'' + inv.id + '\\', \\'' + invNum + '\\')" style="'+disabled+'padding:12px;margin-bottom:8px;background:rgba(255,255,255,0.05);border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.1);" onmouseover="this.style.background=\\'rgba(239,68,68,0.2)\\'" onmouseout="this.style.background=\\'rgba(255,255,255,0.05)\\'">';
-                        html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
-                        html += '<div><strong style="color:white;">' + invNum + '</strong>';
-                        html += '<span style="color:rgba(255,255,255,0.5);font-size:12px;margin-left:10px;">' + (inv.date || '-') + '</span></div>';
-                        html += '<div style="text-align:right;">';
-                        html += '<div style="color:white;font-weight:bold;">R' + (inv.total || 0).toFixed(2) + '</div>';
-                        html += '<div style="color:' + statusColor + ';font-size:11px;text-transform:uppercase;">' + (inv.status || 'outstanding') + '</div>';
-                        html += '</div></div></div>';
-                    });
-                    document.getElementById('invoiceList').innerHTML = html;
-                } else {
-                    document.getElementById('invoiceList').innerHTML = '<p style="color:rgba(255,255,255,0.5);text-align:center;padding:20px;">No invoices found for this customer</p>';
-                }
-            })
-            .catch(err => {
-                document.getElementById('invoiceList').innerHTML = '<p style="color:#ef4444;text-align:center;padding:20px;">Error loading invoices</p>';
-            });
-    }
-    
-    function closeCreditNoteModal() {
-        document.getElementById('creditNoteModal').style.display = 'none';
-    }
-    
-    function createCreditNote(invoiceId, invoiceNum) {
-        const invDisplay = invoiceNum || 'this invoice';
-        if (confirm('Create credit note for ' + invDisplay + '?')) {
-            window.location = '/invoice/' + invoiceId + '/credit-note';
-        }
-    }
-    
-    // ═══ PRINT FUNCTIONS ═══
-    let posSettings = {};
-    let lastSaleData = null;
-    
-    function loadPosSettings() {
-        try {
-            const settingsJson = document.getElementById('posSettings').value.replace(/&#39;/g, "'");
-            posSettings = JSON.parse(settingsJson);
-        } catch (e) {
-            posSettings = { auto_print: false, print_format: 'ask', slip_footer: 'Thank you!' };
-        }
-    }
-    
-    function showPrintDialog(saleNum, saleId, method, customerName, items, total, cashReceived = 0, changeGiven = 0) {
-        loadPosSettings();
-        
-        lastSaleData = { saleNum, saleId, method, customerName, items, total, cashReceived, changeGiven };
-        
-        // Build slip content
-        const now = new Date();
-        const time = now.toLocaleTimeString('en-ZA', {hour: '2-digit', minute: '2-digit'});
-        const date = now.toLocaleDateString('en-ZA');
-        
-        const methodLabel = {cash: '💵 CASH', card: '💳 CARD', account: '📒 ACCOUNT'}[method] || method.toUpperCase();
-        const subtotal = total / 1.15;
-        const vat = total - subtotal;
-        
-        let itemsHtml = '';
-        items.forEach(item => {
-            const lineTotal = item.price * item.quantity;
-            // Prefer description, fall back to code only if description is empty/missing
-            const itemName = (item.description && item.description.trim()) ? item.description : (item.code || 'Item');
-            itemsHtml += '<tr><td style="padding:10px 0;font-size:18px;">' + item.quantity + 'x ' + itemName + '</td><td style="text-align:right;padding:10px 0;font-size:18px;">R' + lineTotal.toFixed(2) + '</td></tr>';
-        });
-        
-        // Cash payment details (only for cash sales)
-        let cashHtml = '';
-        if (method === 'cash' && cashReceived > 0) {
-            cashHtml = `
-                <div style="margin-top:15px;padding:15px;background:#f5f5f5;border-radius:8px;">
-                    <div style="display:flex;justify-content:space-between;font-size:20px;padding:5px 0;">
-                        <span>💵 Cash Received</span><span>R${cashReceived.toFixed(2)}</span>
-                    </div>
-                    <div style="display:flex;justify-content:space-between;font-size:24px;font-weight:bold;padding:5px 0;color:#10b981;">
-                        <span>🔄 Change</span><span>R${changeGiven.toFixed(2)}</span>
-                    </div>
-                </div>
-            `;
-        }
-        
-        const slipHtml = `
-            <div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:15px;margin-bottom:15px;">
-                <div style="font-size:28px;font-weight:bold;">${posSettings.business_name || 'Business'}</div>
-                ${posSettings.phone ? '<div style="font-size:18px;color:#666;">Tel: ' + posSettings.phone + '</div>' : ''}
-                ${posSettings.vat_number ? '<div style="font-size:18px;color:#666;">VAT: ' + posSettings.vat_number + '</div>' : ''}
-                <div style="margin-top:10px;font-size:22px;font-weight:bold;">${saleNum}</div>
-                <div style="font-size:18px;color:#666;">${date} ${time}</div>
-            </div>
-            
-            <div style="margin-bottom:15px;font-size:18px;">
-                <span style="background:#333;color:white;padding:6px 12px;border-radius:3px;font-size:18px;">${methodLabel}</span>
-                <span style="margin-left:12px;font-size:18px;">${customerName || 'Cash Sale'}</span>
-            </div>
-            
-            <table style="width:100%;border-collapse:collapse;margin-bottom:15px;">
-                ${itemsHtml}
-            </table>
-            
-            <div style="border-top:2px dashed #000;padding-top:12px;">
-                <div style="display:flex;justify-content:space-between;font-size:18px;color:#666;padding:4px 0;">
-                    <span>Subtotal</span><span>R${subtotal.toFixed(2)}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;font-size:18px;color:#666;padding:4px 0;">
-                    <span>VAT (15%)</span><span>R${vat.toFixed(2)}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;font-size:30px;font-weight:bold;margin-top:10px;">
-                    <span>TOTAL</span><span>R${total.toFixed(2)}</span>
-                </div>
-            </div>
-            
-            ${cashHtml}
-            
-            <div style="text-align:center;margin-top:15px;padding-top:15px;border-top:2px dashed #000;font-size:18px;color:#666;">
-                ${posSettings.slip_footer || 'Thank you for your purchase!'}
-            </div>
-        `;
-        
-        document.getElementById('slipContent').innerHTML = slipHtml;
-        
-        // Check settings for auto behavior
-        if (posSettings.auto_print && posSettings.print_format !== 'ask') {
-            // Auto print with default format
-            document.getElementById('printSlipModal').style.display = 'flex';
-            setTimeout(() => doPrintSlip(posSettings.print_format), 100);
-        } else if (posSettings.auto_print) {
-            // Show print dialog
-            document.getElementById('printSlipModal').style.display = 'flex';
-            setTimeout(() => { 
-                const btn = document.getElementById('btnPrintThermal');
-                if (btn) { btn.focus(); btn.style.outline = '3px solid yellow'; }
-            }, 150);
-        } else {
-            // Ask if want to print
-            if (confirm('Sale complete: ' + saleNum + '\\n\\nPrint slip?')) {
-                document.getElementById('printSlipModal').style.display = 'flex';
-                setTimeout(() => { 
-                    const btn = document.getElementById('btnPrintThermal');
-                    if (btn) { btn.focus(); btn.style.outline = '3px solid yellow'; }
-                }, 150);
-            } else {
-                location.reload();
-            }
-        }
-    }
-    
-    function doPrintSlip(format) {
-        const slipContent = document.getElementById('slipContent').innerHTML;
-        
-        // Create print window
-        const printWin = window.open('', '_blank', 'width=400,height=600');
-        
-        const styles = format === 'thermal' ? `
-            body { 
-                width: 72mm; 
-                margin: 0; 
-                padding: 4mm; 
-                font-family: 'Courier New', monospace; 
-                font-size: 16px;
-            }
-            @page { size: 80mm auto; margin: 0; }
-        ` : `
-            body { 
-                width: 210mm; 
-                margin: 20mm; 
-                font-family: Arial, sans-serif; 
-                font-size: 18px;
-            }
-            @page { size: A4; margin: 20mm; }
-        `;
-        
-        printWin.document.write(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Slip</title>
-                <style>${styles}</style>
-            </head>
-            <body>${slipContent}</body>
-            </html>
-        `);
-        
-        printWin.document.close();
-        
-        // Print after content loads
-        printWin.onload = function() {
-            printWin.print();
-            
-            // Handle duplicates - print 2nd copy automatically for store record
-            if (posSettings.print_duplicates) {
-                setTimeout(() => {
-                    // Auto print 2nd copy (store copy) - no confirmation needed
-                    printWin.print();
-                    setTimeout(() => {
-                        printWin.close();
-                        closePrintModal();
-                        location.reload();
-                    }, 500);
-                }, 1000);  // Wait 1 second between prints
-            } else {
-                setTimeout(() => {
-                    printWin.close();
-                    closePrintModal();
-                    location.reload();
-                }, 500);
-            }
-        };
-    }
-    
-    function closePrintModal() {
-        document.getElementById('printSlipModal').style.display = 'none';
-        location.reload();
-    }
+    // Show keyboard shortcuts hint
+    console.log('POS Keyboard shortcuts: F1=Cash, F2=Card, F3=Account, ESC=Clear, Type to search, Enter to add');
+    console.log('[POS] Enter handler is now at DOCUMENT level with capture phase');
     </script>
-    
-    <!-- Custom Item Modal - BIG & WELCOMING -->
-    <div id="customItemModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:40px;border-radius:20px;max-width:700px;width:95%;border:2px solid rgba(139,92,246,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);">
-            <div style="text-align:center;margin-bottom:30px;">
-                <div style="font-size:48px;margin-bottom:10px;">✏️</div>
-                <h2 style="margin:0;color:white;font-size:28px;" id="customModalTitle">Add Custom Item</h2>
-                <p style="color:rgba(255,255,255,0.6);font-size:16px;margin-top:10px;" id="customModalDesc">
-                    Add any item not in your stock list - perfect for special orders, services, or once-off items
-                </p>
-            </div>
-            
-            <div style="margin-bottom:25px;">
-                <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">📝 Description *</label>
-                <input type="text" id="customDesc" placeholder="e.g. Special order bracket, Transport, Labour, etc..." 
-                    style="width:100%;padding:18px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:#1a1a2e;color:white;font-size:18px;box-sizing:border-box;"
-                    onkeypress="if(event.key==='Enter'){document.getElementById('customPrice').focus();}">
-            </div>
-            
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:25px;margin-bottom:30px;">
-                <div id="customPriceDiv">
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;" id="customPriceLabel">💰 Price (incl VAT) *</label>
-                    <input type="number" id="customPrice" placeholder="0.00" step="0.01"
-                        style="width:100%;padding:18px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:#1a1a2e;color:white;font-size:24px;text-align:right;box-sizing:border-box;"
-                        onkeypress="if(event.key==='Enter'){document.getElementById('customAddBtn').click();}">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">📦 Quantity</label>
-                    <input type="number" id="customQty" value="1" min="1"
-                        style="width:100%;padding:18px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:#1a1a2e;color:white;font-size:24px;text-align:center;box-sizing:border-box;">
-                </div>
-            </div>
-            
-            <div style="display:flex;gap:15px;">
-                <button onclick="closeCustomItemModal()" style="flex:1;padding:18px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;font-weight:bold;">✕ Cancel (Esc)</button>
-                <button onclick="addCustomItem()" style="flex:2;padding:18px;border-radius:10px;border:none;background:linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(139,92,246,0.4);" id="customAddBtn">✓ Add to Cart (Enter)</button>
-            </div>
-            
-            <p style="text-align:center;color:rgba(255,255,255,0.4);font-size:13px;margin-top:20px;">
-                Tip: After adding, press <kbd style="background:#333;padding:2px 6px;border-radius:4px;">F4</kbd> to create a quote
-            </p>
-        </div>
-    </div>
-    
-    <!-- Quick Quote Modal (F4 with empty cart) - Full quote without stock/customer -->
-    <div id="quickQuoteModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px;">
-        <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:30px;border-radius:20px;max-width:800px;width:95%;border:2px solid rgba(16,185,129,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);margin:auto;">
-            <div style="text-align:center;margin-bottom:20px;">
-                <div style="font-size:40px;margin-bottom:8px;">📝</div>
-                <h2 style="margin:0;color:white;font-size:24px;">Quick Quote</h2>
-                <p style="color:rgba(255,255,255,0.6);font-size:13px;margin-top:5px;">
-                    Create a quote without stock items or saved customer
-                </p>
-            </div>
-            
-            <!-- Customer Section -->
-            <div id="qqCustSection" style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
-                <h3 style="margin:0 0 15px 0;color:#10b981;font-size:16px;">👤 Customer Details</h3>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Name *</label>
-                        <input type="text" id="qqCustName" placeholder="Company or person" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
-                        <input type="text" id="qqCustPhone" placeholder="082 123 4567" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Email</label>
-                        <input type="text" id="qqCustEmail" placeholder="email@example.com" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
-                        <input type="text" id="qqCustVat" placeholder="4123456789" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                </div>
-                <div style="margin-top:15px;">
-                    <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Address</label>
-                    <input type="text" id="qqCustAddress" placeholder="Street, City, Code" 
-                        style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                </div>
-            </div>
-            
-            <!-- Line Items Section -->
-            <div style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                    <h3 style="margin:0;color:#f59e0b;font-size:16px;">📦 Line Items</h3>
-                    <button onclick="qqAddLine()" style="background:#f59e0b;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">+ Add Item</button>
-                </div>
-                <div id="qqLines" style="max-height:250px;overflow-y:auto;">
-                    <!-- Line items will be added here -->
-                </div>
-                <div style="display:flex;justify-content:flex-end;margin-top:15px;padding-top:15px;border-top:1px solid rgba(255,255,255,0.1);">
-                    <div style="text-align:right;">
-                        <span style="color:var(--text-muted);font-size:14px;">Total (excl VAT):</span>
-                        <span id="qqSubtotal" style="color:white;font-size:18px;font-weight:bold;margin-left:10px;">R0.00</span>
-                    </div>
-                </div>
-                <div style="display:flex;justify-content:flex-end;margin-top:5px;">
-                    <div style="text-align:right;">
-                        <span style="color:var(--text-muted);font-size:14px;">VAT (15%):</span>
-                        <span id="qqVat" style="color:white;font-size:16px;margin-left:10px;">R0.00</span>
-                    </div>
-                </div>
-                <div style="display:flex;justify-content:flex-end;margin-top:5px;">
-                    <div style="text-align:right;">
-                        <span style="color:#10b981;font-size:16px;font-weight:bold;">Total (incl VAT):</span>
-                        <span id="qqTotal" style="color:#10b981;font-size:22px;font-weight:bold;margin-left:10px;">R0.00</span>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Buttons -->
-            <div style="display:flex;gap:15px;">
-                <button onclick="closeQuickQuoteModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
-                <button onclick="submitQuickQuote()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);">✓ Create Quote</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Quick PO Modal (F5 with empty cart) - Full PO without stock/supplier -->
-    <div id="quickPOModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px;">
-        <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:30px;border-radius:20px;max-width:800px;width:95%;border:2px solid rgba(59,130,246,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);margin:auto;">
-            <div style="text-align:center;margin-bottom:20px;">
-                <div style="font-size:40px;margin-bottom:8px;">📦</div>
-                <h2 style="margin:0;color:white;font-size:24px;">Quick Purchase Order</h2>
-                <p style="color:rgba(255,255,255,0.6);font-size:13px;margin-top:5px;">
-                    Create a PO without stock items or saved supplier
-                </p>
-            </div>
-            
-            <!-- Supplier Section -->
-            <div id="qpSupplierSection" style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
-                <h3 style="margin:0 0 15px 0;color:#3b82f6;font-size:16px;">🏭 Supplier Details</h3>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Supplier Name *</label>
-                        <input type="text" id="qpSupplierName" placeholder="Company name" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Phone</label>
-                        <input type="text" id="qpSupplierPhone" placeholder="012 345 6789" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Email</label>
-                        <input type="text" id="qpSupplierEmail" placeholder="orders@supplier.com" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
-                        <input type="text" id="qpSupplierVat" placeholder="4123456789" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Line Items Section -->
-            <div style="background:rgba(0,0,0,0.2);padding:20px;border-radius:12px;margin-bottom:20px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                    <h3 style="margin:0;color:#f59e0b;font-size:16px;">📋 Order Items</h3>
-                    <button onclick="qpAddLine()" style="background:#f59e0b;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;">+ Add Item</button>
-                </div>
-                <div id="qpLines" style="max-height:250px;overflow-y:auto;">
-                    <!-- Line items will be added here -->
-                </div>
-                <div style="display:flex;justify-content:flex-end;margin-top:15px;padding-top:15px;border-top:1px solid rgba(255,255,255,0.1);">
-                    <div style="text-align:right;">
-                        <span style="color:var(--text-muted);font-size:14px;">Total Items:</span>
-                        <span id="qpTotalItems" style="color:white;font-size:18px;font-weight:bold;margin-left:10px;">0</span>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Notes -->
-            <div style="background:rgba(0,0,0,0.2);padding:15px;border-radius:12px;margin-bottom:20px;">
-                <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Notes / Special Instructions</label>
-                <textarea id="qpNotes" rows="2" placeholder="Delivery instructions, urgency, etc." 
-                    style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;resize:none;"></textarea>
-            </div>
-            
-            <!-- Buttons -->
-            <div style="display:flex;gap:15px;">
-                <button onclick="closeQuickPOModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
-                <button onclick="submitQuickPO()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(59,130,246,0.4);">✓ Create PO</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Edit Customer Modal (F7) -->
-    <div id="editCustomerModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:40px;border-radius:20px;max-width:600px;width:95%;border:2px solid rgba(99,102,241,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);">
-            <div style="text-align:center;margin-bottom:25px;">
-                <div style="font-size:48px;margin-bottom:10px;">📝</div>
-                <h2 style="margin:0;color:white;font-size:28px;">Edit Customer Details</h2>
-                <p style="color:rgba(255,255,255,0.6);font-size:14px;margin-top:10px;" id="editCustSubtitle">
-                    Update customer information
-                </p>
-            </div>
-            
-            <input type="hidden" id="editCustId">
-            
-            <div style="margin-bottom:20px;">
-                <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">👤 Customer Name *</label>
-                <input type="text" id="editCustName" placeholder="Company or person name" 
-                    style="width:100%;padding:15px;border-radius:10px;border:2px solid rgba(99,102,241,0.3);background:#1a1a2e;color:white;font-size:18px;box-sizing:border-box;">
-            </div>
-            
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
-                <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📱 Phone</label>
-                    <input type="text" id="editCustPhone" placeholder="e.g. 082 123 4567" 
-                        style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📧 Email</label>
-                    <input type="text" id="editCustEmail" placeholder="email@example.com" 
-                        style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
-                </div>
-            </div>
-            
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
-                <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">🏢 VAT Number</label>
-                    <input type="text" id="editCustVat" placeholder="e.g. 4123456789" 
-                        style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📍 Address</label>
-                    <input type="text" id="editCustAddress" placeholder="Street, City, Code" 
-                        style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
-                </div>
-            </div>
-            
-            <div style="display:flex;gap:15px;">
-                <button onclick="closeEditCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
-                <button onclick="submitEditCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(99,102,241,0.4);">✓ Save Changes</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Quick Customer Modal for Quotes -->
-    <div id="quickCustomerModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:linear-gradient(135deg, #1e1e32 0%, #2a2a4a 100%);padding:40px;border-radius:20px;max-width:600px;width:95%;border:2px solid rgba(16,185,129,0.5);box-shadow:0 25px 50px rgba(0,0,0,0.5);">
-            <div style="text-align:center;margin-bottom:25px;">
-                <div style="font-size:48px;margin-bottom:10px;">👤</div>
-                <h2 style="margin:0;color:white;font-size:28px;">Customer Details for Quote</h2>
-                <p style="color:rgba(255,255,255,0.6);font-size:14px;margin-top:10px;">
-                    Enter customer details for this quote (will also be saved for future use)
-                </p>
-            </div>
-            
-            <div style="margin-bottom:20px;">
-                <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">👤 Customer Name *</label>
-                <input type="text" id="quickCustName" placeholder="Company or person name" 
-                    style="width:100%;padding:15px;border-radius:10px;border:2px solid rgba(16,185,129,0.3);background:#1a1a2e;color:white;font-size:18px;box-sizing:border-box;">
-            </div>
-            
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
-                <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📱 Phone</label>
-                    <input type="text" id="quickCustPhone" placeholder="e.g. 082 123 4567" 
-                        style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📧 Email</label>
-                    <input type="text" id="quickCustEmail" placeholder="email@example.com" 
-                        style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
-                </div>
-            </div>
-            
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
-                <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">🏢 VAT Number</label>
-                    <input type="text" id="quickCustVat" placeholder="e.g. 4123456789" 
-                        style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📍 Address</label>
-                    <input type="text" id="quickCustAddress" placeholder="Street, City, Code" 
-                        style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
-                </div>
-            </div>
-            
-            <div style="display:flex;gap:15px;">
-                <button onclick="closeQuickCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
-                <button onclick="submitQuickCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);" id="quickCustSubmitBtn">✓ Create Quote</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Credit Note Modal -->
-    <div id="creditNoteModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:#1e1e32;padding:25px;border-radius:12px;max-width:500px;width:90%;border:1px solid rgba(239,68,68,0.3);">
-            <h3 style="margin:0 0 15px 0;color:white;">Credit Note from Invoice</h3>
-            <p style="color:rgba(255,255,255,0.6);font-size:13px;margin-bottom:15px;" id="cnCustomerName">
-                Select a customer first (F8)
-            </p>
-            
-            <div id="invoiceList" style="max-height:300px;overflow-y:auto;margin-bottom:15px;">
-                <p style="color:rgba(255,255,255,0.5);text-align:center;padding:20px;">Loading invoices...</p>
-            </div>
-            
-            <div style="display:flex;gap:10px;">
-                <button onclick="closeCreditNoteModal()" style="flex:1;padding:12px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:white;cursor:pointer;">Cancel</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Print Slip Modal -->
-    <div id="printSlipModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px;">
-        <div style="background:white;border-radius:8px;max-width:450px;width:100%;margin:auto;">
-            <div id="slipContent" style="padding:20px;font-family:'Courier New',monospace;font-size:16px;color:#000;"></div>
-            <div style="padding:20px;border-top:2px solid #eee;display:flex;gap:15px;flex-wrap:wrap;" id="printButtonRow">
-                <button id="btnPrintThermal" tabindex="0" onclick="doPrintSlip('thermal')" 
-                    onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
-                    onblur="this.style.outline='none';this.style.transform='scale(1)'"
-                    style="flex:1;padding:18px;border-radius:8px;border:3px solid #10b981;background:#10b981;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;" autofocus>🖨️ THERMAL [1]</button>
-                <button id="btnPrintA4" tabindex="0" onclick="doPrintSlip('a4')" 
-                    onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
-                    onblur="this.style.outline='none';this.style.transform='scale(1)'"
-                    style="flex:1;padding:18px;border-radius:8px;border:3px solid #3b82f6;background:#3b82f6;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;">📄 A4 [2]</button>
-                <button id="btnPrintSkip" tabindex="0" onclick="closePrintModal()" 
-                    onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
-                    onblur="this.style.outline='none';this.style.transform='scale(1)'"
-                    style="flex:1;padding:18px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;transition:transform 0.1s;">✕ Skip [3]</button>
-            </div>
-            <div style="text-align:center;padding:10px;color:#666;font-size:12px;">
-                Use Tab/Arrows to navigate • Enter to select • Or press 1, 2, 3
-            </div>
-        </div>
-    </div>
     '''
     
     return f'''<!DOCTYPE html>
@@ -25644,44 +20042,121 @@ def pos_page():
     {CSS}
     {pos_css}
     <style>
-    .stock-row.highlighted {{
-        background: linear-gradient(90deg, rgba(99, 102, 241, 0.25), rgba(99, 102, 241, 0.1)) !important;
-        outline: 2px solid var(--primary);
+    .pos-header {{
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        background: var(--card);
+        padding: 10px 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--border);
+    }}
+    .pos-header-nav {{
+        display: flex;
+        gap: 15px;
+        align-items: center;
+    }}
+    .pos-header-nav a {{
+        color: var(--text-muted);
+        text-decoration: none;
+        padding: 8px 12px;
+        border-radius: 6px;
+    }}
+    .pos-header-nav a:hover {{
+        background: rgba(255,255,255,0.05);
+    }}
+    .pos-header-nav a.active {{
+        color: var(--primary);
+        background: rgba(99,102,241,0.1);
+    }}
+    .pos-header-actions {{
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }}
+    .pos-header-total {{
+        font-size: 20px;
+        font-weight: bold;
+        color: var(--green);
+        margin-right: 15px;
+    }}
+    .pos-pay-header {{
+        padding: 10px 20px;
+        border: none;
+        border-radius: 8px;
+        font-weight: bold;
+        cursor: pointer;
+        font-size: 14px;
+    }}
+    .pos-pay-header.cash {{
+        background: var(--green);
+        color: white;
+    }}
+    .pos-pay-header.card {{
+        background: var(--primary);
+        color: white;
+    }}
+    .pos-pay-header.account {{
+        background: var(--orange);
+        color: white;
+    }}
+    .pos-pay-header:disabled {{
+        opacity: 0.5;
+        cursor: not-allowed;
+    }}
+    .key-hint {{
+        font-size: 10px;
+        background: rgba(0,0,0,0.3);
+        padding: 2px 5px;
+        border-radius: 3px;
+        margin-right: 5px;
+        font-family: monospace;
+    }}
+    .pos-logo {{
+        font-weight: bold;
+        color: white;
+        font-size: 14px;
+        padding: 6px 12px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+        cursor: pointer;
+        transition: all 0.2s;
+        text-decoration: none;
+    }}
+    .pos-logo:hover {{
+        transform: scale(1.05);
+        box-shadow: 0 4px 15px rgba(99, 102, 241, 0.5);
+    }}
+    
+    /* Ensure body scrolls and header sticks */
+    html, body {{
+        height: 100%;
+        overflow: hidden;
     }}
     </style>
 </head>
-<body>
+<body style="overflow:hidden;">
     <header class="pos-header">
         <div class="pos-header-nav">
             <span class="pos-logo" onclick="toggleZaneChat()">Click AI</span>
             <a href="/">Dashboard</a>
             <a href="/pos" class="active">POS</a>
-            <a href="/pos/history">History</a>
             <a href="/stock">Stock</a>
             <a href="/customers">Customers</a>
         </div>
         <div class="pos-header-actions">
-            <div class="entity-select-wrapper">
-                <button class="entity-toggle active" id="btnCust" onclick="toggleEntity('customer')" title="F8">C</button>
-                <button class="entity-toggle" id="btnSupp" onclick="toggleEntity('supplier')" title="F9">S</button>
-                <div class="entity-dropdown" id="entityDropdown">
-                    <input type="text" id="entitySearch" class="entity-search" placeholder="Cash Sale" onclick="openEntityDropdown()">
-                    <input type="hidden" id="entityValue" value="">
-                    <div class="entity-list" id="entityList" style="display:none;"></div>
-                </div>
-            </div>
-            <input type="hidden" id="supplierData" value='{supplier_json}'>
-            <input type="hidden" id="customerData" value='{customer_json}'>
-            <input type="hidden" id="posSettings" value='{pos_settings_json}'>
+            <select id="customerSelect" style="padding:8px 12px;border-radius:6px;background:var(--bg);color:var(--text);border:1px solid var(--border);">
+                {customer_options}
+            </select>
             <span class="pos-header-total" id="headerTotal">R0.00</span>
-            <button class="pos-pay-btn cash" onclick="completeSale('cash')" id="btnCash" disabled><span class="key-hint">F1</span> CASH</button>
-            <button class="pos-pay-btn card" onclick="completeSale('card')" id="btnCard" disabled><span class="key-hint">F2</span> CARD</button>
-            <button class="pos-pay-btn account" onclick="completeSale('account')" id="btnAccount" disabled><span class="key-hint">F3</span> ACCOUNT</button>
-            <button class="pos-pay-btn quote" onclick="createQuote()" id="btnQuote" disabled><span class="key-hint">F4</span> QUOTE</button>
-            <button class="pos-pay-btn po" onclick="createPO()" id="btnPO" disabled><span class="key-hint">F5</span> PO</button>
-            <button class="pos-pay-btn invoice" onclick="createInvoice()" id="btnInvoice" disabled style="background:linear-gradient(135deg,#f59e0b,#d97706);"><span class="key-hint">F6</span> INVOICE</button>
-            <button class="pos-pay-btn" onclick="createCreditNote()" id="btnCredit" disabled style="background:linear-gradient(135deg,#ef4444,#dc2626);"><span class="key-hint">F10</span> CREDIT</button>
-            <button class="pos-pay-btn clear" onclick="if(cart.length>0 && confirm('Clear cart?'))clearCart()"><span class="key-hint">ESC</span> CLEAR</button>
+            <button class="pos-pay-header cash" onclick="completeSale('cash')" id="btnCash" disabled><span class="key-hint">F1</span> CASH</button>
+            <button class="pos-pay-header card" onclick="completeSale('card')" id="btnCard" disabled><span class="key-hint">F2</span> CARD</button>
+            <button class="pos-pay-header account" onclick="completeSale('account')" id="btnAccount" disabled><span class="key-hint">F3</span> ACCOUNT</button>
+            <button class="pos-pay-header quote" onclick="createQuote()" id="btnQuote" disabled style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);"><span class="key-hint">F4</span> QUOTE</button>
+            <button class="pos-pay-header po" onclick="createPO()" id="btnPO" disabled style="background:linear-gradient(135deg,#ec4899,#db2777);"><span class="key-hint">F5</span> PO</button>
+            <button onclick="clearCart()" style="padding:10px 15px;background:var(--red);color:white;border:none;border-radius:8px;cursor:pointer;"><span class="key-hint">ESC</span> Clear</button>
         </div>
     </header>
     
@@ -25694,484 +20169,6 @@ def pos_page():
 </body>
 </html>'''
 
-@app.route("/pos/history")
-@login_required
-def pos_history():
-    """POS History - View all transactions with X-Read and Z-Read"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    # Get filter params
-    date_filter = request.args.get("date", today())
-    show_type = request.args.get("type", "all")  # all, cash, card, account
-    
-    # Get all sales for this date
-    all_sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-    sales = [s for s in all_sales if s.get("date") == date_filter]
-    sales = sorted(sales, key=lambda x: x.get("created_at", ""), reverse=True)
-    
-    # Get invoices for this date
-    all_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-    invoices = [i for i in all_invoices if i.get("date") == date_filter]
-    
-    # Get quotes for this date
-    all_quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
-    quotes = [q for q in all_quotes if q.get("date") == date_filter]
-    
-    # Calculate totals
-    cash_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "cash")
-    card_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "card")
-    account_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account")
-    invoice_total = sum(float(i.get("total", 0)) for i in invoices)
-    quote_total = sum(float(q.get("total", 0)) for q in quotes)
-    
-    grand_total = cash_total + card_total + account_total + invoice_total
-    transaction_count = len(sales) + len(invoices) + len(quotes)
-    
-    # Build transaction rows
-    rows = ""
-    
-    # Combine and sort by time
-    transactions = []
-    for s in sales:
-        # Handle items that might be a list or JSON string
-        s_items = s.get("items", [])
-        if isinstance(s_items, str):
-            try:
-                s_items = json.loads(s_items)
-            except:
-                s_items = []
-        
-        transactions.append({
-            "id": s.get("id"),
-            "number": s.get("sale_number", "-"),
-            "time": s.get("created_at", "")[-8:-3] if s.get("created_at") else "-",
-            "type": s.get("payment_method", "cash").upper(),
-            "customer": s.get("customer_name", "Cash Sale"),
-            "total": float(s.get("total", 0)),
-            "items": len(s_items) if s_items else 0,
-            "source": "sale",
-            "created_at": s.get("created_at", "")
-        })
-    
-    for i in invoices:
-        # Handle items that might be a list or JSON string
-        i_items = i.get("items", [])
-        if isinstance(i_items, str):
-            try:
-                i_items = json.loads(i_items)
-            except:
-                i_items = []
-        
-        transactions.append({
-            "id": i.get("id"),
-            "number": i.get("invoice_number", "-"),
-            "time": i.get("created_at", "")[-8:-3] if i.get("created_at") else "-",
-            "type": "INVOICE",
-            "customer": i.get("customer_name", "-"),
-            "total": float(i.get("total", 0)),
-            "items": len(i_items) if i_items else 0,
-            "source": "invoice",
-            "created_at": i.get("created_at", "")
-        })
-    
-    for q in quotes:
-        # Handle items that might be a list or JSON string
-        q_items = q.get("items", [])
-        if isinstance(q_items, str):
-            try:
-                q_items = json.loads(q_items)
-            except:
-                q_items = []
-        
-        transactions.append({
-            "id": q.get("id"),
-            "number": q.get("quote_number", "-"),
-            "time": q.get("created_at", "")[-8:-3] if q.get("created_at") else "-",
-            "type": "QUOTE",
-            "customer": q.get("customer_name", "-"),
-            "total": float(q.get("total", 0)),
-            "items": len(q_items) if q_items else 0,
-            "source": "quote",
-            "created_at": q.get("created_at", "")
-        })
-    
-    # Sort by created_at descending
-    transactions = sorted(transactions, key=lambda x: x.get("created_at", ""), reverse=True)
-    
-    # Filter by type
-    if show_type != "all":
-        transactions = [t for t in transactions if t.get("type", "").lower() == show_type.lower()]
-    
-    for t in transactions:
-        type_color = {
-            "CASH": "#10b981",
-            "CARD": "#3b82f6",
-            "ACCOUNT": "#f59e0b",
-            "INVOICE": "#8b5cf6",
-            "QUOTE": "#ec4899"
-        }.get(t["type"], "#888")
-        
-        if t["source"] == "sale":
-            view_url = f"/sale/{t['id']}"
-        elif t["source"] == "invoice":
-            view_url = f"/invoice/{t['id']}"
-        else:
-            view_url = f"/quote/{t['id']}"
-        
-        rows += f'''
-        <tr onclick="window.location='{view_url}'" style="cursor:pointer;">
-            <td><strong>{t["number"]}</strong></td>
-            <td>{t["time"]}</td>
-            <td><span style="background:{type_color};color:white;padding:2px 8px;border-radius:4px;font-size:11px;">{t["type"]}</span></td>
-            <td>{safe_string(t["customer"])}</td>
-            <td style="text-align:center;">{t["items"]}</td>
-            <td style="text-align:right;font-weight:bold;">{money(t["total"])}</td>
-        </tr>
-        '''
-    
-    content = f'''
-    <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px;margin-bottom:20px;">
-            <div>
-                <h2 style="margin:0;">POS History</h2>
-                <p style="color:var(--text-muted);margin:5px 0 0 0;">Transaction history and cash-up</p>
-            </div>
-            <div style="display:flex;gap:10px;align-items:center;">
-                <input type="date" id="dateFilter" value="{date_filter}" onchange="filterByDate()" 
-                       style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                <select id="typeFilter" onchange="filterByType()" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                    <option value="all" {"selected" if show_type == "all" else ""}>All Types</option>
-                    <option value="cash" {"selected" if show_type == "cash" else ""}>Cash</option>
-                    <option value="card" {"selected" if show_type == "card" else ""}>Card</option>
-                    <option value="account" {"selected" if show_type == "account" else ""}>Account</option>
-                    <option value="invoice" {"selected" if show_type == "invoice" else ""}>Invoice</option>
-                    <option value="quote" {"selected" if show_type == "quote" else ""}>Quote</option>
-                </select>
-                <a href="/pos" class="btn btn-primary">← Back to POS</a>
-            </div>
-        </div>
-        
-        <!-- Summary Cards -->
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:15px;margin-bottom:25px;">
-            <div style="background:linear-gradient(135deg,#10b981,#059669);padding:20px;border-radius:12px;text-align:center;">
-                <div style="font-size:24px;font-weight:bold;color:white;">{money(cash_total)}</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:13px;">💵 Cash</div>
-            </div>
-            <div style="background:linear-gradient(135deg,#3b82f6,#2563eb);padding:20px;border-radius:12px;text-align:center;">
-                <div style="font-size:24px;font-weight:bold;color:white;">{money(card_total)}</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:13px;">💳 Card</div>
-            </div>
-            <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:20px;border-radius:12px;text-align:center;">
-                <div style="font-size:24px;font-weight:bold;color:white;">{money(account_total)}</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:13px;">📒 Account</div>
-            </div>
-            <div style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);padding:20px;border-radius:12px;text-align:center;">
-                <div style="font-size:24px;font-weight:bold;color:white;">{money(invoice_total)}</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:13px;">📄 Invoices</div>
-            </div>
-            <div style="background:linear-gradient(135deg,#ec4899,#db2777);padding:20px;border-radius:12px;text-align:center;">
-                <div style="font-size:24px;font-weight:bold;color:white;">{money(quote_total)}</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:13px;">📝 Quotes</div>
-            </div>
-        </div>
-        
-        <!-- Grand Total -->
-        <div style="background:var(--bg);padding:20px;border-radius:12px;margin-bottom:25px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px;">
-            <div>
-                <span style="font-size:32px;font-weight:bold;">{money(grand_total)}</span>
-                <span style="color:var(--text-muted);margin-left:10px;">{transaction_count} transactions</span>
-            </div>
-            <div style="display:flex;gap:10px;">
-                <button onclick="printXRead()" class="btn btn-secondary">X-Read</button>
-                <button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>
-            </div>
-        </div>
-        
-        <!-- Transactions Table -->
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Slip #</th>
-                    <th>Time</th>
-                    <th>Type</th>
-                    <th>Customer</th>
-                    <th style="text-align:center;">Items</th>
-                    <th style="text-align:right;">Total</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted);padding:40px;'>No transactions for this date</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- X-Read Modal -->
-    <div id="xreadModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
-            <div id="xreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
-            <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
-                <button onclick="window.print()" class="btn btn-primary" style="flex:1;">🖨️ Print</button>
-                <button onclick="closeModal('xreadModal')" class="btn btn-secondary" style="flex:1;">Close</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Z-Read Modal -->
-    <div id="zreadModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
-            <div id="zreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
-            <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
-                <button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">✓ Close Day & Print</button>
-                <button onclick="closeModal('zreadModal')" class="btn btn-secondary" style="flex:1;">Cancel</button>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-    function filterByDate() {{
-        const date = document.getElementById('dateFilter').value;
-        const type = document.getElementById('typeFilter').value;
-        window.location = '/pos/history?date=' + date + '&type=' + type;
-    }}
-    
-    function filterByType() {{
-        const date = document.getElementById('dateFilter').value;
-        const type = document.getElementById('typeFilter').value;
-        window.location = '/pos/history?date=' + date + '&type=' + type;
-    }}
-    
-    function closeModal(id) {{
-        document.getElementById(id).style.display = 'none';
-    }}
-    
-    function printXRead() {{
-        const content = `
-<div style="text-align:center;margin-bottom:20px;">
-<strong style="font-size:18px;">X-READ</strong><br>
-<span style="color:#666;">Interim Report</span><br>
-<span>{date_filter}</span><br>
-<span style="font-size:11px;">Printed: ${{new Date().toLocaleTimeString()}}</span>
-</div>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<div style="margin-bottom:15px;">
-<strong>SALES SUMMARY</strong>
-</div>
-<table style="width:100%;border-collapse:collapse;">
-<tr><td>Cash Sales:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
-<tr><td>Card Sales:</td><td style="text-align:right;">{money(card_total)}</td></tr>
-<tr><td>Account Sales:</td><td style="text-align:right;">{money(account_total)}</td></tr>
-<tr><td>Invoices:</td><td style="text-align:right;">{money(invoice_total)}</td></tr>
-<tr><td>Quotes:</td><td style="text-align:right;">{money(quote_total)}</td></tr>
-</table>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<table style="width:100%;border-collapse:collapse;">
-<tr style="font-size:18px;font-weight:bold;">
-<td>TOTAL:</td>
-<td style="text-align:right;">{money(grand_total)}</td>
-</tr>
-<tr><td>Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
-</table>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<div style="text-align:center;color:#666;font-size:11px;">
-*** X-READ - NOT A CLOSE ***
-</div>
-        `;
-        document.getElementById('xreadContent').innerHTML = content;
-        document.getElementById('xreadModal').style.display = 'flex';
-    }}
-    
-    function printZRead() {{
-        const content = `
-<div style="text-align:center;margin-bottom:20px;">
-<strong style="font-size:18px;">Z-READ</strong><br>
-<span style="color:#666;">End of Day Report</span><br>
-<span>{date_filter}</span><br>
-<span style="font-size:11px;">Printed: ${{new Date().toLocaleTimeString()}}</span>
-</div>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<div style="margin-bottom:15px;">
-<strong>FINAL SALES SUMMARY</strong>
-</div>
-<table style="width:100%;border-collapse:collapse;">
-<tr><td>Cash Sales:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
-<tr><td>Card Sales:</td><td style="text-align:right;">{money(card_total)}</td></tr>
-<tr><td>Account Sales:</td><td style="text-align:right;">{money(account_total)}</td></tr>
-<tr><td>Invoices:</td><td style="text-align:right;">{money(invoice_total)}</td></tr>
-<tr><td>Quotes:</td><td style="text-align:right;">{money(quote_total)}</td></tr>
-</table>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<table style="width:100%;border-collapse:collapse;">
-<tr style="font-size:18px;font-weight:bold;">
-<td>GRAND TOTAL:</td>
-<td style="text-align:right;">{money(grand_total)}</td>
-</tr>
-<tr><td>Total Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
-</table>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<div style="margin-bottom:15px;">
-<strong>CASH DRAWER</strong>
-</div>
-<table style="width:100%;border-collapse:collapse;">
-<tr><td>Expected Cash:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
-<tr><td>Counted:</td><td style="text-align:right;border-bottom:1px solid #000;width:100px;">________</td></tr>
-<tr><td>Difference:</td><td style="text-align:right;">________</td></tr>
-</table>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<div style="text-align:center;">
-<div style="margin-top:30px;border-top:1px solid #000;width:200px;margin-left:auto;margin-right:auto;padding-top:5px;">
-Cashier Signature
-</div>
-</div>
-<div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">
-*** Z-READ - DAY CLOSED ***
-</div>
-        `;
-        document.getElementById('zreadContent').innerHTML = content;
-        document.getElementById('zreadModal').style.display = 'flex';
-    }}
-    
-    function confirmZRead() {{
-        if (confirm('Close day for {date_filter}?\\n\\nThis will mark the day as closed.')) {{
-            // Could save Z-Read to database here
-            window.print();
-            closeModal('zreadModal');
-        }}
-    }}
-    
-    // Close modal on background click
-    document.getElementById('xreadModal').addEventListener('click', function(e) {{
-        if (e.target === this) closeModal('xreadModal');
-    }});
-    document.getElementById('zreadModal').addEventListener('click', function(e) {{
-        if (e.target === this) closeModal('zreadModal');
-    }});
-    </script>
-    
-    <style>
-    @media print {{
-        body * {{ visibility: hidden; }}
-        #xreadContent, #xreadContent *, #zreadContent, #zreadContent * {{ visibility: visible; }}
-        #xreadContent, #zreadContent {{ position: absolute; left: 0; top: 0; width: 80mm; }}
-    }}
-    </style>
-    '''
-    
-    return render_page("POS History", content, user, "pos")
-
-
-@app.route("/sale/<sale_id>")
-@login_required
-def view_sale(sale_id):
-    """View individual sale/slip"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_name = business.get("name", "Business") if business else "Business"
-    
-    sale = db.get_one("sales", sale_id)
-    if not sale:
-        flash("Sale not found", "error")
-        return redirect("/pos/history")
-    
-    # Handle items that might be a list or JSON string
-    items = sale.get("items", [])
-    if isinstance(items, str):
-        try:
-            items = json.loads(items)
-        except:
-            items = []
-    elif not isinstance(items, list):
-        items = []
-    
-    items_html = ""
-    for item in items:
-        qty = item.get("quantity") or item.get("qty", 1)
-        price = float(item.get("price", 0))
-        total = qty * price
-        items_html += f'''
-        <tr>
-            <td>{safe_string(item.get("code", "-"))}</td>
-            <td>{safe_string(item.get("description", "-"))}</td>
-            <td style="text-align:center;">{qty}</td>
-            <td style="text-align:right;">{money(price)}</td>
-            <td style="text-align:right;">{money(total)}</td>
-        </tr>
-        '''
-    
-    payment_method = sale.get("payment_method", "cash").upper()
-    method_color = {"CASH": "#10b981", "CARD": "#3b82f6", "ACCOUNT": "#f59e0b"}.get(payment_method, "#888")
-    
-    content = f'''
-    <div style="max-width:500px;margin:0 auto;">
-        <a href="/pos/history" style="color:var(--text-muted);display:block;margin-bottom:15px;">← Back to History</a>
-        
-        <div class="card" style="background:white;color:#000;">
-            <div style="text-align:center;padding-bottom:20px;border-bottom:2px dashed #ccc;margin-bottom:20px;">
-                <h2 style="margin:0;color:#000;">{biz_name}</h2>
-                <p style="color:#666;margin:5px 0;">TAX INVOICE / SLIP</p>
-                <p style="margin:5px 0;"><strong>{sale.get("sale_number", "-")}</strong></p>
-                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {sale.get("created_at", "")[-8:-3] if sale.get("created_at") else ""}</p>
-            </div>
-            
-            <div style="margin-bottom:15px;">
-                <span style="background:{method_color};color:white;padding:4px 12px;border-radius:4px;font-size:12px;">{payment_method}</span>
-                <span style="margin-left:10px;color:#666;">{safe_string(sale.get("customer_name", "Cash Sale"))}</span>
-            </div>
-            
-            <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
-                <thead>
-                    <tr style="border-bottom:1px solid #ddd;">
-                        <th style="text-align:left;padding:8px 0;color:#000;">Code</th>
-                        <th style="text-align:left;padding:8px 0;color:#000;">Description</th>
-                        <th style="text-align:center;padding:8px 0;color:#000;">Qty</th>
-                        <th style="text-align:right;padding:8px 0;color:#000;">Price</th>
-                        <th style="text-align:right;padding:8px 0;color:#000;">Total</th>
-                    </tr>
-                </thead>
-                <tbody style="color:#333;">
-                    {items_html}
-                </tbody>
-            </table>
-            
-            <div style="border-top:2px dashed #ccc;padding-top:15px;">
-                <div style="display:flex;justify-content:space-between;padding:5px 0;color:#666;">
-                    <span>Subtotal</span>
-                    <span>{money(sale.get("subtotal", 0))}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:5px 0;color:#666;">
-                    <span>VAT (15%)</span>
-                    <span>{money(sale.get("vat", 0))}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:24px;font-weight:bold;color:#000;">
-                    <span>TOTAL</span>
-                    <span>{money(sale.get("total", 0))}</span>
-                </div>
-            </div>
-            
-            <div style="text-align:center;margin-top:20px;padding-top:20px;border-top:2px dashed #ccc;color:#666;">
-                <p style="margin:5px 0;">Thank you for your purchase!</p>
-            </div>
-        </div>
-        
-        <div style="margin-top:20px;display:flex;gap:10px;">
-            <button onclick="window.print()" class="btn btn-primary" style="flex:1;">🖨️ Print Slip</button>
-        </div>
-    </div>
-    
-    <style>
-    @media print {{
-        body * {{ visibility: hidden; }}
-        .card, .card * {{ visibility: visible; }}
-        .card {{ position: absolute; left: 0; top: 0; width: 80mm; box-shadow: none !important; }}
-        .btn, a {{ display: none !important; }}
-    }}
-    </style>
-    '''
-    
-    return render_page(f"Sale {sale.get('sale_number', '')}", content, user, "pos")
 
 @app.route("/api/pos/sale", methods=["POST"])
 @login_required
@@ -26267,30 +20264,21 @@ def api_pos_sale():
         
         # Update stock quantities and create Cost of Sales entries
         total_cost = Decimal("0")
-        logger.info(f"[POS DEBUG] Processing {len(items)} items for stock update")
         for item in items:
-            logger.info(f"[POS DEBUG] Item received: {item}")
             stock_id = item.get("stock_id")
             qty_sold = int(item.get("quantity", 0))
             
-            logger.info(f"[POS DEBUG] stock_id={stock_id}, qty_sold={qty_sold}")
-            
             if stock_id:
                 stock_item = db.get_one("stock", stock_id)
-                logger.info(f"[POS DEBUG] Found stock_item: {stock_item.get('code') if stock_item else 'NOT FOUND'}")
                 if stock_item:
                     # Update stock quantity
                     current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
                     new_qty = current_qty - qty_sold  # Allow negative
                     logger.info(f"[POS DEBUG] Updating stock {stock_id}: {current_qty} - {qty_sold} = {new_qty}")
-                    
-                    if qty_sold > 0:
-                        success = db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                        logger.info(f"[POS DEBUG] Stock update result: {success}")
-                        if not success:
-                            logger.error(f"[POS] Failed to update stock {stock_id} - qty was {current_qty}, tried to set {new_qty}")
-                    else:
-                        logger.warning(f"[POS DEBUG] Skipping stock update - qty_sold is 0")
+                    success = db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty})
+                    logger.info(f"[POS DEBUG] Stock update result: {success}")
+                    if not success:
+                        logger.error(f"[POS] Failed to update stock {stock_id} - qty was {current_qty}, tried to set {new_qty}")
                     
                     # Calculate cost of sales
                     cost_price = Decimal(str(stock_item.get("cost") or stock_item.get("cost_price") or 0))
@@ -26347,19 +20335,11 @@ def api_pos_quote():
         customer_name = data.get("customer_name", "")
         total = Decimal(str(data.get("total", 0)))
         
-        # DEBUG LOG
-        logger.info(f"[POS QUOTE] Received customer_id: '{customer_id}' name: '{customer_name}'")
-        
         if not items:
             return jsonify({"success": False, "error": "No items in cart"})
         
-        if not customer_name:
+        if not customer_id:
             return jsonify({"success": False, "error": "Customer required for quote"})
-        
-        # Use safe_uuid to handle invalid UUIDs (returns None if invalid)
-        safe_customer_id = safe_uuid(customer_id)
-        
-        logger.info(f"[POS QUOTE] UUID valid: {safe_customer_id is not None}, using: {safe_customer_id}")
         
         # Calculate VAT
         vat = (total * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
@@ -26369,22 +20349,24 @@ def api_pos_quote():
         existing = db.get("quotes", {"business_id": biz_id}) if biz_id else []
         quote_num = f"Q-{len(existing) + 1:05d}"
         
-        # Create quote using RecordFactory
-        user = Auth.get_current_user()
-        quote = RecordFactory.quote(
-            business_id=biz_id,
-            customer_id=safe_customer_id,
-            customer_name=customer_name,
-            items=items,
-            quote_number=quote_num,
-            date=today(),
-            subtotal=float(subtotal),
-            vat=float(vat),
-            total=float(total),
-            status="draft",
-            created_by=user.get("id") if user else None
-        )
-        quote_id = quote["id"]
+        # Create quote
+        quote_id = generate_id()
+        quote = {
+            "id": quote_id,
+            "business_id": biz_id,
+            "quote_number": quote_num,
+            "date": today(),
+            "customer_id": customer_id,
+            "customer_name": customer_name,
+            "items": json.dumps(items),
+            "subtotal": float(subtotal),
+            "vat": float(vat),
+            "total": float(total),
+            "status": "draft",
+            "valid_days": 14,
+            "created_at": now(),
+            "created_by": user.get("id") if user else None
+        }
         
         success, err = db.save("quotes", quote)
         
@@ -26404,512 +20386,10 @@ def api_pos_quote():
         return jsonify({"success": False, "error": str(e)})
 
 
-@app.route("/api/pos/quick-quote", methods=["POST"])
-@login_required
-def api_pos_quick_quote():
-    """
-    Create a quote on-the-fly without needing stock items or saved customer.
-    Customer is created if not exists, items are custom (non-stock).
-    If customer_id is provided, uses existing customer.
-    """
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    try:
-        data = request.get_json()
-        customer_data = data.get("customer", {})
-        items = data.get("items", [])
-        existing_customer_id = data.get("customer_id")  # Pre-selected customer
-        
-        customer_name = customer_data.get("name", "").strip()
-        customer_phone = customer_data.get("phone", "").strip()
-        customer_email = customer_data.get("email", "").strip()
-        customer_vat = customer_data.get("vat_number", "").strip()
-        customer_address = customer_data.get("address", "").strip()
-        
-        if not items:
-            return jsonify({"success": False, "error": "No items in quote"})
-        
-        # Use existing customer if provided
-        if existing_customer_id:
-            customer_id = existing_customer_id
-            # Get customer name if not provided
-            if not customer_name:
-                cust = db.get_one("customers", existing_customer_id)
-                customer_name = cust.get("name", "Customer") if cust else "Customer"
-        else:
-            if not customer_name:
-                return jsonify({"success": False, "error": "Customer name required"})
-            
-            # Check if customer exists by name/phone, create if not
-            existing_customers = db.get("customers", {"business_id": biz_id}) or []
-            customer_id = None
-            
-            for c in existing_customers:
-                if c.get("name", "").lower() == customer_name.lower():
-                    customer_id = c.get("id")
-                    # Update VAT if provided and not already set
-                    if customer_vat and not c.get("vat_number"):
-                        db.update("customers", customer_id, {"vat_number": customer_vat})
-                    break
-                if customer_phone and c.get("phone") == customer_phone:
-                    customer_id = c.get("id")
-                    customer_name = c.get("name", customer_name)
-                    break
-            
-            # Create customer if not found
-            if not customer_id:
-                new_customer = RecordFactory.customer(
-                    business_id=biz_id,
-                    name=customer_name,
-                    phone=customer_phone,
-                    email=customer_email,
-                    vat_number=customer_vat,
-                    address=customer_address
-                )
-                customer_id = new_customer["id"]
-                db.save("customers", new_customer)
-                logger.info(f"[QUICK QUOTE] Created new customer: {customer_name}")
-        
-        # Calculate totals - items come with excl VAT prices
-        subtotal = Decimal("0")
-        quote_items = []
-        
-        for item in items:
-            desc = item.get("description", "Item")
-            qty = Decimal(str(item.get("quantity", 1)))
-            price = Decimal(str(item.get("price", 0)))  # Price excl VAT
-            line_total = qty * price
-            subtotal += line_total
-            
-            quote_items.append({
-                "code": "CUSTOM",
-                "description": desc,
-                "quantity": float(qty),
-                "price": float(price),
-                "total": float(line_total)
-            })
-        
-        vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
-        total = subtotal + vat
-        
-        # Generate quote number
-        existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
-        quote_num = f"Q-{len(existing_quotes) + 1:05d}"
-        
-        # Create quote
-        quote = RecordFactory.quote(
-            business_id=biz_id,
-            customer_id=customer_id,
-            customer_name=customer_name,
-            items=quote_items,
-            quote_number=quote_num,
-            date=today(),
-            subtotal=float(subtotal),
-            vat=float(vat),
-            total=float(total),
-            status="draft",
-            created_by=user.get("id") if user else None
-        )
-        quote_id = quote["id"]
-        
-        success, err = db.save("quotes", quote)
-        
-        if success:
-            logger.info(f"[QUICK QUOTE] Created {quote_num} for {customer_name}: R{total:.2f}")
-            AuditLog.log("CREATE", "quotes", quote_id, details=f"Quick quote - {customer_name}")
-            return jsonify({
-                "success": True,
-                "quote_id": quote_id,
-                "quote_number": quote_num,
-                "customer_id": customer_id
-            })
-        else:
-            return jsonify({"success": False, "error": str(err)})
-            
-    except Exception as e:
-        logger.error(f"[QUICK QUOTE] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/pos/quick-po", methods=["POST"])
-@login_required
-def api_pos_quick_po():
-    """
-    Create a PO on-the-fly without needing stock items or saved supplier.
-    Supplier is created if not exists, items are custom (non-stock).
-    If supplier_id is provided, uses existing supplier.
-    """
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    try:
-        data = request.get_json()
-        supplier_data = data.get("supplier", {})
-        items = data.get("items", [])
-        notes = data.get("notes", "")
-        existing_supplier_id = data.get("supplier_id")  # Pre-selected supplier
-        
-        supplier_name = supplier_data.get("name", "").strip()
-        supplier_phone = supplier_data.get("phone", "").strip()
-        supplier_email = supplier_data.get("email", "").strip()
-        supplier_vat = supplier_data.get("vat_number", "").strip()
-        
-        if not items:
-            return jsonify({"success": False, "error": "No items in PO"})
-        
-        # Use existing supplier if provided
-        if existing_supplier_id:
-            supplier_id = existing_supplier_id
-            # Get supplier name if not provided
-            if not supplier_name:
-                sup = db.get_one("suppliers", existing_supplier_id)
-                supplier_name = sup.get("name", "Supplier") if sup else "Supplier"
-        else:
-            if not supplier_name:
-                return jsonify({"success": False, "error": "Supplier name required"})
-            
-            # Check if supplier exists by name/phone, create if not
-            existing_suppliers = db.get("suppliers", {"business_id": biz_id}) or []
-            supplier_id = None
-            
-            for s in existing_suppliers:
-                if s.get("name", "").lower() == supplier_name.lower():
-                    supplier_id = s.get("id")
-                    # Update VAT if provided and not already set
-                    if supplier_vat and not s.get("vat_number"):
-                        db.update("suppliers", supplier_id, {"vat_number": supplier_vat})
-                    break
-                if supplier_phone and s.get("phone") == supplier_phone:
-                    supplier_id = s.get("id")
-                    supplier_name = s.get("name", supplier_name)
-                    break
-            
-            # Create supplier if not found
-            if not supplier_id:
-                new_supplier = RecordFactory.supplier(
-                    business_id=biz_id,
-                    name=supplier_name,
-                    phone=supplier_phone,
-                    email=supplier_email,
-                    vat_number=supplier_vat
-                )
-                supplier_id = new_supplier["id"]
-                db.save("suppliers", new_supplier)
-                logger.info(f"[QUICK PO] Created new supplier: {supplier_name}")
-        
-        # Build PO items (no prices - PO is just a request)
-        po_items = []
-        total_qty = 0
-        
-        for item in items:
-            desc = item.get("description", "Item")
-            qty = int(item.get("qty", 1))
-            total_qty += qty
-            
-            po_items.append({
-                "code": "CUSTOM",
-                "description": desc,
-                "qty": qty
-            })
-        
-        # Generate PO number
-        existing_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
-        po_num = f"PO-{len(existing_pos) + 1:05d}"
-        
-        # Create PO
-        po = {
-            "id": generate_id(),
-            "business_id": biz_id,
-            "supplier_id": supplier_id,
-            "supplier_name": supplier_name,
-            "po_number": po_num,
-            "date": today(),
-            "items": po_items,
-            "notes": notes,
-            "status": "draft",
-            "created_at": now(),
-            "created_by": user.get("id") if user else None
-        }
-        
-        success, err = db.save("purchase_orders", po)
-        
-        if success:
-            logger.info(f"[QUICK PO] Created {po_num} for {supplier_name}: {total_qty} items")
-            AuditLog.log("CREATE", "purchase_orders", po["id"], details=f"Quick PO - {supplier_name}")
-            return jsonify({
-                "success": True,
-                "po_id": po["id"],
-                "po_number": po_num,
-                "supplier_id": supplier_id
-            })
-        else:
-            return jsonify({"success": False, "error": str(err)})
-            
-    except Exception as e:
-        logger.error(f"[QUICK PO] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/pos/invoice", methods=["POST"])
-@login_required
-def api_pos_invoice():
-    """Create invoice from POS cart"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    try:
-        data = request.get_json()
-        items = data.get("items", [])
-        customer_id = data.get("customer_id", "")
-        customer_name = data.get("customer_name", "")
-        total = Decimal(str(data.get("total", 0)))
-        
-        if not items:
-            return jsonify({"success": False, "error": "No items in cart"})
-        
-        # Validate customer_id using safe_uuid
-        safe_customer_id = safe_uuid(customer_id)
-        if not safe_customer_id:
-            return jsonify({"success": False, "error": "Please select a valid customer from the list"})
-        
-        # Calculate VAT
-        vat = (total * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-        subtotal = total - vat
-        
-        # Generate invoice number
-        existing = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        inv_num = f"INV-{len(existing) + 1:05d}"
-        
-        # Create invoice
-        user = Auth.get_current_user()
-        invoice = RecordFactory.invoice(
-            business_id=biz_id,
-            customer_id=safe_customer_id,
-            customer_name=customer_name,
-            items=items,
-            invoice_number=inv_num,
-            date=today(),
-            due_date=today(),
-            subtotal=float(subtotal),
-            vat=float(vat),
-            total=float(total),
-            status="outstanding",
-            payment_method="account",
-            created_by=user.get("id", "") if user else ""
-        )
-        invoice_id = invoice["id"]
-        
-        success, err = db.save("invoices", invoice)
-        
-        if not success:
-            return jsonify({"success": False, "error": str(err)})
-        
-        # Update stock quantities
-        for item in items:
-            stock_id = item.get("stock_id")
-            qty_sold = int(item.get("quantity", 0))
-            
-            if stock_id and qty_sold > 0:
-                stock_item = db.get_one("stock", stock_id)
-                if stock_item:
-                    current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                    new_qty = current_qty - qty_sold
-                    db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                    logger.info(f"[POS INV] Stock {stock_id}: {current_qty} - {qty_sold} = {new_qty}")
-        
-        # Update customer balance
-        customer = db.get_one("customers", customer_id)
-        if customer:
-            new_balance = float(customer.get("balance", 0)) + float(total)
-            db.update("customers", customer_id, {"balance": new_balance})
-        
-        # Create journal entries (Debit Debtors, Credit Sales + VAT)
-        try:
-            create_journal_entry(biz_id, today(), f"Invoice {inv_num} - {customer_name}", inv_num, [
-                {"account_code": "1200", "debit": float(total), "credit": 0},
-                {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
-                {"account_code": "2100", "debit": 0, "credit": float(vat)},
-            ])
-        except Exception as je:
-            logger.warning(f"[POS INV] Journal entry failed: {je}")
-        
-        logger.info(f"[POS] Invoice {inv_num} created: R{total:.2f}")
-        AuditLog.log("CREATE", "invoices", invoice_id, details=f"Invoice from POS - {customer_name}")
-        
-        return jsonify({
-            "success": True,
-            "invoice_id": invoice_id,
-            "invoice_number": inv_num
-        })
-            
-    except Exception as e:
-        logger.error(f"[POS] Invoice error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/pos/customer-invoices")
-@login_required
-def api_pos_customer_invoices():
-    """Get invoices AND sales for a customer (for credit note selection)"""
-    
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    customer_id = request.args.get("customer_id", "")
-    
-    if not customer_id:
-        return jsonify({"success": False, "error": "Customer ID required"})
-    
-    try:
-        # Get invoices
-        all_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer_id]
-        
-        # Also get sales for this customer
-        all_sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        sales = [s for s in all_sales if s.get("customer_id") == customer_id]
-        
-        # Combine and sort
-        combined = []
-        
-        for inv in invoices:
-            combined.append({
-                "id": inv.get("id"),
-                "invoice_number": inv.get("invoice_number", "-"),
-                "date": inv.get("date", "-"),
-                "total": float(inv.get("total", 0)),
-                "status": inv.get("status", "outstanding"),
-                "type": "invoice"
-            })
-        
-        for sale in sales:
-            combined.append({
-                "id": sale.get("id"),
-                "invoice_number": sale.get("sale_number", "-"),
-                "date": sale.get("date", "-"),
-                "total": float(sale.get("total", 0)),
-                "status": "paid",  # Sales are immediate payment
-                "type": "sale",
-                "payment_method": sale.get("payment_method", "cash")
-            })
-        
-        # Sort by date descending
-        combined = sorted(combined, key=lambda x: x.get("date", ""), reverse=True)[:20]
-        
-        return jsonify({"success": True, "invoices": combined})
-        
-    except Exception as e:
-        logger.error(f"[POS] Customer invoices error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/pos/credit-note", methods=["POST"])
-@login_required
-def api_pos_credit_note():
-    """Create credit note from POS cart"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    try:
-        data = request.get_json()
-        items = data.get("items", [])
-        customer_id = data.get("customer_id", "")
-        customer_name = data.get("customer_name", "")
-        total = Decimal(str(data.get("total", 0)))
-        
-        if not items:
-            return jsonify({"success": False, "error": "No items in cart"})
-        
-        if not customer_id:
-            return jsonify({"success": False, "error": "Customer required for credit note"})
-        
-        # Calculate VAT
-        vat = (total * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-        subtotal = total - vat
-        
-        # Generate credit note number
-        existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
-        cn_num = f"CN-{len(existing) + 1:05d}"
-        
-        # Create credit note
-        cn_id = generate_id()
-        credit_note = {
-            "id": cn_id,
-            "business_id": biz_id,
-            "credit_note_number": cn_num,
-            "date": today(),
-            "customer_id": customer_id,
-            "customer_name": customer_name,
-            "invoice_id": None,  # Direct credit note, not linked to invoice
-            "items": json.dumps(items),
-            "subtotal": float(subtotal),
-            "vat": float(vat),
-            "total": float(total),
-            "reason": "POS Credit Note",
-            "created_at": now()
-        }
-        
-        success, err = db.save("credit_notes", credit_note)
-        
-        if not success:
-            return jsonify({"success": False, "error": str(err)})
-        
-        # Return stock to inventory
-        for item in items:
-            stock_id = item.get("stock_id")
-            qty_returned = int(item.get("quantity", 0))
-            
-            if stock_id and qty_returned > 0:
-                stock_item = db.get_one("stock", stock_id)
-                if stock_item:
-                    current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                    new_qty = current_qty + qty_returned
-                    db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                    logger.info(f"[POS CN] Stock {stock_id}: {current_qty} + {qty_returned} = {new_qty}")
-        
-        # Update customer balance (reduce it)
-        customer = db.get_one("customers", customer_id)
-        if customer:
-            new_balance = float(customer.get("balance", 0)) - float(total)
-            db.update("customers", customer_id, {"balance": new_balance})
-        
-        # Create journal entries (reverse of invoice)
-        # Credit Debtors, Debit Sales + VAT
-        try:
-            create_journal_entry(biz_id, today(), f"Credit Note {cn_num} - {customer_name}", cn_num, [
-                {"account_code": "1200", "debit": 0, "credit": float(total)},  # Credit Debtors
-                {"account_code": "4000", "debit": float(subtotal), "credit": 0},  # Debit Sales
-                {"account_code": "2100", "debit": float(vat), "credit": 0},  # Debit VAT
-            ])
-        except Exception as je:
-            logger.warning(f"[POS CN] Journal entry failed: {je}")
-        
-        logger.info(f"[POS] Credit Note {cn_num} created: -R{total:.2f}")
-        AuditLog.log("CREATE", "credit_notes", cn_id, details=f"Credit Note from POS - {customer_name}")
-        
-        return jsonify({
-            "success": True,
-            "credit_note_id": cn_id,
-            "credit_note_number": cn_num
-        })
-            
-    except Exception as e:
-        logger.error(f"[POS] Credit note error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
 @app.route("/api/pos/purchase-order", methods=["POST"])
 @login_required
 def api_pos_purchase_order():
-    """Create purchase order from POS cart - NO PRICES"""
+    """Create purchase order from POS cart"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -26918,8 +20398,8 @@ def api_pos_purchase_order():
     try:
         data = request.get_json()
         items = data.get("items", [])
-        supplier_id = data.get("supplier_id", "")
         supplier_name = data.get("supplier_name", "")
+        total = Decimal(str(data.get("total", 0)))
         
         if not items:
             return jsonify({"success": False, "error": "No items in cart"})
@@ -26927,37 +20407,30 @@ def api_pos_purchase_order():
         if not supplier_name:
             return jsonify({"success": False, "error": "Supplier name required"})
         
-        # Use provided supplier_id or find/create supplier
-        if not supplier_id:
-            suppliers = db.get("suppliers", {"business_id": biz_id, "name": supplier_name}) if biz_id else []
-            if suppliers:
-                supplier_id = suppliers[0].get("id")
-            else:
-                # Create new supplier
-                supplier_id = generate_id()
-                db.save("suppliers", {
-                    "id": supplier_id,
-                    "business_id": biz_id,
-                    "name": supplier_name,
-                    "balance": 0,
-                    "created_at": now()
-                })
+        # Find or create supplier
+        suppliers = db.get("suppliers", {"business_id": biz_id, "name": supplier_name}) if biz_id else []
+        if suppliers:
+            supplier_id = suppliers[0].get("id")
+        else:
+            # Create new supplier
+            supplier_id = generate_id()
+            db.save("suppliers", {
+                "id": supplier_id,
+                "business_id": biz_id,
+                "name": supplier_name,
+                "balance": 0,
+                "created_at": now()
+            })
+        
+        # Calculate VAT
+        vat = (total * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
+        subtotal = total - vat
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
         po_num = f"PO-{len(existing) + 1:05d}"
         
-        # Clean items - remove any prices that might have snuck in
-        clean_items = []
-        for item in items:
-            clean_items.append({
-                "stock_id": item.get("stock_id"),
-                "code": item.get("code", ""),
-                "description": item.get("description", ""),
-                "qty": item.get("qty") or item.get("quantity", 1)
-            })
-        
-        # Create purchase order - NO PRICES
+        # Create purchase order
         po_id = generate_id()
         po = {
             "id": po_id,
@@ -26966,15 +20439,19 @@ def api_pos_purchase_order():
             "date": today(),
             "supplier_id": supplier_id,
             "supplier_name": supplier_name,
-            "items": json.dumps(clean_items),
+            "items": json.dumps(items),
+            "subtotal": float(subtotal),
+            "vat": float(vat),
+            "total": float(total),
             "status": "draft",
-            "created_at": now()
+            "created_at": now(),
+            "created_by": user.get("id") if user else None
         }
         
         success, err = db.save("purchase_orders", po)
         
         if success:
-            logger.info(f"[POS] PO {po_num} created for {supplier_name}")
+            logger.info(f"[POS] PO {po_num} created: R{total:.2f}")
             AuditLog.log("CREATE", "purchase_orders", po_id, details=f"PO from POS - {supplier_name}")
             return jsonify({
                 "success": True,
@@ -27003,136 +20480,30 @@ def api_customer_quick_add():
         
         data = request.get_json()
         name = data.get("name", "").strip()
-        phone = data.get("phone", "").strip()
-        email = data.get("email", "").strip()
-        vat_number = data.get("vat_number", "").strip()
-        address = data.get("address", "").strip()
         
         if not name:
             return jsonify({"success": False, "error": "Name required"})
         
-        user = Auth.get_current_user()
-        customer = RecordFactory.customer(
-            business_id=biz_id,
-            name=name,
-            phone=phone,
-            email=email,
-            vat_number=vat_number,
-            address=address,
-            created_by=user.get("id", "") if user else ""
-        )
-        customer_id = customer["id"]
+        customer_id = generate_id()
+        customer = {
+            "id": customer_id,
+            "business_id": biz_id,
+            "name": name,
+            "balance": 0,
+            "created_at": now()
+        }
         
         success, err = db.save("customers", customer)
         
         if success:
             logger.info(f"[QUICK ADD] Customer created: {name}")
-            return jsonify({"success": True, "customer_id": customer_id, "id": customer_id, "name": name})
+            return jsonify({"success": True, "id": customer_id, "name": name})
         else:
             logger.error(f"[QUICK ADD] Failed: {err}")
             return jsonify({"success": False, "error": str(err)})
             
     except Exception as e:
         logger.error(f"[QUICK ADD] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/customer/<customer_id>")
-@login_required
-def api_customer_get(customer_id):
-    """Get customer details"""
-    
-    try:
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        customers = db.get("customers", {"business_id": biz_id, "id": customer_id}) if biz_id else []
-        
-        if customers:
-            return jsonify({"success": True, "customer": customers[0]})
-        else:
-            return jsonify({"success": False, "error": "Customer not found"})
-            
-    except Exception as e:
-        logger.error(f"[API] Customer get error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/customer/<customer_id>/update", methods=["POST"])
-@login_required
-def api_customer_update(customer_id):
-    """Update customer details"""
-    
-    try:
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        data = request.get_json()
-        
-        updates = {
-            "name": data.get("name", "").strip(),
-            "phone": data.get("phone", "").strip(),
-            "email": data.get("email", "").strip(),
-            "vat_number": data.get("vat_number", "").strip(),
-            "address": data.get("address", "").strip()
-        }
-        
-        if not updates["name"]:
-            return jsonify({"success": False, "error": "Name is required"})
-        
-        success = db.update("customers", customer_id, updates, biz_id)
-        
-        if success:
-            logger.info(f"[API] Customer updated: {customer_id}")
-            return jsonify({"success": True})
-        else:
-            return jsonify({"success": False, "error": "Update failed"})
-            
-    except Exception as e:
-        logger.error(f"[API] Customer update error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/supplier/quick-add", methods=["POST"])
-@login_required
-def api_supplier_quick_add():
-    """Quick add supplier from POS"""
-    
-    try:
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        data = request.get_json()
-        name = data.get("name", "").strip()
-        
-        if not name:
-            return jsonify({"success": False, "error": "Name required"})
-        
-        user = Auth.get_current_user()
-        supplier = RecordFactory.supplier(
-            business_id=biz_id,
-            name=name,
-            created_by=user.get("id", "") if user else ""
-        )
-        supplier_id = supplier["id"]
-        
-        success, err = db.save("suppliers", supplier)
-        
-        if success:
-            logger.info(f"[QUICK ADD] Supplier created: {name}")
-            return jsonify({"success": True, "id": supplier_id, "name": name})
-        else:
-            logger.error(f"[QUICK ADD] Supplier failed: {err}")
-            return jsonify({"success": False, "error": str(err)})
-            
-    except Exception as e:
-        logger.error(f"[QUICK ADD] Supplier error: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 
@@ -27257,23 +20628,17 @@ def import_page():
                     <optgroup label="Payroll">
                         <option value="employees">Employees</option>
                     </optgroup>
-                    <optgroup label="Sales">
-                        <option value="quotes">Quotes / Quotations</option>
-                        <option value="quote_items">Quote Line Items</option>
-                        <option value="invoices">Sales Invoices</option>
-                        <option value="payments">Customer Payments</option>
-                    </optgroup>
-                    <optgroup label="Purchases">
-                        <option value="expenses">Expenses</option>
-                        <option value="bills">Supplier Bills / Invoices</option>
-                    </optgroup>
-                    <optgroup label="Jobs">
-                        <option value="job_cards">Job Cards</option>
-                        <option value="job_materials">Job Materials</option>
-                        <option value="job_labour">Job Labour / Timesheets</option>
+                    <optgroup label="Outstanding Transactions">
+                        <option value="outstanding_invoices">Outstanding Invoices (Debtors)</option>
+                        <option value="outstanding_bills">Outstanding Bills (Creditors)</option>
                     </optgroup>
                     <optgroup label="Banking">
                         <option value="bank_transactions">Bank Transactions</option>
+                    </optgroup>
+                    <optgroup label="Advanced">
+                        <option value="price_lists">Customer Price Lists</option>
+                        <option value="fixed_assets">Fixed Assets</option>
+                        <option value="jobs">Jobs / Projects</option>
                     </optgroup>
                 </select>
                 <small id="importHelp" style="color:var(--text-muted);display:block;margin-top:8px;"></small>
@@ -27361,48 +20726,13 @@ def import_page():
         const progress = document.getElementById('importProgress');
         const bar = document.getElementById('progressBar');
         const text = document.getElementById('progressText');
-
-        // Auto-save any edits before importing
-        const inputs = document.querySelectorAll('#editTable input[type="text"]');
-        if (inputs.length > 0) {
-            text.textContent = 'Saving edits...';
-            progress.style.display = 'block';
-            bar.style.width = '10%';
-            bar.style.background = 'var(--primary)';
-
-            const edits = {};
-            inputs.forEach(input => {
-                const row = input.dataset.row;
-                const col = input.dataset.col;
-                if (!edits[row]) edits[row] = {};
-                edits[row][col] = input.value;
-            });
-
-            try {
-                const response = await fetch('/api/import/save-edits', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({session_id: sessionId, edits: edits})
-                });
-                const data = await response.json();
-                if (!data.success) {
-                    text.innerHTML = ' Error saving edits: ' + data.error;
-                    bar.style.background = 'var(--red)';
-                    return;
-                }
-            } catch (err) {
-                text.innerHTML = ' Connection error while saving edits';
-                bar.style.background = 'var(--red)';
-                return;
-            }
-        }
-
+        
         progress.style.display = 'block';
         bar.style.width = '0%';
         bar.style.background = 'var(--green)';
         window._firstImportError = null;
         window._importType = document.getElementById('importType')?.value || 'stock';
-
+        
         const batchSize = 100;
         const totalBatches = Math.ceil(totalRows / batchSize);
         let imported = 0;
@@ -27453,25 +20783,15 @@ def import_page():
             'customers': '/customers',
             'suppliers': '/suppliers',
             'stock': '/stock',
-            'employees': '/payroll',
+            'employees': '/employees',
             'chart_of_accounts': '/accounts',
             'opening_balances': '/reports',
             'outstanding_invoices': '/invoices',
             'outstanding_bills': '/expenses',
             'bank_transactions': '/banking',
-            'jobs': '/jobs',
-            'job_cards': '/jobs',
-            'quotes': '/quotes',
-            'invoices': '/invoices',
-            'expenses': '/expenses',
-            'payments': '/invoices',
-            'receipts': '/invoices',
-            'quote_items': '/quotes',
-            'job_materials': '/jobs',
-            'job_labour': '/jobs',
-            'bills': '/expenses'
+            'jobs': '/jobs'
         };
-        const redirectUrl = redirectMap[window._importType] || '/';
+        const redirectUrl = redirectMap[window._importType] || '/dashboard';
         
         // Suggest next imports for better reports
         const nextImportSuggestions = {
@@ -27480,12 +20800,7 @@ def import_page():
             'stock': 'Your stock is ready! Try the <a href="/reports/stock-valuation" style="color:#10b981;">Stock Valuation Report</a>',
             'chart_of_accounts': 'Now import <a href="/import" style="color:#10b981;">Opening Balances</a> to run Trial Balance',
             'opening_balances': 'Run your <a href="/reports/trial-balance" style="color:#10b981;">Trial Balance</a> now!',
-            'employees': 'Ready for <a href="/payroll" style="color:#10b981;">Payroll</a>!',
-            'quotes': 'View your quotes at <a href="/quotes" style="color:#10b981;">Quotes</a>',
-            'invoices': 'View invoices at <a href="/invoices" style="color:#10b981;">Invoices</a>',
-            'expenses': 'Track expenses at <a href="/expenses" style="color:#10b981;">Expenses</a>',
-            'job_cards': 'Manage jobs at <a href="/jobs" style="color:#10b981;">Jobs</a>',
-            'payments': 'Payments linked to invoices!'
+            'employees': 'Ready for <a href="/payroll" style="color:#10b981;">Payroll</a>!'
         };
         const nextSuggestion = nextImportSuggestions[window._importType] || '';
         
@@ -27566,19 +20881,14 @@ def import_page():
     async function saveEdits(sessionId) {
         const inputs = document.querySelectorAll('#editTable input[type="text"]');
         const edits = {};
-
+        
         inputs.forEach(input => {
             const row = input.dataset.row;
             const col = input.dataset.col;
             if (!edits[row]) edits[row] = {};
             edits[row][col] = input.value;
         });
-
-        const saveBtn = event.target;
-        const originalText = saveBtn.textContent;
-        saveBtn.textContent = 'Saving...';
-        saveBtn.disabled = true;
-
+        
         try {
             const response = await fetch('/api/import/save-edits', {
                 method: 'POST',
@@ -27587,22 +20897,12 @@ def import_page():
             });
             const data = await response.json();
             if (data.success) {
-                saveBtn.textContent = ' Saved!';
-                saveBtn.style.background = 'var(--green)';
-                setTimeout(() => {
-                    saveBtn.textContent = originalText;
-                    saveBtn.style.background = '';
-                    saveBtn.disabled = false;
-                }, 2000);
+                alert('Edits saved!');
             } else {
                 alert('Error: ' + data.error);
-                saveBtn.textContent = originalText;
-                saveBtn.disabled = false;
             }
         } catch (err) {
             alert('Connection error');
-            saveBtn.textContent = originalText;
-            saveBtn.disabled = false;
         }
     }
     </script>
@@ -27636,63 +20936,18 @@ def api_import_analyze():
         # Parse CSV
         reader = csv.reader(io.StringIO(content))
         rows = list(reader)
-        
-        # === SMART HEADER DETECTION ===
-        # Many accounting exports have report titles in first few rows
-        # Look for the actual header row (usually has "Name", "Balance", "Phone", etc)
-        header_keywords = ["name", "balance", "phone", "telephone", "email", "address", "customer", "supplier", 
-                          "code", "description", "price", "qty", "quantity", "amount", "total", "date",
-                          "account", "debit", "credit", "category", "contact"]
-        
-        # Patterns that indicate a title/preamble row (NOT a header)
-        title_patterns = ["listing", "report", "pty", "ltd", "vat no", "page:", "date:", "printed", 
-                         "generated", "exported", "company", "trading as", "t/a", "reg no"]
-        
-        header_row_idx = 0
-        best_score = 0
-        
-        for idx, row in enumerate(rows[:15]):  # Check first 15 rows
-            row_text = " ".join(str(cell).lower().strip() for cell in row)
-            row_lower = [str(cell).lower().strip() for cell in row]
-            
-            # Skip if it looks like a title/preamble row
-            is_title = any(pattern in row_text for pattern in title_patterns)
-            if is_title:
-                continue
-            
-            # Skip mostly empty rows
-            non_empty = [c for c in row_lower if c]
-            if len(non_empty) < 2:
-                continue
-            
-            # Count how many header keywords match
-            matches = sum(1 for kw in header_keywords if any(kw == cell or (len(kw) > 3 and kw in cell) for cell in row_lower))
-            
-            # The row with the MOST matches is likely the header
-            if matches > best_score:
-                best_score = matches
-                header_row_idx = idx
-        
-        logger.info(f"[IMPORT] Detected header row at index {header_row_idx} (score={best_score}): {rows[header_row_idx][:5] if header_row_idx < len(rows) else []}")
-        
-        headers = [str(h).strip() for h in rows[header_row_idx]] if rows else []
+        headers = rows[0] if rows else []
         
         # Ensure headers are strings (not lists)
         headers = [str(h) if not isinstance(h, str) else h for h in headers]
         
-        data_rows = rows[header_row_idx + 1:] if len(rows) > header_row_idx + 1 else []
+        data_rows = rows[1:] if len(rows) > 1 else []
         
-        # Helper function to safely get cell value as string - FIXED for nested lists
+        # Helper function to safely get cell value as string
         def cell_str(cell):
-            """Convert any cell value to a clean string"""
-            if cell is None:
-                return ""
-            if isinstance(cell, (list, tuple)):
-                # Handle nested lists/tuples by recursively taking first element
-                while isinstance(cell, (list, tuple)) and cell:
-                    cell = cell[0]
-                return str(cell).strip() if cell is not None else ""
-            return str(cell).strip()
+            if isinstance(cell, list):
+                return str(cell[0]).strip() if cell else ""
+            return str(cell).strip() if cell else ""
         
         # Sanitize all data rows - ensure every cell is a string
         sanitized_rows = []
@@ -27700,61 +20955,20 @@ def api_import_analyze():
             sanitized_rows.append([cell_str(cell) for cell in row])
         data_rows = sanitized_rows
         
-        # FILTER OUT FOOTER/JUNK ROWS
-        # Common patterns in report footers that should be skipped
-        footer_patterns = [
-            "report total", "total:", "end of report", "*** end", "page total",
-            "grand total", "subtotal", "sub total", "totals:", "total customers",
-            "total suppliers", "total items", "total stock", "stock value",
-            "printed by", "printed on", "generated", "page ", "report date"
-        ]
-        
-        filtered_rows = []
-        for row in data_rows:
-            # Check first cell for footer patterns
-            first_cell = row[0].lower().strip() if row else ""
-            is_footer = any(pattern in first_cell for pattern in footer_patterns)
-            
-            # Also check if "total" appears anywhere in first cell
-            if "total" in first_cell:
-                is_footer = True
-            
-            # Also skip rows that start with "***" or are mostly empty
-            if first_cell.startswith("***"):
-                is_footer = True
-            
-            # Skip empty rows
-            if not any(cell.strip() for cell in row):
-                is_footer = True
-            
-            if not is_footer:
-                filtered_rows.append(row)
-            else:
-                logger.info(f"[IMPORT] Skipping footer row: {row[:3]}")
-        
-        data_rows = filtered_rows
-        logger.info(f"[IMPORT] After footer filter: {len(data_rows)} rows (removed {len(sanitized_rows) - len(filtered_rows)} footer rows)")
-        
-        
         # Define required fields per type
         field_specs = {
-            "customers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name"]},
-            "suppliers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "fax"]},
-            "stock": {"required": ["description"], "optional": ["code", "cost_price", "selling_price", "quantity", "category", "unit"]},
-            "employees": {"required": ["name"], "optional": ["code", "id_number", "position", "role", "department", "salary", "rate", "start_date", "bank", "account", "branch", "phone", "email", "status"]},
+            "customers": {"required": ["name"], "optional": ["phone", "email", "address", "balance", "vat_number"]},
+            "suppliers": {"required": ["name"], "optional": ["phone", "email", "address", "balance", "vat_number"]},
+            "stock": {"required": ["description"], "optional": ["code", "cost_price", "selling_price", "quantity", "category", "supplier_code"]},
+            "employees": {"required": ["name"], "optional": ["id_number", "phone", "email", "rate", "hours", "bank", "account", "branch"]},
             "opening_balances": {"required": ["account"], "optional": ["code", "amount", "debit", "credit", "type"]},
             "chart_of_accounts": {"required": ["name"], "optional": ["code", "type", "parent"]},
+            "outstanding_invoices": {"required": ["customer", "amount"], "optional": ["invoice_no", "date", "balance", "due_date"]},
+            "outstanding_bills": {"required": ["supplier", "amount"], "optional": ["invoice_no", "date", "balance", "due_date"]},
             "bank_transactions": {"required": ["date", "amount"], "optional": ["description", "reference", "debit", "credit"]},
-            "job_cards": {"required": ["job_number"], "optional": ["date", "customer_id", "customer_name", "job_type", "description", "estimated_hours", "material_cost", "labour_cost", "total_cost", "selling_price", "status", "completion_date", "invoice_ref", "notes"]},
-            "quotes": {"required": ["customer_name"], "optional": ["quote_number", "date", "subtotal", "vat", "total", "status", "expiry_date", "contact", "converted_to"]},
-            "invoices": {"required": ["customer_name"], "optional": ["invoice_no", "date", "description", "subtotal", "vat", "total", "status", "paid_date", "paid_amount"]},
-            "bills": {"required": ["supplier_name"], "optional": ["number", "date", "due_date", "total", "balance", "status"]},
-            "expenses": {"required": ["description"], "optional": ["expense_number", "date", "supplier", "supplier_id", "supplier_name", "category", "amount", "vat", "net", "total", "reference", "status", "paid_date"]},
-            "receipts": {"required": ["customer_name"], "optional": ["payment_number", "date", "customer_id", "invoice_id", "invoice_number", "amount", "method", "reference"]},
-            "payments": {"required": ["customer_name"], "optional": ["payment_number", "date", "customer_id", "invoice_id", "invoice_number", "amount", "method", "reference"]},
-            "quote_items": {"required": ["quote_id"], "optional": ["line_number", "item_code", "description", "qty", "unit_price", "line_total"]},
-            "job_materials": {"required": ["job_card_id"], "optional": ["item_code", "description", "qty", "unit_cost", "line_total"]},
-            "job_labour": {"required": ["job_card_id"], "optional": ["date", "employee_id", "employee_name", "hours", "rate", "cost"]}
+            "price_lists": {"required": ["customer", "code"], "optional": ["price", "discount"]},
+            "fixed_assets": {"required": ["description"], "optional": ["cost", "purchase_date", "depreciation_rate", "category"]},
+            "jobs": {"required": ["name"], "optional": ["customer", "status", "budget", "start_date"]}
         }
         
         specs = field_specs.get(import_type, {"required": [], "optional": []})
@@ -27764,394 +20978,50 @@ def api_import_analyze():
         mapping = {}
         
         # Smart mapping based on header names
-        # NOTE: Order matters! More specific matches should come first
-        # IMPORTANT: For suppliers/customers, match "supplier name" / "customer name" BEFORE just "supplier" / "customer"
         mapping_rules = {
-            # ===== NAMES =====
-            "name": ["supplier name", "customer name", "supplier_name", "customer_name", "company name", "company_name", 
-                     "name", "company", "client", "employee", "account_name", "asset", "first names", "full name", "full_name",
-                     "business name", "business_name", "trading name", "trading_name", "entity", "party", "debtor", "creditor",
-                     "naam", "maatskappy", "klient"],  # Afrikaans
-            "code": ["supplier code", "customer code", "supplier_code", "customer_code", "account code", "account_code",
-                     "item code", "item_code", "stock code", "stock_code", "emp no", "emp_no", "employee no", "employee_no",
-                     "code", "sku", "product_code", "acc_code", "acc", "no", "number", "gl code", "gl_code", "ledger code",
-                     "cust code", "cust_code", "sup code", "sup_code", "vendor code", "vendor_code", "part number", "part_number",
-                     "kode", "nommer"],  # Afrikaans
-            "contact_name": ["contact_name", "contact name", "contact_person", "contactname", "attention", "attn", "contact",
-                            "representative", "rep", "salesperson", "sales rep", "account manager", "kontak"],
-            
-            # ===== CONTACT INFO =====
-            "phone": ["phone", "tel no", "tel_no", "mobile", "cell", "telephone", "contact_number", "cell_no", "phone_number", 
-                     "tel", "phone no", "phone_no", "landline", "fax", "cellphone", "telefoon", "sel", "nommer"],
-            "email": ["email", "e-mail", "mail", "email_address", "e_mail", "epos"],
-            "address": ["address", "street", "addr", "physical", "postal", "street_address", "physical address", "postal address",
-                       "delivery address", "billing address", "ship to", "bill to", "location", "adres", "straat"],
-            
-            # ===== FINANCIAL - BALANCES =====
-            "balance": ["balance", "balance owing", "balance_owing", "owing", "owed", "outstanding", "open", "amount_due", 
-                       "bal", "total_due", "acc_bal", "account_balance", "current_balance", "amount owing", "amount_owing",
-                       "open balance", "open_balance", "closing balance", "closing_balance", "running balance", "balans", "uitstaande"],
-            
-            # ===== FINANCIAL - AMOUNTS =====
-            "amount": ["amount", "excl amount", "excl_amount", "incl amount", "incl_amount", "balance", "bal", "value", "val",
-                      "amt", "sum", "total", "nett", "netto", "gross", "bruto", "bedrag", "waarde", "som"],
-            "subtotal": ["subtotal", "sub total", "sub_total", "total excl", "total_excl", "excl vat", "excl_vat", "nett", 
-                        "excl amount", "excl_amount", "net amount", "net_amount", "exclusive", "before vat", "before_vat",
-                        "amount excl", "sub", "subtotaal", "ekskl"],
-            "total": ["total", "total incl", "total_incl", "incl vat", "incl_vat", "grand total", "incl amount", "incl_amount",
-                     "gross amount", "gross_amount", "inclusive", "after vat", "after_vat", "final total", "amount incl",
-                     "totaal", "inkl", "groot totaal"],
-            "vat": ["vat", "tax", "vat amount", "vat_amount", "tax amount", "tax_amount", "btw", "gst", "sales tax",
-                   "output vat", "input vat", "vat 15", "vat 14", "belasting"],
-            "net": ["net", "nett", "net amount", "net_amount", "netto"],
-            
-            # ===== DEBIT/CREDIT =====
-            "debit": ["debit", "dr", "money out", "out", "withdrawal", "payment", "uitgawe", "betaling", "uit"],
-            "credit": ["credit", "cr", "money in", "in", "deposit", "receipt", "inkomste", "ontvangs", "in"],
-            
-            # ===== DATES =====
-            "date": ["date", "inv_date", "trans_date", "txn_date", "posting_date", "quote date", "quote_date", "transaction date",
-                    "transaction_date", "doc date", "doc_date", "document date", "document_date", "entry date", "entry_date",
-                    "value date", "value_date", "effective date", "effective_date", "datum", "transaksie datum"],
-            "due_date": ["due", "due_date", "due date", "payment_date", "payment due", "payment_due", "pay by", "pay_by",
-                        "deadline", "vervaldatum", "betaal datum"],
-            "start_date": ["start", "start_date", "start date", "commenced", "commencement", "begin", "begin_date", "from",
-                          "employment date", "hire date", "join date", "begindatum", "aanvangsdatum"],
-            "paid_date": ["paid date", "paid_date", "payment date", "date paid", "settled", "settlement date", "cleared",
-                         "betaaldatum"],
-            "expiry_date": ["expiry", "expiry date", "expiry_date", "valid until", "valid_until", "expires", "expire date",
-                           "expiration", "expiration_date", "vervaldatum", "geldig tot"],
-            "completion_date": ["completion date", "completion_date", "completed", "complete date", "finished", "done date",
-                               "end date", "end_date", "close date", "voltooiingsdatum"],
-            
-            # ===== DESCRIPTIONS =====
-            "description": ["description", "desc", "item", "product", "narration", "particulars", "detail", "details", 
-                           "memo", "note", "notes", "text", "line", "transaction", "trans", "beskrywing", "besonderhede",
-                           "item description", "item_description", "product description", "service", "goods"],
-            "reference": ["reference", "ref", "cheque", "check", "converted to", "converted_to", "ref no", "ref_no",
-                         "reference no", "reference_no", "doc ref", "doc_ref", "your ref", "our ref", "external ref",
-                         "bank ref", "bank_ref", "payment ref", "payment_ref", "verwysing", "tjek"],
-            
-            # ===== CATEGORIES =====
-            "category": ["category", "cat", "group", "class", "dept", "customer_type", "supplier_type", "type", "classification",
-                        "expense type", "expense_type", "income type", "account type", "kategorie", "tipe", "groep"],
-            
-            # ===== STOCK/INVENTORY =====
-            "cost_price": ["cost", "cost_price", "cost price", "purchase", "buy", "landed", "avg cost", "avg_cost", 
-                          "average cost", "unit cost", "unit_cost", "purchase price", "purchase_price", "buy price",
-                          "landed cost", "landed_cost", "kosprys", "aankoopprys"],
-            "selling_price": ["sell", "selling", "selling_price", "selling price", "retail", "sale", "price", "unit price", 
-                             "unit_price", "sale price", "sale_price", "retail price", "retail_price", "list price",
-                             "verkoopprys", "prys"],
-            "quantity": ["qty", "quantity", "stock", "onhand", "on_hand", "on hand", "qty on hand", "qty_on_hand", "units",
-                        "soh", "in stock", "in_stock", "available", "count", "aantal", "hoeveelheid", "voorraad"],
-            "unit": ["unit", "uom", "unit of measure", "measure", "unit_of_measure", "pack", "pack size", "eenheid"],
-            "reorder_level": ["reorder", "reorder level", "reorder_level", "min stock", "min_stock", "minimum", "min qty",
-                             "herbestel vlak"],
-            
-            # ===== VAT/TAX =====
-            "vat_number": ["vat no", "vat_no", "vat_number", "tax_no", "tax number", "tax_number", "vat reg", "vat registration",
-                          "btw nommer"],
-            
-            # ===== EMPLOYEES/PAYROLL =====
-            "id_number": ["id number", "id_number", "identity", "sa_id", "id_no", "id no", "national id", "id", "rsa id",
-                         "identity number", "identity_number", "id nommer"],
-            "rate": ["rate", "hourly", "hourly rate", "hourly_rate", "hour rate", "per hour", "tarief", "uurtarief"],
-            "salary": ["salary", "basic salary", "basic_salary", "wage", "pay", "monthly", "basic", "monthly salary",
-                      "gross salary", "gross_salary", "salaris", "loon", "maandelikse"],
-            "surname": ["surname", "last name", "last_name", "family name", "family_name", "van"],
-            "first_names": ["first names", "first_names", "first name", "first_name", "given names", "names", "forename",
-                           "voorname", "naam"],
-            "department": ["dept", "department", "section", "division", "unit", "cost centre", "cost_centre", "afdeling"],
-            "position": ["position", "job title", "job_title", "designation", "title", "rank", "pos", "posisie", "titel"],
-            "role": ["role", "function", "rol"],
-            
-            # ===== BANKING =====
-            "account": ["account", "acc", "account_no", "bank_account", "acc_no", "account number", "account_number",
-                       "bank acc", "bank_acc", "rekening", "rekeningnommer"],
-            "bank": ["bank", "bank_name", "bank name", "financial institution", "bank"],
-            "branch": ["branch", "branch_code", "branch code", "branch_no", "tak", "takkode"],
-            
-            # ===== INVOICES =====
-            "invoice_no": ["invoice", "inv", "inv_no", "invoice no", "invoice_no", "document no", "document_no", "doc no", 
-                          "doc_no", "invoice number", "invoice_number", "inv number", "faktuur", "faktuur no"],
-            "quote_number": ["quote no", "quote_no", "quote_number", "quotation", "qt no", "qt_no", "quotation no",
-                            "quotation_no", "kwotasie", "kwotasie no"],
-            "customer_name": ["customer", "customer name", "customer_name", "client", "client name", "client_name",
-                             "debtor", "debtor name", "sold to", "bill to", "klient", "debiteur"],
-            "supplier_name": ["supplier", "supplier name", "supplier_name", "vendor", "vendor name", "vendor_name",
-                             "creditor", "creditor name", "bought from", "verskaffer", "krediteur"],
-            
-            # ===== JOBS =====
-            "job_number": ["job number", "job_number", "job no", "job_no", "job #", "job", "work order", "work_order",
-                          "wo", "wo no", "wo_no", "project", "project no", "werk nommer", "taak"],
-            "job_type": ["job type", "job_type", "work type", "work_type", "service type", "tipe werk"],
-            "material_cost": ["material cost", "material_cost", "materials", "material", "parts", "parts cost", "materiaal"],
-            "labour_cost": ["labour cost", "labour_cost", "labor cost", "labor_cost", "labour", "labor", "wages", "arbeid"],
-            "total_cost": ["total cost", "total_cost", "job cost", "job_cost", "totale koste"],
-            "invoice_ref": ["invoice ref", "invoice_ref", "inv ref", "invoiced to", "invoiced", "linked invoice", "gefaktureer"],
-            "estimated_hours": ["estimated hours", "estimated_hours", "est hours", "hours est", "estimate", "geskatte ure"],
-            "actual_hours": ["actual hours", "actual_hours", "hours worked", "worked hours", "time spent", "werklike ure"],
-            "notes": ["notes", "note", "comments", "comment", "remarks", "memo", "notas", "opmerkings"],
-            
-            # ===== PAYMENTS =====
-            "payment_number": ["payment number", "payment_number", "payment no", "pay no", "receipt no", "receipt number",
-                              "receipt_no", "receipt_number", "rcpt no", "rcpt_no", "pmt no", "pmt_no", "betaling nommer"],
-            "invoice_number": ["invoice number", "invoice_number", "inv no", "inv_no", "against invoice", "for invoice",
-                              "faktuur nommer"],
-            "invoice_id": ["invoice id", "invoice_id", "inv id", "inv_id", "linked invoice"],
-            "customer_id": ["customer id", "customer_id", "cust id", "cust_id", "client id", "client_id", "debtor id"],
-            "supplier_id": ["supplier id", "supplier_id", "sup id", "sup_id", "vendor id", "vendor_id", "creditor id"],
-            "method": ["method", "payment method", "pay method", "payment type", "payment_type", "pay type", "pay_type",
-                      "tender", "tender type", "betaal metode"],
-            
-            # ===== EXPENSES =====
-            "expense_number": ["expense number", "expense_number", "expense no", "exp no", "exp_no", "expense ref",
-                              "uitgawe nommer"],
-            "excl_amount": ["excl amount", "excl_amount", "amount excl", "excl", "exclusive", "before tax", "netto"],
-            "incl_amount": ["incl amount", "incl_amount", "amount incl", "incl", "inclusive", "after tax", "bruto"],
-            
-            # ===== LINE ITEMS =====
-            "quote_id": ["quote id", "quote_id", "qt id", "qt_id", "quotation id", "linked quote"],
-            "job_card_id": ["job card id", "job_card_id", "job id", "job_id", "jobid", "work order id", "linked job"],
-            "line_number": ["line number", "line_number", "line no", "line_no", "line", "row", "seq", "sequence", "lyn"],
-            "item_code": ["item code", "item_code", "stock code", "stock_code", "part no", "part_no", "part number",
-                         "product code", "product_code", "artikel kode"],
-            "unit_price": ["unit price", "unit_price", "price each", "price_each", "sell price", "each", "per unit",
-                          "eenheidsprys"],
-            "unit_cost": ["unit cost", "unit_cost", "cost each", "cost_each", "cost per unit", "eenheidskoste"],
-            "line_total": ["line total", "line_total", "ext price", "ext_price", "extended", "extended price",
-                          "line amount", "line_amount", "lyn totaal"],
-            "employee_id": ["employee id", "employee_id", "emp id", "emp_id", "worker id", "staff id", "werknemer id"],
-            "employee_name": ["employee name", "employee_name", "emp name", "worker", "staff", "technician", "werknemer"],
-            "hours": ["hours", "hrs", "time", "hours worked", "time worked", "duration", "ure", "tyd"],
-            "cost": ["cost", "labour cost", "labor cost", "total cost", "koste"],
-            
-            # ===== STATUS =====
-            "status": ["status", "state", "progress", "condition", "stage", "active", "enabled", "toestand", "status"],
-            "discount": ["discount", "disc", "rebate", "less", "afslag", "korting"],
-            "parent": ["parent", "main", "master", "parent account", "parent_account", "hoofrekening"],
-            
-            # ===== FIXED ASSETS =====
-            "purchase_date": ["purchase_date", "acquired", "bought", "acquisition date", "acquisition_date", "aankoopdatum"],
-            "depreciation_rate": ["depreciation", "depr", "depreciation rate", "depreciation_rate", "depr rate", "waardevermindering"],
-            
-            # ===== IDs (for preserving existing records) =====
-            "id": ["id", "uuid", "record_id", "unique_id", "key", "primary_key", "row_id"]
+            "name": ["name", "customer", "supplier", "company", "client", "employee", "account_name", "job", "asset"],
+            "customer": ["customer", "client", "debtor", "cust"],
+            "supplier": ["supplier", "vendor", "creditor", "supp"],
+            "phone": ["phone", "tel", "mobile", "cell", "contact", "telephone"],
+            "email": ["email", "e-mail", "mail"],
+            "address": ["address", "street", "addr", "physical", "postal"],
+            "balance": ["balance", "owing", "owed", "outstanding", "open"],
+            "amount": ["amount", "total", "value", "sum"],
+            "code": ["code", "sku", "item_code", "stock_code", "product_code", "acc_code", "account_code", "acc", "no"],
+            "description": ["description", "desc", "item", "product", "narration", "particulars"],
+            "cost_price": ["cost", "cost_price", "purchase", "buy", "landed"],
+            "selling_price": ["sell", "selling", "selling_price", "retail", "sale", "excl"],
+            "quantity": ["qty", "quantity", "stock", "onhand", "on_hand", "units", "soh"],
+            "category": ["category", "cat", "group", "class", "dept"],
+            "type": ["type", "account_type", "acc_type"],
+            "vat_number": ["vat", "vat_no", "vat_number", "tax_no"],
+            "id_number": ["id", "id_number", "identity", "sa_id", "id_no"],
+            "rate": ["rate", "hourly", "wage", "salary", "pay"],
+            "account": ["account", "acc", "account_no", "bank_account", "acc_no"],
+            "bank": ["bank", "bank_name"],
+            "branch": ["branch", "branch_code"],
+            "debit": ["debit", "dr"],
+            "credit": ["credit", "cr"],
+            "supplier_code": ["supplier_code", "vendor_code", "sup_code"],
+            "invoice_no": ["invoice", "inv", "inv_no", "number", "doc_no"],
+            "date": ["date", "inv_date", "trans_date", "txn_date", "posting_date"],
+            "due_date": ["due", "due_date", "payment_date"],
+            "reference": ["reference", "ref", "cheque", "check"],
+            "purchase_date": ["purchase_date", "acquired", "bought"],
+            "depreciation_rate": ["depreciation", "depr", "rate"],
+            "budget": ["budget", "estimate", "quoted"],
+            "status": ["status", "state", "progress"],
+            "start_date": ["start", "start_date", "commenced"],
+            "discount": ["discount", "disc", "rebate"],
+            "parent": ["parent", "main", "group"]
         }
         
-        # FIRST PASS: Try exact matches (including compound names like "supplier name")
         for field, keywords in mapping_rules.items():
             for i, h in enumerate(header_lower):
-                h_clean = h.replace(" ", "_").replace("-", "_").strip()
-                h_spaced = h.replace("_", " ").replace("-", " ").strip()
-                # Check exact match
-                if h_clean in keywords or h_spaced in keywords or h in keywords:
+                if any(kw in h for kw in keywords):
                     if field not in mapping:
                         mapping[field] = i
-                        break
-        
-        # SECOND PASS: Try partial matches only for fields not yet mapped
-        # But be more careful - don't let "supplier" match when "supplier name" exists
-        for field, keywords in mapping_rules.items():
-            if field in mapping:
-                continue  # Already mapped
-            for i, h in enumerate(header_lower):
-                # Skip columns already mapped to something else
-                if i in mapping.values():
-                    continue
-                # Partial match - but only for short keywords
-                for kw in keywords:
-                    if len(kw) > 3 and kw in h:
-                        mapping[field] = i
-                        break
-                if field in mapping:
                     break
-        
-        # DEBUG: Log the detected mapping
-
-        # Track if we auto-split code:name format (for user notification)
-        code_split_notification = None
-
-        # SPECIAL HANDLING: Detect "CODE : NAME" pattern in ANY column
-        # Works regardless of what the column is named (Name, Customer, etc)
-        if import_type in ["customers", "suppliers"]:
-            name_col_idx = None
-            
-            # Check each column for " : " pattern in actual data
-            for col_idx in range(len(headers)):
-                pattern_found = False
-                for row in data_rows[:5]:
-                    if col_idx < len(row):
-                        cell_val = str(row[col_idx])
-                        if " : " in cell_val:
-                            pattern_found = True
-                            break
-                if pattern_found:
-                    name_col_idx = col_idx
-                    logger.info(f"[IMPORT] Found 'CODE : NAME' pattern in column {col_idx} ({headers[col_idx]})")
-                    break
-            
-            # If pattern detected, split into code and name columns
-            if name_col_idx is not None:
-                original_header = headers[name_col_idx]
-                logger.info(f"[IMPORT] Splitting column '{original_header}' into Code and Name")
-                
-                # Set notification for user
-                code_split_notification = f"Auto-split '{original_header}' column into separate Code and Name"
-                
-                # Insert "code" column before the name column
-                headers.insert(name_col_idx, "code")
-                
-                # CRITICAL: Update mapping indexes after inserting new column
-                # All columns at name_col_idx and after need to shift right by 1
-                for field, idx in list(mapping.items()):
-                    if idx >= name_col_idx:
-                        mapping[field] = idx + 1
-                # Add code to mapping at the inserted position
-                mapping["code"] = name_col_idx
-                
-                # SIMPLE FIX: Explicitly set name mapping to the column AFTER the new code column
-                # This ensures the name field always points to the actual name data
-                mapping["name"] = name_col_idx + 1
-                
-                logger.info(f"[IMPORT] Updated mapping after code insertion: {mapping}")
-                
-                # Split each row
-                new_data_rows = []
-                for row in data_rows:
-                    new_row = list(row)  # Copy row
-                    if name_col_idx < len(new_row):
-                        cell_val = str(new_row[name_col_idx])
-                        if " : " in cell_val:
-                            parts = cell_val.split(" : ", 1)
-                            code = parts[0].strip()
-                            name = parts[1].strip()
-                            new_row.insert(name_col_idx, code)  # Insert code
-                            new_row[name_col_idx + 1] = name    # Update name
-                        else:
-                            # No colon - just insert empty code
-                            new_row.insert(name_col_idx, "")
-                    else:
-                        new_row.insert(name_col_idx, "")
-                    new_data_rows.append(new_row)
-                data_rows = new_data_rows
-                
-                logger.info(f"[IMPORT] Split complete. New headers: {headers[:5]}")
-                logger.info(f"[IMPORT] Sample row after split: {data_rows[0][:5] if data_rows else 'NO DATA'}")
-        logger.info(f"[IMPORT-ANALYZE] Auto-detected mapping: {mapping}")
-        logger.info(f"[IMPORT-ANALYZE] Headers: {headers}")
-        logger.info(f"[IMPORT-ANALYZE] Sample row 0: {data_rows[0] if data_rows else 'NO DATA'}")
-        
-        # === AI SMART MAPPING: DISABLED FOR NOW ===
-        # This feature was adding columns that don't exist in Supabase
-        # TODO: Re-enable once we have proper schema sync
-        new_columns_added = []
-        
-        # OLD CODE - kept for future reference:
-        # mapped_csv_indices = set(mapping.values())
-        # unmapped_headers = []
-        # for i, h in enumerate(headers):
-        #     if i not in mapped_csv_indices and h.strip():
-        #         skip_keywords = ["total value", "total_value", "line total", "active", "page", "date:"]
-        #         if not any(skip in h.lower() for skip in skip_keywords):
-        #             unmapped_headers.append({"index": i, "name": h})
-        
-        if False and ANTHROPIC_API_KEY:  # DISABLED
-            try:
-                unmapped_headers = []
-                # Ask AI which unmapped columns should become database fields
-                sample_data = []
-                for row in data_rows[:3]:
-                    row_sample = {}
-                    for uh in unmapped_headers:
-                        if uh["index"] < len(row):
-                            row_sample[uh["name"]] = row[uh["index"]]
-                    sample_data.append(row_sample)
-                
-                ai_prompt = f"""Analyzing CSV import for a {import_type} table.
-
-These CSV columns were NOT mapped to existing database fields:
-{json.dumps([h["name"] for h in unmapped_headers], indent=2)}
-
-Sample data from these columns:
-{json.dumps(sample_data, indent=2)}
-
-Current database has these mapped fields: {list(mapping.keys())}
-
-For each unmapped column, decide:
-1. Should it be added as a new database column? (useful business data)
-2. Or ignored? (calculated fields, duplicates, system fields)
-
-Respond ONLY with valid JSON:
-{{
-  "add_columns": [
-    {{"csv_header": "Unit", "db_column": "unit", "type": "text"}},
-    {{"csv_header": "Location", "db_column": "location", "type": "text"}}
-  ],
-  "ignore": ["Total Value", "Page Number"]
-}}
-
-Rules:
-- db_column must be lowercase, underscores, no spaces
-- type can be: text, numeric, integer, boolean
-- Only add columns that contain useful business data
-- Ignore calculated fields (totals, subtotals)
-- Ignore system/page fields"""
-
-                client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-                response = client.messages.create(
-                    model="claude-3-5-haiku-20241022",
-                    max_tokens=500,
-                    messages=[{"role": "user", "content": ai_prompt}]
-                )
-                
-                ai_text = response.content[0].text.strip()
-                # Extract JSON from response
-                if "{" in ai_text:
-                    json_start = ai_text.index("{")
-                    json_end = ai_text.rindex("}") + 1
-                    ai_json = json.loads(ai_text[json_start:json_end])
-                    
-                    # Map import_type to actual table name
-                    table_map = {
-                        "customers": "customers", "suppliers": "suppliers", "stock": "stock",
-                        "employees": "employees", "jobs": "jobs", "chart_of_accounts": "chart_of_accounts"
-                    }
-                    table_name = table_map.get(import_type, import_type)
-                    
-                    # Add new columns to database
-                    for col_info in ai_json.get("add_columns", []):
-                        csv_header = col_info.get("csv_header", "")
-                        db_column = col_info.get("db_column", "")
-                        col_type = col_info.get("type", "text")
-                        
-                        if csv_header and db_column:
-                            # Find the CSV index for this header
-                            csv_idx = None
-                            for uh in unmapped_headers:
-                                if uh["name"].lower() == csv_header.lower():
-                                    csv_idx = uh["index"]
-                                    break
-                            
-                            if csv_idx is not None:
-                                # Add column to database
-                                success, msg = db.add_column(table_name, db_column, col_type)
-                                if success:
-                                    new_columns_added.append(db_column)
-                                    logger.info(f"[IMPORT-AI] Added new column: {db_column} ({col_type}) to {table_name}")
-                                else:
-                                    logger.warning(f"[IMPORT-AI] Could not add column {db_column}: {msg}")
-                                
-                                # Add to mapping regardless (column might already exist)
-                                mapping[db_column] = csv_idx
-                                logger.info(f"[IMPORT-AI] Mapped {csv_header} -> {db_column} (col {csv_idx})")
-                    
-                    logger.info(f"[IMPORT-AI] AI analysis complete. Added columns: {new_columns_added}, Ignored: {ai_json.get('ignore', [])}")
-                    
-            except Exception as e:
-                logger.error(f"[IMPORT-AI] Smart mapping error: {e}")
-                # Continue with normal mapping if AI fails
         
         # Analyze data quality
         issues = []
@@ -28270,62 +21140,33 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
         temp_dir = "/tmp/clickai_imports"
         os_module.makedirs(temp_dir, exist_ok=True)
         temp_path = f"{temp_dir}/{session_id}.csv"
-
-        # CRITICAL: Save the CLEANED/SANITIZED data, not the original content
-        # This ensures row 0 is always the headers, and row 1+ is always data
-        # This makes save-edits and import execution consistent
-        with open(temp_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-            writer.writerows(data_rows)
-
+        
+        with open(temp_path, 'w') as f:
+            f.write(content)
+        
         # Also store as JSON for editing
         json_path = f"{temp_dir}/{session_id}.json"
         with open(json_path, 'w') as f:
             json.dump({"headers": headers, "rows": data_rows}, f)
-
-        # Save metadata to file instead of session (prevents 4KB cookie limit)
-        metadata_path = f"{temp_dir}/{session_id}_meta.json"
-        metadata = {
+        
+        session[f"import_{session_id}"] = {
             "type": import_type,
             "path": temp_path,
             "json_path": json_path,
             "mapping": mapping,
             "row_count": len(data_rows),
-            "headers": headers,
-            "new_columns": new_columns_added  # Track AI-added columns
+            "headers": headers
         }
-        print(f"[IMPORT-ANALYZE] Saving metadata with mapping: {mapping}", flush=True)
-        print(f"[IMPORT-ANALYZE] Headers after processing: {headers[:7]}", flush=True)
-        print(f"[IMPORT-ANALYZE] First row after processing: {data_rows[0][:7] if data_rows else 'EMPTY'}", flush=True)
-        if new_columns_added:
-            print(f"[IMPORT-ANALYZE] AI added new columns: {new_columns_added}", flush=True)
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f)
-        logger.info(f"[IMPORT] Metadata saved to {metadata_path}")
         
         # Build response HTML
         can_import = len(issues) == 0
-        
-        # New columns notification
-        new_cols_html = ""
-        if new_columns_added:
-            cols_list = ", ".join(new_columns_added)
-            new_cols_html = f'''
-            <div style="background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);border-radius:8px;padding:12px 15px;margin:10px 0;">
-                <strong style="color:var(--green);">🤖 AI Smart Import:</strong> 
-                Added new columns to database: <strong>{cols_list}</strong>
-            </div>
-            '''
         
         # Mapping HTML
         mapping_html = ""
         for field, col_idx in mapping.items():
             col_name = headers[col_idx] if col_idx < len(headers) else f"Column {col_idx}"
             req = "(required)" if field in specs["required"] else ""
-            is_new = " (NEW)" if field in new_columns_added else ""
-            color = "var(--green)" if field not in new_columns_added else "#22c55e"
-            mapping_html += f'<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);"><span>{field} {req}{is_new}</span><span style="color:{color};">{col_name}</span></div>'
+            mapping_html += f'<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);"><span>{field} {req}</span><span style="color:var(--green);">{col_name}</span></div>'
         
         # Zane's Analysis HTML
         claude_html = ""
@@ -28344,15 +21185,6 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
             for issue in issues:
                 issues_html += f'<div style="color:var(--red);margin:5px 0;">x {issue}</div>'
             issues_html += '</div>'
-        
-        # Auto-split notification (info box - blue)
-        if code_split_notification:
-            issues_html += f'''
-            <div style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:15px;margin:15px 0;">
-                <h4 style="color:#3b82f6;margin-bottom:10px;">Smart Detection</h4>
-                <div style="color:#3b82f6;margin:5px 0;">{code_split_notification}</div>
-            </div>
-            '''
         
         if warnings:
             issues_html += '<div style="background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:15px;margin:15px 0;"><h4 style="color:var(--orange);margin-bottom:10px;">Warnings (can still import)</h4>'
@@ -28520,8 +21352,6 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
             <h3 style="margin-bottom:15px;">Data Analysis</h3>
             <p style="font-size:14px;color:var(--text-muted);">{summary}</p>
             
-            {new_cols_html}
-            
             <h4 style="margin-top:20px;">Column Mapping</h4>
             {mapping_html}
             
@@ -28567,13 +21397,8 @@ def api_import_ai_clean():
         if not command:
             return jsonify({"success": False, "error": "No command provided"})
         
-        # Load metadata from file instead of session
-        temp_dir = "/tmp/clickai_imports"
-        metadata_path = f"{temp_dir}/{session_id}_meta.json"
-        try:
-            with open(metadata_path, 'r') as f:
-                import_data = json.load(f)
-        except FileNotFoundError:
+        import_data = session.get(f"import_{session_id}")
+        if not import_data:
             return jsonify({"success": False, "error": "Import session expired - please re-upload the file"})
         
         temp_path = import_data.get("path")
@@ -28589,17 +21414,11 @@ def api_import_ai_clean():
         csv_headers = rows[0] if rows else []
         data_rows = rows[1:] if len(rows) > 1 else []
         
-        # Helper function to safely get cell value as string - FIXED for nested lists
+        # Helper function to safely get cell value as string
         def cell_str(cell):
-            """Convert any cell value to a clean string"""
-            if cell is None:
-                return ""
-            if isinstance(cell, (list, tuple)):
-                # Handle nested lists/tuples by recursively taking first element
-                while isinstance(cell, (list, tuple)) and cell:
-                    cell = cell[0]
-                return str(cell).strip() if cell is not None else ""
-            return str(cell).strip()
+            if isinstance(cell, list):
+                return str(cell[0]).strip() if cell else ""
+            return str(cell).strip() if cell else ""
         
         # Sanitize headers and data
         csv_headers = [cell_str(h) for h in csv_headers]
@@ -28854,9 +21673,7 @@ IMPORTANT: Only set true for actions the user EXPLICITLY asked for.
             writer.writerow(csv_headers)
             writer.writerows(data_rows)
         
-        # Save updated metadata back to file
-        with open(metadata_path, 'w') as f:
-            json.dump(import_data, f)
+        session[f"import_{session_id}"] = import_data
         
         return jsonify({
             "success": True,
@@ -28877,13 +21694,8 @@ def api_import_save_edits():
         session_id = data.get("session_id", "")
         edits = data.get("edits", {})
         
-        # Load metadata from file instead of session
-        temp_dir = "/tmp/clickai_imports"
-        metadata_path = f"{temp_dir}/{session_id}_meta.json"
-        try:
-            with open(metadata_path, 'r') as f:
-                import_data = json.load(f)
-        except FileNotFoundError:
+        import_data = session.get(f"import_{session_id}")
+        if not import_data:
             return jsonify({"success": False, "error": "Import session expired - please re-upload"})
         
         temp_path = import_data.get("path")
@@ -28916,9 +21728,7 @@ def api_import_save_edits():
         
         # Update row count
         import_data["row_count"] = len(data_rows)
-        # Save updated metadata back to file
-        with open(metadata_path, 'w') as f:
-            json.dump(import_data, f)
+        session[f"import_{session_id}"] = import_data
         
         return jsonify({"success": True, "message": f"Saved edits to {len(edits)} rows"})
         
@@ -28949,13 +21759,8 @@ def api_import_execute():
         
         logger.info(f"[IMPORT] Session: {session_id}, offset: {offset}, limit: {limit}")
         
-        # Load metadata from file instead of session
-        temp_dir = "/tmp/clickai_imports"
-        metadata_path = f"{temp_dir}/{session_id}_meta.json"
-        try:
-            with open(metadata_path, 'r') as f:
-                import_data = json.load(f)
-        except FileNotFoundError:
+        import_data = session.get(f"import_{session_id}")
+        if not import_data:
             return jsonify({"success": False, "error": "Import session expired - please re-upload"})
         
         import_type = import_data.get("type")
@@ -28963,54 +21768,23 @@ def api_import_execute():
         mapping = import_data.get("mapping", {})
         
         logger.info(f"[IMPORT] Type: {import_type}, mapping: {mapping}")
-        logger.info(f"[IMPORT-DEBUG] Mapping details - name: {mapping.get('name')}, phone: {mapping.get('phone')}, contact_name: {mapping.get('contact_name')}, balance: {mapping.get('balance')}")
         
-        # Read CSV with proper encoding (handles BOM)
-        # NOTE: The CSV was saved by analyze with cleaned data, so row 0 is always headers
-        with open(temp_path, 'r', encoding='utf-8-sig') as f:
+        # Read CSV
+        with open(temp_path, 'r') as f:
             reader = csv.reader(f)
             rows = list(reader)
-
-        # Row 0 is headers, row 1+ is data (guaranteed by analyze function)
+        
         headers = rows[0] if rows else []
         all_data_rows = rows[1:] if len(rows) > 1 else []
-
-        logger.info(f"[IMPORT] Headers: {headers[:5]}")
-        logger.info(f"[IMPORT] Total data rows before cleaning: {len(all_data_rows)}")
         
-        # Helper function to safely get cell value as string - FIXED for nested lists
+        # Helper function to safely get cell value as string
         def cell_str(cell):
-            """Convert any cell value to a clean string"""
-            if cell is None:
-                return ""
-            if isinstance(cell, (list, tuple)):
-                # Handle nested lists/tuples by recursively taking first element
-                while isinstance(cell, (list, tuple)) and cell:
-                    cell = cell[0]
-                return str(cell).strip() if cell is not None else ""
-            return str(cell).strip()
+            if isinstance(cell, list):
+                return str(cell[0]).strip() if cell else ""
+            return str(cell).strip() if cell else ""
         
-        # Sanitize all data rows - ensure every cell is a clean string
+        # Sanitize all data rows - ensure every cell is a string
         all_data_rows = [[cell_str(cell) for cell in row] for row in all_data_rows]
-        
-        # Also filter out completely empty rows
-        all_data_rows = [row for row in all_data_rows if any(cell.strip() for cell in row)]
-        
-        # FILTER OUT FOOTER/JUNK ROWS (in case they weren't filtered in analyze)
-        footer_patterns = [
-            "report total", "total:", "end of report", "*** end", "page total",
-            "grand total", "subtotal", "sub total", "totals:", "total customers",
-            "total suppliers", "total items", "printed by", "printed on", "generated"
-        ]
-        filtered_rows = []
-        for row in all_data_rows:
-            first_cell = row[0].lower().strip() if row else ""
-            is_footer = any(pattern in first_cell for pattern in footer_patterns)
-            if first_cell.startswith("***"):
-                is_footer = True
-            if not is_footer:
-                filtered_rows.append(row)
-        all_data_rows = filtered_rows
         
         logger.info(f"[IMPORT] Total rows: {len(all_data_rows)}, headers: {headers[:5]}")
         
@@ -29020,11 +21794,6 @@ def api_import_execute():
         imported = 0
         skipped = 0
         records = []
-        
-        # DEBUG: Log the full mapping at start
-        print(f"[IMPORT-EXECUTE] Starting import with mapping: {mapping}", flush=True)
-        print(f"[IMPORT-EXECUTE] Headers: {headers}", flush=True)
-        print(f"[IMPORT-EXECUTE] First data row: {data_rows[0] if data_rows else 'EMPTY'}", flush=True)
         
         for row in data_rows:
             try:
@@ -29039,76 +21808,24 @@ def api_import_execute():
                         skipped += 1
                         continue
                     
-                    # Get phone
-                    phone = ""
-                    phone_idx = mapping.get("phone")
-                    if phone_idx is not None and phone_idx < len(row):
-                        phone = str(row[phone_idx]).strip()
+                    record = {
+                        "id": generate_id(),
+                        "business_id": biz_id,
+                        "name": name,
+                        "phone": str(row[mapping.get("phone", 999)]).strip() if mapping.get("phone") is not None and mapping.get("phone") < len(row) else "",
+                        "email": str(row[mapping.get("email", 999)]).strip() if mapping.get("email") is not None and mapping.get("email") < len(row) else "",
+                        "address": str(row[mapping.get("address", 999)]).strip() if mapping.get("address") is not None and mapping.get("address") < len(row) else "",
+                        "balance": 0,
+                        "created_at": now()
+                    }
                     
-                    # Get contact name
-                    contact_name = ""
-                    contact_idx = mapping.get("contact_name")
-                    if contact_idx is not None and contact_idx < len(row):
-                        contact_name = str(row[contact_idx]).strip()
-                    
-                    # Get category
-                    category = ""
-                    cat_idx = mapping.get("category")
-                    if cat_idx is not None and cat_idx < len(row):
-                        category = str(row[cat_idx]).strip()
-                    
-                    # Get code
-                    code = ""
-                    code_idx = mapping.get("code")
-                    if code_idx is not None and code_idx < len(row):
-                        code = str(row[code_idx]).strip()
-                    
-                    # DEBUG: Log extraction for first few rows
-                    if len(records) < 3:
-                        print(f"[IMPORT-DEBUG] Customer row {len(records)}: code_idx={code_idx}, name_idx={name_idx}, cat_idx={cat_idx}, contact_idx={contact_idx}, phone_idx={phone_idx}", flush=True)
-                        print(f"[IMPORT-DEBUG] Extracted: code='{code}', name='{name[:30]}', category='{category}', contact='{contact_name}', phone='{phone}'", flush=True)
-                        print(f"[IMPORT-DEBUG] Raw row: {row[:7]}", flush=True)
-                    
-                    # Get email
-                    email = ""
-                    if mapping.get("email") is not None and mapping.get("email") < len(row):
-                        email = str(row[mapping.get("email")]).strip()
-                    
-                    # Get address
-                    address = ""
-                    if mapping.get("address") is not None and mapping.get("address") < len(row):
-                        address = str(row[mapping.get("address")]).strip()
-                    
-                    # Parse balance
-                    balance = 0
                     if mapping.get("balance") is not None and mapping.get("balance") < len(row):
                         try:
-                            bal_str = str(row[mapping.get("balance")])
-                            bal_str = bal_str.replace("R", "").replace("r", "").replace("$", "").replace(",", "").replace(" ", "").strip()
-                            if bal_str.startswith("(") and bal_str.endswith(")"):
-                                bal_str = "-" + bal_str[1:-1]
-                            if bal_str.upper().endswith("CR"):
-                                bal_str = bal_str[:-2]
-                            elif bal_str.upper().endswith("DR"):
-                                bal_str = bal_str[:-2]
-                            balance = float(bal_str) if bal_str and bal_str != "-" else 0
+                            bal_str = str(row[mapping.get("balance")]).replace("R", "").replace(",", "").strip()
+                            record["balance"] = float(bal_str) if bal_str else 0
                         except:
-                            balance = 0
+                            pass
                     
-                    record = RecordFactory.customer(
-                        business_id=biz_id,
-                        name=name,
-                        code=code,
-                        phone=phone,
-                        email=email,
-                        address=address,
-                        contact_name=contact_name,
-                        category=category,
-                        balance=balance,
-                        created_by=user.get("id", "") if user else ""
-                    )
-                    
-                    # Only use known customer fields - no dynamic additions
                     records.append(record)
                 
                 elif import_type == "suppliers":
@@ -29118,71 +21835,29 @@ def api_import_execute():
                         continue
                     
                     name = str(row[name_idx]).strip()
-                    logger.info(f"[IMPORT-DEBUG] Row {imported}: name_idx={name_idx}, row length={len(row)}, extracted name='{name[:50]}'")
                     if not name:
                         skipped += 1
                         continue
                     
-                    # Get phone
-                    phone = ""
-                    if mapping.get("phone") is not None and mapping.get("phone") < len(row):
-                        phone = str(row[mapping.get("phone")]).strip()
-                    
-                    # Get contact name
-                    contact_name = ""
-                    if mapping.get("contact_name") is not None and mapping.get("contact_name") < len(row):
-                        contact_name = str(row[mapping.get("contact_name")]).strip()
-                    
-                    # Get category
-                    category = ""
-                    if mapping.get("category") is not None and mapping.get("category") < len(row):
-                        category = str(row[mapping.get("category")]).strip()
-                    
-                    # Get code
-                    code = ""
-                    if mapping.get("code") is not None and mapping.get("code") < len(row):
-                        code = str(row[mapping.get("code")]).strip()
-                    
-                    # Get email
-                    email = ""
-                    if mapping.get("email") is not None and mapping.get("email") < len(row):
-                        email = str(row[mapping.get("email")]).strip()
-                    
-                    # Get address
-                    address = ""
-                    if mapping.get("address") is not None and mapping.get("address") < len(row):
-                        address = str(row[mapping.get("address")]).strip()
+                    record = {
+                        "id": generate_id(),
+                        "business_id": biz_id,
+                        "name": name,
+                        "phone": str(row[mapping.get("phone", 999)]).strip() if mapping.get("phone") is not None and mapping.get("phone") < len(row) else "",
+                        "email": str(row[mapping.get("email", 999)]).strip() if mapping.get("email") is not None and mapping.get("email") < len(row) else "",
+                        "address": str(row[mapping.get("address", 999)]).strip() if mapping.get("address") is not None and mapping.get("address") < len(row) else "",
+                        "balance": 0,
+                        "created_at": now()
+                    }
                     
                     # Parse balance if mapped
-                    balance = 0
                     if mapping.get("balance") is not None and mapping.get("balance") < len(row):
                         try:
-                            bal_str = str(row[mapping.get("balance")])
-                            bal_str = bal_str.replace("R", "").replace("r", "").replace("$", "").replace(",", "").replace(" ", "").strip()
-                            if bal_str.startswith("(") and bal_str.endswith(")"):
-                                bal_str = "-" + bal_str[1:-1]
-                            if bal_str.upper().endswith("CR"):
-                                bal_str = bal_str[:-2]
-                            elif bal_str.upper().endswith("DR"):
-                                bal_str = bal_str[:-2]
-                            balance = float(bal_str) if bal_str and bal_str != "-" else 0
+                            bal_str = str(row[mapping.get("balance")]).replace("R", "").replace(",", "").strip()
+                            record["balance"] = float(bal_str) if bal_str else 0
                         except:
-                            balance = 0
+                            pass
                     
-                    record = RecordFactory.supplier(
-                        business_id=biz_id,
-                        name=name,
-                        code=code,
-                        phone=phone,
-                        email=email,
-                        address=address,
-                        contact_name=contact_name,
-                        category=category,
-                        balance=balance,
-                        created_by=user.get("id", "") if user else ""
-                    )
-                    
-                    # Only use known supplier fields - no dynamic additions
                     records.append(record)
                 
                 elif import_type == "stock":
@@ -29239,175 +21914,86 @@ def api_import_execute():
                         # Ensure unique by adding row number if needed
                         code = code[:15]
                     
-                    # Extract optional fields
-                    cost_price = 0
+                    # Build minimal record - only essential fields
+                    record = {
+                        "id": generate_id(),
+                        "business_id": biz_id,
+                        "code": code or desc[:20].upper().replace(" ", "-"),
+                        "description": desc or code,
+                        "created_at": now()
+                    }
+                    
+                    # Only add optional fields if they have values AND are mapped
                     if mapping.get("cost_price") is not None and mapping.get("cost_price") < len(row):
                         try:
                             val = str(row[mapping.get("cost_price")]).replace("R", "").replace(",", "").strip()
                             if val:
-                                cost_price = float(val)
+                                record["cost"] = float(val)
                         except:
                             pass
                     
-                    selling_price = 0
                     if mapping.get("selling_price") is not None and mapping.get("selling_price") < len(row):
                         try:
                             val = str(row[mapping.get("selling_price")]).replace("R", "").replace(",", "").strip()
                             if val:
-                                selling_price = float(val)
+                                record["price"] = float(val)
                         except:
                             pass
                     
-                    quantity = 0
                     if mapping.get("quantity") is not None and mapping.get("quantity") < len(row):
                         try:
                             val = str(row[mapping.get("quantity")]).replace(",", "").strip()
                             if val:
-                                quantity = int(float(val))  # Convert to int (9.0 -> 9)
+                                record["qty"] = int(float(val))  # Convert to int (9.0 -> 9)
                         except:
                             pass
                     
-                    category = ""
                     if mapping.get("category") is not None and mapping.get("category") < len(row):
                         cat_val = str(row[mapping.get("category")]).strip()
                         if cat_val:
-                            category = cat_val
+                            record["category"] = cat_val
                     
-                    unit = ""
-                    if mapping.get("unit") is not None and mapping.get("unit") < len(row):
-                        unit_val = str(row[mapping.get("unit")]).strip()
-                        if unit_val:
-                            unit = unit_val
-                    
-                    # DEBUG: Log first few records
-                    if len(records) < 3:
-                        logger.info(f"[IMPORT-DEBUG] Stock row {len(records)}: code='{code}', desc='{desc[:30]}', qty={quantity}, cost={cost_price}, price={selling_price}, category='{category}', unit='{unit}'")
-                    
-                    # Use RecordFactory.stock() to ensure all fields are correct
-                    record = RecordFactory.stock(
-                        business_id=biz_id,
-                        description=desc or code,
-                        code=code or desc[:20].upper().replace(" ", "-"),
-                        qty=quantity,
-                        cost=cost_price,
-                        price=selling_price,
-                        category=category,
-                        unit=unit
-                    )
-                    
-                    # Only use known stock fields - no dynamic additions
                     records.append(record)
                 
                 elif import_type == "employees":
-                    # Handle both formats:
-                    # 1. Simple: id, code, name, role, rate
-                    # 2. Sage: EMP NO, ID NUMBER, SURNAME, FIRST NAMES, START DATE, DEPT, POSITION, BASIC SALARY, STATUS
-                    
-                    # Try to get name - could be combined or separate surname/first names
-                    name = ""
                     name_idx = mapping.get("name")
-                    surname_idx = mapping.get("surname")
-                    first_names_idx = mapping.get("first_names")
+                    if name_idx is None or name_idx >= len(row):
+                        skipped += 1
+                        continue
                     
-                    if surname_idx is not None and first_names_idx is not None:
-                        # Sage format - combine SURNAME + FIRST NAMES
-                        surname = str(row[surname_idx]).strip() if surname_idx < len(row) else ""
-                        first_names = str(row[first_names_idx]).strip() if first_names_idx < len(row) else ""
-                        name = f"{first_names} {surname}".strip()
-                    elif name_idx is not None and name_idx < len(row):
-                        name = str(row[name_idx]).strip()
-                    
+                    name = str(row[name_idx]).strip()
                     if not name:
                         skipped += 1
                         continue
                     
-                    # Use existing ID if provided
-                    record_id = generate_id()
-                    if mapping.get("id") is not None and mapping.get("id") < len(row):
-                        existing_id = str(row[mapping.get("id")]).strip()
-                        if existing_id:
-                            record_id = existing_id
-                    
                     record = {
-                        "id": record_id,
+                        "id": generate_id(),
                         "business_id": biz_id,
                         "name": name,
-                        "code": "",
-                        "employee_number": "",
                         "id_number": "",
-                        "position": "",
-                        "role": "",
-                        "department": "",
-                        "basic_salary": 0,
-                        "hourly_rate": 0,
-                        "rate": 0,
-                        "bank_name": "",
-                        "bank_account": "",
-                        "bank_branch": "",
                         "phone": "",
                         "email": "",
-                        "active": True,
-                        "status": "active",
-                        "start_date": "",
+                        "rate": 0,
+                        "hours": 0,
+                        "bank": "",
+                        "account": "",
+                        "branch": "",
                         "created_at": now()
                     }
                     
-                    # Map code/employee_number
-                    if mapping.get("code") is not None and mapping.get("code") < len(row):
-                        code_val = str(row[mapping.get("code")]).strip()
-                        record["code"] = code_val
-                        record["employee_number"] = code_val
+                    # Map optional fields
+                    for field in ["id_number", "phone", "email", "bank", "account", "branch"]:
+                        if mapping.get(field) is not None and mapping.get(field) < len(row):
+                            record[field] = str(row[mapping.get(field)]).strip()
                     
-                    # Map text fields
-                    if mapping.get("id_number") is not None and mapping.get("id_number") < len(row):
-                        record["id_number"] = str(row[mapping.get("id_number")]).strip()
-                    
-                    # Position - check both "position" and "role" columns
-                    if mapping.get("position") is not None and mapping.get("position") < len(row):
-                        record["position"] = str(row[mapping.get("position")]).strip()
-                        record["role"] = record["position"]
-                    if mapping.get("role") is not None and mapping.get("role") < len(row):
-                        role_val = str(row[mapping.get("role")]).strip()
-                        record["role"] = role_val
-                        if not record["position"]:
-                            record["position"] = role_val
-                    
-                    if mapping.get("department") is not None and mapping.get("department") < len(row):
-                        record["department"] = str(row[mapping.get("department")]).strip()
-                    if mapping.get("start_date") is not None and mapping.get("start_date") < len(row):
-                        record["start_date"] = str(row[mapping.get("start_date")]).strip()
-                    if mapping.get("status") is not None and mapping.get("status") < len(row):
-                        stat = str(row[mapping.get("status")]).strip().lower()
-                        record["status"] = stat
-                        record["active"] = stat in ["active", "yes", "true", "1"]
-                    if mapping.get("phone") is not None and mapping.get("phone") < len(row):
-                        record["phone"] = str(row[mapping.get("phone")]).strip()
-                    if mapping.get("email") is not None and mapping.get("email") < len(row):
-                        record["email"] = str(row[mapping.get("email")]).strip()
-                    
-                    # Bank fields
-                    if mapping.get("bank") is not None and mapping.get("bank") < len(row):
-                        record["bank_name"] = str(row[mapping.get("bank")]).strip()
-                    if mapping.get("account") is not None and mapping.get("account") < len(row):
-                        record["bank_account"] = str(row[mapping.get("account")]).strip()
-                    if mapping.get("branch") is not None and mapping.get("branch") < len(row):
-                        record["bank_branch"] = str(row[mapping.get("branch")]).strip()
-                    
-                    # Salary/rate fields
-                    if mapping.get("salary") is not None and mapping.get("salary") < len(row):
-                        try:
-                            val = str(row[mapping.get("salary")]).replace("R", "").replace(",", "").strip()
-                            record["basic_salary"] = float(val) if val else 0
-                        except:
-                            pass
-                    if mapping.get("rate") is not None and mapping.get("rate") < len(row):
-                        try:
-                            val = str(row[mapping.get("rate")]).replace("R", "").replace(",", "").strip()
-                            rate_val = float(val) if val else 0
-                            record["hourly_rate"] = rate_val
-                            record["rate"] = rate_val
-                        except:
-                            pass
+                    # Numeric fields
+                    for field in ["rate", "hours"]:
+                        if mapping.get(field) is not None and mapping.get(field) < len(row):
+                            try:
+                                val = str(row[mapping.get(field)]).replace("R", "").replace(",", "").strip()
+                                record[field] = float(val) if val else 0
+                            except:
+                                pass
                     
                     records.append(record)
                 
@@ -29485,7 +22071,6 @@ def api_import_execute():
                         continue
                     
                     name = str(row[name_idx]).strip()
-                    logger.info(f"[IMPORT-DEBUG] Row {imported}: name_idx={name_idx}, row length={len(row)}, extracted name='{name[:50]}'")
                     if not name:
                         skipped += 1
                         continue
@@ -29606,10 +22191,6 @@ def api_import_execute():
                         continue
                     
                     amount = 0
-                    debit_val = 0
-                    credit_val = 0
-                    
-                    # Get amount if single column
                     if mapping.get("amount") is not None and mapping.get("amount") < len(row):
                         try:
                             val = str(row[mapping.get("amount")]).replace("R", "").replace(",", "").strip()
@@ -29617,12 +22198,12 @@ def api_import_execute():
                         except:
                             pass
                     
-                    # Handle separate debit/credit columns (cashbook format)
+                    # Handle debit/credit columns
                     if mapping.get("debit") is not None and mapping.get("debit") < len(row):
                         try:
                             val = str(row[mapping.get("debit")]).replace("R", "").replace(",", "").strip()
                             if val:
-                                debit_val = abs(float(val))
+                                amount = -abs(float(val))  # Debit = money out = negative
                         except:
                             pass
                     
@@ -29630,13 +22211,9 @@ def api_import_execute():
                         try:
                             val = str(row[mapping.get("credit")]).replace("R", "").replace(",", "").strip()
                             if val:
-                                credit_val = abs(float(val))
+                                amount = abs(float(val))  # Credit = money in = positive
                         except:
                             pass
-                    
-                    # If we have dr/cr, calculate amount (credit - debit for bank perspective)
-                    if debit_val > 0 or credit_val > 0:
-                        amount = credit_val - debit_val  # Money in minus money out
                     
                     record = {
                         "id": generate_id(),
@@ -29644,8 +22221,6 @@ def api_import_execute():
                         "date": trans_date[:10],
                         "description": "",
                         "amount": amount,
-                        "debit": debit_val,
-                        "credit": credit_val,
                         "reference": "",
                         "matched": False,
                         "created_at": now()
@@ -29748,556 +22323,40 @@ def api_import_execute():
                     
                     records.append(record)
                 
-                elif import_type == "job_cards":
-                    # Job cards import - supports all fields from CSV exports
-                    job_num_idx = mapping.get("job_number")
-                    if job_num_idx is None or job_num_idx >= len(row):
+                elif import_type == "jobs":
+                    name_idx = mapping.get("name")
+                    if name_idx is None or name_idx >= len(row):
                         skipped += 1
                         continue
                     
-                    job_number = str(row[job_num_idx]).strip()
-                    if not job_number:
-                        skipped += 1
-                        continue
-                    
-                    # Use existing ID if provided (for UUID format)
-                    record_id = generate_id()
-                    if mapping.get("id") is not None and mapping.get("id") < len(row):
-                        existing_id = str(row[mapping.get("id")]).strip()
-                        if existing_id:
-                            record_id = existing_id
-                    
-                    record = {
-                        "id": record_id,
-                        "business_id": biz_id,
-                        "job_number": job_number,
-                        "date": today(),
-                        "customer_id": "",
-                        "customer_name": "",
-                        "job_type": "",
-                        "title": "",
-                        "description": "",
-                        "estimated_hours": 0,
-                        "actual_hours": 0,
-                        "material_cost": 0,
-                        "labour_cost": 0,
-                        "total_cost": 0,
-                        "total_material_cost": 0,
-                        "total_labour_cost": 0,
-                        "total_actual_cost": 0,
-                        "selling_price": 0,
-                        "quote_value": 0,
-                        "profit_loss": 0,
-                        "status": "open",
-                        "completion_date": "",
-                        "invoice_ref": "",
-                        "notes": "",
-                        "is_active": True,
-                        "created_at": now()
-                    }
-                    
-                    # Text fields
-                    if mapping.get("date") is not None and mapping.get("date") < len(row):
-                        dt = str(row[mapping.get("date")]).strip()[:10]
-                        record["date"] = dt
-                        record["started_at"] = dt
-                    if mapping.get("customer_id") is not None and mapping.get("customer_id") < len(row):
-                        record["customer_id"] = str(row[mapping.get("customer_id")]).strip()
-                    if mapping.get("customer_name") is not None and mapping.get("customer_name") < len(row):
-                        record["customer_name"] = str(row[mapping.get("customer_name")]).strip()
-                    if mapping.get("job_type") is not None and mapping.get("job_type") < len(row):
-                        record["job_type"] = str(row[mapping.get("job_type")]).strip()
-                    if mapping.get("description") is not None and mapping.get("description") < len(row):
-                        desc = str(row[mapping.get("description")]).strip()
-                        record["description"] = desc
-                        record["title"] = desc[:100]
-                    if mapping.get("status") is not None and mapping.get("status") < len(row):
-                        record["status"] = str(row[mapping.get("status")]).strip().lower()
-                    if mapping.get("completion_date") is not None and mapping.get("completion_date") < len(row):
-                        cd = str(row[mapping.get("completion_date")]).strip()[:10]
-                        record["completion_date"] = cd
-                        record["completed_at"] = cd
-                    if mapping.get("invoice_ref") is not None and mapping.get("invoice_ref") < len(row):
-                        record["invoice_ref"] = str(row[mapping.get("invoice_ref")]).strip()
-                    if mapping.get("notes") is not None and mapping.get("notes") < len(row):
-                        record["notes"] = str(row[mapping.get("notes")]).strip()
-                    
-                    # Numeric fields
-                    for num_field in ["estimated_hours", "actual_hours", "material_cost", "labour_cost", 
-                                      "total_cost", "selling_price", "profit_loss"]:
-                        if mapping.get(num_field) is not None and mapping.get(num_field) < len(row):
-                            try:
-                                val = str(row[mapping.get(num_field)]).replace("R", "").replace(",", "").strip()
-                                record[num_field] = float(val) if val else 0
-                            except:
-                                pass
-                    
-                    # Copy to alternative column names for compatibility
-                    record["total_material_cost"] = record["material_cost"]
-                    record["total_labour_cost"] = record["labour_cost"]
-                    record["total_actual_cost"] = record["total_cost"]
-                    record["quote_value"] = record["selling_price"]
-                    
-                    records.append(record)
-                
-                elif import_type == "quotes":
-                    # Get customer name - required
-                    cust_idx = mapping.get("customer_name") or mapping.get("customer")
-                    if cust_idx is None or cust_idx >= len(row):
-                        skipped += 1
-                        continue
-                    
-                    customer_name = str(row[cust_idx]).strip()
-                    if not customer_name:
-                        skipped += 1
-                        continue
-                    
-                    # Build quote record
-                    record = {
-                        "id": generate_id(),
-                        "business_id": biz_id,
-                        "customer_id": "",  # Will need to match to customer table
-                        "customer_name": customer_name,
-                        "quote_number": "",
-                        "date": today(),
-                        "items": [],  # Can't import line items from summary
-                        "subtotal": 0,
-                        "vat": 0,
-                        "total": 0,
-                        "status": "draft",
-                        "valid_until": "",
-                        "notes": "Imported from CSV",
-                        "created_at": now()
-                    }
-                    
-                    if mapping.get("quote_number") is not None and mapping.get("quote_number") < len(row):
-                        record["quote_number"] = str(row[mapping.get("quote_number")]).strip()
-                    if mapping.get("date") is not None and mapping.get("date") < len(row):
-                        record["date"] = str(row[mapping.get("date")]).strip()[:10]
-                    if mapping.get("subtotal") is not None and mapping.get("subtotal") < len(row):
-                        try:
-                            val = str(row[mapping.get("subtotal")]).replace("R", "").replace(",", "").strip()
-                            record["subtotal"] = float(val) if val else 0
-                        except:
-                            pass
-                    if mapping.get("vat") is not None and mapping.get("vat") < len(row):
-                        try:
-                            val = str(row[mapping.get("vat")]).replace("R", "").replace(",", "").strip()
-                            record["vat"] = float(val) if val else 0
-                        except:
-                            pass
-                    if mapping.get("total") is not None and mapping.get("total") < len(row):
-                        try:
-                            val = str(row[mapping.get("total")]).replace("R", "").replace(",", "").strip()
-                            record["total"] = float(val) if val else 0
-                        except:
-                            pass
-                    if mapping.get("status") is not None and mapping.get("status") < len(row):
-                        record["status"] = str(row[mapping.get("status")]).strip().lower()
-                    if mapping.get("expiry_date") is not None and mapping.get("expiry_date") < len(row):
-                        record["valid_until"] = str(row[mapping.get("expiry_date")]).strip()[:10]
-                    
-                    records.append(record)
-                
-                elif import_type == "invoices":
-                    # Sales invoice import
-                    cust_idx = mapping.get("customer_name") or mapping.get("customer")
-                    if cust_idx is None or cust_idx >= len(row):
-                        skipped += 1
-                        continue
-                    
-                    customer_name = str(row[cust_idx]).strip()
-                    if not customer_name:
+                    name = str(row[name_idx]).strip()
+                    if not name:
                         skipped += 1
                         continue
                     
                     record = {
                         "id": generate_id(),
                         "business_id": biz_id,
-                        "customer_id": "",
-                        "customer_name": customer_name,
-                        "invoice_number": "",
-                        "date": today(),
-                        "items": [],
-                        "subtotal": 0,
-                        "vat": 0,
-                        "total": 0,
-                        "status": "draft",
+                        "name": name,
+                        "customer": "",
+                        "status": "Open",
+                        "budget": 0,
+                        "start_date": today(),
                         "created_at": now()
                     }
                     
-                    if mapping.get("invoice_no") is not None and mapping.get("invoice_no") < len(row):
-                        record["invoice_number"] = str(row[mapping.get("invoice_no")]).strip()
-                    if mapping.get("date") is not None and mapping.get("date") < len(row):
-                        record["date"] = str(row[mapping.get("date")]).strip()[:10]
-                    for num_field in ["subtotal", "vat", "total"]:
-                        if mapping.get(num_field) is not None and mapping.get(num_field) < len(row):
-                            try:
-                                val = str(row[mapping.get(num_field)]).replace("R", "").replace(",", "").strip()
-                                record[num_field] = float(val) if val else 0
-                            except:
-                                pass
+                    if mapping.get("customer") is not None and mapping.get("customer") < len(row):
+                        record["customer"] = str(row[mapping.get("customer")]).strip()
                     if mapping.get("status") is not None and mapping.get("status") < len(row):
-                        record["status"] = str(row[mapping.get("status")]).strip().lower()
-                    
-                    records.append(record)
-                
-                elif import_type == "bills":
-                    # Supplier bills import - ACTUAL Supabase bills columns:
-                    # id, business_id, supplier_id, supplier_name, number, date, due_date, total, balance, status, created_at
-                    sup_idx = mapping.get("supplier_name") or mapping.get("name")
-                    if sup_idx is None or sup_idx >= len(row):
-                        skipped += 1
-                        continue
-                    
-                    supplier_name = str(row[sup_idx]).strip()
-                    if not supplier_name:
-                        skipped += 1
-                        continue
-                    
-                    record = {
-                        "id": generate_id(),
-                        "business_id": biz_id,
-                        "supplier_id": "",
-                        "supplier_name": supplier_name,
-                        "number": "",
-                        "date": today(),
-                        "due_date": "",
-                        "total": 0,
-                        "balance": 0,
-                        "status": "unpaid",
-                        "created_at": now()
-                    }
-                    
-                    if mapping.get("invoice_no") is not None and mapping.get("invoice_no") < len(row):
-                        record["number"] = str(row[mapping.get("invoice_no")]).strip()
-                    if mapping.get("date") is not None and mapping.get("date") < len(row):
-                        record["date"] = str(row[mapping.get("date")]).strip()[:10]
-                    if mapping.get("due_date") is not None and mapping.get("due_date") < len(row):
-                        record["due_date"] = str(row[mapping.get("due_date")]).strip()[:10]
-                    if mapping.get("total") is not None and mapping.get("total") < len(row):
+                        record["status"] = str(row[mapping.get("status")]).strip()
+                    if mapping.get("budget") is not None and mapping.get("budget") < len(row):
                         try:
-                            val = str(row[mapping.get("total")]).replace("R", "").replace(",", "").strip()
-                            record["total"] = float(val) if val else 0
-                            record["balance"] = record["total"]  # Initially balance = total
+                            val = str(row[mapping.get("budget")]).replace("R", "").replace(",", "").strip()
+                            record["budget"] = float(val) if val else 0
                         except:
                             pass
-                    if mapping.get("balance") is not None and mapping.get("balance") < len(row):
-                        try:
-                            val = str(row[mapping.get("balance")]).replace("R", "").replace(",", "").strip()
-                            record["balance"] = float(val) if val else 0
-                        except:
-                            pass
-                    if mapping.get("status") is not None and mapping.get("status") < len(row):
-                        record["status"] = str(row[mapping.get("status")]).strip().lower()
-                    
-                    records.append(record)
-                
-                elif import_type == "expenses":
-                    # Expense import - supports all fields from CSV exports
-                    desc_idx = mapping.get("description")
-                    if desc_idx is None or desc_idx >= len(row):
-                        skipped += 1
-                        continue
-                    
-                    description = str(row[desc_idx]).strip()
-                    if not description:
-                        skipped += 1
-                        continue
-                    
-                    # Use existing ID if provided, otherwise generate new one
-                    record_id = generate_id()
-                    if mapping.get("id") is not None and mapping.get("id") < len(row):
-                        existing_id = str(row[mapping.get("id")]).strip()
-                        if existing_id:
-                            record_id = existing_id
-                    
-                    record = {
-                        "id": record_id,
-                        "business_id": biz_id,
-                        "expense_number": "",
-                        "date": today(),
-                        "description": description,
-                        "amount": 0,
-                        "vat": 0,
-                        "net": 0,
-                        "total": 0,
-                        "category": "",
-                        "category_code": "",
-                        "supplier": "",
-                        "supplier_id": "",
-                        "supplier_name": "",
-                        "reference": "",
-                        "vat_type": "standard",
-                        "status": "pending",
-                        "paid_date": "",
-                        "created_at": now()
-                    }
-                    
-                    # Text fields
-                    if mapping.get("expense_number") is not None and mapping.get("expense_number") < len(row):
-                        record["expense_number"] = str(row[mapping.get("expense_number")]).strip()
-                    if mapping.get("date") is not None and mapping.get("date") < len(row):
-                        record["date"] = str(row[mapping.get("date")]).strip()[:10]
-                    if mapping.get("supplier_name") is not None and mapping.get("supplier_name") < len(row):
-                        sup_name = str(row[mapping.get("supplier_name")]).strip()
-                        record["supplier"] = sup_name
-                        record["supplier_name"] = sup_name
-                    if mapping.get("supplier") is not None and mapping.get("supplier") < len(row):
-                        sup_name = str(row[mapping.get("supplier")]).strip()
-                        record["supplier"] = sup_name
-                        record["supplier_name"] = sup_name
-                    if mapping.get("supplier_id") is not None and mapping.get("supplier_id") < len(row):
-                        record["supplier_id"] = str(row[mapping.get("supplier_id")]).strip()
-                    if mapping.get("category") is not None and mapping.get("category") < len(row):
-                        record["category"] = str(row[mapping.get("category")]).strip()
-                    if mapping.get("reference") is not None and mapping.get("reference") < len(row):
-                        record["reference"] = str(row[mapping.get("reference")]).strip()
-                    if mapping.get("status") is not None and mapping.get("status") < len(row):
-                        record["status"] = str(row[mapping.get("status")]).strip().lower()
-                    if mapping.get("paid_date") is not None and mapping.get("paid_date") < len(row):
-                        record["paid_date"] = str(row[mapping.get("paid_date")]).strip()[:10]
-                    
-                    # Numeric fields
-                    for num_field in ["amount", "vat", "net", "total"]:
-                        if mapping.get(num_field) is not None and mapping.get(num_field) < len(row):
-                            try:
-                                val = str(row[mapping.get(num_field)]).replace("R", "").replace(",", "").strip()
-                                record[num_field] = float(val) if val else 0
-                            except:
-                                pass
-                    # Check excl_amount and incl_amount
-                    if record["amount"] == 0:
-                        for alt_field in ["excl_amount", "subtotal"]:
-                            if mapping.get(alt_field) is not None and mapping.get(alt_field) < len(row):
-                                try:
-                                    val = str(row[mapping.get(alt_field)]).replace("R", "").replace(",", "").strip()
-                                    record["amount"] = float(val) if val else 0
-                                    break
-                                except:
-                                    pass
-                    if record["total"] == 0:
-                        for alt_field in ["incl_amount"]:
-                            if mapping.get(alt_field) is not None and mapping.get(alt_field) < len(row):
-                                try:
-                                    val = str(row[mapping.get(alt_field)]).replace("R", "").replace(",", "").strip()
-                                    record["total"] = float(val) if val else 0
-                                    break
-                                except:
-                                    pass
-                    
-                    records.append(record)
-                
-                elif import_type in ["receipts", "payments"]:
-                    # Customer receipts/payments import - supports all fields from CSV exports
-                    cust_idx = mapping.get("customer_name") or mapping.get("name")
-                    if cust_idx is None or cust_idx >= len(row):
-                        skipped += 1
-                        continue
-                    
-                    customer_name = str(row[cust_idx]).strip()
-                    if not customer_name:
-                        skipped += 1
-                        continue
-                    
-                    # Use existing ID if provided
-                    record_id = generate_id()
-                    if mapping.get("id") is not None and mapping.get("id") < len(row):
-                        existing_id = str(row[mapping.get("id")]).strip()
-                        if existing_id:
-                            record_id = existing_id
-                    
-                    record = {
-                        "id": record_id,
-                        "business_id": biz_id,
-                        "payment_number": "",
-                        "receipt_number": "",
-                        "date": today(),
-                        "customer_id": "",
-                        "customer_name": customer_name,
-                        "invoice_id": "",
-                        "invoice_number": "",
-                        "amount": 0,
-                        "method": "EFT",
-                        "reference": "",
-                        "created_at": now()
-                    }
-                    
-                    # Text fields
-                    if mapping.get("payment_number") is not None and mapping.get("payment_number") < len(row):
-                        pn = str(row[mapping.get("payment_number")]).strip()
-                        record["payment_number"] = pn
-                        record["receipt_number"] = pn
-                    if mapping.get("date") is not None and mapping.get("date") < len(row):
-                        record["date"] = str(row[mapping.get("date")]).strip()[:10]
-                    if mapping.get("customer_id") is not None and mapping.get("customer_id") < len(row):
-                        record["customer_id"] = str(row[mapping.get("customer_id")]).strip()
-                    if mapping.get("invoice_id") is not None and mapping.get("invoice_id") < len(row):
-                        record["invoice_id"] = str(row[mapping.get("invoice_id")]).strip()
-                    if mapping.get("invoice_number") is not None and mapping.get("invoice_number") < len(row):
-                        record["invoice_number"] = str(row[mapping.get("invoice_number")]).strip()
-                    if mapping.get("method") is not None and mapping.get("method") < len(row):
-                        record["method"] = str(row[mapping.get("method")]).strip()
-                    if mapping.get("reference") is not None and mapping.get("reference") < len(row):
-                        record["reference"] = str(row[mapping.get("reference")]).strip()
-                    
-                    # Amount
-                    if mapping.get("amount") is not None and mapping.get("amount") < len(row):
-                        try:
-                            val = str(row[mapping.get("amount")]).replace("R", "").replace(",", "").strip()
-                            record["amount"] = float(val) if val else 0
-                        except:
-                            pass
-                    
-                    records.append(record)
-                
-                elif import_type == "quote_items":
-                    # Quote line items import
-                    quote_id_idx = mapping.get("quote_id")
-                    if quote_id_idx is None or quote_id_idx >= len(row):
-                        skipped += 1
-                        continue
-                    
-                    quote_id = str(row[quote_id_idx]).strip()
-                    if not quote_id:
-                        skipped += 1
-                        continue
-                    
-                    record_id = generate_id()
-                    if mapping.get("id") is not None and mapping.get("id") < len(row):
-                        existing_id = str(row[mapping.get("id")]).strip()
-                        if existing_id:
-                            record_id = existing_id
-                    
-                    record = {
-                        "id": record_id,
-                        "business_id": biz_id,
-                        "quote_id": quote_id,
-                        "line_number": 1,
-                        "item_code": "",
-                        "description": "",
-                        "qty": 1,
-                        "unit_price": 0,
-                        "line_total": 0,
-                        "created_at": now()
-                    }
-                    
-                    if mapping.get("line_number") is not None and mapping.get("line_number") < len(row):
-                        try:
-                            record["line_number"] = int(row[mapping.get("line_number")])
-                        except:
-                            pass
-                    if mapping.get("code") is not None and mapping.get("code") < len(row):
-                        record["item_code"] = str(row[mapping.get("code")]).strip()
-                    if mapping.get("item_code") is not None and mapping.get("item_code") < len(row):
-                        record["item_code"] = str(row[mapping.get("item_code")]).strip()
-                    if mapping.get("description") is not None and mapping.get("description") < len(row):
-                        record["description"] = str(row[mapping.get("description")]).strip()
-                    
-                    for num_field in ["qty", "unit_price", "line_total"]:
-                        if mapping.get(num_field) is not None and mapping.get(num_field) < len(row):
-                            try:
-                                val = str(row[mapping.get(num_field)]).replace("R", "").replace(",", "").strip()
-                                record[num_field] = float(val) if val else 0
-                            except:
-                                pass
-                    
-                    records.append(record)
-                
-                elif import_type == "job_materials":
-                    # Job materials import
-                    job_id_idx = mapping.get("job_card_id") or mapping.get("job_id")
-                    if job_id_idx is None or job_id_idx >= len(row):
-                        skipped += 1
-                        continue
-                    
-                    job_card_id = str(row[job_id_idx]).strip()
-                    if not job_card_id:
-                        skipped += 1
-                        continue
-                    
-                    record_id = generate_id()
-                    if mapping.get("id") is not None and mapping.get("id") < len(row):
-                        existing_id = str(row[mapping.get("id")]).strip()
-                        if existing_id:
-                            record_id = existing_id
-                    
-                    record = {
-                        "id": record_id,
-                        "business_id": biz_id,
-                        "job_card_id": job_card_id,
-                        "item_code": "",
-                        "description": "",
-                        "qty": 1,
-                        "unit_cost": 0,
-                        "line_total": 0,
-                        "created_at": now()
-                    }
-                    
-                    if mapping.get("code") is not None and mapping.get("code") < len(row):
-                        record["item_code"] = str(row[mapping.get("code")]).strip()
-                    if mapping.get("item_code") is not None and mapping.get("item_code") < len(row):
-                        record["item_code"] = str(row[mapping.get("item_code")]).strip()
-                    if mapping.get("description") is not None and mapping.get("description") < len(row):
-                        record["description"] = str(row[mapping.get("description")]).strip()
-                    
-                    for num_field in ["qty", "unit_cost", "line_total"]:
-                        if mapping.get(num_field) is not None and mapping.get(num_field) < len(row):
-                            try:
-                                val = str(row[mapping.get(num_field)]).replace("R", "").replace(",", "").strip()
-                                record[num_field] = float(val) if val else 0
-                            except:
-                                pass
-                    
-                    records.append(record)
-                
-                elif import_type == "job_labour":
-                    # Job labour/timesheet import
-                    job_id_idx = mapping.get("job_card_id") or mapping.get("job_id")
-                    if job_id_idx is None or job_id_idx >= len(row):
-                        skipped += 1
-                        continue
-                    
-                    job_card_id = str(row[job_id_idx]).strip()
-                    if not job_card_id:
-                        skipped += 1
-                        continue
-                    
-                    record_id = generate_id()
-                    if mapping.get("id") is not None and mapping.get("id") < len(row):
-                        existing_id = str(row[mapping.get("id")]).strip()
-                        if existing_id:
-                            record_id = existing_id
-                    
-                    record = {
-                        "id": record_id,
-                        "business_id": biz_id,
-                        "job_card_id": job_card_id,
-                        "date": today(),
-                        "employee_id": "",
-                        "employee_name": "",
-                        "hours": 0,
-                        "rate": 0,
-                        "cost": 0,
-                        "created_at": now()
-                    }
-                    
-                    if mapping.get("date") is not None and mapping.get("date") < len(row):
-                        record["date"] = str(row[mapping.get("date")]).strip()[:10]
-                    if mapping.get("employee_id") is not None and mapping.get("employee_id") < len(row):
-                        record["employee_id"] = str(row[mapping.get("employee_id")]).strip()
-                    if mapping.get("employee_name") is not None and mapping.get("employee_name") < len(row):
-                        record["employee_name"] = str(row[mapping.get("employee_name")]).strip()
-                    if mapping.get("name") is not None and mapping.get("name") < len(row) and not record["employee_name"]:
-                        record["employee_name"] = str(row[mapping.get("name")]).strip()
-                    
-                    for num_field in ["hours", "rate", "cost"]:
-                        if mapping.get(num_field) is not None and mapping.get(num_field) < len(row):
-                            try:
-                                val = str(row[mapping.get(num_field)]).replace("R", "").replace(",", "").strip()
-                                record[num_field] = float(val) if val else 0
-                            except:
-                                pass
+                    if mapping.get("start_date") is not None and mapping.get("start_date") < len(row):
+                        record["start_date"] = str(row[mapping.get("start_date")]).strip()[:10]
                     
                     records.append(record)
                     
@@ -30314,21 +22373,16 @@ def api_import_execute():
             table_map = {
                 "customers": "customers",
                 "suppliers": "suppliers", 
-                "stock": "stock_items",
+                "stock": "stock",
                 "employees": "employees",
                 "opening_balances": "journal_entries",
                 "chart_of_accounts": "accounts",
+                "outstanding_invoices": "invoices",
+                "outstanding_bills": "bills",
                 "bank_transactions": "bank_transactions",
-                "job_cards": "jobs",
-                "quotes": "quotes",
-                "invoices": "invoices",
-                "bills": "bills",
-                "expenses": "expenses",
-                "receipts": "receipts",
-                "payments": "receipts",  # Alias - payments goes to receipts table
-                "quote_items": "quote_items",
-                "job_materials": "job_materials",
-                "job_labour": "job_labour"
+                "price_lists": "price_lists",
+                "fixed_assets": "fixed_assets",
+                "jobs": "jobs"
             }
             table = table_map.get(import_type, import_type)
             
@@ -30343,7 +22397,7 @@ def api_import_execute():
                     skipped += 1
                     if not first_error:
                         first_error = str(err)[:200]
-                    logger.error(f"[IMPORT] Save failed for '{record.get('name', 'unknown')}': {str(err)[:100]}")
+                        logger.error(f"[IMPORT] First save error: {first_error}")
             
             logger.info(f"[IMPORT] Batch done - imported: {imported}, skipped: {skipped}")
         
@@ -30357,13 +22411,7 @@ def api_import_execute():
             except:
                 pass
             try:
-                # Clean up metadata file
-                import os as os_module
-                try:
-                    metadata_path = f"/tmp/clickai_imports/{session_id}_meta.json"
-                    os_module.remove(metadata_path)
-                except:
-                    pass
+                del session[f"import_{session_id}"]
             except:
                 pass
         
@@ -30383,93 +22431,6 @@ def api_import_execute():
 # 
 # BANK RECONCILIATION - Match transactions with AI
 # 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PAYMENTS - Track all customer payments
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.route("/payments")
-@login_required
-def payments_page():
-    """List all customer payments received"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    payments = db.get("payments", {"business_id": biz_id}) if biz_id else []
-    payments = sorted(payments, key=lambda x: x.get("created_at", ""), reverse=True)
-    
-    # Stats
-    today_str = today()
-    this_month = today_str[:7]
-    
-    today_total = sum(float(p.get("amount", 0)) for p in payments if str(p.get("date", ""))[:10] == today_str)
-    month_total = sum(float(p.get("amount", 0)) for p in payments if str(p.get("date", ""))[:7] == this_month)
-    total_all = sum(float(p.get("amount", 0)) for p in payments)
-    
-    # Build rows
-    rows = ""
-    for p in payments[:100]:
-        method = p.get("method", "eft")
-        method_colors = {"cash": "#10b981", "eft": "#3b82f6", "card": "#8b5cf6", "other": "#6b7280"}
-        method_color = method_colors.get(method, "#6b7280")
-        
-        rows += f'''
-        <tr>
-            <td>{p.get("date", "-")}</td>
-            <td><strong>{safe_string(p.get("customer_name", "-"))}</strong></td>
-            <td>{p.get("invoice_number", "-")}</td>
-            <td><span style="background:{method_color};color:white;padding:2px 8px;border-radius:10px;font-size:11px;">{method.upper()}</span></td>
-            <td style="color:#10b981;font-weight:bold;">{money(p.get("amount", 0))}</td>
-            <td style="color:var(--text-muted);font-size:12px;">{p.get("reference", "-")}</td>
-        </tr>'''
-    
-    content = f'''
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h1 style="margin:0;">Payments Received</h1>
-    </div>
-    
-    <div class="stats-grid" style="margin-bottom:25px;">
-        <div class="stat-card" style="background:linear-gradient(135deg, rgba(16,185,129,0.3), rgba(16,185,129,0.1));">
-            <div class="stat-value" style="color:#10b981;">{money(today_total)}</div>
-            <div class="stat-label">Today</div>
-        </div>
-        <div class="stat-card" style="background:linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.05));">
-            <div class="stat-value" style="color:#10b981;">{money(month_total)}</div>
-            <div class="stat-label">This Month</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{money(total_all)}</div>
-            <div class="stat-label">All Time</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{len(payments)}</div>
-            <div class="stat-label">Total Payments</div>
-        </div>
-    </div>
-    
-    <div class="card">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Customer</th>
-                    <th>Invoice</th>
-                    <th>Method</th>
-                    <th>Amount</th>
-                    <th>Reference</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows or "<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--text-muted);'>No payments recorded yet</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    '''
-    
-    return render_page("Payments", content, user, "payments")
-
 
 @app.route("/banking")
 @login_required
@@ -30492,31 +22453,19 @@ def banking_page():
     bank_stats = BankLearning.get_learning_stats(biz_id) if biz_id else {}
     auto_rate = bank_stats.get("coverage_estimate", "0%")
     
-    # Calculate totals
-    total_debit = sum(float(t.get("debit", 0)) for t in transactions)
-    total_credit = sum(float(t.get("credit", 0)) for t in transactions)
-    
     rows = ""
-    for txn in transactions[:500]:
+    for txn in transactions[:50]:
         amount = float(txn.get("amount", 0))
-        debit = float(txn.get("debit", 0))
-        credit = float(txn.get("credit", 0))
-        
-        # If no debit/credit but has amount, derive them
-        if debit == 0 and credit == 0 and amount != 0:
-            if amount < 0:
-                debit = abs(amount)
-            else:
-                credit = amount
+        amount_color = "var(--green)" if amount > 0 else "var(--red)"
         
         # Show AI suggestion if available
         suggested = txn.get("suggested_category", "")
         confidence = txn.get("suggestion_confidence", 0)
         
         if suggested and confidence >= 0.7:
-            suggestion_html = f'<span style="color:var(--green);font-size:11px;">AI: {suggested}</span>'
+            suggestion_html = f'<span style="color:var(--green);font-size:11px;">🤖 {suggested}</span>'
         elif suggested:
-            suggestion_html = f'<span style="color:var(--text-muted);font-size:11px;">AI: {suggested}?</span>'
+            suggestion_html = f'<span style="color:var(--text-muted);font-size:11px;">🤖 {suggested}?</span>'
         else:
             suggestion_html = ""
         
@@ -30527,8 +22476,7 @@ def banking_page():
                 {safe_string(txn.get("description", "-"))}
                 <br>{suggestion_html}
             </td>
-            <td style="text-align:right;color:var(--red);">{money(debit) if debit > 0 else "-"}</td>
-            <td style="text-align:right;color:var(--green);">{money(credit) if credit > 0 else "-"}</td>
+            <td style="color:{amount_color};text-align:right;">{money(abs(amount))}</td>
             <td>
                 <select class="form-input" style="width:150px;padding:4px;font-size:12px;" 
                         onchange="categorizeTransaction('{txn.get("id")}', this.value, '{safe_string(txn.get("description", ""))}')">
@@ -30550,21 +22498,6 @@ def banking_page():
         </div>
     </div>
     
-    <div class="stats-grid" style="margin-bottom:20px;">
-        <div class="stat-card">
-            <div class="stat-value">{len(transactions)}</div>
-            <div class="stat-label">Unmatched</div>
-        </div>
-        <div class="stat-card" style="background:rgba(239,68,68,0.1);border-color:var(--red);">
-            <div class="stat-value" style="color:var(--red);">{money(total_debit)}</div>
-            <div class="stat-label">Total Debit (Out)</div>
-        </div>
-        <div class="stat-card" style="background:rgba(16,185,129,0.1);border-color:var(--green);">
-            <div class="stat-value" style="color:var(--green);">{money(total_credit)}</div>
-            <div class="stat-label">Total Credit (In)</div>
-        </div>
-    </div>
-    
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <h3 class="card-title" style="margin:0;"> Bank Reconciliation</h3>
@@ -30578,22 +22511,14 @@ def banking_page():
             {len(transactions)} unmatched transactions. Select a category to match, or ask Zane.
         </p>
         
-        <div style="overflow-x:auto;">
         <table class="table">
             <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Description</th>
-                    <th style="text-align:right;">Debit (Out)</th>
-                    <th style="text-align:right;">Credit (In)</th>
-                    <th>Category</th>
-                </tr>
+                <tr><th>Date</th><th>Description</th><th style="text-align:right;">Amount</th><th>Category</th></tr>
             </thead>
             <tbody>
-                {rows or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No unmatched transactions. Import a bank statement to start.</td></tr>"}
+                {rows or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No unmatched transactions. Import a bank statement to start.</td></tr>"}
             </tbody>
         </table>
-        </div>
     </div>
     
     <script>
@@ -30674,17 +22599,11 @@ def api_banking_import():
         headers = [str(h).lower() if not isinstance(h, list) else str(h[0]).lower() for h in rows[0]]
         data_rows = rows[1:]
         
-        # Helper function to safely get cell value as string - FIXED for nested lists
+        # Helper function to safely get cell value as string
         def cell_str(cell):
-            """Convert any cell value to a clean string"""
-            if cell is None:
-                return ""
-            if isinstance(cell, (list, tuple)):
-                # Handle nested lists/tuples by recursively taking first element
-                while isinstance(cell, (list, tuple)) and cell:
-                    cell = cell[0]
-                return str(cell).strip() if cell is not None else ""
-            return str(cell).strip()
+            if isinstance(cell, list):
+                return str(cell[0]).strip() if cell else ""
+            return str(cell).strip() if cell else ""
         
         # Sanitize all data rows
         data_rows = [[cell_str(cell) for cell in row] for row in data_rows]
@@ -30794,14 +22713,17 @@ def api_banking_categorize():
         # Create expense record if it's an outgoing payment
         amount = float(txn.get("amount", 0))
         if amount < 0:
-            expense = RecordFactory.expense(
-                business_id=biz_id,
-                description=description,
-                amount=abs(amount),
-                date=txn.get("date", today()),
-                category=category,
-                reference=f"Bank: {txn_id[:8]}"
-            )
+            expense = {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "date": txn.get("date", today()),
+                "description": description,
+                "amount": abs(amount),
+                "category": category,
+                "source": "bank_import",
+                "bank_transaction_id": txn_id,
+                "created_at": now()
+            }
             db.save("expenses", expense)
         
         return jsonify({"success": True})
@@ -30895,15 +22817,20 @@ def job_new():
         if not title:
             flash("Job title is required", "error")
         else:
-            job = RecordFactory.job(
-                business_id=biz_id,
-                title=title,
-                customer_name=customer_name,
-                customer_id=safe_uuid(customer_id),
-                description=description,
-                status="open"
-            )
-            job_id = job["id"]
+            job_id = generate_id()
+            job = {
+                "id": job_id,
+                "business_id": biz_id,
+                "title": title,
+                "customer_id": customer_id or None,
+                "customer_name": customer_name,
+                "description": description,
+                "status": "open",
+                "date": today(),
+                "parts": "[]",
+                "time_entries": "[]",
+                "created_at": now()
+            }
             
             success, err = db.save("jobs", job)
             if success:
@@ -31242,11 +23169,11 @@ def quote_create_job_card(quote_id):
     success, result = db.save("jobs", job_card)
     
     if success:
-        flash(f"Job Card {job_number} created!", "success")
+        flash(f"✅ Job Card {job_number} created!", "success")
         AuditLog.log("CREATE", "jobs", job_id, details=f"Job card created from quote {quote.get('quote_number')}")
         return redirect(f"/job-card/{job_id}")
     else:
-        flash(f"Error creating job card: {result}", "error")
+        flash(f"❌ Error creating job card: {result}", "error")
         return redirect(f"/quote/{quote_id}")
 
 
@@ -31261,33 +23188,11 @@ def job_card_view(job_id):
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
     
     job = db.get_one("jobs", job_id)
     if not job:
         flash("Job card not found", "error")
         return redirect("/jobs")
-    
-    # Get stock items for Add Material dropdown (from OWN stock)
-    stock_items = db.get("stock", {"business_id": biz_id}) if biz_id else []
-    stock_options = ''
-    for s in sorted(stock_items, key=lambda x: x.get("description", "")):
-        code = s.get("code", "")
-        desc = s.get("description", "")
-        qty = float(s.get("qty") or s.get("quantity") or 0)
-        cost = float(s.get("cost") or s.get("cost_price") or 0)
-        price = float(s.get("price") or s.get("selling_price") or 0)
-        stock_id = s.get("id", "")
-        if qty > 0:  # Only show items with stock
-            stock_options += f'<option value="{stock_id}" data-code="{code}" data-desc="{desc}" data-qty="{qty}" data-cost="{cost}" data-price="{price}">{code} - {desc} (Qty: {qty:.0f})</option>'
-    
-    # Get suppliers for ordering items
-    suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-    supplier_options = ''
-    for sup in sorted(suppliers, key=lambda x: x.get("name", "")):
-        sup_id = sup.get("id", "")
-        sup_name = safe_string(sup.get("name", ""))
-        supplier_options += f'<option value="{sup_id}">{sup_name}</option>'
     
     # Parse JSON fields
     try:
@@ -31327,7 +23232,6 @@ def job_card_view(job_id):
         "in_progress": "#3b82f6",
         "on_hold": "#f59e0b",
         "completed": "#10b981",
-        "delivered": "#22d3ee",
         "invoiced": "#8b5cf6"
     }
     status_labels = {
@@ -31335,16 +23239,14 @@ def job_card_view(job_id):
         "in_progress": "In Progress",
         "on_hold": "On Hold",
         "completed": "Completed",
-        "delivered": "Delivered",
         "invoiced": "Invoiced"
     }
     status_emoji = {
-        "not_started": "",
-        "in_progress": "[WIP]",
-        "on_hold": "[HOLD]",
-        "completed": "[DONE]",
-        "delivered": "[DEL]",
-        "invoiced": "[INV]"
+        "not_started": "📋",
+        "in_progress": "🔧",
+        "on_hold": "⏸️",
+        "completed": "✅",
+        "invoiced": "💰"
     }
     
     # Build BOM table with issue tracking
@@ -31430,30 +23332,15 @@ def job_card_view(job_id):
         action_buttons = '<button class="btn btn-primary" onclick="updateStatus(\'in_progress\')">🚀 Start Work</button>'
     elif status == 'in_progress':
         action_buttons = '''
-        <button class="btn btn-secondary" onclick="showLabourModal()">Log Hours</button>
-        <button class="btn btn-secondary" onclick="showCostModal()">Add Cost</button>
-        <button class="btn btn-secondary" onclick="updateStatus('on_hold')">Pause</button>
-        <button class="btn btn-primary" onclick="completeJob()">Complete</button>
+        <button class="btn btn-secondary" onclick="showLabourModal()">⏱️ Log Hours</button>
+        <button class="btn btn-secondary" onclick="showCostModal()">💰 Add Cost</button>
+        <button class="btn btn-secondary" onclick="updateStatus('on_hold')">⏸️ Pause</button>
+        <button class="btn btn-primary" onclick="completeJob()">✅ Complete</button>
         '''
     elif status == 'on_hold':
         action_buttons = '<button class="btn btn-primary" onclick="updateStatus(\'in_progress\')">▶️ Resume Work</button>'
     elif status == 'completed':
-        action_buttons = f'''
-        <button class="btn btn-secondary" onclick="createDeliveryNote()">Create DN</button>
-        <button class="btn btn-secondary" onclick="createInvoice()">Create Invoice</button>
-        <button class="btn btn-primary" onclick="createBoth()">DN & Invoice</button>
-        '''
-    elif status == 'delivered':
-        action_buttons = f'<button class="btn btn-primary" onclick="createInvoice()">Create Invoice</button>'
-    elif status == 'invoiced':
-        # Show links to documents
-        inv_id = job.get("invoice_id", "")
-        dn_id = job.get("delivery_note_id", "")
-        action_buttons = '<span style="color:var(--green);font-weight:bold;">Job Complete</span>'
-        if dn_id:
-            action_buttons += f' <a href="/delivery-note/{dn_id}" class="btn btn-secondary" style="margin-left:10px;">View DN</a>'
-        if inv_id:
-            action_buttons += f' <a href="/invoice/{inv_id}" class="btn btn-secondary" style="margin-left:5px;">View Invoice</a>'
+        action_buttons = f'<button class="btn btn-primary" onclick="createInvoice()">📄 Create Invoice</button>'
     
     # Progress indicator
     progress_html = ''
@@ -31524,7 +23411,7 @@ def job_card_view(job_id):
         <div>
             <a href="/jobs" style="color:var(--text-muted);">← Back to Jobs</a>
             <h1 style="margin:10px 0 5px 0;font-size:28px;">
-                {status_emoji.get(status, "")} {job.get("job_number", "Job Card")}
+                {status_emoji.get(status, "📋")} {job.get("job_number", "Job Card")}
             </h1>
             <p style="color:var(--text-muted);margin:0;">
                 {safe_string(job.get("customer_name", "Customer"))} 
@@ -31569,10 +23456,7 @@ def job_card_view(job_id):
     <div class="job-card-grid">
         <!-- Materials Card -->
         <div class="job-card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <h3 style="margin:0;">Materials (BOM)</h3>
-                <button class="btn btn-sm" style="background:#8b5cf6;color:white;" onclick="showAddMaterialModal()">+ Add Material</button>
-            </div>
+            <h3>📦 Materials (BOM)</h3>
             <div style="overflow-x:auto;">
                 <table class="table" style="font-size:14px;">
                     <thead>
@@ -31598,10 +23482,7 @@ def job_card_view(job_id):
         
         <!-- Labour Card -->
         <div class="job-card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <h3 style="margin:0;">Labour</h3>
-                {'<button class="btn btn-sm" style="background:#3b82f6;color:white;" onclick="showLabourModal()">+ Log Hours</button>' if status != 'invoiced' else ''}
-            </div>
+            <h3>⏱️ Labour</h3>
             <div style="overflow-x:auto;">
                 <table class="table" style="font-size:14px;">
                     <thead>
@@ -31626,10 +23507,7 @@ def job_card_view(job_id):
         
         <!-- Additional Costs Card -->
         <div class="job-card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                <h3 style="margin:0;">Additional Costs</h3>
-                {'<button class="btn btn-sm" style="background:#f59e0b;color:white;" onclick="showCostModal()">+ Add Cost</button>' if status != 'invoiced' else ''}
-            </div>
+            <h3>💰 Additional Costs</h3>
             <div style="overflow-x:auto;">
                 <table class="table" style="font-size:14px;">
                     <thead>
@@ -31861,224 +23739,7 @@ def job_card_view(job_id):
             alert('Error: ' + result.message);
         }}
     }}
-    
-    // Create Delivery Note
-    async function createDeliveryNote() {{
-        if (!confirm('Create delivery note for this job?')) return;
-        
-        const response = await fetch('/api/job-card/{job_id}/create-delivery-note', {{
-            method: 'POST'
-        }});
-        
-        const result = await response.json();
-        if (result.success) {{
-            window.location = '/delivery-note/' + result.dn_id;
-        }} else {{
-            alert('Error: ' + result.message);
-        }}
-    }}
-    
-    // Create BOTH DN and Invoice - ONE CLICK!
-    async function createBoth() {{
-        if (!confirm('Create delivery note AND invoice for this job?')) return;
-        
-        const response = await fetch('/api/job-card/{job_id}/create-both', {{
-            method: 'POST'
-        }});
-        
-        const result = await response.json();
-        if (result.success) {{
-            alert('' + result.message);
-            window.location = '/invoice/' + result.invoice_id;
-        }} else {{
-            alert('Error: ' + result.message);
-        }}
-    }}
-    
-    // Add Material Modal
-    function showAddMaterialModal() {{
-        document.getElementById('addMaterialModal').style.display = 'flex';
-        switchMaterialTab('stock'); // Default to stock tab
-    }}
-    
-    function closeAddMaterialModal() {{
-        document.getElementById('addMaterialModal').style.display = 'none';
-        // Reset form
-        document.getElementById('stockSelect').value = '';
-        document.getElementById('supplierSelect') && (document.getElementById('supplierSelect').value = '');
-        document.getElementById('materialCode').value = '';
-        document.getElementById('materialDesc').value = '';
-        document.getElementById('materialQty').value = '1';
-        document.getElementById('materialCost').value = '0';
-        document.getElementById('materialPrice').value = '0';
-        document.getElementById('materialAvail').textContent = '-';
-    }}
-    
-    function switchMaterialTab(tab) {{
-        // Update hidden field
-        document.getElementById('materialSource').value = tab;
-        
-        // Update tab buttons
-        document.getElementById('tabStock').style.background = tab === 'stock' ? '#10b981' : 'transparent';
-        document.getElementById('tabStock').style.color = tab === 'stock' ? 'white' : 'var(--text)';
-        document.getElementById('tabStock').style.border = tab === 'stock' ? 'none' : '1px solid var(--border)';
-        
-        document.getElementById('tabSupplier').style.background = tab === 'supplier' ? '#f97316' : 'transparent';
-        document.getElementById('tabSupplier').style.color = tab === 'supplier' ? 'white' : 'var(--text)';
-        document.getElementById('tabSupplier').style.border = tab === 'supplier' ? 'none' : '1px solid var(--border)';
-        
-        document.getElementById('tabManual').style.background = tab === 'manual' ? '#8b5cf6' : 'transparent';
-        document.getElementById('tabManual').style.color = tab === 'manual' ? 'white' : 'var(--text)';
-        document.getElementById('tabManual').style.border = tab === 'manual' ? 'none' : '1px solid var(--border)';
-        
-        // Show/hide panels
-        document.getElementById('panelStock').style.display = tab === 'stock' ? 'block' : 'none';
-        document.getElementById('panelSupplier').style.display = tab === 'supplier' ? 'block' : 'none';
-        document.getElementById('panelManual').style.display = tab === 'manual' ? 'block' : 'none';
-        
-        // Clear fields when switching
-        document.getElementById('materialCode').value = '';
-        document.getElementById('materialDesc').value = '';
-        document.getElementById('materialCost').value = '0';
-        document.getElementById('materialPrice').value = '0';
-        document.getElementById('materialAvail').textContent = '-';
-    }}
-    
-    function updateMaterialDetails(source) {{
-        if (source === 'stock') {{
-            const select = document.getElementById('stockSelect');
-            const option = select.options[select.selectedIndex];
-            if (option && option.value) {{
-                document.getElementById('materialCode').value = option.dataset.code || '';
-                document.getElementById('materialDesc').value = option.dataset.desc || '';
-                document.getElementById('materialCost').value = option.dataset.cost || 0;
-                document.getElementById('materialPrice').value = option.dataset.price || 0;
-                document.getElementById('materialAvail').textContent = option.dataset.qty || 0;
-            }}
-        }}
-    }}
-    
-    async function submitAddMaterial(e) {{
-        e.preventDefault();
-        const source = document.getElementById('materialSource').value;
-        const stockId = source === 'stock' ? document.getElementById('stockSelect').value : '';
-        const supplierId = source === 'supplier' && document.getElementById('supplierSelect') ? document.getElementById('supplierSelect').value : '';
-        const code = document.getElementById('materialCode').value;
-        const desc = document.getElementById('materialDesc').value;
-        const qty = parseFloat(document.getElementById('materialQty').value) || 0;
-        const cost = parseFloat(document.getElementById('materialCost').value) || 0;
-        const price = parseFloat(document.getElementById('materialPrice').value) || 0;
-        
-        if (!desc || qty <= 0) {{
-            alert('Please fill in description and quantity');
-            return false;
-        }}
-        
-        const response = await fetch('/api/job-card/{job_id}/add-bom-item', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{
-                source: source,
-                stock_id: stockId,
-                supplier_id: supplierId,
-                code: code,
-                description: desc,
-                quantity: qty,
-                cost: cost,
-                price: price
-            }})
-        }});
-        
-        const result = await response.json();
-        if (result.success) {{
-            location.reload();
-        }} else {{
-            alert('Error: ' + result.message);
-        }}
-        return false;
-    }}
     </script>
-    
-    <!-- Add Material Modal -->
-    <div id="addMaterialModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:var(--card);padding:25px;border-radius:12px;max-width:500px;width:90%;">
-            <h3 style="margin:0 0 15px 0;">Add Material to BOM</h3>
-            
-            <!-- Tab Buttons -->
-            <div style="display:flex;gap:5px;margin-bottom:15px;">
-                <button type="button" id="tabStock" class="btn btn-sm" style="flex:1;background:#10b981;color:white;" onclick="switchMaterialTab('stock')">From Stock</button>
-                <button type="button" id="tabSupplier" class="btn btn-sm" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text);" onclick="switchMaterialTab('supplier')">🚚 Order from Supplier</button>
-                <button type="button" id="tabManual" class="btn btn-sm" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text);" onclick="switchMaterialTab('manual')">✏️ Manual Entry</button>
-            </div>
-            
-            <form onsubmit="return submitAddMaterial(event)">
-                <input type="hidden" id="materialSource" value="stock">
-                
-                <!-- STOCK TAB -->
-                <div id="panelStock">
-                    <div style="margin-bottom:15px;">
-                        <label class="form-label">Select from your Stock</label>
-                        <select id="stockSelect" class="form-input" onchange="updateMaterialDetails('stock')">
-                            <option value="">-- Select Stock Item --</option>
-                            {stock_options}
-                        </select>
-                        <small style="color:var(--text-muted);">Available in stock: <span id="materialAvail">-</span></small>
-                    </div>
-                </div>
-                
-                <!-- SUPPLIER TAB -->
-                <div id="panelSupplier" style="display:none;">
-                    <div style="margin-bottom:15px;">
-                        <label class="form-label">Supplier</label>
-                        <select id="supplierSelect" class="form-input">
-                            <option value="">-- Select Supplier --</option>
-                            {supplier_options}
-                        </select>
-                    </div>
-                    <div style="background:rgba(249,115,22,0.1);padding:10px;border-radius:6px;margin-bottom:15px;">
-                        <small style="color:#f97316;">🚚 This item will be ordered from the supplier. Fill in details below.</small>
-                    </div>
-                </div>
-                
-                <!-- MANUAL TAB -->
-                <div id="panelManual" style="display:none;">
-                    <div style="background:rgba(139,92,246,0.1);padding:10px;border-radius:6px;margin-bottom:15px;">
-                        <small style="color:#a78bfa;">✏️ Enter non-stock item details (e.g. Consumables, Transport, Subcontractor)</small>
-                    </div>
-                </div>
-                
-                <!-- Common Fields -->
-                <div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-bottom:15px;">
-                    <div>
-                        <label class="form-label">Code</label>
-                        <input type="text" id="materialCode" class="form-input" placeholder="Optional">
-                    </div>
-                    <div>
-                        <label class="form-label">Description *</label>
-                        <input type="text" id="materialDesc" class="form-input" required placeholder="Item description">
-                    </div>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:20px;">
-                    <div>
-                        <label class="form-label">Qty Needed *</label>
-                        <input type="number" id="materialQty" class="form-input" value="1" min="0.1" step="0.1" required>
-                    </div>
-                    <div>
-                        <label class="form-label">Cost Each</label>
-                        <input type="number" id="materialCost" class="form-input" value="0" step="0.01">
-                    </div>
-                    <div>
-                        <label class="form-label">Sell Price Each</label>
-                        <input type="number" id="materialPrice" class="form-input" value="0" step="0.01">
-                    </div>
-                </div>
-                <div style="display:flex;gap:10px;">
-                    <button type="button" class="btn btn-secondary" onclick="closeAddMaterialModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary" style="flex:1;">+ Add to BOM</button>
-                </div>
-            </form>
-        </div>
-    </div>
     '''
     
     return render_page(f"Job Card {job.get('job_number', '')}", content, user, "jobs")
@@ -32087,76 +23748,6 @@ def job_card_view(job_id):
 # ============================================================================
 # API ROUTES - Job Card Actions
 # ============================================================================
-
-@app.route("/api/job-card/<job_id>/add-bom-item", methods=["POST"])
-@login_required
-def api_job_card_add_bom_item(job_id):
-    """Add a material item to job card BOM"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    try:
-        data = request.get_json()
-        source = data.get("source", "manual")  # stock, supplier, or manual
-        stock_id = data.get("stock_id", "")
-        supplier_id = data.get("supplier_id", "")
-        code = data.get("code", "").strip()
-        description = data.get("description", "").strip()
-        quantity = float(data.get("quantity", 0))
-        cost = float(data.get("cost", 0))
-        price = float(data.get("price", 0))
-        
-        if not description or quantity <= 0:
-            return jsonify({"success": False, "message": "Description and quantity required"})
-        
-        # Get job card
-        job = db.get_one("jobs", job_id)
-        if not job:
-            return jsonify({"success": False, "message": "Job not found"})
-        
-        # Get existing BOM
-        try:
-            bom = json.loads(job.get("bom", "[]"))
-        except:
-            bom = []
-        
-        # Get supplier name if supplier source
-        supplier_name = ""
-        if supplier_id:
-            supplier = db.get_one("suppliers", supplier_id)
-            if supplier:
-                supplier_name = supplier.get("name", "")
-        
-        # Add new item
-        new_item = {
-            "source": source,  # stock, supplier, manual
-            "stock_id": stock_id if source == "stock" else "",
-            "supplier_id": supplier_id if source == "supplier" else "",
-            "supplier_name": supplier_name,
-            "code": code,
-            "description": description,
-            "quantity": quantity,
-            "qty": quantity,
-            "cost": cost,
-            "price": price,
-            "total": quantity * price
-        }
-        bom.append(new_item)
-        
-        # Update job card
-        db.update("jobs", job_id, {"bom": json.dumps(bom)}, biz_id)
-        
-        AuditLog.log("UPDATE", "jobs", job_id, details=f"BOM item added: {quantity}x {description}")
-        logger.info(f"[JOB CARD] Added BOM item: {quantity}x {description} to job {job.get('job_number')}")
-        
-        return jsonify({"success": True})
-        
-    except Exception as e:
-        logger.error(f"[JOB CARD] Add BOM item error: {e}")
-        return jsonify({"success": False, "message": str(e)})
-
 
 @app.route("/api/job-card/<job_id>/issue-material", methods=["POST"])
 @login_required
@@ -32222,17 +23813,7 @@ def api_job_card_issue_material(job_id):
         success, _ = db.save("jobs", updates)
         
         if success:
-            # === DEDUCT STOCK ===
-            # Try to find matching stock item by description or code
-            stock_id = bom_item.get("stock_id")
-            if stock_id:
-                stock_item = db.get_one("stock", stock_id)
-                if stock_item:
-                    current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                    new_qty = current_qty - qty
-                    db.update("stock", stock_id, {"qty": new_qty, "quantity": new_qty}, job.get("business_id"))
-                    logger.info(f"[JOB CARD] Stock issued {stock_id}: {current_qty} - {qty} = {new_qty}")
-            
+            # TODO: Deduct from stock if stock tracking is enabled
             AuditLog.log("UPDATE", "jobs", job_id, details=f"Material issued: {bom_item.get('description')} x {qty}")
             return jsonify({"success": True})
         else:
@@ -32424,42 +24005,37 @@ def api_job_card_create_invoice(job_id):
         if not job:
             return jsonify({"success": False, "message": "Job not found"})
         
-        if job.get("status") not in ("completed", "delivered"):
+        if job.get("status") != "completed":
             return jsonify({"success": False, "message": "Job must be completed first"})
         
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
-        user = Auth.get_current_user()
         
         # Get BOM as invoice items
-        bom = job.get("bom", [])
-        if isinstance(bom, str):
-            try:
-                bom = json.loads(bom)
-            except:
-                bom = []
+        bom = json.loads(job.get("bom", "[]"))
         
         # Generate invoice number
         existing_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
         inv_number = f"INV-{len(existing_invoices) + 1:05d}"
         
         # Create invoice
-        invoice = RecordFactory.invoice(
-            business_id=biz_id,
-            customer_id=job.get("customer_id", ""),
-            customer_name=job.get("customer_name", ""),
-            items=bom,
-            invoice_number=inv_number,
-            date=today(),
-            due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-            subtotal=job.get("quote_subtotal", 0),
-            vat=float(job.get("quote_subtotal", 0)) * 0.15,
-            total=job.get("quote_value", 0),
-            status="unpaid",
-            job_card_id=job_id,
-            created_by=user.get("id", "") if user else ""
-        )
-        invoice_id = invoice["id"]
+        invoice_id = generate_id()
+        invoice = {
+            "id": invoice_id,
+            "business_id": biz_id,
+            "invoice_number": inv_number,
+            "customer_id": job.get("customer_id"),
+            "customer_name": job.get("customer_name"),
+            "date": today(),
+            "due_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+            "items": job.get("bom"),  # Use BOM as items
+            "subtotal": job.get("quote_subtotal", 0),
+            "vat": float(job.get("quote_subtotal", 0)) * 0.15,
+            "total": job.get("quote_value", 0),
+            "status": "unpaid",
+            "created_at": now(),
+            "job_card_id": job_id
+        }
         
         success, _ = db.save("invoices", invoice)
         
@@ -32491,172 +24067,12 @@ def api_job_card_create_invoice(job_id):
         return jsonify({"success": False, "message": str(e)})
 
 
-@app.route("/api/job-card/<job_id>/create-delivery-note", methods=["POST"])
-@login_required
-def api_job_card_create_dn(job_id):
-    """Create delivery note from completed job card"""
-    
-    try:
-        # Get job card
-        job = db.get_one("jobs", job_id)
-        if not job:
-            return jsonify({"success": False, "message": "Job not found"})
-        
-        if job.get("status") not in ("completed", "in_progress"):
-            return jsonify({"success": False, "message": "Job must be completed or in progress"})
-        
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        # Get BOM as DN items
-        bom = json.loads(job.get("bom", "[]"))
-        
-        # Generate DN number
-        existing_dns = db.get("delivery_notes", {"business_id": biz_id}) if biz_id else []
-        dn_number = f"DN-{len(existing_dns) + 1:05d}"
-        
-        # Create delivery note
-        dn_id = generate_id()
-        dn = {
-            "id": dn_id,
-            "business_id": biz_id,
-            "dn_number": dn_number,
-            "customer_id": job.get("customer_id"),
-            "customer_name": job.get("customer_name"),
-            "date": today(),
-            "items": job.get("bom"),
-            "notes": f"Delivery for Job {job.get('job_number')}",
-            "status": "pending",
-            "created_at": now(),
-            "job_card_id": job_id
-        }
-        
-        success, _ = db.save("delivery_notes", dn)
-        
-        if success:
-            # Update job card
-            db.save("jobs", {"id": job_id, "status": "delivered", "delivery_note_id": dn_id})
-            
-            AuditLog.log("CREATE", "delivery_notes", dn_id, details=f"DN created from job card {job.get('job_number')}")
-            
-            return jsonify({"success": True, "dn_id": dn_id})
-        else:
-            return jsonify({"success": False, "message": "Failed to create delivery note"})
-            
-    except Exception as e:
-        logger.error(f"[JOB CARD] Create DN error: {e}")
-        return jsonify({"success": False, "message": str(e)})
-
-
-@app.route("/api/job-card/<job_id>/create-both", methods=["POST"])
-@login_required
-def api_job_card_create_both(job_id):
-    """Create BOTH delivery note AND invoice from completed job card - ONE CLICK!"""
-    
-    try:
-        # Get job card
-        job = db.get_one("jobs", job_id)
-        if not job:
-            return jsonify({"success": False, "message": "Job not found"})
-        
-        if job.get("status") not in ("completed", "in_progress"):
-            return jsonify({"success": False, "message": "Job must be completed first"})
-        
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        # Get BOM as items
-        bom = job.get("bom", [])
-        if isinstance(bom, str):
-            try:
-                bom = json.loads(bom)
-            except:
-                bom = []
-        
-        user = Auth.get_current_user()
-        
-        # === CREATE DELIVERY NOTE ===
-        existing_dns = db.get("delivery_notes", {"business_id": biz_id}) if biz_id else []
-        dn_number = f"DN-{len(existing_dns) + 1:05d}"
-        
-        dn = RecordFactory.delivery_note(
-            business_id=biz_id,
-            customer_id=job.get("customer_id", ""),
-            customer_name=job.get("customer_name", ""),
-            items=bom,
-            delivery_note_number=dn_number,
-            date=today(),
-            notes=f"Delivery for Job {job.get('job_number')}",
-            status="delivered"
-        )
-        dn_id = dn["id"]
-        db.save("delivery_notes", dn)
-        
-        # === CREATE INVOICE ===
-        existing_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        inv_number = f"INV-{len(existing_invoices) + 1:05d}"
-        
-        invoice = RecordFactory.invoice(
-            business_id=biz_id,
-            customer_id=job.get("customer_id", ""),
-            customer_name=job.get("customer_name", ""),
-            items=bom,
-            invoice_number=inv_number,
-            date=today(),
-            due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-            subtotal=job.get("quote_subtotal", 0),
-            vat=float(job.get("quote_subtotal", 0)) * 0.15,
-            total=job.get("quote_value", 0),
-            status="unpaid",
-            job_card_id=job_id,
-            notes=f"Delivery Note: {dn_number}",
-            created_by=user.get("id", "") if user else ""
-        )
-        invoice_id = invoice["id"]
-        db.save("invoices", invoice)
-        
-        # Update job card
-        db.save("jobs", {
-            "id": job_id, 
-            "status": "invoiced", 
-            "invoice_id": invoice_id,
-            "delivery_note_id": dn_id
-        })
-        
-        # Post GL entries
-        create_journal_entry(
-            biz_id,
-            today(),
-            f"Invoice {inv_number} - Job {job.get('job_number')}",
-            inv_number,
-            [
-                {"account": "Debtors", "debit": float(invoice.get("total", 0)), "credit": 0},
-                {"account": "Sales", "debit": 0, "credit": float(invoice.get("subtotal", 0))},
-                {"account": "Output VAT", "debit": 0, "credit": float(invoice.get("vat", 0))}
-            ]
-        )
-        
-        AuditLog.log("CREATE", "invoices", invoice_id, details=f"DN + Invoice created from job {job.get('job_number')}")
-        
-        return jsonify({
-            "success": True, 
-            "invoice_id": invoice_id, 
-            "dn_id": dn_id,
-            "message": f"Created {dn_number} and {inv_number}"
-        })
-        
-    except Exception as e:
-        logger.error(f"[JOB CARD] Create both error: {e}")
-        return jsonify({"success": False, "message": str(e)})
-
-
 
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
     """Login page"""
     
     error = ""
-    prefill_email = request.args.get("email", "")
     
     if request.method == "POST":
         email = request.form.get("email", "")
@@ -32668,7 +24084,6 @@ def login_page():
             return redirect("/")
         else:
             error = message
-            prefill_email = email  # Keep email on error
     
     return f'''<!DOCTYPE html>
 <html>
@@ -32689,12 +24104,12 @@ def login_page():
         <form method="POST">
             <div class="form-group">
                 <label class="form-label">Email</label>
-                <input type="email" name="email" class="form-input" required value="{prefill_email}" {"" if prefill_email else "autofocus"}>
+                <input type="email" name="email" class="form-input" required autofocus>
             </div>
             <div class="form-group">
                 <label class="form-label">Password</label>
                 <div style="position:relative;">
-                    <input type="password" id="loginPassword" name="password" class="form-input" required style="padding-right:45px;" {"autofocus" if prefill_email else ""}>
+                    <input type="password" id="loginPassword" name="password" class="form-input" required style="padding-right:45px;">
                     <button type="button" onclick="togglePassword('loginPassword', 'loginToggleIcon')" 
                             style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-muted);padding:5px;">
                         <svg id="loginToggleIcon" width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -32703,9 +24118,6 @@ def login_page():
                         </svg>
                     </button>
                 </div>
-            </div>
-            <div style="text-align:right;margin-bottom:15px;">
-                <a href="/forgot-password" style="color:var(--text-muted);font-size:13px;">Forgot password?</a>
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;">Login</button>
         </form>
@@ -32738,222 +24150,6 @@ def login_page():
 </html>'''
 
 
-@app.route("/forgot-password", methods=["GET", "POST"])
-def forgot_password_page():
-    """Forgot password - send reset email"""
-    
-    message = ""
-    error = ""
-    
-    if request.method == "POST":
-        email = request.form.get("email", "").lower().strip()
-        
-        if not email:
-            error = "Email required"
-        else:
-            # Find user
-            users = db.get("users", {"email": email})
-            
-            if users:
-                user = users[0]
-                
-                # Generate reset token
-                import secrets
-                reset_token = secrets.token_urlsafe(32)
-                reset_expires = (datetime.now() + timedelta(hours=24)).isoformat()
-                
-                # Save token to user
-                db.update("users", user.get("id"), {
-                    "reset_token": reset_token,
-                    "reset_expires": reset_expires
-                })
-                
-                # Send reset email
-                reset_link = f"https://clickai.fly.dev/reset-password/{reset_token}"
-                
-                email_body = f'''
-                <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;">
-                    <h2 style="color:#6366f1;">🔐 Password Reset</h2>
-                    <p>Hi,</p>
-                    <p>Click the button below to reset your password:</p>
-                    <p style="text-align:center;margin:30px 0;">
-                        <a href="{reset_link}" style="background:#6366f1;color:white;padding:12px 30px;text-decoration:none;border-radius:6px;display:inline-block;">Reset Password</a>
-                    </p>
-                    <p style="color:#666;font-size:13px;">Or copy this link: {reset_link}</p>
-                    <p style="color:#666;font-size:13px;">This link expires in 24 hours.</p>
-                    <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
-                    <p style="color:#999;font-size:12px;">If you didn't request this, ignore this email.</p>
-                </div>
-                '''
-                
-                try:
-                    Email.send(email, "Password Reset - Click AI", email_body)
-                    message = "Reset link sent! Check your email."
-                    logger.info(f"[PASSWORD RESET] Email sent to {email}")
-                except Exception as e:
-                    logger.error(f"[PASSWORD RESET] Email failed: {e}")
-                    # Still show success to prevent email enumeration
-                    message = "If that email exists, you'll receive a reset link."
-            else:
-                # Don't reveal if email exists
-                message = "If that email exists, you'll receive a reset link."
-    
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Forgot Password - Click AI</title>
-    {CSS}
-</head>
-<body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
-    <div class="card" style="width:100%;max-width:400px;">
-        <h2 style="text-align:center;margin-bottom:10px;">🔐 Forgot Password</h2>
-        <p style="text-align:center;color:var(--text-muted);margin-bottom:25px;">Enter your email to receive a reset link</p>
-        
-        {f'<div style="color:var(--green);margin-bottom:20px;text-align:center;padding:10px;background:rgba(34,197,94,0.1);border-radius:6px;">{message}</div>' if message else ''}
-        {f'<div style="color:var(--red);margin-bottom:20px;text-align:center;">{error}</div>' if error else ''}
-        
-        <form method="POST">
-            <div class="form-group">
-                <label class="form-label">Email</label>
-                <input type="email" name="email" class="form-input" required autofocus placeholder="your@email.com">
-            </div>
-            <button type="submit" class="btn btn-primary" style="width:100%;">Send Reset Link</button>
-        </form>
-        
-        <p style="text-align:center;margin-top:20px;color:var(--text-muted);">
-            <a href="/login" style="color:var(--primary);">← Back to Login</a>
-        </p>
-    </div>
-</body>
-</html>'''
-
-
-@app.route("/reset-password/<token>", methods=["GET", "POST"])
-def reset_password_page(token):
-    """Reset password with token"""
-    
-    # Find user with this token
-    users = db.get("users", {"reset_token": token})
-    
-    if not users:
-        return f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Invalid Link - Click AI</title>
-    {CSS}
-</head>
-<body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
-    <div class="card" style="width:100%;max-width:400px;text-align:center;">
-        <h2 style="color:var(--red);">Invalid Link</h2>
-        <p style="color:var(--text-muted);margin:20px 0;">This reset link is invalid or has already been used.</p>
-        <a href="/forgot-password" class="btn btn-primary">Request New Link</a>
-    </div>
-</body>
-</html>'''
-    
-    user = users[0]
-    
-    # Check if token expired
-    reset_expires = user.get("reset_expires", "")
-    if reset_expires:
-        try:
-            expires_dt = datetime.fromisoformat(reset_expires.replace("Z", "+00:00").replace("+00:00", ""))
-            if datetime.now() > expires_dt:
-                return f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Link Expired - Click AI</title>
-    {CSS}
-</head>
-<body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
-    <div class="card" style="width:100%;max-width:400px;text-align:center;">
-        <h2 style="color:var(--red);">⏰ Link Expired</h2>
-        <p style="color:var(--text-muted);margin:20px 0;">This reset link has expired. Please request a new one.</p>
-        <a href="/forgot-password" class="btn btn-primary">Request New Link</a>
-    </div>
-</body>
-</html>'''
-        except:
-            pass  # If parsing fails, allow reset anyway
-    
-    error = ""
-    
-    if request.method == "POST":
-        password = request.form.get("password", "")
-        password_confirm = request.form.get("password_confirm", "")
-        
-        if not password:
-            error = "Password required"
-        elif len(password) < 6:
-            error = "Password must be at least 6 characters"
-        elif password != password_confirm:
-            error = "Passwords don't match"
-        else:
-            # Update password
-            pwd_hash = hashlib.sha256(password.encode()).hexdigest()
-            
-            db.update("users", user.get("id"), {
-                "encrypted_password": pwd_hash,
-                "reset_token": None,  # Clear token
-                "reset_expires": None
-            })
-            
-            logger.info(f"[PASSWORD RESET] Password changed for {user.get('email')}")
-            
-            return f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Password Reset - Click AI</title>
-    {CSS}
-</head>
-<body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
-    <div class="card" style="width:100%;max-width:400px;text-align:center;">
-        <h2 style="color:var(--green);">Password Reset!</h2>
-        <p style="color:var(--text-muted);margin:20px 0;">Your password has been changed successfully.</p>
-        <a href="/login?email={user.get('email', '')}" class="btn btn-primary">Login Now</a>
-    </div>
-</body>
-</html>'''
-    
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reset Password - Click AI</title>
-    {CSS}
-</head>
-<body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
-    <div class="card" style="width:100%;max-width:400px;">
-        <h2 style="text-align:center;margin-bottom:10px;">🔐 Set New Password</h2>
-        <p style="text-align:center;color:var(--text-muted);margin-bottom:25px;">For: {user.get('email', '')}</p>
-        
-        {f'<div style="color:var(--red);margin-bottom:20px;text-align:center;">{error}</div>' if error else ''}
-        
-        <form method="POST">
-            <div class="form-group">
-                <label class="form-label">New Password</label>
-                <input type="password" name="password" class="form-input" required autofocus minlength="6" placeholder="At least 6 characters">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Confirm Password</label>
-                <input type="password" name="password_confirm" class="form-input" required minlength="6" placeholder="Type password again">
-            </div>
-            <button type="submit" class="btn btn-primary" style="width:100%;">Reset Password</button>
-        </form>
-    </div>
-</body>
-</html>'''
-
-
 @app.route("/register", methods=["GET", "POST"])
 def register_page():
     """Register page"""
@@ -32969,11 +24165,10 @@ def register_page():
         if not all([name, email, password, business_name]):
             error = "All fields required"
         else:
-            email = email.lower().strip()  # Normalize email
             # Check if user exists
             existing = db.get("users", {"email": email})
             if existing:
-                error = "Email already registered - please login instead"
+                error = "Email already registered"
             else:
                 # Check if this email is in team_members (invited to existing business)
                 team_invites = db.get("team_members", {"email": email})
@@ -32997,11 +24192,9 @@ def register_page():
                         "updated_at": now()
                     })
                     
-                    # Update team member to mark as active AND accepted
+                    # Update team member to mark as active
                     invite["status"] = "active"
-                    invite["invitation_status"] = "accepted"
                     invite["user_id"] = user_id
-                    invite["accepted_at"] = now()
                     db.save("team_members", invite)
                     
                     # Login
@@ -33133,7 +24326,7 @@ def invitation_page(token):
 </head>
 <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
     <div class="card" style="width:100%;max-width:500px;text-align:center;">
-        <h2 style="color:var(--red);">Invalid Invitation</h2>
+        <h2 style="color:var(--red);">❌ Invalid Invitation</h2>
         <p style="color:var(--text-muted);margin:20px 0;">This invitation link is invalid or has expired.</p>
         <a href="/login" class="btn btn-primary">Go to Login</a>
     </div>
@@ -33144,8 +24337,6 @@ def invitation_page(token):
     
     # Check if already accepted
     if invitation.get("invitation_status") == "accepted":
-        # Get the user's email to help them login
-        inv_email = invitation.get("email", "")
         return f'''<!DOCTYPE html>
 <html>
 <head>
@@ -33157,10 +24348,8 @@ def invitation_page(token):
 <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
     <div class="card" style="width:100%;max-width:500px;text-align:center;">
         <h2 style="color:var(--green);">✓ Already Accepted</h2>
-        <p style="color:var(--text-muted);margin:20px 0;">You've already accepted this invitation.</p>
-        <p style="margin-bottom:20px;">Please log in with your email:</p>
-        <p style="background:var(--background);padding:10px;border-radius:6px;font-family:monospace;">{inv_email}</p>
-        <a href="/login?email={inv_email}" class="btn btn-primary" style="margin-top:20px;">Go to Login</a>
+        <p style="color:var(--text-muted);margin:20px 0;">You've already accepted this invitation. Please log in with your password.</p>
+        <a href="/login" class="btn btn-primary">Go to Login</a>
     </div>
 </body>
 </html>'''
@@ -33229,7 +24418,7 @@ def invitation_page(token):
 </head>
 <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
     <div class="card" style="width:100%;max-width:500px;text-align:center;">
-        <h2 style="color:var(--red);">Account Creation Failed</h2>
+        <h2 style="color:var(--red);">❌ Account Creation Failed</h2>
         <p style="color:var(--text-muted);margin:20px 0;">{error}</p>
         <p>Please contact support: fullarddeon@gmail.com</p>
         <a href="/invite/{token}" class="btn btn-primary">Try Again</a>
@@ -33250,7 +24439,7 @@ def invitation_page(token):
 </head>
 <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
     <div class="card" style="width:100%;max-width:500px;text-align:center;">
-        <h2 style="color:var(--red);">Account Creation Failed</h2>
+        <h2 style="color:var(--red);">❌ Account Creation Failed</h2>
         <p style="color:var(--text-muted);margin:20px 0;">{error}</p>
         <p>Please contact support: fullarddeon@gmail.com</p>
         <a href="/invite/{token}" class="btn btn-primary">Try Again</a>
@@ -33612,7 +24801,6 @@ def timesheets_scan():
     content = '''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/timesheets" style="color:var(--text-muted);">← Back to Timesheets</a>
-        <a href="/timesheets/template" target="_blank" class="btn btn-secondary" style="padding:8px 16px;">Download Template</a>
     </div>
     
     <div class="card">
@@ -33703,320 +24891,6 @@ def timesheets_scan():
     return render_page("Scan Timesheet", content, user, "timesheets")
 
 
-@app.route("/timesheets/template")
-@login_required
-def timesheets_template():
-    """Generate printable timesheet template PDF with active job numbers"""
-    
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    biz_name = business.get("business_name", business.get("name", "Company")) if business else "Company"
-    
-    # Get active jobs
-    jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-    active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
-    
-    # Build job list HTML
-    jobs_list = ""
-    for j in active_jobs[:8]:  # Max 8 jobs on template
-        jobs_list += f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;"><div style="width:14px;height:14px;border:1px solid #333;"></div><span style="font-size:11px;">{j.get("job_number", "")} - {safe_string(j.get("title", "")[:25])}</span></div>'
-    
-    if not jobs_list:
-        jobs_list = '<div style="font-size:11px;color:#666;">No active jobs</div>'
-    
-    # Generate HTML that will be converted to PDF-like display
-    html = f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Timesheet - {biz_name}</title>
-        <style>
-            @media print {{
-                body {{ margin: 0; padding: 20px; }}
-                .no-print {{ display: none !important; }}
-            }}
-            body {{
-                font-family: Arial, sans-serif;
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 20px;
-                background: white;
-                color: #000;
-            }}
-            .header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: flex-start;
-                border-bottom: 3px solid #333;
-                padding-bottom: 15px;
-                margin-bottom: 20px;
-            }}
-            .title {{
-                font-size: 24px;
-                font-weight: bold;
-                margin: 0;
-            }}
-            .subtitle {{
-                font-size: 14px;
-                color: #666;
-                margin: 5px 0 0 0;
-            }}
-            .info-grid {{
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-                margin-bottom: 20px;
-            }}
-            .info-box {{
-                border: 1px solid #ccc;
-                padding: 12px;
-                border-radius: 4px;
-            }}
-            .info-label {{
-                font-size: 11px;
-                color: #666;
-                text-transform: uppercase;
-                margin-bottom: 5px;
-            }}
-            .info-value {{
-                border-bottom: 1px solid #333;
-                min-height: 24px;
-                padding: 4px 0;
-            }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin-bottom: 20px;
-            }}
-            th, td {{
-                border: 1px solid #333;
-                padding: 10px 8px;
-                text-align: center;
-                font-size: 13px;
-            }}
-            th {{
-                background: #f0f0f0;
-                font-weight: bold;
-                font-size: 12px;
-            }}
-            .day-cell {{
-                text-align: left;
-                font-weight: bold;
-            }}
-            .write-line {{
-                border-bottom: 1px solid #999;
-                min-height: 22px;
-            }}
-            .totals-row {{
-                background: #f5f5f5;
-                font-weight: bold;
-            }}
-            .signature-section {{
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 40px;
-                margin-top: 30px;
-                padding-top: 20px;
-                border-top: 1px solid #ccc;
-            }}
-            .sig-line {{
-                border-bottom: 1px solid #333;
-                height: 40px;
-                margin-bottom: 5px;
-            }}
-            .sig-label {{
-                font-size: 11px;
-                color: #666;
-            }}
-            .jobs-box {{
-                border: 1px solid #ccc;
-                padding: 12px;
-                border-radius: 4px;
-                margin-bottom: 20px;
-            }}
-            .jobs-title {{
-                font-size: 12px;
-                font-weight: bold;
-                margin-bottom: 10px;
-                color: #333;
-            }}
-            .print-btn {{
-                background: #6366f1;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                font-size: 16px;
-                border-radius: 8px;
-                cursor: pointer;
-                margin-bottom: 20px;
-            }}
-            .print-btn:hover {{
-                background: #4f46e5;
-            }}
-        </style>
-    </head>
-    <body>
-        <button class="print-btn no-print" onclick="window.print()">🖨️ Print Timesheet</button>
-        
-        <div class="header">
-            <div>
-                <h1 class="title">WEEKLY TIMESHEET</h1>
-                <p class="subtitle">{safe_string(biz_name)}</p>
-            </div>
-            <div style="text-align:right;">
-                <div class="info-label">Week Ending</div>
-                <div class="info-value" style="width:150px;"></div>
-            </div>
-        </div>
-        
-        <div class="info-grid">
-            <div class="info-box">
-                <div class="info-label">Employee Name</div>
-                <div class="info-value"></div>
-            </div>
-            <div class="info-box">
-                <div class="info-label">Employee ID / Code</div>
-                <div class="info-value"></div>
-            </div>
-        </div>
-        
-        <div class="jobs-box">
-            <div class="jobs-title">📌 ACTIVE JOB CARDS (tick which job you worked on)</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">
-                {jobs_list}
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                    <div style="width:14px;height:14px;border:1px solid #333;"></div>
-                    <span style="font-size:11px;">Other: _______________</span>
-                </div>
-            </div>
-        </div>
-        
-        <table>
-            <thead>
-                <tr>
-                    <th style="width:80px;">DAY</th>
-                    <th style="width:80px;">DATE</th>
-                    <th style="width:100px;">JOB #</th>
-                    <th style="width:70px;">IN</th>
-                    <th style="width:70px;">OUT</th>
-                    <th style="width:70px;">IN</th>
-                    <th style="width:70px;">OUT</th>
-                    <th style="width:60px;">HOURS</th>
-                    <th>NOTES</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td class="day-cell">Mon</td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                </tr>
-                <tr>
-                    <td class="day-cell">Tue</td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                </tr>
-                <tr>
-                    <td class="day-cell">Wed</td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                </tr>
-                <tr>
-                    <td class="day-cell">Thu</td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                </tr>
-                <tr>
-                    <td class="day-cell">Fri</td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                </tr>
-                <tr>
-                    <td class="day-cell">Sat</td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                </tr>
-                <tr>
-                    <td class="day-cell" style="color:#c00;">Sun</td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                    <td><div class="write-line"></div></td>
-                </tr>
-                <tr class="totals-row">
-                    <td colspan="7" style="text-align:right;">TOTAL HOURS:</td>
-                    <td><div class="write-line"></div></td>
-                    <td></td>
-                </tr>
-            </tbody>
-        </table>
-        
-        <div style="font-size:11px;color:#666;margin-bottom:20px;">
-            <strong>Instructions:</strong> Write job number (e.g. JC-2026-001) for each day. 
-            Use 24hr time format (07:00, 16:30). Two IN/OUT columns for split shifts.
-        </div>
-        
-        <div class="signature-section">
-            <div>
-                <div class="sig-line"></div>
-                <div class="sig-label">Employee Signature & Date</div>
-            </div>
-            <div>
-                <div class="sig-line"></div>
-                <div class="sig-label">Supervisor Signature & Date</div>
-            </div>
-        </div>
-        
-        <div style="text-align:center;margin-top:30px;font-size:10px;color:#999;" class="no-print">
-            Generated by Click AI - {today()}
-        </div>
-    </body>
-    </html>
-    '''
-    
-    return html
-
-
 @app.route("/timesheets/review/<batch_id>")
 @login_required
 def timesheets_review(batch_id):
@@ -34050,11 +24924,6 @@ def timesheets_review(batch_id):
     
     # Build cards for each scanned employee
     cards_html = ""
-    
-    # Get active jobs for dropdown
-    jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-    active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
-    
     for i, emp in enumerate(employees_data):
         scanned_name = emp.get("name", "Unknown")
         total_hours = emp.get("total_hours", 0)
@@ -34062,12 +24931,7 @@ def timesheets_review(batch_id):
         total_sunday = emp.get("total_sunday", 0)
         days = emp.get("days", [])
         
-        # Job card info from scan
-        scanned_job_number = emp.get("job_number", "")
-        scanned_job_id = emp.get("job_id", "")
-        scanned_job_title = emp.get("job_title", "")
-        
-        logger.info(f"[TIMESHEET REVIEW] Scanned employee: '{scanned_name}' job: '{scanned_job_number}'")
+        logger.info(f"[TIMESHEET REVIEW] Scanned employee: '{scanned_name}'")
         
         # Try to match to existing employee - fuzzy match
         matched_id = ""
@@ -34091,20 +24955,6 @@ def timesheets_review(batch_id):
         for db_emp in all_employees:
             selected = "selected" if db_emp.get("id") == matched_id else ""
             emp_options += f'<option value="{db_emp.get("id", "")}" {selected}>{safe_string(db_emp.get("name", ""))}</option>'
-        
-        # Dropdown of jobs
-        job_options = '<option value="">-- No Job Card --</option>'
-        for job in active_jobs:
-            selected = "selected" if job.get("id") == scanned_job_id else ""
-            job_options += f'<option value="{job.get("id", "")}" {selected}>{job.get("job_number", "")} - {safe_string(job.get("title", "")[:30])}</option>'
-        
-        # Job match indicator
-        job_match_html = ""
-        if scanned_job_number:
-            if scanned_job_id:
-                job_match_html = f'<span style="color:#22c55e;font-size:12px;">✓ {scanned_job_number}</span>'
-            else:
-                job_match_html = f'<span style="color:#f59e0b;font-size:12px;">Warning: {scanned_job_number} (not matched)</span>'
         
         # Build daily breakdown table
         days_html = ""
@@ -34174,7 +25024,6 @@ def timesheets_review(batch_id):
                 <div>
                     <h3 style="margin:0; font-size:18px;">👤 {safe_string(scanned_name)}</h3>
                     <span style="color:{match_color}; font-size:12px;">{match_status}</span>
-                    {f' • {job_match_html}' if job_match_html else ''}
                 </div>
                 <div style="text-align:right;">
                     <div style="font-size:24px; font-weight:bold; color:#22c55e;">{total_hours} hrs</div>
@@ -34186,7 +25035,7 @@ def timesheets_review(batch_id):
             </div>
             
             <details open style="background:rgba(139,92,246,0.1); border-radius:8px; padding:12px; margin-bottom:16px;">
-                <summary style="cursor:pointer; font-size:12px; color:#a78bfa;">DAILY BREAKDOWN (times read by AI, hours by Flask)</summary>
+                <summary style="cursor:pointer; font-size:12px; color:#a78bfa;">📅 DAILY BREAKDOWN (times read by AI, hours by Flask)</summary>
                 {days_html}
             </details>
             
@@ -34194,10 +25043,6 @@ def timesheets_review(batch_id):
                 <div style="flex:1; min-width:150px;">
                     <label class="form-label">Match to Employee</label>
                     <select name="emp_{i}" class="form-input">{emp_options}</select>
-                </div>
-                <div style="flex:1; min-width:180px;">
-                    <label class="form-label" style="color:#8b5cf6;">Link to Job Card</label>
-                    <select name="job_{i}" class="form-input" style="border:1px solid #8b5cf6;">{job_options}</select>
                 </div>
                 <div>
                     <label class="form-label">Normal ✏️</label>
@@ -34224,7 +25069,7 @@ def timesheets_review(batch_id):
     elif "sonnet" in ai_source.lower():
         ai_badge = '<span style="background:#8b5cf6;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;">🟣 Sonnet</span>'
     else:
-        ai_badge = '<span style="background:#6366f1;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;">AI</span>'
+        ai_badge = '<span style="background:#6366f1;color:white;padding:4px 10px;border-radius:4px;font-size:12px;margin-left:10px;">🤖 AI</span>'
     
     content = f'''
     <div style="margin-bottom:20px;">
@@ -34257,7 +25102,7 @@ def timesheets_review(batch_id):
 @app.route("/timesheets/process/<batch_id>", methods=["POST"])
 @login_required
 def timesheets_process(batch_id):
-    """Process reviewed timesheet and save to payroll + job cards"""
+    """Process reviewed timesheet and save to payroll"""
     
     logger.info(f"[TIMESHEET PROCESS] Starting for batch {batch_id}")
     
@@ -34267,17 +25112,15 @@ def timesheets_process(batch_id):
     count = int(request.form.get("count", 0))
     logger.info(f"[TIMESHEET PROCESS] Processing {count} employees")
     saved = 0
-    job_logged = 0
     errors = []
     
     for i in range(count):
         emp_id = request.form.get(f"emp_{i}", "")
-        job_id = request.form.get(f"job_{i}", "")
         hours = float(request.form.get(f"hours_{i}", 0) or 0)
         overtime = float(request.form.get(f"overtime_{i}", 0) or 0)
         sunday = float(request.form.get(f"sunday_{i}", 0) or 0)
         
-        logger.info(f"[TIMESHEET PROCESS] Row {i}: emp_id={emp_id}, job_id={job_id}, hours={hours}, ot={overtime}, sun={sunday}")
+        logger.info(f"[TIMESHEET PROCESS] Row {i}: emp_id={emp_id}, hours={hours}, ot={overtime}, sun={sunday}")
         
         if emp_id and (hours > 0 or overtime > 0 or sunday > 0):
             emp = db.get_one("employees", emp_id)
@@ -34292,7 +25135,6 @@ def timesheets_process(batch_id):
                     "hours": hours,
                     "overtime": overtime,
                     "sunday_hours": sunday,
-                    "job_id": job_id if job_id else None,
                     "batch_id": batch_id,
                     "description": f"Scanned timesheet - {hours}h normal, {overtime}h OT, {sunday}h Sunday"
                 }
@@ -34300,70 +25142,6 @@ def timesheets_process(batch_id):
                 if success:
                     saved += 1
                     logger.info(f"[TIMESHEET PROCESS] Saved entry for {emp.get('name')}")
-                    
-                    # === LOG TO JOB CARD IF LINKED ===
-                    if job_id:
-                        job = db.get_one("jobs", job_id)
-                        if job:
-                            # Get employee hourly rate
-                            hourly_rate = float(emp.get("hourly_rate", 0))
-                            ot_rate = hourly_rate * 1.5
-                            sunday_rate = hourly_rate * 2
-                            
-                            total_hours_worked = hours + overtime + sunday
-                            total_labour_cost = (hours * hourly_rate) + (overtime * ot_rate) + (sunday * sunday_rate)
-                            
-                            # Get existing labour entries
-                            try:
-                                labour_entries = json.loads(job.get("labour_entries", "[]"))
-                            except:
-                                labour_entries = []
-                            
-                            # Add new entry
-                            labour_entry = {
-                                "date": today(),
-                                "employee": emp.get("name"),
-                                "employee_id": emp_id,
-                                "task": f"From timesheet scan",
-                                "hours": total_hours_worked,
-                                "normal_hours": hours,
-                                "overtime_hours": overtime,
-                                "sunday_hours": sunday,
-                                "rate": hourly_rate,
-                                "cost": total_labour_cost,
-                                "source": "timesheet_scan",
-                                "batch_id": batch_id,
-                                "timestamp": now()
-                            }
-                            labour_entries.append(labour_entry)
-                            
-                            # Update job totals
-                            current_labour_cost = float(job.get("total_labour_cost", 0))
-                            current_hours = float(job.get("actual_hours", 0))
-                            new_labour_cost = current_labour_cost + total_labour_cost
-                            new_hours = current_hours + total_hours_worked
-                            
-                            total_actual_cost = float(job.get("total_material_cost", 0)) + new_labour_cost + float(job.get("total_additional_cost", 0))
-                            quote_value = float(job.get("quote_value", 0))
-                            profit_loss = quote_value - total_actual_cost
-                            
-                            # Update job card
-                            job_update = {
-                                "labour_entries": json.dumps(labour_entries),
-                                "total_labour_cost": new_labour_cost,
-                                "actual_hours": new_hours,
-                                "total_actual_cost": total_actual_cost,
-                                "profit_loss": profit_loss
-                            }
-                            
-                            # Auto-start job if not started
-                            if job.get("status") == "not_started":
-                                job_update["status"] = "in_progress"
-                                job_update["started_at"] = now()
-                            
-                            db.update("jobs", job_id, job_update, biz_id)
-                            job_logged += 1
-                            logger.info(f"[TIMESHEET PROCESS] Logged {total_hours_worked}h to job {job.get('job_number')} for {emp.get('name')}")
                 else:
                     errors.append(f"{emp.get('name')}: {msg}")
                     logger.error(f"[TIMESHEET PROCESS] Failed to save entry: {msg}")
@@ -34375,12 +25153,12 @@ def timesheets_process(batch_id):
     # Mark batch as processed
     db.save("timesheet_batches", {"id": batch_id, "status": "processed"})
     
-    logger.info(f"[TIMESHEET PROCESS] Done: saved {saved}, job_logged {job_logged}, errors: {len(errors)}")
+    logger.info(f"[TIMESHEET PROCESS] Done: saved {saved}, errors: {len(errors)}")
     
     if errors:
-        flash(f"Saved {saved} entries ({job_logged} linked to job cards). Errors: {', '.join(errors)}", "error")
+        flash(f"Saved {saved} entries. Errors: {', '.join(errors)}", "error")
     else:
-        flash(f"Saved {saved} timesheet entries ({job_logged} linked to job cards)", "success")
+        flash(f"Saved {saved} timesheet entries", "success")
     
     return redirect("/payroll")
 
@@ -34516,11 +25294,6 @@ def api_scan_timesheet():
         employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
         emp_names = [e.get("name", "") for e in employees]
         
-        # Get active jobs for context
-        jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-        active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
-        job_numbers = [j.get("job_number", "") for j in active_jobs]
-        
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         
         # IMPORTANT: Only extract times - Flask calculates hours
@@ -34529,12 +25302,10 @@ def api_scan_timesheet():
 READ ONLY - DO NOT CALCULATE ANYTHING. Just extract exactly what is written.
 
 Known employees: {', '.join(emp_names) if emp_names else 'Not specified'}
-Active job numbers: {', '.join(job_numbers) if job_numbers else 'JC-2026-001, JC-2026-002, etc'}
 
 For EACH employee on the sheet, extract:
 1. Employee name (read carefully, exactly as written)
 2. For each day: the date/day AND the clock in time AND clock out time (exactly as written)
-3. Job number/code if written (look for JC-XXX, JC XXX, Job XXX, or similar patterns)
 
 Return ONLY valid JSON in this exact format:
 {{
@@ -34542,7 +25313,6 @@ Return ONLY valid JSON in this exact format:
   "employees": [
     {{
       "name": "John Smith",
-      "job_number": "JC-2026-001",
       "days": [
         {{"date": "Mon 6", "in": "07:00", "out": "16:00"}},
         {{"date": "Tue 7", "in": "07:00", "out": "17:30"}},
@@ -34557,8 +25327,6 @@ IMPORTANT:
 - Read times in 24hr format (07:00, 16:00, etc)
 - If a time is unclear, make your best guess
 - If a day is blank or marked off, skip it
-- Look for job numbers written as JC-001, JC 001, Job 001, J001, etc - normalize to JC-XXXX-XXX format
-- If no job number is found for an employee, set job_number to null
 - DO NOT add any hours or overtime fields - just in/out times"""
 
         message = client.messages.create(
@@ -34642,21 +25410,7 @@ IMPORTANT:
         processed_employees = []
         for emp in raw_employees:
             emp_name = emp.get("name", "Unknown")
-            job_number = emp.get("job_number", None)
             days = emp.get("days", [])
-            
-            # Try to match job number to actual job
-            matched_job_id = None
-            matched_job_title = None
-            if job_number:
-                # Normalize job number format
-                jn_clean = job_number.upper().replace(" ", "-").replace("JC", "JC-").replace("--", "-")
-                for job in active_jobs:
-                    if jn_clean in job.get("job_number", "").upper() or job.get("job_number", "").upper() in jn_clean:
-                        matched_job_id = job.get("id")
-                        matched_job_title = job.get("title", "")
-                        job_number = job.get("job_number")  # Use exact format
-                        break
             
             calculated_days = []
             total_hours = 0
@@ -34696,9 +25450,6 @@ IMPORTANT:
             
             processed_employees.append({
                 "name": emp_name,
-                "job_number": job_number,
-                "job_id": matched_job_id,
-                "job_title": matched_job_title,
                 "days": calculated_days,
                 "total_hours": round(total_hours, 1),
                 "total_overtime": round(total_overtime, 1),
@@ -35564,7 +26315,7 @@ def staging_page():
     biz_id = business.get("id") if business else None
     
     # Get staged items
-    staged = db.get("staged_transactions", {"business_id": biz_id, "status": "pending"}) if biz_id else []
+    staged = db.get("staged_items", {"business_id": biz_id, "status": "pending"}) if biz_id else []
     staged = sorted(staged, key=lambda x: x.get("created_at", ""), reverse=True)
     
     rows = ""
@@ -35636,7 +26387,7 @@ def staging_page():
 def api_staging_approve(item_id):
     """Approve staged item and post to books"""
     try:
-        item = db.get_one("staged_transactions", item_id)
+        item = db.get_one("staged_items", item_id)
         if not item:
             return jsonify({"success": False, "error": "Item not found"})
         
@@ -35669,7 +26420,7 @@ def api_staging_approve(item_id):
             })
         
         # Mark as approved
-        db.save("staged_transactions", {"id": item_id, "status": "approved"})
+        db.save("staged_items", {"id": item_id, "status": "approved"})
         
         return jsonify({"success": True})
     except Exception as e:
@@ -35681,7 +26432,7 @@ def api_staging_approve(item_id):
 def api_staging_reject(item_id):
     """Reject staged item"""
     try:
-        db.save("staged_transactions", {"id": item_id, "status": "rejected"})
+        db.save("staged_items", {"id": item_id, "status": "rejected"})
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
@@ -35726,7 +26477,7 @@ def team_page():
             # Add copy invitation link button for pending members
             if invitation_token:
                 action_button = f'''
-                    <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;margin-right:5px;" onclick="copyInviteLink('https://clickai.fly.dev/invite/{invitation_token}')">Copy Link</button>
+                    <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;margin-right:5px;" onclick="copyInviteLink('https://www.clickai.co.za/invite/{invitation_token}')">📋 Copy Link</button>
                     <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="removeMember('{member.get("id")}')">Remove</button>
                 '''
             else:
@@ -35883,7 +26634,7 @@ def team_add():
         
         # Generate invitation token
         invitation_token = hashlib.sha256(f"{email}{time.time()}{generate_id()}".encode()).hexdigest()[:32]
-        invitation_link = f"https://clickai.fly.dev/invite/{invitation_token}"
+        invitation_link = f"https://www.clickai.co.za/invite/{invitation_token}"
         
         # Add team member with invitation
         member_id = generate_id()
@@ -35918,7 +26669,7 @@ def team_add():
                     f'''
                     <html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
                     <div style="max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9; border-radius: 10px;">
-                        <h2 style="color: #6366f1;">You've been invited to Click AI! </h2>
+                        <h2 style="color: #6366f1;">You've been invited to Click AI! 🎉</h2>
                         <p><strong>{biz_name}</strong> has invited you to join their team.</p>
                         
                         <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
@@ -35948,10 +26699,10 @@ def team_add():
                 if email_sent:
                     flash(f"✉️ Invitation sent to {name} ({email})", "success")
                 else:
-                    flash(f"Warning: Member added but email failed. Share this link: {invitation_link}", "warning")
+                    flash(f"⚠️ Member added but email failed. Share this link: {invitation_link}", "warning")
             except Exception as e:
                 logger.error(f"[TEAM] Email failed: {e}")
-                flash(f"Warning: Member added but email failed. Share this link: {invitation_link}", "warning")
+                flash(f"⚠️ Member added but email failed. Share this link: {invitation_link}", "warning")
             
             AuditLog.log("CREATE", "team_members", member_id, details=f"Invitation sent: {email} as {role}")
         else:
@@ -36735,7 +27486,7 @@ def smart_quote():
     </style>
     
     <div class="card">
-        <h2 style="margin-bottom:20px;">Smart Quote</h2>
+        <h2 style="margin-bottom:20px;">📝 Smart Quote</h2>
         
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:20px;">
             <div>
@@ -37232,22 +27983,21 @@ def api_smart_quote_save():
             })
         
         # Save quote
-        user = Auth.get_current_user()
-        quote = RecordFactory.quote(
-            business_id=biz_id,
-            customer_id="",
-            customer_name=customer_name,
-            items=quote_items,
-            quote_number=quote_num,
-            date=today(),
-            subtotal=float(subtotal),
-            vat=float(vat),
-            total=float(total),
-            status="pending",
-            notes="Created from Smart Quote",
-            created_by=user.get("id") if user else None
-        )
-        quote_id = quote["id"]
+        quote_id = generate_id()
+        quote = {
+            "id": quote_id,
+            "business_id": biz_id,
+            "quote_number": quote_num,
+            "date": today(),
+            "customer_name": customer_name,
+            "items": json.dumps(quote_items),
+            "subtotal": float(subtotal),
+            "vat": float(vat),
+            "total": float(total),
+            "status": "pending",
+            "notes": "Created from Smart Quote",
+            "created_at": now()
+        }
         
         success, err = db.save("quotes", quote)
         
@@ -37373,7 +28123,7 @@ def tools_page():
         <h3 style="margin:30px 0 15px 0;color:var(--text-muted);">Fulltech Steel</h3>
         <div class="stats-grid">
             <div class="card" style="cursor:pointer" onclick="window.location='/tools/smart-quote'">
-                <h3>Smart Quote</h3>
+                <h3>📝 Smart Quote</h3>
                 <p style="color:var(--text-muted)">Build quotes with auto pricing</p>
             </div>
             <div class="card" style="cursor:pointer" onclick="window.location='/tools/coil-calculator'">
@@ -37400,11 +28150,11 @@ def tools_page():
             <p style="color:var(--text-muted)">Scan invoices & receipts</p>
         </div>
         <div class="card" style="cursor:pointer" onclick="window.location='/timesheets/scan'">
-            <h3>Timesheet Scanner</h3>
+            <h3>⏱️ Timesheet Scanner</h3>
             <p style="color:var(--text-muted)">Scan handwritten timesheets</p>
         </div>
         <div class="card" style="cursor:pointer" onclick="window.location='/import'">
-            <h3>Import Data</h3>
+            <h3>📥 Import Data</h3>
             <p style="color:var(--text-muted)">Import from CSV/Excel</p>
         </div>
     </div>
@@ -37645,7 +28395,7 @@ def credit_notes_list():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2 style="margin:0;">Credit Notes</h2>
+        <h2 style="margin:0;">📝 Credit Notes</h2>
     </div>
     
     <div class="stat-card red" style="margin-bottom:20px;">
@@ -37759,7 +28509,7 @@ def year_end_page():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2 style="margin:0;">Year End Close - {current_year}</h2>
+        <h2 style="margin:0;">📅 Year End Close - {current_year}</h2>
     </div>
     
     <div class="stats-grid">
@@ -37815,7 +28565,7 @@ def year_end_page():
         </p>
         <form method="POST" action="/year-end/close" onsubmit="return confirm('Are you sure you want to close year {current_year}? This cannot be undone.');">
             <input type="hidden" name="year" value="{current_year}">
-            <button type="submit" class="btn btn-primary">Close Year {current_year}</button>
+            <button type="submit" class="btn btn-primary">🔒 Close Year {current_year}</button>
         </form>
     </div>
     
@@ -37985,13 +28735,6 @@ def timesheets_page():
     emp_options = "".join([f'<option value="{e.get("id")}">{safe_string(e.get("name", ""))}</option>' for e in employees])
     
     content = f'''
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2 style="margin:0;">Timesheets</h2>
-        <a href="/timesheets/scan" class="btn btn-primary" style="background:#8b5cf6;">
-            📷 Scan Timesheet
-        </a>
-    </div>
-    
     <div class="card" style="margin-bottom:20px;">
         <h3 style="margin:0 0 15px 0;"> Quick Clock In</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end;">
@@ -38119,7 +28862,7 @@ def timesheet_detail(employee_id):
     
     # Build entries table
     rows = ""
-    for e in entries[:500]:
+    for e in entries[:50]:
         job_id = e.get("job_id")
         job = job_map.get(job_id, {}) if job_id else {}
         job_info = f'{job.get("job_number", "")} - {safe_string(job.get("title", ""))}' if job else "-"
@@ -38506,10 +29249,6 @@ def api_timesheet_delete(entry_id):
         return jsonify({"success": False, "error": str(e)})
 
 
-# ============================================================================
-# PRICE LIST MAKER - Clean up old handwritten/messy price lists
-# ============================================================================
-
 @app.route("/scan")
 @login_required
 def scan_page():
@@ -38528,13 +29267,13 @@ def scan_page():
             
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <button class="btn scan-type-btn" onclick="selectType('invoice')" style="padding:20px;background:var(--primary);color:white;">
-                    Invoice/Receipt
+                    🧾 Invoice/Receipt
                 </button>
                 <button class="btn scan-type-btn" onclick="selectType('payslip')" style="padding:20px;background:#ec4899;color:white;">
                     [MONEY] Payslip
                 </button>
                 <button class="btn scan-type-btn" onclick="selectType('timesheet')" style="padding:20px;background:#f59e0b;color:white;">
-                    Timesheet
+                    ⏱️ Timesheet
                 </button>
                 <button class="btn scan-type-btn" onclick="selectType('other')" style="padding:20px;background:var(--card);border:1px solid var(--border);">
                     [DOC] Other Document
@@ -38542,14 +29281,14 @@ def scan_page():
             </div>
             
             <a href="/scan-inbox" style="display:block;text-align:center;margin-top:20px;color:var(--primary);">
-                View Scan Inbox →
+                📥 View Scan Inbox →
             </a>
         </div>
         
         <!-- STEP 2: Take Photo -->
         <div id="step2" style="display:none;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                <span id="scanTypeLabel" style="background:var(--primary);padding:5px 12px;border-radius:20px;font-size:13px;">Invoice</span>
+                <span id="scanTypeLabel" style="background:var(--primary);padding:5px 12px;border-radius:20px;font-size:13px;">🧾 Invoice</span>
                 <button onclick="goToStep(1)" style="background:none;border:none;color:var(--text-muted);cursor:pointer;">← Change type</button>
             </div>
             
@@ -38571,7 +29310,7 @@ def scan_page():
         <!-- STEP 3: Preview -->
         <div id="step3" style="display:none;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                <span id="scanTypeLabel2" style="background:var(--primary);padding:5px 12px;border-radius:20px;font-size:13px;">Invoice</span>
+                <span id="scanTypeLabel2" style="background:var(--primary);padding:5px 12px;border-radius:20px;font-size:13px;">🧾 Invoice</span>
                 <button onclick="resetScan()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;">← Start over</button>
             </div>
             
@@ -38603,7 +29342,7 @@ def scan_page():
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                     <button id="saveBtn" class="btn btn-primary" onclick="saveToInbox()" style="padding:15px;font-size:16px;">
-                        Save to Inbox
+                        📥 Save to Inbox
                     </button>
                     <button class="btn btn-secondary" onclick="goToStep(3)" style="padding:15px;font-size:16px;">
                         🔍 Re-scan
@@ -38617,14 +29356,14 @@ def scan_page():
         
         <!-- STEP 6: Saved confirmation -->
         <div id="step6" style="display:none;text-align:center;padding:40px;">
-            
+            <div style="font-size:48px;margin-bottom:15px;">📥</div>
             <h3 style="margin-bottom:20px;">Saved to Inbox!</h3>
             <div style="display:grid;gap:10px;max-width:300px;margin:0 auto;">
                 <button class="btn btn-primary" onclick="resetScan()" style="padding:15px;">
                     📸 Scan Another
                 </button>
                 <a href="/scan-inbox" class="btn btn-secondary" style="padding:15px;text-decoration:none;">
-                    Go to Inbox
+                    📥 Go to Inbox
                 </a>
             </div>
         </div>
@@ -38648,9 +29387,9 @@ def scan_page():
     let scanType = 'invoice';
     
     const typeLabels = {
-        'invoice': 'Invoice/Receipt',
+        'invoice': '🧾 Invoice/Receipt',
         'payslip': '[MONEY] Payslip',
-        'timesheet': 'Timesheet',
+        'timesheet': '⏱️ Timesheet',
         'other': '[DOC] Document'
     };
     
@@ -38715,11 +29454,11 @@ def scan_page():
                 
                 // Update button text based on scan type
                 if (scanType === 'timesheet') {
-                    document.getElementById('saveBtn').innerHTML = 'Save to Payroll';
+                    document.getElementById('saveBtn').innerHTML = '⏱️ Save to Payroll';
                     document.getElementById('saveBtn').style.background = '#f59e0b';
                     document.getElementById('saveHint').textContent = 'Timesheet will go to payroll staging for review before processing.';
                 } else {
-                    document.getElementById('saveBtn').innerHTML = 'Save to Inbox';
+                    document.getElementById('saveBtn').innerHTML = '📥 Save to Inbox';
                     document.getElementById('saveBtn').style.background = '';
                     document.getElementById('saveHint').textContent = 'Documents go to your inbox for review. Process them anytime from computer or phone.';
                 }
@@ -38774,7 +29513,7 @@ def scan_page():
                 </div>
                 ${items.length > 0 ? `
                 <div style="margin:10px 0;padding-top:10px;border-top:1px solid var(--border);">
-                    <span style="color:var(--text-muted);font-size:12px;">${items.length} LINE ITEMS</span>
+                    <span style="color:var(--text-muted);font-size:12px;">📦 ${items.length} LINE ITEMS</span>
                 </div>
                 ${itemsHtml}
                 ` : ''}
@@ -39207,137 +29946,39 @@ def api_scan_check_duplicate():
             return jsonify({"duplicate": False})
         
         check_type = data.get("type", "invoice")
-        current_id = data.get("id", "")  # Current item ID to exclude from check
         duplicates = []
         
-        # DEBUG logging
-        logger.info(f"[DUPLICATE CHECK] Type: {check_type}, Current ID: {current_id}")
-        logger.info(f"[DUPLICATE CHECK] Data keys: {list(data.keys())}")
-        
-        if check_type in ["invoice", "expense", "other"]:
-            # Get values from MULTIPLE possible locations (direct, extracted, nested)
+        if check_type in ["invoice", "expense"]:
+            # Check expenses
+            expenses = db.get("expenses", {"business_id": biz_id})
+            
+            # Get values from either direct data or extracted object
             extracted = data.get("extracted", {})
-            
-            # Invoice number - check all possible field names
-            invoice_num_raw = (
-                data.get("invoice_number") or 
-                data.get("invoice_num") or 
-                extracted.get("invoice_number") or 
-                extracted.get("invoice_num") or 
-                ""
-            )
-            invoice_num = str(invoice_num_raw).strip().lower() if invoice_num_raw else ""
-            
-            # Supplier name
-            supplier_raw = (
-                data.get("supplier_name") or 
-                data.get("supplier") or 
-                extracted.get("supplier_name") or 
-                extracted.get("supplier") or 
-                ""
-            )
-            supplier = str(supplier_raw).strip().lower() if supplier_raw else ""
-            
-            # Total amount - check all possible field names
-            total_raw = (
-                data.get("total") or 
-                data.get("total_amount") or 
-                extracted.get("total") or 
-                extracted.get("total_amount") or 
-                0
-            )
-            try:
-                total = float(total_raw) if total_raw else 0
-            except (ValueError, TypeError):
-                total = 0
-            
-            # Date
+            invoice_num = (data.get("invoice_number") or extracted.get("invoice_number") or "").strip().lower()
+            supplier = (data.get("supplier_name") or extracted.get("supplier_name") or "").strip().lower()
+            total = float(data.get("total") or data.get("total_amount") or extracted.get("total_amount") or 0)
             date = data.get("date") or extracted.get("date") or ""
             
-            logger.info(f"[DUPLICATE CHECK] Checking: inv={invoice_num}, supplier={supplier}, total={total}, date={date}")
-            
-            # ============================================
-            # CHECK 1: Other items in scan_queue
-            # ============================================
-            scan_queue = db.get("scan_queue", {"business_id": biz_id}) or []
-            for sq_item in scan_queue:
-                # Skip the current item
-                if sq_item.get("id") == current_id:
-                    continue
-                
-                # Parse stored data
-                try:
-                    sq_data = json.loads(sq_item.get("data", "{}")) if isinstance(sq_item.get("data"), str) else sq_item.get("data", {})
-                except:
-                    sq_data = {}
-                
-                sq_extracted = sq_data.get("extracted", {})
-                
-                # Get comparable fields
-                sq_inv_num = str(sq_data.get("invoice_number") or sq_extracted.get("invoice_number") or "").strip().lower()
-                sq_supplier = str(sq_data.get("supplier_name") or sq_extracted.get("supplier_name") or "").strip().lower()
-                sq_total_raw = sq_data.get("total") or sq_data.get("total_amount") or sq_extracted.get("total") or sq_extracted.get("total_amount") or 0
-                try:
-                    sq_total = float(sq_total_raw) if sq_total_raw else 0
-                except:
-                    sq_total = 0
-                
-                match_score = 0
-                match_reasons = []
-                
-                # Invoice number match
-                if invoice_num and sq_inv_num and (invoice_num in sq_inv_num or sq_inv_num in invoice_num):
-                    match_score += 50
-                    match_reasons.append(f"Invoice # '{invoice_num}'")
-                
-                # Supplier match
-                if supplier and sq_supplier and (supplier in sq_supplier or sq_supplier in supplier):
-                    match_score += 25
-                    match_reasons.append(f"Supplier '{supplier}'")
-                
-                # Amount match (within 2%)
-                if total > 0 and sq_total > 0:
-                    if abs(total - sq_total) / max(total, sq_total) < 0.02:
-                        match_score += 30
-                        match_reasons.append(f"Amount R{total:.2f}")
-                
-                if match_score >= 50:
-                    duplicates.append({
-                        "id": sq_item.get("id"),
-                        "type": "scan_queue",
-                        "description": f"[In Queue] {sq_item.get('description', 'Scanned document')}",
-                        "amount": sq_total,
-                        "date": sq_data.get("date") or sq_extracted.get("date") or "",
-                        "score": match_score,
-                        "reasons": match_reasons
-                    })
-                    logger.info(f"[DUPLICATE CHECK] Found scan_queue match: {sq_item.get('description')}, score={match_score}")
-            
-            # ============================================
-            # CHECK 2: Already processed expenses
-            # ============================================
-            expenses = db.get("expenses", {"business_id": biz_id}) or []
             for exp in expenses:
                 match_score = 0
                 match_reasons = []
                 
                 # Check invoice number match
-                exp_ref = str(exp.get("reference", "") or "").strip().lower()
-                if invoice_num and exp_ref and (invoice_num in exp_ref or exp_ref in invoice_num):
+                exp_ref = str(exp.get("reference", "")).strip().lower()
+                if invoice_num and exp_ref and invoice_num in exp_ref:
                     match_score += 50
                     match_reasons.append(f"Invoice # '{invoice_num}'")
                 
                 # Check supplier match
-                exp_desc = str(exp.get("description", "") or "").lower()
-                exp_supplier = str(exp.get("supplier_name", "") or "").lower()
-                if supplier and (supplier in exp_desc or supplier in exp_supplier or (exp_supplier and exp_supplier in supplier)):
+                exp_desc = str(exp.get("description", "")).lower()
+                if supplier and supplier in exp_desc:
                     match_score += 25
                     match_reasons.append(f"Supplier '{supplier}'")
                 
-                # Check amount match (within 2%)
-                exp_amount = float(exp.get("amount", 0) or 0)
+                # Check amount match (within 1%)
+                exp_amount = float(exp.get("amount", 0))
                 if total > 0 and exp_amount > 0:
-                    if abs(total - exp_amount) / max(total, exp_amount) < 0.02:
+                    if abs(total - exp_amount) / total < 0.01:
                         match_score += 30
                         match_reasons.append(f"Amount R{total:.2f}")
                 
@@ -39350,35 +29991,32 @@ def api_scan_check_duplicate():
                     duplicates.append({
                         "id": exp.get("id"),
                         "type": "expense",
-                        "description": f"[Expense] {exp.get('description', '')}",
+                        "description": exp.get("description"),
                         "amount": exp_amount,
                         "date": exp.get("date"),
                         "score": match_score,
                         "reasons": match_reasons
                     })
-                    logger.info(f"[DUPLICATE CHECK] Found expense match: score={match_score}, reasons={match_reasons}")
             
-            # ============================================
-            # CHECK 3: Already processed supplier invoices
-            # ============================================
-            supplier_invs = db.get("supplier_invoices", {"business_id": biz_id}) or []
+            # Also check supplier invoices
+            supplier_invs = db.get("supplier_invoices", {"business_id": biz_id})
             for inv in supplier_invs:
                 match_score = 0
                 match_reasons = []
                 
-                inv_num = str(inv.get("invoice_number", "") or "").strip().lower()
-                if invoice_num and inv_num and (invoice_num in inv_num or inv_num in invoice_num):
+                inv_num = str(inv.get("invoice_number", "")).strip().lower()
+                if invoice_num and inv_num and invoice_num in inv_num:
                     match_score += 50
                     match_reasons.append(f"Invoice # '{invoice_num}'")
                 
-                inv_supplier = str(inv.get("supplier_name", "") or "").lower()
-                if supplier and inv_supplier and (supplier in inv_supplier or inv_supplier in supplier):
+                inv_supplier = str(inv.get("supplier_name", "")).lower()
+                if supplier and supplier in inv_supplier:
                     match_score += 25
-                    match_reasons.append(f"Supplier '{supplier}'")
+                    match_reasons.append(f"Supplier")
                 
-                inv_total = float(inv.get("total", 0) or 0)
+                inv_total = float(inv.get("total", 0))
                 if total > 0 and inv_total > 0:
-                    if abs(total - inv_total) / max(total, inv_total) < 0.02:  # 2% tolerance
+                    if abs(total - inv_total) / total < 0.01:
                         match_score += 30
                         match_reasons.append(f"Amount R{total:.2f}")
                 
@@ -39390,86 +30028,36 @@ def api_scan_check_duplicate():
                     duplicates.append({
                         "id": inv.get("id"),
                         "type": "supplier_invoice",
-                        "description": f"[Supplier Invoice] {inv.get('supplier_name', '')} - {inv.get('invoice_number', '')}",
+                        "description": f"{inv.get('supplier_name')} - {inv.get('invoice_number')}",
                         "amount": inv_total,
                         "date": inv.get("date"),
                         "score": match_score,
                         "reasons": match_reasons
                     })
-                    logger.info(f"[DUPLICATE CHECK] Found supplier_invoice match: score={match_score}, reasons={match_reasons}")
         
         elif check_type == "payslip":
-            # Check scan_queue for payslip duplicates
-            scan_queue = db.get("scan_queue", {"business_id": biz_id}) or []
-            
-            extracted = data.get("extracted", {})
-            employee_raw = data.get("employee_name") or extracted.get("employee_name") or ""
-            period_raw = data.get("period") or extracted.get("period") or ""
-            net_raw = data.get("net") or extracted.get("net") or 0
-            
-            employee = str(employee_raw).strip().lower() if employee_raw else ""
-            period = str(period_raw).strip().lower() if period_raw else ""
-            try:
-                net = float(net_raw) if net_raw else 0
-            except:
-                net = 0
-            
-            # Check scan_queue
-            for sq_item in scan_queue:
-                if sq_item.get("id") == current_id or sq_item.get("type") != "payslip":
-                    continue
-                
-                try:
-                    sq_data = json.loads(sq_item.get("data", "{}")) if isinstance(sq_item.get("data"), str) else sq_item.get("data", {})
-                except:
-                    sq_data = {}
-                
-                sq_extracted = sq_data.get("extracted", {})
-                sq_emp = str(sq_data.get("employee_name") or sq_extracted.get("employee_name") or "").lower()
-                sq_period = str(sq_data.get("period") or sq_extracted.get("period") or "").lower()
-                
-                match_score = 0
-                match_reasons = []
-                
-                if employee and sq_emp and (employee in sq_emp or sq_emp in employee):
-                    match_score += 40
-                    match_reasons.append(f"Employee '{employee}'")
-                
-                if period and sq_period and (period in sq_period or sq_period in period):
-                    match_score += 40
-                    match_reasons.append(f"Period '{period}'")
-                
-                if match_score >= 50:
-                    duplicates.append({
-                        "id": sq_item.get("id"),
-                        "type": "scan_queue",
-                        "description": f"[In Queue] {sq_item.get('description', 'Payslip')}",
-                        "amount": 0,
-                        "date": "",
-                        "score": match_score,
-                        "reasons": match_reasons
-                    })
-            
-            # Check existing payslips
-            payslips = db.get("payslips", {"business_id": biz_id}) or []
+            payslips = db.get("payslips", {"business_id": biz_id})
+            employee = data.get("employee_name", "").strip().lower()
+            period = data.get("period", "").strip().lower()
+            net = float(data.get("net", 0))
             
             for ps in payslips:
                 match_score = 0
                 match_reasons = []
                 
-                ps_emp = str(ps.get("employee_name", "") or "").lower()
-                if employee and ps_emp and (employee in ps_emp or ps_emp in employee):
+                ps_emp = str(ps.get("employee_name", "")).lower()
+                if employee and employee in ps_emp:
                     match_score += 40
                     match_reasons.append(f"Employee '{employee}'")
                 
-                ps_period = str(ps.get("period", "") or "").lower()
-                if period and ps_period and (period in ps_period or ps_period in period):
+                ps_period = str(ps.get("period", "")).lower()
+                if period and period in ps_period:
                     match_score += 40
                     match_reasons.append(f"Period '{period}'")
                 
-                ps_net = float(ps.get("net", 0) or 0)
+                ps_net = float(ps.get("net", 0))
                 if net > 0 and ps_net > 0:
-                    if abs(net - ps_net) / max(net, ps_net) < 0.02:
+                    if abs(net - ps_net) / net < 0.01:
                         match_score += 30
                         match_reasons.append(f"Net R{net:.2f}")
                 
@@ -39477,7 +30065,7 @@ def api_scan_check_duplicate():
                     duplicates.append({
                         "id": ps.get("id"),
                         "type": "payslip",
-                        "description": f"[Payslip] {ps.get('employee_name', '')} - {ps.get('period', '')}",
+                        "description": f"{ps.get('employee_name')} - {ps.get('period')}",
                         "amount": ps_net,
                         "date": ps.get("date"),
                         "score": match_score,
@@ -39658,7 +30246,7 @@ def scan_inbox_page():
     inbox_html = ""
     for item in inbox_items:
         doc_type = item.get("type", "other")
-        type_icon = {"invoice": "[INV]", "payslip": "[MONEY]", "timesheet": "⏱️", "other": "[DOC]"}.get(doc_type, "[DOC]")
+        type_icon = {"invoice": "🧾", "payslip": "[MONEY]", "timesheet": "⏱️", "other": "[DOC]"}.get(doc_type, "[DOC]")
         type_color = {"invoice": "var(--primary)", "payslip": "#ec4899", "timesheet": "#f59e0b", "other": "var(--text-muted)"}.get(doc_type, "var(--text-muted)")
         
         # Parse stored data
@@ -39693,7 +30281,7 @@ def scan_inbox_page():
         </div>
         <div class="stat-card" style="background:rgba(99,102,241,0.1);border-color:var(--primary);">
             <div class="stat-value">{type_counts.get("invoice", 0)}</div>
-            <div class="stat-label">Invoices</div>
+            <div class="stat-label">🧾 Invoices</div>
         </div>
         <div class="stat-card" style="background:rgba(236,72,153,0.1);border-color:#ec4899;">
             <div class="stat-value">{type_counts.get("payslip", 0)}</div>
@@ -39701,15 +30289,14 @@ def scan_inbox_page():
         </div>
         <div class="stat-card" style="background:rgba(245,158,11,0.1);border-color:#f59e0b;">
             <div class="stat-value">{type_counts.get("timesheet", 0)}</div>
-            <div class="stat-label">Timesheets</div>
+            <div class="stat-label">⏱️ Timesheets</div>
         </div>
     </div>
     
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <h3 style="margin:0;">Scan Inbox</h3>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                <button onclick="cleanupBounces()" class="btn" style="padding:10px 15px;background:var(--red);" id="cleanupBtn" title="Remove bounce/notification emails">🗑️ Cleanup</button>
+            <h3 style="margin:0;">📥 Scan Inbox</h3>
+            <div style="display:flex;gap:10px;">
                 <button onclick="checkEmail()" class="btn btn-secondary" style="padding:10px 20px;" id="checkEmailBtn">[EMAIL] Check Email</button>
                 <a href="/scan" class="btn btn-primary" style="padding:10px 20px;">📸 Scan New</a>
             </div>
@@ -39850,7 +30437,7 @@ def scan_inbox_page():
                 badge.style.background = '#8b5cf6';
                 badge.style.color = '#fff';
             }} else {{
-                badge.innerHTML = 'AI: ' + aiSource;
+                badge.innerHTML = '🤖 ' + aiSource;
                 badge.style.background = '#6366f1';
                 badge.style.color = '#fff';
             }}
@@ -39903,11 +30490,9 @@ def scan_inbox_page():
             const dupResponse = await fetch('/api/scan/check-duplicate', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{...currentItemData, type: currentItemType, id: currentItemId}})
+                body: JSON.stringify({{...currentItemData, type: currentItemType}})
             }});
             const dupData = await dupResponse.json();
-            
-            console.log('[DUPLICATE CHECK] Response:', dupData);
             
             if (dupData.duplicate && dupData.matches && dupData.matches.length > 0) {{
                 showModalDuplicate(dupData.matches);
@@ -39915,7 +30500,6 @@ def scan_inbox_page():
                 document.getElementById('modalDuplicateWarning').style.display = 'none';
             }}
         }} catch (e) {{
-            console.error('[DUPLICATE CHECK] Error:', e);
             document.getElementById('modalDuplicateWarning').style.display = 'none';
         }}
         
@@ -39947,127 +30531,31 @@ def scan_inbox_page():
             const result = await response.json();
             
             if (result.success && result.suggestion) {{
-                showZaneSuggestion(result.suggestion, data, extracted);
+                const sugg = result.suggestion;
+                let html = `
+                    <div style="font-size:16px;margin-bottom:8px;">
+                        <strong style="color:#8b5cf6;">${{sugg.category}}</strong>
+                        <span style="color:var(--text-muted);font-size:13px;margin-left:8px;">(${{Math.round(sugg.confidence * 100)}}% sure)</span>
+                    </div>
+                    <div style="color:var(--text-muted);font-size:13px;margin-bottom:8px;">
+                        ${{sugg.reason}}
+                    </div>
+                `;
+                
+                if (sugg.vat_warning) {{
+                    html += `
+                        <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:8px;border-radius:4px;font-size:12px;color:#000;">
+                            ${{sugg.vat_warning}}
+                        </div>
+                    `;
+                }}
+                
+                document.getElementById('zaneSuggestionContent').innerHTML = html;
+                document.getElementById('zaneSuggestion').style.display = 'block';
             }}
         }} catch (e) {{
             console.log('Category suggestion failed:', e);
-        }}
-    }}
-    
-    function showZaneSuggestion(sugg, data, extracted) {{
-        const container = document.getElementById('zaneSuggestionContent');
-        
-        // Check if there's a duplicate warning showing
-        const dupWarning = document.getElementById('modalDuplicateWarning');
-        const hasDuplicate = dupWarning && dupWarning.style.display !== 'none';
-        
-        // Check if Zane needs clarification
-        if (sugg.needs_clarification) {{
-            // Zane is asking a question!
-            let html = `
-                <div style="font-size:14px;margin-bottom:12px;line-height:1.5;">
-                    ${{sugg.explanation || ''}}
-                </div>
-                <div style="font-size:15px;font-weight:bold;margin-bottom:12px;color:#8b5cf6;">
-                    🤔 ${{sugg.question}}
-                </div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            `;
-            
-            // Add option buttons
-            if (sugg.options) {{
-                sugg.options.forEach((opt, i) => {{
-                    const btnColor = opt.value.includes('resale') || opt.value.includes('stock') ? '#6366f1' : '#f59e0b';
-                    html += `
-                        <button onclick="answerZaneQuestion('${{opt.value}}')" 
-                                style="padding:10px 16px;background:${{btnColor}};color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px;">
-                            ${{opt.label}}
-                        </button>
-                    `;
-                }});
-            }}
-            
-            html += '</div>';
-            container.innerHTML = html;
-        }} else {{
-            // Zane has a clear answer
-            let actionColor = '#f59e0b'; // orange for expense
-            if (sugg.action === 'expense_paid') actionColor = '#059669'; // green
-            else if (sugg.action === 'supplier') actionColor = '#6366f1'; // blue
-            else if (sugg.action === 'supplier_paid') actionColor = '#0891b2'; // teal
-            
-            let html = `
-                <div style="font-size:15px;margin-bottom:10px;">
-                    <span style="background:${{actionColor}};color:white;padding:6px 12px;border-radius:6px;font-weight:bold;">
-                        👆 Click: ${{sugg.action_label || sugg.category}}
-                    </span>
-                    <span style="color:var(--text-muted);font-size:12px;margin-left:8px;">(${{Math.round(sugg.confidence * 100)}}%)</span>
-                </div>
-                <div style="color:var(--text);font-size:14px;margin-bottom:8px;line-height:1.5;">
-                    ${{sugg.explanation || sugg.reason || ''}}
-                </div>
-            `;
-            
-            // Show category for expenses
-            if (sugg.category && !sugg.is_stock) {{
-                html += `
-                    <div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">
-                        📁 Category: <strong>${{sugg.category}}</strong>
-                    </div>
-                `;
-            }}
-            
-            if (sugg.vat_warning) {{
-                html += `
-                    <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:8px;border-radius:4px;font-size:12px;color:#000;margin-top:8px;">
-                        Warning: ${{sugg.vat_warning}}
-                    </div>
-                `;
-            }}
-            
-            // Add duplicate reminder if present
-            if (hasDuplicate) {{
-                html += `
-                    <div style="background:#fed7aa;border-left:3px solid #f97316;padding:8px;border-radius:4px;font-size:12px;color:#000;margin-top:8px;">
-                        Warning: Heads up: This might be a duplicate (see warning above). Double-check before saving!
-                    </div>
-                `;
-            }}
-            
-            container.innerHTML = html;
-        }}
-        
-        document.getElementById('zaneSuggestion').style.display = 'block';
-    }}
-    
-    // Store current scan data for re-query
-    let currentScanData = {{}};
-    
-    async function answerZaneQuestion(answer) {{
-        // Show loading
-        document.getElementById('zaneSuggestionContent').innerHTML = '<div style="text-align:center;padding:10px;">Processing...</div>';
-        
-        try {{
-            const extracted = currentItemData.extracted || {{}};
-            const response = await fetch('/api/scan/suggest-category', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{
-                    supplier_name: currentItemData.supplier_name || extracted.supplier_name || '',
-                    items: currentItemData.items || extracted.items || [],
-                    total: currentItemData.total || extracted.total_amount || 0,
-                    invoice_number: currentItemData.invoice_number || extracted.invoice_number || '',
-                    clarification_answer: answer
-                }})
-            }});
-            
-            const result = await response.json();
-            
-            if (result.success && result.suggestion) {{
-                showZaneSuggestion(result.suggestion, currentItemData, extracted);
-            }}
-        }} catch (e) {{
-            console.log('Zane follow-up failed:', e);
+            // Don't show error to user, just hide the suggestion box
         }}
     }}
     
@@ -40096,7 +30584,7 @@ def scan_inbox_page():
                 itemsHtml = `
                 <div style="margin:15px 0;background:rgba(99,102,241,0.1);border-radius:12px;padding:15px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                        <span style="font-weight:600;color:var(--primary);">LINE ITEMS (${{items.length}})</span>
+                        <span style="font-weight:600;color:var(--primary);">📦 LINE ITEMS (${{items.length}})</span>
                         <span style="font-size:11px;color:var(--text-muted);background:rgba(245,158,11,0.2);padding:3px 8px;border-radius:4px;">
                             ✏️ Click to edit spelling
                         </span>
@@ -40225,7 +30713,7 @@ def scan_inbox_page():
                 <div id="zaneSuggestion" style="margin:20px 0;padding:15px;border-radius:12px;background:rgba(139,92,246,0.1);border:2px solid #8b5cf6;display:none;">
                     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
                         <span style="font-size:24px;">🧠</span>
-                        <strong style="color:#8b5cf6;">Zane recommends:</strong>
+                        <strong style="color:#8b5cf6;">Zane se voorstel:</strong>
                     </div>
                     <div id="zaneSuggestionContent" style="font-size:14px;"></div>
                 </div>
@@ -40233,9 +30721,9 @@ def scan_inbox_page():
             
             saveHtml = `
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                    <button class="btn" onclick="processAs('expense')" style="padding:14px;background:var(--orange);color:white;">Book as Expense</button>
+                    <button class="btn" onclick="processAs('expense')" style="padding:14px;background:var(--orange);color:white;">📝 Book as Expense</button>
                     <button class="btn" onclick="processAs('expense_paid')" style="padding:14px;background:#059669;color:white;"> Expense (Paid)</button>
-                    <button class="btn" onclick="processAs('supplier')" style="padding:14px;background:var(--primary);color:white;">Stock Purchase (Credit)</button>
+                    <button class="btn" onclick="processAs('supplier')" style="padding:14px;background:var(--primary);color:white;">📦 Stock Purchase (Credit)</button>
                     <button class="btn" onclick="processAs('supplier_paid')" style="padding:14px;background:#0891b2;color:white;"> Stock Purchase (Paid)</button>
                 </div>
             `;
@@ -40308,7 +30796,7 @@ def scan_inbox_page():
                                 </div>
                             </div>
                             <details>
-                                <summary style="cursor:pointer;font-size:11px;color:var(--text-muted);">Daily breakdown (${{days.length}} days)</summary>
+                                <summary style="cursor:pointer;font-size:11px;color:var(--text-muted);">📅 Daily breakdown (${{days.length}} days)</summary>
                                 <div style="max-height:150px;overflow-y:auto;margin-top:8px;">
                                     ${{daysHtml}}
                                 </div>
@@ -40330,7 +30818,7 @@ def scan_inbox_page():
                     </div>
                 `;
                 saveHtml = `
-                    <button class="btn" onclick="processAs('timesheet_batch')" style="width:100%;padding:16px;background:#f59e0b;color:white;font-size:16px;">Save to Payroll</button>
+                    <button class="btn" onclick="processAs('timesheet_batch')" style="width:100%;padding:16px;background:#f59e0b;color:white;font-size:16px;">⏱️ Save to Payroll</button>
                 `;
             }} else {{
                 // Simple format fallback
@@ -40355,7 +30843,7 @@ def scan_inbox_page():
                     </div>
                 `;
                 saveHtml = `
-                    <button class="btn" onclick="processAs('timesheet')" style="width:100%;padding:16px;background:#f59e0b;color:white;font-size:16px;">Save Timesheet</button>
+                    <button class="btn" onclick="processAs('timesheet')" style="width:100%;padding:16px;background:#f59e0b;color:white;font-size:16px;">⏱️ Save Timesheet</button>
                 `;
             }}
         }}
@@ -40394,41 +30882,6 @@ def scan_inbox_page():
             }}
         }} catch (err) {{
             alert(' Connection error: ' + err.message);
-        }}
-        
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    }}
-    
-    async function cleanupBounces() {{
-        if (!confirm('Remove all bounce/notification emails from scan inbox?\\n\\nThis will delete:\\n- Delivery Status Notifications\\n- Undeliverable emails\\n- Auto-replies\\n- Items with no data extracted')) {{
-            return;
-        }}
-        
-        const btn = document.getElementById('cleanupBtn');
-        const originalText = btn.innerHTML;
-        btn.innerHTML = '⏳ Cleaning...';
-        btn.disabled = true;
-        
-        try {{
-            const response = await fetch('/api/scan/cleanup-bounces', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}}
-            }});
-            const data = await response.json();
-            
-            if (data.success) {{
-                if (data.deleted > 0) {{
-                    alert('🗑️ Removed ' + data.deleted + ' bounce/notification email(s)!\\n\\nRefreshing page...');
-                    location.reload();
-                }} else {{
-                    alert('No bounce emails to remove');
-                }}
-            }} else {{
-                alert('Error: ' + (data.error || 'Cleanup failed'));
-            }}
-        }} catch (err) {{
-            alert('Connection error: ' + err.message);
         }}
         
         btn.innerHTML = originalText;
@@ -40530,15 +30983,15 @@ def scan_inbox_page():
                 // Build detailed success message
                 let msg = ' Saved successfully!';
                 if (data.stock_matched || data.stock_created) {{
-                    msg += '\\n\\nStock: ';
+                    msg += '\\n\\n📦 Stock: ';
                     if (data.stock_matched) msg += data.stock_matched + ' matched, ';
                     if (data.stock_created) msg += data.stock_created + ' created';
                 }}
                 if (data.expenses_booked) {{
-                    msg += '\\n\\nExpenses: ' + data.expenses_booked + ' items booked';
+                    msg += '\\n\\n📝 Expenses: ' + data.expenses_booked + ' items booked';
                 }}
                 if (data.supplier_created) {{
-                    msg += '\\nNew supplier created';
+                    msg += '\\n🏭 New supplier created';
                 }}
                 
                 alert(msg);
@@ -41005,65 +31458,6 @@ def api_scan_remove_from_inbox():
         return jsonify({"success": False, "error": str(e)})
 
 
-@app.route("/api/scan/cleanup-bounces", methods=["POST"])
-@login_required
-def api_scan_cleanup_bounces():
-    """Remove bounce/notification emails from scan inbox"""
-    
-    try:
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        # Get all scan queue items
-        all_items = db.get("scan_queue", {"business_id": biz_id})
-        
-        # Keywords that indicate bounce/notification emails
-        bounce_keywords = [
-            "delivery status notification",
-            "undeliverable",
-            "delivery failed",
-            "failure notice",
-            "returned mail",
-            "could not be delivered",
-            "automatic reply",
-            "out of office",
-        ]
-        
-        deleted_count = 0
-        for item in all_items:
-            desc = (item.get("description") or "").lower()
-            doc_type = (item.get("doc_type") or "").lower()
-            
-            # Check if it's a bounce email
-            is_bounce = False
-            for keyword in bounce_keywords:
-                if keyword in desc:
-                    is_bounce = True
-                    break
-            
-            # Also delete items with no data extracted
-            if doc_type == "other" and not item.get("extracted_data"):
-                is_bounce = True
-            
-            if is_bounce:
-                if db.delete("scan_queue", item.get("id"), biz_id):
-                    deleted_count += 1
-                    logger.info(f"[CLEANUP] Deleted bounce email: {item.get('description', 'unknown')}")
-        
-        return jsonify({
-            "success": True, 
-            "message": f"Removed {deleted_count} bounce/notification emails",
-            "deleted": deleted_count
-        })
-        
-    except Exception as e:
-        logger.error(f"[CLEANUP] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
 @app.route("/api/scan/save-payslip", methods=["POST"])
 @login_required
 def api_scan_save_payslip():
@@ -41222,7 +31616,7 @@ Extract ALL line items. VAT is 15% in South Africa. Return ONLY JSON."""
             invoice_data = ScannerMemory.enhance_scan_result(biz_id, invoice_data)
         
         invoice_data["source"] = "sonnet_fallback"
-        invoice_data["source_display"] = "AI Processed"
+        invoice_data["source_display"] = "🤖 Zane Sonnet"
         
         return jsonify({"success": True, "invoice": invoice_data})
         
@@ -41284,38 +31678,27 @@ def api_scan_save_supplier_invoice():
         # Find or create supplier
         suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
         supplier = None
-        
-        # Make sure supplier_name is valid
-        if not supplier_name or not supplier_name.strip():
-            supplier_name = "Unknown Supplier"
-        supplier_name = supplier_name.strip()
-        
         for s in suppliers:
-            s_name = s.get("name", "") or ""
-            if supplier_name.lower() in s_name.lower() or s_name.lower() in supplier_name.lower():
+            if supplier_name.lower() in s.get("name", "").lower():
                 supplier = s
-                logger.info(f"[SCAN PROCESS] Found existing supplier: {s_name}")
                 break
         
         if not supplier:
             # Create new supplier with contact details
-            new_supplier = RecordFactory.supplier(
-                business_id=biz_id,
-                name=supplier_name,
-                phone=data.get("supplier_phone", "") or "",
-                email=data.get("supplier_email", "") or "",
-                address=data.get("supplier_address", "") or "",
-                created_by=user.get("id", "") if user else ""
-            )
-            logger.info(f"[SCAN PROCESS] Creating new supplier: {supplier_name} for business {biz_id}")
-            success, result = db.save("suppliers", new_supplier)
+            supplier = {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "name": supplier_name,
+                "phone": data.get("supplier_phone", ""),
+                "email": data.get("supplier_email", ""),
+                "address": data.get("supplier_address", ""),
+                "vat_number": data.get("vat_number", ""),
+                "balance": 0,
+                "created_at": now()
+            }
+            success, _ = db.save("suppliers", supplier)
             if not success:
-                logger.error(f"[SCAN PROCESS] Failed to create supplier: {result}")
-                # Don't fail completely - continue with None supplier
-                supplier = new_supplier  # Use local copy even if save failed
-            else:
-                supplier = new_supplier
-                logger.info(f"[SCAN PROCESS] Supplier created successfully: {supplier_name}")
+                return jsonify({"success": False, "error": "Failed to create supplier"})
         else:
             # Update supplier contact details if we have new info
             update_needed = False
@@ -41503,34 +31886,41 @@ def api_scan_save_supplier_invoice():
                         final_code = f"{smart_code}-{counter}"
                         counter += 1
                     
-                    # Use RecordFactory.stock() for 'stock' table (uuid ids)
-                    new_stock = RecordFactory.stock(
-                        business_id=biz_id,
-                        description=desc,
-                        code=final_code,
-                        qty=qty,
-                        cost=unit_price,
-                        price=round(unit_price * 1.3, 2)
-                    )
+                    new_stock = {
+                        "id": generate_id(),
+                        "business_id": biz_id,
+                        "code": final_code,
+                        "description": desc,
+                        "quantity": qty,
+                        "qty": qty,
+                        "cost_price": unit_price,
+                        "cost": unit_price,
+                        "price": round(unit_price * 1.3, 2),  # 30% markup default
+                        "selling_price": round(unit_price * 1.3, 2),
+                        "last_purchase_date": today(),
+                        "created_at": now()
+                    }
                     db.save("stock", new_stock)
                     stock_by_code[final_code] = new_stock
                     logger.info(f"[SCAN] Created stock: {final_code} = {desc}")
         
         # Create supplier invoice
-        invoice = RecordFactory.supplier_invoice(
-            business_id=biz_id,
-            supplier_id=supplier["id"],
-            supplier_name=supplier_name,
-            invoice_number=data.get("invoice_number", f"SCAN-{generate_id()[:6]}"),
-            date=data.get("date", today()),
-            subtotal=float(data.get("subtotal", 0)),
-            vat=float(data.get("vat", 0)),
-            total=float(data.get("total", 0)),
-            items=json.dumps(items),
-            status="paid" if is_paid else "unpaid",
-            scanned=True
-        )
-        inv_id = invoice["id"]
+        inv_id = generate_id()
+        invoice = {
+            "id": inv_id,
+            "business_id": biz_id,
+            "date": data.get("date", today()),
+            "invoice_number": data.get("invoice_number", f"SCAN-{inv_id[:6]}"),
+            "supplier_id": supplier["id"],
+            "supplier_name": supplier_name,
+            "items": json.dumps(items),
+            "subtotal": float(data.get("subtotal", 0)),
+            "vat": float(data.get("vat", 0)),
+            "total": float(data.get("total", 0)),
+            "status": "paid" if is_paid else "unpaid",
+            "scanned": True,
+            "created_at": now()
+        }
         
         success, result = db.save("supplier_invoices", invoice)
         
@@ -41611,8 +32001,8 @@ def api_scan_save_supplier_invoice():
 @login_required
 def api_scan_suggest_category():
     """
-    Use Claude/Zane to suggest what ACTION to take AND expense category
-    NOW WITH CLARIFICATION - Zane asks questions when unsure!
+    Use Claude/Zane to suggest expense category based on supplier and items
+    Helps users know where to allocate expenses
     """
     try:
         data = request.get_json()
@@ -41621,102 +32011,56 @@ def api_scan_suggest_category():
         total = data.get("total", 0)
         invoice_number = data.get("invoice_number", "")
         
-        # Check if user already answered a clarification question
-        user_answer = data.get("clarification_answer", "")
-        
         # Build description of what was purchased
         items_desc = ""
         if items:
             items_desc = ", ".join([item.get("description", "") for item in items[:5]])
         
-        # Ask Claude for smart action recommendation
+        # Ask Claude for category suggestion
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         
-        prompt = f"""You are Zane, a smart AI bookkeeper for South African small businesses.
+        prompt = f"""You are Zane, the helpful AI bookkeeper for South African small businesses.
 
-LANGUAGE: Always respond in English. Keep it simple and friendly.
+A user just scanned this expense and needs help categorizing it:
 
-PERSONALITY: You're helpful, confident but not arrogant. You guide users step by step. 
-Always end with reassurance like "Click [BUTTON], I'll handle the rest!" or "Just click [BUTTON] and I'll take care of everything!"
+Supplier: {supplier_name}
+Invoice: {invoice_number}
+Amount: R{total}
+Items purchased: {items_desc or "Not specified"}
 
-A user just scanned a document. Your job is to tell them EXACTLY what to do.
+Based on this information, suggest the BEST expense category from this list:
 
-SCANNED DOCUMENT:
-- Supplier: {supplier_name}
-- Invoice #: {invoice_number}
-- Amount: R{total}
-- Items: {items_desc or "Not specified"}
-{"- User's answer to your question: " + user_answer if user_answer else ""}
-
-IMPORTANT: Some items are AMBIGUOUS - they could be STOCK or EXPENSE depending on the business:
-
-AMBIGUOUS ITEMS (ASK USER):
-- Lubricants, oils (Fuchs, Engen oils) → Could be stock for resale OR expense for own vehicles
-- Paint, chemicals → Could be stock for resale OR expense for own use
-- Tools, equipment → Could be stock for resale OR asset/expense
-- Parts, spares → Could be stock for resale OR repairs expense
-- Cleaning supplies → Could be stock for resale OR consumables expense
-
-CLEAR ITEMS (DON'T ASK):
-- Bank fees/statements → ALWAYS expense (Bank Charges)
-- Fuel/petrol/diesel → ALWAYS expense (Fuel) - warn about no VAT claim
-- Electricity/water → ALWAYS expense (Utilities)
-- Phone/internet bills → ALWAYS expense (Telephone)
-- Rent payments → ALWAYS expense (Rent)
-- Insurance → ALWAYS expense (Insurance)
-- Professional services → ALWAYS expense (Professional Fees)
-
-{"The user answered: '" + user_answer + "' - Now give them a FINAL answer based on this." if user_answer else ""}
+1. **Vehicle Expenses** - Fuel, car repairs, vehicle maintenance, car wash
+2. **Repairs & Maintenance** - Building repairs, equipment repairs, maintenance 
+3. **Utilities** - Electricity, water, municipal services
+4. **Telephone & Internet** - Cell phone, data, internet, landline
+5. **Consumables** - Office supplies, stationery, cleaning supplies, groceries for office
+6. **Travel** - Accommodation, flights, toll fees, parking (NOT fuel)
+7. **Entertainment** - Client meals, corporate events (no VAT claim)
+8. **Insurance** - Vehicle insurance, building insurance, liability insurance
+9. **Bank Charges** - Bank fees, card fees, transaction fees
+10. **Professional Fees** - Legal, accounting, consulting
+11. **Rent** - Office rent, equipment rental
+12. **General** - Anything else that doesn't fit above
 
 Respond ONLY with JSON:
-
-If CLEAR (no question needed):
 {{
-    "needs_clarification": false,
-    "action": "expense_paid",
-    "action_label": "Expense (Paid)",
-    "category": "Bank Charges",
-    "confidence": 0.98,
-    "explanation": "This is a bank statement from ABSA with monthly fees and transaction charges. Click the GREEN 'Expense (Paid)' button, I'll handle the rest!",
-    "vat_warning": "",
-    "is_stock": false
-}}
-
-If AMBIGUOUS (need to ask):
-{{
-    "needs_clarification": true,
-    "question": "Is this oil for resale, or for your own vehicles/machines?",
-    "options": [
-        {{"label": "For resale (stock)", "value": "resale"}},
-        {{"label": "For own use (expense)", "value": "own_use"}}
-    ],
-    "confidence": 0.6,
-    "explanation": "I see this is lubricants from Fuchs. Quick question so I can book it correctly:"
-}}
-
-If user ANSWERED (give final recommendation):
-{{
-    "needs_clarification": false,
-    "action": "expense",
-    "action_label": "Book as Expense",
     "category": "Vehicle Expenses",
     "confidence": 0.95,
-    "explanation": "Perfect! Since this is for your own vehicles, I'll book it as Vehicle Expenses. Click the ORANGE 'Book as Expense' button, I'll take care of the rest!",
-    "vat_warning": "",
-    "is_stock": false
+    "reason": "This is fuel from Engen, which is a vehicle expense",
+    "vat_warning": "[!] SARS Rule: NO VAT input claim allowed on fuel" 
 }}
 
-BUTTON COLORS to mention:
-- ORANGE = Book as Expense
-- GREEN = Expense (Paid)
-- BLUE = Stock Purchase (Credit)
-- TEAL = Stock Purchase (Paid)
+Important SARS rules to mention in vat_warning if applicable:
+- Fuel: NO VAT claim allowed
+- Entertainment: NO VAT claim allowed  
+- Club Subscriptions: NO VAT claim allowed
 
-Keep explanations SHORT (1-2 sentences max). Always end with reassurance!"""
+If VAT is claimable, set vat_warning to empty string."""
 
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=600,
+            max_tokens=500,
             messages=[{"role": "user", "content": prompt}]
         )
         
@@ -41724,29 +32068,25 @@ Keep explanations SHORT (1-2 sentences max). Always end with reassurance!"""
         suggestion = extract_json_from_text(ai_response)
         
         if suggestion:
-            logger.info(f"[ZANE SMART] Clarification: {suggestion.get('needs_clarification')}, Action: {suggestion.get('action')}")
+            logger.info(f"[CATEGORY] Zane suggests: {suggestion.get('category')} ({suggestion.get('confidence', 0):.0%})")
             return jsonify({
                 "success": True,
                 "suggestion": suggestion
             })
         else:
-            # Fallback
+            # Fallback to basic categorization
             return jsonify({
                 "success": True,
                 "suggestion": {
-                    "needs_clarification": False,
-                    "action": "expense",
-                    "action_label": "Book as Expense",
                     "category": "General",
                     "confidence": 0.5,
-                    "explanation": "I'm not 100% sure about this one. If it's stock for resale, click 'Stock Purchase'. Otherwise click 'Book as Expense' and I'll handle it!",
-                    "vat_warning": "",
-                    "is_stock": False
+                    "reason": "Could not determine specific category",
+                    "vat_warning": ""
                 }
             })
             
     except Exception as e:
-        logger.error(f"[ZANE SMART] Error: {e}")
+        logger.error(f"[CATEGORY] Suggestion error: {e}")
         return jsonify({
             "success": False,
             "error": str(e)
@@ -41800,19 +32140,17 @@ def api_scan_save_expense():
         if is_paid:
             desc += " [PAID]"
         
-        total_amount = float(data.get("total", 0))
-        expense = RecordFactory.expense(
-            business_id=biz_id,
-            description=desc,
-            amount=total_amount,
-            date=data.get("date", today()),
-            category=category,
-            vat=vat_amount,
-            net=total_amount - vat_amount,
-            reference=data.get("invoice_number", ""),
-            supplier=data.get("supplier_name", "")
-        )
-        exp_id = expense["id"]
+        expense = {
+            "id": exp_id,
+            "business_id": biz_id,
+            "date": data.get("date", today()),
+            "description": desc,
+            "category": category,
+            "amount": float(data.get("total", 0)),
+            "vat": vat_amount,
+            "reference": data.get("invoice_number", ""),
+            "created_at": now()
+        }
         
         # Actually check if save succeeded!
         success, result = db.save("expenses", expense)
@@ -42210,7 +32548,7 @@ def settings_page():
             <!-- SMTP (Outgoing) Status -->
             <div style="background:var(--card-bg); padding:15px; border-radius:8px; border:1px solid var(--border);">
                 <h4 style="margin:0 0 10px 0;">📤 SMTP (Uitgaande Email)</h4>
-                {'<p style="color:var(--green);font-weight:bold;">CONFIGURED</p>' if (business and business.get('smtp_user') and business.get('smtp_pass')) or (SMTP_USER and SMTP_PASS) else '<p style="color:var(--red);font-weight:bold;">NOT CONFIGURED</p>'}
+                {'<p style="color:var(--green);font-weight:bold;">✅ GEKONFIGUREER</p>' if (business and business.get('smtp_user') and business.get('smtp_pass')) or (SMTP_USER and SMTP_PASS) else '<p style="color:var(--red);font-weight:bold;">❌ NIE GEKONFIGUREER</p>'}
                 
                 <table style="width:100%;font-size:13px;margin-top:10px;">
                     <tr>
@@ -42238,8 +32576,8 @@ def settings_page():
             
             <!-- IMAP (Incoming) Status -->
             <div style="background:var(--card-bg); padding:15px; border-radius:8px; border:1px solid var(--border);">
-                <h4 style="margin:0 0 10px 0;">IMAP (Scanner Inbox)</h4>
-                {'<p style="color:var(--green);font-weight:bold;">CONFIGURED</p>' if (business and business.get('imap_user') and business.get('imap_pass')) or (IMAP_USER and IMAP_PASS) else '<p style="color:var(--text-muted);font-weight:bold;">Not configured (opsioneel)</p>'}
+                <h4 style="margin:0 0 10px 0;">📥 IMAP (Scanner Inbox)</h4>
+                {'<p style="color:var(--green);font-weight:bold;">✅ GEKONFIGUREER</p>' if (business and business.get('imap_user') and business.get('imap_pass')) or (IMAP_USER and IMAP_PASS) else '<p style="color:var(--text-muted);font-weight:bold;">⚪ Nie gestel (opsioneel)</p>'}
                 
                 <table style="width:100%;font-size:13px;margin-top:10px;">
                     <tr>
@@ -42259,8 +32597,8 @@ def settings_page():
         </div>
         
         <div style="margin-top:15px; padding:10px; background:var(--bg); border-radius:6px; font-size:12px; color:var(--text-muted);">
-            <strong>Note:</strong> Invites, payment reminders, en invoice emails vereis SMTP. Scanner inbox (IMAP) is slegs nodig as jy dokumente per email wil scan.
-            {'<br><span style="color:var(--orange);">Warning: SMTP is nie gekonfigureer nie - emails sal nie gestuur word nie!</span>' if not ((business and business.get('smtp_user') and business.get('smtp_pass')) or (SMTP_USER and SMTP_PASS)) else ''}
+            <strong>💡 Nota:</strong> Invites, payment reminders, en invoice emails vereis SMTP. Scanner inbox (IMAP) is slegs nodig as jy dokumente per email wil scan.
+            {'<br><span style="color:var(--orange);">⚠️ SMTP is nie gekonfigureer nie - emails sal nie gestuur word nie!</span>' if not ((business and business.get('smtp_user') and business.get('smtp_pass')) or (SMTP_USER and SMTP_PASS)) else ''}
         </div>
     </div>
     
@@ -42310,12 +32648,12 @@ def settings_page():
                 const data = await res.json();
                 
                 if (data.success) {{
-                    result.innerHTML = '<span style="color:var(--green);">data.message + '</span>';
+                    result.innerHTML = '<span style="color:var(--green);">✅ ' + data.message + '</span>';
                 }} else {{
-                    result.innerHTML = '<span style="color:var(--red);">data.error + '</span>';
+                    result.innerHTML = '<span style="color:var(--red);">❌ ' + data.error + '</span>';
                 }}
             }} catch (e) {{
-                result.innerHTML = '<span style="color:var(--red);">Error: ' + e.message + '</span>';
+                result.innerHTML = '<span style="color:var(--red);">❌ Error: ' + e.message + '</span>';
             }}
             
             btn.disabled = false;
@@ -42325,7 +32663,7 @@ def settings_page():
     </div>
     
     <div class="card" style="margin-top:20px;">
-        <h3 style="margin-bottom:15px;">Scanner Inbox Settings</h3>
+        <h3 style="margin-bottom:15px;">📥 Scanner Inbox Settings</h3>
         <p style="color:var(--text-muted);margin-bottom:15px;">Set up an email address where your printer/scanner sends scanned documents. Click AI will automatically check this inbox and process invoices.</p>
         
         <form action="/api/settings/scan-inbox" method="POST">
@@ -42402,52 +32740,10 @@ def settings_page():
         </form>
     </div>
     
-    <!-- POS Settings -->
-    <div class="card" style="margin-top:20px;">
-        <h3 style="margin-bottom:15px;">🖨️ POS Print Settings</h3>
-        <p style="color:var(--text-muted);margin-bottom:15px;">Configure how slips print at Point of Sale</p>
-        
-        <form action="/api/settings/pos" method="POST">
-            <div style="display:grid;gap:15px;">
-                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px;background:var(--bg);border-radius:8px;">
-                    <input type="checkbox" name="pos_auto_print" value="1" style="width:20px;height:20px;" {"checked" if business and business.get("pos_auto_print") else ""}>
-                    <div>
-                        <strong>Auto-print after sale</strong>
-                        <div style="color:var(--text-muted);font-size:12px;">Automatically show print dialog when sale completes</div>
-                    </div>
-                </label>
-                
-                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px;background:var(--bg);border-radius:8px;">
-                    <input type="checkbox" name="pos_print_duplicates" value="1" style="width:20px;height:20px;" {"checked" if business and business.get("pos_print_duplicates") else ""}>
-                    <div>
-                        <strong>🖨️ Print 2 copies (auto)</strong>
-                        <div style="color:var(--text-muted);font-size:12px;">Automatically prints customer copy + store copy</div>
-                    </div>
-                </label>
-                
-                <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label">Default Print Format</label>
-                    <select name="pos_print_format" class="form-input" style="max-width:300px;">
-                        <option value="thermal" {"selected" if business and business.get("pos_print_format") == "thermal" else ""}>80mm Thermal (Receipt Printer)</option>
-                        <option value="a4" {"selected" if business and business.get("pos_print_format") == "a4" else ""}>A4 (Standard Printer)</option>
-                        <option value="ask" {"selected" if not business or not business.get("pos_print_format") or business.get("pos_print_format") == "ask" else ""}>Ask each time</option>
-                    </select>
-                </div>
-                
-                <div class="form-group" style="margin-bottom:0;">
-                    <label class="form-label">Business Footer on Slip</label>
-                    <input type="text" name="pos_slip_footer" class="form-input" value="{safe_string(business.get("pos_slip_footer", "Thank you for your purchase!") if business else "Thank you for your purchase!")}" placeholder="e.g. Thank you! Visit again!">
-                </div>
-            </div>
-            
-            <button type="submit" class="btn btn-secondary" style="margin-top:15px;">💾 Save POS Settings</button>
-        </form>
-    </div>
-    
     <h3 style="margin:30px 0 15px 0;">More Settings</h3>
     <div class="stats-grid">
         <div class="card" style="cursor:pointer;border-left:4px solid var(--primary);" onclick="window.location='/settings/invoice-template'">
-            <h3>Invoice Template</h3>
+            <h3>📄 Invoice Template</h3>
             <p style="color:var(--text-muted)">Customize your invoice look</p>
         </div>
         <div class="card" style="cursor:pointer" onclick="window.location='/setup'">
@@ -42569,7 +32865,7 @@ def settings_invoice_template():
     </div>
     
     <div class="card" style="margin-bottom: 20px;">
-        <h2 style="margin: 0 0 5px 0;">Invoice Template</h2>
+        <h2 style="margin: 0 0 5px 0;">📄 Invoice Template</h2>
         <p style="color: var(--text-muted); margin: 0;">Customize how your invoices and quotes look</p>
     </div>
     
@@ -42826,91 +33122,51 @@ def settings_invoice_template():
 def api_settings_business():
     """Save business settings"""
     
-    try:
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    
+    # Check if this is a NEW business creation (from ?action=new page)
+    is_new = request.form.get("is_new", "") == "true" or request.referrer and "action=new" in request.referrer
+    
+    # CREATE NEW BUSINESS (for 2nd company)
+    if is_new or not business:
+        # LIMIT: Check how many businesses this user already has
+        user_id = user.get("id")
+        existing_businesses = db.get("businesses", {"user_id": user_id}) or []
         
-        # Check if this is a NEW business creation (from ?action=new page)
-        is_new = request.form.get("is_new", "") == "true" or request.referrer and "action=new" in request.referrer
+        # MAXIMUM 2 BUSINESSES PER USER!
+        if len(existing_businesses) >= 2:
+            # Return error - user already has 2 businesses
+            return f'''
+            <html>
+            <head>
+                <title>Limit Reached</title>
+                <style>
+                    body {{ font-family: system-ui; max-width: 500px; margin: 100px auto; padding: 20px; text-align: center; }}
+                    .card {{ background: #fee; border: 2px solid #f44; border-radius: 12px; padding: 30px; }}
+                    h2 {{ color: #c00; margin-bottom: 20px; }}
+                    p {{ color: #666; line-height: 1.6; }}
+                    a {{ display: inline-block; margin-top: 20px; padding: 10px 20px; background: #6366f1; color: white; text-decoration: none; border-radius: 6px; }}
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <h2>[!] Business Limit Reached</h2>
+                    <p>You can only create <strong>2 businesses</strong> per account.</p>
+                    <p>You already have:</p>
+                    <ul style="text-align:left;">
+                        {"".join(f"<li>{b.get('name')}</li>" for b in existing_businesses)}
+                    </ul>
+                    <p>If you need to manage more businesses, please contact support to upgrade your plan.</p>
+                    <a href="/settings">← Back to Settings</a>
+                </div>
+            </body>
+            </html>
+            '''
         
-        # CREATE NEW BUSINESS (for 2nd company)
-        if is_new or not business:
-            # LIMIT: Check how many businesses this user already has
-            user_id = user.get("id")
-            existing_businesses = db.get("businesses", {"user_id": user_id}) or []
-            
-            # MAXIMUM 2 BUSINESSES PER USER!
-            if len(existing_businesses) >= 2:
-                # Return error - user already has 2 businesses
-                return f'''
-                <html>
-                <head>
-                    <title>Limit Reached</title>
-                    <style>
-                        body {{ font-family: system-ui; max-width: 500px; margin: 100px auto; padding: 20px; text-align: center; }}
-                        .card {{ background: #fee; border: 2px solid #f44; border-radius: 12px; padding: 30px; }}
-                        h2 {{ color: #c00; margin-bottom: 20px; }}
-                        p {{ color: #666; line-height: 1.6; }}
-                        a {{ display: inline-block; margin-top: 20px; padding: 10px 20px; background: #6366f1; color: white; text-decoration: none; border-radius: 6px; }}
-                    </style>
-                </head>
-                <body>
-                    <div class="card">
-                        <h2>[!] Business Limit Reached</h2>
-                        <p>You can only create <strong>2 businesses</strong> per account.</p>
-                        <p>You already have:</p>
-                        <ul style="text-align:left;">
-                            {"".join(f"<li>{b.get('business_name', b.get('name', 'Unnamed'))}</li>" for b in existing_businesses)}
-                        </ul>
-                        <p>If you need to manage more businesses, please contact support to upgrade your plan.</p>
-                        <a href="/settings">← Back to Settings</a>
-                    </div>
-                </body>
-                </html>
-                '''
-            
-            # Get user_id - CRITICAL for multi-tenant!
-            user_id = user.get("id") if user else session.get("user_id")
-            
-            if not user_id:
-                app.logger.error("[BUSINESS] Cannot create business - no user_id!")
-                return redirect("/settings?error=no_user")
-            
-            new_biz = {
-                "id": generate_id(),
-                "name": request.form.get("name", "My Business"),
-                "industry_type": request.form.get("industry_type", "retail_general"),
-                "reg_number": request.form.get("reg_number", ""),
-                "vat_number": request.form.get("vat_number", ""),
-                "phone": request.form.get("phone", ""),
-                "email": request.form.get("email", ""),
-                "address": request.form.get("address", ""),
-                "bank_name": request.form.get("bank_name", ""),
-                "bank_account": request.form.get("bank_account", ""),
-                "bank_branch": request.form.get("bank_branch", ""),
-                "currency": "ZAR",
-                "tax_rate": 15,
-                "active": True,
-                "created_at": now(),
-                "user_id": user_id
-            }
-            
-            success, result = db.save("businesses", new_biz)
-            
-            if not success:
-                app.logger.error(f"[BUSINESS] Failed to create: {result}")
-                return redirect("/settings?error=create_failed")
-            
-            # Switch to the new business
-            session["business_id"] = new_biz["id"]
-            
-            flash_msg = f"✓ New business '{new_biz['name']}' created successfully!"
-            return redirect("/settings")
-        
-        # UPDATE EXISTING BUSINESS
-        updates = {
-            "id": business.get("id"),
-            "name": request.form.get("name", ""),
+        new_biz = {
+            "id": generate_id(),
+            "name": request.form.get("name", "My Business"),
             "industry_type": request.form.get("industry_type", "retail_general"),
             "reg_number": request.form.get("reg_number", ""),
             "vat_number": request.form.get("vat_number", ""),
@@ -42920,16 +33176,35 @@ def api_settings_business():
             "bank_name": request.form.get("bank_name", ""),
             "bank_account": request.form.get("bank_account", ""),
             "bank_branch": request.form.get("bank_branch", ""),
+            "created_at": now(),
+            "user_id": user.get("id")  # Link to user
         }
+        db.save("businesses", new_biz)
         
-        db.save("businesses", updates)
+        # Switch to the new business
+        session["business_id"] = new_biz["id"]
         
+        flash_msg = f" New business '{new_biz['name']}' created successfully!"
         return redirect("/settings")
     
-    except Exception as e:
-        logger.error(f"[SETTINGS] Business save error: {e}")
-        flash(f"Error saving business: {str(e)}", "error")
-        return redirect("/settings")
+    # UPDATE EXISTING BUSINESS
+    updates = {
+        "id": business.get("id"),
+        "name": request.form.get("name", ""),
+        "industry_type": request.form.get("industry_type", "retail_general"),
+        "reg_number": request.form.get("reg_number", ""),
+        "vat_number": request.form.get("vat_number", ""),
+        "phone": request.form.get("phone", ""),
+        "email": request.form.get("email", ""),
+        "address": request.form.get("address", ""),
+        "bank_name": request.form.get("bank_name", ""),
+        "bank_account": request.form.get("bank_account", ""),
+        "bank_branch": request.form.get("bank_branch", ""),
+    }
+    
+    db.save("businesses", updates)
+    
+    return redirect("/settings")
 
 
 @app.route("/api/switch-business", methods=["POST"])
@@ -42937,18 +33212,14 @@ def api_settings_business():
 def api_switch_business():
     """Switch to a different business"""
     
-    try:
-        data = request.get_json()
-        business_id = data.get("business_id", "") if data else ""
-        
-        if business_id:
-            session["business_id"] = business_id
-            return jsonify({"success": True})
-        
-        return jsonify({"success": False, "error": "No business ID provided"})
-    except Exception as e:
-        logger.error(f"[SWITCH] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    data = request.get_json()
+    business_id = data.get("business_id", "")
+    
+    if business_id:
+        session["business_id"] = business_id
+        return jsonify({"success": True})
+    
+    return jsonify({"success": False, "error": "No business ID provided"})
 
 
 @app.route("/api/create-business", methods=["POST"])
@@ -42956,29 +33227,24 @@ def api_switch_business():
 def api_create_business():
     """Create a new business"""
     
-    try:
-        user = Auth.get_current_user()
-        
-        data = request.get_json() if request.is_json else request.form
-        name = data.get("name", "New Business") if data else "New Business"
-        
-        new_biz = {
-            "id": generate_id(),
-            "name": name,
-            "created_at": now(),
-            "user_id": user.get("id") if user else None
-        }
-        
-        ok, result = db.save("businesses", new_biz)
-        
-        if ok:
-            session["business_id"] = new_biz["id"]
-            return jsonify({"success": True, "business_id": new_biz["id"]})
-        
-        return jsonify({"success": False, "error": str(result)})
-    except Exception as e:
-        logger.error(f"[CREATE BIZ] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    user = Auth.get_current_user()
+    
+    data = request.get_json() if request.is_json else request.form
+    name = data.get("name", "New Business")
+    
+    new_biz = {
+        "id": generate_id(),
+        "name": name,
+        "created_at": now()
+    }
+    
+    ok, result = db.save("businesses", new_biz)
+    
+    if ok:
+        session["business_id"] = new_biz["id"]
+        return jsonify({"success": True, "business_id": new_biz["id"]})
+    
+    return jsonify({"success": False, "error": str(result)})
 
 
 @app.route("/api/settings/email", methods=["POST"])
@@ -42986,61 +33252,25 @@ def api_create_business():
 def api_settings_email():
     """Save email settings"""
     
-    try:
-        business = Auth.get_current_business()
-        if not business:
-            flash("No business selected", "error")
-            return redirect("/settings")
-        
-        updates = {
-            "id": business.get("id"),
-            "smtp_host": request.form.get("smtp_host", ""),
-            "smtp_port": request.form.get("smtp_port", ""),
-            "smtp_user": request.form.get("smtp_user", ""),
-            "smtp_pass": request.form.get("smtp_pass", ""),
-        }
-        
-        # Only update password if provided
-        if not updates["smtp_pass"]:
-            del updates["smtp_pass"]
-        
-        db.save("businesses", updates)
-        flash("Email settings saved", "success")
-        
+    business = Auth.get_current_business()
+    if not business:
         return redirect("/settings")
-    except Exception as e:
-        logger.error(f"[SETTINGS EMAIL] Error: {e}")
-        flash(f"Error saving email settings: {str(e)}", "error")
-        return redirect("/settings")
-
-
-@app.route("/api/settings/pos", methods=["POST"])
-@login_required
-def api_settings_pos():
-    """Save POS print settings"""
     
-    try:
-        business = Auth.get_current_business()
-        if not business:
-            flash("No business found", "error")
-            return redirect("/settings")
-        
-        updates = {
-            "id": business.get("id"),
-            "pos_auto_print": bool(request.form.get("pos_auto_print")),
-            "pos_print_duplicates": bool(request.form.get("pos_print_duplicates")),
-            "pos_print_format": request.form.get("pos_print_format", "ask"),
-            "pos_slip_footer": request.form.get("pos_slip_footer", "Thank you for your purchase!"),
-        }
-        
-        db.save("businesses", updates)
-        flash("POS settings saved", "success")
-        
-        return redirect("/settings")
-    except Exception as e:
-        logger.error(f"[SETTINGS POS] Error: {e}")
-        flash(f"Error saving POS settings: {str(e)}", "error")
-        return redirect("/settings")
+    updates = {
+        "id": business.get("id"),
+        "smtp_host": request.form.get("smtp_host", ""),
+        "smtp_port": request.form.get("smtp_port", ""),
+        "smtp_user": request.form.get("smtp_user", ""),
+        "smtp_pass": request.form.get("smtp_pass", ""),
+    }
+    
+    # Only update password if provided
+    if not updates["smtp_pass"]:
+        del updates["smtp_pass"]
+    
+    db.save("businesses", updates)
+    
+    return redirect("/settings")
 
 
 @app.route("/api/settings/scan-inbox", methods=["POST"])
@@ -43075,10 +33305,10 @@ def api_settings_scan_inbox():
     
     if success:
         logger.info(f"[SCANNER] Scanner inbox saved successfully: {imap_user}")
-        flash(f"Scanner inbox saved: {imap_user}", "success")
+        flash(f"✅ Scanner inbox saved: {imap_user}", "success")
     else:
         logger.error(f"[SCANNER] Failed to save scanner inbox: {result}")
-        flash(f"Failed to save: {result}", "error")
+        flash(f"❌ Failed to save: {result}", "error")
     
     return redirect("/settings")
 
@@ -43333,23 +33563,23 @@ def mobile_scanner():
         </div>
         <div class="buttons">
             <button class="scan-btn invoice" onclick="startScan('invoice')">
-                <span class="icon">INV</span>
+                <span class="icon">🧾</span>
                 <span>Supplier Invoice</span>
             </button>
             <button class="scan-btn expense" onclick="startScan('expense')">
-                <span class="icon">INV</span>
+                <span class="icon">🧾</span>
                 <span>Expense / Slip</span>
             </button>
             <button class="scan-btn timesheet" onclick="startScan('timesheet')">
-                <span class="icon">T</span>
+                <span class="icon">⏱️</span>
                 <span>Timesheet</span>
             </button>
             <button class="scan-btn payslip" onclick="startScan('payslip')">
-                <span class="icon">R</span>
+                <span class="icon">💰</span>
                 <span>Payslip</span>
             </button>
-            <button class="scan-btn inbox" onclick="window.location='/scan-inbox'">
-                <span class="icon">IN</span>
+            <button class="scan-btn inbox" onclick="window.location='/m/inbox'">
+                <span class="icon">📥</span>
                 <span>View Inbox</span>
             </button>
         </div>
@@ -43388,7 +33618,7 @@ def mobile_scanner():
         <div class="done-msg">Saved!</div>
         <div class="done-btns">
             <button class="btn-another" onclick="goHome()">📷 Scan Another</button>
-            <button class="btn-inbox" onclick="window.location='/scan-inbox'">Go to Inbox</button>
+            <button class="btn-inbox" onclick="window.location='/m/inbox'">📥 Go to Inbox</button>
         </div>
     </div>
     
@@ -43480,7 +33710,7 @@ def mobile_scanner():
         // Update button text based on type
         const btn = document.getElementById('saveBtn');
         if (currentType === 'timesheet') {{
-            btn.textContent = 'Save to Payroll';
+            btn.textContent = '⏱️ Save to Payroll';
             btn.style.background = '#f59e0b';  // Orange for payroll
         }} else {{
             btn.textContent = '💾 Save to Inbox';
@@ -44669,74 +34899,62 @@ Thank you for your business! """
 @login_required
 def api_whatsapp_send():
     """Send WhatsApp message"""
-    try:
-        data = request.get_json()
-        
-        to = data.get("to") if data else None
-        message = data.get("message") if data else None
-        
-        if not to or not message:
-            return jsonify({"success": False, "error": "Missing 'to' or 'message'"})
-        
-        success, result = WhatsApp.send(to, message)
-        
-        business = Auth.get_current_business()
-        AuditLog.log("SEND", "whatsapp", to, business_id=business.get("id") if business else None, 
-                     details=f"WhatsApp to {to}: {message[:50]}...")
-        
-        return jsonify({"success": success, "result": result})
-    except Exception as e:
-        logger.error(f"[WHATSAPP] Send error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    data = request.get_json()
+    
+    to = data.get("to")
+    message = data.get("message")
+    
+    if not to or not message:
+        return jsonify({"success": False, "error": "Missing 'to' or 'message'"})
+    
+    success, result = WhatsApp.send(to, message)
+    
+    business = Auth.get_current_business()
+    AuditLog.log("SEND", "whatsapp", to, business_id=business.get("id") if business else None, 
+                 details=f"WhatsApp to {to}: {message[:50]}...")
+    
+    return jsonify({"success": success, "result": result})
 
 
 @app.route("/api/whatsapp/invoice/<invoice_id>", methods=["POST"])
 @login_required
 def api_whatsapp_invoice(invoice_id):
     """Send invoice via WhatsApp"""
-    try:
-        business = Auth.get_current_business()
-        
-        invoice = db.get_one("invoices", invoice_id)
-        if not invoice:
-            return jsonify({"success": False, "error": "Invoice not found"})
-        
-        customer = db.get_one("customers", invoice.get("customer_id"))
-        if not customer:
-            return jsonify({"success": False, "error": "Customer not found"})
-        
-        success, result = WhatsApp.send_invoice_link(customer, invoice, business)
-        
-        return jsonify({"success": success, "result": result})
-    except Exception as e:
-        logger.error(f"[WHATSAPP] Invoice send error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    business = Auth.get_current_business()
+    
+    invoice = db.get_one("invoices", invoice_id)
+    if not invoice:
+        return jsonify({"success": False, "error": "Invoice not found"})
+    
+    customer = db.get_one("customers", invoice.get("customer_id"))
+    if not customer:
+        return jsonify({"success": False, "error": "Customer not found"})
+    
+    success, result = WhatsApp.send_invoice_link(customer, invoice, business)
+    
+    return jsonify({"success": success, "result": result})
 
 
 @app.route("/api/whatsapp/reminder/<customer_id>", methods=["POST"])
 @login_required
 def api_whatsapp_reminder(customer_id):
     """Send payment reminder via WhatsApp"""
-    try:
-        business = Auth.get_current_business()
-        
-        customer = db.get_one("customers", customer_id)
-        if not customer:
-            return jsonify({"success": False, "error": "Customer not found"})
-        
-        balance = float(customer.get("balance", 0))
-        if balance <= 0:
-            return jsonify({"success": False, "error": "Customer has no outstanding balance"})
-        
-        # Calculate days overdue (simplified - would need invoice dates for accuracy)
-        days_overdue = request.json.get("days_overdue", 0) if request.is_json else 0
-        
-        success, result = WhatsApp.send_payment_reminder(customer, balance, business, days_overdue)
-        
-        return jsonify({"success": success, "result": result})
-    except Exception as e:
-        logger.error(f"[WHATSAPP] Reminder error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    business = Auth.get_current_business()
+    
+    customer = db.get_one("customers", customer_id)
+    if not customer:
+        return jsonify({"success": False, "error": "Customer not found"})
+    
+    balance = float(customer.get("balance", 0))
+    if balance <= 0:
+        return jsonify({"success": False, "error": "Customer has no outstanding balance"})
+    
+    # Calculate days overdue (simplified - would need invoice dates for accuracy)
+    days_overdue = request.json.get("days_overdue", 0) if request.is_json else 0
+    
+    success, result = WhatsApp.send_payment_reminder(customer, balance, business, days_overdue)
+    
+    return jsonify({"success": success, "result": result})
 
 
 # 
@@ -44938,7 +35156,7 @@ def collections_page():
     
     # Build table rows
     rows = ""
-    for c in overdue[:500]:  # Limit to 50
+    for c in overdue[:50]:  # Limit to 50
         days = c.get("days_overdue", 0)
         if days > 60:
             badge_color = "var(--red)"
@@ -45067,61 +35285,47 @@ def collections_page():
 @login_required
 def api_collections_remind(customer_id):
     """Send reminder to single customer"""
-    try:
-        business = Auth.get_current_business()
-        customer = db.get_one("customers", customer_id)
-        
-        if not customer:
-            return jsonify({"success": False, "error": "Customer not found"})
-        
-        if not business:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        data = request.get_json() or {}
-        method = data.get("method", "email")
-        
-        # Get overdue info
-        overdue = Collections.get_overdue_customers(business.get("id"))
-        cust_overdue = next((c for c in overdue if c.get("id") == customer_id), None)
-        
-        if not cust_overdue:
-            return jsonify({"success": False, "error": "Customer not overdue"})
-        
-        success = False
-        
-        if method == "email":
-            email = customer.get("email")
-            if email:
-                subject = f"Payment Reminder - {business.get('name', 'Business')}"
-                body = Collections._build_reminder_email(cust_overdue, business)
-                success = Email.send(email, subject, body, business=business)
-        
-        return jsonify({"success": success})
-    except Exception as e:
-        logger.error(f"[COLLECTIONS] Remind error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+    business = Auth.get_current_business()
+    customer = db.get_one("customers", customer_id)
+    
+    if not customer:
+        return jsonify({"success": False, "error": "Customer not found"})
+    
+    data = request.get_json() or {}
+    method = data.get("method", "email")
+    
+    # Get overdue info
+    overdue = Collections.get_overdue_customers(business.get("id"))
+    cust_overdue = next((c for c in overdue if c.get("id") == customer_id), None)
+    
+    if not cust_overdue:
+        return jsonify({"success": False, "error": "Customer not overdue"})
+    
+    success = False
+    
+    if method == "email":
+        email = customer.get("email")
+        if email:
+            subject = f"Payment Reminder - {business.get('name', 'Business')}"
+            body = Collections._build_reminder_email(cust_overdue, business)
+            success = Email.send(email, subject, body, business=business)
+    
+    return jsonify({"success": success})
 
 
 @app.route("/api/collections/bulk", methods=["POST"])
 @login_required
 def api_collections_bulk():
     """Send bulk reminders"""
-    try:
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        data = request.get_json() or {}
-        method = data.get("method", "email")
-        
-        results = Collections.send_reminders(biz_id, method)
-        
-        return jsonify(results)
-    except Exception as e:
-        logger.error(f"[COLLECTIONS] Bulk error: {e}")
-        return jsonify({"success": False, "error": str(e), "sent": 0, "failed": 0, "skipped": 0})
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    data = request.get_json() or {}
+    method = data.get("method", "email")
+    
+    results = Collections.send_reminders(biz_id, method)
+    
+    return jsonify(results)
 
 
 # 
@@ -45793,7 +35997,7 @@ def accountant_access():
             if email:
                 # Generate invitation token
                 invitation_token = hashlib.sha256(f"{email}{time.time()}{generate_id()}".encode()).hexdigest()[:32]
-                invitation_link = f"https://clickai.fly.dev/invite/{invitation_token}"
+                invitation_link = f"https://www.clickai.co.za/invite/{invitation_token}"
                 
                 # Create accountant access
                 access_id = generate_id()
@@ -45818,7 +36022,7 @@ def accountant_access():
                         f'''
                         <html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
                         <div style="max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9; border-radius: 10px;">
-                            <h2 style="color: #6366f1;">You've been invited to Click AI! </h2>
+                            <h2 style="color: #6366f1;">You've been invited to Click AI! 🎉</h2>
                             <p><strong>{biz_name}</strong> has granted you accountant access to their Click AI account.</p>
                             
                             <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
@@ -45854,10 +36058,10 @@ def accountant_access():
                     if email_sent:
                         message = f"✉️ Invitation sent to {email}"
                     else:
-                        message = f"Warning: Accountant added but email failed. Share this link: {invitation_link}"
+                        message = f"⚠️ Accountant added but email failed. Share this link: {invitation_link}"
                 except Exception as e:
                     logger.error(f"[ACCOUNTANT] Email failed: {e}")
-                    message = f"Warning: Accountant added but email failed. Share this link: {invitation_link}"
+                    message = f"⚠️ Accountant added but email failed. Share this link: {invitation_link}"
                 
                 AuditLog.log("CREATE", "team_members", access_id, details=f"Accountant invitation sent: {email}")
         
@@ -45971,7 +36175,7 @@ def audit_page():
     
     # Build table
     rows = ""
-    for log in logs[:500]:
+    for log in logs[:100]:
         action = log.get("action", "-")
         action_colors = {
             "CREATE": "var(--green)",
@@ -46097,9 +36301,9 @@ def intelligence_page():
     # Season info
     season_badge = ""
     if insights.get("is_busy_season"):
-        season_badge = '<span style="background:var(--green);color:white;padding:5px 15px;border-radius:20px;">Busy Season</span>'
+        season_badge = '<span style="background:var(--green);color:white;padding:5px 15px;border-radius:20px;">📈 Busy Season</span>'
     elif insights.get("is_slow_season"):
-        season_badge = '<span style="background:var(--orange);color:white;padding:5px 15px;border-radius:20px;">Slow Season</span>'
+        season_badge = '<span style="background:var(--orange);color:white;padding:5px 15px;border-radius:20px;">📉 Slow Season</span>'
     
     # Calculate next scheduler run
     now_time = datetime.now()
@@ -46135,7 +36339,7 @@ def intelligence_page():
     
     <!-- Industry Profile -->
     <div class="card" style="background:linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.1)); margin-bottom:20px;">
-        <h3>Industry Profile: {profile.get("name", "General")}</h3>
+        <h3>🏭 Industry Profile: {profile.get("name", "General")}</h3>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:20px;margin-top:15px;">
             <div>
                 <strong>Typical Margin:</strong><br>
@@ -46150,14 +36354,14 @@ def intelligence_page():
                 {", ".join(insights.get("kpis", [])[:3]) or "N/A"}
             </div>
         </div>
-        <p style="margin-top:15px;color:var(--text-muted);font-size:14px;">{insights.get("pricing_notes", "")}</p>
+        <p style="margin-top:15px;color:var(--text-muted);font-size:14px;">💡 {insights.get("pricing_notes", "")}</p>
     </div>
     
     <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(450px, 1fr));gap:20px;">
         
         <!-- Risky Debtors -->
         <div class="card">
-            <h3>Warning: Payment Risk Alert</h3>
+            <h3>⚠️ Payment Risk Alert</h3>
             <p style="color:var(--text-muted);font-size:14px;">Customers most likely to pay late</p>
             <table class="table" style="margin-top:15px;">
                 <thead>
@@ -46171,7 +36375,7 @@ def intelligence_page():
         
         <!-- Reorder Alerts -->
         <div class="card">
-            <h3>Reorder Soon</h3>
+            <h3>📦 Reorder Soon</h3>
             <p style="color:var(--text-muted);font-size:14px;">Stock predicted to run out</p>
             <table class="table" style="margin-top:15px;">
                 <thead>
@@ -46513,22 +36717,25 @@ class RecurringInvoices:
         inv_num = f"INV{len(existing) + 1:04d}"
         
         # Create the invoice
-        invoice = RecordFactory.invoice(
-            business_id=business_id,
-            customer_id=safe_uuid(customer_id),
-            customer_name=customer_name or "",
-            items=items,
-            invoice_number=inv_num,
-            date=today(),
-            due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-            subtotal=subtotal,
-            vat=vat,
-            total=total,
-            payment_method="account",
-            status="outstanding",
-            notes=f"{recurring.get('notes', '')} [Recurring: {recurring.get('id', '')[:8]}]"
-        )
-        invoice_id = invoice["id"]
+        invoice_id = generate_id()
+        invoice = {
+            "id": invoice_id,
+            "business_id": business_id,
+            "invoice_number": inv_num,
+            "date": today(),
+            "due_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+            "customer_id": customer_id,
+            "customer_name": customer_name,
+            "items": json.dumps(items),
+            "subtotal": subtotal,
+            "vat": vat,
+            "total": total,
+            "payment_method": "account",
+            "status": "outstanding",
+            "recurring_id": recurring.get("id"),  # Link back to recurring
+            "notes": recurring.get("notes", ""),
+            "created_at": now()
+        }
         
         success, _ = db.save("invoices", invoice)
         
@@ -46704,7 +36911,7 @@ class NightlyScheduler:
         
         try:
             # === PROCESS RECURRING INVOICES FIRST ===
-            logger.info("[SCHEDULER] Processing recurring invoices...")
+            logger.info("[SCHEDULER] 📋 Processing recurring invoices...")
             try:
                 recurring_result = RecurringInvoices.process_all_due()
                 if recurring_result.get("generated"):
@@ -46730,15 +36937,6 @@ class NightlyScheduler:
                 try:
                     # Run intelligence calculations
                     BusinessIntelligence.run_nightly_calculations(biz_id)
-                    
-                    # Generate daily briefing for yesterday
-                    try:
-                        briefing_result = DailyBriefing.generate(biz_id)
-                        if briefing_result.get("success"):
-                            logger.info(f"[SCHEDULER] ✓ {biz_name} - briefing generated")
-                    except Exception as be:
-                        logger.error(f"[SCHEDULER] {biz_name} - briefing error: {be}")
-                    
                     success_count += 1
                     logger.info(f"[SCHEDULER] ✓ {biz_name} - done")
                     
