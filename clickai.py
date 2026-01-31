@@ -4626,6 +4626,15 @@ Example: "Key: You need R45,000 by the 25th for payroll. Risk: Your top debtor i
 
 **RULE 8: Be honest** - If data is missing or unclear, say so
 
+**RULE 9: NEVER INVENT UI ELEMENTS!** - This is CRITICAL!
+   - Do NOT tell users to click buttons, filters, dropdowns, or tabs that you're not 100% sure exist
+   - Do NOT say "use the date filter at the top" unless you KNOW there is one
+   - Do NOT say "click the X button" unless it's documented in the CLICKAI SYSTEM KNOWLEDGE above
+   - If a user asks you to help them do something on a page, ONLY reference elements documented above
+   - If you're NOT SURE if a UI element exists → Say "I'm not sure if that option is available on this page - let me know what you see and I'll help from there"
+   - Making up buttons/filters that don't exist makes you look STUPID and the system look BROKEN
+   - When guiding step-by-step: Ask the user WHAT THEY SEE first, then guide based on their answer
+
 ## ⚠️ SMART WARNINGS - Protect the user from mistakes!
 
 **BEFORE creating invoices, check:**
@@ -8572,6 +8581,8 @@ class DailyBriefing:
     @classmethod
     def _write_catchup_briefing(cls, biz_name: str, owner_name: str, data: dict) -> Optional[str]:
         """Use GPT-5 to write a natural catch-up briefing, with Claude Haiku fallback."""
+        
+        logger.info(f"[BRIEFING] === _write_catchup_briefing CALLED === OPENAI_KEY={'SET' if OPENAI_API_KEY else 'EMPTY'} ANTHROPIC_KEY={'SET' if ANTHROPIC_API_KEY else 'EMPTY'}")
         
         if not OPENAI_API_KEY and not ANTHROPIC_API_KEY:
             logger.error("[BRIEFING] No API keys available at all")
