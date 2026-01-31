@@ -8320,7 +8320,7 @@ class DailyBriefing:
             business = db.get_one("businesses", business_id)
             biz_name = business.get("name", "Business") if business else "Business"
             owner_name = business.get("owner_name", "") if business else ""
-            logger.info(f"[BRIEFING] Starting for {biz_name} (biz_id={business_id})")
+            logger.error(f"[BRIEFING] Starting for {biz_name} (biz_id={business_id})")
             
             # Find last pulse view
             try:
@@ -8358,7 +8358,7 @@ class DailyBriefing:
             start_date = today - timedelta(days=days_since)
             end_date = yesterday
             
-            logger.info(f"[BRIEFING] Date range: {start_date} to {end_date} ({days_since} days)")
+            logger.error(f"[BRIEFING] Date range: {start_date} to {end_date} ({days_since} days)")
             
             # Gather data for the range
             data = cls._gather_range_data(business_id, start_date, end_date)
@@ -8366,7 +8366,7 @@ class DailyBriefing:
             data["start_date"] = start_date.strftime("%Y-%m-%d")
             data["end_date"] = end_date.strftime("%Y-%m-%d")
             
-            logger.info(f"[BRIEFING] Data gathered. Sales: R{data.get('total_sales', 0)}, Invoices: R{data.get('total_invoiced', 0)}")
+            logger.error(f"[BRIEFING] Data gathered. Sales: R{data.get('total_sales', 0)}, Invoices: R{data.get('total_invoiced', 0)}")
             
             # Generate briefing
             briefing_text = cls._write_catchup_briefing(biz_name, owner_name, data)
@@ -8582,7 +8582,7 @@ class DailyBriefing:
     def _write_catchup_briefing(cls, biz_name: str, owner_name: str, data: dict) -> Optional[str]:
         """Use GPT-5 to write a natural catch-up briefing, with Claude Haiku fallback."""
         
-        logger.info(f"[BRIEFING] === _write_catchup_briefing CALLED === OPENAI_KEY={'SET' if OPENAI_API_KEY else 'EMPTY'} ANTHROPIC_KEY={'SET' if ANTHROPIC_API_KEY else 'EMPTY'}")
+        logger.error(f"[BRIEFING] === CALLED === OPENAI_KEY={'SET' if OPENAI_API_KEY else 'EMPTY'} ANTHROPIC_KEY={'SET' if ANTHROPIC_API_KEY else 'EMPTY'}")
         
         if not OPENAI_API_KEY and not ANTHROPIC_API_KEY:
             logger.error("[BRIEFING] No API keys available at all")
@@ -8724,7 +8724,7 @@ Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
             
             for model_name, token_param in models_to_try:
                 try:
-                    logger.info(f"[BRIEFING] Trying model: {model_name}")
+                    logger.error(f"[BRIEFING] Trying model: {model_name}")
                     
                     payload = {
                         "model": model_name,
@@ -8744,22 +8744,22 @@ Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
                     
                     if response.status_code == 200:
                         result = response.json()
-                        logger.info(f"[BRIEFING] Success with {model_name}")
+                        logger.error(f"[BRIEFING] Success with {model_name}")
                         return result["choices"][0]["message"]["content"]
                     else:
-                        logger.warning(f"[BRIEFING] {model_name} failed: {response.status_code} - {response.text[:200]}")
+                        logger.error(f"[BRIEFING] {model_name} failed: {response.status_code} - {response.text[:200]}")
                         continue
                         
                 except Exception as e:
-                    logger.warning(f"[BRIEFING] {model_name} error: {e}")
+                    logger.error(f"[BRIEFING] {model_name} error: {e}")
                     continue
         else:
-            logger.warning("[BRIEFING] No OPENAI_API_KEY set, skipping to Claude fallback")
+            logger.error("[BRIEFING] No OPENAI_API_KEY set, skipping to Claude fallback")
         
         # Final fallback: Claude Haiku
         if ANTHROPIC_API_KEY:
             try:
-                logger.info("[BRIEFING] All OpenAI models failed, trying Claude Haiku")
+                logger.error("[BRIEFING] All OpenAI models failed, trying Claude Haiku")
                 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
                 message = client.messages.create(
                     model="claude-haiku-4-5-20251001",
@@ -8767,7 +8767,7 @@ Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
                     messages=[{"role": "user", "content": prompt}]
                 )
                 if message.content:
-                    logger.info("[BRIEFING] Success with Claude Haiku fallback")
+                    logger.error("[BRIEFING] Success with Claude Haiku fallback")
                     return message.content[0].text
             except Exception as e:
                 logger.error(f"[BRIEFING] Claude Haiku fallback also failed: {e}")
