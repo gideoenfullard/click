@@ -8311,11 +8311,16 @@ class DailyBriefing:
             business = db.get_one("businesses", business_id)
             biz_name = business.get("name", "Business") if business else "Business"
             owner_name = business.get("owner_name", "") if business else ""
+            logger.info(f"[BRIEFING] Starting for {biz_name} (biz_id={business_id})")
             
             # Find last pulse view
-            views = db.get("pulse_views", {"business_id": business_id}) or []
-            if user_id:
-                views = [v for v in views if v.get("user_id") == user_id]
+            try:
+                views = db.get("pulse_views", {"business_id": business_id}) or []
+                if user_id:
+                    views = [v for v in views if v.get("user_id") == user_id]
+            except Exception as view_err:
+                logger.warning(f"[BRIEFING] pulse_views table error (non-critical): {view_err}")
+                views = []
             
             last_view = None
             if views:
@@ -8344,43 +8349,56 @@ class DailyBriefing:
             start_date = today - timedelta(days=days_since)
             end_date = yesterday
             
+            logger.info(f"[BRIEFING] Date range: {start_date} to {end_date} ({days_since} days)")
+            
             # Gather data for the range
             data = cls._gather_range_data(business_id, start_date, end_date)
             data["days_covered"] = days_since
             data["start_date"] = start_date.strftime("%Y-%m-%d")
             data["end_date"] = end_date.strftime("%Y-%m-%d")
             
+            logger.info(f"[BRIEFING] Data gathered. Sales: R{data.get('total_sales', 0)}, Invoices: R{data.get('total_invoiced', 0)}")
+            
             # Generate briefing
             briefing_text = cls._write_catchup_briefing(biz_name, owner_name, data)
             
-            # Record this view
-            view_record = {
-                "id": generate_id(),
-                "business_id": business_id,
-                "user_id": user_id,
-                "viewed_at": now()
-            }
-            db.save("pulse_views", view_record)
+            # Record this view (don't fail if table missing)
+            try:
+                view_record = {
+                    "id": generate_id(),
+                    "business_id": business_id,
+                    "user_id": user_id,
+                    "viewed_at": now()
+                }
+                db.save("pulse_views", view_record)
+            except Exception as save_err:
+                logger.warning(f"[BRIEFING] Could not save pulse_view (non-critical): {save_err}")
             
             if briefing_text:
                 # Save briefing
-                briefing_record = {
-                    "id": generate_id(),
-                    "business_id": business_id,
-                    "date": today.strftime("%Y-%m-%d"),
-                    "days_covered": days_since,
-                    "briefing": briefing_text,
-                    "data": data,
-                    "created_at": now()
-                }
-                db.save("daily_briefings", briefing_record)
+                try:
+                    briefing_record = {
+                        "id": generate_id(),
+                        "business_id": business_id,
+                        "date": today.strftime("%Y-%m-%d"),
+                        "days_covered": days_since,
+                        "briefing": briefing_text,
+                        "data": data,
+                        "created_at": now()
+                    }
+                    db.save("daily_briefings", briefing_record)
+                except Exception as save_err:
+                    logger.warning(f"[BRIEFING] Could not save briefing record (non-critical): {save_err}")
                 
                 return {"success": True, "briefing": briefing_text, "data": data, "days": days_since}
             else:
+                logger.error(f"[BRIEFING] _write_catchup_briefing returned None - all AI models failed")
                 return {"success": False, "error": "Could not generate briefing"}
                 
         except Exception as e:
             logger.error(f"[BRIEFING] Error: {e}")
+            import traceback
+            logger.error(f"[BRIEFING] Traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
     
     @classmethod
