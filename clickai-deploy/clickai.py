@@ -8649,70 +8649,62 @@ class DailyBriefing:
         
         # Build simple data summary
         summary = f"""
-Besigheid: {biz_name}
-Eienaar: {owner_name}
-Periode: {days} dae ({start_date_str} tot {end_date_str})
-Werksdae: {working_days}, Naweke: {weekend_days}
+Business: {biz_name}
+Owner: {owner_name}
+Period: {days} day(s) ({start_date_str} to {end_date_str})
+Working days: {working_days}, Weekends: {weekend_days}
 
-TOTALE:
+TOTALS:
 - POS Sales: R{data['total_sales']:,.0f}
 - Invoices: R{data['total_invoiced']:,.0f}
 - Quotes: R{data['total_quoted']:,.0f}
-- Payments ontvang: R{data['total_received']:,.0f}
+- Payments received: R{data['total_received']:,.0f}
 
-WAT GEBEUR HET:
-{chr(10).join(events) if events else 'Niks gerecord nie'}
+WHAT HAPPENED:
+{chr(10).join(events) if events else 'Nothing recorded'}
 
-SPAN:
-{chr(10).join(team) if team else 'Geen aktiwiteit'}
+TEAM:
+{chr(10).join(team) if team else 'No activity'}
 
-PROBLEME:
-{chr(10).join(problems) if problems else 'Geen'}
+PROBLEMS:
+{chr(10).join(problems) if problems else 'None'}
 """
 
-        # Determine greeting based on time of day
-        # Use Afrikaans for SA businesses (detect from business name or default)
+        # Determine greeting based on time of day - ALWAYS English (users can ask for Afrikaans via Zane chat)
         from datetime import datetime
         current_hour = datetime.now().hour
         
-        # Check if business seems Afrikaans (has Afrikaans words in name or owner name has Afrikaans surname)
-        afrikaans_indicators = ['van ', 'de ', 'du ', 'pty', 'bk', 'edms', 'ing', 'boerdery', 'handel', 'dienste']
-        is_afrikaans = any(ind in biz_name.lower() for ind in afrikaans_indicators) or \
-                       any(ind in owner_name.lower() for ind in ['van ', 'de ', 'du '])
-        
         if current_hour < 12:
-            greeting_af = "Goeie môre"
-            greeting_en = "Good morning"
+            greeting = "Good morning"
         else:
-            greeting_af = "Goeie middag" 
-            greeting_en = "Good afternoon"
+            greeting = "Good afternoon"
         
-        greeting = greeting_af if is_afrikaans else greeting_en
         first_name = owner_name.split()[0] if owner_name else ""
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
-        # Professional prompt with structure
-        prompt = f"""Jy is Zane, 'n hoogs gekwalifiseerde besigheidsadviseur met 'n BCom Honneurs en MBA agtergrond. Jy adviseer {biz_name}.
+        # Professional prompt with structure - ENGLISH
+        prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
 
-Skryf 'n insiggewende besigheidsopsomming vir die eienaar oor die laaste {days} dae.
+Write an insightful business summary for the owner about the last {days} day(s).
 
-JOU STYL:
-- Begin met: "{greeting_full}"
-- Skryf soos 'n senior adviseur wat regtig omgee - nie soos 'n robot nie
-- Wees warm maar professioneel - soos 'n gerespekteerde kollega
-- MOENIE "Boss", "Baas" gebruik nie
-- Geen emojis of oormatige uitroeptekens nie
+YOUR STYLE:
+- Start with: "{greeting_full}"
+- Write like a senior advisor who genuinely cares - not like a robot
+- Be warm but professional - like a respected colleague
+- DO NOT use "Boss" or "Baas"
+- No emojis or excessive exclamation marks
+- ALWAYS write in English unless the data clearly shows otherwise
 
-INHOUD:
-- Gee die belangrikste syfers MET konteks en insig
-- As iets goed gaan, erken dit kalm
-- As iets aandag nodig het, sê dit duidelik met 'n aanbeveling
-- Gebruik seksies: **Verkope**, **Kontantvloei**, **Aandag Nodig** 
-- Sluit af met EEN konkrete aksie-item as daar een is
+CONTENT:
+- Give the key figures WITH context and insight
+- If something is going well, acknowledge it calmly
+- If something needs attention, say it clearly with a recommendation
+- Use sections: **Sales**, **Cash Flow**, **Attention Needed**
+- End with ONE concrete action item if there is one
 
 {summary}
 
-Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
+Write with confidence - you KNOW what you're talking about. Sign off with "- Zane"."""
 
         # Try gpt-5 first (works!), then gpt-5-mini, then Claude Haiku fallback
         if OPENAI_API_KEY:
