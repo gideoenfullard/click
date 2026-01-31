@@ -12087,6 +12087,68 @@ def get_zane_chat() -> str:
         color: white;
         cursor: pointer;
     }
+    /* Zane File Analysis Modal - fullscreen overlay for TB/CSV analysis */
+    .zane-analysis-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.85);
+        z-index: 2000;
+        display: none;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+    }
+    .zane-analysis-overlay.active { display: flex; }
+    .zane-analysis-modal {
+        background: var(--card);
+        border-radius: 12px;
+        width: 95%;
+        max-width: 900px;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    .zane-analysis-header {
+        padding: 15px 20px;
+        background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+        border-radius: 12px 12px 0 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: white;
+    }
+    .zane-analysis-header h3 { margin: 0; }
+    .zane-analysis-body {
+        padding: 20px;
+        overflow-y: auto;
+        flex: 1;
+        font-size: 14px;
+        line-height: 1.6;
+    }
+    .zane-analysis-body table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 10px 0;
+    }
+    .zane-analysis-body th, .zane-analysis-body td {
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        text-align: left;
+    }
+    .zane-analysis-body th {
+        background: rgba(99,102,241,0.15);
+        font-weight: 600;
+    }
+    .zane-analysis-body tr:hover { background: rgba(99,102,241,0.05); }
+    .zane-analysis-body h4 { color: var(--primary); margin-top: 15px; }
+    .zane-analysis-body .amount-dr { color: #22c55e; }
+    .zane-analysis-body .amount-cr { color: #ef4444; }
+    @media (max-width: 768px) {
+        .zane-analysis-modal { width: 100%; max-height: 95vh; border-radius: 8px; }
+        .zane-analysis-body { font-size: 12px; padding: 12px; }
+        .zane-analysis-body th, .zane-analysis-body td { padding: 5px 8px; font-size: 11px; }
+    }
     .zane-msg {
         margin-bottom: 10px;
         padding: 10px;
@@ -12139,8 +12201,23 @@ How can I assist you?</div>
         </div>
         <div class="zane-chat-input">
             <input type="text" id="zaneInput" placeholder="Type here... e.g. 'Who owes us money?'" onkeypress="if(event.key==='Enter')sendZaneMsg()">
+            <input type="file" id="zaneFileInput" accept=".csv,.xlsx,.xls,.pdf" style="display:none" onchange="handleZaneFile(this)">
+            <button onclick="document.getElementById('zaneFileInput').click()" title="Upload file for analysis (TB, CSV, Excel)" style="background:transparent;border:1px solid var(--border);padding:8px 10px;">📎</button>
             <button onclick="startVoice()" id="voiceBtn" title="🎤 Praat met Zane" style="background:transparent;border:1px solid var(--border);padding:8px 10px;">🎤</button>
             <button onclick="sendZaneMsg()">Send</button>
+        </div>
+    </div>
+    
+    <!-- Zane Analysis Modal - fullscreen for file analysis results -->
+    <div class="zane-analysis-overlay" id="zaneAnalysisOverlay" onclick="if(event.target===this)closeZaneAnalysis()">
+        <div class="zane-analysis-modal">
+            <div class="zane-analysis-header">
+                <h3>📊 <span id="zaneAnalysisTitle">File Analysis</span></h3>
+                <button onclick="closeZaneAnalysis()" style="background:none;border:none;color:white;font-size:24px;cursor:pointer;">×</button>
+            </div>
+            <div class="zane-analysis-body" id="zaneAnalysisBody">
+                <p>Analyzing...</p>
+            </div>
         </div>
     </div>
     
@@ -12372,6 +12449,67 @@ How can I assist you?</div>
         document.getElementById('zaneInput').value = question;
         sendZaneMsg();
     }
+    
+    // ═══════════════════════════════════════════════════════════
+    // ZANE FILE ANALYSIS - Upload CSV/Excel/PDF for AI analysis
+    // ═══════════════════════════════════════════════════════════
+    async function handleZaneFile(input) {
+        const file = input.files[0];
+        if (!file) return;
+        
+        const body = document.getElementById('zaneChatBody');
+        const fileName = file.name;
+        const fileSize = (file.size / 1024).toFixed(0);
+        
+        // Show in chat that file was uploaded
+        body.innerHTML += `<div class="zane-msg user">📎 ${fileName} (${fileSize}KB)</div>`;
+        body.innerHTML += `<div class="zane-msg zane" id="zaneFileLoading">🔍 Analyzing <b>${fileName}</b>... This may take a moment.</div>`;
+        body.scrollTop = body.scrollHeight;
+        
+        // Send file to backend
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+            const response = await fetch('/api/zane/analyze-file', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            document.getElementById('zaneFileLoading').remove();
+            
+            if (data.success) {
+                // Show short summary in chat
+                body.innerHTML += `<div class="zane-msg zane">✅ Analysis complete! Opening full report...</div>`;
+                body.scrollTop = body.scrollHeight;
+                
+                // Open fullscreen modal with analysis
+                document.getElementById('zaneAnalysisTitle').textContent = data.title || 'File Analysis';
+                document.getElementById('zaneAnalysisBody').innerHTML = data.analysis_html;
+                document.getElementById('zaneAnalysisOverlay').classList.add('active');
+            } else {
+                body.innerHTML += `<div class="zane-msg zane">❌ ${data.error || 'Could not analyze file'}</div>`;
+            }
+            
+        } catch (e) {
+            document.getElementById('zaneFileLoading')?.remove();
+            body.innerHTML += `<div class="zane-msg zane">❌ Error analyzing file. Please try again.</div>`;
+        }
+        
+        // Reset file input
+        input.value = '';
+        body.scrollTop = body.scrollHeight;
+    }
+    
+    function closeZaneAnalysis() {
+        document.getElementById('zaneAnalysisOverlay').classList.remove('active');
+    }
+    
+    // Close modal with Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeZaneAnalysis();
+    });
     </script>
     
     <style>
@@ -12499,6 +12637,159 @@ def ai_insight_box(text: str) -> str:
 # 
 # API ROUTES
 # 
+
+@app.route("/api/zane/analyze-file", methods=["POST"])
+@login_required
+def api_zane_analyze_file():
+    """
+    Zane File Analysis - Upload CSV/Excel/PDF for AI-powered analysis
+    Returns formatted HTML for fullscreen modal display
+    Used for Trial Balance analysis, bank statements, any financial document
+    Uses GPT-5 (primary) with Claude fallback via Brain.call
+    """
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"success": False, "error": "No file uploaded"})
+        
+        filename = file.filename.lower() if file.filename else "file"
+        file_data = file.read()
+        
+        business = Auth.get_current_business()
+        biz_name = business.get("name", "Unknown") if business else "Unknown"
+        
+        # ── Read file content based on type ──
+        file_text = ""
+        file_type = "unknown"
+        
+        if filename.endswith('.csv'):
+            file_type = "CSV"
+            try:
+                file_text = file_data.decode('utf-8')
+            except:
+                file_text = file_data.decode('latin-1')
+        
+        elif filename.endswith(('.xlsx', '.xls')):
+            file_type = "Excel"
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(io.BytesIO(file_data), data_only=True)
+                rows = []
+                for sheet_name in wb.sheetnames:
+                    ws = wb[sheet_name]
+                    if len(wb.sheetnames) > 1:
+                        rows.append(f"--- Sheet: {sheet_name} ---")
+                    for row in ws.iter_rows(values_only=True):
+                        row_vals = [str(cell) if cell is not None else "" for cell in row]
+                        rows.append(",".join(row_vals))
+                file_text = "\n".join(rows)
+            except Exception as e:
+                return jsonify({"success": False, "error": f"Could not read Excel file: {e}"})
+        
+        elif filename.endswith('.pdf'):
+            file_type = "PDF"
+            # For PDFs, use Claude Sonnet vision (GPT-5 can't do vision on PDFs via API easily)
+            base64_data = base64.b64encode(file_data).decode('utf-8')
+            
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            message = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4000,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": base64_data}},
+                        {"type": "text", "text": f"""You are Zane, the AI financial analyst for {biz_name}.
+
+Analyze this document thoroughly. Identify what type of document it is (Trial Balance, Income Statement, Balance Sheet, Bank Statement, etc).
+
+Provide your analysis as clean HTML (no markdown). Use:
+- <h4> for section headers
+- <table> with proper <th> and <td> for any data tables
+- <p> for explanations
+- <span class="amount-dr"> for debit amounts, <span class="amount-cr"> for credit amounts
+- <b> for important findings
+
+Include:
+1. Document type and period
+2. Key totals and summary
+3. Any concerns, errors, or unusual items
+4. Recommendations
+
+Make it professional but accessible. Use ZAR (R) currency format. Be thorough."""}
+                    ]
+                }]
+            )
+            
+            analysis_html = message.content[0].text.strip()
+            analysis_html = analysis_html.replace("```html", "").replace("```", "").strip()
+            
+            return jsonify({
+                "success": True,
+                "title": f"📄 {file.filename or 'PDF'} Analysis",
+                "analysis_html": analysis_html
+            })
+        
+        else:
+            return jsonify({"success": False, "error": "Unsupported file type. Use CSV, Excel (.xlsx), or PDF."})
+        
+        # ── Truncate if too large ──
+        if len(file_text) > 50000:
+            file_text = file_text[:50000] + "\n... (truncated - file too large for full analysis)"
+        
+        if not file_text.strip():
+            return jsonify({"success": False, "error": "File appears to be empty"})
+        
+        # ── Count rows for context ──
+        row_count = len(file_text.strip().split('\n'))
+        
+        # ── Send to GPT-5 via Brain.call (with Claude fallback) ──
+        analysis_prompt = f"""Analyze this {file_type} file ({row_count} rows) for {biz_name}. Identify what it is (Trial Balance, Chart of Accounts, Bank Statement, Customer List, etc).
+
+FILE CONTENT:
+{file_text}
+
+Provide your analysis as clean HTML (no markdown, no code fences). Use:
+- <h4> for section headers
+- <table> with proper <th> and <td> for data tables - include ALL rows from the data in your table
+- <p> for explanations
+- <span class="amount-dr"> for debit amounts, <span class="amount-cr"> for credit amounts
+- <b> for important findings
+
+Include:
+1. <h4>📋 Document Type</h4> - What this file is and the period it covers
+2. <h4>📊 Summary</h4> - Key totals, does it balance? Total debits vs credits
+3. <h4>📑 Full Data</h4> - Show ALL the data in a nicely formatted table
+4. <h4>⚠️ Issues & Observations</h4> - Any errors, missing info, unusual items
+5. <h4>💡 Recommendations</h4> - What to do next, any improvements needed
+
+Use ZAR (R) currency format. Be thorough and professional. Return ONLY HTML, no markdown."""
+        
+        system_prompt = f"You are Zane, the AI financial analyst for {biz_name}. You analyze financial documents and provide clear, professional analysis in HTML format. You are thorough, accurate, and highlight any issues."
+        
+        analysis_html = Brain.call(
+            system=system_prompt,
+            user=analysis_prompt,
+            model="gpt-5",  # Use GPT-5 premium for analysis
+            max_tokens=4000
+        )
+        
+        if not analysis_html:
+            return jsonify({"success": False, "error": "AI analysis failed - please try again"})
+        
+        # Clean any markdown code fences that might slip through
+        analysis_html = analysis_html.replace("```html", "").replace("```", "").strip()
+        
+        return jsonify({
+            "success": True,
+            "title": f"📊 {file.filename or file_type} Analysis",
+            "analysis_html": analysis_html
+        })
+        
+    except Exception as e:
+        logger.error(f"[ZANE ANALYZE] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
 
 @app.route("/api/ai", methods=["POST"])
 def api_ai():
