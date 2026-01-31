@@ -8571,10 +8571,10 @@ class DailyBriefing:
     
     @classmethod
     def _write_catchup_briefing(cls, biz_name: str, owner_name: str, data: dict) -> Optional[str]:
-        """Use GPT-5.1 to write a natural catch-up briefing. No rules, just honest."""
+        """Use GPT-5 to write a natural catch-up briefing, with Claude Haiku fallback."""
         
-        if not OPENAI_API_KEY:
-            logger.error("[BRIEFING] No OpenAI API key")
+        if not OPENAI_API_KEY and not ANTHROPIC_API_KEY:
+            logger.error("[BRIEFING] No API keys available at all")
             return None
         
         days = data.get("days_covered", 1)
@@ -8704,43 +8704,46 @@ INHOUD:
 Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
 
         # Try gpt-5 first (works!), then gpt-5-mini, then Claude Haiku fallback
-        models_to_try = [
-            ("gpt-5", "max_completion_tokens"),       # Premium: GPT-5 - works reliably
-            ("gpt-5-mini", "max_completion_tokens"),   # Budget: GPT-5 mini
-            ("gpt-4o-mini", "max_tokens"),             # Legacy fallback
-        ]
-        
-        for model_name, token_param in models_to_try:
-            try:
-                logger.info(f"[BRIEFING] Trying model: {model_name}")
-                
-                payload = {
-                    "model": model_name,
-                    "messages": [{"role": "user", "content": prompt}]
-                }
-                payload[token_param] = 600
-                
-                response = requests.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {OPENAI_API_KEY}",
-                        "Content-Type": "application/json"
-                    },
-                    json=payload,
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    logger.info(f"[BRIEFING] Success with {model_name}")
-                    return result["choices"][0]["message"]["content"]
-                else:
-                    logger.warning(f"[BRIEFING] {model_name} failed: {response.status_code} - {response.text[:200]}")
-                    continue
+        if OPENAI_API_KEY:
+            models_to_try = [
+                ("gpt-5", "max_completion_tokens"),       # Premium: GPT-5 - works reliably
+                ("gpt-5-mini", "max_completion_tokens"),   # Budget: GPT-5 mini
+                ("gpt-4o-mini", "max_tokens"),             # Legacy fallback
+            ]
+            
+            for model_name, token_param in models_to_try:
+                try:
+                    logger.info(f"[BRIEFING] Trying model: {model_name}")
                     
-            except Exception as e:
-                logger.warning(f"[BRIEFING] {model_name} error: {e}")
-                continue
+                    payload = {
+                        "model": model_name,
+                        "messages": [{"role": "user", "content": prompt}]
+                    }
+                    payload[token_param] = 600
+                    
+                    response = requests.post(
+                        "https://api.openai.com/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {OPENAI_API_KEY}",
+                            "Content-Type": "application/json"
+                        },
+                        json=payload,
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        logger.info(f"[BRIEFING] Success with {model_name}")
+                        return result["choices"][0]["message"]["content"]
+                    else:
+                        logger.warning(f"[BRIEFING] {model_name} failed: {response.status_code} - {response.text[:200]}")
+                        continue
+                        
+                except Exception as e:
+                    logger.warning(f"[BRIEFING] {model_name} error: {e}")
+                    continue
+        else:
+            logger.warning("[BRIEFING] No OPENAI_API_KEY set, skipping to Claude fallback")
         
         # Final fallback: Claude Haiku
         if ANTHROPIC_API_KEY:
