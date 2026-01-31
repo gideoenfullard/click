@@ -8401,7 +8401,7 @@ class DailyBriefing:
                 
                 return {"success": True, "briefing": briefing_text, "data": data, "days": days_since}
             else:
-                logger.error(f"[BRIEFING] _write_catchup_briefing returned None - all AI models failed")
+                logger.error(f"[BRIEFING] _write_catchup_briefing returned: {type(briefing_text).__name__} = {repr(briefing_text)[:100]}")
                 return {"success": False, "error": "Could not generate briefing"}
                 
         except Exception as e:
@@ -8744,8 +8744,14 @@ Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
                     
                     if response.status_code == 200:
                         result = response.json()
-                        logger.error(f"[BRIEFING] Success with {model_name}")
-                        return result["choices"][0]["message"]["content"]
+                        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        logger.error(f"[BRIEFING] {model_name} returned status 200, content length: {len(content) if content else 0}")
+                        if content and len(content.strip()) > 10:
+                            logger.error(f"[BRIEFING] Success with {model_name}")
+                            return content
+                        else:
+                            logger.error(f"[BRIEFING] {model_name} returned empty/null content, trying next model")
+                            continue
                     else:
                         logger.error(f"[BRIEFING] {model_name} failed: {response.status_code} - {response.text[:200]}")
                         continue
