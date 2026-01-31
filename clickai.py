@@ -12046,7 +12046,10 @@ def get_zane_chat() -> str:
         display: flex;
         justify-content: space-between;
         align-items: center;
+        cursor: grab;
+        user-select: none;
     }
+    .zane-chat-header:active { cursor: grabbing; }
     .zane-chat-header h4 {
         margin: 0;
         color: white;
@@ -12510,6 +12513,74 @@ How can I assist you?</div>
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') closeZaneAnalysis();
     });
+    
+    // ═══════════════════════════════════════════════════════════
+    // DRAGGABLE ZANE CHAT - Grab header to move
+    // ═══════════════════════════════════════════════════════════
+    (function() {
+        const chat = document.getElementById('zaneChat');
+        const header = document.querySelector('.zane-chat-header');
+        let isDragging = false, startX, startY, startLeft, startTop;
+        
+        header.addEventListener('mousedown', function(e) {
+            if (e.target.classList.contains('zane-chat-close')) return;
+            isDragging = true;
+            const rect = chat.getBoundingClientRect();
+            startX = e.clientX;
+            startY = e.clientY;
+            startLeft = rect.left;
+            startTop = rect.top;
+            chat.style.right = 'auto';
+            chat.style.left = startLeft + 'px';
+            chat.style.top = startTop + 'px';
+            e.preventDefault();
+        });
+        
+        document.addEventListener('mousemove', function(e) {
+            if (!isDragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            let newLeft = startLeft + dx;
+            let newTop = startTop + dy;
+            // Keep on screen
+            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - 100));
+            newTop = Math.max(0, Math.min(newTop, window.innerHeight - 50));
+            chat.style.left = newLeft + 'px';
+            chat.style.top = newTop + 'px';
+        });
+        
+        document.addEventListener('mouseup', function() { isDragging = false; });
+        
+        // Touch support for mobile
+        header.addEventListener('touchstart', function(e) {
+            if (e.target.classList.contains('zane-chat-close')) return;
+            isDragging = true;
+            const touch = e.touches[0];
+            const rect = chat.getBoundingClientRect();
+            startX = touch.clientX;
+            startY = touch.clientY;
+            startLeft = rect.left;
+            startTop = rect.top;
+            chat.style.right = 'auto';
+            chat.style.left = startLeft + 'px';
+            chat.style.top = startTop + 'px';
+        }, {passive: true});
+        
+        document.addEventListener('touchmove', function(e) {
+            if (!isDragging) return;
+            const touch = e.touches[0];
+            const dx = touch.clientX - startX;
+            const dy = touch.clientY - startY;
+            let newLeft = startLeft + dx;
+            let newTop = startTop + dy;
+            newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - 100));
+            newTop = Math.max(0, Math.min(newTop, window.innerHeight - 50));
+            chat.style.left = newLeft + 'px';
+            chat.style.top = newTop + 'px';
+        }, {passive: true});
+        
+        document.addEventListener('touchend', function() { isDragging = false; });
+    })();
     </script>
     
     <style>
