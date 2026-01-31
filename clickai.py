@@ -8685,23 +8685,22 @@ INHOUD:
 
 Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
 
-        # Try gpt-5-mini first, fallback to gpt-4o-mini
+        # Try gpt-5 first (works!), then gpt-5-mini, then Claude Haiku fallback
         models_to_try = [
-            ("gpt-5-mini", "max_completion_tokens"),  # Best: GPT-5 mini - $0.25/$2 per 1M tokens
-            ("gpt-4o-mini", "max_tokens"),             # Fallback: GPT-4o mini
+            ("gpt-5", "max_completion_tokens"),       # Premium: GPT-5 - works reliably
+            ("gpt-5-mini", "max_completion_tokens"),   # Budget: GPT-5 mini
+            ("gpt-4o-mini", "max_tokens"),             # Legacy fallback
         ]
         
         for model_name, token_param in models_to_try:
             try:
                 logger.info(f"[BRIEFING] Trying model: {model_name}")
                 
-                # Build payload with dynamic token parameter
-                # NOTE: GPT-5 models only support temperature=1 (default), so we don't set it
                 payload = {
                     "model": model_name,
                     "messages": [{"role": "user", "content": prompt}]
                 }
-                payload[token_param] = 600  # Add the correct token param
+                payload[token_param] = 600
                 
                 response = requests.post(
                     "https://api.openai.com/v1/chat/completions",
@@ -8719,11 +8718,27 @@ Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
                     return result["choices"][0]["message"]["content"]
                 else:
                     logger.warning(f"[BRIEFING] {model_name} failed: {response.status_code} - {response.text[:200]}")
-                    continue  # Try next model
+                    continue
                     
             except Exception as e:
                 logger.warning(f"[BRIEFING] {model_name} error: {e}")
-                continue  # Try next model
+                continue
+        
+        # Final fallback: Claude Haiku
+        if ANTHROPIC_API_KEY:
+            try:
+                logger.info("[BRIEFING] All OpenAI models failed, trying Claude Haiku")
+                client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+                message = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=600,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                if message.content:
+                    logger.info("[BRIEFING] Success with Claude Haiku fallback")
+                    return message.content[0].text
+            except Exception as e:
+                logger.error(f"[BRIEFING] Claude Haiku fallback also failed: {e}")
         
         logger.error("[BRIEFING] All models failed")
         return None
