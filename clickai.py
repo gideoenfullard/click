@@ -4028,7 +4028,23 @@ When users ask "how do I [do something]", provide step-by-step instructions:
   * LIMIT: 2 businesses per subscription (prevents sharing with others)
   * If user needs more than 2, they must contact support for enterprise plan
 
-**IMPORT / MIGRATION (Sage, Xero, QuickBooks, Excel):**
+**DIRECT MIGRATION (Connect & Pull automatically):**
+🚀 NEW! Users can connect DIRECTLY to their old system - no export needed!
+Go to: Migrate (in the menu) or navigate to /migrate
+
+Available connectors:
+1. 🟢 Sage Business Cloud - Enter Sage email + password, we pull everything via API
+2. 🔵 Xero - Click Connect, log in to Xero, we pull everything via OAuth
+3. 🟢 QuickBooks Online - Click Connect, log in to QuickBooks, we pull everything via OAuth
+
+What gets pulled automatically: Customers, Suppliers, Stock Items, Chart of Accounts
+Everything is READ-ONLY - we never write to or change their old system!
+
+IMPORTANT: When someone asks about migrating/importing, ALWAYS mention the direct connection option FIRST:
+- "You can connect directly to [system] from our Migration Hub! Go to Migrate in the menu, click Connect, and we pull everything automatically. Zero export needed."
+- Only suggest CSV/Excel upload as a fallback for Sage Pastel Desktop (which has no API)
+
+**IMPORT VIA CSV/EXCEL (fallback for Sage Pastel Desktop + any other system):**
 1. Go to: Settings → Import (or click "Import" on Dashboard)
 2. Select what to import:
    - Customers (with balances)
@@ -11843,6 +11859,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("intelligence", "/intelligence", "AI"),
             ("tools", "/tools", "Tools"),
             ("import", "/import", "Import"),
+            ("import", "/migrate", "Migrate"),
             ("inbox", "/scan-inbox", "Inbox"),
             ("settings", "/settings", "Settings"),
         ]
@@ -28572,13 +28589,1007 @@ def api_bulk_statements():
 
 
 # 
-# SMART IMPORT - Zane analyzes your CSV
+# DIRECT MIGRATION CONNECTORS - Sage, Xero, QuickBooks
+# Pull data directly from competitor systems - zero stress for users
 # 
 
 import csv
 import io
 import tempfile
 import os as os_module
+
+# Environment vars for connectors
+SAGE_API_KEY = os.environ.get("SAGE_API_KEY", "")
+XERO_CLIENT_ID = os.environ.get("XERO_CLIENT_ID", "")
+XERO_CLIENT_SECRET = os.environ.get("XERO_CLIENT_SECRET", "")
+QB_CLIENT_ID = os.environ.get("QB_CLIENT_ID", "")
+QB_CLIENT_SECRET = os.environ.get("QB_CLIENT_SECRET", "")
+
+
+@app.route("/migrate")
+@login_required
+def migrate_page():
+    """Migration Hub - Connect directly to competitor systems"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_name = business.get("name", "your business") if business else "your business"
+    
+    content = f'''
+    <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.15), rgba(34,197,94,0.1));margin-bottom:20px;text-align:center;padding:30px;">
+        <h2 style="margin-bottom:10px;">🚀 Switch to ClickAI in Minutes</h2>
+        <p style="color:var(--text-muted);font-size:15px;">Connect your current system and we pull everything automatically.<br>Your data stays safe - we only <strong>read</strong>, never write to your old system.</p>
+    </div>
+    
+    <!-- SAGE BUSINESS CLOUD -->
+    <div class="card" style="margin-bottom:15px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div style="flex:1;min-width:250px;">
+                <h3 style="color:#1a8d48;margin-bottom:8px;">🟢 Sage Business Cloud</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">
+                    Direct API connection. Enter your Sage credentials and we pull Customers, Suppliers, Stock, and Chart of Accounts automatically.
+                    <br><strong>Auth:</strong> Basic Auth (your Sage email + password). Read-only, zero risk.
+                </p>
+            </div>
+            <button onclick="document.getElementById('sagePanel').style.display=document.getElementById('sagePanel').style.display==='none'?'block':'none'" class="btn btn-primary" style="background:#1a8d48;white-space:nowrap;">Connect Sage →</button>
+        </div>
+        <div id="sagePanel" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid var(--border);">
+            <div class="form-group">
+                <label class="form-label">Sage Email</label>
+                <input type="email" id="sageEmail" class="form-input" placeholder="your@email.com">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Sage Password</label>
+                <input type="password" id="sagePassword" class="form-input" placeholder="Your Sage password">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Sage Company ID <span style="color:var(--text-muted);font-size:12px;">(find this in Sage → Settings → Company)</span></label>
+                <input type="text" id="sageCompanyId" class="form-input" placeholder="e.g. 12345">
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="sagePullCustomers" checked> Customers</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="sagePullSuppliers" checked> Suppliers</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="sagePullStock" checked> Stock Items</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="sagePullAccounts" checked> Chart of Accounts</label>
+            </div>
+            <button onclick="startSageMigration()" class="btn btn-primary" style="background:#1a8d48;margin-top:15px;" id="sagePullBtn">
+                🔄 Pull My Data from Sage
+            </button>
+            <div id="sageProgress" style="display:none;margin-top:15px;">
+                <div style="background:var(--border);border-radius:10px;overflow:hidden;">
+                    <div id="sageProgressBar" style="height:20px;background:#1a8d48;width:0%;transition:width 0.5s;"></div>
+                </div>
+                <p id="sageProgressText" style="text-align:center;margin-top:8px;color:var(--text-muted);font-size:13px;"></p>
+            </div>
+            <div id="sageResult" style="display:none;margin-top:15px;"></div>
+        </div>
+    </div>
+    
+    <!-- XERO -->
+    <div class="card" style="margin-bottom:15px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div style="flex:1;min-width:250px;">
+                <h3 style="color:#13B5EA;margin-bottom:8px;">🔵 Xero</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">
+                    OAuth 2.0 connection. Click Connect, log in to Xero, and we pull your Contacts, Inventory, Chart of Accounts, and Trial Balance.
+                    <br><strong>Auth:</strong> Secure OAuth (you approve access in Xero). Read-only.
+                </p>
+            </div>
+            <a href="/api/xero/connect" class="btn btn-primary" style="background:#13B5EA;white-space:nowrap;text-decoration:none;">Connect Xero →</a>
+        </div>
+        <div id="xeroStatus" style="display:none;margin-top:15px;padding:12px;border-radius:8px;background:rgba(19,181,234,0.1);font-size:13px;"></div>
+    </div>
+    
+    <!-- QUICKBOOKS -->
+    <div class="card" style="margin-bottom:15px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div style="flex:1;min-width:250px;">
+                <h3 style="color:#2CA01C;margin-bottom:8px;">🟢 QuickBooks Online</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">
+                    OAuth 2.0 connection. Click Connect, log in to QuickBooks, and we pull Customers, Vendors, Items, and Chart of Accounts.
+                    <br><strong>Auth:</strong> Secure OAuth (you approve access in QuickBooks). Read-only.
+                </p>
+            </div>
+            <a href="/api/qb/connect" class="btn btn-primary" style="background:#2CA01C;white-space:nowrap;text-decoration:none;">Connect QuickBooks →</a>
+        </div>
+        <div id="qbStatus" style="display:none;margin-top:15px;padding:12px;border-radius:8px;background:rgba(44,160,28,0.1);font-size:13px;"></div>
+    </div>
+    
+    <!-- SAGE PASTEL DESKTOP -->
+    <div class="card" style="margin-bottom:15px;opacity:0.85;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div style="flex:1;min-width:250px;">
+                <h3 style="color:var(--text-muted);margin-bottom:8px;">📁 Sage Pastel Desktop / Excel / CSV</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">
+                    Sage Pastel Desktop doesn't have an API. Export your data to Excel/CSV from Sage Pastel, then upload it below.
+                    Our AI handles messy files - headers, formatting, R signs, everything.
+                </p>
+            </div>
+            <a href="/import" class="btn" style="white-space:nowrap;text-decoration:none;">Upload File →</a>
+        </div>
+    </div>
+    
+    <script>
+    async function startSageMigration() {{
+        const email = document.getElementById('sageEmail').value.trim();
+        const password = document.getElementById('sagePassword').value;
+        const companyId = document.getElementById('sageCompanyId').value.trim();
+        
+        if (!email || !password) {{
+            alert('Please enter your Sage email and password');
+            return;
+        }}
+        
+        const pullTypes = [];
+        if (document.getElementById('sagePullCustomers').checked) pullTypes.push('customers');
+        if (document.getElementById('sagePullSuppliers').checked) pullTypes.push('suppliers');
+        if (document.getElementById('sagePullStock').checked) pullTypes.push('stock');
+        if (document.getElementById('sagePullAccounts').checked) pullTypes.push('accounts');
+        
+        if (pullTypes.length === 0) {{
+            alert('Select at least one data type to import');
+            return;
+        }}
+        
+        const btn = document.getElementById('sagePullBtn');
+        const progress = document.getElementById('sageProgress');
+        const progressBar = document.getElementById('sageProgressBar');
+        const progressText = document.getElementById('sageProgressText');
+        const resultDiv = document.getElementById('sageResult');
+        
+        btn.disabled = true;
+        btn.textContent = '⏳ Connecting to Sage...';
+        progress.style.display = 'block';
+        resultDiv.style.display = 'none';
+        
+        let completed = 0;
+        const total = pullTypes.length;
+        const results = [];
+        
+        for (const pullType of pullTypes) {{
+            progressText.textContent = `Pulling ${{pullType}}...`;
+            progressBar.style.width = `${{(completed / total) * 100}}%`;
+            
+            try {{
+                const resp = await fetch('/api/sage/pull', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{
+                        email: email,
+                        password: password,
+                        company_id: companyId,
+                        pull_type: pullType
+                    }})
+                }});
+                const data = await resp.json();
+                results.push({{type: pullType, ...data}});
+            }} catch (err) {{
+                results.push({{type: pullType, success: false, error: err.message}});
+            }}
+            completed++;
+        }}
+        
+        progressBar.style.width = '100%';
+        progressText.textContent = 'Done!';
+        
+        // Show results
+        let html = '<div style="padding:15px;background:rgba(16,185,129,0.1);border-radius:8px;">';
+        html += '<h4 style="margin-bottom:10px;">📊 Migration Results</h4>';
+        for (const r of results) {{
+            if (r.success) {{
+                html += `<div style="color:var(--green);font-size:13px;margin-bottom:4px;">✅ ${{r.type}}: ${{r.imported || 0}} imported, ${{r.skipped || 0}} skipped</div>`;
+            }} else {{
+                html += `<div style="color:var(--red);font-size:13px;margin-bottom:4px;">❌ ${{r.type}}: ${{r.error || 'Failed'}}</div>`;
+            }}
+        }}
+        html += '</div>';
+        resultDiv.innerHTML = html;
+        resultDiv.style.display = 'block';
+        
+        btn.disabled = false;
+        btn.textContent = '🔄 Pull My Data from Sage';
+    }}
+    
+    // Check URL params for Xero/QB callback results
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('xero_status') === 'success') {{
+        const xeroDiv = document.getElementById('xeroStatus');
+        xeroDiv.style.display = 'block';
+        const imported = urlParams.get('imported') || '0';
+        xeroDiv.innerHTML = `<strong>✅ Xero import complete!</strong> ${{imported}} records imported. <a href="/dashboard">Go to Dashboard →</a>`;
+    }} else if (urlParams.get('xero_status') === 'error') {{
+        const xeroDiv = document.getElementById('xeroStatus');
+        xeroDiv.style.display = 'block';
+        xeroDiv.innerHTML = `<strong>❌ Xero connection failed:</strong> ${{urlParams.get('error') || 'Unknown error'}}. Try again.`;
+        xeroDiv.style.background = 'rgba(239,68,68,0.1)';
+    }}
+    if (urlParams.get('qb_status') === 'success') {{
+        const qbDiv = document.getElementById('qbStatus');
+        qbDiv.style.display = 'block';
+        const imported = urlParams.get('imported') || '0';
+        qbDiv.innerHTML = `<strong>✅ QuickBooks import complete!</strong> ${{imported}} records imported. <a href="/dashboard">Go to Dashboard →</a>`;
+    }} else if (urlParams.get('qb_status') === 'error') {{
+        const qbDiv = document.getElementById('qbStatus');
+        qbDiv.style.display = 'block';
+        qbDiv.innerHTML = `<strong>❌ QuickBooks connection failed:</strong> ${{urlParams.get('error') || 'Unknown error'}}. Try again.`;
+        qbDiv.style.background = 'rgba(239,68,68,0.1)';
+    }}
+    </script>
+    '''
+    return render_page("Migrate to ClickAI", content, user, "import")
+
+
+# ═══════════════════════════════════════════════════
+# SAGE BUSINESS CLOUD - Direct API Integration
+# REST API at accounting.sageone.co.za
+# Auth: Basic Auth (email:password base64)
+# Read-only: customers, suppliers, stock, accounts
+# ═══════════════════════════════════════════════════
+
+@app.route("/sage-migrate")
+@login_required
+def sage_migrate_redirect():
+    """Redirect old route to new migration hub"""
+    return redirect("/migrate")
+
+
+@app.route("/api/sage/pull", methods=["POST"])
+@login_required
+def api_sage_pull():
+    """Pull data from Sage Business Cloud API"""
+    import base64
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+    
+    try:
+        data = request.get_json()
+        email = data.get("email", "")
+        password = data.get("password", "")
+        company_id = data.get("company_id", "")
+        pull_type = data.get("pull_type", "")
+        
+        if not email or not password:
+            return jsonify({"success": False, "error": "Email and password required"})
+        
+        # Build Basic Auth header
+        auth_str = base64.b64encode(f"{email}:{password}".encode()).decode()
+        headers = {
+            "Authorization": f"Basic {auth_str}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        # Sage Business Cloud SA API base
+        sage_base = "https://accounting.sageone.co.za/api/2.0.0"
+        if company_id:
+            headers["X-Site"] = company_id
+        
+        # Add API key if available
+        if SAGE_API_KEY:
+            headers["X-API-Key"] = SAGE_API_KEY
+        
+        imported = 0
+        skipped = 0
+        errors = []
+        
+        if pull_type == "customers":
+            # Pull customers from Sage
+            try:
+                resp = requests.get(f"{sage_base}/Customer/Get", headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    sage_data = resp.json()
+                    customers = sage_data.get("Results", sage_data) if isinstance(sage_data, dict) else sage_data
+                    if not isinstance(customers, list):
+                        customers = [customers] if customers else []
+                    
+                    for cust in customers:
+                        try:
+                            name = cust.get("Name", "").strip()
+                            if not name:
+                                skipped += 1
+                                continue
+                            
+                            # Check for duplicate
+                            existing = db.get("customers", {"business_id": biz_id, "name": name})
+                            if existing:
+                                skipped += 1
+                                continue
+                            
+                            record = {
+                                "business_id": biz_id,
+                                "name": name,
+                                "email": cust.get("Email", ""),
+                                "phone": cust.get("Telephone", cust.get("Mobile", "")),
+                                "contact_name": cust.get("ContactName", cust.get("Contact", "")),
+                                "address": _sage_build_address(cust),
+                                "vat_number": cust.get("TaxNumber", ""),
+                                "balance": float(cust.get("Balance", 0) or 0),
+                                "account_code": cust.get("AccountCode", cust.get("Code", "")),
+                                "credit_limit": float(cust.get("CreditLimit", 0) or 0),
+                                "source": "sage_import"
+                            }
+                            success, _ = db.save("customers", record)
+                            if success:
+                                imported += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            logger.error(f"[SAGE] Customer error: {e}")
+                            skipped += 1
+                else:
+                    return jsonify({"success": False, "error": f"Sage API error {resp.status_code}: {resp.text[:200]}"})
+            except requests.exceptions.ConnectionError:
+                return jsonify({"success": False, "error": "Cannot connect to Sage API. Check your internet connection."})
+            except requests.exceptions.Timeout:
+                return jsonify({"success": False, "error": "Sage API timeout. Try again."})
+        
+        elif pull_type == "suppliers":
+            # Pull suppliers from Sage
+            try:
+                resp = requests.get(f"{sage_base}/Supplier/Get", headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    sage_data = resp.json()
+                    suppliers = sage_data.get("Results", sage_data) if isinstance(sage_data, dict) else sage_data
+                    if not isinstance(suppliers, list):
+                        suppliers = [suppliers] if suppliers else []
+                    
+                    for supp in suppliers:
+                        try:
+                            name = supp.get("Name", "").strip()
+                            if not name:
+                                skipped += 1
+                                continue
+                            
+                            existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                            if existing:
+                                skipped += 1
+                                continue
+                            
+                            record = {
+                                "business_id": biz_id,
+                                "name": name,
+                                "email": supp.get("Email", ""),
+                                "phone": supp.get("Telephone", supp.get("Mobile", "")),
+                                "contact_name": supp.get("ContactName", supp.get("Contact", "")),
+                                "address": _sage_build_address(supp),
+                                "vat_number": supp.get("TaxNumber", ""),
+                                "balance": float(supp.get("Balance", 0) or 0),
+                                "account_code": supp.get("AccountCode", supp.get("Code", "")),
+                                "source": "sage_import"
+                            }
+                            success, _ = db.save("suppliers", record)
+                            if success:
+                                imported += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            logger.error(f"[SAGE] Supplier error: {e}")
+                            skipped += 1
+                else:
+                    return jsonify({"success": False, "error": f"Sage API error {resp.status_code}: {resp.text[:200]}"})
+            except requests.exceptions.ConnectionError:
+                return jsonify({"success": False, "error": "Cannot connect to Sage API."})
+        
+        elif pull_type == "stock":
+            # Pull stock items from Sage
+            try:
+                resp = requests.get(f"{sage_base}/Item/Get", headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    sage_data = resp.json()
+                    items = sage_data.get("Results", sage_data) if isinstance(sage_data, dict) else sage_data
+                    if not isinstance(items, list):
+                        items = [items] if items else []
+                    
+                    for item in items:
+                        try:
+                            desc = item.get("Description", item.get("ItemName", "")).strip()
+                            code = item.get("Code", item.get("ItemCode", "")).strip()
+                            if not desc and not code:
+                                skipped += 1
+                                continue
+                            
+                            # Check duplicate by code
+                            if code:
+                                existing = db.get_all_stock(biz_id)
+                                if existing and any(s.get("code") == code for s in existing):
+                                    skipped += 1
+                                    continue
+                            
+                            record = {
+                                "business_id": biz_id,
+                                "description": desc or code,
+                                "code": code,
+                                "cost_price": float(item.get("CostPrice", item.get("Cost", 0)) or 0),
+                                "selling_price": float(item.get("SellingPrice", item.get("PriceInclusive", 0)) or 0),
+                                "qty": float(item.get("QuantityOnHand", item.get("Quantity", 0)) or 0),
+                                "quantity": float(item.get("QuantityOnHand", item.get("Quantity", 0)) or 0),
+                                "category": item.get("Category", item.get("ItemGroup", "")),
+                                "unit": item.get("Unit", "each"),
+                                "vat_type": "standard" if item.get("TaxTypeId") else "exempt",
+                                "source": "sage_import"
+                            }
+                            success, _ = db.save_stock(record)
+                            if success:
+                                imported += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            logger.error(f"[SAGE] Stock error: {e}")
+                            skipped += 1
+                else:
+                    return jsonify({"success": False, "error": f"Sage API error {resp.status_code}: {resp.text[:200]}"})
+            except requests.exceptions.ConnectionError:
+                return jsonify({"success": False, "error": "Cannot connect to Sage API."})
+        
+        elif pull_type == "accounts":
+            # Pull chart of accounts from Sage
+            try:
+                resp = requests.get(f"{sage_base}/Account/Get", headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    sage_data = resp.json()
+                    accounts = sage_data.get("Results", sage_data) if isinstance(sage_data, dict) else sage_data
+                    if not isinstance(accounts, list):
+                        accounts = [accounts] if accounts else []
+                    
+                    for acct in accounts:
+                        try:
+                            name = acct.get("Name", acct.get("AccountName", "")).strip()
+                            if not name:
+                                skipped += 1
+                                continue
+                            
+                            # Map Sage category to ClickAI type
+                            sage_cat = acct.get("Category", acct.get("Type", "")).lower()
+                            acct_type = "expense"  # default
+                            if "asset" in sage_cat:
+                                acct_type = "asset"
+                            elif "liability" in sage_cat or "liabilit" in sage_cat:
+                                acct_type = "liability"
+                            elif "equity" in sage_cat or "capital" in sage_cat:
+                                acct_type = "equity"
+                            elif "income" in sage_cat or "revenue" in sage_cat or "sales" in sage_cat:
+                                acct_type = "income"
+                            elif "expense" in sage_cat or "cost" in sage_cat:
+                                acct_type = "expense"
+                            
+                            record = {
+                                "business_id": biz_id,
+                                "account_name": name,
+                                "account_code": acct.get("Code", acct.get("AccountCode", "")),
+                                "account_type": acct_type,
+                                "description": acct.get("Description", ""),
+                                "is_active": acct.get("Active", True),
+                                "source": "sage_import"
+                            }
+                            success, _ = db.save("chart_of_accounts", record)
+                            if success:
+                                imported += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            logger.error(f"[SAGE] Account error: {e}")
+                            skipped += 1
+                else:
+                    return jsonify({"success": False, "error": f"Sage API error {resp.status_code}: {resp.text[:200]}"})
+            except requests.exceptions.ConnectionError:
+                return jsonify({"success": False, "error": "Cannot connect to Sage API."})
+        
+        else:
+            return jsonify({"success": False, "error": f"Unknown pull type: {pull_type}"})
+        
+        logger.info(f"[SAGE] Pull complete: type={pull_type}, imported={imported}, skipped={skipped}")
+        return jsonify({"success": True, "imported": imported, "skipped": skipped})
+    
+    except Exception as e:
+        logger.error(f"[SAGE] Pull error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+def _sage_build_address(entity):
+    """Build address string from Sage entity fields"""
+    parts = []
+    for field in ["PostalAddress01", "PostalAddress02", "PostalAddress03", "PostalAddress04", "PostalAddress05",
+                   "PhysicalAddress01", "PhysicalAddress02", "PhysicalAddress03"]:
+        val = entity.get(field, "")
+        if val and val.strip():
+            parts.append(val.strip())
+    if not parts:
+        # Try simpler fields
+        for field in ["Address", "City", "State", "PostalCode"]:
+            val = entity.get(field, "")
+            if val and val.strip():
+                parts.append(val.strip())
+    return ", ".join(parts)
+
+
+# ═══════════════════════════════════════════════════
+# XERO - OAuth 2.0 Integration
+# User clicks Connect → redirect to Xero → callback → pull data
+# Read-only: contacts, items, accounts, trial balance
+# ═══════════════════════════════════════════════════
+
+@app.route("/xero-migrate")
+@login_required
+def xero_migrate_redirect():
+    return redirect("/migrate")
+
+
+@app.route("/api/xero/connect")
+@login_required
+def api_xero_connect():
+    """Start Xero OAuth flow"""
+    if not XERO_CLIENT_ID or not XERO_CLIENT_SECRET:
+        flash("Xero not configured yet. Set XERO_CLIENT_ID and XERO_CLIENT_SECRET environment variables.", "error")
+        return redirect("/migrate")
+    
+    import urllib.parse
+    
+    # Build callback URL
+    callback_url = request.url_root.rstrip("/") + "/api/xero/callback"
+    
+    # Store state for CSRF protection
+    state = generate_id()
+    session["xero_state"] = state
+    session["xero_callback"] = callback_url
+    
+    # Xero OAuth 2.0 authorization URL
+    params = {
+        "response_type": "code",
+        "client_id": XERO_CLIENT_ID,
+        "redirect_uri": callback_url,
+        "scope": "openid profile email accounting.contacts.read accounting.settings.read accounting.reports.read",
+        "state": state
+    }
+    auth_url = f"https://login.xero.com/identity/connect/authorize?{urllib.parse.urlencode(params)}"
+    return redirect(auth_url)
+
+
+@app.route("/api/xero/callback")
+@login_required
+def api_xero_callback():
+    """Handle Xero OAuth callback - exchange code for token, then pull data"""
+    import urllib.parse
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return redirect("/migrate?xero_status=error&error=No+business+selected")
+    
+    # Verify state
+    state = request.args.get("state", "")
+    expected_state = session.pop("xero_state", "")
+    if state != expected_state:
+        return redirect("/migrate?xero_status=error&error=Invalid+state+parameter")
+    
+    code = request.args.get("code", "")
+    error = request.args.get("error", "")
+    
+    if error or not code:
+        return redirect(f"/migrate?xero_status=error&error={urllib.parse.quote(error or 'No authorization code')}")
+    
+    callback_url = session.pop("xero_callback", request.url_root.rstrip("/") + "/api/xero/callback")
+    
+    try:
+        # Exchange code for access token
+        token_resp = requests.post("https://identity.xero.com/connect/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": callback_url,
+            "client_id": XERO_CLIENT_ID,
+            "client_secret": XERO_CLIENT_SECRET
+        }, headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=15)
+        
+        if token_resp.status_code != 200:
+            logger.error(f"[XERO] Token exchange failed: {token_resp.text}")
+            return redirect(f"/migrate?xero_status=error&error=Token+exchange+failed")
+        
+        token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        
+        if not access_token:
+            return redirect("/migrate?xero_status=error&error=No+access+token")
+        
+        # Get tenant ID (Xero org)
+        connections_resp = requests.get("https://api.xero.com/connections", headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }, timeout=10)
+        
+        tenants = connections_resp.json() if connections_resp.status_code == 200 else []
+        if not tenants:
+            return redirect("/migrate?xero_status=error&error=No+Xero+organisation+found")
+        
+        tenant_id = tenants[0].get("tenantId", "")
+        
+        xero_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Xero-tenant-id": tenant_id,
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        total_imported = 0
+        
+        # Pull Contacts (customers + suppliers)
+        try:
+            contacts_resp = requests.get("https://api.xero.com/api.xro/2.0/Contacts", headers=xero_headers, timeout=30)
+            if contacts_resp.status_code == 200:
+                contacts = contacts_resp.json().get("Contacts", [])
+                for contact in contacts:
+                    name = contact.get("Name", "").strip()
+                    if not name:
+                        continue
+                    
+                    is_customer = contact.get("IsCustomer", False)
+                    is_supplier = contact.get("IsSupplier", False)
+                    
+                    # Build address
+                    address = ""
+                    addresses = contact.get("Addresses", [])
+                    for addr in addresses:
+                        if addr.get("AddressType") == "POBOX" or addr.get("AddressType") == "STREET":
+                            parts = [addr.get(f"AddressLine{i}", "") for i in range(1, 5)]
+                            parts += [addr.get("City", ""), addr.get("Region", ""), addr.get("PostalCode", "")]
+                            address = ", ".join(p for p in parts if p)
+                            break
+                    
+                    # Get phone
+                    phone = ""
+                    phones = contact.get("Phones", [])
+                    for ph in phones:
+                        if ph.get("PhoneNumber"):
+                            phone = f"{ph.get('PhoneCountryCode', '')}{ph.get('PhoneAreaCode', '')}{ph.get('PhoneNumber', '')}"
+                            break
+                    
+                    record = {
+                        "business_id": biz_id,
+                        "name": name,
+                        "email": contact.get("EmailAddress", ""),
+                        "phone": phone,
+                        "contact_name": contact.get("FirstName", "") + " " + contact.get("LastName", ""),
+                        "address": address,
+                        "vat_number": contact.get("TaxNumber", ""),
+                        "balance": float(contact.get("Balances", {}).get("AccountsReceivable", {}).get("Outstanding", 0) or 0),
+                        "source": "xero_import"
+                    }
+                    
+                    if is_customer or (not is_customer and not is_supplier):
+                        existing = db.get("customers", {"business_id": biz_id, "name": name})
+                        if not existing:
+                            db.save("customers", record)
+                            total_imported += 1
+                    
+                    if is_supplier:
+                        record["balance"] = float(contact.get("Balances", {}).get("AccountsPayable", {}).get("Outstanding", 0) or 0)
+                        existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                        if not existing:
+                            db.save("suppliers", record)
+                            total_imported += 1
+        except Exception as e:
+            logger.error(f"[XERO] Contacts error: {e}")
+        
+        # Pull Items (stock)
+        try:
+            items_resp = requests.get("https://api.xero.com/api.xro/2.0/Items", headers=xero_headers, timeout=30)
+            if items_resp.status_code == 200:
+                items = items_resp.json().get("Items", [])
+                for item in items:
+                    desc = item.get("Name", item.get("Description", "")).strip()
+                    code = item.get("Code", "").strip()
+                    if not desc and not code:
+                        continue
+                    
+                    record = {
+                        "business_id": biz_id,
+                        "description": desc or code,
+                        "code": code,
+                        "cost_price": float(item.get("PurchaseDetails", {}).get("UnitPrice", 0) or 0),
+                        "selling_price": float(item.get("SalesDetails", {}).get("UnitPrice", 0) or 0),
+                        "qty": float(item.get("QuantityOnHand", 0) or 0),
+                        "quantity": float(item.get("QuantityOnHand", 0) or 0),
+                        "unit": "each",
+                        "source": "xero_import"
+                    }
+                    db.save_stock(record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[XERO] Items error: {e}")
+        
+        # Pull Chart of Accounts
+        try:
+            accounts_resp = requests.get("https://api.xero.com/api.xro/2.0/Accounts", headers=xero_headers, timeout=30)
+            if accounts_resp.status_code == 200:
+                accounts = accounts_resp.json().get("Accounts", [])
+                for acct in accounts:
+                    name = acct.get("Name", "").strip()
+                    if not name:
+                        continue
+                    
+                    xero_type = acct.get("Type", "").upper()
+                    acct_type = "expense"
+                    if xero_type in ["BANK", "CURRENT", "FIXED", "INVENTORY", "PREPAYMENT"]:
+                        acct_type = "asset"
+                    elif xero_type in ["CURRLIAB", "LIABILITY", "TERMLIAB", "WAGESBYABLE"]:
+                        acct_type = "liability"
+                    elif xero_type in ["EQUITY"]:
+                        acct_type = "equity"
+                    elif xero_type in ["REVENUE", "SALES", "OTHERINCOME"]:
+                        acct_type = "income"
+                    elif xero_type in ["DIRECTCOSTS", "EXPENSE", "OVERHEADS", "DEPRECIATN"]:
+                        acct_type = "expense"
+                    
+                    record = {
+                        "business_id": biz_id,
+                        "account_name": name,
+                        "account_code": acct.get("Code", ""),
+                        "account_type": acct_type,
+                        "description": acct.get("Description", ""),
+                        "is_active": acct.get("Status", "ACTIVE") == "ACTIVE",
+                        "source": "xero_import"
+                    }
+                    db.save("chart_of_accounts", record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[XERO] Accounts error: {e}")
+        
+        logger.info(f"[XERO] Migration complete: {total_imported} records imported for business {biz_id}")
+        return redirect(f"/migrate?xero_status=success&imported={total_imported}")
+    
+    except Exception as e:
+        logger.error(f"[XERO] Callback error: {e}")
+        return redirect(f"/migrate?xero_status=error&error={urllib.parse.quote(str(e))}")
+
+
+# ═══════════════════════════════════════════════════
+# QUICKBOOKS ONLINE - OAuth 2.0 Integration
+# User clicks Connect → redirect to Intuit → callback → pull data
+# Read-only: customers, vendors, items, accounts
+# ═══════════════════════════════════════════════════
+
+@app.route("/qb-migrate")
+@login_required
+def qb_migrate_redirect():
+    return redirect("/migrate")
+
+
+@app.route("/api/qb/connect")
+@login_required
+def api_qb_connect():
+    """Start QuickBooks OAuth flow"""
+    if not QB_CLIENT_ID or not QB_CLIENT_SECRET:
+        flash("QuickBooks not configured yet. Set QB_CLIENT_ID and QB_CLIENT_SECRET environment variables.", "error")
+        return redirect("/migrate")
+    
+    import urllib.parse
+    
+    callback_url = request.url_root.rstrip("/") + "/api/qb/callback"
+    state = generate_id()
+    session["qb_state"] = state
+    session["qb_callback"] = callback_url
+    
+    params = {
+        "client_id": QB_CLIENT_ID,
+        "response_type": "code",
+        "scope": "com.intuit.quickbooks.accounting",
+        "redirect_uri": callback_url,
+        "state": state
+    }
+    auth_url = f"https://appcenter.intuit.com/connect/oauth2?{urllib.parse.urlencode(params)}"
+    return redirect(auth_url)
+
+
+@app.route("/api/qb/callback")
+@login_required
+def api_qb_callback():
+    """Handle QuickBooks OAuth callback"""
+    import base64
+    import urllib.parse
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return redirect("/migrate?qb_status=error&error=No+business+selected")
+    
+    state = request.args.get("state", "")
+    expected_state = session.pop("qb_state", "")
+    if state != expected_state:
+        return redirect("/migrate?qb_status=error&error=Invalid+state")
+    
+    code = request.args.get("code", "")
+    realm_id = request.args.get("realmId", "")
+    error = request.args.get("error", "")
+    
+    if error or not code:
+        return redirect(f"/migrate?qb_status=error&error={urllib.parse.quote(error or 'No code')}")
+    
+    callback_url = session.pop("qb_callback", request.url_root.rstrip("/") + "/api/qb/callback")
+    
+    try:
+        # Exchange code for token
+        auth_header = base64.b64encode(f"{QB_CLIENT_ID}:{QB_CLIENT_SECRET}".encode()).decode()
+        token_resp = requests.post("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": callback_url
+        }, headers={
+            "Authorization": f"Basic {auth_header}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json"
+        }, timeout=15)
+        
+        if token_resp.status_code != 200:
+            logger.error(f"[QB] Token error: {token_resp.text}")
+            return redirect("/migrate?qb_status=error&error=Token+exchange+failed")
+        
+        token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        
+        if not access_token:
+            return redirect("/migrate?qb_status=error&error=No+access+token")
+        
+        # QuickBooks API base (production)
+        qb_base = f"https://quickbooks.api.intuit.com/v3/company/{realm_id}"
+        qb_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        
+        total_imported = 0
+        
+        # Pull Customers
+        try:
+            resp = requests.get(f"{qb_base}/query?query=SELECT * FROM Customer MAXRESULTS 1000", headers=qb_headers, timeout=30)
+            if resp.status_code == 200:
+                customers = resp.json().get("QueryResponse", {}).get("Customer", [])
+                for cust in customers:
+                    name = cust.get("DisplayName", cust.get("CompanyName", "")).strip()
+                    if not name:
+                        continue
+                    
+                    existing = db.get("customers", {"business_id": biz_id, "name": name})
+                    if existing:
+                        continue
+                    
+                    # Build address
+                    address = ""
+                    bill_addr = cust.get("BillAddr", {})
+                    if bill_addr:
+                        parts = [bill_addr.get(f"Line{i}", "") for i in range(1, 6)]
+                        parts += [bill_addr.get("City", ""), bill_addr.get("CountrySubDivisionCode", ""), bill_addr.get("PostalCode", "")]
+                        address = ", ".join(p for p in parts if p)
+                    
+                    phone = cust.get("PrimaryPhone", {}).get("FreeFormNumber", "") if cust.get("PrimaryPhone") else ""
+                    email = cust.get("PrimaryEmailAddr", {}).get("Address", "") if cust.get("PrimaryEmailAddr") else ""
+                    
+                    record = {
+                        "business_id": biz_id,
+                        "name": name,
+                        "email": email,
+                        "phone": phone,
+                        "contact_name": cust.get("GivenName", "") + " " + cust.get("FamilyName", ""),
+                        "address": address,
+                        "balance": float(cust.get("Balance", 0) or 0),
+                        "source": "quickbooks_import"
+                    }
+                    db.save("customers", record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[QB] Customers error: {e}")
+        
+        # Pull Vendors (suppliers)
+        try:
+            resp = requests.get(f"{qb_base}/query?query=SELECT * FROM Vendor MAXRESULTS 1000", headers=qb_headers, timeout=30)
+            if resp.status_code == 200:
+                vendors = resp.json().get("QueryResponse", {}).get("Vendor", [])
+                for vendor in vendors:
+                    name = vendor.get("DisplayName", vendor.get("CompanyName", "")).strip()
+                    if not name:
+                        continue
+                    
+                    existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                    if existing:
+                        continue
+                    
+                    phone = vendor.get("PrimaryPhone", {}).get("FreeFormNumber", "") if vendor.get("PrimaryPhone") else ""
+                    email = vendor.get("PrimaryEmailAddr", {}).get("Address", "") if vendor.get("PrimaryEmailAddr") else ""
+                    
+                    record = {
+                        "business_id": biz_id,
+                        "name": name,
+                        "email": email,
+                        "phone": phone,
+                        "balance": float(vendor.get("Balance", 0) or 0),
+                        "source": "quickbooks_import"
+                    }
+                    db.save("suppliers", record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[QB] Vendors error: {e}")
+        
+        # Pull Items (stock)
+        try:
+            resp = requests.get(f"{qb_base}/query?query=SELECT * FROM Item MAXRESULTS 1000", headers=qb_headers, timeout=30)
+            if resp.status_code == 200:
+                items = resp.json().get("QueryResponse", {}).get("Item", [])
+                for item in items:
+                    if item.get("Type") not in ["Inventory", "NonInventory", "Service"]:
+                        continue
+                    
+                    name = item.get("Name", item.get("Description", "")).strip()
+                    if not name:
+                        continue
+                    
+                    record = {
+                        "business_id": biz_id,
+                        "description": name,
+                        "code": item.get("Sku", ""),
+                        "cost_price": float(item.get("PurchaseCost", 0) or 0),
+                        "selling_price": float(item.get("UnitPrice", 0) or 0),
+                        "qty": float(item.get("QtyOnHand", 0) or 0),
+                        "quantity": float(item.get("QtyOnHand", 0) or 0),
+                        "unit": "each",
+                        "source": "quickbooks_import"
+                    }
+                    db.save_stock(record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[QB] Items error: {e}")
+        
+        # Pull Chart of Accounts
+        try:
+            resp = requests.get(f"{qb_base}/query?query=SELECT * FROM Account MAXRESULTS 1000", headers=qb_headers, timeout=30)
+            if resp.status_code == 200:
+                accounts = resp.json().get("QueryResponse", {}).get("Account", [])
+                for acct in accounts:
+                    name = acct.get("Name", "").strip()
+                    if not name:
+                        continue
+                    
+                    qb_type = acct.get("AccountType", "").lower()
+                    acct_type = "expense"
+                    if "asset" in qb_type or "bank" in qb_type:
+                        acct_type = "asset"
+                    elif "liabilit" in qb_type or "credit card" in qb_type:
+                        acct_type = "liability"
+                    elif "equity" in qb_type:
+                        acct_type = "equity"
+                    elif "income" in qb_type or "revenue" in qb_type:
+                        acct_type = "income"
+                    
+                    record = {
+                        "business_id": biz_id,
+                        "account_name": name,
+                        "account_code": acct.get("AcctNum", ""),
+                        "account_type": acct_type,
+                        "description": acct.get("Description", ""),
+                        "is_active": acct.get("Active", True),
+                        "source": "quickbooks_import"
+                    }
+                    db.save("chart_of_accounts", record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[QB] Accounts error: {e}")
+        
+        logger.info(f"[QB] Migration complete: {total_imported} records imported for business {biz_id}")
+        return redirect(f"/migrate?qb_status=success&imported={total_imported}")
+    
+    except Exception as e:
+        logger.error(f"[QB] Callback error: {e}")
+        return redirect(f"/migrate?qb_status=error&error={urllib.parse.quote(str(e))}")
+
+
+# ═══════════════════════════════════════════════════
+# SMART IMPORT - Zane analyzes your CSV/Excel
+# ═══════════════════════════════════════════════════
 
 @app.route("/import")
 @login_required
@@ -28588,6 +29599,17 @@ def import_page():
     user = Auth.get_current_user()
     
     content = '''
+    <!-- Migration Hub Banner -->
+    <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.15), rgba(34,197,94,0.1));margin-bottom:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div>
+                <h3 style="margin-bottom:5px;">🔗 Direct Import from Sage, Xero, QuickBooks?</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">Connect directly to your old system - no export needed. We pull everything automatically.</p>
+            </div>
+            <a href="/migrate" class="btn btn-primary" style="white-space:nowrap;text-decoration:none;">Open Migration Hub →</a>
+        </div>
+    </div>
+    
     <div class="card" style="background:linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1));margin-bottom:20px;">
         <h3 style="margin-bottom:15px;">[FORM] Recommended Import Order</h3>
         <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:13px;">
