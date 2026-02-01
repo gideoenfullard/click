@@ -4028,7 +4028,7 @@ When users ask "how do I [do something]", provide step-by-step instructions:
   * LIMIT: 2 businesses per subscription (prevents sharing with others)
   * If user needs more than 2, they must contact support for enterprise plan
 
-**IMPORT / MIGRATION (Sage, Xero, QuickBooks):**
+**IMPORT / MIGRATION (Sage, Xero, QuickBooks, Excel):**
 1. Go to: Settings → Import (or click "Import" on Dashboard)
 2. Select what to import:
    - Customers (with balances)
@@ -4041,7 +4041,7 @@ When users ask "how do I [do something]", provide step-by-step instructions:
    - Bank Transactions
    - Fixed Assets
    - Jobs/Projects
-3. Upload CSV file (or .xlsx)
+3. Upload CSV or Excel (.xlsx) file - BOTH work!
 4. Click "Analyze with AI"
 5. AI detects columns automatically
 6. Review data quality issues (duplicates, missing data)
@@ -4056,11 +4056,43 @@ When users ask "how do I [do something]", provide step-by-step instructions:
 4. Opening Trial Balance (if not already balanced)
 5. Outstanding Invoices/Bills
 
-**Import from Sage/Xero/QuickBooks:**
-- Export your data to CSV
-- Upload to ClickAI Import
-- AI maps columns automatically (very smart!)
+**HOW TO EXPORT FROM OTHER SYSTEMS:**
+
+Sage Pastel / Sage 50:
+- Customers: Setup → Customers → Edit → Batch → Export to CSV
+- Suppliers: Setup → Suppliers → Edit → Batch → Export to CSV
+- Stock: Inventory → Items → Reports → Item Listing → Export to Excel/CSV
+- Trial Balance: Reports → General Ledger → Trial Balance → Export
+- Tip: Pastel exports often have header rows - ClickAI handles that automatically
+
+Sage Business Cloud:
+- Go to Contacts → Export → CSV
+- Go to Items → Export → CSV
+- Reports → Trial Balance → Export
+
+Xero:
+- Contacts → Export → CSV (customers & suppliers)
+- Reports → Trial Balance → Export to Excel
+- Inventory → Export to CSV
+- Settings → Chart of Accounts → Export
+
+QuickBooks:
+- Reports → Customers & Receivables → Customer Contact List → Export to Excel
+- Reports → Vendors & Payables → Vendor Contact List → Export to Excel
+- Reports → Inventory → Inventory Stock Status → Export to Excel
+- Reports → Accountant & Taxes → Trial Balance → Export to Excel
+
+Excel Spreadsheet (no accounting system):
+- Just make sure your Excel has column headers in the first row
+- Common columns: Name, Phone, Email, Address, Balance
+- Save as .xlsx and upload directly - no need to convert to CSV!
+
+**IMPORT TIPS:**
+- ClickAI accepts BOTH .csv and .xlsx files
+- AI auto-detects column mapping (very smart!)
+- Messy headers, title rows, empty rows? AI handles it
 - 5-10 minute migration typical
+- After import, always check your Trial Balance balances
 
 **SCAN INBOX (AI Document Scanner):**
 1. Go to: Scan Inbox (top menu)
@@ -4635,6 +4667,14 @@ Example: "Key: You need R45,000 by the 25th for payroll. Risk: Your top debtor i
    - Making up buttons/filters that don't exist makes you look STUPID and the system look BROKEN
    - When guiding step-by-step: Ask the user WHAT THEY SEE first, then guide based on their answer
 
+**RULE 10: IMPORT ASSISTANCE FLOW** - When user wants to import data (stock, customers, suppliers, etc):
+   Step 1: Ask "Do you have a CSV file ready to import?"
+   Step 2 (if YES): Guide them to the correct import page and explain the format needed
+   Step 3 (if NO): Ask "Do you need help preparing one? Where are you migrating from? (e.g. Sage, Xero, QuickBooks, Excel spreadsheet) - then I can help you get the data in the right format."
+   Step 4: Based on their source system, guide them on how to export from that system and what columns ClickAI needs
+   - Be proactive and helpful - don't just say "upload a CSV", actually HELP them get there
+   - If they mention a specific system (Sage, Pastel, Xero), give specific export instructions for that system
+
 ## ⚠️ SMART WARNINGS - Protect the user from mistakes!
 
 **BEFORE creating invoices, check:**
@@ -5048,8 +5088,20 @@ You: NOW navigate!
     "response": "Let's do it together!",
     "navigate": "/import",
     "highlight": "#importType",
-    "next_message": "👆 Stap 1: Kies 'Suppliers' in die dropdown hierbo. Sê wanneer jy klaar is."
+    "next_message": "👆 Step 1: Select 'Suppliers' in the dropdown above. Tell me when you're ready."
 }}
+
+STEP 2 - User says NO:
+User: "No" / "Nee" / "Not yet" / "I don't have one"
+You: Ask where they're coming from, then help them export!
+{{
+    "action": "QUERY",
+    "response": "No problem! Where are you migrating from? For example: Sage, Pastel, Xero, QuickBooks, or just an Excel spreadsheet? I'll help you get your data out and into the right format."
+}}
+Then based on their answer, give specific export instructions for that system.
+If they say "Excel" → tell them they can upload the .xlsx directly, no conversion needed!
+If they say "Sage/Pastel" → give the specific Sage export steps
+If they say "nowhere, starting fresh" → help them set up from scratch instead
 
 **WRONG (never do this):**
 User: "How do I import customers?"
@@ -8608,6 +8660,27 @@ class DailyBriefing:
                 current += timedelta(days=1)
         except:
             working_days = days
+        
+        # === NO-ACTIVITY SHORTCUT ===
+        # If zero activity (weekend/holiday/quiet day), return short message - don't waste AI call
+        total_activity = (data.get('total_sales', 0) + data.get('total_invoiced', 0) + 
+                         data.get('total_quoted', 0) + data.get('total_received', 0))
+        has_events = len(data.get("events", [])) > 0
+        
+        if total_activity == 0 and not has_events:
+            first_name = owner_name.split()[0] if owner_name else ""
+            from datetime import datetime as dt_check
+            current_hour = dt_check.now().hour
+            greeting = "Good morning" if current_hour < 12 else "Good afternoon"
+            greeting_full = f"{greeting} {first_name}" if first_name else greeting
+            
+            # Check if period was weekend
+            is_weekend_period = weekend_days > 0 and working_days == 0
+            
+            if is_weekend_period:
+                return f"{greeting_full},\n\nNo business activity recorded over the weekend ({start_date_str} to {end_date_str}). Enjoy the rest.\n\n- Zane"
+            else:
+                return f"{greeting_full},\n\nNo activity recorded for {start_date_str} to {end_date_str}. All systems quiet.\n\n- Zane"
         
         # Build event list
         events = []
@@ -28922,16 +28995,57 @@ def api_import_analyze():
         if not import_type or not file:
             return jsonify({"success": False, "error": "Please select type and file"})
         
-        # Read CSV
-        content = file.read().decode('utf-8', errors='ignore')
-        lines = content.strip().split('\n')
+        filename = file.filename.lower() if file.filename else ""
         
-        if len(lines) < 2:
-            return jsonify({"success": False, "error": "File is empty or has no data rows"})
-        
-        # Parse CSV
-        reader = csv.reader(io.StringIO(content))
-        rows = list(reader)
+        # === HANDLE BOTH CSV AND XLSX ===
+        if filename.endswith(('.xlsx', '.xls')):
+            # Excel file - convert to CSV-like rows using openpyxl
+            try:
+                import openpyxl
+                import tempfile, os
+                
+                # Save to temp file
+                temp_dir = tempfile.gettempdir()
+                temp_path = os.path.join(temp_dir, f"import_{generate_id()}.xlsx")
+                file.save(temp_path)
+                
+                wb = openpyxl.load_workbook(temp_path, read_only=True, data_only=True)
+                ws = wb.active
+                
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    rows.append([str(cell) if cell is not None else "" for cell in row])
+                
+                wb.close()
+                os.remove(temp_path)
+                
+                if len(rows) < 2:
+                    return jsonify({"success": False, "error": "Excel file is empty or has no data rows"})
+                
+                # Convert to CSV string for downstream compatibility
+                output = io.StringIO()
+                writer = csv.writer(output)
+                for row in rows:
+                    writer.writerow(row)
+                content = output.getvalue()
+                lines = content.strip().split('\n')
+                
+                logger.info(f"[IMPORT] Converted Excel file: {len(rows)} rows from {filename}")
+                
+            except Exception as xlsx_err:
+                logger.error(f"[IMPORT] Excel read error: {xlsx_err}")
+                return jsonify({"success": False, "error": f"Could not read Excel file: {str(xlsx_err)}"})
+        else:
+            # CSV file - original logic
+            content = file.read().decode('utf-8', errors='ignore')
+            lines = content.strip().split('\n')
+            
+            if len(lines) < 2:
+                return jsonify({"success": False, "error": "File is empty or has no data rows"})
+            
+            # Parse CSV
+            reader = csv.reader(io.StringIO(content))
+            rows = list(reader)
         
         # === SMART HEADER DETECTION ===
         # Many accounting exports have report titles in first few rows
