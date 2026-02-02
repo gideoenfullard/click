@@ -3415,6 +3415,8 @@ class Brain:
                 tables_to_delete.append("expenses")
             if "receipt" in msg_lower:
                 tables_to_delete.append("receipts")
+            if "employee" in msg_lower or "werknemer" in msg_lower:
+                tables_to_delete.append("employees")
             if "quote" in msg_lower:
                 tables_to_delete.append("quotes")
             if "gl" in msg_lower or "journal" in msg_lower or "gl_entries" in msg_lower:
@@ -4269,7 +4271,7 @@ When user confirms with "ja delete X" or "yes delete X", send with confirmed: tr
     Optional: confirmed (true ONLY if user explicitly confirmed!)
 
 26. **BULK_DELETE** - "Delete all [type]" or "Delete all [type] with [criteria]"
-    Required: type (customers/suppliers/stock/pos/invoices/expenses)
+    Required: type (customers/suppliers/stock/pos/invoices/expenses/employees/bank_transactions/quotes/gl_entries)
     Optional: criteria ("all", "no phone", "zero balance", "zero total", "no phone and zero balance", "duplicates")
     Optional: confirmed (true ONLY if user explicitly confirmed!)
     Examples: "Delete all POS", "Delete all suppliers with no phone", "Delete all stock with zero price", "Delete all duplicate customers", "Delete all duplicate suppliers", "Delete duplicate stock", "Delete all expenses"
@@ -6772,6 +6774,8 @@ class Actions:
             table = "pos_sales"
         if table in ["invoice", "invoices"]:
             table = "invoices"
+        if table in ["employee", "employees", "werknemer", "werknemers"]:
+            table = "employees"
         if table in ["bank", "bank_transaction", "bank_transactions"]:
             table = "bank_transactions"
         if table in ["receipt"]:
@@ -6781,7 +6785,7 @@ class Actions:
         if table in ["gl", "journal", "journals", "gl_entry"]:
             table = "gl_entries"
         
-        if table not in ["customers", "suppliers", "stock", "stock_items", "pos_sales", "invoices", "expenses", "bank_transactions", "receipts", "quotes", "gl_entries"]:
+        if table not in ["customers", "suppliers", "stock", "stock_items", "pos_sales", "invoices", "expenses", "bank_transactions", "receipts", "quotes", "gl_entries", "employees"]:
             return {"success": False, "message": "Can delete: customers, suppliers, stock, pos, invoices, expenses"}
         
         biz_id = context.get("business_id")
