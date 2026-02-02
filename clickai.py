@@ -29842,7 +29842,7 @@ ONLY return the JSON object, nothing else."""
                      "cust code", "cust_code", "sup code", "sup_code", "vendor code", "vendor_code", "part number", "part_number",
                      "kode", "nommer"],  # Afrikaans
             "contact_name": ["contact_name", "contact name", "contact_person", "contactname", "attention", "attn", "contact",
-                            "representative", "rep", "salesperson", "sales rep", "account manager", "kontak"],
+                            "kontak", "kontak persoon"],
             
             # ===== CONTACT INFO =====
             "phone": ["phone", "tel no", "tel_no", "mobile", "telephone", "contact_number", "phone_number", 
@@ -29924,7 +29924,7 @@ ONLY return the JSON object, nothing else."""
             
             # ===== VAT/TAX =====
             "vat_number": ["vat no", "vat_no", "vat_number", "tax_no", "tax number", "tax_number", "vat reg", "vat registration",
-                          "btw nommer"],
+                          "vat reference", "vat_reference", "btw nommer"],
             
             # ===== EMPLOYEES/PAYROLL =====
             "id_number": ["id number", "id_number", "identity", "sa_id", "id_no", "id no", "national id", "id", "rsa id",
@@ -30556,6 +30556,18 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
         temp_dir = "/tmp/clickai_imports"
         os_module.makedirs(temp_dir, exist_ok=True)
         temp_path = f"{temp_dir}/{session_id}.csv"
+
+        # DEBUG: Verify data right before save
+        print(f"[IMPORT-SAVE] Headers ({len(headers)}): {headers}", flush=True)
+        print(f"[IMPORT-SAVE] Mapping: {mapping}", flush=True)
+        if data_rows:
+            print(f"[IMPORT-SAVE] Row 0 ({len(data_rows[0])} cols): {data_rows[0][:8]}", flush=True)
+            # Verify contact_name specifically
+            cn_idx = mapping.get("contact_name")
+            if cn_idx is not None and data_rows[0] and cn_idx < len(data_rows[0]):
+                print(f"[IMPORT-SAVE] contact_name at idx {cn_idx} = '{data_rows[0][cn_idx]}'", flush=True)
+            else:
+                print(f"[IMPORT-SAVE] ⚠️ contact_name NOT MAPPED (idx={cn_idx})", flush=True)
 
         # CRITICAL: Save the CLEANED/SANITIZED data, not the original content
         # This ensures row 0 is always the headers, and row 1+ is always data
