@@ -13129,12 +13129,12 @@ def customers_page():
         customers_html += f'''
         <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
             <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;">
+                <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 70px;align-items:center;font-size:13px;">
                     <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(c.get("code", ""))}</span>
                     <span><strong>{safe_string(c.get("name", "-"))}</strong></span>
-                    <span style="color:var(--text-muted);">{safe_string(c.get("category", ""))}</span>
                     <span style="color:var(--text-muted);">{safe_string(c.get("contact_name", ""))}</span>
                     <span style="color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
+                    <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(c.get("email", ""))}</span>
                     <span style="text-align:right;color:{balance_color};font-weight:bold;">{money(balance)}</span>
                     <span style="text-align:right;">
                         <a href="/customer/{cust_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
@@ -13163,12 +13163,12 @@ def customers_page():
     # Sticky header - matches import preview columns
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;font-weight:bold;">
+        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
             <span>Name</span>
-            <span>Category</span>
             <span>Contact</span>
             <span>Phone</span>
+            <span>Email</span>
             <span style="text-align:right;">Balance</span>
             <span style="text-align:right;">Actions</span>
         </div>
@@ -13334,11 +13334,19 @@ def customer_view(customer_id):
         <div style="display:flex;justify-content:space-between;align-items:start;">
             <div>
                 <h2 style="margin:0;">{safe_string(customer.get("name", "-"))}</h2>
-                <p style="color:var(--text-muted);margin:5px 0;">
-                     {safe_string(customer.get("phone", "-"))} |  {safe_string(customer.get("email", "-"))}
+                <p style="color:var(--text-muted);margin:5px 0;font-family:monospace;font-size:12px;">
+                    Code: {safe_string(customer.get("code", "-"))}
                 </p>
                 <p style="color:var(--text-muted);margin:5px 0;">
-                     {safe_string(customer.get("address", "-"))}
+                    📞 {safe_string(customer.get("phone", "-"))} &nbsp;|&nbsp; ✉️ {safe_string(customer.get("email", "-"))}
+                </p>
+                <p style="color:var(--text-muted);margin:5px 0;">
+                    📍 {safe_string(customer.get("address", "-"))}
+                </p>
+                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
+                    {"👤 " + safe_string(customer.get("contact_name")) if customer.get("contact_name") else ""}
+                    {"&nbsp;|&nbsp; VAT: " + safe_string(customer.get("vat_number")) if customer.get("vat_number") else ""}
+                    {"&nbsp;|&nbsp; Category: " + safe_string(customer.get("category")) if customer.get("category") else ""}
                 </p>
             </div>
             <div style="text-align:right;">
@@ -15748,11 +15756,12 @@ def suppliers_page():
         suppliers_html += f'''
         <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
             <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;">
+                <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 70px;align-items:center;font-size:13px;">
                     <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(s.get("code", ""))}</span>
                     <span><strong>{safe_string(s.get("name", "-"))}</strong></span>
                     <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("contact_name", ""))}</span>
                     <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span>
+                    <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(s.get("email", ""))}</span>
                     <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
                     <span style="text-align:right;">
                         <a href="/supplier/{sup_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
@@ -15780,11 +15789,12 @@ def suppliers_page():
     # Sticky header
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;font-weight:bold;">
+        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
             <span>Supplier</span>
             <span>Contact</span>
             <span>Phone</span>
+            <span>Email</span>
             <span style="text-align:right;">We Owe</span>
             <span style="text-align:right;">Actions</span>
         </div>
@@ -16010,11 +16020,19 @@ def supplier_view(supplier_id):
         <div style="display:flex;justify-content:space-between;align-items:start;">
             <div>
                 <h2 style="margin:0;">{safe_string(supplier.get("name", "-"))}</h2>
+                <p style="color:var(--text-muted);margin:5px 0;font-family:monospace;font-size:12px;">
+                    Code: {safe_string(supplier.get("code", "-"))}
+                </p>
                 <p style="color:var(--text-muted);margin:5px 0;">
-                    📞 {safe_string(supplier.get("phone", "-"))} | ✉️ {safe_string(supplier.get("email", "-"))}
+                    📞 {safe_string(supplier.get("phone", "-"))} &nbsp;|&nbsp; ✉️ {safe_string(supplier.get("email", "-"))}
                 </p>
                 <p style="color:var(--text-muted);margin:5px 0;">
                     📍 {safe_string(supplier.get("address", "-"))}
+                </p>
+                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
+                    {"👤 " + safe_string(supplier.get("contact_name")) if supplier.get("contact_name") else ""}
+                    {"&nbsp;|&nbsp; VAT: " + safe_string(supplier.get("vat_number")) if supplier.get("vat_number") else ""}
+                    {"&nbsp;|&nbsp; Category: " + safe_string(supplier.get("category")) if supplier.get("category") else ""}
                 </p>
             </div>
             {balance_section}
