@@ -29441,8 +29441,37 @@ def api_import_analyze():
             if len(lines) < 2:
                 return jsonify({"success": False, "error": "File is empty or has no data rows"})
             
-            # Parse CSV
-            reader = csv.reader(io.StringIO(content))
+            # ═══════════════════════════════════════════════════════════════
+            # AUTO-DETECT DELIMITER (comma, semicolon, tab, pipe)
+            # Sage SA often exports with semicolons, Pastel uses commas/tabs
+            # ═══════════════════════════════════════════════════════════════
+            detected_delimiter = ','
+            try:
+                # Use Python's csv.Sniffer to auto-detect
+                sample = '\n'.join(lines[:5])
+                dialect = csv.Sniffer().sniff(sample, delimiters=',;\t|')
+                detected_delimiter = dialect.delimiter
+                logger.info(f"[IMPORT] Auto-detected delimiter: '{detected_delimiter}' (repr: {repr(detected_delimiter)})")
+            except csv.Error:
+                # Sniffer failed - do manual detection
+                # Count delimiters in first 3 non-empty lines
+                test_lines = [l for l in lines[:5] if l.strip()][:3]
+                counts = {',': 0, ';': 0, '\t': 0, '|': 0}
+                for line in test_lines:
+                    for delim in counts:
+                        counts[delim] += line.count(delim)
+                
+                # Pick the delimiter that appears most consistently
+                if counts[';'] > counts[','] * 1.5:
+                    detected_delimiter = ';'
+                elif counts['\t'] > counts[','] * 1.5:
+                    detected_delimiter = '\t'
+                elif counts['|'] > counts[','] * 1.5:
+                    detected_delimiter = '|'
+                logger.info(f"[IMPORT] Manual delimiter detection: '{detected_delimiter}' (counts: {counts})")
+            
+            # Parse CSV with detected delimiter
+            reader = csv.reader(io.StringIO(content), delimiter=detected_delimiter)
             rows = list(reader)
         
         # === SMART HEADER DETECTION ===
@@ -29543,11 +29572,135 @@ def api_import_analyze():
         data_rows = filtered_rows
         logger.info(f"[IMPORT] After footer filter: {len(data_rows)} rows (removed {len(sanitized_rows) - len(filtered_rows)} footer rows)")
         
+        # ═══════════════════════════════════════════════════════════════
+        # SMART COLUMN PRUNING - Strip out mostly-empty & irrelevant columns
+        # Sage/Pastel exports have 50+ columns, most are empty or useless
+        # This makes the preview clean and mapping accurate
+        # ═══════════════════════════════════════════════════════════════
+        if len(headers) > 15 and import_type in ("customers", "suppliers"):
+            logger.info(f"[IMPORT-PRUNE] Starting column pruning: {len(headers)} columns detected")
+            
+            # Step 1: Calculate fill rate for each column
+            col_fill_rates = {}
+            for col_idx in range(len(headers)):
+                filled = 0
+                total = min(len(data_rows), 50)  # Sample first 50 rows
+                for row in data_rows[:50]:
+                    if col_idx < len(row):
+                        val = str(row[col_idx]).strip()
+                        # Don't count "0.0000", "False", "None", empty, or "0" as filled
+                        if val and val not in ("0.0000", "0", "0.00", "False", "false", "None", "none", ""):
+                            filled += 1
+                col_fill_rates[col_idx] = filled / total if total > 0 else 0
+            
+            # Step 2: Identify which columns to KEEP
+            # Always keep: Name, Contact, Phone, Cell, Email, VAT, Balance, Category, Code
+            # Keep if: >10% fill rate AND not a known useless column
+            
+            useless_patterns = [
+                "additional delivery", "text user field", "numeric user field", 
+                "date user field", "yes/no user field", "web address",
+                "auto allocate", "statement distribution", "enable customer zone",
+                "cash sale customer", "default price list", "default discount",
+                "default vat type", "subject to drc", "accepts electronic",
+                "credit limit"
+            ]
+            
+            # Important columns to ALWAYS keep (by header name pattern)
+            important_patterns = [
+                "name", "contact", "telephone", "phone", "cell", "mobile", "fax",
+                "email", "vat", "balance", "opening balance", "category", "code",
+                "active", "sales rep"
+            ]
+            
+            # Address columns - we'll combine these into ONE
+            address_col_indices = []
+            address_combined_header = "address"
+            
+            keep_cols = []
+            for col_idx, h in enumerate(headers):
+                h_low = h.lower().strip()
+                fill_rate = col_fill_rates.get(col_idx, 0)
+                
+                # Check if it's a known useless column
+                is_useless = any(pat in h_low for pat in useless_patterns)
+                
+                # Check if it's important
+                is_important = any(pat in h_low for pat in important_patterns)
+                
+                # Check if it's an address-related column
+                is_address = any(kw in h_low for kw in ["address", "postal code", "delivery"])
+                # BUT exclude "email address" and "web address" - those are NOT physical addresses
+                if is_address and any(excl in h_low for excl in ["email", "web", "e-mail"]):
+                    is_address = False
+                
+                if is_address:
+                    # Track address columns for combining
+                    if fill_rate > 0.05:  # Only include if at least some data
+                        address_col_indices.append(col_idx)
+                    continue  # Don't add individually
+                
+                if is_useless:
+                    logger.info(f"[IMPORT-PRUNE] Dropping useless column {col_idx}: '{h}' (fill={fill_rate:.0%})")
+                    continue
+                
+                if is_important or fill_rate > 0.10:
+                    keep_cols.append(col_idx)
+                else:
+                    logger.info(f"[IMPORT-PRUNE] Dropping empty column {col_idx}: '{h}' (fill={fill_rate:.0%})")
+            
+            # Step 3: Combine address columns into one "Address" column
+            if address_col_indices:
+                logger.info(f"[IMPORT-PRUNE] Combining {len(address_col_indices)} address columns into one")
+                
+                # Add a virtual "Address" column at the end
+                combined_address_idx = len(headers)  # Will be at the end
+                headers.append("Address")
+                
+                for row_idx, row in enumerate(data_rows):
+                    parts = []
+                    for ac in address_col_indices:
+                        if ac < len(row):
+                            part = str(row[ac]).strip()
+                            if part and part not in ("0.0000", "0", "False", "None"):
+                                parts.append(part)
+                    # Remove duplicates while preserving order
+                    seen = set()
+                    unique_parts = []
+                    for p in parts:
+                        if p.lower() not in seen:
+                            seen.add(p.lower())
+                            unique_parts.append(p)
+                    combined = ", ".join(unique_parts)
+                    # Pad row if needed
+                    while len(data_rows[row_idx]) <= combined_address_idx:
+                        data_rows[row_idx].append("")
+                    data_rows[row_idx][combined_address_idx] = combined
+                
+                keep_cols.append(combined_address_idx)
+            
+            # Step 4: Rebuild headers and data with only kept columns
+            if len(keep_cols) < len(headers) - 1:  # Only prune if we're actually removing columns
+                new_headers = [headers[i] for i in keep_cols]
+                new_data_rows = []
+                for row in data_rows:
+                    new_row = []
+                    for col_idx in keep_cols:
+                        if col_idx < len(row):
+                            new_row.append(row[col_idx])
+                        else:
+                            new_row.append("")
+                    new_data_rows.append(new_row)
+                
+                logger.info(f"[IMPORT-PRUNE] ✅ Pruned {len(headers)} → {len(new_headers)} columns: {new_headers}")
+                headers = new_headers
+                data_rows = new_data_rows
+        
         
         # Define required fields per type
         field_specs = {
-            "customers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name"]},
-            "suppliers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "fax"]},
+            "customers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
+            "suppliers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
             "stock": {"required": ["description"], "optional": ["code", "cost_price", "selling_price", "quantity", "category", "unit"]},
             "employees": {"required": ["name"], "optional": ["code", "id_number", "position", "role", "department", "salary", "rate", "start_date", "bank", "account", "branch", "phone", "email", "status"]},
             "opening_balances": {"required": ["account"], "optional": ["code", "amount", "debit", "credit", "type"]},
@@ -29591,7 +29744,7 @@ def api_import_analyze():
                 
                 all_fields = list(set(specs["required"] + specs["optional"]))
                 
-                ai_map_prompt = f"""You are a CSV column mapper for a business accounting system.
+                ai_map_prompt = f"""You are a CSV column mapper for a South African business accounting system.
 
 Import type: {import_type}
 
@@ -29609,6 +29762,15 @@ YOUR JOB: Map each CSV header to the correct database field.
 - Handle abbreviations (Qty = quantity, Desc = description, etc)  
 - If a CSV column doesn't match any field, skip it
 - NEVER map two CSV columns to the same field
+
+CRITICAL - SOUTH AFRICAN DATA PATTERNS:
+- Phone numbers have 10+ digits, start with 0 or +27 (e.g. 0821234567, +27821234567, 012 345 6789)
+- Postal codes are EXACTLY 4 digits (e.g. 1612, 2000, 0157) - do NOT map these as phone!
+- Suburb/city names like DOWERGLEN, KRUGERSDORP, WESTWOOD are ADDRESS parts, NOT contact names
+- "Delivery Address 1/2/3", "Postal Address 1/2/3" are address fields - combine into "address"
+- Multiple address columns should ALL map to "address" - pick the FIRST/main one
+- If you see columns like "Town", "City", "Suburb", "Region", "Postal Code" - these are address parts, skip them or map to address
+- Contact person names are PEOPLE names (e.g. "John Smith", "Mrs van der Merwe"), NOT place names
 
 Return ONLY a JSON object mapping CSV column index (0-based) to field name.
 Example: {{"0": "code", "1": "name", "3": "quantity", "4": "cost_price"}}
@@ -29678,11 +29840,20 @@ ONLY return the JSON object, nothing else."""
                             "representative", "rep", "salesperson", "sales rep", "account manager", "kontak"],
             
             # ===== CONTACT INFO =====
-            "phone": ["phone", "tel no", "tel_no", "mobile", "cell", "telephone", "contact_number", "cell_no", "phone_number", 
-                     "tel", "phone no", "phone_no", "landline", "fax", "cellphone", "telefoon", "sel", "nommer"],
-            "email": ["email", "e-mail", "mail", "email_address", "e_mail", "epos"],
-            "address": ["address", "street", "addr", "physical", "postal", "street_address", "physical address", "postal address",
-                       "delivery address", "billing address", "ship to", "bill to", "location", "adres", "straat"],
+            "phone": ["phone", "tel no", "tel_no", "mobile", "telephone", "contact_number", "phone_number", 
+                     "tel", "phone no", "phone_no", "landline", "cellphone", "telefoon", "nommer",
+                     "main phone", "main_phone", "telephone 1", "telephone1", "mobile number", "mobile_number",
+                     "work phone", "work_phone", "business phone", "business_phone", "phone number 1",
+                     "telephone number"],
+            "cell": ["cell", "cell_no", "cell no", "cell number", "cell_number", "mobile", "mobile no", 
+                    "mobile_no", "mobile number", "mobile_number", "cellphone", "sel", "selnommer"],
+            "fax": ["fax", "fax no", "fax_no", "fax number", "fax_number", "facsimile"],
+            "email": ["email", "e-mail", "mail", "email_address", "e_mail", "epos",
+                     "email address", "e-mail address", "main email", "main_email", "email 1"],
+            "address": ["address", "street", "addr", "physical", "street_address", "physical address",
+                       "delivery address", "billing address", "ship to", "bill to", "location", "adres", "straat",
+                       "main address", "main_address", "address 1", "address_1", "address line 1", "registered address",
+                       "delivery address 1", "postal address 1", "street address 1"],
             
             # ===== FINANCIAL - BALANCES =====
             "balance": ["balance", "balance owing", "balance_owing", "owing", "owed", "outstanding", "open", "amount_due", 
@@ -29860,6 +30031,12 @@ ONLY return the JSON object, nothing else."""
                 # Partial match - but only for short keywords
                 for kw in keywords:
                     if len(kw) > 3 and kw in h:
+                        # SAFETY: Don't let "contact" match headers that are phone/address/email
+                        if field == "contact_name":
+                            skip_words = ["phone", "tel", "mobile", "cell", "email", "mail", "address", "addr",
+                                         "city", "town", "suburb", "postal", "zip", "fax", "number"]
+                            if any(sw in h for sw in skip_words):
+                                continue  # Skip - this is a phone/address column, not contact name
                         mapping[field] = i
                         break
                 if field in mapping:
@@ -30052,6 +30229,212 @@ Rules:
                 # Continue with normal mapping if AI fails
         
         # Analyze data quality
+        
+        # ═══════════════════════════════════════════════════════════════
+        # POST-MAPPING DATA VALIDATION
+        # Check actual data values to catch mapping errors
+        # E.g. postal codes mapped as phones, suburbs as contact names
+        # ═══════════════════════════════════════════════════════════════
+        if import_type in ("customers", "suppliers") and data_rows:
+            import re as _re
+            
+            def _get_samples(col_idx, max_rows=15):
+                """Get non-empty sample values from a column"""
+                samples = []
+                for r in data_rows[:max_rows]:
+                    if col_idx < len(r):
+                        v = str(r[col_idx]).strip()
+                        if v:
+                            samples.append(v)
+                return samples
+            
+            def _looks_like_phone(values):
+                """Check if values look like phone numbers (7+ digits)"""
+                if not values:
+                    return 0
+                phone_count = 0
+                for v in values:
+                    digits = _re.sub(r'[^\d]', '', v)
+                    if len(digits) >= 7:
+                        phone_count += 1
+                return phone_count / len(values)  # ratio 0-1
+            
+            def _looks_like_postal_code(values):
+                """Check if values look like SA postal codes (exactly 4 digits)"""
+                if not values:
+                    return 0
+                postal_count = 0
+                for v in values:
+                    digits = _re.sub(r'[^\d]', '', v)
+                    if len(digits) == 4 and v.strip().isdigit():
+                        postal_count += 1
+                return postal_count / len(values)
+            
+            def _looks_like_suburb_city(values):
+                """Check if values look like suburb/city names (all caps, no digits, SA places)"""
+                if not values:
+                    return 0
+                place_count = 0
+                for v in values:
+                    v_clean = v.strip().upper()
+                    digits = _re.sub(r'[^\d]', '', v)
+                    # All text, no digits, looks like a place name
+                    if len(digits) == 0 and len(v_clean) > 2 and v_clean.replace(" ", "").replace("_", "").isalpha():
+                        place_count += 1
+                return place_count / len(values)
+            
+            def _looks_like_email(values):
+                """Check if values look like email addresses"""
+                if not values:
+                    return 0
+                email_count = 0
+                for v in values:
+                    if "@" in v and "." in v:
+                        email_count += 1
+                return email_count / len(values)
+            
+            # CHECK PHONE MAPPING - is it really phone numbers?
+            phone_fixed = False
+            if "phone" in mapping:
+                phone_samples = _get_samples(mapping["phone"])
+                phone_score = _looks_like_phone(phone_samples)
+                postal_score = _looks_like_postal_code(phone_samples)
+                suburb_score = _looks_like_suburb_city(phone_samples)
+                
+                if phone_score < 0.3 and (postal_score > 0.3 or suburb_score > 0.3):
+                    # Current "phone" column doesn't contain phone numbers!
+                    bad_col = mapping["phone"]
+                    logger.warning(f"[IMPORT-VALIDATE] ⚠️ Column {bad_col} ({headers[bad_col]}) mapped as 'phone' but contains {'postal codes' if postal_score > 0.3 else 'suburbs/cities'} (phone_score={phone_score:.1%}, postal={postal_score:.1%}, suburb={suburb_score:.1%})")
+                    
+                    # Remove bad mapping
+                    del mapping["phone"]
+                    
+                    # Scan ALL columns to find the REAL phone column
+                    mapped_indices = set(mapping.values())
+                    best_phone_col = None
+                    best_phone_score = 0
+                    
+                    for col_idx in range(len(headers)):
+                        if col_idx in mapped_indices:
+                            continue  # Skip already-mapped columns
+                        samples = _get_samples(col_idx)
+                        if not samples:
+                            continue
+                        score = _looks_like_phone(samples)
+                        if score > best_phone_score and score > 0.2:
+                            best_phone_score = score
+                            best_phone_col = col_idx
+                    
+                    if best_phone_col is not None:
+                        mapping["phone"] = best_phone_col
+                        phone_fixed = True
+                        logger.info(f"[IMPORT-VALIDATE] ✅ Re-mapped 'phone' to column {best_phone_col} ({headers[best_phone_col]}) (score={best_phone_score:.1%})")
+                    else:
+                        logger.info(f"[IMPORT-VALIDATE] No suitable phone column found in data")
+            
+            # If no phone mapped at all, scan for one
+            if "phone" not in mapping:
+                mapped_indices = set(mapping.values())
+                best_phone_col = None
+                best_phone_score = 0
+                
+                for col_idx in range(len(headers)):
+                    if col_idx in mapped_indices:
+                        continue
+                    samples = _get_samples(col_idx)
+                    if not samples:
+                        continue
+                    score = _looks_like_phone(samples)
+                    if score > best_phone_score and score > 0.3:
+                        best_phone_score = score
+                        best_phone_col = col_idx
+                
+                if best_phone_col is not None:
+                    mapping["phone"] = best_phone_col
+                    phone_fixed = True
+                    logger.info(f"[IMPORT-VALIDATE] ✅ Found unmapped phone column {best_phone_col} ({headers[best_phone_col]}) (score={best_phone_score:.1%})")
+            
+            # CHECK CONTACT_NAME MAPPING - is it really contact names?
+            if "contact_name" in mapping:
+                contact_samples = _get_samples(mapping["contact_name"])
+                suburb_score = _looks_like_suburb_city(contact_samples)
+                
+                if suburb_score > 0.5:
+                    # Contact column contains suburbs/cities, not people names!
+                    bad_col = mapping["contact_name"]
+                    logger.warning(f"[IMPORT-VALIDATE] ⚠️ Column {bad_col} ({headers[bad_col]}) mapped as 'contact_name' but contains suburbs/cities (suburb_score={suburb_score:.1%})")
+                    
+                    # If no address mapped, use this as address instead
+                    if "address" not in mapping:
+                        mapping["address"] = bad_col
+                        logger.info(f"[IMPORT-VALIDATE] Re-mapped column {bad_col} from 'contact_name' to 'address'")
+                    del mapping["contact_name"]
+            
+            # CHECK EMAIL MAPPING - make sure email column has actual emails
+            if "email" in mapping:
+                email_samples = _get_samples(mapping["email"])
+                email_score = _looks_like_email(email_samples)
+                
+                if email_score < 0.1 and email_samples:
+                    bad_col = mapping["email"]
+                    logger.warning(f"[IMPORT-VALIDATE] ⚠️ Column {bad_col} ({headers[bad_col]}) mapped as 'email' but doesn't contain emails (score={email_score:.1%})")
+                    del mapping["email"]
+                    
+                    # Scan for real email column
+                    mapped_indices = set(mapping.values())
+                    for col_idx in range(len(headers)):
+                        if col_idx in mapped_indices:
+                            continue
+                        samples = _get_samples(col_idx)
+                        if _looks_like_email(samples) > 0.3:
+                            mapping["email"] = col_idx
+                            logger.info(f"[IMPORT-VALIDATE] ✅ Re-mapped 'email' to column {col_idx} ({headers[col_idx]})")
+                            break
+            
+            # BUILD ADDRESS FROM MULTIPLE COLUMNS
+            # Sage/Pastel often split address into: Address 1, Address 2, City, Region, Postal Code
+            # We should combine them into one address field
+            address_parts_cols = []
+            for col_idx, h in enumerate(headers):
+                h_low = h.lower().strip()
+                if col_idx in set(mapping.values()):
+                    if mapping.get("address") == col_idx:
+                        continue  # Don't double-count the already-mapped address
+                    continue
+                # Check if this looks like an address part column
+                addr_keywords = ["address", "addr", "street", "city", "town", "suburb", "region", 
+                                "province", "state", "postal", "zip", "post code", "postcode",
+                                "delivery", "physical", "postal address", "dorp", "stad", "provinsie", "poskode"]
+                if any(kw in h_low for kw in addr_keywords):
+                    address_parts_cols.append(col_idx)
+            
+            if address_parts_cols and "address" not in mapping:
+                # Use the first address part as main address
+                mapping["address"] = address_parts_cols[0]
+                logger.info(f"[IMPORT-VALIDATE] ✅ Mapped address to column {address_parts_cols[0]} ({headers[address_parts_cols[0]]})")
+            
+            # If we found extra address columns, combine them into the main address
+            if address_parts_cols:
+                addr_main = mapping.get("address")
+                extra_addr_cols = [c for c in address_parts_cols if c != addr_main]
+                
+                if extra_addr_cols and addr_main is not None:
+                    logger.info(f"[IMPORT-VALIDATE] Combining address columns: main={addr_main}, extras={extra_addr_cols}")
+                    for row_idx, row in enumerate(data_rows):
+                        if addr_main < len(row):
+                            parts = [str(row[addr_main]).strip()]
+                            for ec in extra_addr_cols:
+                                if ec < len(row):
+                                    part = str(row[ec]).strip()
+                                    if part and part != parts[0]:
+                                        parts.append(part)
+                            combined = ", ".join(p for p in parts if p)
+                            data_rows[row_idx][addr_main] = combined
+                    logger.info(f"[IMPORT-VALIDATE] ✅ Combined {len(extra_addr_cols) + 1} address columns into one")
+            
+            if phone_fixed or "contact_name" not in mapping:
+                logger.info(f"[IMPORT-VALIDATE] Final validated mapping: {mapping}")
+        
         issues = []
         warnings = []
         stats = {"total": len(data_rows), "empty_rows": 0, "duplicates": 0}
@@ -30994,6 +31377,23 @@ def api_import_execute():
                     if phone_idx is not None and phone_idx < len(row):
                         phone = str(row[phone_idx]).strip()
                     
+                    # Get cell number - use as phone if phone is empty
+                    cell = ""
+                    cell_idx = mapping.get("cell")
+                    if cell_idx is not None and cell_idx < len(row):
+                        cell = str(row[cell_idx]).strip()
+                    if not phone and cell:
+                        phone = cell
+                    elif phone and cell and phone != cell:
+                        # Combine: "011-412-2900 / 082-855-1576"
+                        phone = f"{phone} / {cell}"
+                    
+                    # Get VAT number
+                    vat_number = ""
+                    vat_idx = mapping.get("vat_number")
+                    if vat_idx is not None and vat_idx < len(row):
+                        vat_number = str(row[vat_idx]).strip()
+                    
                     # Get contact name
                     contact_name = ""
                     contact_idx = mapping.get("contact_name")
@@ -31054,6 +31454,7 @@ def api_import_execute():
                         contact_name=contact_name,
                         category=category,
                         balance=balance,
+                        vat_number=vat_number,
                         created_by=user.get("id", "") if user else ""
                     )
                     
@@ -31076,6 +31477,22 @@ def api_import_execute():
                     phone = ""
                     if mapping.get("phone") is not None and mapping.get("phone") < len(row):
                         phone = str(row[mapping.get("phone")]).strip()
+                    
+                    # Get cell number - use as phone if phone is empty
+                    cell = ""
+                    cell_idx = mapping.get("cell")
+                    if cell_idx is not None and cell_idx < len(row):
+                        cell = str(row[cell_idx]).strip()
+                    if not phone and cell:
+                        phone = cell
+                    elif phone and cell and phone != cell:
+                        phone = f"{phone} / {cell}"
+                    
+                    # Get VAT number
+                    vat_number = ""
+                    vat_idx = mapping.get("vat_number")
+                    if vat_idx is not None and vat_idx < len(row):
+                        vat_number = str(row[vat_idx]).strip()
                     
                     # Get contact name
                     contact_name = ""
@@ -31128,6 +31545,7 @@ def api_import_execute():
                         contact_name=contact_name,
                         category=category,
                         balance=balance,
+                        vat_number=vat_number,
                         created_by=user.get("id", "") if user else ""
                     )
                     
