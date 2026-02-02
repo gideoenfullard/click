@@ -29381,7 +29381,7 @@ def import_page():
 @app.route("/api/import/analyze", methods=["POST"])
 @login_required
 def api_import_analyze():
-    """Analyze CSV with AI - shows data quality issues"""
+    """Analyze CSV with AI - shows data quality issues - v2.1 PRUNE"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -29389,6 +29389,8 @@ def api_import_analyze():
     try:
         import_type = request.form.get("import_type", "")
         file = request.files.get("file")
+        print(f"[IMPORT-V2.1] ========== ANALYZE START ==========", flush=True)
+        print(f"[IMPORT-V2.1] Type: {import_type}, File: {file.filename if file else 'None'}", flush=True)
         
         if not import_type or not file:
             return jsonify({"success": False, "error": "Please select type and file"})
@@ -29578,6 +29580,7 @@ def api_import_analyze():
         # This makes the preview clean and mapping accurate
         # ═══════════════════════════════════════════════════════════════
         if len(headers) > 15 and import_type in ("customers", "suppliers"):
+            print(f"[IMPORT-PRUNE] ★★★ PRUNING ACTIVE ★★★ {len(headers)} columns detected", flush=True)
             logger.info(f"[IMPORT-PRUNE] Starting column pruning: {len(headers)} columns detected")
             
             # Step 1: Calculate fill rate for each column
@@ -29693,6 +29696,8 @@ def api_import_analyze():
                     new_data_rows.append(new_row)
                 
                 logger.info(f"[IMPORT-PRUNE] ✅ Pruned {len(headers)} → {len(new_headers)} columns: {new_headers}")
+                print(f"[IMPORT-PRUNE] ★★★ PRUNED {len(headers)} → {len(new_headers)} columns ★★★", flush=True)
+                print(f"[IMPORT-PRUNE] Final headers: {new_headers}", flush=True)
                 headers = new_headers
                 data_rows = new_data_rows
         
@@ -30653,6 +30658,8 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
         
         # Editable Preview HTML - show first 20 rows for editing
         edit_rows = min(20, len(data_rows))
+        print(f"[IMPORT-PREVIEW] Building preview with {len(headers)} headers: {headers[:10]}", flush=True)
+        print(f"[IMPORT-PREVIEW] Data rows: {len(data_rows)}, cols per row: {len(data_rows[0]) if data_rows else 0}", flush=True)
         preview_html = f'''
         <div style="margin-top:20px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
