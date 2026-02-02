@@ -30360,20 +30360,30 @@ Rules:
                     logger.info(f"[IMPORT-VALIDATE] ✅ Found unmapped phone column {best_phone_col} ({headers[best_phone_col]}) (score={best_phone_score:.1%})")
             
             # CHECK CONTACT_NAME MAPPING - is it really contact names?
+            # IMPORTANT: After column pruning, Contact Name is already correctly identified
+            # Only validate if the column header itself suggests it's NOT a contact
+            # (e.g. "City", "Suburb", "Town" mapped as contact_name by mistake)
             if "contact_name" in mapping:
-                contact_samples = _get_samples(mapping["contact_name"])
-                suburb_score = _looks_like_suburb_city(contact_samples)
+                bad_col = mapping["contact_name"]
+                col_header = headers[bad_col].lower() if bad_col < len(headers) else ""
+                # Only flag as wrong if the HEADER NAME itself indicates an address/location column
+                address_header_words = ["city", "town", "suburb", "region", "province", "district", 
+                                       "area", "postal", "address", "delivery", "street", "dorp", "wyk"]
+                header_is_address = any(word in col_header for word in address_header_words)
                 
-                if suburb_score > 0.5:
-                    # Contact column contains suburbs/cities, not people names!
-                    bad_col = mapping["contact_name"]
-                    logger.warning(f"[IMPORT-VALIDATE] ⚠️ Column {bad_col} ({headers[bad_col]}) mapped as 'contact_name' but contains suburbs/cities (suburb_score={suburb_score:.1%})")
-                    
-                    # If no address mapped, use this as address instead
-                    if "address" not in mapping:
-                        mapping["address"] = bad_col
-                        logger.info(f"[IMPORT-VALIDATE] Re-mapped column {bad_col} from 'contact_name' to 'address'")
-                    del mapping["contact_name"]
+                if header_is_address:
+                    contact_samples = _get_samples(mapping["contact_name"])
+                    suburb_score = _looks_like_suburb_city(contact_samples)
+                    if suburb_score > 0.5:
+                        logger.warning(f"[IMPORT-VALIDATE] ⚠️ Column {bad_col} ({headers[bad_col]}) mapped as 'contact_name' but header indicates address (suburb_score={suburb_score:.1%})")
+                        if "address" not in mapping:
+                            mapping["address"] = bad_col
+                            logger.info(f"[IMPORT-VALIDATE] Re-mapped column {bad_col} from 'contact_name' to 'address'")
+                        del mapping["contact_name"]
+                    else:
+                        logger.info(f"[IMPORT-VALIDATE] ✅ contact_name column '{headers[bad_col]}' looks valid despite address-like header")
+                else:
+                    logger.info(f"[IMPORT-VALIDATE] ✅ contact_name column '{col_header}' header OK - keeping mapping")
             
             # CHECK EMAIL MAPPING - make sure email column has actual emails
             if "email" in mapping:
@@ -30582,12 +30592,76 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
         with open(json_path, 'w') as f:
             json.dump({"headers": headers, "rows": data_rows}, f)
 
+        # ═══════════════════════════════════════════════════════════════
+        # PRE-EXTRACT RECORDS - Build ready-to-import records NOW
+        # This ensures execute uses EXACTLY what the preview shows
+        # No second mapping pass, no validation re-run, no data loss
+        # ═══════════════════════════════════════════════════════════════
+        pre_extracted = []
+        if import_type in ("customers", "suppliers"):
+            for row in data_rows:
+                def _get(field):
+                    idx = mapping.get(field)
+                    if idx is not None and idx < len(row):
+                        return str(row[idx]).strip()
+                    return ""
+                
+                name = _get("name")
+                if not name:
+                    continue
+                
+                phone = _get("phone")
+                cell = _get("cell")
+                if not phone and cell:
+                    phone = cell
+                elif phone and cell and phone != cell:
+                    phone = f"{phone} / {cell}"
+                
+                # Parse balance
+                balance = 0
+                bal_str = _get("balance")
+                if bal_str:
+                    try:
+                        bal_str = bal_str.replace("R", "").replace("r", "").replace("$", "").replace(",", "").replace(" ", "").strip()
+                        if bal_str.startswith("(") and bal_str.endswith(")"):
+                            bal_str = "-" + bal_str[1:-1]
+                        if bal_str.upper().endswith("CR"):
+                            bal_str = bal_str[:-2]
+                        elif bal_str.upper().endswith("DR"):
+                            bal_str = bal_str[:-2]
+                        balance = float(bal_str) if bal_str and bal_str != "-" else 0
+                    except:
+                        balance = 0
+                
+                rec = {
+                    "name": name,
+                    "code": _get("code"),
+                    "phone": phone,
+                    "email": _get("email"),
+                    "address": _get("address"),
+                    "contact_name": _get("contact_name"),
+                    "category": _get("category"),
+                    "vat_number": _get("vat_number"),
+                    "balance": balance
+                }
+                pre_extracted.append(rec)
+            
+            print(f"[IMPORT-PRE] ✅ Pre-extracted {len(pre_extracted)} {import_type} records", flush=True)
+            if pre_extracted:
+                print(f"[IMPORT-PRE] Sample: {pre_extracted[0]}", flush=True)
+
+        # Save pre-extracted records
+        pre_path = f"{temp_dir}/{session_id}_records.json"
+        with open(pre_path, 'w') as f:
+            json.dump(pre_extracted, f)
+
         # Save metadata to file instead of session (prevents 4KB cookie limit)
         metadata_path = f"{temp_dir}/{session_id}_meta.json"
         metadata = {
             "type": import_type,
             "path": temp_path,
             "json_path": json_path,
+            "pre_path": pre_path,
             "mapping": mapping,
             "row_count": len(data_rows),
             "headers": headers,
@@ -31309,6 +31383,68 @@ def api_import_execute():
         mapping = import_data.get("mapping", {})
         
         logger.info(f"[IMPORT] Type: {import_type}, mapping: {mapping}")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # FAST PATH: Use pre-extracted records (built during analyze)
+        # This ensures execute saves EXACTLY what the preview showed
+        # No re-mapping, no re-validation, no data loss
+        # ═══════════════════════════════════════════════════════════════
+        pre_path = import_data.get("pre_path")
+        if pre_path and import_type in ("customers", "suppliers"):
+            try:
+                with open(pre_path, 'r') as f:
+                    pre_records = json.load(f)
+                
+                if pre_records:
+                    print(f"[IMPORT-FAST] ★ Using pre-extracted records: {len(pre_records)} {import_type}", flush=True)
+                    
+                    batch = pre_records[offset:offset + limit]
+                    records = []
+                    skipped = 0
+                    
+                    for rec in batch:
+                        name = rec.get("name", "").strip()
+                        if not name:
+                            skipped += 1
+                            continue
+                        
+                        factory = RecordFactory.customer if import_type == "customers" else RecordFactory.supplier
+                        record = factory(
+                            business_id=biz_id,
+                            name=name,
+                            code=rec.get("code", ""),
+                            phone=rec.get("phone", ""),
+                            email=rec.get("email", ""),
+                            address=rec.get("address", ""),
+                            contact_name=rec.get("contact_name", ""),
+                            category=rec.get("category", ""),
+                            balance=float(rec.get("balance", 0)),
+                            vat_number=rec.get("vat_number", ""),
+                            created_by=user.get("id", "") if user else ""
+                        )
+                        records.append(record)
+                    
+                    # Bulk insert
+                    if records:
+                        table = "customers" if import_type == "customers" else "suppliers"
+                        db.table(table).insert(records).execute()
+                        print(f"[IMPORT-FAST] ✅ Inserted {len(records)} {import_type}, skipped {skipped}", flush=True)
+                    
+                    return jsonify({
+                        "success": True,
+                        "imported": len(records),
+                        "skipped": skipped,
+                        "total": len(pre_records),
+                        "has_more": (offset + limit) < len(pre_records)
+                    })
+            except FileNotFoundError:
+                print(f"[IMPORT-FAST] Pre-extracted file not found, falling back to CSV", flush=True)
+            except Exception as fast_err:
+                print(f"[IMPORT-FAST] Error: {fast_err}, falling back to CSV", flush=True)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # STANDARD PATH: Read CSV and map columns (for stock, employees, etc)
+        # ═══════════════════════════════════════════════════════════════
         logger.info(f"[IMPORT-DEBUG] Mapping details - name: {mapping.get('name')}, phone: {mapping.get('phone')}, contact_name: {mapping.get('contact_name')}, balance: {mapping.get('balance')}")
         
         # Read CSV with proper encoding (handles BOM)
