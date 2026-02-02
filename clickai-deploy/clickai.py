@@ -13129,12 +13129,13 @@ def customers_page():
         customers_html += f'''
         <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
             <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 70px;align-items:center;font-size:13px;">
+                <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
                     <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(c.get("code", ""))}</span>
                     <span><strong>{safe_string(c.get("name", "-"))}</strong></span>
                     <span style="color:var(--text-muted);">{safe_string(c.get("contact_name", ""))}</span>
                     <span style="color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
                     <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(c.get("email", ""))}</span>
+                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(c.get("vat_number", ""))}</span>
                     <span style="text-align:right;color:{balance_color};font-weight:bold;">{money(balance)}</span>
                     <span style="text-align:right;">
                         <a href="/customer/{cust_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
@@ -13163,12 +13164,13 @@ def customers_page():
     # Sticky header - matches import preview columns
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
+        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
             <span>Name</span>
             <span>Contact</span>
             <span>Phone</span>
             <span>Email</span>
+            <span>VAT No</span>
             <span style="text-align:right;">Balance</span>
             <span style="text-align:right;">Actions</span>
         </div>
@@ -13440,6 +13442,10 @@ def customer_new():
         phone = request.form.get("phone", "").strip()
         email = request.form.get("email", "").strip()
         address = request.form.get("address", "").strip()
+        code = request.form.get("code", "").strip()
+        contact_name = request.form.get("contact_name", "").strip()
+        category = request.form.get("category", "").strip()
+        vat_number = request.form.get("vat_number", "").strip()
         
         if not name:
             flash("Customer name is required", "error")
@@ -13447,9 +13453,13 @@ def customer_new():
             customer = RecordFactory.customer(
                 business_id=biz_id,
                 name=name,
+                code=code,
                 phone=phone,
                 email=email,
                 address=address,
+                contact_name=contact_name,
+                category=category,
+                vat_number=vat_number,
                 created_by=user.get("id", "") if user else ""
             )
             customer_id = customer["id"]
@@ -13465,17 +13475,39 @@ def customer_new():
     <div class="card" style="max-width: 600px;">
         <h2 style="margin-bottom: 20px;">New Customer</h2>
         <form method="POST">
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
-                <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
+                    <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
+                    <input type="text" name="code" placeholder="e.g. AFR001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Contact Person</label>
+                    <input type="text" name="contact_name" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Category</label>
+                    <input type="text" name="category" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
+                    <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
+                    <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
             </div>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
-                <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
-                <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
+                <input type="text" name="vat_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
             </div>
             <div style="margin-bottom: 20px;">
                 <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
@@ -15756,12 +15788,13 @@ def suppliers_page():
         suppliers_html += f'''
         <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
             <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 70px;align-items:center;font-size:13px;">
+                <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
                     <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(s.get("code", ""))}</span>
                     <span><strong>{safe_string(s.get("name", "-"))}</strong></span>
                     <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("contact_name", ""))}</span>
                     <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span>
                     <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(s.get("email", ""))}</span>
+                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("vat_number", ""))}</span>
                     <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
                     <span style="text-align:right;">
                         <a href="/supplier/{sup_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
@@ -15789,12 +15822,13 @@ def suppliers_page():
     # Sticky header
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
+        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
             <span>Supplier</span>
             <span>Contact</span>
             <span>Phone</span>
             <span>Email</span>
+            <span>VAT No</span>
             <span style="text-align:right;">We Owe</span>
             <span style="text-align:right;">Actions</span>
         </div>
@@ -15840,6 +15874,10 @@ def supplier_new():
         phone = request.form.get("phone", "").strip()
         email = request.form.get("email", "").strip()
         address = request.form.get("address", "").strip()
+        code = request.form.get("code", "").strip()
+        contact_name = request.form.get("contact_name", "").strip()
+        category = request.form.get("category", "").strip()
+        vat_number = request.form.get("vat_number", "").strip()
         
         if not name:
             flash("Supplier name is required", "error")
@@ -15847,9 +15885,13 @@ def supplier_new():
             supplier = RecordFactory.supplier(
                 business_id=biz_id,
                 name=name,
+                code=code,
                 phone=phone,
                 email=email,
                 address=address,
+                contact_name=contact_name,
+                category=category,
+                vat_number=vat_number,
                 created_by=user.get("id", "") if user else ""
             )
             supplier_id = supplier["id"]
@@ -15865,17 +15907,39 @@ def supplier_new():
     <div class="card" style="max-width: 600px;">
         <h2 style="margin-bottom: 20px;">New Supplier</h2>
         <form method="POST">
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
-                <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
+                    <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
+                    <input type="text" name="code" placeholder="e.g. SUP001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Contact Person</label>
+                    <input type="text" name="contact_name" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Category</label>
+                    <input type="text" name="category" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
+                    <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
+                    <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
             </div>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
-                <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
-                <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
+                <input type="text" name="vat_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
             </div>
             <div style="margin-bottom: 20px;">
                 <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
