@@ -584,6 +584,39 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOCAL-FIRST SYNC ENGINE (JavaScript)
+# This enables instant UI with background sync - like Pastel speed with cloud sync
+# ═══════════════════════════════════════════════════════════════════════════════
+LOCALFIRST_JS = '''
+const ClickDB={db:null,dbName:"clickai_local",dbVersion:1,businessId:null,syncInProgress:!1,lastSync:{},tables:["stock_items","customers","suppliers","invoices","quotes","receipts"],
+async init(e){return this.businessId=e,new Promise((e,t)=>{const n=indexedDB.open(this.dbName,this.dbVersion);n.onerror=()=>t(n.error),n.onsuccess=()=>{this.db=n.result,console.log("[ClickDB] ✅ Ready"),e(this.db)},n.onupgradeneeded=e=>{const t=e.target.result;this.tables.forEach(e=>{if(!t.objectStoreNames.contains(e)){const n=t.createObjectStore(e,{keyPath:"id"});n.createIndex("business_id","business_id",{unique:!1}),n.createIndex("updated_at","updated_at",{unique:!1}),n.createIndex("sync_status","sync_status",{unique:!1})}}),t.objectStoreNames.contains("_sync_meta")||t.createObjectStore("_sync_meta",{keyPath:"table"})}})},
+async getAll(e,t={}){return new Promise((n,s)=>{const i=this.db.transaction(e,"readonly").objectStore(e).getAll();i.onsuccess=()=>{let e=i.result;this.businessId&&(e=e.filter(e=>e.business_id===this.businessId)),Object.keys(t).forEach(n=>{e=e.filter(e=>e[n]===t[n])}),n(e)},i.onerror=()=>s(i.error)})},
+async getOne(e,t){return new Promise((n,s)=>{const i=this.db.transaction(e,"readonly").objectStore(e).get(t);i.onsuccess=()=>n(i.result),i.onerror=()=>s(i.error)})},
+async save(e,t){return t.id||(t.id=this.generateId()),t.business_id||(t.business_id=this.businessId),t.updated_at=(new Date).toISOString(),t.sync_status="pending",new Promise((n,s)=>{const i=this.db.transaction(e,"readwrite").objectStore(e).put(t);i.onsuccess=()=>{console.log(`[ClickDB] 💾 Saved: ${e}/${t.id}`),this.syncToCloud(e,t),n(t)},i.onerror=()=>s(i.error)})},
+async saveMany(e,t){return new Promise((n,s)=>{const i=this.db.transaction(e,"readwrite"),a=i.objectStore(e);t.forEach(t=>{t.id||(t.id=this.generateId()),t.business_id||(t.business_id=this.businessId),t.updated_at=(new Date).toISOString(),t.sync_status="pending",a.put(t)}),i.oncomplete=()=>{console.log(`[ClickDB] 💾 Saved ${t.length} records`),this.syncTableToCloud(e),n(t)},i.onerror=()=>s(i.error)})},
+async delete(e,t){const n=await this.getOne(e,t);return n?(n.deleted_at=(new Date).toISOString(),n.sync_status="pending_delete",this.save(e,n)):void 0},
+async search(e,t,n=["description","name","code"]){const s=await this.getAll(e),i=t.toLowerCase();return s.filter(e=>n.some(t=>String(e[t]||"").toLowerCase().includes(i)))},
+async syncToCloud(e,t){try{const n=await fetch("/api/sync/push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table:e,record:t})});n.ok?(t.sync_status="synced",this.db.transaction(e,"readwrite").objectStore(e).put(t),console.log(`[ClickDB] ☁️ Synced: ${e}/${t.id}`),this.updateSyncIndicator("synced")):(console.warn(`[ClickDB] ⚠️ Sync failed: ${e}/${t.id}`),this.updateSyncIndicator("error"))}catch(e){console.log(`[ClickDB] 📴 Offline: ${t.id}`),this.updateSyncIndicator("offline")}},
+async syncTableToCloud(e){const t=await this.getAll(e),n=t.filter(e=>"pending"===e.sync_status||"pending_delete"===e.sync_status);if(0===n.length)return;console.log(`[ClickDB] ☁️ Syncing ${n.length} ${e}...`);try{(await fetch("/api/sync/push-batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({table:e,records:n})})).ok&&(()=>{const t=this.db.transaction(e,"readwrite"),s=t.objectStore(e);n.forEach(e=>{"pending_delete"===e.sync_status?s.delete(e.id):(e.sync_status="synced",s.put(e))}),console.log(`[ClickDB] ☁️ Batch done: ${e}`)})()}catch(e){console.log("[ClickDB] 📴 Offline, batch delayed")}},
+async pullFromCloud(e,t=!1){this.updateSyncIndicator("syncing");try{const n=await this.getSyncMeta(e),s=t?null:n?.last_pull,i=`/api/sync/pull?table=${e}${s?`&since=${s}`:""}`,a=await(await fetch(i)).json();return a.records?.length>0&&(()=>{const t=this.db.transaction(e,"readwrite").objectStore(e);a.records.forEach(e=>{e.sync_status="synced",t.put(e)}),console.log(`[ClickDB] ⬇️ Pulled ${a.records.length} ${e}`)})(),await this.setSyncMeta(e,{last_pull:(new Date).toISOString()}),this.updateSyncIndicator("synced"),a.records||[]}catch(e){return console.error(`[ClickDB] Pull error: ${e.message}`),this.updateSyncIndicator("error"),[]}},
+async initialLoad(e,t){this.updateSyncIndicator("syncing");try{let n=0;const s=500;let i=0,a=0;const o=await(await fetch(`/api/sync/pull?table=${e}&offset=0&limit=${s}`)).json();if(i=o.total||o.records?.length||0,o.records?.length>0&&(await this.saveMany(e,o.records.map(e=>({...e,sync_status:"synced"}))),a+=o.records.length,t&&t(a,i)),o.has_more)for(;a<i;){n+=s;const o=await(await fetch(`/api/sync/pull?table=${e}&offset=${n}&limit=${s}`)).json();if(o.records?.length>0&&(await this.saveMany(e,o.records.map(e=>({...e,sync_status:"synced"}))),a+=o.records.length,t&&t(a,i)),!o.has_more)break}return await this.setSyncMeta(e,{last_pull:(new Date).toISOString(),record_count:a}),console.log(`[ClickDB] ✅ Loaded ${a} ${e}`),this.updateSyncIndicator("synced"),a}catch(e){throw console.error(`[ClickDB] Load error: ${e.message}`),this.updateSyncIndicator("error"),e}},
+generateId(){return"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,e=>{const t=16*Math.random()|0;return("x"===e?t:3&t|8).toString(16)})},
+async getSyncMeta(e){return new Promise(t=>{const n=this.db.transaction("_sync_meta","readonly").objectStore("_sync_meta").get(e);n.onsuccess=()=>t(n.result),n.onerror=()=>t(null)})},
+async setSyncMeta(e,t){return new Promise(n=>{const s=this.db.transaction("_sync_meta","readwrite");s.objectStore("_sync_meta").put({table:e,...t}),s.oncomplete=()=>n()})},
+async getLocalCount(e){return(await this.getAll(e)).length},
+async hasLocalData(e){return await this.getLocalCount(e)>0},
+updateSyncIndicator(e){const t=document.getElementById("syncIndicator");if(!t)return;const n={synced:"✓",syncing:"⟳",offline:"○",error:"!"},s={synced:"#10b981",syncing:"#3b82f6",offline:"#f59e0b",error:"#ef4444"},i={synced:"Synced",syncing:"Syncing...",offline:"Offline",error:"Error"};t.innerHTML=`<span style="color:${s[e]}">${n[e]} ${i[e]}</span>`},
+stock:{async getAll(){return ClickDB.getAll("stock_items")},async getOne(e){return ClickDB.getOne("stock_items",e)},async save(e){return ClickDB.save("stock_items",e)},async delete(e){return ClickDB.delete("stock_items",e)},async search(e){return ClickDB.search("stock_items",e,["description","code","category"])}},
+customers:{async getAll(){return ClickDB.getAll("customers")},async getOne(e){return ClickDB.getOne("customers",e)},async save(e){return ClickDB.save("customers",e)},async search(e){return ClickDB.search("customers",e,["name","code","email","phone"])}},
+suppliers:{async getAll(){return ClickDB.getAll("suppliers")},async getOne(e){return ClickDB.getOne("suppliers",e)},async save(e){return ClickDB.save("suppliers",e)},async search(e){return ClickDB.search("suppliers",e,["name","code","email","phone"])}}
+};
+document.addEventListener("DOMContentLoaded",async()=>{const e=document.body.dataset.businessId;e&&await ClickDB.init(e)});
+window.ClickDB=ClickDB;
+'''
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABLE CONFIGURATION - SINGLE SOURCE OF TRUTH
 # If you need to change a table name, change it HERE and nowhere else.
@@ -11381,7 +11414,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     <title>{title} - Click AI</title>
     {CSS}
 </head>
-<body>
+<body data-business-id="{biz_id}">
     <header class="header">
         <div class="header-top">
             <div class="logo" onclick="toggleZaneChat()">Click AI</div>
@@ -11561,6 +11594,11 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             }}
         }}, 100);
     }})();
+    </script>
+    
+    <!-- Local-First Database Engine -->
+    <script>
+    {LOCALFIRST_JS}
     </script>
 </body>
 </html>'''
@@ -13069,112 +13107,23 @@ def dashboard():
 @app.route("/customers")
 @login_required
 def customers_page():
-    """Customers list with accordion - click to see transactions"""
+    """Customers list - LOCAL-FIRST: loads from IndexedDB instantly"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-    customers = sorted(customers, key=lambda x: x.get("name", "").lower())
+    # LOCAL-FIRST: Don't load data server-side
+    # JavaScript will load from IndexedDB (instant)
     
-    # Get all invoices and receipts for lookup
-    all_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-    all_receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
+    # Quick count for initial display
+    try:
+        count_result = db.table("customers").select("id", count="exact").eq("business_id", biz_id).execute()
+        total_customers = count_result.count if hasattr(count_result, 'count') else 0
+    except:
+        total_customers = 0
     
-    # Summary stats
-    total_customers = len(customers)
-    debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
-    total_owed = sum(float(c.get("balance", 0)) for c in debtors)
-    
-    # Build accordion rows
-    customers_html = ""
-    for c in customers:
-        cust_id = c.get("id")
-        balance = float(c.get("balance", 0))
-        balance_color = "var(--red)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
-        
-        # Get transactions for this customer
-        cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == cust_id]
-        cust_invoices = sorted(cust_invoices, key=lambda x: x.get("date", ""), reverse=True)
-        cust_receipts = [r for r in all_receipts if r.get("customer_id") == cust_id]
-        cust_receipts = sorted(cust_receipts, key=lambda x: x.get("date", ""), reverse=True)
-        
-        # Date cutoff - 12 months ago
-        from datetime import datetime, timedelta
-        cutoff_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-        
-        # Build transactions list
-        trans_rows = ""
-        
-        # ALL outstanding invoices (no date limit) + paid invoices from last 12 months
-        outstanding_invs = [inv for inv in cust_invoices if inv.get("status") != "paid"]
-        paid_recent = [inv for inv in cust_invoices if inv.get("status") == "paid" and inv.get("date", "") >= cutoff_date]
-        show_invoices = outstanding_invs + paid_recent
-        show_invoices = sorted(show_invoices, key=lambda x: x.get("date", ""), reverse=True)
-        
-        for inv in show_invoices:
-            status = inv.get("status", "outstanding")
-            status_color = "var(--green)" if status == "paid" else "var(--orange)"
-            trans_rows += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
-                <td>{inv.get("date", "-")}</td>
-                <td>Invoice {inv.get("invoice_number", "-")}</td>
-                <td style="text-align:right;color:var(--red);">{money(inv.get("total", 0))}</td>
-                <td style="color:{status_color};">{status}</td>
-            </tr>
-            '''
-        
-        # Payments from last 12 months only
-        recent_receipts = [r for r in cust_receipts if r.get("date", "") >= cutoff_date]
-        for r in recent_receipts:
-            trans_rows += f'''
-            <tr>
-                <td>{r.get("date", "-")}</td>
-                <td>Payment ({r.get("method", "cash")})</td>
-                <td style="text-align:right;color:var(--green);">-{money(r.get("amount", 0))}</td>
-                <td style="color:var(--green);">received</td>
-            </tr>
-            '''
-        
-        trans_count = len(outstanding_invs) + len(paid_recent) + len(recent_receipts)
-        
-        customers_html += f'''
-        <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-            <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
-                    <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(c.get("code", ""))}</span>
-                    <span><strong>{safe_string(c.get("name", "-"))}</strong></span>
-                    <span style="color:var(--text-muted);">{safe_string(c.get("contact_name", ""))}</span>
-                    <span style="color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
-                    <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(c.get("email", ""))}</span>
-                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(c.get("vat_number", ""))}</span>
-                    <span style="text-align:right;color:{balance_color};font-weight:bold;">{money(balance)}</span>
-                    <span style="text-align:right;">
-                        <a href="/customer/{cust_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
-                        <a href="/statement/{cust_id}" style="color:var(--text-muted);font-size:11px;margin-left:8px;" onclick="event.stopPropagation();">Stmt</a>
-                    </span>
-                </div>
-            </summary>
-            <div style="padding:0 10px 8px 10px;">
-                {f"""<table class="table" style="font-size:11px;">
-                    <thead>
-                        <tr>
-                            <th style="padding:4px;">Date</th>
-                            <th style="padding:4px;">Description</th>
-                            <th style="padding:4px;text-align:right;">Amount</th>
-                            <th style="padding:4px;">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {trans_rows}
-                    </tbody>
-                </table>""" if trans_rows else "<p style='color:var(--text-muted);text-align:center;padding:10px;'>No transactions yet</p>"}
-            </div>
-        </details>
-        '''
-    
-    # Sticky header - matches import preview columns
+    # Sticky header
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
         <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
@@ -13190,58 +13139,186 @@ def customers_page():
     </div>
     '''
     
-    summary_html = ""
-    if total_owed > 0:
-        summary_html = f'''
-        <div style="background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); padding:10px 15px; border-radius: 8px; margin-bottom: 15px;font-size:13px;">
-            <strong>{len(debtors)} customers</strong> owe a total of <strong style="color: var(--red);">{money(total_owed)}</strong>
-        </div>
-        '''
-    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-        <h2 style="margin:0;">[TEAM] Customers ({total_customers})</h2>
+        <div style="display:flex;align-items:center;gap:15px;">
+            <h2 style="margin:0;">Customers (<span id="customerCount">{total_customers}</span>)</h2>
+            <span id="syncIndicator" style="font-size:12px;color:var(--text-muted);">⟳ Loading...</span>
+        </div>
         <div style="display:flex;gap:10px;">
+            <input type="text" id="customerSearch" placeholder="🔍 Search..." 
+                oninput="filterCustomers()" 
+                style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);width:200px;">
             <button onclick="bulkStatements()" class="btn btn-secondary"> Bulk Statements</button>
             <a href="/customer/new" class="btn btn-primary">+ Add Customer</a>
         </div>
     </div>
     
-    {summary_html}
+    <div id="summaryBox" style="display:none;background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); padding:10px 15px; border-radius: 8px; margin-bottom: 15px;font-size:13px;">
+        <strong id="debtorCount">0</strong> customers owe a total of <strong style="color: var(--red);" id="totalOwed">R0.00</strong>
+    </div>
     
     <p style="color:var(--text-muted);margin-bottom:10px;font-size:12px;">Click on a customer to see transactions</p>
     
     {header_row}
-    {customers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No customers yet! Add your first customer to start invoicing.</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/customer/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
+    <div id="customersContainer">
+        <div class="card" style="text-align:center;padding:40px;">
+            <p style="color:var(--text-muted);">⟳ Loading customers...</p>
+        </div>
+    </div>
     
     <script>
-    async function bulkStatements() {{
-        const choice = confirm('Send statements to ALL customers with outstanding balances?\\n\\nThis will email statements to {len(debtors)} customers owing {money(total_owed)} total.');
-        if (!choice) return;
+    let allCustomers = [];
+    
+    document.addEventListener('DOMContentLoaded', async () => {{
+        await initLocalCustomers();
+    }});
+    
+    async function initLocalCustomers() {{
+        const indicator = document.getElementById('syncIndicator');
+        const container = document.getElementById('customersContainer');
         
-        const btn = event.target;
-        btn.disabled = true;
-        btn.textContent = 'Sending...';
+        try {{
+            const bizId = document.body.dataset.businessId;
+            if (!bizId) {{
+                indicator.innerHTML = '<span style="color:#ef4444">No business</span>';
+                return;
+            }}
+            
+            await ClickDB.init(bizId);
+            
+            const hasLocal = await ClickDB.hasLocalData('customers');
+            
+            if (hasLocal) {{
+                indicator.innerHTML = '<span style="color:#10b981">⟳ Loading...</span>';
+                allCustomers = await ClickDB.customers.getAll();
+                renderCustomers(allCustomers);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Loaded</span>';
+                
+                // Background sync
+                syncCustomersBackground();
+            }} else {{
+                indicator.innerHTML = '<span style="color:#3b82f6">⟳ First sync...</span>';
+                await ClickDB.initialLoad('customers', (loaded, total) => {{
+                    container.innerHTML = `<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);">⟳ Syncing... ${{loaded}} of ${{total}}</p></div>`;
+                }});
+                
+                allCustomers = await ClickDB.customers.getAll();
+                renderCustomers(allCustomers);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Synced</span>';
+            }}
+        }} catch (err) {{
+            console.error('Init error:', err);
+            indicator.innerHTML = '<span style="color:#ef4444">! Error</span>';
+        }}
+    }}
+    
+    async function syncCustomersBackground() {{
+        try {{
+            await ClickDB.pullFromCloud('customers');
+            allCustomers = await ClickDB.customers.getAll();
+        }} catch (err) {{
+            console.log('Background sync skipped');
+        }}
+    }}
+    
+    function renderCustomers(customers) {{
+        const container = document.getElementById('customersContainer');
+        const countEl = document.getElementById('customerCount');
+        
+        customers.sort((a, b) => (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()));
+        
+        countEl.textContent = customers.length;
+        
+        // Calculate stats
+        const debtors = customers.filter(c => parseFloat(c.balance || 0) > 0);
+        const totalOwed = debtors.reduce((sum, c) => sum + parseFloat(c.balance || 0), 0);
+        
+        if (totalOwed > 0) {{
+            document.getElementById('summaryBox').style.display = 'block';
+            document.getElementById('debtorCount').textContent = debtors.length;
+            document.getElementById('totalOwed').textContent = 'R' + totalOwed.toFixed(2);
+        }}
+        
+        if (!customers.length) {{
+            container.innerHTML = `<div class="card" style="text-align:center;padding:40px;">
+                <p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No customers yet!</p>
+                <div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/customer/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div>
+            </div>`;
+            return;
+        }}
+        
+        let html = '';
+        customers.forEach(c => {{
+            const balance = parseFloat(c.balance || 0);
+            const balanceColor = balance > 0 ? 'var(--red)' : balance < 0 ? 'var(--green)' : 'var(--text-muted)';
+            
+            html += `<details style="background:var(--card);border-radius:6px;margin-bottom:4px;" data-search="${{(c.name || '').toLowerCase()}} ${{(c.code || '').toLowerCase()}} ${{(c.email || '').toLowerCase()}}">
+                <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
+                    <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
+                        <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">${{escapeHtml(c.code || '')}}</span>
+                        <span><strong>${{escapeHtml(c.name || '-')}}</strong></span>
+                        <span style="color:var(--text-muted);">${{escapeHtml(c.contact_name || '')}}</span>
+                        <span style="color:var(--text-muted);">${{escapeHtml(c.phone || '')}}</span>
+                        <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${{escapeHtml(c.email || '')}}</span>
+                        <span style="color:var(--text-muted);font-size:11px;">${{escapeHtml(c.vat_number || '')}}</span>
+                        <span style="text-align:right;color:${{balanceColor}};font-weight:bold;">R${{balance.toFixed(2)}}</span>
+                        <span style="text-align:right;">
+                            <a href="/customer/${{c.id}}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
+                            <a href="/statement/${{c.id}}" style="color:var(--text-muted);font-size:11px;margin-left:8px;" onclick="event.stopPropagation();">Stmt</a>
+                        </span>
+                    </div>
+                </summary>
+                <div style="padding:0 10px 8px 10px;">
+                    <p style="color:var(--text-muted);text-align:center;padding:10px;font-size:12px;">Click "View" to see full transaction history</p>
+                </div>
+            </details>`;
+        }});
+        
+        container.innerHTML = html;
+    }}
+    
+    function filterCustomers() {{
+        const search = document.getElementById('customerSearch').value.toLowerCase().trim();
+        
+        if (!search) {{
+            renderCustomers(allCustomers);
+            return;
+        }}
+        
+        const filtered = allCustomers.filter(c => {{
+            const name = (c.name || '').toLowerCase();
+            const code = (c.code || '').toLowerCase();
+            const email = (c.email || '').toLowerCase();
+            const phone = (c.phone || '').toLowerCase();
+            return name.includes(search) || code.includes(search) || email.includes(search) || phone.includes(search);
+        }});
+        
+        renderCustomers(filtered);
+    }}
+    
+    function escapeHtml(str) {{
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }}
+    
+    async function bulkStatements() {{
+        const debtors = allCustomers.filter(c => parseFloat(c.balance || 0) > 0);
+        const totalOwed = debtors.reduce((sum, c) => sum + parseFloat(c.balance || 0), 0);
+        
+        const choice = confirm(`Send statements to ALL customers with outstanding balances?\\n\\nThis will email statements to ${{debtors.length}} customers owing R${{totalOwed.toFixed(2)}} total.`);
+        if (!choice) return;
         
         try {{
             const response = await fetch('/api/bulk-statements', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}}
             }});
-            
             const data = await response.json();
-            
-            if (data.success) {{
-                alert('Statements sent successfully.\\n\\n' + data.message);
-            }} else {{
-                alert('Error: ' + (data.error || 'Failed to send statements'));
-            }}
+            alert(data.success ? 'Statements sent successfully.' : 'Error: ' + (data.error || 'Failed'));
         }} catch (err) {{
             alert('Connection error');
         }}
-        
-        btn.disabled = false;
-        btn.textContent = ' Bulk Statements';
     }}
     </script>
     '''
@@ -13554,98 +13631,68 @@ def customer_new():
 @app.route("/stock")
 @login_required
 def stock_page():
-    """Stock list - clean, no AI on load"""
+    """Stock list - LOCAL-FIRST: loads from IndexedDB, syncs in background"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
-    context = Context.get_page_context("stock", user, business)
     
-    stock = context.get("stock", [])
-    
-    # Get active jobs for Issue to Job dropdown
+    # Get active jobs for Issue to Job dropdown (small dataset, fetch from server)
     jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
     active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
     job_options_html = '<option value="">-- Select Job Card --</option>'
     for job in active_jobs:
         job_options_html += f'<option value="{job.get("id")}">{job.get("job_number")} - {safe_string(job.get("title", "")[:30])}</option>'
     
-    # Get pagination info from context
-    total_count = context.get("total_count", len(stock))
-    showing_count = context.get("showing", len(stock))
-    has_more = total_count > showing_count
+    # LOCAL-FIRST: Don't load stock data server-side
+    # JavaScript will load from IndexedDB (instant) or sync from cloud
+    # Just get quick count for initial display
+    try:
+        count_result = db.table("stock_items").select("id", count="exact").eq("business_id", biz_id).execute()
+        total_items = count_result.count if hasattr(count_result, 'count') else 0
+    except:
+        total_items = 0
     
-    # Calculate stats on displayed items (full stats would require loading all)
-    total_items = total_count  # Use full count for display
-    total_qty = sum(float(s.get("qty") or s.get("quantity") or 0) for s in stock)
-    stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock)
-    low_stock_count = len([s for s in stock if float(s.get("qty") or s.get("quantity") or 0) < 5])
+    # Get categories for filter dropdown (cached, fast)
+    categories = set()
+    try:
+        cat_result = db.table("stock_items").select("category").eq("business_id", biz_id).execute()
+        for row in (cat_result.data or []):
+            if row.get("category"):
+                categories.add(row["category"])
+    except:
+        pass
     
-    # Stock is already sorted from context
-    rows = ""
-    current_category = None
-    for s in stock:
-        category = s.get("category") or ""
-        
-        # Add category header when it changes
-        if category != current_category:
-            current_category = category
-            if category:
-                rows += f'''
-                <tr class="category-header-row" data-category="{safe_string(category)}" style="background:rgba(99,102,241,0.15);">
-                    <td colspan="9" style="padding:10px;font-weight:bold;color:var(--primary);">{category}</td>
-                </tr>
-                '''
-        
-        qty = float(s.get("qty") or s.get("quantity") or 0)
-        cost = float(s.get("cost") or s.get("cost_price") or 0)
-        price = float(s.get("price") or s.get("selling_price") or 0)
-        unit = safe_string(s.get("unit", ""))
-        total_value = qty * cost
-        qty_class = "color: var(--red);" if qty < 5 else ""
-        code = safe_string(s.get("code", "-"))
-        desc = safe_string(s.get("description", "-"))
-        desc_escaped = desc.replace("'", "&#39;")
-        stock_id = s.get("id", "")
-        rows += f'''
-        <tr class="stock-data-row" data-search="{code.lower()} {desc.lower()}" data-category="{safe_string(category)}">
-            <td><strong>{code}</strong></td>
-            <td>{desc}</td>
-            <td style="color:var(--text-muted);font-size:11px;">{safe_string(category)}</td>
-            <td style="{qty_class} text-align:right;">{qty:.0f}</td>
-            <td style="text-align:center;color:var(--text-muted);">{unit}</td>
-            <td style="text-align:right;">{money(cost)}</td>
-            <td style="text-align:right;color:var(--text-muted);">{money(total_value)}</td>
-            <td style="text-align:right;">{money(price)}</td>
-            <td><button class="btn btn-sm" style="background:#8b5cf6;color:white;padding:4px 8px;font-size:11px;" 
-                onclick="showIssueToJob('{stock_id}', '{code}', '{desc_escaped}', {qty}, {cost})">Issue</button></td>
-        </tr>
-        '''
+    # Stats will be calculated client-side after local load
+    stock_value = 0
+    low_stock_count = 0
+    total_qty = 0
+    
+    # Initial rows - show loading state, JS will populate
+    rows = '<tr><td colspan="9" style="text-align:center;padding:40px;"><div style="color:var(--text-muted);"><strong>⟳ Loading stock...</strong></div></td></tr>'
     
     # Stats bar
-    stats_html = ""
-    if total_items > 0:
-        stats_html = f'''
-        <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap;">
-            <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;">
-                <div style="font-size:24px;font-weight:bold;">{total_items}</div>
-                <div style="color:var(--text-muted);font-size:13px;">Items</div>
-            </div>
-            <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;">
-                <div style="font-size:24px;font-weight:bold;">{money(stock_value)}</div>
-                <div style="color:var(--text-muted);font-size:13px;">Stock Value</div>
-            </div>
-            <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;{" border-left:3px solid var(--red);" if low_stock_count > 0 else ""}">
-                <div style="font-size:24px;font-weight:bold;{"color:var(--red);" if low_stock_count > 0 else ""}">{low_stock_count}</div>
-                <div style="color:var(--text-muted);font-size:13px;">Low Stock</div>
-            </div>
+    # Stats - show placeholders, JavaScript will update after loading local data
+    stats_html = f'''
+    <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap;">
+        <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;">
+            <div style="font-size:24px;font-weight:bold;" id="statItems">{total_items}</div>
+            <div style="color:var(--text-muted);font-size:13px;">Items</div>
         </div>
-        '''
+        <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;">
+            <div style="font-size:24px;font-weight:bold;" id="statValue">R0.00</div>
+            <div style="color:var(--text-muted);font-size:13px;">Stock Value</div>
+        </div>
+        <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;" id="statLowStockBox">
+            <div style="font-size:24px;font-weight:bold;" id="statLowStock">0</div>
+            <div style="color:var(--text-muted);font-size:13px;">Low Stock</div>
+        </div>
+    </div>
+    '''
     
-    # Get unique categories for dropdown
-    categories = sorted(set(s.get("category") or "" for s in stock if s.get("category")))
+    # Categories for dropdown - already loaded from database earlier
     category_options = '<option value="">All Categories</option>'
-    for cat in categories:
+    for cat in sorted(categories):
         category_options += f'<option value="{safe_string(cat)}">{safe_string(cat)}</option>'
     
     content = f'''
@@ -13653,7 +13700,10 @@ def stock_page():
     
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
-            <h3 class="card-title" style="margin:0;">Stock ({total_items})</h3>
+            <div style="display:flex;align-items:center;gap:15px;">
+                <h3 class="card-title" style="margin:0;">Stock (<span id="stockCount">{total_items}</span>)</h3>
+                <span id="syncIndicator" style="font-size:12px;color:var(--text-muted);">⟳ Loading...</span>
+            </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                 <input type="text" id="stockSearch" placeholder="🔍 Search code or description..." 
                     oninput="filterStockTable()" 
@@ -13701,120 +13751,224 @@ def stock_page():
                 {rows or "<tr><td colspan='9' style='text-align:center;padding:40px;'><div style='color:var(--text-muted);'><strong>Tip:</strong> No stock items yet!</div><div style='margin-top:10px;'><a href='/import' class='btn btn-primary'>Import from Excel</a> <span style='color:var(--text-muted);margin:0 10px;'>or</span> <a href='/stock/new' class='btn btn-secondary'>Add manually</a></div></td></tr>"}
             </tbody>
         </table>
-        
-        <!-- Pagination info and Load More -->
-        <div id="paginationInfo" style="text-align:center;padding:20px;{'display:none;' if not has_more else ''}">
-            <p style="color:var(--text-muted);margin-bottom:10px;">
-                Showing <span id="showingCount">{showing_count}</span> of <span id="totalCount">{total_count}</span> items
-            </p>
-            <button onclick="loadMoreStock()" class="btn btn-primary" id="loadMoreBtn">
-                Load More
-            </button>
-            <span id="loadingSpinner" style="display:none;color:var(--text-muted);">Loading...</span>
-        </div>
     </div>
     
     <script>
-    let currentOffset = {showing_count};
-    const pageSize = 100;
+    // ═══════════════════════════════════════════════════════════════════
+    // LOCAL-FIRST STOCK PAGE
+    // Data loads from IndexedDB (instant), syncs to cloud in background
+    // ═══════════════════════════════════════════════════════════════════
+    
+    let allStock = [];
     let searchTimeout = null;
     
-    function filterStockTable() {{
-        // For small datasets, use client-side filtering (already loaded)
-        // For search queries, use server-side search
-        const search = document.getElementById('stockSearch').value.toLowerCase().trim();
-        const categoryFilter = document.getElementById('categoryFilter').value;
-        
-        // If searching and we have more items on server, do server-side search
-        if (search.length >= 2 && {total_count} > 100) {{
-            // Debounce server search
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => serverSearch(search, categoryFilter), 300);
-            return;
-        }}
-        
-        // Client-side filtering for loaded items
-        const rows = document.querySelectorAll('.stock-data-row');
-        const categoryHeaders = document.querySelectorAll('.category-header-row');
-        
-        // Track which categories have visible items
-        const visibleCategories = new Set();
-        
-        rows.forEach(row => {{
-            const searchData = row.getAttribute('data-search') || '';
-            const rowCategory = row.getAttribute('data-category') || '';
-            
-            const matchesSearch = !search || searchData.includes(search);
-            const matchesCategory = !categoryFilter || rowCategory === categoryFilter;
-            
-            if (matchesSearch && matchesCategory) {{
-                row.style.display = '';
-                if (rowCategory) visibleCategories.add(rowCategory);
-            }} else {{
-                row.style.display = 'none';
-            }}
-        }});
-        
-        // Show/hide category headers based on visible items
-        categoryHeaders.forEach(header => {{
-            const cat = header.getAttribute('data-category') || '';
-            header.style.display = visibleCategories.has(cat) ? '' : 'none';
-        }});
-        
-        // Show pagination info only if not searching
-        const pagInfo = document.getElementById('paginationInfo');
-        if (pagInfo) pagInfo.style.display = search ? 'none' : '';
-    }}
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', async () => {{
+        await initLocalStock();
+    }});
     
-    async function serverSearch(query, category) {{
+    async function initLocalStock() {{
+        const indicator = document.getElementById('syncIndicator');
         const tbody = document.getElementById('stockTableBody');
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;">Searching...</td></tr>';
+        const countEl = document.getElementById('stockCount');
         
         try {{
-            const params = new URLSearchParams({{q: query, limit: 200}});
-            if (category) params.append('category', category);
+            // Wait for ClickDB to be ready
+            const bizId = document.body.dataset.businessId;
+            if (!bizId) {{
+                indicator.innerHTML = '<span style="color:#ef4444">No business</span>';
+                return;
+            }}
             
-            const resp = await fetch('/api/stock/search?' + params);
-            const data = await resp.json();
+            await ClickDB.init(bizId);
             
-            if (data.success) {{
-                tbody.innerHTML = data.html || '<tr><td colspan="9" style="text-align:center;padding:20px;">No items found</td></tr>';
-                document.getElementById('showingCount').textContent = data.total;
-                document.getElementById('totalCount').textContent = data.total;
-                document.getElementById('paginationInfo').style.display = 'none';
+            // Check if we have local data
+            const hasLocal = await ClickDB.hasLocalData('stock_items');
+            
+            if (hasLocal) {{
+                // INSTANT load from local
+                indicator.innerHTML = '<span style="color:#10b981">⟳ Loading local...</span>';
+                allStock = await ClickDB.stock.getAll();
+                renderStockTable(allStock);
+                updateStats(allStock);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Loaded</span>';
+                
+                // Background sync to get any updates
+                syncInBackground();
+            }} else {{
+                // First time - need to pull from cloud
+                indicator.innerHTML = '<span style="color:#3b82f6">⟳ First sync...</span>';
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;"><div style="color:var(--text-muted);"><strong>⟳ Syncing stock data...</strong></div><div id="syncProgress" style="margin-top:10px;font-size:13px;color:var(--text-muted);">0 items</div></td></tr>';
+                
+                await ClickDB.initialLoad('stock_items', (loaded, total) => {{
+                    document.getElementById('syncProgress').textContent = `${{loaded}} of ${{total}} items`;
+                }});
+                
+                allStock = await ClickDB.stock.getAll();
+                renderStockTable(allStock);
+                updateStats(allStock);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Synced</span>';
             }}
         }} catch (err) {{
-            console.error('Search error:', err);
+            console.error('Init error:', err);
+            indicator.innerHTML = '<span style="color:#ef4444">! Error</span>';
+            // Fallback to server
+            loadFromServer();
         }}
     }}
     
-    async function loadMoreStock() {{
-        const btn = document.getElementById('loadMoreBtn');
-        const spinner = document.getElementById('loadingSpinner');
-        btn.style.display = 'none';
-        spinner.style.display = 'inline';
-        
+    async function syncInBackground() {{
         try {{
-            const resp = await fetch('/api/stock/search?offset=' + currentOffset + '&limit=' + pageSize);
-            const data = await resp.json();
-            
-            if (data.success && data.html) {{
-                const tbody = document.getElementById('stockTableBody');
-                tbody.insertAdjacentHTML('beforeend', data.html);
-                currentOffset += pageSize;
-                
-                document.getElementById('showingCount').textContent = currentOffset;
-                
-                if (!data.has_more) {{
-                    document.getElementById('paginationInfo').style.display = 'none';
+            const newRecords = await ClickDB.pullFromCloud('stock_items');
+            if (newRecords.length > 0) {{
+                allStock = await ClickDB.stock.getAll();
+                // Only re-render if not filtering
+                const search = document.getElementById('stockSearch').value.trim();
+                if (!search) {{
+                    renderStockTable(allStock);
+                    document.getElementById('stockCount').textContent = allStock.length;
                 }}
             }}
         }} catch (err) {{
-            console.error('Load more error:', err);
+            console.log('Background sync skipped:', err.message);
+        }}
+    }}
+    
+    function renderStockTable(items) {{
+        const tbody = document.getElementById('stockTableBody');
+        
+        if (!items || items.length === 0) {{
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;"><div style="color:var(--text-muted);"><strong>No stock items</strong></div><div style="margin-top:10px;"><a href="/import" class="btn btn-primary">Import from Excel</a></div></td></tr>';
+            return;
         }}
         
-        btn.style.display = '';
-        spinner.style.display = 'none';
+        // Sort by category then description
+        items.sort((a, b) => {{
+            const catA = (a.category || 'ZZZ').toLowerCase();
+            const catB = (b.category || 'ZZZ').toLowerCase();
+            if (catA !== catB) return catA.localeCompare(catB);
+            return (a.description || '').localeCompare(b.description || '');
+        }});
+        
+        let html = '';
+        let currentCategory = null;
+        
+        items.forEach(s => {{
+            const category = s.category || '';
+            
+            // Category header
+            if (category !== currentCategory) {{
+                currentCategory = category;
+                if (category) {{
+                    html += `<tr class="category-header-row" data-category="${{escapeHtml(category)}}" style="background:rgba(99,102,241,0.15);">
+                        <td colspan="9" style="padding:10px;font-weight:bold;color:var(--primary);">${{escapeHtml(category)}}</td>
+                    </tr>`;
+                }}
+            }}
+            
+            const qty = parseFloat(s.quantity || s.qty || 0);
+            const cost = parseFloat(s.cost_price || s.cost || 0);
+            const price = parseFloat(s.selling_price || s.price || 0);
+            const unit = s.unit || '';
+            const totalValue = qty * cost;
+            const qtyStyle = qty < 5 ? 'color: var(--red);' : '';
+            const code = s.code || '-';
+            const desc = s.description || '-';
+            const stockId = s.id || '';
+            
+            html += `<tr class="stock-data-row" data-search="${{code.toLowerCase()}} ${{desc.toLowerCase()}}" data-category="${{escapeHtml(category)}}">
+                <td><strong>${{escapeHtml(code)}}</strong></td>
+                <td>${{escapeHtml(desc)}}</td>
+                <td style="color:var(--text-muted);font-size:11px;">${{escapeHtml(category)}}</td>
+                <td style="${{qtyStyle}} text-align:right;">${{qty.toFixed(0)}}</td>
+                <td style="text-align:center;color:var(--text-muted);">${{escapeHtml(unit)}}</td>
+                <td style="text-align:right;">R${{cost.toFixed(2)}}</td>
+                <td style="text-align:right;color:var(--text-muted);">R${{totalValue.toFixed(2)}}</td>
+                <td style="text-align:right;">R${{price.toFixed(2)}}</td>
+                <td><button class="btn btn-sm" style="background:#8b5cf6;color:white;padding:4px 8px;font-size:11px;" 
+                    onclick="showIssueToJob('${{stockId}}', '${{escapeHtml(code)}}', '${{escapeHtml(desc).replace(/'/g, "&#39;")}}', ${{qty}}, ${{cost}})">Issue</button></td>
+            </tr>`;
+        }});
+        
+        tbody.innerHTML = html;
+    }}
+    
+    function updateStats(items) {{
+        // Calculate stats from local data
+        const totalItems = items.length;
+        let stockValue = 0;
+        let lowStockCount = 0;
+        
+        items.forEach(s => {{
+            const qty = parseFloat(s.quantity || s.qty || 0);
+            const cost = parseFloat(s.cost_price || s.cost || 0);
+            stockValue += qty * cost;
+            if (qty < 5) lowStockCount++;
+        }});
+        
+        // Update UI
+        document.getElementById('statItems').textContent = totalItems.toLocaleString();
+        document.getElementById('stockCount').textContent = totalItems.toLocaleString();
+        document.getElementById('statValue').textContent = 'R' + stockValue.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+        document.getElementById('statLowStock').textContent = lowStockCount;
+        
+        // Highlight low stock if > 0
+        const lowBox = document.getElementById('statLowStockBox');
+        if (lowStockCount > 0) {{
+            lowBox.style.borderLeft = '3px solid var(--red)';
+            document.getElementById('statLowStock').style.color = 'var(--red)';
+        }} else {{
+            lowBox.style.borderLeft = 'none';
+            document.getElementById('statLowStock').style.color = '';
+        }}
+    }}
+    
+    function escapeHtml(str) {{
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }}
+    
+    function filterStockTable() {{
+        const search = document.getElementById('stockSearch').value.toLowerCase().trim();
+        const categoryFilter = document.getElementById('categoryFilter').value;
+        
+        if (!search && !categoryFilter) {{
+            // No filter - show all
+            renderStockTable(allStock);
+            return;
+        }}
+        
+        // Filter locally (instant!)
+        let filtered = allStock;
+        
+        if (search) {{
+            filtered = filtered.filter(s => {{
+                const code = (s.code || '').toLowerCase();
+                const desc = (s.description || '').toLowerCase();
+                const cat = (s.category || '').toLowerCase();
+                return code.includes(search) || desc.includes(search) || cat.includes(search);
+            }});
+        }}
+        
+        if (categoryFilter) {{
+            filtered = filtered.filter(s => (s.category || '').toLowerCase() === categoryFilter.toLowerCase());
+        }}
+        
+        renderStockTable(filtered);
+        document.getElementById('stockCount').textContent = filtered.length;
+    }}
+    
+    async function loadFromServer() {{
+        // Fallback if local DB fails
+        try {{
+            const resp = await fetch('/api/stock/search?limit=500');
+            const data = await resp.json();
+            if (data.success) {{
+                document.getElementById('stockTableBody').innerHTML = data.html;
+            }}
+        }} catch (err) {{
+            console.error('Server fallback failed:', err);
+        }}
     }}
     
     function openZaneEdit() {{
@@ -14635,35 +14789,30 @@ def api_stock_zane_edit_apply():
 @app.route("/invoices")
 @login_required
 def invoices_page():
-    """Invoices list"""
+    """Invoices list - LOCAL-FIRST: loads from IndexedDB instantly"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-    invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
-    
-    rows = ""
-    for inv in invoices[:500]:
-        status = inv.get("status", "")
-        status_colors = {"paid": "var(--green)", "delivered": "#3b82f6", "credited": "var(--red)", "outstanding": "var(--orange)", "account": "#f59e0b"}
-        status_color = status_colors.get(status, "var(--text-muted)")
-        rows += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
-            <td><strong>{inv.get("invoice_number", "-")}</strong></td>
-            <td>{inv.get("date", "-")}</td>
-            <td>{safe_string(inv.get("customer_name", "-"))}</td>
-            <td>{money(inv.get("total", 0))}</td>
-            <td style="color:{status_color}">{status}</td>
-        </tr>
-        '''
+    # Quick count only
+    try:
+        count_result = db.table("invoices").select("id", count="exact").eq("business_id", biz_id).execute()
+        total_invoices = count_result.count if hasattr(count_result, 'count') else 0
+    except:
+        total_invoices = 0
     
     content = f'''
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <h3 class="card-title" style="margin:0;">Invoices</h3>
+            <div style="display:flex;align-items:center;gap:15px;">
+                <h3 class="card-title" style="margin:0;">Invoices (<span id="invoiceCount">{total_invoices}</span>)</h3>
+                <span id="syncIndicator" style="font-size:12px;color:var(--text-muted);">⟳ Loading...</span>
+            </div>
             <div style="display: flex; gap: 10px;">
+                <input type="text" id="invoiceSearch" placeholder="🔍 Search..." 
+                    oninput="filterInvoices()" 
+                    style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);width:150px;">
                 <a href="/recurring-invoices" class="btn btn-secondary">🔄 Recurring</a>
                 <a href="/invoice/new" class="btn btn-primary">+ New Invoice</a>
             </div>
@@ -14672,11 +14821,109 @@ def invoices_page():
             <thead>
                 <tr><th>Number</th><th>Date</th><th>Customer</th><th>Amount</th><th>Status</th></tr>
             </thead>
-            <tbody>
-                {rows or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No invoices yet</td></tr>"}
+            <tbody id="invoicesBody">
+                <tr><td colspan="5" style="text-align:center;color:var(--text-muted)">⟳ Loading...</td></tr>
             </tbody>
         </table>
     </div>
+    
+    <script>
+    let allInvoices = [];
+    
+    document.addEventListener('DOMContentLoaded', async () => {{
+        await initLocalInvoices();
+    }});
+    
+    async function initLocalInvoices() {{
+        const indicator = document.getElementById('syncIndicator');
+        const tbody = document.getElementById('invoicesBody');
+        
+        try {{
+            const bizId = document.body.dataset.businessId;
+            if (!bizId) return;
+            
+            await ClickDB.init(bizId);
+            
+            const hasLocal = await ClickDB.hasLocalData('invoices');
+            
+            if (hasLocal) {{
+                indicator.innerHTML = '<span style="color:#10b981">⟳ Loading...</span>';
+                allInvoices = await ClickDB.getAll('invoices');
+                renderInvoices(allInvoices);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Loaded</span>';
+                syncInvoicesBackground();
+            }} else {{
+                indicator.innerHTML = '<span style="color:#3b82f6">⟳ First sync...</span>';
+                await ClickDB.initialLoad('invoices');
+                allInvoices = await ClickDB.getAll('invoices');
+                renderInvoices(allInvoices);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Synced</span>';
+            }}
+        }} catch (err) {{
+            console.error('Init error:', err);
+            indicator.innerHTML = '<span style="color:#ef4444">! Error</span>';
+        }}
+    }}
+    
+    async function syncInvoicesBackground() {{
+        try {{
+            await ClickDB.pullFromCloud('invoices');
+            allInvoices = await ClickDB.getAll('invoices');
+        }} catch (err) {{}}
+    }}
+    
+    function renderInvoices(invoices) {{
+        const tbody = document.getElementById('invoicesBody');
+        const countEl = document.getElementById('invoiceCount');
+        
+        // Sort by date descending
+        invoices.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        countEl.textContent = invoices.length;
+        
+        if (!invoices.length) {{
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">No invoices yet</td></tr>';
+            return;
+        }}
+        
+        const statusColors = {{paid: 'var(--green)', delivered: '#3b82f6', credited: 'var(--red)', outstanding: 'var(--orange)', account: '#f59e0b'}};
+        
+        let html = '';
+        invoices.slice(0, 500).forEach(inv => {{
+            const status = inv.status || '';
+            const statusColor = statusColors[status] || 'var(--text-muted)';
+            const total = parseFloat(inv.total || 0);
+            
+            html += `<tr style="cursor:pointer;" onclick="window.location='/invoice/${{inv.id}}'">
+                <td><strong>${{escapeHtml(inv.invoice_number || '-')}}</strong></td>
+                <td>${{inv.date || '-'}}</td>
+                <td>${{escapeHtml(inv.customer_name || '-')}}</td>
+                <td>R${{total.toFixed(2)}}</td>
+                <td style="color:${{statusColor}}">${{status}}</td>
+            </tr>`;
+        }});
+        
+        tbody.innerHTML = html;
+    }}
+    
+    function filterInvoices() {{
+        const search = document.getElementById('invoiceSearch').value.toLowerCase().trim();
+        if (!search) {{
+            renderInvoices(allInvoices);
+            return;
+        }}
+        const filtered = allInvoices.filter(inv => {{
+            const num = (inv.invoice_number || '').toLowerCase();
+            const cust = (inv.customer_name || '').toLowerCase();
+            return num.includes(search) || cust.includes(search);
+        }});
+        renderInvoices(filtered);
+    }}
+    
+    function escapeHtml(str) {{
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }}
+    </script>
     '''
     
     return render_page("Invoices", content, user, "invoices")
@@ -15900,7 +16147,7 @@ def api_recurring_delete(recurring_id):
 @app.route("/suppliers")
 @login_required
 def suppliers_page():
-    """Suppliers list with accordion - click to see transactions"""
+    """Suppliers list - LOCAL-FIRST: loads from IndexedDB instantly"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -15910,109 +16157,13 @@ def suppliers_page():
     role = get_user_role()
     can_see_balances = role in ["owner", "admin", "manager", "bookkeeper", "accountant"]
     
-    suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-    suppliers = sorted(suppliers, key=lambda x: x.get("name", "").lower())
-    
-    # Get all supplier invoices and payments for lookup
-    all_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-    all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
-    
-    # Summary stats - only show if can see balances
-    total_suppliers = len(suppliers)
-    creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
-    total_owed = sum(float(s.get("balance", 0)) for s in creditors) if can_see_balances else 0
-    
-    # Build accordion rows
-    suppliers_html = ""
-    for s in suppliers:
-        sup_id = s.get("id")
-        balance = float(s.get("balance", 0))
-        balance_color = "var(--orange)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
-        
-        # Balance display - hide for staff
-        balance_display = money(balance) if can_see_balances else "---"
-        
-        # Get transactions for this supplier
-        sup_invoices = [inv for inv in all_invoices if inv.get("supplier_id") == sup_id]
-        sup_invoices = sorted(sup_invoices, key=lambda x: x.get("date", ""), reverse=True)
-        sup_payments = [p for p in all_payments if p.get("supplier_id") == sup_id]
-        sup_payments = sorted(sup_payments, key=lambda x: x.get("date", ""), reverse=True)
-        
-        # Date cutoff - 12 months ago
-        from datetime import datetime, timedelta
-        cutoff_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-        
-        # Build transactions list - only if can see balances
-        trans_rows = ""
-        
-        if can_see_balances:
-            # ALL unpaid invoices (no date limit) + paid invoices from last 12 months
-            unpaid_invs = [inv for inv in sup_invoices if inv.get("status") != "paid"]
-            paid_recent = [inv for inv in sup_invoices if inv.get("status") == "paid" and inv.get("date", "") >= cutoff_date]
-            show_invoices = unpaid_invs + paid_recent
-            show_invoices = sorted(show_invoices, key=lambda x: x.get("date", ""), reverse=True)
-            
-            for inv in show_invoices:
-                status = inv.get("status", "unpaid")
-                status_color = "var(--green)" if status == "paid" else "var(--orange)"
-                trans_rows += f'''
-                <tr style="cursor:pointer;" onclick="window.location='/supplier-invoice/{inv.get("id")}'">
-                    <td>{inv.get("date", "-")}</td>
-                    <td>Invoice {inv.get("invoice_number", "-")}</td>
-                    <td style="text-align:right;color:var(--orange);">{money(inv.get("total", 0))}</td>
-                    <td style="color:{status_color};">{status}</td>
-                </tr>
-                '''
-            
-            # Payments from last 12 months only
-            recent_payments = [p for p in sup_payments if p.get("date", "") >= cutoff_date]
-            for p in recent_payments:
-                trans_rows += f'''
-                <tr>
-                    <td>{p.get("date", "-")}</td>
-                    <td>Payment ({p.get("method", "EFT")})</td>
-                    <td style="text-align:right;color:var(--green);">-{money(p.get("amount", 0))}</td>
-                    <td style="color:var(--green);">paid</td>
-                </tr>
-                '''
-            
-            trans_count = len(unpaid_invs) + len(paid_recent) + len(recent_payments)
-        else:
-            trans_count = 0
-        
-        suppliers_html += f'''
-        <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-            <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
-                    <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(s.get("code", ""))}</span>
-                    <span><strong>{safe_string(s.get("name", "-"))}</strong></span>
-                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("contact_name", ""))}</span>
-                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span>
-                    <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(s.get("email", ""))}</span>
-                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("vat_number", ""))}</span>
-                    <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
-                    <span style="text-align:right;">
-                        <a href="/supplier/{sup_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
-                    </span>
-                </div>
-            </summary>
-            <div style="padding:0 10px 8px 10px;">
-                {f"""<table class="table" style="font-size:11px;">
-                    <thead>
-                        <tr>
-                            <th style="padding:4px;">Date</th>
-                            <th style="padding:4px;">Description</th>
-                            <th style="padding:4px;text-align:right;">Amount</th>
-                            <th style="padding:4px;">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {trans_rows}
-                    </tbody>
-                </table>""" if trans_rows else "<p style='color:var(--text-muted);text-align:center;padding:10px;'>No transactions yet</p>"}
-            </div>
-        </details>
-        '''
+    # LOCAL-FIRST: Don't load data server-side
+    # Quick count only
+    try:
+        count_result = db.table("suppliers").select("id", count="exact").eq("business_id", biz_id).execute()
+        total_suppliers = count_result.count if hasattr(count_result, 'count') else 0
+    except:
+        total_suppliers = 0
     
     # Sticky header
     header_row = '''
@@ -16030,26 +16181,156 @@ def suppliers_page():
     </div>
     '''
     
-    summary_html = ""
-    if total_owed > 0 and can_see_balances:
-        summary_html = f'''
-        <div style="background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.3); padding:10px 15px; border-radius: 8px; margin-bottom: 15px;font-size:13px;">
-            <strong>{len(creditors)} suppliers</strong> - we owe a total of <strong style="color: var(--orange);">{money(total_owed)}</strong>
-        </div>
-        '''
-    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-        <h2 style="margin:0;">Suppliers ({total_suppliers})</h2>
-        <a href="/supplier/new" class="btn btn-primary">+ Add Supplier</a>
+        <div style="display:flex;align-items:center;gap:15px;">
+            <h2 style="margin:0;">Suppliers (<span id="supplierCount">{total_suppliers}</span>)</h2>
+            <span id="syncIndicator" style="font-size:12px;color:var(--text-muted);">⟳ Loading...</span>
+        </div>
+        <div style="display:flex;gap:10px;">
+            <input type="text" id="supplierSearch" placeholder="🔍 Search..." 
+                oninput="filterSuppliers()" 
+                style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);width:200px;">
+            <a href="/supplier/new" class="btn btn-primary">+ Add Supplier</a>
+        </div>
     </div>
     
-    {summary_html}
+    <div id="summaryBox" style="display:none;background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.3); padding:10px 15px; border-radius: 8px; margin-bottom: 15px;font-size:13px;">
+        <strong id="creditorCount">0</strong> suppliers - we owe a total of <strong style="color: var(--orange);" id="totalOwed">R0.00</strong>
+    </div>
     
     <p style="color:var(--text-muted);margin-bottom:10px;font-size:12px;">Click on a supplier to see transactions</p>
     
     {header_row}
-    {suppliers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No suppliers yet! Add suppliers to track purchases and creditors.</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/supplier/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
+    <div id="suppliersContainer">
+        <div class="card" style="text-align:center;padding:40px;">
+            <p style="color:var(--text-muted);">⟳ Loading suppliers...</p>
+        </div>
+    </div>
+    
+    <script>
+    let allSuppliers = [];
+    const canSeeBalances = {'true' if can_see_balances else 'false'};
+    
+    document.addEventListener('DOMContentLoaded', async () => {{
+        await initLocalSuppliers();
+    }});
+    
+    async function initLocalSuppliers() {{
+        const indicator = document.getElementById('syncIndicator');
+        const container = document.getElementById('suppliersContainer');
+        
+        try {{
+            const bizId = document.body.dataset.businessId;
+            if (!bizId) return;
+            
+            await ClickDB.init(bizId);
+            
+            const hasLocal = await ClickDB.hasLocalData('suppliers');
+            
+            if (hasLocal) {{
+                indicator.innerHTML = '<span style="color:#10b981">⟳ Loading...</span>';
+                allSuppliers = await ClickDB.suppliers.getAll();
+                renderSuppliers(allSuppliers);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Loaded</span>';
+                syncSuppliersBackground();
+            }} else {{
+                indicator.innerHTML = '<span style="color:#3b82f6">⟳ First sync...</span>';
+                await ClickDB.initialLoad('suppliers', (loaded, total) => {{
+                    container.innerHTML = `<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);">⟳ Syncing... ${{loaded}} of ${{total}}</p></div>`;
+                }});
+                allSuppliers = await ClickDB.suppliers.getAll();
+                renderSuppliers(allSuppliers);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Synced</span>';
+            }}
+        }} catch (err) {{
+            console.error('Init error:', err);
+            indicator.innerHTML = '<span style="color:#ef4444">! Error</span>';
+        }}
+    }}
+    
+    async function syncSuppliersBackground() {{
+        try {{
+            await ClickDB.pullFromCloud('suppliers');
+            allSuppliers = await ClickDB.suppliers.getAll();
+        }} catch (err) {{}}
+    }}
+    
+    function renderSuppliers(suppliers) {{
+        const container = document.getElementById('suppliersContainer');
+        const countEl = document.getElementById('supplierCount');
+        
+        suppliers.sort((a, b) => (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()));
+        countEl.textContent = suppliers.length;
+        
+        // Stats
+        if (canSeeBalances) {{
+            const creditors = suppliers.filter(s => parseFloat(s.balance || 0) > 0);
+            const totalOwed = creditors.reduce((sum, s) => sum + parseFloat(s.balance || 0), 0);
+            if (totalOwed > 0) {{
+                document.getElementById('summaryBox').style.display = 'block';
+                document.getElementById('creditorCount').textContent = creditors.length;
+                document.getElementById('totalOwed').textContent = 'R' + totalOwed.toFixed(2);
+            }}
+        }}
+        
+        if (!suppliers.length) {{
+            container.innerHTML = `<div class="card" style="text-align:center;padding:40px;">
+                <p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No suppliers yet!</p>
+                <div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/supplier/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div>
+            </div>`;
+            return;
+        }}
+        
+        let html = '';
+        suppliers.forEach(s => {{
+            const balance = parseFloat(s.balance || 0);
+            const balanceColor = balance > 0 ? 'var(--orange)' : balance < 0 ? 'var(--green)' : 'var(--text-muted)';
+            const balanceDisplay = canSeeBalances ? 'R' + balance.toFixed(2) : '---';
+            
+            html += `<details style="background:var(--card);border-radius:6px;margin-bottom:4px;" data-search="${{(s.name || '').toLowerCase()}} ${{(s.code || '').toLowerCase()}}">
+                <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
+                    <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
+                        <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">${{escapeHtml(s.code || '')}}</span>
+                        <span><strong>${{escapeHtml(s.name || '-')}}</strong></span>
+                        <span style="color:var(--text-muted);font-size:11px;">${{escapeHtml(s.contact_name || '')}}</span>
+                        <span style="color:var(--text-muted);font-size:11px;">${{escapeHtml(s.phone || '')}}</span>
+                        <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${{escapeHtml(s.email || '')}}</span>
+                        <span style="color:var(--text-muted);font-size:11px;">${{escapeHtml(s.vat_number || '')}}</span>
+                        <span style="text-align:right;color:${{canSeeBalances ? balanceColor : 'var(--text-muted)'}};font-weight:bold;">${{balanceDisplay}}</span>
+                        <span style="text-align:right;">
+                            <a href="/supplier/${{s.id}}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
+                        </span>
+                    </div>
+                </summary>
+                <div style="padding:0 10px 8px 10px;">
+                    <p style="color:var(--text-muted);text-align:center;padding:10px;font-size:12px;">Click "View" to see full transaction history</p>
+                </div>
+            </details>`;
+        }});
+        
+        container.innerHTML = html;
+    }}
+    
+    function filterSuppliers() {{
+        const search = document.getElementById('supplierSearch').value.toLowerCase().trim();
+        if (!search) {{
+            renderSuppliers(allSuppliers);
+            return;
+        }}
+        const filtered = allSuppliers.filter(s => {{
+            const name = (s.name || '').toLowerCase();
+            const code = (s.code || '').toLowerCase();
+            return name.includes(search) || code.includes(search);
+        }});
+        renderSuppliers(filtered);
+    }}
+    
+    function escapeHtml(str) {{
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }}
+    </script>
     '''
     
     return render_page("Suppliers", content, user, "suppliers")
@@ -16463,44 +16744,137 @@ def supplier_edit(supplier_id):
 @app.route("/quotes")
 @login_required  
 def quotes_page():
-    """Quotes list"""
+    """Quotes list - LOCAL-FIRST: loads from IndexedDB instantly"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
-    quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
-    
-    rows = ""
-    for q in quotes[:500]:
-        status = q.get("status", "pending")
-        status_color = "var(--green)" if status == "accepted" else "var(--red)" if status == "declined" else "var(--orange)"
-        rows += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/quote/{q.get("id")}'">
-            <td><strong>{q.get("quote_number", "-")}</strong></td>
-            <td>{q.get("date", "-")}</td>
-            <td>{safe_string(q.get("customer_name", "-"))}</td>
-            <td>{money(q.get("total", 0))}</td>
-            <td style="color:{status_color};">{status}</td>
-        </tr>
-        '''
+    # Quick count only
+    try:
+        count_result = db.table("quotes").select("id", count="exact").eq("business_id", biz_id).execute()
+        total_quotes = count_result.count if hasattr(count_result, 'count') else 0
+    except:
+        total_quotes = 0
     
     content = f'''
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <h3 class="card-title" style="margin:0;">Quotes</h3>
-            <a href="/quote/new" class="btn btn-primary">+ New Quote</a>
+            <div style="display:flex;align-items:center;gap:15px;">
+                <h3 class="card-title" style="margin:0;">Quotes (<span id="quoteCount">{total_quotes}</span>)</h3>
+                <span id="syncIndicator" style="font-size:12px;color:var(--text-muted);">⟳ Loading...</span>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <input type="text" id="quoteSearch" placeholder="🔍 Search..." 
+                    oninput="filterQuotes()" 
+                    style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);width:150px;">
+                <a href="/quote/new" class="btn btn-primary">+ New Quote</a>
+            </div>
         </div>
         <table class="table">
             <thead>
                 <tr><th>Number</th><th>Date</th><th>Customer</th><th>Amount</th><th>Status</th></tr>
             </thead>
-            <tbody>
-                {rows or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No quotes yet</td></tr>"}
+            <tbody id="quotesBody">
+                <tr><td colspan="5" style="text-align:center;color:var(--text-muted)">⟳ Loading...</td></tr>
             </tbody>
         </table>
     </div>
+    
+    <script>
+    let allQuotes = [];
+    
+    document.addEventListener('DOMContentLoaded', async () => {{
+        await initLocalQuotes();
+    }});
+    
+    async function initLocalQuotes() {{
+        const indicator = document.getElementById('syncIndicator');
+        const tbody = document.getElementById('quotesBody');
+        
+        try {{
+            const bizId = document.body.dataset.businessId;
+            if (!bizId) return;
+            
+            await ClickDB.init(bizId);
+            
+            const hasLocal = await ClickDB.hasLocalData('quotes');
+            
+            if (hasLocal) {{
+                indicator.innerHTML = '<span style="color:#10b981">⟳ Loading...</span>';
+                allQuotes = await ClickDB.getAll('quotes');
+                renderQuotes(allQuotes);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Loaded</span>';
+                syncQuotesBackground();
+            }} else {{
+                indicator.innerHTML = '<span style="color:#3b82f6">⟳ First sync...</span>';
+                await ClickDB.initialLoad('quotes');
+                allQuotes = await ClickDB.getAll('quotes');
+                renderQuotes(allQuotes);
+                indicator.innerHTML = '<span style="color:#10b981">✓ Synced</span>';
+            }}
+        }} catch (err) {{
+            console.error('Init error:', err);
+            indicator.innerHTML = '<span style="color:#ef4444">! Error</span>';
+        }}
+    }}
+    
+    async function syncQuotesBackground() {{
+        try {{
+            await ClickDB.pullFromCloud('quotes');
+            allQuotes = await ClickDB.getAll('quotes');
+        }} catch (err) {{}}
+    }}
+    
+    function renderQuotes(quotes) {{
+        const tbody = document.getElementById('quotesBody');
+        const countEl = document.getElementById('quoteCount');
+        
+        quotes.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        countEl.textContent = quotes.length;
+        
+        if (!quotes.length) {{
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">No quotes yet</td></tr>';
+            return;
+        }}
+        
+        let html = '';
+        quotes.slice(0, 500).forEach(q => {{
+            const status = q.status || 'pending';
+            const statusColor = status === 'accepted' ? 'var(--green)' : status === 'declined' ? 'var(--red)' : 'var(--orange)';
+            const total = parseFloat(q.total || 0);
+            
+            html += `<tr style="cursor:pointer;" onclick="window.location='/quote/${{q.id}}'">
+                <td><strong>${{escapeHtml(q.quote_number || '-')}}</strong></td>
+                <td>${{q.date || '-'}}</td>
+                <td>${{escapeHtml(q.customer_name || '-')}}</td>
+                <td>R${{total.toFixed(2)}}</td>
+                <td style="color:${{statusColor}};">${{status}}</td>
+            </tr>`;
+        }});
+        
+        tbody.innerHTML = html;
+    }}
+    
+    function filterQuotes() {{
+        const search = document.getElementById('quoteSearch').value.toLowerCase().trim();
+        if (!search) {{
+            renderQuotes(allQuotes);
+            return;
+        }}
+        const filtered = allQuotes.filter(q => {{
+            const num = (q.quote_number || '').toLowerCase();
+            const cust = (q.customer_name || '').toLowerCase();
+            return num.includes(search) || cust.includes(search);
+        }});
+        renderQuotes(filtered);
+    }}
+    
+    function escapeHtml(str) {{
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }}
+    </script>
     '''
     
     return render_page("Quotes", content, user, "quotes")
@@ -46697,6 +47071,206 @@ def api_mobile_save():
 # Added: SARS eFiling, WhatsApp, Audit Trail, Cash Flow AI, Collections,
 #        Bank Import, Customer Portal, Accountant Access
 # ============================================================================
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOCAL-FIRST SYNC APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+# These endpoints enable the local-first architecture:
+# - Browser has local IndexedDB copy of data
+# - Pull: Get data from cloud to local
+# - Push: Send local changes to cloud
+# - Result: Instant UI, background sync
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/sync/pull")
+@login_required
+def api_sync_pull():
+    """Pull records from cloud to local database"""
+    
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    table = request.args.get("table", "")
+    since = request.args.get("since")  # ISO timestamp for incremental sync
+    offset = int(request.args.get("offset", 0))
+    limit = int(request.args.get("limit", 500))
+    
+    # Validate table name
+    allowed_tables = ["stock_items", "stock", "customers", "suppliers", "invoices", "quotes", "receipts", "jobs"]
+    if table not in allowed_tables:
+        return jsonify({"success": False, "error": f"Invalid table: {table}"})
+    
+    try:
+        # Build query
+        query = db.table(table).select("*").eq("business_id", biz_id)
+        
+        # Incremental sync - only records updated since last pull
+        if since:
+            query = query.gte("updated_at", since)
+        
+        # Pagination
+        query = query.range(offset, offset + limit - 1)
+        
+        result = query.execute()
+        records = result.data if result.data else []
+        
+        # Get total count for progress
+        count_result = db.table(table).select("id", count="exact").eq("business_id", biz_id).execute()
+        total = count_result.count if hasattr(count_result, 'count') else len(records)
+        
+        return jsonify({
+            "success": True,
+            "table": table,
+            "records": records,
+            "count": len(records),
+            "total": total,
+            "offset": offset,
+            "has_more": (offset + limit) < total
+        })
+        
+    except Exception as e:
+        logger.error(f"[SYNC] Pull error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/sync/push", methods=["POST"])
+@login_required
+def api_sync_push():
+    """Push single record from local to cloud"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    data = request.get_json()
+    table = data.get("table", "")
+    record = data.get("record", {})
+    
+    # Validate
+    allowed_tables = ["stock_items", "customers", "suppliers", "invoices", "quotes", "receipts", "jobs"]
+    if table not in allowed_tables:
+        return jsonify({"success": False, "error": f"Invalid table: {table}"})
+    
+    if not record or not record.get("id"):
+        return jsonify({"success": False, "error": "Invalid record"})
+    
+    # Ensure business_id matches
+    record["business_id"] = biz_id
+    record["updated_at"] = now()
+    
+    # Remove local-only fields
+    record.pop("sync_status", None)
+    
+    try:
+        # Check if delete
+        if record.get("deleted_at"):
+            db.table(table).delete().eq("id", record["id"]).execute()
+            logger.info(f"[SYNC] Deleted {table}/{record['id']}")
+        else:
+            # Upsert
+            db.table(table).upsert(record).execute()
+            logger.info(f"[SYNC] Upserted {table}/{record['id']}")
+        
+        return jsonify({"success": True, "id": record["id"]})
+        
+    except Exception as e:
+        logger.error(f"[SYNC] Push error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/sync/push-batch", methods=["POST"])
+@login_required
+def api_sync_push_batch():
+    """Push multiple records from local to cloud"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    data = request.get_json()
+    table = data.get("table", "")
+    records = data.get("records", [])
+    
+    # Validate
+    allowed_tables = ["stock_items", "customers", "suppliers", "invoices", "quotes", "receipts", "jobs"]
+    if table not in allowed_tables:
+        return jsonify({"success": False, "error": f"Invalid table: {table}"})
+    
+    if not records:
+        return jsonify({"success": True, "synced": 0})
+    
+    try:
+        to_upsert = []
+        to_delete = []
+        
+        for record in records:
+            record["business_id"] = biz_id
+            record["updated_at"] = now()
+            record.pop("sync_status", None)
+            
+            if record.get("deleted_at"):
+                to_delete.append(record["id"])
+            else:
+                to_upsert.append(record)
+        
+        # Batch upsert
+        if to_upsert:
+            db.table(table).upsert(to_upsert).execute()
+            logger.info(f"[SYNC] Batch upserted {len(to_upsert)} {table} records")
+        
+        # Batch delete
+        for rid in to_delete:
+            db.table(table).delete().eq("id", rid).execute()
+        if to_delete:
+            logger.info(f"[SYNC] Batch deleted {len(to_delete)} {table} records")
+        
+        return jsonify({
+            "success": True, 
+            "synced": len(to_upsert),
+            "deleted": len(to_delete)
+        })
+        
+    except Exception as e:
+        logger.error(f"[SYNC] Batch push error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/sync/status")
+@login_required  
+def api_sync_status():
+    """Get sync status and counts for all tables"""
+    
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    tables = ["stock_items", "customers", "suppliers", "invoices", "quotes"]
+    counts = {}
+    
+    for table in tables:
+        try:
+            result = db.table(table).select("id", count="exact").eq("business_id", biz_id).execute()
+            counts[table] = result.count if hasattr(result, 'count') else 0
+        except:
+            counts[table] = 0
+    
+    return jsonify({
+        "success": True,
+        "counts": counts,
+        "timestamp": now()
+    })
 
 
 # 
