@@ -4883,7 +4883,7 @@ When user confirms with "ja delete X" or "yes delete X", send with confirmed: tr
 
 33. **SET_BOLT_PRICING** - "Price bolts at R200/kg" / "Set bolt tiers M3-M6 R300/kg, M8-M12 R250/kg"
     Sets weight-based pricing for fasteners (bolts, nuts, washers)
-    Optional: tiers (dict with tier prices, e.g., {"M3-M6": 300, "M6-M12": 250, "M12-M16": 200, "M16-M24": 170, "M24+": 140})
+    Optional: tiers (dict with tier prices, e.g., M3-M6: 300, M6-M12: 250, M12-M16: 200, M16-M24: 170, M24+: 140)
     Optional: single_price (R/kg to apply to ALL fasteners regardless of size)
     Example: "Price all bolts at R205/kg" → single_price: 205
     Example: "Set bolt tiers: M3-M6 R300, M8-M12 R250, M12-M16 R170, M16+ R140" → tiers dict
