@@ -8228,7 +8228,7 @@ class Actions:
             return {"success": False, "message": "No business selected"}
         
         # Get saved tiers or use defaults
-        business = db.first("businesses", {"id": biz_id})
+        business = db.get_one("businesses", biz_id)
         tiers_json = business.get("bolt_pricing_tiers") if business else None
         
         if tiers_json:
@@ -8347,7 +8347,7 @@ class Actions:
         # Get custom tiers if saved
         custom_tiers = None
         if biz_id:
-            business = db.first("businesses", {"id": biz_id})
+            business = db.get_one("businesses", biz_id)
             tiers_json = business.get("bolt_pricing_tiers") if business else None
             if tiers_json:
                 try:
