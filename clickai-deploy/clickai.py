@@ -88,6 +88,526 @@ class fulltech_addon:
         "4509": 7.9, "Aluminium": 2.7,
     }
     
+    # ==================== BOLT/FASTENER WEIGHT-BASED PRICING ====================
+    # Standard hex bolt weights in GRAMS (DIN 933 / ISO 4017)
+    # Format: {thread_size: {length: weight_grams}}
+    BOLT_WEIGHTS = {
+        3: {6: 0.8, 8: 1.0, 10: 1.2, 12: 1.4, 16: 1.8, 20: 2.2, 25: 2.7, 30: 3.2},
+        4: {8: 1.8, 10: 2.1, 12: 2.5, 16: 3.2, 20: 3.9, 25: 4.8, 30: 5.6, 40: 7.3},
+        5: {10: 3.2, 12: 3.8, 16: 4.8, 20: 5.9, 25: 7.2, 30: 8.5, 40: 11.0, 50: 13.5},
+        6: {10: 4.8, 12: 5.6, 16: 7.0, 20: 8.5, 25: 10.3, 30: 12.0, 40: 15.5, 50: 19.0, 60: 22.5},
+        8: {16: 12.0, 20: 14.5, 25: 17.5, 30: 21.0, 35: 24.0, 40: 27.5, 50: 34.0, 60: 41.0, 70: 48.0, 80: 55.0},
+        10: {20: 22.0, 25: 26.0, 30: 30.0, 35: 34.0, 40: 38.0, 50: 47.0, 60: 55.0, 70: 64.0, 80: 72.0, 100: 89.0},
+        12: {25: 40.0, 30: 46.0, 35: 52.0, 40: 58.0, 50: 68.0, 60: 80.0, 70: 92.0, 80: 104.0, 100: 128.0, 120: 152.0},
+        14: {30: 68.0, 40: 82.0, 50: 97.0, 60: 112.0, 70: 127.0, 80: 142.0, 100: 172.0},
+        16: {30: 85.0, 40: 103.0, 50: 120.0, 60: 138.0, 70: 155.0, 80: 173.0, 100: 208.0, 120: 243.0, 150: 296.0},
+        18: {40: 145.0, 50: 168.0, 60: 190.0, 70: 213.0, 80: 235.0, 100: 280.0},
+        20: {40: 175.0, 50: 203.0, 60: 230.0, 70: 258.0, 80: 285.0, 100: 340.0, 120: 395.0, 150: 478.0},
+        22: {50: 268.0, 60: 302.0, 70: 335.0, 80: 369.0, 100: 436.0},
+        24: {50: 330.0, 60: 370.0, 70: 410.0, 80: 450.0, 100: 530.0, 120: 610.0, 150: 730.0},
+        27: {60: 530.0, 80: 630.0, 100: 730.0},
+        30: {60: 660.0, 80: 780.0, 100: 900.0, 120: 1020.0, 150: 1200.0},
+    }
+    
+    # Nut weights in grams (standard hex nuts)
+    NUT_WEIGHTS = {3: 0.6, 4: 1.2, 5: 2.0, 6: 3.2, 8: 6.8, 10: 12.0, 12: 21.0, 14: 32.0, 
+                   16: 47.0, 18: 64.0, 20: 88.0, 22: 114.0, 24: 147.0, 27: 207.0, 30: 282.0}
+    
+    # Washer weights in grams (standard flat washers)
+    WASHER_WEIGHTS = {3: 0.3, 4: 0.5, 5: 1.0, 6: 1.5, 8: 3.5, 10: 6.0, 12: 10.5, 14: 16.0,
+                      16: 22.0, 18: 32.0, 20: 45.0, 22: 55.0, 24: 73.0, 27: 100.0, 30: 130.0}
+    
+    # ==================== IMPERIAL FASTENER WEIGHTS (UNC/UNF) ====================
+    # Weights in GRAMS - UNC (Unified National Coarse) hex bolts
+    # Format: {"size_fraction": {length_inches: weight_grams}}
+    UNC_BOLT_WEIGHTS = {
+        "1/4": {0.5: 4.5, 0.75: 6.0, 1.0: 7.8, 1.25: 9.5, 1.5: 11.2, 2.0: 14.5},
+        "5/16": {0.5: 7.5, 0.75: 10.0, 1.0: 12.5, 1.25: 15.2, 1.5: 18.0, 2.0: 23.5},
+        "3/8": {0.75: 15.0, 1.0: 19.0, 1.25: 23.0, 1.5: 27.0, 2.0: 35.0, 2.5: 43.0, 3.0: 51.0},
+        "7/16": {1.0: 28.0, 1.25: 33.0, 1.5: 39.0, 2.0: 50.0, 2.5: 61.0, 3.0: 72.0},
+        "1/2": {1.0: 38.0, 1.25: 46.0, 1.5: 54.0, 2.0: 70.0, 2.5: 86.0, 3.0: 102.0, 4.0: 134.0},
+        "5/8": {1.5: 92.0, 2.0: 115.0, 2.5: 140.0, 3.0: 165.0, 4.0: 215.0},
+        "3/4": {1.5: 140.0, 2.0: 175.0, 2.5: 212.0, 3.0: 250.0, 4.0: 325.0, 5.0: 400.0},
+        "7/8": {2.0: 265.0, 2.5: 318.0, 3.0: 372.0, 4.0: 480.0, 5.0: 588.0},
+        "1": {2.0: 360.0, 2.5: 430.0, 3.0: 500.0, 4.0: 640.0, 5.0: 780.0, 6.0: 920.0},
+    }
+    
+    # UNC Nut weights in grams
+    UNC_NUT_WEIGHTS = {
+        "1/4": 4.5, "5/16": 8.0, "3/8": 14.0, "7/16": 20.0, "1/2": 30.0,
+        "5/8": 55.0, "3/4": 95.0, "7/8": 145.0, "1": 210.0
+    }
+    
+    # UNC Washer weights in grams  
+    UNC_WASHER_WEIGHTS = {
+        "1/4": 2.5, "5/16": 4.0, "3/8": 7.0, "7/16": 10.0, "1/2": 14.0,
+        "5/8": 25.0, "3/4": 42.0, "7/8": 60.0, "1": 85.0
+    }
+    
+    # Imperial size to approximate metric equivalent (for tier pricing)
+    IMPERIAL_TO_METRIC = {
+        "1/4": 6, "5/16": 8, "3/8": 10, "7/16": 11, "1/2": 12,
+        "5/8": 16, "3/4": 19, "7/8": 22, "1": 25, "1-1/8": 28, "1-1/4": 32
+    }
+    
+    # ==================== MATERIAL MARKUPS ====================
+    # Base price is for plain mild steel / black
+    # These are PERCENTAGE markups to add on top
+    DEFAULT_MATERIAL_MARKUPS = {
+        # Stainless Steel grades
+        "SS": 50.0,       # Stainless steel +50%
+        "S/S": 50.0,
+        "STAINLESS": 50.0,
+        "304": 50.0,
+        "316": 65.0,      # 316 marine grade even more
+        "A2": 50.0,
+        "A4": 65.0,
+        
+        # Mild steel with finish
+        "GALV": 15.0,     # Galvanized +15%
+        "HDG": 20.0,      # Hot dip galv +20%
+        "ZINC": 10.0,     # Zinc plated +10%
+        "ZP": 10.0,
+        "BZP": 10.0,      # Bright zinc plated
+        "YZP": 12.0,      # Yellow zinc plated
+        
+        # Brass
+        "BRASS": 80.0,
+        
+        # High tensile grades
+        "8.8": 10.0,      # Grade 8.8 +10%
+        "10.9": 20.0,     # Grade 10.9 +20%
+        "12.9": 30.0,     # Grade 12.9 +30%
+        "HT": 15.0,       # High tensile generic
+        
+        # Thread types (imperial premium)
+        "UNC": 20.0,      # Unified National Coarse +20%
+        "UNF": 25.0,      # Unified National Fine +25%
+        "BSW": 25.0,      # British Standard Whitworth +25%
+        "BSF": 30.0,      # British Standard Fine +30%
+        
+        # Metric Fine thread
+        "MF": 15.0,       # Metric Fine +15% (fyner draad)
+        "FINE": 15.0,     # Fine thread generic
+        
+        # Rare/uncommon sizes
+        "M7": 50.0,       # M7 is skaars +50%
+        "RARE": 50.0,     # Generic rare size markup
+    }
+    
+    # Rare metric sizes that get automatic markup
+    RARE_METRIC_SIZES = [7, 9, 11, 13, 15, 17, 19, 21, 23, 26, 28, 29]  # Uncommon M sizes
+    
+    # Default pricing tiers (R per kg) - can be customized per business
+    DEFAULT_BOLT_TIERS = {
+        "M3-M6": 300.0,    # Small fasteners - more handling
+        "M6-M12": 250.0,   # Medium - standard
+        "M12-M16": 200.0,  # Large - less handling  
+        "M16-M24": 170.0,  # Very large
+        "M24+": 140.0      # Extra large - bulk pricing
+    }
+    
+    @classmethod
+    def parse_bolt_size(cls, description: str) -> dict:
+        """
+        Parse bolt/nut/washer description to extract size, length, material, thread type
+        Returns dict with: {
+            'system': 'metric' or 'imperial',
+            'size': int (M size) or str (imperial fraction like '1/2'),
+            'length': int/float or None,
+            'fastener_type': 'bolt', 'nut', 'washer',
+            'materials': list of detected materials/finishes,
+            'thread_type': 'standard', 'UNC', 'UNF', 'BSW', 'MF', etc.,
+            'is_rare_size': bool (M7, M9, etc.),
+            'success': bool
+        }
+        Examples:
+            "M12x70 HEX BOLT SS" -> metric, M12, 70mm, stainless
+            "1/2 x 2 UNC BOLT GALV" -> imperial, 1/2", 2", UNC, galvanized
+            "M8 NUT ZINC" -> metric, M8, nut, zinc plated
+            "M7x30 HEX BOLT" -> metric, M7, rare size
+            "M10x1.25x50 MF BOLT" -> metric fine thread
+        """
+        import re
+        desc = description.upper()
+        result = {
+            'system': None,
+            'size': None,
+            'length': None,
+            'fastener_type': 'bolt',
+            'materials': [],
+            'thread_type': 'standard',
+            'is_rare_size': False,
+            'success': False
+        }
+        
+        # Determine fastener type
+        if any(x in desc for x in ['NUT', 'NYLOC', 'NYLOCK', 'LOCKNUT', 'MOER']):
+            result['fastener_type'] = 'nut'
+        elif any(x in desc for x in ['WASHER', 'WASS', 'WASSER']):
+            result['fastener_type'] = 'washer'
+        
+        # Detect thread type - check MF (Metric Fine) first
+        if any(x in desc for x in [' MF ', 'MF ', ' MF', '/MF', 'METRIC FINE', 'FINE THREAD', 'FYNDRAAD']):
+            result['thread_type'] = 'MF'
+        elif 'X1.' in desc or 'X0.' in desc:  # Fine pitch indicator like M10x1.25
+            result['thread_type'] = 'MF'
+        elif 'UNC' in desc:
+            result['thread_type'] = 'UNC'
+        elif 'UNF' in desc:
+            result['thread_type'] = 'UNF'
+        elif 'BSW' in desc:
+            result['thread_type'] = 'BSW'
+        elif 'BSF' in desc:
+            result['thread_type'] = 'BSF'
+        
+        # Detect materials/finishes
+        material_keywords = {
+            'S/S': 'SS', 'SS': 'SS', 'STAINLESS': 'SS', '304': '304', '316': '316',
+            'A2': 'A2', 'A4': 'A4',
+            'GALV': 'GALV', 'HDG': 'HDG', 'ZINC': 'ZINC', 'ZP': 'ZP', 'BZP': 'BZP', 'YZP': 'YZP',
+            'BRASS': 'BRASS',
+            '8.8': '8.8', '10.9': '10.9', '12.9': '12.9', 'HT': 'HT',
+            'BLACK': 'BLACK', 'SELF COLOUR': 'BLACK', 'SC': 'BLACK'
+        }
+        for keyword, mat in material_keywords.items():
+            if keyword in desc:
+                if mat not in result['materials']:
+                    result['materials'].append(mat)
+        
+        # Try METRIC first - look for M followed by number
+        m_match = re.search(r'\bM\s*(\d+)', desc)
+        if m_match:
+            result['system'] = 'metric'
+            result['size'] = int(m_match.group(1))
+            
+            # Check if it's a rare size (M7, M9, M11, etc.)
+            if result['size'] in cls.RARE_METRIC_SIZES:
+                result['is_rare_size'] = True
+                # Add M7 (or whatever) to materials for markup calculation
+                result['materials'].append(f"M{result['size']}")
+            
+            # Extract length - look for xNN or XNN pattern (mm)
+            # Handle fine pitch: M10x1.25x50 -> length is 50, not 1.25
+            length_match = re.search(r'[Xx]\s*(\d+)(?:\.\d+)?[Xx](\d+)', description)  # M10x1.25x50 format
+            if length_match:
+                result['length'] = int(length_match.group(2))
+            else:
+                # Standard format: M10x50
+                length_match = re.search(r'[Xx]\s*(\d+)(?!\.\d)', description)  # Avoid matching pitch like x1.25
+                if length_match:
+                    result['length'] = int(length_match.group(1))
+            
+            result['success'] = True
+            return result
+        
+        # Try IMPERIAL - look for fractions like 1/4, 3/8, 1/2, etc.
+        imperial_patterns = [
+            r'(\d+[-/]\d+[-/]\d+)',     # 1-1/4 format
+            r'(\d+/\d+)',                # 1/4, 3/8, 1/2 format
+            r'(\d+)"',                   # 1" format
+        ]
+        
+        for pattern in imperial_patterns:
+            imp_match = re.search(pattern, desc)
+            if imp_match:
+                result['system'] = 'imperial'
+                size_str = imp_match.group(1).replace('-', '-').replace('"', '')
+                result['size'] = size_str
+                
+                # Look for length - second fraction or number followed by "
+                # Pattern: size x length or size X length
+                length_patterns = [
+                    rf'{re.escape(size_str)}\s*[Xx]\s*(\d+(?:/\d+)?)',  # 1/2 x 2
+                    rf'{re.escape(size_str)}\s*[Xx]\s*(\d+\.?\d*)',     # 1/2 x 2.5
+                ]
+                for lp in length_patterns:
+                    lm = re.search(lp, desc)
+                    if lm:
+                        try:
+                            result['length'] = float(lm.group(1))
+                        except:
+                            result['length'] = lm.group(1)
+                        break
+                
+                # If UNC/UNF detected, mark as imperial thread type
+                if result['thread_type'] == 'standard' and result['system'] == 'imperial':
+                    result['thread_type'] = 'UNC'  # Default imperial to UNC
+                
+                result['success'] = True
+                return result
+        
+        # Last resort - check for thread type keywords that indicate imperial
+        if any(x in desc for x in ['UNC', 'UNF', 'BSW', 'BSF', 'WHIT']):
+            # Try to find any fraction-like pattern
+            frac_match = re.search(r'(\d+/\d+)', desc)
+            if frac_match:
+                result['system'] = 'imperial'
+                result['size'] = frac_match.group(1)
+                result['success'] = True
+        
+        return result
+    
+    @classmethod
+    def get_imperial_weight(cls, size: str, length: float = None, fastener_type: str = 'bolt') -> float:
+        """Get weight in grams for an imperial fastener"""
+        
+        if fastener_type == 'nut':
+            return cls.UNC_NUT_WEIGHTS.get(size, 20.0)
+        
+        if fastener_type == 'washer':
+            return cls.UNC_WASHER_WEIGHTS.get(size, 10.0)
+        
+        # Bolt - need size and length
+        if not length:
+            return None
+        
+        if size in cls.UNC_BOLT_WEIGHTS:
+            lengths = cls.UNC_BOLT_WEIGHTS[size]
+            if length in lengths:
+                return lengths[length]
+            # Interpolate/extrapolate
+            sorted_lengths = sorted(lengths.keys())
+            if length < sorted_lengths[0]:
+                ratio = length / sorted_lengths[0]
+                return lengths[sorted_lengths[0]] * ratio
+            elif length > sorted_lengths[-1]:
+                base_length = sorted_lengths[-1]
+                base_weight = lengths[base_length]
+                # Approximate extra weight
+                extra = (length - base_length) * (base_weight / base_length) * 0.8
+                return base_weight + extra
+            else:
+                # Interpolate
+                for i, l in enumerate(sorted_lengths[:-1]):
+                    if l < length < sorted_lengths[i+1]:
+                        l1, l2 = l, sorted_lengths[i+1]
+                        w1, w2 = lengths[l1], lengths[l2]
+                        ratio = (length - l1) / (l2 - l1)
+                        return w1 + (w2 - w1) * ratio
+        
+        # Estimate based on size
+        # Convert fraction to decimal for estimation
+        try:
+            if '/' in str(size):
+                parts = str(size).split('/')
+                decimal_size = float(parts[0]) / float(parts[1])
+            else:
+                decimal_size = float(size)
+            # Approximate: weight in grams ~ (diameter_inch)^2 * length_inch * 45
+            return (decimal_size ** 2) * (length or 1) * 45
+        except:
+            return None
+    
+    @classmethod
+    def get_bolt_weight(cls, m_size: int, length: int = None, fastener_type: str = 'bolt') -> float:
+        """
+        Get weight in grams for a fastener
+        Returns weight in grams, or estimate if exact size not in table
+        """
+        if fastener_type == 'nut':
+            return cls.NUT_WEIGHTS.get(m_size, m_size * 3.0)  # Estimate if not found
+        
+        if fastener_type == 'washer':
+            return cls.WASHER_WEIGHTS.get(m_size, m_size * 1.5)  # Estimate if not found
+        
+        # Bolt - need both size and length
+        if not length:
+            return None
+        
+        if m_size in cls.BOLT_WEIGHTS:
+            lengths = cls.BOLT_WEIGHTS[m_size]
+            if length in lengths:
+                return lengths[length]
+            # Interpolate/extrapolate
+            sorted_lengths = sorted(lengths.keys())
+            if length < sorted_lengths[0]:
+                # Extrapolate down
+                ratio = length / sorted_lengths[0]
+                return lengths[sorted_lengths[0]] * ratio
+            elif length > sorted_lengths[-1]:
+                # Extrapolate up
+                base_length = sorted_lengths[-1]
+                base_weight = lengths[base_length]
+                extra_length = length - base_length
+                # Approximate: weight per mm based on thread diameter
+                weight_per_mm = (m_size ** 2) * 0.00617 * 7.85  # Steel density approx
+                return base_weight + (extra_length * weight_per_mm)
+            else:
+                # Interpolate between two known lengths
+                for i, l in enumerate(sorted_lengths[:-1]):
+                    if l < length < sorted_lengths[i+1]:
+                        l1, l2 = l, sorted_lengths[i+1]
+                        w1, w2 = lengths[l1], lengths[l2]
+                        ratio = (length - l1) / (l2 - l1)
+                        return w1 + (w2 - w1) * ratio
+        else:
+            # Estimate based on thread diameter if M size not in table
+            # Approximate formula: weight = k * d^2 * L (d=diameter, L=length)
+            k = 0.00617 * 7.85  # Factor for steel hex bolts
+            return (m_size ** 2) * length * k
+        
+        return None
+    
+    @classmethod
+    def get_price_tier(cls, size, system: str = 'metric', custom_tiers: dict = None) -> float:
+        """Get the R/kg price for a given size based on tiers
+        
+        Args:
+            size: int for metric (M size), str for imperial (fraction)
+            system: 'metric' or 'imperial'
+            custom_tiers: optional custom tier prices
+        """
+        tiers = custom_tiers or cls.DEFAULT_BOLT_TIERS
+        
+        # Convert imperial to metric equivalent for tier lookup
+        if system == 'imperial':
+            m_size = cls.IMPERIAL_TO_METRIC.get(str(size), 12)  # Default to M12 tier
+        else:
+            m_size = int(size) if size else 12
+        
+        if m_size <= 6:
+            return tiers.get("M3-M6", 300.0)
+        elif m_size <= 12:
+            return tiers.get("M6-M12", 250.0)
+        elif m_size <= 16:
+            return tiers.get("M12-M16", 200.0)
+        elif m_size <= 24:
+            return tiers.get("M16-M24", 170.0)
+        else:
+            return tiers.get("M24+", 140.0)
+    
+    @classmethod
+    def calc_material_markup(cls, materials: list, custom_markups: dict = None) -> float:
+        """Calculate total markup percentage based on materials/finishes
+        
+        Returns percentage to ADD (e.g., 50 for +50%)
+        Multiple materials: takes the highest markup (don't stack)
+        """
+        markups = custom_markups or cls.DEFAULT_MATERIAL_MARKUPS
+        
+        if not materials:
+            return 0.0
+        
+        # Find highest applicable markup
+        max_markup = 0.0
+        for mat in materials:
+            markup = markups.get(mat.upper(), 0.0)
+            if markup > max_markup:
+                max_markup = markup
+        
+        return max_markup
+    
+    @classmethod
+    def calc_bolt_price(cls, description: str, custom_tiers: dict = None, custom_markups: dict = None) -> dict:
+        """
+        Calculate price for a fastener based on weight, tier, and material
+        
+        Returns: {
+            system, size, length, type, weight_g, weight_kg, 
+            tier_rkg, base_price, material_markup_pct, final_price, 
+            materials, thread_type, success
+        }
+        """
+        # Parse the description
+        parsed = cls.parse_bolt_size(description)
+        
+        if not parsed.get('success'):
+            return {"success": False, "error": "Could not parse bolt size from description"}
+        
+        system = parsed['system']
+        size = parsed['size']
+        length = parsed['length']
+        ftype = parsed['fastener_type']
+        materials = parsed['materials']
+        thread_type = parsed['thread_type']
+        
+        # Get weight based on system
+        if system == 'imperial':
+            weight_g = cls.get_imperial_weight(size, length, ftype)
+        else:
+            weight_g = cls.get_bolt_weight(size, length, ftype)
+        
+        if not weight_g:
+            size_str = f"M{size}" if system == 'metric' else f"{size}\""
+            return {"success": False, "error": f"Could not determine weight for {size_str}" + (f"x{length}" if length else "")}
+        
+        # Get base tier price
+        tier_rkg = cls.get_price_tier(size, system, custom_tiers)
+        weight_kg = weight_g / 1000
+        base_price = weight_kg * tier_rkg
+        
+        # Apply material markup
+        material_markup_pct = cls.calc_material_markup(materials, custom_markups)
+        
+        # Apply thread type markup (for imperial and metric fine)
+        thread_markup = 0.0
+        if thread_type in ['UNC', 'UNF', 'BSW', 'BSF', 'MF']:
+            thread_markups = custom_markups or cls.DEFAULT_MATERIAL_MARKUPS
+            thread_markup = thread_markups.get(thread_type, 0.0)
+        
+        # Total markup (take highest between material and thread)
+        total_markup_pct = max(material_markup_pct, thread_markup)
+        
+        # Calculate final price
+        final_price = base_price * (1 + total_markup_pct / 100)
+        
+        # Format size string for display
+        if system == 'imperial':
+            size_str = f"{size}\""
+        else:
+            size_str = f"M{size}"
+        
+        return {
+            "success": True,
+            "system": system,
+            "size": size,
+            "size_str": size_str,
+            "length": length,
+            "type": ftype,
+            "weight_g": round(weight_g, 1),
+            "weight_kg": round(weight_kg, 4),
+            "tier_rkg": tier_rkg,
+            "base_price": round(base_price, 2),
+            "material_markup_pct": total_markup_pct,
+            "materials": materials,
+            "thread_type": thread_type,
+            "price_each": round(final_price, 2),
+            "description": description
+        }
+    
+    @classmethod
+    def format_bolt_pricing_summary(cls, results: list) -> str:
+        """Format bulk pricing results for display"""
+        if not results:
+            return "No fasteners to price."
+        
+        success = [r for r in results if r.get("success")]
+        failed = [r for r in results if not r.get("success")]
+        
+        lines = [f"**✅ Priced {len(success)} fasteners:**\n"]
+        
+        # Group by tier
+        by_tier = {}
+        for r in success:
+            tier = f"R{r['tier_rkg']:.0f}/kg"
+            if tier not in by_tier:
+                by_tier[tier] = []
+            by_tier[tier].append(r)
+        
+        for tier, items in sorted(by_tier.items()):
+            lines.append(f"\n**{tier}** ({len(items)} items):")
+            for item in items[:5]:  # Show first 5 per tier
+                lines.append(f"  • M{item['m_size']}" + (f"x{item['length']}" if item['length'] else "") + 
+                           f" {item['type']}: {item['weight_g']}g = **R{item['price_each']:.2f}**")
+            if len(items) > 5:
+                lines.append(f"  • ... and {len(items)-5} more")
+        
+        if failed:
+            lines.append(f"\n**⚠️ Could not price {len(failed)} items** (no size detected)")
+        
+        return "\n".join(lines)
+    
     # Cold rolled finishing (up to 3mm) - per sqm
     FINISH_COLD = {
         "N4 + PVC": 34.08, "N4 LASER PVC": 34.08, "LASER PVC": 28.78,
@@ -4361,6 +4881,25 @@ When user confirms with "ja delete X" or "yes delete X", send with confirmed: tr
     Required: whatsapp_phone (phone number with country code)
     Optional: whatsapp_token (API token), whatsapp_account_id (business account ID)
 
+33. **SET_BOLT_PRICING** - "Price bolts at R200/kg" / "Set bolt tiers M3-M6 R300/kg, M8-M12 R250/kg"
+    Sets weight-based pricing for fasteners (bolts, nuts, washers)
+    Optional: tiers (dict with tier prices, e.g., {"M3-M6": 300, "M6-M12": 250, "M12-M16": 200, "M16-M24": 170, "M24+": 140})
+    Optional: single_price (R/kg to apply to ALL fasteners regardless of size)
+    Example: "Price all bolts at R205/kg" → single_price: 205
+    Example: "Set bolt tiers: M3-M6 R300, M8-M12 R250, M12-M16 R170, M16+ R140" → tiers dict
+
+34. **UPDATE_BOLT_PRICES** - "Update all bolt prices" / "Apply bolt pricing to stock" / "Recalculate fastener prices"
+    Applies the saved bolt pricing tiers to ALL fasteners in stock
+    Uses fulltech_addon.calc_bolt_price() to calculate each item
+    Detects M size from description, calculates weight, applies tier price
+    Shows summary: X items updated, grouped by tier
+
+35. **CALC_BOLT_PRICE** - "What should M12x70 cost at R200/kg?" / "Price for M16x80 bolt?"
+    Calculate price for a single bolt based on weight
+    Required: description (e.g., "M12x70" or "M16x80 hex bolt")
+    Optional: price_per_kg (defaults to saved tier or 200)
+    Returns: weight in grams, price per unit
+
 ## RESPONSE FORMAT
 **CRITICAL: Respond with ONLY JSON. Nothing before. Nothing after. No explanations outside the JSON.**
 
@@ -5103,6 +5642,24 @@ Fokus op verkope en invorderings vir die res van die maand."
             
             elif action == "SAVE_WHATSAPP_SETTINGS":
                 result = Actions.save_whatsapp_settings(action_data, context)
+                if result["success"]:
+                    actions_taken.append(result["message"])
+                    result_data = result.get("data", {})
+            
+            elif action == "SET_BOLT_PRICING":
+                result = Actions.set_bolt_pricing(action_data, context)
+                if result["success"]:
+                    actions_taken.append(result["message"])
+                    result_data = result.get("data", {})
+            
+            elif action == "UPDATE_BOLT_PRICES":
+                result = Actions.update_bolt_prices(action_data, context)
+                if result["success"]:
+                    actions_taken.append(result["message"])
+                    result_data = result.get("data", {})
+            
+            elif action == "CALC_BOLT_PRICE":
+                result = Actions.calc_bolt_price(action_data, context)
                 if result["success"]:
                     actions_taken.append(result["message"])
                     result_data = result.get("data", {})
@@ -7613,6 +8170,235 @@ class Actions:
             }
         
         return {"success": False, "message": "Failed to save WhatsApp settings"}
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BOLT/FASTENER WEIGHT-BASED PRICING
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    @staticmethod
+    def set_bolt_pricing(data: dict, context: dict) -> dict:
+        """Save bolt pricing tiers for the business"""
+        
+        biz_id = context.get("business_id")
+        if not biz_id:
+            return {"success": False, "message": "No business selected"}
+        
+        # Extract tiers or single price
+        tiers = data.get("tiers", {})
+        single_price = data.get("single_price") or data.get("price_per_kg")
+        
+        if single_price:
+            # Apply single price to all tiers
+            tiers = {
+                "M3-M6": float(single_price),
+                "M6-M12": float(single_price),
+                "M12-M16": float(single_price),
+                "M16-M24": float(single_price),
+                "M24+": float(single_price)
+            }
+        elif not tiers:
+            # Use defaults
+            tiers = fulltech_addon.DEFAULT_BOLT_TIERS.copy()
+        
+        # Save to business settings
+        updates = {
+            "id": biz_id,
+            "bolt_pricing_tiers": json.dumps(tiers)
+        }
+        
+        success, result = db.save("businesses", updates)
+        
+        if success:
+            tier_summary = "\n".join([f"  • {k}: R{v:.0f}/kg" for k, v in tiers.items()])
+            logger.info(f"[ZANE] Saved bolt pricing tiers for business {biz_id}")
+            return {
+                "success": True,
+                "message": f"✅ Bolt pricing tiers saved!\n\n{tier_summary}\n\nSay 'Update all bolt prices' to apply these to your stock.",
+                "data": {"tiers": tiers}
+            }
+        
+        return {"success": False, "message": "Failed to save bolt pricing"}
+    
+    @staticmethod
+    def update_bolt_prices(data: dict, context: dict) -> dict:
+        """Apply bolt pricing tiers to all fasteners in stock"""
+        
+        biz_id = context.get("business_id")
+        if not biz_id:
+            return {"success": False, "message": "No business selected"}
+        
+        # Get saved tiers or use defaults
+        business = db.first("businesses", {"id": biz_id})
+        tiers_json = business.get("bolt_pricing_tiers") if business else None
+        
+        if tiers_json:
+            try:
+                tiers = json.loads(tiers_json)
+            except:
+                tiers = fulltech_addon.DEFAULT_BOLT_TIERS.copy()
+        else:
+            tiers = fulltech_addon.DEFAULT_BOLT_TIERS.copy()
+        
+        # Get all stock items
+        stock_items = db.query("stock_items", {"business_id": biz_id}) or []
+        stock_old = db.query("stock", {"business_id": biz_id}) or []
+        all_stock = stock_items + stock_old
+        
+        # Process each item
+        updated = []
+        skipped = []
+        
+        for item in all_stock:
+            desc = item.get("description", "") or item.get("name", "")
+            code = item.get("code", "")
+            full_desc = f"{code} {desc}".strip()
+            
+            # Check if this looks like a fastener
+            result = fulltech_addon.calc_bolt_price(full_desc, tiers)
+            
+            if result.get("success"):
+                new_price = result["price_each"]
+                old_price = float(item.get("selling_price") or item.get("price") or 0)
+                
+                # Determine which table to update
+                table = "stock_items" if item in stock_items else "stock"
+                
+                # Update the item
+                update_data = {"id": item["id"]}
+                if table == "stock_items":
+                    update_data["selling_price"] = new_price
+                else:
+                    update_data["price"] = new_price
+                
+                success, _ = db.save(table, update_data)
+                
+                if success:
+                    updated.append({
+                        "code": code,
+                        "description": desc[:30],
+                        "size_str": result.get("size_str", f"M{result.get('size', '?')}"),
+                        "length": result.get("length"),
+                        "weight_g": result["weight_g"],
+                        "old_price": old_price,
+                        "new_price": new_price,
+                        "tier_rkg": result["tier_rkg"],
+                        "materials": result.get("materials", []),
+                        "markup_pct": result.get("material_markup_pct", 0)
+                    })
+            else:
+                # Not a fastener or couldn't parse - skip
+                skipped.append({"code": code, "description": desc[:30]})
+        
+        if not updated:
+            return {
+                "success": True,
+                "message": "No fasteners found to update. Make sure your stock descriptions include sizes like 'M12x70', 'M8 NUT', or '1/2 UNC'.",
+                "data": {"updated": 0, "skipped": len(skipped)}
+            }
+        
+        # Group by tier for summary
+        by_tier = {}
+        for u in updated:
+            tier = f"R{u['tier_rkg']:.0f}/kg"
+            if u['markup_pct'] > 0:
+                tier += f" (+{u['markup_pct']:.0f}%)"
+            if tier not in by_tier:
+                by_tier[tier] = []
+            by_tier[tier].append(u)
+        
+        # Build summary
+        lines = [f"✅ **Updated {len(updated)} fasteners:**\n"]
+        
+        for tier, items in sorted(by_tier.items()):
+            lines.append(f"\n**{tier}** ({len(items)} items):")
+            for item in items[:5]:  # Show first 5 per tier
+                size_str = item['size_str'] + (f"x{item['length']}" if item['length'] else "")
+                mat_info = f" [{','.join(item['materials'])}]" if item['materials'] else ""
+                lines.append(f"  • {item['code'] or size_str}{mat_info}: {item['weight_g']}g → **R{item['new_price']:.2f}** (was R{item['old_price']:.2f})")
+            if len(items) > 5:
+                lines.append(f"  • ... and {len(items)-5} more")
+        
+        if skipped:
+            lines.append(f"\n⏭️ Skipped {len(skipped)} items (no size detected)")
+        
+        logger.info(f"[ZANE] Updated {len(updated)} bolt prices for business {biz_id}")
+        
+        return {
+            "success": True,
+            "message": "\n".join(lines),
+            "data": {
+                "updated": len(updated),
+                "skipped": len(skipped),
+                "tiers_used": list(by_tier.keys())
+            }
+        }
+    
+    @staticmethod
+    def calc_bolt_price(data: dict, context: dict) -> dict:
+        """Calculate price for a single bolt/fastener"""
+        
+        biz_id = context.get("business_id")
+        description = data.get("description", "")
+        price_per_kg = data.get("price_per_kg")
+        
+        if not description:
+            return {"success": False, "message": "Please specify a bolt size, e.g. 'M12x70', 'M16x80 hex bolt SS', or '1/2 x 2 UNC'"}
+        
+        # Get custom tiers if saved
+        custom_tiers = None
+        if biz_id:
+            business = db.first("businesses", {"id": biz_id})
+            tiers_json = business.get("bolt_pricing_tiers") if business else None
+            if tiers_json:
+                try:
+                    custom_tiers = json.loads(tiers_json)
+                except:
+                    pass
+        
+        # Override with single price if provided
+        if price_per_kg:
+            custom_tiers = {
+                "M3-M6": float(price_per_kg),
+                "M6-M12": float(price_per_kg),
+                "M12-M16": float(price_per_kg),
+                "M16-M24": float(price_per_kg),
+                "M24+": float(price_per_kg)
+            }
+        
+        result = fulltech_addon.calc_bolt_price(description, custom_tiers)
+        
+        if not result.get("success"):
+            return {"success": False, "message": result.get("error", "Could not calculate price")}
+        
+        size_str = result.get('size_str', f"M{result.get('size', '?')}")
+        if result.get('length'):
+            size_str += f"x{result['length']}"
+        ftype = result['type'].capitalize()
+        
+        # Build message with material info
+        material_info = ""
+        if result.get('materials'):
+            material_info = f"\n• Material: {', '.join(result['materials'])}"
+        
+        markup_info = ""
+        if result.get('material_markup_pct', 0) > 0:
+            markup_info = f"\n• Material markup: +{result['material_markup_pct']:.0f}% (base was R{result['base_price']:.2f})"
+        
+        message = f"""**{size_str} {ftype}**{material_info}
+
+• Weight: **{result['weight_g']}g** ({result['weight_kg']:.4f} kg)
+• Tier: R{result['tier_rkg']:.0f}/kg{markup_info}
+• **Price each: R{result['price_each']:.2f}**
+
+Quick reference:
+• Box of 50: R{result['price_each'] * 50:.2f}
+• Box of 100: R{result['price_each'] * 100:.2f}"""
+        
+        return {
+            "success": True,
+            "message": message,
+            "data": result
+        }
 
 
 # 

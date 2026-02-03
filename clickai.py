@@ -88,6 +88,526 @@ class fulltech_addon:
         "4509": 7.9, "Aluminium": 2.7,
     }
     
+    # ==================== BOLT/FASTENER WEIGHT-BASED PRICING ====================
+    # Standard hex bolt weights in GRAMS (DIN 933 / ISO 4017)
+    # Format: {thread_size: {length: weight_grams}}
+    BOLT_WEIGHTS = {
+        3: {6: 0.8, 8: 1.0, 10: 1.2, 12: 1.4, 16: 1.8, 20: 2.2, 25: 2.7, 30: 3.2},
+        4: {8: 1.8, 10: 2.1, 12: 2.5, 16: 3.2, 20: 3.9, 25: 4.8, 30: 5.6, 40: 7.3},
+        5: {10: 3.2, 12: 3.8, 16: 4.8, 20: 5.9, 25: 7.2, 30: 8.5, 40: 11.0, 50: 13.5},
+        6: {10: 4.8, 12: 5.6, 16: 7.0, 20: 8.5, 25: 10.3, 30: 12.0, 40: 15.5, 50: 19.0, 60: 22.5},
+        8: {16: 12.0, 20: 14.5, 25: 17.5, 30: 21.0, 35: 24.0, 40: 27.5, 50: 34.0, 60: 41.0, 70: 48.0, 80: 55.0},
+        10: {20: 22.0, 25: 26.0, 30: 30.0, 35: 34.0, 40: 38.0, 50: 47.0, 60: 55.0, 70: 64.0, 80: 72.0, 100: 89.0},
+        12: {25: 40.0, 30: 46.0, 35: 52.0, 40: 58.0, 50: 68.0, 60: 80.0, 70: 92.0, 80: 104.0, 100: 128.0, 120: 152.0},
+        14: {30: 68.0, 40: 82.0, 50: 97.0, 60: 112.0, 70: 127.0, 80: 142.0, 100: 172.0},
+        16: {30: 85.0, 40: 103.0, 50: 120.0, 60: 138.0, 70: 155.0, 80: 173.0, 100: 208.0, 120: 243.0, 150: 296.0},
+        18: {40: 145.0, 50: 168.0, 60: 190.0, 70: 213.0, 80: 235.0, 100: 280.0},
+        20: {40: 175.0, 50: 203.0, 60: 230.0, 70: 258.0, 80: 285.0, 100: 340.0, 120: 395.0, 150: 478.0},
+        22: {50: 268.0, 60: 302.0, 70: 335.0, 80: 369.0, 100: 436.0},
+        24: {50: 330.0, 60: 370.0, 70: 410.0, 80: 450.0, 100: 530.0, 120: 610.0, 150: 730.0},
+        27: {60: 530.0, 80: 630.0, 100: 730.0},
+        30: {60: 660.0, 80: 780.0, 100: 900.0, 120: 1020.0, 150: 1200.0},
+    }
+    
+    # Nut weights in grams (standard hex nuts)
+    NUT_WEIGHTS = {3: 0.6, 4: 1.2, 5: 2.0, 6: 3.2, 8: 6.8, 10: 12.0, 12: 21.0, 14: 32.0, 
+                   16: 47.0, 18: 64.0, 20: 88.0, 22: 114.0, 24: 147.0, 27: 207.0, 30: 282.0}
+    
+    # Washer weights in grams (standard flat washers)
+    WASHER_WEIGHTS = {3: 0.3, 4: 0.5, 5: 1.0, 6: 1.5, 8: 3.5, 10: 6.0, 12: 10.5, 14: 16.0,
+                      16: 22.0, 18: 32.0, 20: 45.0, 22: 55.0, 24: 73.0, 27: 100.0, 30: 130.0}
+    
+    # ==================== IMPERIAL FASTENER WEIGHTS (UNC/UNF) ====================
+    # Weights in GRAMS - UNC (Unified National Coarse) hex bolts
+    # Format: {"size_fraction": {length_inches: weight_grams}}
+    UNC_BOLT_WEIGHTS = {
+        "1/4": {0.5: 4.5, 0.75: 6.0, 1.0: 7.8, 1.25: 9.5, 1.5: 11.2, 2.0: 14.5},
+        "5/16": {0.5: 7.5, 0.75: 10.0, 1.0: 12.5, 1.25: 15.2, 1.5: 18.0, 2.0: 23.5},
+        "3/8": {0.75: 15.0, 1.0: 19.0, 1.25: 23.0, 1.5: 27.0, 2.0: 35.0, 2.5: 43.0, 3.0: 51.0},
+        "7/16": {1.0: 28.0, 1.25: 33.0, 1.5: 39.0, 2.0: 50.0, 2.5: 61.0, 3.0: 72.0},
+        "1/2": {1.0: 38.0, 1.25: 46.0, 1.5: 54.0, 2.0: 70.0, 2.5: 86.0, 3.0: 102.0, 4.0: 134.0},
+        "5/8": {1.5: 92.0, 2.0: 115.0, 2.5: 140.0, 3.0: 165.0, 4.0: 215.0},
+        "3/4": {1.5: 140.0, 2.0: 175.0, 2.5: 212.0, 3.0: 250.0, 4.0: 325.0, 5.0: 400.0},
+        "7/8": {2.0: 265.0, 2.5: 318.0, 3.0: 372.0, 4.0: 480.0, 5.0: 588.0},
+        "1": {2.0: 360.0, 2.5: 430.0, 3.0: 500.0, 4.0: 640.0, 5.0: 780.0, 6.0: 920.0},
+    }
+    
+    # UNC Nut weights in grams
+    UNC_NUT_WEIGHTS = {
+        "1/4": 4.5, "5/16": 8.0, "3/8": 14.0, "7/16": 20.0, "1/2": 30.0,
+        "5/8": 55.0, "3/4": 95.0, "7/8": 145.0, "1": 210.0
+    }
+    
+    # UNC Washer weights in grams  
+    UNC_WASHER_WEIGHTS = {
+        "1/4": 2.5, "5/16": 4.0, "3/8": 7.0, "7/16": 10.0, "1/2": 14.0,
+        "5/8": 25.0, "3/4": 42.0, "7/8": 60.0, "1": 85.0
+    }
+    
+    # Imperial size to approximate metric equivalent (for tier pricing)
+    IMPERIAL_TO_METRIC = {
+        "1/4": 6, "5/16": 8, "3/8": 10, "7/16": 11, "1/2": 12,
+        "5/8": 16, "3/4": 19, "7/8": 22, "1": 25, "1-1/8": 28, "1-1/4": 32
+    }
+    
+    # ==================== MATERIAL MARKUPS ====================
+    # Base price is for plain mild steel / black
+    # These are PERCENTAGE markups to add on top
+    DEFAULT_MATERIAL_MARKUPS = {
+        # Stainless Steel grades
+        "SS": 50.0,       # Stainless steel +50%
+        "S/S": 50.0,
+        "STAINLESS": 50.0,
+        "304": 50.0,
+        "316": 65.0,      # 316 marine grade even more
+        "A2": 50.0,
+        "A4": 65.0,
+        
+        # Mild steel with finish
+        "GALV": 15.0,     # Galvanized +15%
+        "HDG": 20.0,      # Hot dip galv +20%
+        "ZINC": 10.0,     # Zinc plated +10%
+        "ZP": 10.0,
+        "BZP": 10.0,      # Bright zinc plated
+        "YZP": 12.0,      # Yellow zinc plated
+        
+        # Brass
+        "BRASS": 80.0,
+        
+        # High tensile grades
+        "8.8": 10.0,      # Grade 8.8 +10%
+        "10.9": 20.0,     # Grade 10.9 +20%
+        "12.9": 30.0,     # Grade 12.9 +30%
+        "HT": 15.0,       # High tensile generic
+        
+        # Thread types (imperial premium)
+        "UNC": 20.0,      # Unified National Coarse +20%
+        "UNF": 25.0,      # Unified National Fine +25%
+        "BSW": 25.0,      # British Standard Whitworth +25%
+        "BSF": 30.0,      # British Standard Fine +30%
+        
+        # Metric Fine thread
+        "MF": 15.0,       # Metric Fine +15% (fyner draad)
+        "FINE": 15.0,     # Fine thread generic
+        
+        # Rare/uncommon sizes
+        "M7": 50.0,       # M7 is skaars +50%
+        "RARE": 50.0,     # Generic rare size markup
+    }
+    
+    # Rare metric sizes that get automatic markup
+    RARE_METRIC_SIZES = [7, 9, 11, 13, 15, 17, 19, 21, 23, 26, 28, 29]  # Uncommon M sizes
+    
+    # Default pricing tiers (R per kg) - can be customized per business
+    DEFAULT_BOLT_TIERS = {
+        "M3-M6": 300.0,    # Small fasteners - more handling
+        "M6-M12": 250.0,   # Medium - standard
+        "M12-M16": 200.0,  # Large - less handling  
+        "M16-M24": 170.0,  # Very large
+        "M24+": 140.0      # Extra large - bulk pricing
+    }
+    
+    @classmethod
+    def parse_bolt_size(cls, description: str) -> dict:
+        """
+        Parse bolt/nut/washer description to extract size, length, material, thread type
+        Returns dict with: {
+            'system': 'metric' or 'imperial',
+            'size': int (M size) or str (imperial fraction like '1/2'),
+            'length': int/float or None,
+            'fastener_type': 'bolt', 'nut', 'washer',
+            'materials': list of detected materials/finishes,
+            'thread_type': 'standard', 'UNC', 'UNF', 'BSW', 'MF', etc.,
+            'is_rare_size': bool (M7, M9, etc.),
+            'success': bool
+        }
+        Examples:
+            "M12x70 HEX BOLT SS" -> metric, M12, 70mm, stainless
+            "1/2 x 2 UNC BOLT GALV" -> imperial, 1/2", 2", UNC, galvanized
+            "M8 NUT ZINC" -> metric, M8, nut, zinc plated
+            "M7x30 HEX BOLT" -> metric, M7, rare size
+            "M10x1.25x50 MF BOLT" -> metric fine thread
+        """
+        import re
+        desc = description.upper()
+        result = {
+            'system': None,
+            'size': None,
+            'length': None,
+            'fastener_type': 'bolt',
+            'materials': [],
+            'thread_type': 'standard',
+            'is_rare_size': False,
+            'success': False
+        }
+        
+        # Determine fastener type
+        if any(x in desc for x in ['NUT', 'NYLOC', 'NYLOCK', 'LOCKNUT', 'MOER']):
+            result['fastener_type'] = 'nut'
+        elif any(x in desc for x in ['WASHER', 'WASS', 'WASSER']):
+            result['fastener_type'] = 'washer'
+        
+        # Detect thread type - check MF (Metric Fine) first
+        if any(x in desc for x in [' MF ', 'MF ', ' MF', '/MF', 'METRIC FINE', 'FINE THREAD', 'FYNDRAAD']):
+            result['thread_type'] = 'MF'
+        elif 'X1.' in desc or 'X0.' in desc:  # Fine pitch indicator like M10x1.25
+            result['thread_type'] = 'MF'
+        elif 'UNC' in desc:
+            result['thread_type'] = 'UNC'
+        elif 'UNF' in desc:
+            result['thread_type'] = 'UNF'
+        elif 'BSW' in desc:
+            result['thread_type'] = 'BSW'
+        elif 'BSF' in desc:
+            result['thread_type'] = 'BSF'
+        
+        # Detect materials/finishes
+        material_keywords = {
+            'S/S': 'SS', 'SS': 'SS', 'STAINLESS': 'SS', '304': '304', '316': '316',
+            'A2': 'A2', 'A4': 'A4',
+            'GALV': 'GALV', 'HDG': 'HDG', 'ZINC': 'ZINC', 'ZP': 'ZP', 'BZP': 'BZP', 'YZP': 'YZP',
+            'BRASS': 'BRASS',
+            '8.8': '8.8', '10.9': '10.9', '12.9': '12.9', 'HT': 'HT',
+            'BLACK': 'BLACK', 'SELF COLOUR': 'BLACK', 'SC': 'BLACK'
+        }
+        for keyword, mat in material_keywords.items():
+            if keyword in desc:
+                if mat not in result['materials']:
+                    result['materials'].append(mat)
+        
+        # Try METRIC first - look for M followed by number
+        m_match = re.search(r'\bM\s*(\d+)', desc)
+        if m_match:
+            result['system'] = 'metric'
+            result['size'] = int(m_match.group(1))
+            
+            # Check if it's a rare size (M7, M9, M11, etc.)
+            if result['size'] in cls.RARE_METRIC_SIZES:
+                result['is_rare_size'] = True
+                # Add M7 (or whatever) to materials for markup calculation
+                result['materials'].append(f"M{result['size']}")
+            
+            # Extract length - look for xNN or XNN pattern (mm)
+            # Handle fine pitch: M10x1.25x50 -> length is 50, not 1.25
+            length_match = re.search(r'[Xx]\s*(\d+)(?:\.\d+)?[Xx](\d+)', description)  # M10x1.25x50 format
+            if length_match:
+                result['length'] = int(length_match.group(2))
+            else:
+                # Standard format: M10x50
+                length_match = re.search(r'[Xx]\s*(\d+)(?!\.\d)', description)  # Avoid matching pitch like x1.25
+                if length_match:
+                    result['length'] = int(length_match.group(1))
+            
+            result['success'] = True
+            return result
+        
+        # Try IMPERIAL - look for fractions like 1/4, 3/8, 1/2, etc.
+        imperial_patterns = [
+            r'(\d+[-/]\d+[-/]\d+)',     # 1-1/4 format
+            r'(\d+/\d+)',                # 1/4, 3/8, 1/2 format
+            r'(\d+)"',                   # 1" format
+        ]
+        
+        for pattern in imperial_patterns:
+            imp_match = re.search(pattern, desc)
+            if imp_match:
+                result['system'] = 'imperial'
+                size_str = imp_match.group(1).replace('-', '-').replace('"', '')
+                result['size'] = size_str
+                
+                # Look for length - second fraction or number followed by "
+                # Pattern: size x length or size X length
+                length_patterns = [
+                    rf'{re.escape(size_str)}\s*[Xx]\s*(\d+(?:/\d+)?)',  # 1/2 x 2
+                    rf'{re.escape(size_str)}\s*[Xx]\s*(\d+\.?\d*)',     # 1/2 x 2.5
+                ]
+                for lp in length_patterns:
+                    lm = re.search(lp, desc)
+                    if lm:
+                        try:
+                            result['length'] = float(lm.group(1))
+                        except:
+                            result['length'] = lm.group(1)
+                        break
+                
+                # If UNC/UNF detected, mark as imperial thread type
+                if result['thread_type'] == 'standard' and result['system'] == 'imperial':
+                    result['thread_type'] = 'UNC'  # Default imperial to UNC
+                
+                result['success'] = True
+                return result
+        
+        # Last resort - check for thread type keywords that indicate imperial
+        if any(x in desc for x in ['UNC', 'UNF', 'BSW', 'BSF', 'WHIT']):
+            # Try to find any fraction-like pattern
+            frac_match = re.search(r'(\d+/\d+)', desc)
+            if frac_match:
+                result['system'] = 'imperial'
+                result['size'] = frac_match.group(1)
+                result['success'] = True
+        
+        return result
+    
+    @classmethod
+    def get_imperial_weight(cls, size: str, length: float = None, fastener_type: str = 'bolt') -> float:
+        """Get weight in grams for an imperial fastener"""
+        
+        if fastener_type == 'nut':
+            return cls.UNC_NUT_WEIGHTS.get(size, 20.0)
+        
+        if fastener_type == 'washer':
+            return cls.UNC_WASHER_WEIGHTS.get(size, 10.0)
+        
+        # Bolt - need size and length
+        if not length:
+            return None
+        
+        if size in cls.UNC_BOLT_WEIGHTS:
+            lengths = cls.UNC_BOLT_WEIGHTS[size]
+            if length in lengths:
+                return lengths[length]
+            # Interpolate/extrapolate
+            sorted_lengths = sorted(lengths.keys())
+            if length < sorted_lengths[0]:
+                ratio = length / sorted_lengths[0]
+                return lengths[sorted_lengths[0]] * ratio
+            elif length > sorted_lengths[-1]:
+                base_length = sorted_lengths[-1]
+                base_weight = lengths[base_length]
+                # Approximate extra weight
+                extra = (length - base_length) * (base_weight / base_length) * 0.8
+                return base_weight + extra
+            else:
+                # Interpolate
+                for i, l in enumerate(sorted_lengths[:-1]):
+                    if l < length < sorted_lengths[i+1]:
+                        l1, l2 = l, sorted_lengths[i+1]
+                        w1, w2 = lengths[l1], lengths[l2]
+                        ratio = (length - l1) / (l2 - l1)
+                        return w1 + (w2 - w1) * ratio
+        
+        # Estimate based on size
+        # Convert fraction to decimal for estimation
+        try:
+            if '/' in str(size):
+                parts = str(size).split('/')
+                decimal_size = float(parts[0]) / float(parts[1])
+            else:
+                decimal_size = float(size)
+            # Approximate: weight in grams ~ (diameter_inch)^2 * length_inch * 45
+            return (decimal_size ** 2) * (length or 1) * 45
+        except:
+            return None
+    
+    @classmethod
+    def get_bolt_weight(cls, m_size: int, length: int = None, fastener_type: str = 'bolt') -> float:
+        """
+        Get weight in grams for a fastener
+        Returns weight in grams, or estimate if exact size not in table
+        """
+        if fastener_type == 'nut':
+            return cls.NUT_WEIGHTS.get(m_size, m_size * 3.0)  # Estimate if not found
+        
+        if fastener_type == 'washer':
+            return cls.WASHER_WEIGHTS.get(m_size, m_size * 1.5)  # Estimate if not found
+        
+        # Bolt - need both size and length
+        if not length:
+            return None
+        
+        if m_size in cls.BOLT_WEIGHTS:
+            lengths = cls.BOLT_WEIGHTS[m_size]
+            if length in lengths:
+                return lengths[length]
+            # Interpolate/extrapolate
+            sorted_lengths = sorted(lengths.keys())
+            if length < sorted_lengths[0]:
+                # Extrapolate down
+                ratio = length / sorted_lengths[0]
+                return lengths[sorted_lengths[0]] * ratio
+            elif length > sorted_lengths[-1]:
+                # Extrapolate up
+                base_length = sorted_lengths[-1]
+                base_weight = lengths[base_length]
+                extra_length = length - base_length
+                # Approximate: weight per mm based on thread diameter
+                weight_per_mm = (m_size ** 2) * 0.00617 * 7.85  # Steel density approx
+                return base_weight + (extra_length * weight_per_mm)
+            else:
+                # Interpolate between two known lengths
+                for i, l in enumerate(sorted_lengths[:-1]):
+                    if l < length < sorted_lengths[i+1]:
+                        l1, l2 = l, sorted_lengths[i+1]
+                        w1, w2 = lengths[l1], lengths[l2]
+                        ratio = (length - l1) / (l2 - l1)
+                        return w1 + (w2 - w1) * ratio
+        else:
+            # Estimate based on thread diameter if M size not in table
+            # Approximate formula: weight = k * d^2 * L (d=diameter, L=length)
+            k = 0.00617 * 7.85  # Factor for steel hex bolts
+            return (m_size ** 2) * length * k
+        
+        return None
+    
+    @classmethod
+    def get_price_tier(cls, size, system: str = 'metric', custom_tiers: dict = None) -> float:
+        """Get the R/kg price for a given size based on tiers
+        
+        Args:
+            size: int for metric (M size), str for imperial (fraction)
+            system: 'metric' or 'imperial'
+            custom_tiers: optional custom tier prices
+        """
+        tiers = custom_tiers or cls.DEFAULT_BOLT_TIERS
+        
+        # Convert imperial to metric equivalent for tier lookup
+        if system == 'imperial':
+            m_size = cls.IMPERIAL_TO_METRIC.get(str(size), 12)  # Default to M12 tier
+        else:
+            m_size = int(size) if size else 12
+        
+        if m_size <= 6:
+            return tiers.get("M3-M6", 300.0)
+        elif m_size <= 12:
+            return tiers.get("M6-M12", 250.0)
+        elif m_size <= 16:
+            return tiers.get("M12-M16", 200.0)
+        elif m_size <= 24:
+            return tiers.get("M16-M24", 170.0)
+        else:
+            return tiers.get("M24+", 140.0)
+    
+    @classmethod
+    def calc_material_markup(cls, materials: list, custom_markups: dict = None) -> float:
+        """Calculate total markup percentage based on materials/finishes
+        
+        Returns percentage to ADD (e.g., 50 for +50%)
+        Multiple materials: takes the highest markup (don't stack)
+        """
+        markups = custom_markups or cls.DEFAULT_MATERIAL_MARKUPS
+        
+        if not materials:
+            return 0.0
+        
+        # Find highest applicable markup
+        max_markup = 0.0
+        for mat in materials:
+            markup = markups.get(mat.upper(), 0.0)
+            if markup > max_markup:
+                max_markup = markup
+        
+        return max_markup
+    
+    @classmethod
+    def calc_bolt_price(cls, description: str, custom_tiers: dict = None, custom_markups: dict = None) -> dict:
+        """
+        Calculate price for a fastener based on weight, tier, and material
+        
+        Returns: {
+            system, size, length, type, weight_g, weight_kg, 
+            tier_rkg, base_price, material_markup_pct, final_price, 
+            materials, thread_type, success
+        }
+        """
+        # Parse the description
+        parsed = cls.parse_bolt_size(description)
+        
+        if not parsed.get('success'):
+            return {"success": False, "error": "Could not parse bolt size from description"}
+        
+        system = parsed['system']
+        size = parsed['size']
+        length = parsed['length']
+        ftype = parsed['fastener_type']
+        materials = parsed['materials']
+        thread_type = parsed['thread_type']
+        
+        # Get weight based on system
+        if system == 'imperial':
+            weight_g = cls.get_imperial_weight(size, length, ftype)
+        else:
+            weight_g = cls.get_bolt_weight(size, length, ftype)
+        
+        if not weight_g:
+            size_str = f"M{size}" if system == 'metric' else f"{size}\""
+            return {"success": False, "error": f"Could not determine weight for {size_str}" + (f"x{length}" if length else "")}
+        
+        # Get base tier price
+        tier_rkg = cls.get_price_tier(size, system, custom_tiers)
+        weight_kg = weight_g / 1000
+        base_price = weight_kg * tier_rkg
+        
+        # Apply material markup
+        material_markup_pct = cls.calc_material_markup(materials, custom_markups)
+        
+        # Apply thread type markup (for imperial and metric fine)
+        thread_markup = 0.0
+        if thread_type in ['UNC', 'UNF', 'BSW', 'BSF', 'MF']:
+            thread_markups = custom_markups or cls.DEFAULT_MATERIAL_MARKUPS
+            thread_markup = thread_markups.get(thread_type, 0.0)
+        
+        # Total markup (take highest between material and thread)
+        total_markup_pct = max(material_markup_pct, thread_markup)
+        
+        # Calculate final price
+        final_price = base_price * (1 + total_markup_pct / 100)
+        
+        # Format size string for display
+        if system == 'imperial':
+            size_str = f"{size}\""
+        else:
+            size_str = f"M{size}"
+        
+        return {
+            "success": True,
+            "system": system,
+            "size": size,
+            "size_str": size_str,
+            "length": length,
+            "type": ftype,
+            "weight_g": round(weight_g, 1),
+            "weight_kg": round(weight_kg, 4),
+            "tier_rkg": tier_rkg,
+            "base_price": round(base_price, 2),
+            "material_markup_pct": total_markup_pct,
+            "materials": materials,
+            "thread_type": thread_type,
+            "price_each": round(final_price, 2),
+            "description": description
+        }
+    
+    @classmethod
+    def format_bolt_pricing_summary(cls, results: list) -> str:
+        """Format bulk pricing results for display"""
+        if not results:
+            return "No fasteners to price."
+        
+        success = [r for r in results if r.get("success")]
+        failed = [r for r in results if not r.get("success")]
+        
+        lines = [f"**✅ Priced {len(success)} fasteners:**\n"]
+        
+        # Group by tier
+        by_tier = {}
+        for r in success:
+            tier = f"R{r['tier_rkg']:.0f}/kg"
+            if tier not in by_tier:
+                by_tier[tier] = []
+            by_tier[tier].append(r)
+        
+        for tier, items in sorted(by_tier.items()):
+            lines.append(f"\n**{tier}** ({len(items)} items):")
+            for item in items[:5]:  # Show first 5 per tier
+                lines.append(f"  • M{item['m_size']}" + (f"x{item['length']}" if item['length'] else "") + 
+                           f" {item['type']}: {item['weight_g']}g = **R{item['price_each']:.2f}**")
+            if len(items) > 5:
+                lines.append(f"  • ... and {len(items)-5} more")
+        
+        if failed:
+            lines.append(f"\n**⚠️ Could not price {len(failed)} items** (no size detected)")
+        
+        return "\n".join(lines)
+    
     # Cold rolled finishing (up to 3mm) - per sqm
     FINISH_COLD = {
         "N4 + PVC": 34.08, "N4 LASER PVC": 34.08, "LASER PVC": 28.78,
@@ -553,7 +1073,7 @@ class fulltech_addon:
 FULLTECH_ENABLED = True
 logging.info("[FULLTECH] Smart Quote calculator EMBEDDED and ready")
 
-from flask import Flask, request, redirect, session, jsonify, Response, send_file, flash
+from flask import Flask, request, redirect, session, jsonify, Response, send_file, flash, g
 
 # 
 # CONFIGURATION
@@ -573,6 +1093,33 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s: %(message)s')
 logger = logging.getLogger(__name__)
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# TIMING LOGGER - See where the time goes
+# ═══════════════════════════════════════════════════════════════════════════════
+import time as _time
+
+@app.before_request
+def _start_timer():
+    g._request_start = _time.time()
+    g._timings = []
+
+@app.after_request
+def _log_request_time(response):
+    if hasattr(g, '_request_start'):
+        total_ms = int((_time.time() - g._request_start) * 1000)
+        timings = getattr(g, '_timings', [])
+        timing_str = ', '.join(timings) if timings else 'no details'
+        # Always print for page requests
+        if not request.path.startswith('/api/') and not request.path.startswith('/health'):
+            print(f"[TIMING] {request.method} {request.path} = {total_ms}ms [{timing_str}]", flush=True)
+    return response
+
+def _t(label):
+    """Add a timing checkpoint"""
+    if hasattr(g, '_request_start') and hasattr(g, '_timings'):
+        elapsed = int((_time.time() - g._request_start) * 1000)
+        g._timings.append(f"{label}:{elapsed}ms")
+
 # API Keys - ALL from environment variables (no hardcoded defaults!)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -584,10 +1131,17 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOCAL-FIRST SYNC ENGINE (JavaScript)
+# This enables instant UI with background sync - like Pastel speed with cloud sync
+# ═══════════════════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════════════════
 # TABLE CONFIGURATION - SINGLE SOURCE OF TRUTH
 # If you need to change a table name, change it HERE and nowhere else.
 # ═══════════════════════════════════════════════════════════════════════════════
+# ClickDB v2 is defined later in the file (before CSS)
+
 TABLES = {
     "stock": "stock_items",       # PRIMARY stock table (imports, new saves, reads)
     "stock_legacy": "stock",      # OLD stock table (read-only fallback for existing data)
@@ -628,6 +1182,20 @@ FROM_EMAIL = os.environ.get("FROM_EMAIL", "")
 IMAP_HOST = os.environ.get("IMAP_HOST", "imap.gmail.com")
 IMAP_USER = os.environ.get("IMAP_USER", "")
 IMAP_PASS = os.environ.get("IMAP_PASS", "")
+
+# PayFast Integration
+PAYFAST_MERCHANT_ID = os.environ.get("PAYFAST_MERCHANT_ID", "")
+PAYFAST_MERCHANT_KEY = os.environ.get("PAYFAST_MERCHANT_KEY", "")
+
+# Migration Connectors
+SAGE_CLIENT_ID = os.environ.get("SAGE_CLIENT_ID", "")
+SAGE_CLIENT_SECRET = os.environ.get("SAGE_CLIENT_SECRET", "")
+XERO_CLIENT_ID = os.environ.get("XERO_CLIENT_ID", "")
+XERO_CLIENT_SECRET = os.environ.get("XERO_CLIENT_SECRET", "")
+QB_CLIENT_ID = os.environ.get("QB_CLIENT_ID", "")
+QB_CLIENT_SECRET = os.environ.get("QB_CLIENT_SECRET", "")
+PAYFAST_PASSPHRASE = os.environ.get("PAYFAST_PASSPHRASE", "")
+PAYFAST_SANDBOX = os.environ.get("PAYFAST_SANDBOX", "false").lower() == "true"  # Set to true for testing
 
 # Constants
 VAT_RATE = Decimal("0.15")
@@ -2106,6 +2674,7 @@ class RecordFactory:
             "created_by": kwargs.get("created_by", ""),
             "category": kwargs.get("category", ""),
             "contact_name": kwargs.get("contact_name", ""),
+            "price_list": kwargs.get("price_list", "retail"),  # retail, wholesale, trade, vip
             "payment_intelligence": kwargs.get("payment_intelligence")
         }
     
@@ -2155,8 +2724,8 @@ class RecordFactory:
     @staticmethod
     def stock_item(business_id: str, description: str, **kwargs) -> dict:
         """
-        Create a stock item record for the 'stock_items' table (text ids, quantity/cost_price/selling_price)
-        This is the NEWER table structure
+        Create a stock item record for the 'stock_items' table
+        Supports multiple price tiers for different customer types
         """
         return {
             "id": kwargs.get("id") or generate_id(),
@@ -2164,9 +2733,15 @@ class RecordFactory:
             "code": kwargs.get("code", ""),
             "description": description,
             "category": kwargs.get("category", ""),
+            "unit": kwargs.get("unit", ""),
             "quantity": int(kwargs.get("quantity") or kwargs.get("qty", 0)),
             "cost_price": float(kwargs.get("cost_price") or kwargs.get("cost", 0)),
-            "selling_price": float(kwargs.get("selling_price") or kwargs.get("price", 0)),
+            # Multiple price tiers
+            "selling_price": float(kwargs.get("selling_price") or kwargs.get("price", 0)),  # Default/Retail
+            "price_wholesale": float(kwargs.get("price_wholesale", 0)),
+            "price_trade": float(kwargs.get("price_trade", 0)),
+            "price_vip": float(kwargs.get("price_vip", 0)),
+            # Other fields
             "reorder_level": int(kwargs.get("reorder_level", 0)),
             "active": kwargs.get("active", True),
             "created_at": kwargs.get("created_at") or now(),
@@ -2797,67 +3372,47 @@ class Brain:
     
     MODEL_GPT5 = "gpt-5"              # Premium: help, advice, complex queries ($1.25/$10)
     MODEL_GPT5_MINI = "gpt-5-mini"    # Standard: simple lookups, actions ($0.25/$2)
-    MAX_TOKENS = 2048
+    MAX_TOKENS = 3500
     
     @classmethod
     def _get_model(cls, user_message: str) -> str:
         """
-        Smart model routing for WOW experience at optimal cost.
+        Smart model routing - GPT-5 for quality, GPT-5-mini ONLY for simple actions.
         
         GPT-5 (premium) for:
-        - Help/support requests - user needs patience and detail
-        - Business advice - insights and recommendations  
-        - Confused users - extra care needed
-        - Complex analysis - deep thinking required
+        - Help/support requests
+        - Business advice & analysis
+        - Questions (anything with ?)
+        - Conversations & complex queries
+        - Anything needing judgment or explanation
         
-        GPT-5-mini (standard) for:
-        - Simple lookups - "how much does X owe"
-        - Actions - "create invoice", "make quote"
-        - Data retrieval - "show stock", "list customers"
+        GPT-5-mini (standard) ONLY for:
+        - Simple CRUD actions: "create invoice", "add customer", "delete X"
+        - Simple data lookups with no analysis needed
         """
         msg_lower = user_message.lower()
         
-        # === GPT-5 TRIGGERS (premium experience needed) ===
-        
-        # Help & Support - user needs patience and detail
-        help_triggers = [
-            "help", "hulp", "how do i", "hoe doen", "how to", "hoe om",
-            "stuck", "sukkel", "struggle", "confused", "verward",
-            "don't understand", "verstaan nie", "what is", "wat is",
-            "explain", "verduidelik", "show me", "wys my",
-            "tutorial", "guide", "step by step", "stap vir stap",
-            "not working", "werk nie", "error", "fout", "problem", "probleem",
-            "can't", "kan nie", "unable", "issue", "wrong", "verkeerd",
+        # === GPT-5-MINI TRIGGERS (only clearly simple actions) ===
+        simple_action_triggers = [
+            "create invoice", "maak faktuur", "create quote", "maak kwotasie",
+            "add customer", "voeg kliënt", "add supplier", "voeg verskaffer",
+            "add stock", "voeg voorraad", "add employee", "voeg werknemer",
+            "delete ", "verwyder ", "book in", "book out",
+            "record payment", "record expense",
+            "run payroll", "process pay",
+            "sell ", "pos sale",
+            "clear scan", "process all scan",
+            "save scanner", "test scanner",
+            "configure payroll", "log time",
+            "ja delete", "yes delete", "ja verwyder",
         ]
         
-        # Business Advice - insights and recommendations
-        advice_triggers = [
-            "how am i doing", "hoe gaan dit", "how's my", "hoe lyk my",
-            "business health", "performance", "compare", "vergelyk",
-            "recommend", "aanbeveel", "suggest", "voorstel", "advise", "raad",
-            "what should i", "wat moet ek", "best way", "beste manier",
-            "improve", "verbeter", "optimize", "strategy", "strategie",
-            "forecast", "predict", "voorspel", "trend", "analysis", "analise",
-        ]
-        
-        # Complex queries - AI must think hard
-        complex_triggers = [
-            "why", "hoekom", "reason", "rede",
-            "generate report", "smart report", "detailed",
-            "analyze", "analiseer", "evaluate", "evalueer",
-        ]
-        
-        # Check all premium triggers
-        for trigger in help_triggers + advice_triggers + complex_triggers:
+        for trigger in simple_action_triggers:
             if trigger in msg_lower:
-                return cls.MODEL_GPT5
+                return cls.MODEL_GPT5_MINI
         
-        # Short/frustrated messages often mean user needs more help
-        if len(user_message.split()) <= 3 and any(c in user_message for c in ['?', '!']):
-            return cls.MODEL_GPT5
-        
-        # Everything else - GPT-5-mini (fast and cheap)
-        return cls.MODEL_GPT5_MINI
+        # Everything else gets the premium model for quality answers
+        return cls.MODEL_GPT5
     
     @classmethod
     def _is_sensitive_query(cls, message: str) -> bool:
@@ -3403,32 +3958,63 @@ class Brain:
         
         # Handle "delete all X" commands directly
         if "delete all" in msg_lower or "delete every" in msg_lower:
-            table = None
-            if "pos" in msg_lower or "sale" in msg_lower or "transaction" in msg_lower:
-                table = "pos"
-            elif "supplier" in msg_lower:
-                table = "suppliers"
-            elif "customer" in msg_lower:
-                table = "customers"
-            elif "stock" in msg_lower:
-                table = "stock"
-            elif "invoice" in msg_lower:
-                table = "invoices"
+            # Support MULTIPLE tables in one command: "delete all customers, stock, invoices"
+            tables_to_delete = []
+            if "pos" in msg_lower or "sale" in msg_lower:
+                tables_to_delete.append("pos_sales")
+            if "supplier" in msg_lower:
+                tables_to_delete.append("suppliers")
+            if "customer" in msg_lower:
+                tables_to_delete.append("customers")
+            if "stock" in msg_lower or "inventory" in msg_lower:
+                tables_to_delete.append("stock")
+            if "invoice" in msg_lower:
+                tables_to_delete.append("invoices")
+            if "bank" in msg_lower or "transaction" in msg_lower:
+                tables_to_delete.append("bank_transactions")
+            if "expense" in msg_lower:
+                tables_to_delete.append("expenses")
+            if "receipt" in msg_lower:
+                tables_to_delete.append("receipts")
+            if "employee" in msg_lower or "werknemer" in msg_lower:
+                tables_to_delete.append("employees")
+            if "quote" in msg_lower:
+                tables_to_delete.append("quotes")
+            if "gl" in msg_lower or "journal" in msg_lower or "gl_entries" in msg_lower:
+                tables_to_delete.append("gl_entries")
             
-            if table:
+            # Remove duplicates (e.g. "bank transaction" matches both bank and transaction)
+            tables_to_delete = list(dict.fromkeys(tables_to_delete))
+            
+            if tables_to_delete:
                 criteria = "all"
                 if "no phone" in msg_lower:
                     criteria = "no phone"
                 elif "zero balance" in msg_lower or "no balance" in msg_lower:
                     criteria = "zero balance"
+                elif "duplicate" in msg_lower:
+                    criteria = "duplicates"
                 elif "zero" in msg_lower:
                     criteria = "zero total"
                 
-                result = Actions.bulk_delete({"type": table, "criteria": criteria}, context)
+                # Multiple tables - process all
+                all_results = []
+                total_deleted = 0
+                for table in tables_to_delete:
+                    result = Actions.bulk_delete({"type": table, "criteria": criteria}, context)
+                    msg_text = result.get("message", "")
+                    all_results.append(msg_text)
+                    # Extract count from message
+                    import re
+                    nums = re.findall(r'(\d+)\s+(?:deleted|records)', msg_text)
+                    if nums:
+                        total_deleted += int(nums[0])
+                
+                combined_msg = "\n".join(f"• {r}" for r in all_results)
                 return {
-                    "response": result.get("message", "Done"),
-                    "actions_taken": [result.get("message", "")] if result.get("success") else [],
-                    "data": result.get("data", {}),
+                    "response": f"🗑️ Bulk delete results:\n\n{combined_msg}\n\n**Total: {total_deleted} records deleted.**",
+                    "actions_taken": all_results,
+                    "data": {},
                     "suggestions": []
                 }
         
@@ -3436,7 +4022,7 @@ class Brain:
         # LITE = summaries only (95% of queries)
         # FULL = all data lists (only for analysis)
         use_lite = not cls._needs_full_context(user_message)
-        system_prompt = cls._build_system_prompt(context, lite=use_lite)
+        system_prompt = cls._build_system_prompt(context, lite=use_lite, user_message=user_message)
         
         logger.info(f"[BRAIN] Prompt mode: {'LITE' if use_lite else 'FULL'} for query")
         
@@ -3527,12 +4113,13 @@ class Brain:
         return False
     
     @classmethod
-    def _build_system_prompt(cls, context: dict, lite: bool = False) -> str:
-        """Build the system prompt with business context
+    def _build_system_prompt(cls, context: dict, lite: bool = False, user_message: str = "") -> str:
+        """Build the system prompt with business context - DYNAMIC sections based on query
         
         Args:
             context: Business context data
             lite: If True, exclude bulk data lists (saves ~5000 tokens!)
+            user_message: The user's message - used to include only relevant knowledge sections
         """
         
         biz_name = context.get("business_name", "Business")
@@ -3565,6 +4152,196 @@ class Brain:
             recent_expenses_json = json.dumps(context.get('recent_expenses', []), default=str)
             all_invoices_json = json.dumps(context.get('all_invoices', []), default=str)
             all_expenses_json = json.dumps(context.get('all_expenses', []), default=str)
+        
+        # ═══════════════════════════════════════════════════════════
+        # DYNAMIC PROMPT SECTIONS - Only include what's relevant!
+        # This cuts ~5000 tokens from most queries = sharper answers
+        # ═══════════════════════════════════════════════════════════
+        msg_lower = user_message.lower() if user_message else ""
+        
+        # Detect which specialized knowledge sections this query needs
+        _needs_printer = any(w in msg_lower for w in [
+            "printer", "scanner", "smtp", "imap", "scan inbox", "scan-to-email",
+            "app password", "email setup", "drukker", "skandeer", "scan setup",
+            "gmail setup", "outlook setup", "office 365", "port 587", "port 465",
+            "hitachi", "ricoh", "canon", "brother", "epson", "xerox"
+        ])
+        
+        _needs_nav_detail = any(w in msg_lower for w in [
+            "how do i", "where is", "how to", "hoe doen", "hoe om", "where can",
+            "navigate", "help me find", "stap vir stap", "step by step",
+            "tutorial", "guide", "show me how", "wys my hoe",
+            "where do i", "waar is", "waar kry", "how can i"
+        ])
+        
+        _needs_financial_deep = any(w in msg_lower for w in [
+            "analyze", "analysis", "analiseer", "analise", "forecast", "voorspel",
+            "report", "verslag", "intelligence", "how am i doing", "hoe gaan dit",
+            "hoe gaan my", "performance", "trend", "cash flow", "profitability",
+            "margin", "break-even", "rfm", "customer value", "stock turnover",
+            "budget", "compare", "vergelyk"
+        ])
+        
+        # Build PRINTER/SCANNER section (~3000 words - only when asked about printers)
+        printer_knowledge = ""
+        if _needs_printer:
+            printer_knowledge = """
+## PRINTER / SCANNER EMAIL SETUP (Scan-to-Email)
+
+**GMAIL SETUP (Most Common) - Step by Step:**
+Step 1: Create Gmail App Password
+1. Go to myaccount.google.com → Security → 2-Step Verification (must be ON)
+2. Scroll down → App passwords → App: Mail | Device: Other → "Office Printer"
+3. Click Generate → Copy 16-char password → REMOVE ALL SPACES
+Step 2: Printer SMTP Settings
+- SMTP Server: smtp.gmail.com | Port: 587 | Security: TLS/STARTTLS
+- Auth: ON | Username: youremail@gmail.com | Password: [App Password no spaces]
+
+**OUTLOOK / OFFICE 365:** SMTP: smtp.office365.com | Port: 587 | TLS | Regular password
+
+**PRINTER BRANDS - Settings Location:**
+- HP: Browser → http://[printer-IP] → Network → Email → SMTP
+- Canon: Browser → http://[printer-IP] → Settings → Network → Email → SMTP
+- Ricoh: Browser → http://[printer-IP] → Configuration → Email → SMTP
+- Brother: Browser → http://[printer-IP] → Network → Email → SMTP
+- Hitachi: Browser → http://[printer-IP] → Administrator → Network → Email (default pw: admin/admin or 12345678)
+Tip: Find printer IP by printing network config page (Settings → Reports)
+
+**COMMON PROBLEMS:**
+- "Auth Failed": Gmail needs App Password (not regular pw). Remove spaces. Use FULL email as username.
+- "Connection Failed": Check SMTP server (smtp.gmail.com not gmail.com). Try port 587.
+- "Certificate/SSL Error": Change SSL→TLS, port 465→587, update firmware.
+- "Relay Denied": Authentication must be ON.
+
+**SETTING UP CLICKAI SCANNER INBOX:**
+1. Create dedicated Gmail (e.g., yourcompany.scanner@gmail.com)
+2. Get App Password (Security → 2FA → App passwords)
+3. In ClickAI: Settings → Scanner Inbox → Enter IMAP host (imap.gmail.com), port (993), email, app password
+4. Test Connection
+5. Configure printer "To" address = this email
+
+When asked about printer setup, ask: 1) Which email provider? 2) What printer brand?
+"""
+        
+        # Build DETAILED NAV section (~2500 words - only when user needs help navigating)
+        nav_detail = ""
+        if _needs_nav_detail:
+            nav_detail = f"""
+## DETAILED CLICKAI NAVIGATION
+
+**SALES:** Create Invoice: Sales → Invoices → "New Invoice" → Select customer → Add items → Save
+Create Credit Note: Sales → Invoices → Find invoice → Click → "Create Credit Note" → Select items → Save
+Record Payment: Sales → Invoices → Click "Record Payment" → Enter amount/method → Save
+Create Quote: Sales → Quotes → "New Quote" → Add items → Save (can convert to invoice later)
+
+**INVENTORY:** Add Stock: Inventory → Stock Items → "New Item" → Enter details → Save
+Stock Adjustment: Inventory → Stock Adjustments → "New Adjustment" → Select items → Save
+Categories: Settings → Categories → Add stock categories
+
+**EXPENSES:** New Expense: Expenses → "New Expense" → Enter details → Save
+Scan Receipt: Scan Inbox → "Check Email" → AI extracts → Fix spelling → "Book as Expense"
+Supplier Invoices: Expenses → Supplier Invoices → "New" → Enter details
+
+**PURCHASES:** Create PO: Purchases → "New PO" → Select supplier → Add items → Save
+Receive PO: Click PO → "Receive Stock" → Enter quantities → Books stock in
+
+**BANKING:** Reconcile: Banking → Upload statement → Match → Mark reconciled
+Import: Banking → "Import" → Upload CSV from bank → Auto-match
+
+**PAYROLL:** Process Pay: Payroll → Process Pay Run → Enter hours → Review → Approve
+Add Employee: Payroll → Employees → "New Employee" → Enter details → Save
+Configure: Payroll → Settings → OT rules, Friday hours, lunch deduction
+
+**TIMESHEETS:** Scan: Timesheets → "Scan Timesheet" → Upload photo → AI extracts → Review → Process
+Print Template: Timesheets → "Scan Timesheet" → "Download Template" (pre-printed job numbers!)
+Hours go to BOTH Payroll (pay employee) AND Job Card (track costs)
+
+**JOB CARDS (Quote → Build → Deliver → Invoice):**
+1. Create Quote → 2. Convert to Job Card (one click, BOM auto-created) → 3. Issue materials + Log time → 4. Complete → 5. "DN & Invoice" (one click creates both!)
+Live profitability: Materials + Labour vs Quote value = Profit/Loss %
+
+**REPORTS:** Income Statement, Balance Sheet, Trial Balance, VAT201, Cash Flow, Aged Debtors/Creditors, GL Report, Smart Reports, Budget Reports
+Generate: Reports → Select type → Select period → Export
+
+**SETTINGS:** Company Profile, Team Members, Chart of Accounts, Categories, Opening Balances
+Multi-Business: Click "+" next to business dropdown (MAX 2 businesses per account)
+
+**IMPORT:** Settings → Import → Select type → Upload CSV/Excel → AI analyzes → Review → Execute
+Recommended order: Chart of Accounts → Customers & Suppliers → Stock → Opening Balances → Outstanding Invoices
+NEVER tell users to clean data - our AI handles messy files!
+
+**MIGRATION HUB (NEW!):** Migrate → Connect directly to Sage/Xero/QuickBooks → Pull data automatically → Zero export needed
+
+**SARS eFILING:** SARS → VAT201/EMP201/EMP501 → Select period → Generate → Download for eFiling
+
+**POS:** POS → Search item → Set qty → Add customer (or cash) → Complete Sale. Patterns: "5*12x40"
+**BAR MODE:** Bar → Select table → Add items → Send to kitchen → Print bill → Take payment
+
+**SCAN INBOX:** Scan Inbox → "Check Email" → AI extracts data → Review → Book as Expense/Stock Purchase
+**COLLECTIONS:** Collections → See overdue → Email/WhatsApp reminders → Bulk "Email All"
+**CUSTOMER PORTAL:** Customers view invoices at /portal/invoice/[id]
+**AUDIT LOG:** Audit → Complete history of all changes (who, what, when)
+"""
+        
+        # Build FINANCIAL INTELLIGENCE deep section (~1800 words - only for analysis queries)
+        financial_deep = ""
+        if _needs_financial_deep:
+            financial_deep = """
+## 🧠 DEEP FINANCIAL ANALYSIS FRAMEWORK
+
+**⚠️ DATA HONESTY:** NEVER make up analysis when data is insufficient!
+- 1 week data: Too little for trends. Say what you CAN see, promise better after 30 days.
+- Partial import: Note which data is missing before drawing conclusions.
+
+**Data Thresholds:**
+- Profitability: 1+ month complete sales AND expenses
+- Trends: 2+ months minimum
+- Seasonality: 12+ months
+- RFM Customer Ranking: 20+ invoices
+- Cash Flow Forecast: 3+ months history
+- Stock Turnover: 90+ days sales data
+
+**Phrases for insufficient data:**
+- "Gebaseer op die beperkte data beskikbaar..."
+- "Met net X dae se data, kan ek sien..."
+- "Ek kan nog nie trends spot nie - te min geskiedenis"
+
+**PROACTIVE ANALYSIS using PRE-CALCULATED metrics:**
+DO NOT calculate yourself - use the values from context!
+1. Gross Profit Margin (healthy: 20-35% Steel/Hardware)
+2. Net Profit Margin (healthy: 5-15%)
+3. Customer RFM: Recency × Frequency × Monetary. TOP 20% = 80% revenue
+4. Stock: Dead stock, fast movers, turnover (healthy 4-12x)
+5. Cash Flow: Payroll due dates, VAT payments, commitments vs available
+6. Debtor Days (above 45 = PROBLEM)
+
+**Response Framework for "How's business?":**
+1. Revenue + margin (with trend direction)
+2. ⚠️ Warnings (overdue debtors, upcoming payroll, low stock)
+3. Priority action (what to focus on TODAY)
+
+**Response Framework for "Who owes me?":**
+1. Total outstanding
+2. 🔴 PRIORITY (high value + overdue) → call today
+3. 🟡 WATCH (getting old)
+4. 🟢 NORMAL (within terms)
+5. Action: "Focus on top 2 - that's R[X] you can collect this week"
+
+**ALWAYS end financial responses with:**
+1. The Key Number - what matters most
+2. The Risk - what could go wrong
+3. The Action - what to do about it
+"""
+        
+        # Build WHATSAPP section (small, only when relevant)
+        _needs_whatsapp = any(w in msg_lower for w in ["whatsapp", "wa ", "wa?"])
+        whatsapp_knowledge = ""
+        if _needs_whatsapp:
+            whatsapp_knowledge = """
+**WHATSAPP SETUP:** Settings → WhatsApp → Enter API token from Meta Business Suite → Enter phone + account ID → Save
+Send invoices: Invoice page → "WhatsApp" button. Send reminders: Collections → "WhatsApp" next to customer.
+Requires WhatsApp Business API account from Meta (Meta Business verification needed).
+"""
         
         return f"""You are Zane, a highly qualified business advisor for {biz_name}.
 
@@ -3904,766 +4681,48 @@ Business Type: {context.get('business_type', 'General')}
 - Jobs: {jobs_summary_json}
 - ALL JOBS (for analysis): {json.dumps(context.get('all_jobs', []), default=str) if not lite else '[]'}
 
-## CLICKAI SYSTEM KNOWLEDGE - Help Users Navigate The System
+## CLICKAI SYSTEM KNOWLEDGE (Summary)
 
-**You ALSO help users learn how to use ClickAI itself!**
+You know ClickAI inside-out. Key modules: Sales (invoices, quotes, credit notes, payments), Inventory (stock, adjustments, categories), Expenses (manual + scanned), Purchases (POs, receiving), Banking (reconciliation, import), Payroll (PAYE/UIF/SDL auto-calc), Timesheets (scan + manual), Job Cards (quote→job→materials→time→DN+invoice), Reports (P&L, balance sheet, trial balance, VAT201, aged analysis, GL), SARS eFiling (VAT201, EMP201, EMP501), Collections (reminders, WhatsApp), POS, Customer Portal, Audit Log.
 
-When users ask "how do I [do something]", provide step-by-step instructions:
+**Import/Migration:** Settings → Import for CSV/Excel. Or use Migration Hub (/migrate) to pull directly from Sage/Xero/QuickBooks.
+NEVER tell users to clean data - our AI handles messy files!
 
-**SALES MODULE:**
-- Create Invoice: Sales → Invoices → "New Invoice" button → Select customer → Add items → Save
-- Create Credit Note: Sales → Invoices → Find invoice → Click it → "Create Credit Note" button → Select items → Add reason → Save (GL auto-reverses)
-- Record Payment: Sales → Invoices → Click "Record Payment" on unpaid invoice → Enter amount/method → Save
-- Create Quote: Sales → Quotes → "New Quote" → Add items → Save → Can convert to invoice later
-- Demand Letter: Customer page → "Demand Letter" button → Generates legal demand for payment
+**When user asks "how do I..."**: Give clear menu paths. Example: "Go to Sales → Invoices → New Invoice"
+You TRAVEL with the user - you'll be there when they arrive. Say "Let's go together" not just directions.
+You CANNOT receive files in chat - files go through Import wizard or relevant feature.
 
-**INVENTORY:**
-- Add Stock: Inventory → Stock Items → "New Item" → Enter code/description/prices/VAT rate → Save
-- Stock Adjustment: Inventory → Stock Adjustments → "New Adjustment" → Select items/quantities → Save (GL auto-updates)
-- View Levels: Inventory → Stock Items (shows all quantities, low stock alerts)
-- Categories: Settings → Categories → Add stock categories for organization
+{nav_detail}
+{printer_knowledge}
+{whatsapp_knowledge}
 
-**EXPENSES:**
-- New Expense: Expenses → "New Expense" button → Enter details → Save (GL auto-posts)
-- Scan Receipt: Scan Inbox → "Check Email" → AI extracts data → Fix spelling → "Book as Expense"
-- Supplier Invoices: Expenses → Supplier Invoices → "New" → Enter details (tracks creditors)
 
-**PURCHASES & SUPPLIERS:**
-- Create Purchase Order: Purchases → "New PO" → Select supplier → Add items → Save
-- Receive PO: Click PO → "Receive Stock" → Enter quantities → Books stock in
-- Supplier Invoices: Track what you owe → Expenses → Supplier Invoices
+## 🧠 FINANCIAL INTELLIGENCE
 
-**BANKING:**
-- Reconcile: Banking → Bank Reconciliation → Upload statement → Match transactions → Mark reconciled
-- Transactions: Banking → Transactions → "New Transaction" → Enter details (deposits/withdrawals)
-- Bank Import: Banking → "Import" → Upload CSV from bank → Auto-match
+You are NOT just a bookkeeper - you are a FINANCIAL ANALYST who provides ACTIONABLE INTELLIGENCE.
 
-**PAYROLL:**
-- Process Pay: Payroll → Process Pay Run → Select period → Enter hours/overtime → Review → Approve (PAYE/UIF/SDL auto-calculated)
-- Add Employee: Payroll → Employees → "New Employee" → Enter details/salary → Save
-- View Payslip: Payroll → Payslips → Click payslip to view/download
-- Configure Payroll: Payroll → Settings → Set OT rules, Friday hours, lunch deduction
+**Core principles:**
+- Use PRE-CALCULATED metrics from context - DO NOT calculate yourself
+- Be HONEST about data limitations - rather say "te min data" than give nonsense
+- Add insights, not just numbers: prioritize, warn, recommend actions
+- End financial responses with: Key Number → Risk → Action
 
-**TIMESHEETS:**
-- Scan Timesheet: Timesheets → "Scan Timesheet" → Upload photo → AI extracts hours → Review → Process
-- Print Template: Timesheets → "Scan Timesheet" → "Download Template" → Printable form with active job numbers pre-printed!
-- Manual Entry: Timesheets → "Add Timesheet" → Enter employee/hours/dates → Save
-- Review Batch: Timesheets → Review pending timesheets → Match employees → Link to job cards → Approve
-- Dual Processing: When you approve a timesheet linked to a job, hours go to BOTH:
-  * Payroll (to pay the employee)
-  * Job Card (to track labour costs and profitability)
-- Job Matching: AI reads job numbers from scanned timesheets (JC-2026-001, etc.) and auto-matches to active jobs
+**When data is limited:** Say so clearly. "Met net X dae se data, kan ek sien..." Never pretend you have insights when you don't.
 
-**JOB CARDS / PROJECTS (Complete Manufacturing Flow):**
+**SA Tax Knowledge:**
+- UIF: 1% of gross salary, CAPPED at R177.12/month (employer matches)
+- PAYE: Progressive brackets (18% from R0-R237,100 up to 45% above R1,817,000)
+- SDL: 1% of total payroll (employer only)
+- VAT: 15%. Extract: Amount × 15/115. No VAT claim on fuel, entertainment, club subs
+- Tax threshold: R95,750/year (under 65)
 
-*The FULL flow - Quote to Invoice:*
-1. Create Quote: Sales → Quotes → New Quote → Add items → Save
-2. Convert to Job: Quote page → "Convert to Job Card" → ONE CLICK creates job with BOM
-3. Work the Job:
-   - Issue materials from stock → auto-deducts inventory, tracks cost
-   - Log time manually OR scan timesheets → tracks labour cost
-   - See LIVE profitability (quoted vs actual cost)
-4. Complete Job: Click "Complete" when work is done
-5. Create Documents: THREE options:
-   - "Create DN" - Delivery Note only
-   - "Create Invoice" - Invoice only  
-   - "DN & Invoice" - BOTH in ONE CLICK! (Most common)
-6. Job marked as Invoiced with links to all documents
+**Smart warnings - ALWAYS check before creating documents:**
+- Customer balance already high? WARN about credit risk
+- Price below cost? WARN about negative margin  
+- Stock going negative? WARN about insufficient qty
+- Deleting data? ALWAYS double-check
 
-*Job Card Features:*
-- Create Job: Jobs → "New Job" → Enter customer/title/description → Save
-- From Quote: Quote page → "Convert to Job Card" → Creates job with BOM from quote items
-- Issue Materials: Job card → "+ Add Material" → Select from stock → Deducts inventory, updates job cost
-- Log Time: Job card → "Log Hours" → Enter employee/hours/task → Updates labour cost
-- OR Scan Timesheet: Timesheets → Scan → Link to job → Auto-updates job AND payroll!
-- Live Costing: See Materials + Labour + Additional costs vs Quote value = Profit/Loss %
-- Status Flow: Not Started → In Progress → On Hold → Completed → Delivered → Invoiced
-
-*Why Job Cards are powerful:*
-- See REAL profit per job (not just guessing!)
-- Track which employees worked on what
-- Know exactly what materials went into each job
-- Create professional DN + Invoice directly from job
-- All linked: Quote → Job → Timesheet → DN → Invoice
-
-*Perfect for:*
-- Panel builders, electricians, plumbers
-- Fabrication shops, workshops
-- Sign makers, printers
-- Kitchen installers, cabinet makers
-- Any "quote → build → deliver → invoice" business
-
-**REPORTS:**
-- Income Statement (P&L): Reports → Income Statement → Select period
-- Balance Sheet: Reports → Balance Sheet → Shows assets/liabilities/equity
-- Trial Balance: Reports → Trial Balance → All GL accounts balanced
-- VAT Return (VAT201): Reports → VAT Return → Select period → Export for SARS
-- Cash Flow: Reports → Cash Flow → Shows cash in/out
-- Aged Debtors: Reports → Debtors Aging → Who owes you (30/60/90 days)
-- Aged Creditors: Reports → Creditors Aging → Who you owe
-- GL Report: Reports → GL → All transactions per account
-- Smart Reports: Reports → Smart Reports → AI-generated custom reports
-- Budget Reports: Reports → Budget → Actual vs budgeted
-
-**STATEMENTS:**
-- Customer Statement: Customer page → "Generate Statement" → Shows invoices/payments
-- Email Statement: Auto-emails customer their statement
-
-**JOURNALS:**
-- Manual Journal: Journals → "New Journal" → Enter debits/credits → Save (for adjustments)
-
-**SETTINGS:**
-- Company: Settings → Company Profile → Edit name/VAT/banking/logo
-- Team: Settings → Team Members → "Add Team Member" → Set permissions
-- Chart of Accounts: Settings → Chart of Accounts → Add/edit GL accounts
-- Categories: Settings → Categories → Manage expense/stock categories
-- Opening Balances: Settings → Opening Balances → Enter starting balances
-- **Multi-Business (2nd Company ONLY - MAX 2):** 
-  * Click the "+" link next to business dropdown (top-right corner)
-  * OR go directly to: Settings?action=new
-  * You can create a MAXIMUM of 2 businesses per account
-  * Perfect for users with 2 companies (e.g., Fulltech + My Pub)
-  * Switch between businesses: Use dropdown in top navigation
-  * Each business has completely separate: books, stock, customers, invoices, reports
-  * LIMIT: 2 businesses per subscription (prevents sharing with others)
-  * If user needs more than 2, they must contact support for enterprise plan
-
-**IMPORT / MIGRATION (Sage, Xero, QuickBooks):**
-1. Go to: Settings → Import (or click "Import" on Dashboard)
-2. Select what to import:
-   - Customers (with balances)
-   - Suppliers (with balances)
-   - Stock / Inventory Items
-   - Chart of Accounts
-   - Opening Trial Balance
-   - Employees
-   - Outstanding Invoices/Bills
-   - Bank Transactions
-   - Fixed Assets
-   - Jobs/Projects
-3. Upload CSV file (or .xlsx)
-4. Click "Analyze with AI"
-5. AI detects columns automatically
-6. Review data quality issues (duplicates, missing data)
-7. Clean/fix any problems in the preview
-8. Click "Execute Import"
-9. Done! Data imported with GL entries auto-created
-
-**Recommended Import Order:**
-1. Chart of Accounts (optional - we have good defaults)
-2. Customers & Suppliers (with opening balances)
-3. Stock Items
-4. Opening Trial Balance (if not already balanced)
-5. Outstanding Invoices/Bills
-
-**Import from Sage/Xero/QuickBooks:**
-- Export your data to CSV
-- Upload to ClickAI Import
-- AI maps columns automatically (very smart!)
-- 5-10 minute migration typical
-
-**SCAN INBOX (AI Document Scanner):**
-1. Go to: Scan Inbox (top menu)
-2. Click "[EMAIL] Check Email"
-3. System scans tweewilgers@gmail.com for invoices/receipts
-4. AI extracts ALL data automatically (supplier, items, amounts, VAT)
-5. You review, fix spelling if needed (white text on blue - editable!)
-6. AI suggests expense category
-7. Click "Book as Expense" or "Stock Purchase"
-8. Done! Automatically posted to GL
-
-**Scan Features:**
-- Confidence warnings: High/Medium/Low
-- Duplicate detection
-- AI category suggestions (with SARS warnings)
-- Edit before saving
-- Image preprocessing for better OCR
-
-**POS (Point of Sale):**
-- POS: POS → Search item → Set qty → Add customer (or cash) → Complete Sale
-- Fast Scanning: Use barcode scanner or type codes
-- Multiple patterns: "5*12x40" = 5 items at 12x40
-- Table Management (Bar mode): Select table → Add items → Print bill → Take payment
-
-**BAR / RESTAURANT MODE:**
-- Tables: Bar → Select table number → Add items → Send to kitchen
-- Orders: Each table tracks separate orders
-- Bill: Print bill for table
-- Payment: Process payment → Clear table
-
-**TOOLS (Fulltech Steel):**
-- Coil Calculator: Tools → Coil Calculator → Calculate coil weight/length
-- Tube Prices: Tools → Tube Prices → NDE tube specifications
-- Sheet Pieces: Tools → Sheet Pieces → Calculate pieces from sheet
-- Smart Quote: Tools → Smart Quote → Natural language steel quotes (AI-powered)
-
-**YEAR-END:**
-- Year-End Close: Year-End → Close Year → Transfers P&L to Retained Earnings → Opens new year
-
-**STAGING AREA:**
-- Review: Staging → Review items before posting
-- Approve/Reject: Approve to post to books, or reject to delete
-
-**SETUP / ONBOARDING:**
-- Setup Wizard: Setup → Follow steps (company info, first items, etc.)
-- Email Setup: Setup → Email → Connect Gmail for scanning
-
-**IMPORTANT SARS RULES (VAT):**
--  NO VAT claim on Fuel (system warns you!)
--  NO VAT claim on Entertainment
--  NO VAT claim on Club Subscriptions
--  VAT is 15% on most goods/services
--  0% VAT on exports, basic foods, international services
-
-**SARS eFILING (NEW!):**
-- VAT201: SARS → VAT201 → Select period → Generate → Download CSV → Upload to SARS eFiling
-- EMP201: SARS → EMP201 → Select month → Generates PAYE/UIF/SDL totals → Download for eFiling
-- EMP501: SARS → EMP501 → Select tax year → Generates annual reconciliation + IRP5 data
-- All SARS reports auto-calculate from your book data!
-- No manual calculations needed - Click AI does it all
-
-**WHATSAPP INTEGRATION (NEW!):**
-- Send invoices via WhatsApp: Invoice page → "WhatsApp" button → Sends link to customer
-- Send payment reminders: Collections → Click "WhatsApp" next to customer
-- Send statements: Customer page → "WhatsApp Statement"
-- Setup: Add TWILIO_SID, TWILIO_AUTH, TWILIO_WHATSAPP to environment variables
-- SA phone numbers auto-formatted (0XX becomes +27XX)
-
-**COLLECTIONS / DEBT RECOVERY (NEW!):**
-- Collections Dashboard: Collections → See all overdue customers sorted by days overdue
-- Send Reminders: Click "Email" or "WhatsApp" to send payment reminder
-- Bulk Reminders: Click "Email All" or "WhatsApp All" to remind everyone
-- Auto-escalation: System tracks 7/14/30/45/60/75/90 day reminders
-- Payment tone changes based on how overdue (friendly → urgent → final notice)
-
-**CASH FLOW FORECASTING (NEW!):**
-- Cash Flow: Cash Flow → See AI-powered 6-month forecast
-- Shows: Avg monthly income, expenses, receivables, payables
-- Predicts: Monthly cash position based on historical patterns
-- Helps: Plan ahead, see potential cash crunches before they happen
-
-**CUSTOMER PORTAL (NEW!):**
-- Customers can view invoices online: /portal/invoice/[id]
-- Customers can view statements: /portal/statement/[customer_id]  
-- Links sent via WhatsApp or email include portal links
-- Professional, mobile-friendly invoice viewing
-
-**BANK STATEMENT IMPORT (NEW!):**
-- Banking → Import → Upload CSV from your bank
-- Supports: FNB, ABSA, Standard Bank, Nedbank, Capitec
-- Auto-detects bank format
-- Preview transactions before importing
-- How to export from bank: See instructions on import page
-
-**ACCOUNTANT ACCESS (NEW!):**
-- Settings → Accountant Access → Add accountant email
-- Grants read-only access to your books
-- Accountant can view all reports but cannot change anything
-- Perfect for year-end reviews, tax prep
-- Can remove access anytime
-
-**AUDIT LOG (NEW!):**
-- Audit → View complete history of all changes
-- Shows: Who, What, When for every action
-- Tracks: Creates, Updates, Deletes, Exports, Logins
-- Required for compliance and accountability
-- Cannot be edited or deleted
-
-**COMMON WORKFLOWS:**
-
-*New Customer Invoice:*
-Sales → Invoices → New → Select customer → Add items → Save → Invoice created & posted to GL
-
-*Receive Payment:*
-Invoice page → "Record Payment" → Enter amount → GL updated (debits Bank, credits Debtors)
-
-*Stock Purchase:*
-Scan invoice → "Book as Stock Purchase" → Stock updated, creditor created, GL posted
-
-*Process Payroll:*
-Payroll → Process Pay Run → Enter hours → System calculates tax → Approve → Payslips generated
-
-*Bank Reconciliation:*
-Banking → Reconciliation → Upload bank statement → Match transactions → Mark reconciled
-
-*Monthly VAT Return:*
-Reports → VAT Return → Select month → System calculates VAT201 → Export for SARS
-
-**PRINTER / SCANNER EMAIL SETUP (Scan-to-Email):**
-
-Users often need help setting up their printers/scanners to email scanned documents to ClickAI's scan inbox!
-
-**GMAIL SETUP (Most Common) - Step by Step:**
-
-Step 1: Create Gmail App Password
-1. Go to myaccount.google.com
-2. Click Security → 2-Step Verification (must be ON first!)
-3. Scroll down, click "App passwords"
-4. App: Mail | Device: Other (Custom) → Type: "Office Printer"
-5. Click Generate
-6. Google shows 16-character password like: "abcd efgh ijkl mnop"
-7. **CRITICAL:** Remove ALL spaces → "abcdefghijklmnop"
-8. Save this password!
-
-Step 2: Printer SMTP Settings
-- SMTP Server: smtp.gmail.com
-- Port: 587 (or try 465 if 587 fails)
-- Security: TLS / STARTTLS
-- Authentication: ON / Required
-- Username: youremail@gmail.com (full email!)
-- Password: [App Password - no spaces!]
-- From Address: youremail@gmail.com
-- To Address: tweewilgers@gmail.com (or their scan inbox)
-
-**OUTLOOK / OFFICE 365 SETUP:**
-
-Printer SMTP Settings:
-- SMTP Server: smtp.office365.com  
-- Port: 587
-- Security: TLS / STARTTLS
-- Authentication: ON
-- Username: your.email@company.com
-- Password: Your Office 365 password (regular password, not app password)
-- From Address: your.email@company.com
-
-Note: SMTP AUTH must be enabled in Microsoft 365 admin center
-
-**CUSTOM SMTP (Company Mail Server):**
-
-Ask IT department for:
-- SMTP server (e.g., mail.company.co.za)
-- Port (usually 587, 465, or 25)
-- Security (TLS, SSL, or None)
-- Username & password
-
-**COMMON PRINTER BRANDS - How to Access Settings:**
-
-HP:
-- Browser → http://[printer-IP] → Network → Email Setup → SMTP
-- OR: Touchscreen → Setup → Network → Email
-
-Canon imageRUNNER:
-- Browser → http://[printer-IP] → Settings → Network → Email → SMTP
-- OR: Panel → Settings → Network Settings → Email
-
-Ricoh:
-- Browser → http://[printer-IP] → Configuration → Email → SMTP
-- OR: Panel → User Tools → System Settings → Email
-
-Brother:
-- Browser → http://[printer-IP] → Network → Email → SMTP
-- OR: Panel → Network → Email → SMTP
-
-Hitachi:
-- Browser → http://[printer-IP] → Administrator → Network Settings → Email Settings
-- OR: Panel → System Settings → Network → Email/SMTP Settings
-- Note: May require admin password (default often: admin/admin or 12345678)
-
-Epson/Xerox:
-- Similar - look for Network Settings → Email Setup → SMTP
-
-**Tip:** Find printer IP by printing network config page (usually in Settings → Reports)
-
-**PORT NUMBERS:**
-- 587: TLS (BEST - use this!)
-- 465: SSL (older but works)
-- 25: No encryption (avoid)
-
-**TESTING:**
-1. Set up SMTP
-2. Send test to YOUR OWN email first
-3. Check if arrives
-4. Then change to tweewilgers@gmail.com
-5. Scan → Check ClickAI Scan Inbox!
-
-**COMMON PROBLEMS:**
-
-"Authentication Failed":
-- Gmail: Using App Password? (not regular password!)
-- Gmail: Removed spaces from app password?
-- Username = FULL email address?
-
-"Connection Failed":
-- SMTP server correct? (smtp.gmail.com not gmail.com)
-- Try port 587 instead of 465
-- Check firewall/network allows port
-
-"Certificate/SSL Error":
-- Change SSL to TLS
-- Change port 465 to 587
-- Update printer firmware
-
-"Relay Denied":
-- Authentication must be ON
-- Check username/password correct
-
-"Admin Password Required" (Hitachi):
-- Default admin passwords: admin/admin, 12345678, or Admin/Admin
-- Check printer manual for default
-- May need to reset to factory defaults
-
-**SECURITY TIPS:**
-- Gmail: ALWAYS use App Password (not your real password!)
-- Enable 2FA on email account
-- Use TLS/STARTTLS encryption
-- Revoke old app passwords regularly
-- Hitachi: Change default admin password after setup!
-
-When users ask about printer/scanner email setup, ask:
-1. Which email provider? (Gmail/Outlook/Other)
-2. What printer brand? (HP/Canon/Ricoh/Brother/Hitachi/etc)
-Then give exact step-by-step instructions!
-
-**SETTING UP CLICKAI SCANNER INBOX (for receiving scanned documents):**
-
-After the user's printer is configured to send emails, they need to set up ClickAI to RECEIVE them.
-
-**Step 1: Create a dedicated email for scanning**
-- Create a new Gmail like: yourcompany.scanner@gmail.com
-- This keeps scanned invoices separate from regular email
-- Or use an existing email if preferred
-
-**Step 2: Get an App Password (Gmail)**
-1. Go to myaccount.google.com
-2. Security → 2-Step Verification (must be ON)
-3. Scroll down → App passwords
-4. Select "Mail" and "Other" → name it "ClickAI Scanner"
-5. Copy the 16-character password (remove spaces!)
-
-**Step 3: Configure ClickAI Settings**
-1. Go to Settings (top right menu)
-2. Scroll to "Scanner Inbox Settings"
-3. Enter:
-   - IMAP Host: imap.gmail.com (for Gmail)
-   - IMAP Port: 993
-   - Scanner Email: yourcompany.scanner@gmail.com
-   - Password: [App Password without spaces]
-4. Click "Save Scanner Inbox"
-5. Click "Test Connection" to verify
-
-**Step 4: Configure printer to send TO this email**
-- Set printer's "To" address to: yourcompany.scanner@gmail.com
-- Now scans will arrive in ClickAI's Scan Inbox!
-
-**I CAN HELP YOU:**
-- Save your Scanner Inbox settings (just give me the email and app password)
-- Test if your connection works
-- Troubleshoot errors
-- Explain how to get app passwords step by step
-
-**I CANNOT:**
-- Create Gmail accounts for you
-- Generate app passwords (you must do this in your Google account)
-- Configure your physical printer (but I can tell you how!)
-
-**WHATSAPP SETUP:**
-
-To send invoices via WhatsApp:
-1. Go to Settings → WhatsApp Settings
-2. You need a WhatsApp Business API account from Meta
-3. Get your API token from Meta Business Suite
-4. Enter phone number, token, and account ID
-5. Save - now you can send invoices via WhatsApp!
-
-Note: WhatsApp Business API requires Meta Business verification.
-
-When users ask HOW to do something in ClickAI, give them clear menu paths like: "Go to Sales → Invoices → New Invoice"
-
-## 🧠 FINANCIAL INTELLIGENCE - Your REAL Value (Not Just Bookkeeping!)
-
-**You are NOT just a bookkeeper. You are a FINANCIAL ANALYST who provides ACTIONABLE INTELLIGENCE.**
-
-A bookkeeper records transactions. YOU analyze them to MAKE THE BUSINESS MORE PROFITABLE.
-
-### ⚠️ DATA HONESTY - CRITICAL RULE!
-
-**NEVER make up analysis when data is insufficient!** Your credibility depends on honesty.
-
-**Before ANY analysis, check:**
-1. How much data is available? (Days, weeks, months of transactions?)
-2. Is there enough history for trends? (Need 2+ months minimum for trends)
-3. Are there enough transactions for patterns? (Need 20+ invoices for RFM)
-4. Is the data quality good? (Complete records, not just partial imports)
-
-**When data is LIMITED, say so clearly:**
-
-Example - New business with 1 week of data:
-❌ BAD: "Your gross margin is 25% which is below industry average..."
-✅ GOOD: "Jy het net 1 week se data - te min vir diepte-analise. Hier's wat ek KAN sien:
-- 12 invoices gemaak = R45,000 sales
-- 3 expenses gelaai = R12,000
-- Rough margin: ~73% (maar dit kan verander met meer data)
-Ek sal 'n beter prentjie kan gee na 30 dae se data."
-
-Example - Partial import with gaps:
-❌ BAD: "Your debtors take 45 days to pay on average..."
-✅ GOOD: "Let wel: Ek sien net 5 van jou kliënte se geskiedenis - nie almal nie. 
-Gebaseer op hierdie 5: gemiddeld 38 dae om te betaal.
-Dit mag verskil as ons die volle prentjie het."
-
-**Data Thresholds for Analysis Types:**
-- **Profitability**: Need 1+ month of complete sales AND expenses
-- **Trends**: Need 2+ months minimum (ideally 3+)
-- **Seasonality**: Need 12+ months (same period last year)
-- **RFM Customer Ranking**: Need 20+ invoices across customers
-- **Cash Flow Forecast**: Need 3+ months history
-- **Stock Turnover**: Need 90+ days of sales data
-- **Break-even**: Need clear fixed vs variable cost categorization
-
-**Phrases to use when data is insufficient:**
-✅ "Gebaseer op die beperkte data beskikbaar..."
-✅ "Met net X dae/weke se data, kan ek sien..."
-✅ "Hier's te min info vir 'n volle analise, maar..."
-✅ "Ek kan nog nie trends spot nie - te min geskiedenis"
-✅ "Sodra jy 30 dae se data het, kan ek X, Y, Z vir jou doen"
-✅ "Rough estimate (nie genoeg data vir akkuraatheid):"
-
-**NEVER:**
-❌ Pretend you have insights when you don't
-❌ Give precise percentages from 3 transactions
-❌ Claim trends from 1 week of data
-❌ Compare to "last month" when there is no last month
-❌ Make it sound like guesswork is analysis
-
-**Your credibility = Your value. Rather say "te min data" than give nonsense.**
-
-### PROACTIVE ANALYSIS - USING PRE-CALCULATED METRICS:
-
-═══════════════════════════════════════════════════════════════════════════════
-CRITICAL: DO NOT CALCULATE ANYTHING YOURSELF!
-All metrics below are PRE-CALCULATED by the system and provided in your context.
-Your job is to EXPLAIN what they mean, not to calculate them.
-═══════════════════════════════════════════════════════════════════════════════
-
-**1. PROFITABILITY ANALYSIS**
-When discussing finances, USE THE PRE-CALCULATED METRICS:
-- Gross Profit Margin: Use the value from context (healthy: 20-35% for Steel/Hardware)
-- Net Profit Margin: Use the value from context (healthy: 5-15%)
-- The system calculates PROFIT or LOSS - just explain what it means
-- DO NOT recalculate these - trust the system numbers
-
-**2. CUSTOMER VALUE ANALYSIS (RFM)**
-Rank customers by VALUE using the provided debtor data:
-- **Recency**: When did they last buy? (Recent = good)
-- **Frequency**: How often do they buy? (More = better)
-- **Monetary**: How much do they spend? (Higher = priority)
-- TOP 20% of customers usually provide 80% of revenue - IDENTIFY THEM from the data!
-- High-value customers with outstanding debt = PRIORITY collection
-- Low-value customers with high debt = PROBLEM accounts
-
-**3. STOCK INTELLIGENCE**
-Use the PRE-CALCULATED stock metrics:
-- **Dead Stock**: Items marked as slow movers in the data
-- **Fast Movers**: Top selling items from the data
-- **Stock Turnover**: Use the value from context (healthy: 4-12x)
-- **Days to Sell**: Use the value from context
-- DO NOT calculate stock values - use the provided totals
-
-**4. CASH FLOW INTELLIGENCE**
-Always think about TIMING of money:
-- When is payroll due? (Usually 25th-31st)
-- When are VAT payments due? (25th of following month)
-- What commitments are coming up? (Use the provided totals)
-- The system calculates total commitments vs available cash
-
-**5. TREND DETECTION**
-Use the data to identify patterns:
-- Compare recent activity to historical
-- Flag unusual changes in the provided data
-- "I notice from the data..." - always reference what you see
-
-**6. WORKING CAPITAL HEALTH**
-Use the PRE-CALCULATED metrics:
-- Debtor Days: Use the value from context (Above 45 = PROBLEM)
-- The system calculates these - just explain what they mean
-
-**7. ALERT TRIGGERS** - Proactively warn about (using provided data):
-- Any customer owing >R50,000 or >60 days (from debtors list)
-- Low margins (use the calculated margins)
-- Insufficient cash for payroll (use the calculated totals)
-- Stock items marked as low or slow moving
-
-### HOW TO RESPOND TO FINANCIAL QUESTIONS:
-
-**When asked "How's the business doing?":**
-DON'T just say "Good" - give INTELLIGENCE:
-```
-"Revenue this month: R[amount] (↑12% vs last month)
-Gross Profit: R[amount] ([percent]% margin - healthy for your industry)
-
-⚠️ BUT watch these:
-- Payroll of R[amount] due in [N] days
-- Top debtor [Name] owes R[amount] for 45+ days
-- Stock item [X] hasn't moved in 90 days (R[value] tied up)
-
-Priority: Collect from [Name] this week - that'll cover payroll."
-```
-
-**When asked "Who owes me money?":**
-DON'T just list debtors - PRIORITIZE:
-```
-"Total outstanding: R[amount]
-
-🔴 PRIORITY (High value, overdue):
-1. [Customer] - R[amount] (65 days!) - Your 3rd biggest customer, call today
-2. [Customer] - R[amount] (45 days) - Usually pays on time, might be an oversight
-
-🟡 WATCH (Getting old):
-3. [Customer] - R[amount] (32 days)
-
-🟢 NORMAL (Within terms):
-4. [Customer] - R[amount] (15 days)
-
-Action: Focus on the top 2 - that's R[amount] you can collect this week."
-```
-
-**When asked about a specific customer:**
-```
-"Customer: [Name]
-- Total purchases: R[amount] (ranked #[N] of [total] customers)
-- Current balance: R[amount]
-- Average days to pay: [Z] days
-- Last purchase: [date]
-
-Assessment: [Good customer - always pays within 30 days / Problem - getting slower / Dormant - hasn't bought in 90 days]
-
-[Suggestion based on status]"
-```
-
-### REPORT TYPES YOU CAN GENERATE:
-
-**⚠️ BEFORE generating ANY report, check data sufficiency!**
-
-1. **Executive Summary** - 1-page business health overview
-   *Requires: 1+ month of sales, expenses, and customer data*
-2. **Profitability Report** - Margins, trends, comparisons
-   *Requires: 1+ month complete P&L data*
-3. **Cash Flow Forecast** - 30/60/90 day projections
-   *Requires: 3+ months history for accurate forecast*
-4. **Customer Analysis** - RFM ranking, top/problem customers
-   *Requires: 20+ invoices across multiple customers*
-5. **Stock Performance** - Turnover, dead stock, fast movers
-   *Requires: 90+ days sales with stock movement data*
-6. **Expense Analysis** - By category, trends, savings opportunities
-   *Requires: 2+ months categorized expenses*
-7. **Debtor Aging Analysis** - With collection priorities
-   *Requires: Outstanding invoices with dates*
-8. **Break-Even Report** - Fixed costs, required sales
-   *Requires: Clear fixed cost data (rent, salaries, etc)*
-9. **Budget vs Actual** - Variances and explanations
-   *Requires: Budget data AND actual transactions*
-10. **Tax Liability Report** - VAT, PAYE, provisional tax estimates
-    *Requires: Proper VAT-coded transactions*
-
-**If data is insufficient for requested report:**
-Say: "Ek kan nog nie 'n volledige [report type] gee nie - jy het [X] nodig. 
-Hier's wat ek WEL kan wys met die huidige data: [limited version]"
-
-### PHRASES THAT SHOW INTELLIGENCE:
-
-✅ USE THESE:
-- "Based on your sales pattern..."
-- "Your cash cycle shows..."
-- "Compared to last month..."
-- "The trend indicates..."
-- "Priority action: ..."
-- "Risk alert: ..."
-- "Opportunity: ..."
-- "This customer's lifetime value is..."
-- "Your break-even point is..."
-- "To maintain margins, you need..."
-
-❌ AVOID THESE (too basic):
-- "You have X customers"
-- "Total sales is Y"
-- "Here's a list of debtors"
-(Without context or recommendations)
-
-### ALWAYS END FINANCIAL RESPONSES WITH:
-
-1. **The Key Number** - What matters most right now
-2. **The Risk** - What could go wrong
-3. **The Action** - What to do about it
-
-Example: "Key: You need R45,000 by the 25th for payroll. Risk: Your top debtor is 50 days overdue. Action: Call [debtor name] today - collecting that R38,000 solves your payroll."
-
-## CRITICAL RULES - NEVER BREAK THESE:
-
-**RULE 0: HONESTY ABOVE ALL ELSE**
-- If you DON'T know something → **SAY SO!**
-- Better to say "I don't have that info" than to make up answers
-- Professional assistants admit when they don't know
-- Making up answers makes the system look CHEAP and UNRELIABLE
-- **EXAMPLES:**
-  * User: "What's John's cell number?" → You don't see it in data → "I don't have John's cell number in the system"
-  * User: "When did I last pay this supplier?" → No payment history → "I don't have payment history for this supplier"
-  * User: "What's the weather today?" → You don't have weather data → "I don't have weather information - try a weather app"
-
-**RULE 1: NEVER HALLUCINATE OR MAKE UP ANSWERS!**
-   - **For ClickAI Features:** Check the ClickAI System Knowledge section FIRST
-     * If documented → Give exact steps
-     * If NOT documented → "That feature isn't available in ClickAI right now"
-   - **For Business Data:** Only use the actual data provided in context
-     * Don't invent customer names, phone numbers, balances
-     * Don't guess at stock quantities or prices
-     * If data is missing → Say "I don't have that information"
-   - **For General Questions:** Be honest about your limitations
-     * You're not Google - you don't have all world knowledge
-     * You can't browse the internet (unless using search tools)
-     * You can't see files unless they're in the system
-
-**RULE 2: NEVER MAKE UP DATA** - Only use customers/suppliers/stock from the data above
-
-**RULE 3: If asked about a specific customer/supplier** - Search in ALL CUSTOMERS/SUPPLIERS data first
-
-**RULE 4: If you can't find them** - Say "I couldn't find [name] in your records" (DON'T guess!)
-
-**RULE 5: NEVER invent names, balances, phone numbers, or any business data**
-
-**RULE 6: "Who owes" = search ALL_CUSTOMERS for balance > 0, not just top debtors**
-
-**RULE 7: When asked to find someone** - Search by name, phone, email in all_customers/all_suppliers
-
-**RULE 8: Be honest** - If data is missing or unclear, say so
-
-**RULE 9: NEVER INVENT UI ELEMENTS!** - This is CRITICAL!
-   - Do NOT tell users to click buttons, filters, dropdowns, or tabs that you're not 100% sure exist
-   - Do NOT say "use the date filter at the top" unless you KNOW there is one
-   - Do NOT say "click the X button" unless it's documented in the CLICKAI SYSTEM KNOWLEDGE above
-   - If a user asks you to help them do something on a page, ONLY reference elements documented above
-   - If you're NOT SURE if a UI element exists → Say "I'm not sure if that option is available on this page - let me know what you see and I'll help from there"
-   - Making up buttons/filters that don't exist makes you look STUPID and the system look BROKEN
-   - When guiding step-by-step: Ask the user WHAT THEY SEE first, then guide based on their answer
-
-## ⚠️ SMART WARNINGS - Protect the user from mistakes!
-
-**BEFORE creating invoices, check:**
-- Is customer's balance already high (>R20,000)? WARN: "Let op - [customer] skuld al R[amount]. Wil jy nog R[new amount] byvoeg?"
-- Is customer 30+ days overdue? WARN: "⚠️ [customer] is [X] dae agterstallig. Overweeg om eers betaling te kry."
-
-**BEFORE creating quotes, check:**
-- Is price below cost price? WARN: "⚠️ Hierdie prys (R[X]) is onder kosprys (R[Y])!"
-- Is margin very low (<15%)? NOTE: "💡 Margin is net [X]% - jou normale margin is 25%+"
-
-**BEFORE booking stock out, check:**
-- Will qty go negative? WARN: "⚠️ Net [X] in stock, jy wil [Y] uithaal."
-- Is this a large quantity? CONFIRM: "Dis [X] items - is jy seker?"
-
-**WHEN user asks to delete:**
-- ALWAYS double-check: "Wil jy regtig [X] delete? Dit kan nie ongedaan gemaak word nie."
-
-**HOW TO WARN:**
-1. Give the warning clearly
-2. Still offer to proceed: "Wil jy voortgaan?"
-3. Only execute if user confirms OR if user originally said "anyway" / "steeds" / "ja"
-
-**TONE WHEN YOU DON'T KNOW:**
--  GOOD: "I don't have that information"
--  GOOD: "I couldn't find that in the system"
--  GOOD: "That data isn't available to me"
--  BAD: Making up random answers
--  BAD: Guessing
--  BAD: Pretending you know when you don't
+{financial_deep}
 
 ## YOUR CAPABILITIES - You can EXECUTE these actions:
 
@@ -4773,7 +4832,7 @@ When user confirms with "ja delete X" or "yes delete X", send with confirmed: tr
     Optional: confirmed (true ONLY if user explicitly confirmed!)
 
 26. **BULK_DELETE** - "Delete all [type]" or "Delete all [type] with [criteria]"
-    Required: type (customers/suppliers/stock/pos/invoices/expenses)
+    Required: type (customers/suppliers/stock/pos/invoices/expenses/employees/bank_transactions/quotes/gl_entries)
     Optional: criteria ("all", "no phone", "zero balance", "zero total", "no phone and zero balance", "duplicates")
     Optional: confirmed (true ONLY if user explicitly confirmed!)
     Examples: "Delete all POS", "Delete all suppliers with no phone", "Delete all stock with zero price", "Delete all duplicate customers", "Delete all duplicate suppliers", "Delete duplicate stock", "Delete all expenses"
@@ -4822,8 +4881,35 @@ When user confirms with "ja delete X" or "yes delete X", send with confirmed: tr
     Required: whatsapp_phone (phone number with country code)
     Optional: whatsapp_token (API token), whatsapp_account_id (business account ID)
 
+33. **SET_BOLT_PRICING** - "Price bolts at R200/kg" / "Set bolt tiers M3-M6 R300/kg, M8-M12 R250/kg"
+    Sets weight-based pricing for fasteners (bolts, nuts, washers)
+    Optional: tiers (dict with tier prices, e.g., {"M3-M6": 300, "M6-M12": 250, "M12-M16": 200, "M16-M24": 170, "M24+": 140})
+    Optional: single_price (R/kg to apply to ALL fasteners regardless of size)
+    Example: "Price all bolts at R205/kg" → single_price: 205
+    Example: "Set bolt tiers: M3-M6 R300, M8-M12 R250, M12-M16 R170, M16+ R140" → tiers dict
+
+34. **UPDATE_BOLT_PRICES** - "Update all bolt prices" / "Apply bolt pricing to stock" / "Recalculate fastener prices"
+    Applies the saved bolt pricing tiers to ALL fasteners in stock
+    Uses fulltech_addon.calc_bolt_price() to calculate each item
+    Detects M size from description, calculates weight, applies tier price
+    Shows summary: X items updated, grouped by tier
+
+35. **CALC_BOLT_PRICE** - "What should M12x70 cost at R200/kg?" / "Price for M16x80 bolt?"
+    Calculate price for a single bolt based on weight
+    Required: description (e.g., "M12x70" or "M16x80 hex bolt")
+    Optional: price_per_kg (defaults to saved tier or 200)
+    Returns: weight in grams, price per unit
+
 ## RESPONSE FORMAT
 **CRITICAL: Respond with ONLY JSON. Nothing before. Nothing after. No explanations outside the JSON.**
+
+**THINK BEFORE YOU RESPOND:**
+Before generating your JSON response, mentally:
+1. What is the user actually asking for? (intent)
+2. Do I have the data to answer this properly? (check context)
+3. What action should I take? (QUERY for questions, specific action for commands)
+4. What extra insight can I add? (value-add)
+5. Should I warn about anything? (risk check)
 
 {{
     "action": "ACTION_NAME or QUERY",
@@ -5048,8 +5134,20 @@ You: NOW navigate!
     "response": "Let's do it together!",
     "navigate": "/import",
     "highlight": "#importType",
-    "next_message": "👆 Stap 1: Kies 'Suppliers' in die dropdown hierbo. Sê wanneer jy klaar is."
+    "next_message": "👆 Step 1: Select 'Suppliers' in the dropdown above. Tell me when you're ready."
 }}
+
+STEP 2 - User says NO:
+User: "No" / "Nee" / "Not yet" / "I don't have one"
+You: Ask where they're coming from, then help them export!
+{{
+    "action": "QUERY",
+    "response": "No problem! Where are you migrating from? For example: Sage, Pastel, Xero, QuickBooks, or just an Excel spreadsheet? I'll help you get your data out and into the right format."
+}}
+Then based on their answer, give specific export instructions for that system.
+If they say "Excel" → tell them they can upload the .xlsx directly, no conversion needed!
+If they say "Sage/Pastel" → give the specific Sage export steps
+If they say "nowhere, starting fresh" → help them set up from scratch instead
 
 **WRONG (never do this):**
 User: "How do I import customers?"
@@ -5211,7 +5309,7 @@ Fokus op verkope en invorderings vir die res van die maand."
         # ══════════════════════════════════════════════════════════════
         if ANTHROPIC_API_KEY:
             try:
-                logger.info("[BRAIN] Falling back to Claude Haiku")
+                logger.info("[BRAIN] Falling back to Claude Haiku 4.5")
                 
                 response = requests.post(
                     "https://api.anthropic.com/v1/messages",
@@ -5221,7 +5319,7 @@ Fokus op verkope en invorderings vir die res van die maand."
                         "anthropic-version": "2023-06-01"
                     },
                     json={
-                        "model": "claude-3-5-haiku-20241022",
+                        "model": "claude-haiku-4-5-20251001",
                         "max_tokens": max_tokens or cls.MAX_TOKENS,
                         "system": system,
                         "messages": messages_claude
@@ -5544,6 +5642,24 @@ Fokus op verkope en invorderings vir die res van die maand."
             
             elif action == "SAVE_WHATSAPP_SETTINGS":
                 result = Actions.save_whatsapp_settings(action_data, context)
+                if result["success"]:
+                    actions_taken.append(result["message"])
+                    result_data = result.get("data", {})
+            
+            elif action == "SET_BOLT_PRICING":
+                result = Actions.set_bolt_pricing(action_data, context)
+                if result["success"]:
+                    actions_taken.append(result["message"])
+                    result_data = result.get("data", {})
+            
+            elif action == "UPDATE_BOLT_PRICES":
+                result = Actions.update_bolt_prices(action_data, context)
+                if result["success"]:
+                    actions_taken.append(result["message"])
+                    result_data = result.get("data", {})
+            
+            elif action == "CALC_BOLT_PRICE":
+                result = Actions.calc_bolt_price(action_data, context)
                 if result["success"]:
                     actions_taken.append(result["message"])
                     result_data = result.get("data", {})
@@ -7256,8 +7372,18 @@ class Actions:
             table = "pos_sales"
         if table in ["invoice", "invoices"]:
             table = "invoices"
+        if table in ["employee", "employees", "werknemer", "werknemers"]:
+            table = "employees"
+        if table in ["bank", "bank_transaction", "bank_transactions"]:
+            table = "bank_transactions"
+        if table in ["receipt"]:
+            table = "receipts"
+        if table in ["quote"]:
+            table = "quotes"
+        if table in ["gl", "journal", "journals", "gl_entry"]:
+            table = "gl_entries"
         
-        if table not in ["customers", "suppliers", "stock", "stock_items", "pos_sales", "invoices", "expenses"]:
+        if table not in ["customers", "suppliers", "stock", "stock_items", "pos_sales", "invoices", "expenses", "bank_transactions", "receipts", "quotes", "gl_entries", "employees"]:
             return {"success": False, "message": "Can delete: customers, suppliers, stock, pos, invoices, expenses"}
         
         biz_id = context.get("business_id")
@@ -8044,6 +8170,235 @@ class Actions:
             }
         
         return {"success": False, "message": "Failed to save WhatsApp settings"}
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BOLT/FASTENER WEIGHT-BASED PRICING
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    @staticmethod
+    def set_bolt_pricing(data: dict, context: dict) -> dict:
+        """Save bolt pricing tiers for the business"""
+        
+        biz_id = context.get("business_id")
+        if not biz_id:
+            return {"success": False, "message": "No business selected"}
+        
+        # Extract tiers or single price
+        tiers = data.get("tiers", {})
+        single_price = data.get("single_price") or data.get("price_per_kg")
+        
+        if single_price:
+            # Apply single price to all tiers
+            tiers = {
+                "M3-M6": float(single_price),
+                "M6-M12": float(single_price),
+                "M12-M16": float(single_price),
+                "M16-M24": float(single_price),
+                "M24+": float(single_price)
+            }
+        elif not tiers:
+            # Use defaults
+            tiers = fulltech_addon.DEFAULT_BOLT_TIERS.copy()
+        
+        # Save to business settings
+        updates = {
+            "id": biz_id,
+            "bolt_pricing_tiers": json.dumps(tiers)
+        }
+        
+        success, result = db.save("businesses", updates)
+        
+        if success:
+            tier_summary = "\n".join([f"  • {k}: R{v:.0f}/kg" for k, v in tiers.items()])
+            logger.info(f"[ZANE] Saved bolt pricing tiers for business {biz_id}")
+            return {
+                "success": True,
+                "message": f"✅ Bolt pricing tiers saved!\n\n{tier_summary}\n\nSay 'Update all bolt prices' to apply these to your stock.",
+                "data": {"tiers": tiers}
+            }
+        
+        return {"success": False, "message": "Failed to save bolt pricing"}
+    
+    @staticmethod
+    def update_bolt_prices(data: dict, context: dict) -> dict:
+        """Apply bolt pricing tiers to all fasteners in stock"""
+        
+        biz_id = context.get("business_id")
+        if not biz_id:
+            return {"success": False, "message": "No business selected"}
+        
+        # Get saved tiers or use defaults
+        business = db.first("businesses", {"id": biz_id})
+        tiers_json = business.get("bolt_pricing_tiers") if business else None
+        
+        if tiers_json:
+            try:
+                tiers = json.loads(tiers_json)
+            except:
+                tiers = fulltech_addon.DEFAULT_BOLT_TIERS.copy()
+        else:
+            tiers = fulltech_addon.DEFAULT_BOLT_TIERS.copy()
+        
+        # Get all stock items
+        stock_items = db.query("stock_items", {"business_id": biz_id}) or []
+        stock_old = db.query("stock", {"business_id": biz_id}) or []
+        all_stock = stock_items + stock_old
+        
+        # Process each item
+        updated = []
+        skipped = []
+        
+        for item in all_stock:
+            desc = item.get("description", "") or item.get("name", "")
+            code = item.get("code", "")
+            full_desc = f"{code} {desc}".strip()
+            
+            # Check if this looks like a fastener
+            result = fulltech_addon.calc_bolt_price(full_desc, tiers)
+            
+            if result.get("success"):
+                new_price = result["price_each"]
+                old_price = float(item.get("selling_price") or item.get("price") or 0)
+                
+                # Determine which table to update
+                table = "stock_items" if item in stock_items else "stock"
+                
+                # Update the item
+                update_data = {"id": item["id"]}
+                if table == "stock_items":
+                    update_data["selling_price"] = new_price
+                else:
+                    update_data["price"] = new_price
+                
+                success, _ = db.save(table, update_data)
+                
+                if success:
+                    updated.append({
+                        "code": code,
+                        "description": desc[:30],
+                        "size_str": result.get("size_str", f"M{result.get('size', '?')}"),
+                        "length": result.get("length"),
+                        "weight_g": result["weight_g"],
+                        "old_price": old_price,
+                        "new_price": new_price,
+                        "tier_rkg": result["tier_rkg"],
+                        "materials": result.get("materials", []),
+                        "markup_pct": result.get("material_markup_pct", 0)
+                    })
+            else:
+                # Not a fastener or couldn't parse - skip
+                skipped.append({"code": code, "description": desc[:30]})
+        
+        if not updated:
+            return {
+                "success": True,
+                "message": "No fasteners found to update. Make sure your stock descriptions include sizes like 'M12x70', 'M8 NUT', or '1/2 UNC'.",
+                "data": {"updated": 0, "skipped": len(skipped)}
+            }
+        
+        # Group by tier for summary
+        by_tier = {}
+        for u in updated:
+            tier = f"R{u['tier_rkg']:.0f}/kg"
+            if u['markup_pct'] > 0:
+                tier += f" (+{u['markup_pct']:.0f}%)"
+            if tier not in by_tier:
+                by_tier[tier] = []
+            by_tier[tier].append(u)
+        
+        # Build summary
+        lines = [f"✅ **Updated {len(updated)} fasteners:**\n"]
+        
+        for tier, items in sorted(by_tier.items()):
+            lines.append(f"\n**{tier}** ({len(items)} items):")
+            for item in items[:5]:  # Show first 5 per tier
+                size_str = item['size_str'] + (f"x{item['length']}" if item['length'] else "")
+                mat_info = f" [{','.join(item['materials'])}]" if item['materials'] else ""
+                lines.append(f"  • {item['code'] or size_str}{mat_info}: {item['weight_g']}g → **R{item['new_price']:.2f}** (was R{item['old_price']:.2f})")
+            if len(items) > 5:
+                lines.append(f"  • ... and {len(items)-5} more")
+        
+        if skipped:
+            lines.append(f"\n⏭️ Skipped {len(skipped)} items (no size detected)")
+        
+        logger.info(f"[ZANE] Updated {len(updated)} bolt prices for business {biz_id}")
+        
+        return {
+            "success": True,
+            "message": "\n".join(lines),
+            "data": {
+                "updated": len(updated),
+                "skipped": len(skipped),
+                "tiers_used": list(by_tier.keys())
+            }
+        }
+    
+    @staticmethod
+    def calc_bolt_price(data: dict, context: dict) -> dict:
+        """Calculate price for a single bolt/fastener"""
+        
+        biz_id = context.get("business_id")
+        description = data.get("description", "")
+        price_per_kg = data.get("price_per_kg")
+        
+        if not description:
+            return {"success": False, "message": "Please specify a bolt size, e.g. 'M12x70', 'M16x80 hex bolt SS', or '1/2 x 2 UNC'"}
+        
+        # Get custom tiers if saved
+        custom_tiers = None
+        if biz_id:
+            business = db.first("businesses", {"id": biz_id})
+            tiers_json = business.get("bolt_pricing_tiers") if business else None
+            if tiers_json:
+                try:
+                    custom_tiers = json.loads(tiers_json)
+                except:
+                    pass
+        
+        # Override with single price if provided
+        if price_per_kg:
+            custom_tiers = {
+                "M3-M6": float(price_per_kg),
+                "M6-M12": float(price_per_kg),
+                "M12-M16": float(price_per_kg),
+                "M16-M24": float(price_per_kg),
+                "M24+": float(price_per_kg)
+            }
+        
+        result = fulltech_addon.calc_bolt_price(description, custom_tiers)
+        
+        if not result.get("success"):
+            return {"success": False, "message": result.get("error", "Could not calculate price")}
+        
+        size_str = result.get('size_str', f"M{result.get('size', '?')}")
+        if result.get('length'):
+            size_str += f"x{result['length']}"
+        ftype = result['type'].capitalize()
+        
+        # Build message with material info
+        material_info = ""
+        if result.get('materials'):
+            material_info = f"\n• Material: {', '.join(result['materials'])}"
+        
+        markup_info = ""
+        if result.get('material_markup_pct', 0) > 0:
+            markup_info = f"\n• Material markup: +{result['material_markup_pct']:.0f}% (base was R{result['base_price']:.2f})"
+        
+        message = f"""**{size_str} {ftype}**{material_info}
+
+• Weight: **{result['weight_g']}g** ({result['weight_kg']:.4f} kg)
+• Tier: R{result['tier_rkg']:.0f}/kg{markup_info}
+• **Price each: R{result['price_each']:.2f}**
+
+Quick reference:
+• Box of 50: R{result['price_each'] * 50:.2f}
+• Box of 100: R{result['price_each'] * 100:.2f}"""
+        
+        return {
+            "success": True,
+            "message": message,
+            "data": result
+        }
 
 
 # 
@@ -8277,8 +8632,14 @@ class Context:
             return {"customers": customers, "debtors": debtors}
         
         elif page == "stock":
+            # Performance: Only load first 100 items initially
+            # Full list loaded via API search
             stock = db.get_all_stock(biz_id) if biz_id else []
-            return {"stock": stock}
+            total_count = len(stock)
+            # Sort by description for consistent display
+            stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("description") or ""))
+            # Only return first 100 for initial page load
+            return {"stock": stock[:100], "total_count": total_count, "showing": min(100, total_count)}
         
         elif page == "invoices":
             invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
@@ -8320,7 +8681,7 @@ class DailyBriefing:
             business = db.get_one("businesses", business_id)
             biz_name = business.get("name", "Business") if business else "Business"
             owner_name = business.get("owner_name", "") if business else ""
-            logger.info(f"[BRIEFING] Starting for {biz_name} (biz_id={business_id})")
+            logger.error(f"[BRIEFING] Starting for {biz_name} (biz_id={business_id})")
             
             # Find last pulse view
             try:
@@ -8358,7 +8719,7 @@ class DailyBriefing:
             start_date = today - timedelta(days=days_since)
             end_date = yesterday
             
-            logger.info(f"[BRIEFING] Date range: {start_date} to {end_date} ({days_since} days)")
+            logger.error(f"[BRIEFING] Date range: {start_date} to {end_date} ({days_since} days)")
             
             # Gather data for the range
             data = cls._gather_range_data(business_id, start_date, end_date)
@@ -8366,7 +8727,7 @@ class DailyBriefing:
             data["start_date"] = start_date.strftime("%Y-%m-%d")
             data["end_date"] = end_date.strftime("%Y-%m-%d")
             
-            logger.info(f"[BRIEFING] Data gathered. Sales: R{data.get('total_sales', 0)}, Invoices: R{data.get('total_invoiced', 0)}")
+            logger.error(f"[BRIEFING] Data gathered. Sales: R{data.get('total_sales', 0)}, Invoices: R{data.get('total_invoiced', 0)}")
             
             # Generate briefing
             briefing_text = cls._write_catchup_briefing(biz_name, owner_name, data)
@@ -8401,7 +8762,7 @@ class DailyBriefing:
                 
                 return {"success": True, "briefing": briefing_text, "data": data, "days": days_since}
             else:
-                logger.error(f"[BRIEFING] _write_catchup_briefing returned None - all AI models failed")
+                logger.error(f"[BRIEFING] _write_catchup_briefing returned: {type(briefing_text).__name__} = {repr(briefing_text)[:100]}")
                 return {"success": False, "error": "Could not generate briefing"}
                 
         except Exception as e:
@@ -8582,7 +8943,7 @@ class DailyBriefing:
     def _write_catchup_briefing(cls, biz_name: str, owner_name: str, data: dict) -> Optional[str]:
         """Use GPT-5 to write a natural catch-up briefing, with Claude Haiku fallback."""
         
-        logger.info(f"[BRIEFING] === _write_catchup_briefing CALLED === OPENAI_KEY={'SET' if OPENAI_API_KEY else 'EMPTY'} ANTHROPIC_KEY={'SET' if ANTHROPIC_API_KEY else 'EMPTY'}")
+        logger.error(f"[BRIEFING] === CALLED === OPENAI_KEY={'SET' if OPENAI_API_KEY else 'EMPTY'} ANTHROPIC_KEY={'SET' if ANTHROPIC_API_KEY else 'EMPTY'}")
         
         if not OPENAI_API_KEY and not ANTHROPIC_API_KEY:
             logger.error("[BRIEFING] No API keys available at all")
@@ -8608,6 +8969,27 @@ class DailyBriefing:
                 current += timedelta(days=1)
         except:
             working_days = days
+        
+        # === NO-ACTIVITY SHORTCUT ===
+        # If zero activity (weekend/holiday/quiet day), return short message - don't waste AI call
+        total_activity = (data.get('total_sales', 0) + data.get('total_invoiced', 0) + 
+                         data.get('total_quoted', 0) + data.get('total_received', 0))
+        has_events = len(data.get("events", [])) > 0
+        
+        if total_activity == 0 and not has_events:
+            first_name = owner_name.split()[0] if owner_name else ""
+            from datetime import datetime as dt_check
+            current_hour = dt_check.now().hour
+            greeting = "Good morning" if current_hour < 12 else "Good afternoon"
+            greeting_full = f"{greeting} {first_name}" if first_name else greeting
+            
+            # Check if period was weekend
+            is_weekend_period = weekend_days > 0 and working_days == 0
+            
+            if is_weekend_period:
+                return f"{greeting_full},\n\nNo business activity recorded over the weekend ({start_date_str} to {end_date_str}). Enjoy the rest.\n\n- Zane"
+            else:
+                return f"{greeting_full},\n\nNo activity recorded for {start_date_str} to {end_date_str}. All systems quiet.\n\n- Zane"
         
         # Build event list
         events = []
@@ -8649,70 +9031,62 @@ class DailyBriefing:
         
         # Build simple data summary
         summary = f"""
-Besigheid: {biz_name}
-Eienaar: {owner_name}
-Periode: {days} dae ({start_date_str} tot {end_date_str})
-Werksdae: {working_days}, Naweke: {weekend_days}
+Business: {biz_name}
+Owner: {owner_name}
+Period: {days} day(s) ({start_date_str} to {end_date_str})
+Working days: {working_days}, Weekends: {weekend_days}
 
-TOTALE:
+TOTALS:
 - POS Sales: R{data['total_sales']:,.0f}
 - Invoices: R{data['total_invoiced']:,.0f}
 - Quotes: R{data['total_quoted']:,.0f}
-- Payments ontvang: R{data['total_received']:,.0f}
+- Payments received: R{data['total_received']:,.0f}
 
-WAT GEBEUR HET:
-{chr(10).join(events) if events else 'Niks gerecord nie'}
+WHAT HAPPENED:
+{chr(10).join(events) if events else 'Nothing recorded'}
 
-SPAN:
-{chr(10).join(team) if team else 'Geen aktiwiteit'}
+TEAM:
+{chr(10).join(team) if team else 'No activity'}
 
-PROBLEME:
-{chr(10).join(problems) if problems else 'Geen'}
+PROBLEMS:
+{chr(10).join(problems) if problems else 'None'}
 """
 
-        # Determine greeting based on time of day
-        # Use Afrikaans for SA businesses (detect from business name or default)
+        # Determine greeting based on time of day - ALWAYS English (users can ask for Afrikaans via Zane chat)
         from datetime import datetime
         current_hour = datetime.now().hour
         
-        # Check if business seems Afrikaans (has Afrikaans words in name or owner name has Afrikaans surname)
-        afrikaans_indicators = ['van ', 'de ', 'du ', 'pty', 'bk', 'edms', 'ing', 'boerdery', 'handel', 'dienste']
-        is_afrikaans = any(ind in biz_name.lower() for ind in afrikaans_indicators) or \
-                       any(ind in owner_name.lower() for ind in ['van ', 'de ', 'du '])
-        
         if current_hour < 12:
-            greeting_af = "Goeie môre"
-            greeting_en = "Good morning"
+            greeting = "Good morning"
         else:
-            greeting_af = "Goeie middag" 
-            greeting_en = "Good afternoon"
+            greeting = "Good afternoon"
         
-        greeting = greeting_af if is_afrikaans else greeting_en
         first_name = owner_name.split()[0] if owner_name else ""
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
-        # Professional prompt with structure
-        prompt = f"""Jy is Zane, 'n hoogs gekwalifiseerde besigheidsadviseur met 'n BCom Honneurs en MBA agtergrond. Jy adviseer {biz_name}.
+        # Professional prompt with structure - ENGLISH
+        prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
 
-Skryf 'n insiggewende besigheidsopsomming vir die eienaar oor die laaste {days} dae.
+Write an insightful business summary for the owner about the last {days} day(s).
 
-JOU STYL:
-- Begin met: "{greeting_full}"
-- Skryf soos 'n senior adviseur wat regtig omgee - nie soos 'n robot nie
-- Wees warm maar professioneel - soos 'n gerespekteerde kollega
-- MOENIE "Boss", "Baas" gebruik nie
-- Geen emojis of oormatige uitroeptekens nie
+YOUR STYLE:
+- Start with: "{greeting_full}"
+- Write like a senior advisor who genuinely cares - not like a robot
+- Be warm but professional - like a respected colleague
+- DO NOT use "Boss" or "Baas"
+- No emojis or excessive exclamation marks
+- ALWAYS write in English unless the data clearly shows otherwise
 
-INHOUD:
-- Gee die belangrikste syfers MET konteks en insig
-- As iets goed gaan, erken dit kalm
-- As iets aandag nodig het, sê dit duidelik met 'n aanbeveling
-- Gebruik seksies: **Verkope**, **Kontantvloei**, **Aandag Nodig** 
-- Sluit af met EEN konkrete aksie-item as daar een is
+CONTENT:
+- Give the key figures WITH context and insight
+- If something is going well, acknowledge it calmly
+- If something needs attention, say it clearly with a recommendation
+- Use sections: **Sales**, **Cash Flow**, **Attention Needed**
+- End with ONE concrete action item if there is one
 
 {summary}
 
-Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
+Write with confidence - you KNOW what you're talking about. Sign off with "- Zane"."""
 
         # Try gpt-5 first (works!), then gpt-5-mini, then Claude Haiku fallback
         if OPENAI_API_KEY:
@@ -8724,7 +9098,7 @@ Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
             
             for model_name, token_param in models_to_try:
                 try:
-                    logger.info(f"[BRIEFING] Trying model: {model_name}")
+                    logger.error(f"[BRIEFING] Trying model: {model_name}")
                     
                     payload = {
                         "model": model_name,
@@ -8744,22 +9118,28 @@ Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
                     
                     if response.status_code == 200:
                         result = response.json()
-                        logger.info(f"[BRIEFING] Success with {model_name}")
-                        return result["choices"][0]["message"]["content"]
+                        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        logger.error(f"[BRIEFING] {model_name} returned status 200, content length: {len(content) if content else 0}")
+                        if content and len(content.strip()) > 10:
+                            logger.error(f"[BRIEFING] Success with {model_name}")
+                            return content
+                        else:
+                            logger.error(f"[BRIEFING] {model_name} returned empty/null content, trying next model")
+                            continue
                     else:
-                        logger.warning(f"[BRIEFING] {model_name} failed: {response.status_code} - {response.text[:200]}")
+                        logger.error(f"[BRIEFING] {model_name} failed: {response.status_code} - {response.text[:200]}")
                         continue
                         
                 except Exception as e:
-                    logger.warning(f"[BRIEFING] {model_name} error: {e}")
+                    logger.error(f"[BRIEFING] {model_name} error: {e}")
                     continue
         else:
-            logger.warning("[BRIEFING] No OPENAI_API_KEY set, skipping to Claude fallback")
+            logger.error("[BRIEFING] No OPENAI_API_KEY set, skipping to Claude fallback")
         
         # Final fallback: Claude Haiku
         if ANTHROPIC_API_KEY:
             try:
-                logger.info("[BRIEFING] All OpenAI models failed, trying Claude Haiku")
+                logger.error("[BRIEFING] All OpenAI models failed, trying Claude Haiku")
                 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
                 message = client.messages.create(
                     model="claude-haiku-4-5-20251001",
@@ -8767,7 +9147,7 @@ Skryf met selfvertroue - jy WEET wat jy praat. Sluit af met "- Zane"."""
                     messages=[{"role": "user", "content": prompt}]
                 )
                 if message.content:
-                    logger.info("[BRIEFING] Success with Claude Haiku fallback")
+                    logger.error("[BRIEFING] Success with Claude Haiku fallback")
                     return message.content[0].text
             except Exception as e:
                 logger.error(f"[BRIEFING] Claude Haiku fallback also failed: {e}")
@@ -10724,24 +11104,58 @@ class Auth:
     
     @staticmethod
     def get_current_user() -> Optional[dict]:
-        """Get current logged in user"""
+        """Get current logged in user - CACHED in session"""
+        # Check request cache first (fastest)
+        if hasattr(g, '_cached_user'):
+            return g._cached_user
+        
+        # Check session cache (no DB call needed)
+        if session.get("_user_cache"):
+            g._cached_user = session["_user_cache"]
+            return g._cached_user
+        
         user_id = session.get("user_id")
         if not user_id:
             return None
-        return db.get_one("users", user_id)
+        user = db.get_one("users", user_id)
+        if user:
+            # Cache in session (survives across requests)
+            session["_user_cache"] = user
+        g._cached_user = user
+        return user
     
     @staticmethod
     def get_current_business() -> Optional[dict]:
-        """Get current business"""
+        """Get current business - CACHED in session"""
+        # Check request cache first (fastest)
+        if hasattr(g, '_cached_business'):
+            return g._cached_business
+        
+        # Check session cache (no DB call needed)
+        if session.get("_biz_cache"):
+            g._cached_business = session["_biz_cache"]
+            return g._cached_business
+        
         biz_id = session.get("business_id")
         if not biz_id:
             user = Auth.get_current_user()
             if user:
                 biz_id = user.get("default_business_id")
         
+        business = None
         if biz_id:
-            return db.get_one("businesses", biz_id)
-        return None
+            business = db.get_one("businesses", biz_id)
+        if business:
+            # Cache in session (survives across requests)
+            session["_biz_cache"] = business
+        g._cached_business = business
+        return business
+    
+    @staticmethod
+    def clear_cache():
+        """Clear session cache - call after business switch or profile update"""
+        session.pop("_user_cache", None)
+        session.pop("_biz_cache", None)
     
     @staticmethod
     def login(email: str, password: str) -> Tuple[bool, str]:
@@ -10759,6 +11173,9 @@ class Auth:
         # Supabase uses 'encrypted_password', not 'password_hash'
         if user.get("encrypted_password") != pwd_hash and user.get("password_hash") != pwd_hash:
             return False, "Invalid password"
+        
+        # Clear any old cache first
+        Auth.clear_cache()
         
         # Set session
         session.permanent = True  # Use permanent session (90 days, auto-renews on each visit)
@@ -10824,19 +11241,26 @@ def login_required(f):
 
 
 def get_user_role():
-    """Get current user's role - checks team_members table"""
+    """Get current user's role - CACHED per request"""
+    # Check request cache first
+    if hasattr(g, '_cached_role'):
+        return g._cached_role
+    
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     if not user or not business:
+        g._cached_role = "owner"
         return "owner"  # Default for business owner
     
     # Check if user is in team_members
     team = db.get("team_members", {"business_id": business.get("id"), "email": user.get("email")})
     if team:
-        return team[0].get("role", "staff")
+        role = team[0].get("role", "staff")
+    else:
+        role = "owner"
     
-    # If not in team_members, they're the owner
-    return "owner"
+    g._cached_role = role
+    return role
 
 
 def pos_only_redirect():
@@ -10871,6 +11295,199 @@ def role_required(*allowed_roles):
 # 
 # UI COMPONENTS - Minimal, Zane-centric
 # 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOCAL-FIRST ENGINE - Works offline, syncs when online
+# Strategy: Server-first load, cache locally, use cache if faster/offline
+# ═══════════════════════════════════════════════════════════════════════════════
+
+CLICKDB_JS = '''
+// ClickDB - Simple IndexedDB wrapper for offline support
+const ClickDB = {
+    db: null,
+    dbName: 'clickai_local',
+    dbVersion: 2,
+    bizId: null,
+    
+    // Initialize database
+    async init(bizId) {
+        if (this.db && this.bizId === bizId) return this.db;
+        this.bizId = bizId;
+        
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(this.dbName, this.dbVersion);
+            req.onerror = () => reject(req.error);
+            req.onsuccess = () => {
+                this.db = req.result;
+                resolve(this.db);
+            };
+            req.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                ['stock_items', 'customers', 'suppliers', 'invoices', 'quotes'].forEach(table => {
+                    if (!db.objectStoreNames.contains(table)) {
+                        db.createObjectStore(table, {keyPath: 'id'});
+                    }
+                });
+                if (!db.objectStoreNames.contains('_meta')) {
+                    db.createObjectStore('_meta', {keyPath: 'key'});
+                }
+            };
+        });
+    },
+    
+    // Get all records from local cache
+    async getAll(table) {
+        if (!this.db) return [];
+        return new Promise((resolve) => {
+            const tx = this.db.transaction(table, 'readonly');
+            const req = tx.objectStore(table).getAll();
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = () => resolve([]);
+        });
+    },
+    
+    // Save records to local cache (bulk)
+    async saveAll(table, records) {
+        if (!this.db || !records.length) return;
+        return new Promise((resolve) => {
+            const tx = this.db.transaction(table, 'readwrite');
+            const store = tx.objectStore(table);
+            records.forEach(r => store.put(r));
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => resolve(false);
+        });
+    },
+    
+    // Clear table
+    async clear(table) {
+        if (!this.db) return;
+        return new Promise((resolve) => {
+            const tx = this.db.transaction(table, 'readwrite');
+            tx.objectStore(table).clear();
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => resolve(false);
+        });
+    },
+    
+    // Get meta (last sync time, etc)
+    async getMeta(key) {
+        if (!this.db) return null;
+        return new Promise((resolve) => {
+            const tx = this.db.transaction('_meta', 'readonly');
+            const req = tx.objectStore('_meta').get(key);
+            req.onsuccess = () => resolve(req.result?.value);
+            req.onerror = () => resolve(null);
+        });
+    },
+    
+    // Set meta
+    async setMeta(key, value) {
+        if (!this.db) return;
+        return new Promise((resolve) => {
+            const tx = this.db.transaction('_meta', 'readwrite');
+            tx.objectStore('_meta').put({key, value, updated: Date.now()});
+            tx.oncomplete = () => resolve(true);
+        });
+    },
+    
+    // Check if we have cached data
+    async hasCache(table) {
+        const count = (await this.getAll(table)).length;
+        return count > 0;
+    },
+    
+    // Pull from server and cache locally
+    async pullAndCache(table, onProgress) {
+        let all = [];
+        let offset = 0;
+        const limit = 500;
+        
+        while (true) {
+            const resp = await fetch(`/api/sync/pull?table=${table}&offset=${offset}&limit=${limit}`);
+            const data = await resp.json();
+            
+            if (!data.success) break;
+            
+            all = all.concat(data.records || []);
+            if (onProgress) onProgress(all.length, data.total || all.length);
+            
+            if (!data.has_more) break;
+            offset += limit;
+        }
+        
+        // Save to IndexedDB
+        if (all.length > 0) {
+            await this.clear(table);
+            await this.saveAll(table, all);
+            await this.setMeta(`${table}_synced`, Date.now());
+        }
+        
+        return all;
+    }
+};
+
+// Smart loader - tries cache first, falls back to server
+async function smartLoad(table, renderFn, options = {}) {
+    const indicator = document.getElementById('syncIndicator');
+    const setStatus = (icon, text, color) => {
+        if (indicator) indicator.innerHTML = `<span style="color:${color}">${icon} ${text}</span>`;
+    };
+    
+    const bizId = document.body.dataset.businessId;
+    if (!bizId) return;
+    
+    try {
+        await ClickDB.init(bizId);
+        
+        // Check cache age
+        const lastSync = await ClickDB.getMeta(`${table}_synced`);
+        const cacheAge = lastSync ? (Date.now() - lastSync) / 1000 : Infinity;
+        const hasCache = await ClickDB.hasCache(table);
+        
+        // If cache is fresh (< 5 min) and exists, use it
+        if (hasCache && cacheAge < 300) {
+            setStatus('⚡', 'Cached', '#10b981');
+            const data = await ClickDB.getAll(table);
+            renderFn(data);
+            
+            // Background refresh if > 1 min old
+            if (cacheAge > 60) {
+                setTimeout(async () => {
+                    try {
+                        const fresh = await ClickDB.pullAndCache(table);
+                        if (fresh.length > 0) renderFn(fresh);
+                        setStatus('✓', 'Synced', '#10b981');
+                    } catch (e) {}
+                }, 100);
+            }
+            return;
+        }
+        
+        // No cache or stale - fetch from server
+        setStatus('⟳', 'Loading...', '#3b82f6');
+        
+        try {
+            const data = await ClickDB.pullAndCache(table, (loaded, total) => {
+                setStatus('⟳', `${loaded}/${total}`, '#3b82f6');
+            });
+            renderFn(data);
+            setStatus('✓', 'Loaded', '#10b981');
+        } catch (fetchErr) {
+            // Offline? Try cache anyway
+            if (hasCache) {
+                setStatus('○', 'Offline', '#f59e0b');
+                const data = await ClickDB.getAll(table);
+                renderFn(data);
+            } else {
+                setStatus('!', 'Error', '#ef4444');
+            }
+        }
+    } catch (err) {
+        console.error('SmartLoad error:', err);
+        setStatus('!', 'Error', '#ef4444');
+    }
+}
+'''
 
 CSS = """
 <style>
@@ -11642,76 +12259,68 @@ select.form-input optgroup {
 
 
 def render_page(title: str, content: str, user: dict = None, active: str = "") -> str:
-    """Render a full page - clean layout with Zane float button"""
+    """Render a full page - FAST: uses session cache, minimal DB calls"""
+    _t("render_start")
     
-    # Get current business - with error handling
+    # Get current business - FROM SESSION (no DB call!)
     business = None
     businesses = []
     biz_name = "No Business"
     biz_id = ""
     
     try:
-        business = Auth.get_current_business()
-        if business:
-            biz_name = business.get("name", "No Business")
-            biz_id = business.get("id", "")
+        # FAST: Get from session cache first
+        biz_id = session.get("business_id", "")
+        biz_name = session.get("business_name", "No Business")
         
-        # Get all businesses for this user
-        if user:
+        # Use cached businesses list if available (set at login)
+        if session.get("businesses_cache"):
+            businesses = session.get("businesses_cache", [])
+            # Find current business in cache
+            for b in businesses:
+                if b.get("id") == biz_id:
+                    business = b
+                    biz_name = b.get("name", "No Business")
+                    break
+        
+        # Only fetch from DB if no cache (first page after login)
+        if not businesses and user:
             user_id = user.get("id")
             user_email = user.get("email", "").lower()
             
-            # Get businesses user OWNS
-            owned_businesses = db.get("businesses", {"user_id": user_id}) if user_id else []
-            logger.info(f"[RENDER] User {user_email} owns {len(owned_businesses)} businesses")
+            # Single query for owned businesses
+            owned = db.get("businesses", {"user_id": user_id}) if user_id else []
             
-            # Get businesses user is a TEAM MEMBER of
-            # Be lenient - accept ANY membership (we fix status at login)
-            team_memberships = db.get("team_members", {"email": user_email}) if user_email else []
-            logger.info(f"[RENDER] Found {len(team_memberships)} team memberships for {user_email}")
-            for tm in team_memberships:
-                logger.info(f"[RENDER] Team membership: biz={tm.get('business_id')}, status={tm.get('status')}, invitation_status={tm.get('invitation_status')}")
+            # Single query for team memberships
+            memberships = db.get("team_members", {"email": user_email}) if user_email else []
+            member_biz_ids = [tm.get("business_id") for tm in memberships if tm.get("business_id")]
             
-            # Include ALL team memberships (not just active/accepted)
-            # If user can see this page, they're logged in, so membership is valid
-            member_biz_ids = [tm.get("business_id") for tm in team_memberships if tm.get("business_id")]
-            
-            # Fetch those businesses
+            # Batch fetch member businesses (if any)
             member_businesses = []
-            for mbid in member_biz_ids:
-                if mbid:
-                    biz = db.get_one("businesses", mbid)
-                    if biz and biz not in owned_businesses:
-                        member_businesses.append(biz)
+            if member_biz_ids:
+                for mbid in member_biz_ids[:5]:  # Limit to 5
+                    if mbid and mbid not in [o.get("id") for o in owned]:
+                        biz = db.get_one("businesses", mbid)
+                        if biz:
+                            member_businesses.append(biz)
             
-            # Combine: owned + member businesses
-            businesses = owned_businesses + member_businesses
-            logger.info(f"[RENDER] Total businesses available: {len(businesses)}")
+            businesses = owned + member_businesses
             
-            # FALLBACK: If still no businesses but session has business_id, add that
-            if not businesses and session.get("business_id"):
-                fallback_biz = db.get_one("businesses", session.get("business_id"))
-                if fallback_biz:
-                    businesses = [fallback_biz]
-                    logger.info(f"[RENDER] Using fallback business from session: {fallback_biz.get('name')}")
+            # Cache for next page loads
+            session["businesses_cache"] = businesses
             
-            # AUTO-SELECT: If no business in session but user has businesses, select first one
+            # Auto-select first if none selected
             if not biz_id and businesses:
-                first_biz = businesses[0]
-                biz_id = first_biz.get("id", "")
-                biz_name = first_biz.get("name", "No Business")
-                business = first_biz
+                business = businesses[0]
+                biz_id = business.get("id", "")
+                biz_name = business.get("name", "No Business")
                 session["business_id"] = biz_id
-                logger.info(f"[RENDER] Auto-selected business: {biz_name} ({biz_id})")
-            
-            # If session has business_id but we didn't load it, try to load it
-            if not business and session.get("business_id"):
-                business = db.get_one("businesses", session.get("business_id"))
-                if business:
-                    biz_name = business.get("name", "No Business")
-                    biz_id = business.get("id", "")
-                    if business not in businesses:
-                        businesses.append(business)
+                session["business_name"] = biz_name
+            elif biz_id:
+                for b in businesses:
+                    if b.get("id") == biz_id:
+                        business = b
+                        break
     except Exception as e:
         logger.error(f"[RENDER] Error getting business: {e}")
     
@@ -11772,6 +12381,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("intelligence", "/intelligence", "AI"),
             ("tools", "/tools", "Tools"),
             ("import", "/import", "Import"),
+            ("import", "/migrate", "Migrate"),
             ("inbox", "/scan-inbox", "Inbox"),
             ("settings", "/settings", "Settings"),
         ]
@@ -11820,7 +12430,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     <title>{title} - Click AI</title>
     {CSS}
 </head>
-<body>
+<body data-business-id="{biz_id}">
     <header class="header">
         <div class="header-top">
             <div class="logo" onclick="toggleZaneChat()">Click AI</div>
@@ -12000,6 +12610,11 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             }}
         }}, 100);
     }})();
+    </script>
+    
+    <!-- ClickDB Local Cache -->
+    <script>
+    {CLICKDB_JS}
     </script>
 </body>
 </html>'''
@@ -13280,6 +13895,7 @@ def api_stock_dedup():
 @login_required
 def dashboard():
     """Dashboard - Clean overview with stats, no AI on load"""
+    _t("start")
     
     # Mobile detection - show scanner instead
     user_agent = request.headers.get('User-Agent', '').lower()
@@ -13289,14 +13905,18 @@ def dashboard():
         return redirect("/m")
     
     user = Auth.get_current_user()
+    _t("get_user")
     business = Auth.get_current_business()
+    _t("get_biz")
     
     # Check user role - staff see limited dashboard
     role = get_user_role()
+    _t("get_role")
     is_staff = role in ["staff", "user", "pos_only"]
     
     # Use LIGHTWEIGHT context - not full Zane context!
     context = Context.get_dashboard_stats(user, business)
+    _t("get_stats")
     
     # Stats - pure data, no AI
     stock_count = context.get("stock_count", 0)
@@ -13508,119 +14128,62 @@ def dashboard():
 @app.route("/customers")
 @login_required
 def customers_page():
-    """Customers list with accordion - click to see transactions"""
+    """Customers list - FAST direct query"""
+    _t("start")
     
     user = Auth.get_current_user()
+    _t("get_user")
     business = Auth.get_current_business()
+    _t("get_biz")
     biz_id = business.get("id") if business else None
     
-    customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-    customers = sorted(customers, key=lambda x: x.get("name", "").lower())
+    # FAST: Direct query with order, limit to 300
+    try:
+        result = db.table("customers").select("*").eq("business_id", biz_id).order("name").limit(300).execute()
+        customers = result.data if result.data else []
+    except:
+        customers = []
+    _t("db_customers")
     
-    # Get all invoices and receipts for lookup
-    all_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-    all_receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
-    
-    # Summary stats
     total_customers = len(customers)
     debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
     total_owed = sum(float(c.get("balance", 0)) for c in debtors)
     
-    # Build accordion rows
+    # Build rows
     customers_html = ""
     for c in customers:
-        cust_id = c.get("id")
         balance = float(c.get("balance", 0))
         balance_color = "var(--red)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
-        
-        # Get transactions for this customer
-        cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == cust_id]
-        cust_invoices = sorted(cust_invoices, key=lambda x: x.get("date", ""), reverse=True)
-        cust_receipts = [r for r in all_receipts if r.get("customer_id") == cust_id]
-        cust_receipts = sorted(cust_receipts, key=lambda x: x.get("date", ""), reverse=True)
-        
-        # Date cutoff - 12 months ago
-        from datetime import datetime, timedelta
-        cutoff_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-        
-        # Build transactions list
-        trans_rows = ""
-        
-        # ALL outstanding invoices (no date limit) + paid invoices from last 12 months
-        outstanding_invs = [inv for inv in cust_invoices if inv.get("status") != "paid"]
-        paid_recent = [inv for inv in cust_invoices if inv.get("status") == "paid" and inv.get("date", "") >= cutoff_date]
-        show_invoices = outstanding_invs + paid_recent
-        show_invoices = sorted(show_invoices, key=lambda x: x.get("date", ""), reverse=True)
-        
-        for inv in show_invoices:
-            status = inv.get("status", "outstanding")
-            status_color = "var(--green)" if status == "paid" else "var(--orange)"
-            trans_rows += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
-                <td>{inv.get("date", "-")}</td>
-                <td>Invoice {inv.get("invoice_number", "-")}</td>
-                <td style="text-align:right;color:var(--red);">{money(inv.get("total", 0))}</td>
-                <td style="color:{status_color};">{status}</td>
-            </tr>
-            '''
-        
-        # Payments from last 12 months only
-        recent_receipts = [r for r in cust_receipts if r.get("date", "") >= cutoff_date]
-        for r in recent_receipts:
-            trans_rows += f'''
-            <tr>
-                <td>{r.get("date", "-")}</td>
-                <td>Payment ({r.get("method", "cash")})</td>
-                <td style="text-align:right;color:var(--green);">-{money(r.get("amount", 0))}</td>
-                <td style="color:var(--green);">received</td>
-            </tr>
-            '''
-        
-        trans_count = len(outstanding_invs) + len(paid_recent) + len(recent_receipts)
+        cust_id = c.get("id")
         
         customers_html += f'''
-        <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-            <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;">
-                    <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(c.get("code", ""))}</span>
-                    <span><strong>{safe_string(c.get("name", "-"))}</strong></span>
-                    <span style="color:var(--text-muted);">{safe_string(c.get("category", ""))}</span>
-                    <span style="color:var(--text-muted);">{safe_string(c.get("contact_name", ""))}</span>
-                    <span style="color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
-                    <span style="text-align:right;color:{balance_color};font-weight:bold;">{money(balance)}</span>
-                    <span style="text-align:right;">
-                        <a href="/customer/{cust_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
-                        <a href="/statement/{cust_id}" style="color:var(--text-muted);font-size:11px;margin-left:8px;" onclick="event.stopPropagation();">Stmt</a>
-                    </span>
-                </div>
-            </summary>
-            <div style="padding:0 10px 8px 10px;">
-                {f"""<table class="table" style="font-size:11px;">
-                    <thead>
-                        <tr>
-                            <th style="padding:4px;">Date</th>
-                            <th style="padding:4px;">Description</th>
-                            <th style="padding:4px;text-align:right;">Amount</th>
-                            <th style="padding:4px;">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {trans_rows}
-                    </tbody>
-                </table>""" if trans_rows else "<p style='color:var(--text-muted);text-align:center;padding:10px;'>No transactions yet</p>"}
+        <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;">
+            <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
+                <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(c.get("code", ""))}</span>
+                <span><strong>{safe_string(c.get("name", "-"))}</strong></span>
+                <span style="color:var(--text-muted);">{safe_string(c.get("contact_name", ""))}</span>
+                <span style="color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
+                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(c.get("email", ""))}</span>
+                <span style="color:var(--text-muted);font-size:11px;">{safe_string(c.get("vat_number", ""))}</span>
+                <span style="text-align:right;color:{balance_color};font-weight:bold;">{money(balance)}</span>
+                <span style="text-align:right;">
+                    <a href="/customer/{cust_id}" style="color:var(--primary);font-size:11px;">View</a>
+                    <a href="/statement/{cust_id}" style="color:var(--text-muted);font-size:11px;margin-left:8px;">Stmt</a>
+                </span>
             </div>
-        </details>
+        </div>
         '''
     
-    # Sticky header - matches import preview columns
+    # Sticky header
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;font-weight:bold;">
+        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
             <span>Name</span>
-            <span>Category</span>
             <span>Contact</span>
             <span>Phone</span>
+            <span>Email</span>
+            <span>VAT No</span>
             <span style="text-align:right;">Balance</span>
             <span style="text-align:right;">Actions</span>
         </div>
@@ -13637,52 +14200,19 @@ def customers_page():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-        <h2 style="margin:0;">[TEAM] Customers ({total_customers})</h2>
+        <h2 style="margin:0;">Customers ({total_customers})</h2>
         <div style="display:flex;gap:10px;">
-            <button onclick="bulkStatements()" class="btn btn-secondary"> Bulk Statements</button>
             <a href="/customer/new" class="btn btn-primary">+ Add Customer</a>
         </div>
     </div>
     
     {summary_html}
     
-    <p style="color:var(--text-muted);margin-bottom:10px;font-size:12px;">Click on a customer to see transactions</p>
-    
     {header_row}
-    {customers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No customers yet! Add your first customer to start invoicing.</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/customer/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
-    
-    <script>
-    async function bulkStatements() {{
-        const choice = confirm('Send statements to ALL customers with outstanding balances?\\n\\nThis will email statements to {len(debtors)} customers owing {money(total_owed)} total.');
-        if (!choice) return;
-        
-        const btn = event.target;
-        btn.disabled = true;
-        btn.textContent = 'Sending...';
-        
-        try {{
-            const response = await fetch('/api/bulk-statements', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}}
-            }});
-            
-            const data = await response.json();
-            
-            if (data.success) {{
-                alert('Statements sent successfully.\\n\\n' + data.message);
-            }} else {{
-                alert('Error: ' + (data.error || 'Failed to send statements'));
-            }}
-        }} catch (err) {{
-            alert('Connection error');
-        }}
-        
-        btn.disabled = false;
-        btn.textContent = ' Bulk Statements';
-    }}
-    </script>
+    {customers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No customers yet!</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/customer/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
     '''
     
+    _t("before_render")
     return render_page("Customers", content, user, "customers")
 
 
@@ -13786,11 +14316,20 @@ def customer_view(customer_id):
         <div style="display:flex;justify-content:space-between;align-items:start;">
             <div>
                 <h2 style="margin:0;">{safe_string(customer.get("name", "-"))}</h2>
-                <p style="color:var(--text-muted);margin:5px 0;">
-                     {safe_string(customer.get("phone", "-"))} |  {safe_string(customer.get("email", "-"))}
+                <p style="color:var(--text-muted);margin:5px 0;font-family:monospace;font-size:12px;">
+                    Code: {safe_string(customer.get("code", "-"))}
                 </p>
                 <p style="color:var(--text-muted);margin:5px 0;">
-                     {safe_string(customer.get("address", "-"))}
+                    📞 {safe_string(customer.get("phone", "-"))} &nbsp;|&nbsp; ✉️ {safe_string(customer.get("email", "-"))}
+                </p>
+                <p style="color:var(--text-muted);margin:5px 0;">
+                    📍 {safe_string(customer.get("address", "-"))}
+                </p>
+                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
+                    {"👤 " + safe_string(customer.get("contact_name")) if customer.get("contact_name") else ""}
+                    {"&nbsp;|&nbsp; VAT: " + safe_string(customer.get("vat_number")) if customer.get("vat_number") else ""}
+                    {"&nbsp;|&nbsp; Category: " + safe_string(customer.get("category")) if customer.get("category") else ""}
+                    {"&nbsp;|&nbsp; 💰 " + safe_string(customer.get("price_list", "retail")).upper() + " pricing" if customer.get("price_list") and customer.get("price_list") != "retail" else ""}
                 </p>
             </div>
             <div style="text-align:right;">
@@ -13884,6 +14423,11 @@ def customer_new():
         phone = request.form.get("phone", "").strip()
         email = request.form.get("email", "").strip()
         address = request.form.get("address", "").strip()
+        code = request.form.get("code", "").strip()
+        contact_name = request.form.get("contact_name", "").strip()
+        category = request.form.get("category", "").strip()
+        vat_number = request.form.get("vat_number", "").strip()
+        price_list = request.form.get("price_list", "retail").strip()
         
         if not name:
             flash("Customer name is required", "error")
@@ -13891,9 +14435,14 @@ def customer_new():
             customer = RecordFactory.customer(
                 business_id=biz_id,
                 name=name,
+                code=code,
                 phone=phone,
                 email=email,
                 address=address,
+                contact_name=contact_name,
+                category=category,
+                vat_number=vat_number,
+                price_list=price_list,
                 created_by=user.get("id", "") if user else ""
             )
             customer_id = customer["id"]
@@ -13909,17 +14458,50 @@ def customer_new():
     <div class="card" style="max-width: 600px;">
         <h2 style="margin-bottom: 20px;">New Customer</h2>
         <form method="POST">
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
-                <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
+                    <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
+                    <input type="text" name="code" placeholder="e.g. AFR001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
             </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
-                <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Contact Person</label>
+                    <input type="text" name="contact_name" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Category</label>
+                    <input type="text" name="category" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
             </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
-                <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
+                    <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
+                    <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
+                    <input type="text" name="vat_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Price List</label>
+                    <select name="price_list" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <option value="retail">Retail (Default)</option>
+                        <option value="wholesale">Wholesale</option>
+                        <option value="trade">Trade</option>
+                        <option value="vip">VIP/Special</option>
+                    </select>
+                </div>
             </div>
             <div style="margin-bottom: 20px;">
                 <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
@@ -13939,401 +14521,190 @@ def customer_new():
 @app.route("/stock")
 @login_required
 def stock_page():
-    """Stock list - clean, no AI on load"""
+    """Stock list - FAST skeleton, JS loads from sessionStorage or API"""
+    _t("start")
     
     user = Auth.get_current_user()
+    _t("get_user")
     business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    context = Context.get_page_context("stock", user, business)
+    _t("get_biz")
     
-    stock = context.get("stock", [])
+    # NO DATABASE CALL HERE! JS will handle it.
+    _t("before_render")
     
-    # Get active jobs for Issue to Job dropdown
-    jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-    active_jobs = [j for j in jobs if j.get("status") not in ["completed", "invoiced"]]
-    job_options_html = '<option value="">-- Select Job Card --</option>'
-    for job in active_jobs:
-        job_options_html += f'<option value="{job.get("id")}">{job.get("job_number")} - {safe_string(job.get("title", "")[:30])}</option>'
-    
-    # Calculate stats
-    total_items = len(stock)
-    total_qty = sum(float(s.get("qty") or s.get("quantity") or 0) for s in stock)
-    stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock)
-    low_stock_count = len([s for s in stock if float(s.get("qty") or s.get("quantity") or 0) < 5])
-    
-    # Sort by category then description for grouped display
-    stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("description") or ""))
-    
-    rows = ""
-    current_category = None
-    for s in stock:
-        category = s.get("category") or ""
-        
-        # Add category header when it changes
-        if category != current_category:
-            current_category = category
-            if category:
-                rows += f'''
-                <tr class="category-header-row" data-category="{safe_string(category)}" style="background:rgba(99,102,241,0.15);">
-                    <td colspan="9" style="padding:10px;font-weight:bold;color:var(--primary);">{category}</td>
-                </tr>
-                '''
-        
-        qty = float(s.get("qty") or s.get("quantity") or 0)
-        cost = float(s.get("cost") or s.get("cost_price") or 0)
-        price = float(s.get("price") or s.get("selling_price") or 0)
-        unit = safe_string(s.get("unit", ""))
-        total_value = qty * cost
-        qty_class = "color: var(--red);" if qty < 5 else ""
-        code = safe_string(s.get("code", "-"))
-        desc = safe_string(s.get("description", "-"))
-        desc_escaped = desc.replace("'", "&#39;")
-        stock_id = s.get("id", "")
-        rows += f'''
-        <tr class="stock-data-row" data-search="{code.lower()} {desc.lower()}" data-category="{safe_string(category)}">
-            <td><strong>{code}</strong></td>
-            <td>{desc}</td>
-            <td style="color:var(--text-muted);font-size:11px;">{safe_string(category)}</td>
-            <td style="{qty_class} text-align:right;">{qty:.0f}</td>
-            <td style="text-align:center;color:var(--text-muted);">{unit}</td>
-            <td style="text-align:right;">{money(cost)}</td>
-            <td style="text-align:right;color:var(--text-muted);">{money(total_value)}</td>
-            <td style="text-align:right;">{money(price)}</td>
-            <td><button class="btn btn-sm" style="background:#8b5cf6;color:white;padding:4px 8px;font-size:11px;" 
-                onclick="showIssueToJob('{stock_id}', '{code}', '{desc_escaped}', {qty}, {cost})">Issue</button></td>
-        </tr>
-        '''
-    
-    # Stats bar
-    stats_html = ""
-    if total_items > 0:
-        stats_html = f'''
-        <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap;">
-            <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;">
-                <div style="font-size:24px;font-weight:bold;">{total_items}</div>
-                <div style="color:var(--text-muted);font-size:13px;">Items</div>
-            </div>
-            <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;">
-                <div style="font-size:24px;font-weight:bold;">{money(stock_value)}</div>
-                <div style="color:var(--text-muted);font-size:13px;">Stock Value</div>
-            </div>
-            <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;{" border-left:3px solid var(--red);" if low_stock_count > 0 else ""}">
-                <div style="font-size:24px;font-weight:bold;{"color:var(--red);" if low_stock_count > 0 else ""}">{low_stock_count}</div>
-                <div style="color:var(--text-muted);font-size:13px;">Low Stock</div>
-            </div>
+    content = '''
+    <!-- Stats - filled by JS -->
+    <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap;">
+        <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;">
+            <div style="font-size:24px;font-weight:bold;" id="statItems">-</div>
+            <div style="color:var(--text-muted);font-size:13px;">Items</div>
         </div>
-        '''
-    
-    # Get unique categories for dropdown
-    categories = sorted(set(s.get("category") or "" for s in stock if s.get("category")))
-    category_options = '<option value="">All Categories</option>'
-    for cat in categories:
-        category_options += f'<option value="{safe_string(cat)}">{safe_string(cat)}</option>'
-    
-    content = f'''
-    {stats_html}
+        <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;">
+            <div style="font-size:24px;font-weight:bold;" id="statValue">-</div>
+            <div style="color:var(--text-muted);font-size:13px;">Stock Value</div>
+        </div>
+        <div style="background:var(--card);padding:15px 20px;border-radius:8px;flex:1;min-width:150px;" id="lowStockBox">
+            <div style="font-size:24px;font-weight:bold;" id="statLow">-</div>
+            <div style="color:var(--text-muted);font-size:13px;">Low Stock</div>
+        </div>
+    </div>
     
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
-            <h3 class="card-title" style="margin:0;">Stock ({total_items})</h3>
+            <h3 class="card-title" style="margin:0;">Stock (<span id="stockCount">-</span>)</h3>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                <input type="text" id="stockSearch" placeholder="🔍 Search code or description..." 
-                    oninput="filterStockTable()" 
-                    style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);width:250px;">
-                <select id="categoryFilter" onchange="filterStockTable()" 
+                <input type="text" id="stockSearch" placeholder="🔍 Search..." 
+                    oninput="filterStock()" 
+                    style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);width:200px;">
+                <select id="categoryFilter" onchange="filterStock()" 
                     style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);">
-                    {category_options}
+                    <option value="">All Categories</option>
                 </select>
-                <button class="btn btn-primary" onclick="openZaneEdit()" style="background:var(--primary);">
-                    Zane Edit
-                </button>
+                <a href="/stock/new" class="btn btn-primary">+ Add Stock</a>
             </div>
-        </div>
-        
-        <!-- Zane Edit Panel -->
-        <div id="zaneEditPanel" style="display:none;background:rgba(99,102,241,0.1);border:1px solid var(--primary);border-radius:8px;padding:20px;margin-bottom:20px;">
-            <h4 style="margin:0 0 10px 0;">Tell Zane what to do:</h4>
-            <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
-                Examples: "generate smart codes" | "bolts and nuts under R1 cost = 100% markup, under R2 = 80%" | "categorize by description" | "safety boots max 40% markup"
-            </p>
-            <div style="display:flex;gap:10px;">
-                <input type="text" id="zaneCommand" placeholder="e.g., generate smart codes for all items" 
-                    style="flex:1;padding:12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);font-size:14px;">
-                <button onclick="runZaneEdit()" id="zaneRunBtn" class="btn btn-primary">Run</button>
-                <button onclick="closeZaneEdit()" class="btn btn-secondary">Cancel</button>
-            </div>
-            <div id="zaneResult" style="margin-top:15px;display:none;"></div>
         </div>
         
         <table class="table">
             <thead>
                 <tr>
-                    <th>Code</th>
-                    <th>Description</th>
-                    <th>Category</th>
-                    <th style="text-align:right;">Qty</th>
-                    <th style="text-align:center;">Unit</th>
+                    <th>Code</th><th>Description</th><th>Category</th>
+                    <th style="text-align:right;">Qty</th><th>Unit</th>
                     <th style="text-align:right;">Cost</th>
-                    <th style="text-align:right;">Value</th>
-                    <th style="text-align:right;">Price</th>
-                    <th>Action</th>
+                    <th style="text-align:right;">Price</th><th></th>
                 </tr>
             </thead>
-            <tbody>
-                {rows or "<tr><td colspan='6' style='text-align:center;padding:40px;'><div style='color:var(--text-muted);'><strong>Tip:</strong> No stock items yet!</div><div style='margin-top:10px;'><a href='/import' class='btn btn-primary'>Import from Excel</a> <span style='color:var(--text-muted);margin:0 10px;'>or</span> <a href='/stock/new' class='btn btn-secondary'>Add manually</a></div></td></tr>"}
+            <tbody id="stockTableBody">
+                <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted);">Loading...</td></tr>
             </tbody>
         </table>
     </div>
     
     <script>
-    function filterStockTable() {{
+    const CACHE_KEY = 'clickai_stock';
+    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+    
+    // Check cache
+    function getCache() {
+        try {
+            const cached = sessionStorage.getItem(CACHE_KEY);
+            if (!cached) return null;
+            const data = JSON.parse(cached);
+            if (Date.now() - data.time > CACHE_TTL) return null;
+            return data.items;
+        } catch (e) { return null; }
+    }
+    
+    // Save to cache
+    function setCache(items) {
+        try {
+            sessionStorage.setItem(CACHE_KEY, JSON.stringify({items, time: Date.now()}));
+        } catch (e) {}
+    }
+    
+    // Render stock table
+    function renderStock(items) {
+        // Stats
+        const total = items.length;
+        const value = items.reduce((s, i) => s + (parseFloat(i.quantity||i.qty||0) * parseFloat(i.cost_price||i.cost||0)), 0);
+        const low = items.filter(i => parseFloat(i.quantity||i.qty||0) < 5).length;
+        
+        document.getElementById('stockCount').textContent = total;
+        document.getElementById('statItems').textContent = total;
+        document.getElementById('statValue').textContent = 'R' + value.toFixed(2);
+        document.getElementById('statLow').textContent = low;
+        if (low > 0) {
+            document.getElementById('lowStockBox').style.borderLeft = '3px solid var(--red)';
+            document.getElementById('statLow').style.color = 'var(--red)';
+        }
+        
+        // Categories dropdown
+        const cats = [...new Set(items.map(i => i.category).filter(c => c))].sort();
+        document.getElementById('categoryFilter').innerHTML = '<option value="">All Categories</option>' +
+            cats.map(c => `<option value="${c}">${c}</option>`).join('');
+        
+        // Sort by category then description
+        items.sort((a,b) => ((a.category||'ZZZ')+(a.description||'')).localeCompare((b.category||'ZZZ')+(b.description||'')));
+        
+        // Build rows
+        let html = '';
+        let curCat = null;
+        items.forEach(s => {
+            const cat = s.category || '';
+            if (cat && cat !== curCat) {
+                curCat = cat;
+                html += `<tr class="cat-row" style="background:rgba(99,102,241,0.15);"><td colspan="8" style="padding:8px 10px;font-weight:bold;color:var(--primary);">${cat}</td></tr>`;
+            }
+            const qty = parseFloat(s.quantity||s.qty||0);
+            const cost = parseFloat(s.cost_price||s.cost||0);
+            const price = parseFloat(s.selling_price||s.price||0);
+            const qtyStyle = qty < 5 ? 'color:var(--red);' : '';
+            html += `<tr class="stock-row" data-search="${(s.code||'').toLowerCase()} ${(s.description||'').toLowerCase()}" data-cat="${(cat||'').toLowerCase()}">
+                <td><a href="/stock/${s.id}"><strong>${s.code||'-'}</strong></a></td>
+                <td>${s.description||'-'}</td>
+                <td style="color:var(--text-muted);font-size:11px;">${cat}</td>
+                <td style="text-align:right;${qtyStyle}">${qty.toFixed(0)}</td>
+                <td style="color:var(--text-muted);">${s.unit||''}</td>
+                <td style="text-align:right;">R${cost.toFixed(2)}</td>
+                <td style="text-align:right;">R${price.toFixed(2)}</td>
+                <td><a href="/stock/${s.id}" style="color:var(--primary);font-size:11px;">Edit</a></td>
+            </tr>`;
+        });
+        
+        if (!html) {
+            html = `<tr><td colspan="8" style="text-align:center;padding:40px;">
+                <div style="color:var(--text-muted);"><strong>No stock items</strong></div>
+                <div style="margin-top:10px;"><a href="/import" class="btn btn-primary">Import</a></div>
+            </td></tr>`;
+        }
+        
+        document.getElementById('stockTableBody').innerHTML = html;
+    }
+    
+    // Filter (client-side, instant)
+    function filterStock() {
         const search = document.getElementById('stockSearch').value.toLowerCase().trim();
-        const categoryFilter = document.getElementById('categoryFilter').value;
-        
-        const rows = document.querySelectorAll('.stock-data-row');
-        const categoryHeaders = document.querySelectorAll('.category-header-row');
-        
-        // Track which categories have visible items
-        const visibleCategories = new Set();
-        
-        rows.forEach(row => {{
-            const searchData = row.getAttribute('data-search') || '';
-            const rowCategory = row.getAttribute('data-category') || '';
-            
-            const matchesSearch = !search || searchData.includes(search);
-            const matchesCategory = !categoryFilter || rowCategory === categoryFilter;
-            
-            if (matchesSearch && matchesCategory) {{
-                row.style.display = '';
-                if (rowCategory) visibleCategories.add(rowCategory);
-            }} else {{
-                row.style.display = 'none';
-            }}
-        }});
-        
-        // Show/hide category headers based on visible items
-        categoryHeaders.forEach(header => {{
-            const cat = header.getAttribute('data-category') || '';
-            header.style.display = visibleCategories.has(cat) ? '' : 'none';
-        }});
-    }}
+        const cat = document.getElementById('categoryFilter').value.toLowerCase();
+        document.querySelectorAll('.stock-row').forEach(row => {
+            const matchSearch = !search || row.dataset.search.includes(search);
+            const matchCat = !cat || row.dataset.cat === cat;
+            row.style.display = (matchSearch && matchCat) ? '' : 'none';
+        });
+        document.querySelectorAll('.cat-row').forEach(r => r.style.display = (search || cat) ? 'none' : '');
+    }
     
-    function openZaneEdit() {{
-        document.getElementById('zaneEditPanel').style.display = 'block';
-        document.getElementById('zaneCommand').focus();
-    }}
-    
-    function closeZaneEdit() {{
-        document.getElementById('zaneEditPanel').style.display = 'none';
-        document.getElementById('zaneResult').style.display = 'none';
-    }}
-    
-    async function runZaneEdit() {{
-        const command = document.getElementById('zaneCommand').value.trim();
-        if (!command) return alert('Please enter a command');
-        
-        const btn = document.getElementById('zaneRunBtn');
-        const result = document.getElementById('zaneResult');
-        
-        btn.disabled = true;
-        btn.textContent = 'Working...';
-        result.style.display = 'block';
-        result.innerHTML = `
-            <div style="padding:15px;">
-                <div style="margin-bottom:10px;">Processing stock items...</div>
-                <div style="background:var(--bg);border-radius:6px;height:24px;overflow:hidden;">
-                    <div id="progressBar" style="background:var(--green);height:100%;width:0%;transition:width 0.3s;"></div>
-                </div>
-                <div id="progressText" style="margin-top:8px;font-size:13px;color:var(--text-muted);">Starting...</div>
-            </div>`;
-        
-        try {{
-            let offset = 0;
-            const batchSize = 100;
-            let totalUpdated = 0;
-            let totalProcessed = 0;
-            let totalItems = 0;
-            let hasMore = true;
-            
-            while (hasMore) {{
-                const response = await fetch('/api/stock/zane-edit', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{
-                        command: command,
-                        offset: offset,
-                        limit: batchSize
-                    }})
-                }});
-                
-                const data = await response.json();
-                
-                if (!data.success) {{
-                    result.innerHTML = '<div style="color:var(--red);padding:10px;">Error: ' + (data.error || 'Unknown error') + '</div>';
-                    btn.disabled = false;
-                    btn.textContent = 'Run';
-                    return;
-                }}
-                
-                totalItems = data.total || totalItems;
-                totalUpdated += data.updated || 0;
-                totalProcessed += data.processed || batchSize;
-                hasMore = data.hasMore || false;
-                offset += batchSize;
-                
-                // Update progress bar
-                const percent = Math.min(100, Math.round((totalProcessed / totalItems) * 100));
-                document.getElementById('progressBar').style.width = percent + '%';
-                document.getElementById('progressText').textContent = `Processed ${{totalProcessed}} of ${{totalItems}} items (${{totalUpdated}} updated)`;
-                
-                // Small delay to not overload
-                await new Promise(r => setTimeout(r, 100));
-            }}
-            
-            result.innerHTML = `<div style="color:var(--green);padding:15px;font-size:16px;">✓ Done! Updated ${{totalUpdated}} of ${{totalItems}} items.</div>`;
-            setTimeout(() => location.reload(), 2000);
-            
-        }} catch (e) {{
-            result.innerHTML = '<div style="color:var(--red);padding:10px;">Error: ' + e.message + '</div>';
-        }}
-        
-        btn.disabled = false;
-        btn.textContent = 'Run';
-    }}
-    
-    async function applyZaneEdit(editId) {{
-        const result = document.getElementById('zaneResult');
-        result.innerHTML = '<div style="text-align:center;padding:20px;">Applying changes...</div>';
-        
-        try {{
-            const response = await fetch('/api/stock/zane-edit/apply', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{edit_id: editId}})
-            }});
-            const data = await response.json();
-            
-            if (data.success) {{
-                result.innerHTML = '<div style="color:var(--green);padding:20px;text-align:center;">Done! Updated ' + data.count + ' items.</div>';
-                setTimeout(() => location.reload(), 1500);
-            }} else {{
-                result.innerHTML = '<div style="color:var(--red);padding:10px;">Error: ' + data.error + '</div>';
-            }}
-        }} catch (e) {{
-            result.innerHTML = '<div style="color:var(--red);padding:10px;">Error: ' + e.message + '</div>';
-        }}
-    }}
-    
-    // Allow Enter key to run
-    document.getElementById('zaneCommand')?.addEventListener('keypress', function(e) {{
-        if (e.key === 'Enter') runZaneEdit();
-    }});
-    
-    // === ISSUE TO JOB FUNCTIONS ===
-    let currentIssueStock = null;
-    
-    function showIssueToJob(stockId, code, desc, qty, cost) {{
-        currentIssueStock = {{ stockId, code, desc, qty, cost }};
-        document.getElementById('issueStockCode').textContent = code;
-        document.getElementById('issueStockDesc').textContent = desc;
-        document.getElementById('issueStockQty').textContent = qty;
-        document.getElementById('issueQty').value = 1;
-        document.getElementById('issueQty').max = qty;
-        document.getElementById('issueJobModal').style.display = 'flex';
-    }}
-    
-    function closeIssueModal() {{
-        document.getElementById('issueJobModal').style.display = 'none';
-        currentIssueStock = null;
-    }}
-    
-    async function submitIssueToJob() {{
-        const jobId = document.getElementById('issueJobSelect').value;
-        const qty = parseInt(document.getElementById('issueQty').value) || 0;
-        
-        if (!jobId) {{
-            alert('Kies asb n Job Card');
+    // Load data
+    async function loadStock() {
+        // Try cache first
+        const cached = getCache();
+        if (cached) {
+            console.log('Stock: from cache');
+            renderStock(cached);
             return;
-        }}
-        if (qty <= 0) {{
-            alert('Qty moet meer as 0 wees');
-            return;
-        }}
-        if (qty > currentIssueStock.qty) {{
-            alert('Nie genoeg stock nie! Net ' + currentIssueStock.qty + ' beskikbaar.');
-            return;
-        }}
+        }
         
-        const btn = document.querySelector('#issueJobModal button[onclick="submitIssueToJob()"]');
-        btn.disabled = true;
-        btn.textContent = 'Busy...';
-        
-        try {{
-            const response = await fetch('/api/stock/issue-to-job', {{
-                method: 'POST',
-                headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify({{
-                    stock_id: currentIssueStock.stockId,
-                    job_id: jobId,
-                    qty: qty,
-                    code: currentIssueStock.code,
-                    description: currentIssueStock.desc,
-                    cost: currentIssueStock.cost
-                }})
-            }});
-            
-            const data = await response.json();
-            
-            if (data.success) {{
-                alert('' + qty + 'x ' + currentIssueStock.code + ' issued to ' + data.job_number);
-                closeIssueModal();
-                location.reload();
-            }} else {{
-                alert('Error: ' + (data.error || 'Failed'));
-                btn.disabled = false;
-                btn.textContent = 'Issue to Job';
-            }}
-        }} catch (err) {{
-            alert('Connection error');
-            btn.disabled = false;
-            btn.textContent = 'Issue to Job';
-        }}
-    }}
+        // Fetch from server
+        console.log('Stock: fetching from server...');
+        try {
+            const resp = await fetch('/api/stock/all');
+            const data = await resp.json();
+            if (data.success && data.items) {
+                setCache(data.items);
+                renderStock(data.items);
+            } else {
+                document.getElementById('stockTableBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--red);">Error loading stock</td></tr>';
+            }
+        } catch (e) {
+            document.getElementById('stockTableBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--red);">Connection error</td></tr>';
+        }
+    }
+    
+    // Init
+    loadStock();
     </script>
-    
-    <!-- Issue to Job Modal -->
-    <div id="issueJobModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:var(--card);padding:25px;border-radius:12px;max-width:400px;width:90%;">
-            <h3 style="margin:0 0 15px 0;">Issue Stock to Job Card</h3>
-            
-            <div style="background:rgba(139,92,246,0.1);padding:12px;border-radius:8px;margin-bottom:15px;">
-                <div style="font-weight:bold;" id="issueStockCode"></div>
-                <div style="font-size:13px;color:var(--text-muted);" id="issueStockDesc"></div>
-                <div style="font-size:12px;margin-top:5px;">Available: <strong id="issueStockQty"></strong></div>
-            </div>
-            
-            <div style="margin-bottom:15px;">
-                <label class="form-label">Job Card</label>
-                <select id="issueJobSelect" class="form-input">
-                    {job_options_html}
-                </select>
-            </div>
-            
-            <div style="margin-bottom:20px;">
-                <label class="form-label">Quantity to Issue</label>
-                <input type="number" id="issueQty" class="form-input" value="1" min="1" style="width:100px;">
-            </div>
-            
-            <div style="display:flex;gap:10px;">
-                <button class="btn btn-primary" onclick="submitIssueToJob()" style="flex:1;">Issue to Job</button>
-                <button class="btn btn-secondary" onclick="closeIssueModal()">Cancel</button>
-            </div>
-        </div>
-    </div>
     '''
     
     return render_page("Stock", content, user, "stock")
-
+    
 
 @app.route("/stock/new", methods=["GET", "POST"])
 @login_required
@@ -14458,6 +14829,132 @@ def stock_new():
     '''
     
     return render_page("Add Stock", content, user, "stock")
+
+
+# ═══════════════════════════════════════════════════════════════
+# STOCK SEARCH API - Server-side search and pagination for 7000+ items
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/api/stock/all")
+@login_required
+def api_stock_all():
+    """Return all stock for caching"""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    items = db.get_all_stock(biz_id)
+    return jsonify({"success": True, "items": items})
+
+
+@app.route("/api/customers/all")
+@login_required
+def api_customers_all():
+    """Return all customers for caching"""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    items = db.get("customers", {"business_id": biz_id}) or []
+    return jsonify({"success": True, "items": items})
+
+
+@app.route("/api/suppliers/all")
+@login_required
+def api_suppliers_all():
+    """Return all suppliers for caching"""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    items = db.get("suppliers", {"business_id": biz_id}) or []
+    return jsonify({"success": True, "items": items})
+
+
+@app.route("/api/stock/search")
+@login_required
+def api_stock_search():
+    """Search stock items - handles 7000+ items efficiently"""
+    
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    query = request.args.get("q", "").strip().lower()
+    offset = int(request.args.get("offset", 0))
+    limit = int(request.args.get("limit", 100))
+    category = request.args.get("category", "").strip()
+    
+    # Get all stock (cached in production, fast from Supabase)
+    all_stock = db.get_all_stock(biz_id)
+    
+    # Filter by search query
+    if query:
+        filtered = []
+        for s in all_stock:
+            code = str(s.get("code", "")).lower()
+            desc = str(s.get("description", "")).lower()
+            cat = str(s.get("category", "")).lower()
+            if query in code or query in desc or query in cat:
+                filtered.append(s)
+        all_stock = filtered
+    
+    # Filter by category
+    if category:
+        all_stock = [s for s in all_stock if str(s.get("category", "")).lower() == category.lower()]
+    
+    # Sort by category then description
+    all_stock = sorted(all_stock, key=lambda x: (x.get("category") or "ZZZ", x.get("description") or ""))
+    
+    total = len(all_stock)
+    items = all_stock[offset:offset + limit]
+    
+    # Build HTML rows
+    rows_html = ""
+    for s in items:
+        qty = float(s.get("qty") or s.get("quantity") or 0)
+        cost = float(s.get("cost") or s.get("cost_price") or 0)
+        price = float(s.get("price") or s.get("selling_price") or 0)
+        unit = safe_string(s.get("unit", ""))
+        total_value = qty * cost
+        qty_class = "color: var(--red);" if qty < 5 else ""
+        code = safe_string(s.get("code", "-"))
+        desc = safe_string(s.get("description", "-"))
+        desc_escaped = desc.replace("'", "&#39;")
+        stock_id = s.get("id", "")
+        cat = safe_string(s.get("category", ""))
+        
+        rows_html += f'''
+        <tr class="stock-data-row" data-search="{code.lower()} {desc.lower()}" data-category="{cat}">
+            <td><strong>{code}</strong></td>
+            <td>{desc}</td>
+            <td style="color:var(--text-muted);font-size:11px;">{cat}</td>
+            <td style="{qty_class} text-align:right;">{qty:.0f}</td>
+            <td style="text-align:center;color:var(--text-muted);">{unit}</td>
+            <td style="text-align:right;">R{cost:,.2f}</td>
+            <td style="text-align:right;color:var(--text-muted);">R{total_value:,.2f}</td>
+            <td style="text-align:right;">R{price:,.2f}</td>
+            <td><button class="btn btn-sm" style="background:#8b5cf6;color:white;padding:4px 8px;font-size:11px;" 
+                onclick="showIssueToJob('{stock_id}', '{code}', '{desc_escaped}', {qty}, {cost})">Issue</button></td>
+        </tr>
+        '''
+    
+    return jsonify({
+        "success": True,
+        "html": rows_html,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": (offset + limit) < total
+    })
 
 
 # Store pending edits temporarily
@@ -14852,17 +15349,21 @@ def api_stock_zane_edit_apply():
 @app.route("/invoices")
 @login_required
 def invoices_page():
-    """Invoices list"""
+    """Invoices list - FAST direct query"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-    invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
+    # FAST: Direct query with order and limit
+    try:
+        result = db.table("invoices").select("*").eq("business_id", biz_id).order("date", desc=True).limit(200).execute()
+        invoices = result.data if result.data else []
+    except:
+        invoices = []
     
     rows = ""
-    for inv in invoices[:500]:
+    for inv in invoices:
         status = inv.get("status", "")
         status_colors = {"paid": "var(--green)", "delivered": "#3b82f6", "credited": "var(--red)", "outstanding": "var(--orange)", "account": "#f59e0b"}
         status_color = status_colors.get(status, "var(--text-muted)")
@@ -14879,7 +15380,7 @@ def invoices_page():
     content = f'''
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <h3 class="card-title" style="margin:0;">Invoices</h3>
+            <h3 class="card-title" style="margin:0;">Invoices ({len(invoices)})</h3>
             <div style="display: flex; gap: 10px;">
                 <a href="/recurring-invoices" class="btn btn-secondary">🔄 Recurring</a>
                 <a href="/invoice/new" class="btn btn-primary">+ New Invoice</a>
@@ -16117,126 +16618,60 @@ def api_recurring_delete(recurring_id):
 @app.route("/suppliers")
 @login_required
 def suppliers_page():
-    """Suppliers list with accordion - click to see transactions"""
+    """Suppliers list - FAST direct query"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Check user role - staff should not see balances
     role = get_user_role()
     can_see_balances = role in ["owner", "admin", "manager", "bookkeeper", "accountant"]
     
-    suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-    suppliers = sorted(suppliers, key=lambda x: x.get("name", "").lower())
+    # FAST: Direct query with order, limit
+    try:
+        result = db.table("suppliers").select("*").eq("business_id", biz_id).order("name").limit(300).execute()
+        suppliers = result.data if result.data else []
+    except:
+        suppliers = []
     
-    # Get all supplier invoices and payments for lookup
-    all_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-    all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id else []
-    
-    # Summary stats - only show if can see balances
     total_suppliers = len(suppliers)
     creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
     total_owed = sum(float(s.get("balance", 0)) for s in creditors) if can_see_balances else 0
     
-    # Build accordion rows
+    # Build rows
     suppliers_html = ""
     for s in suppliers:
-        sup_id = s.get("id")
         balance = float(s.get("balance", 0))
         balance_color = "var(--orange)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
-        
-        # Balance display - hide for staff
         balance_display = money(balance) if can_see_balances else "---"
-        
-        # Get transactions for this supplier
-        sup_invoices = [inv for inv in all_invoices if inv.get("supplier_id") == sup_id]
-        sup_invoices = sorted(sup_invoices, key=lambda x: x.get("date", ""), reverse=True)
-        sup_payments = [p for p in all_payments if p.get("supplier_id") == sup_id]
-        sup_payments = sorted(sup_payments, key=lambda x: x.get("date", ""), reverse=True)
-        
-        # Date cutoff - 12 months ago
-        from datetime import datetime, timedelta
-        cutoff_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-        
-        # Build transactions list - only if can see balances
-        trans_rows = ""
-        
-        if can_see_balances:
-            # ALL unpaid invoices (no date limit) + paid invoices from last 12 months
-            unpaid_invs = [inv for inv in sup_invoices if inv.get("status") != "paid"]
-            paid_recent = [inv for inv in sup_invoices if inv.get("status") == "paid" and inv.get("date", "") >= cutoff_date]
-            show_invoices = unpaid_invs + paid_recent
-            show_invoices = sorted(show_invoices, key=lambda x: x.get("date", ""), reverse=True)
-            
-            for inv in show_invoices:
-                status = inv.get("status", "unpaid")
-                status_color = "var(--green)" if status == "paid" else "var(--orange)"
-                trans_rows += f'''
-                <tr style="cursor:pointer;" onclick="window.location='/supplier-invoice/{inv.get("id")}'">
-                    <td>{inv.get("date", "-")}</td>
-                    <td>Invoice {inv.get("invoice_number", "-")}</td>
-                    <td style="text-align:right;color:var(--orange);">{money(inv.get("total", 0))}</td>
-                    <td style="color:{status_color};">{status}</td>
-                </tr>
-                '''
-            
-            # Payments from last 12 months only
-            recent_payments = [p for p in sup_payments if p.get("date", "") >= cutoff_date]
-            for p in recent_payments:
-                trans_rows += f'''
-                <tr>
-                    <td>{p.get("date", "-")}</td>
-                    <td>Payment ({p.get("method", "EFT")})</td>
-                    <td style="text-align:right;color:var(--green);">-{money(p.get("amount", 0))}</td>
-                    <td style="color:var(--green);">paid</td>
-                </tr>
-                '''
-            
-            trans_count = len(unpaid_invs) + len(paid_recent) + len(recent_payments)
-        else:
-            trans_count = 0
+        sup_id = s.get("id")
         
         suppliers_html += f'''
-        <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-            <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;">
-                    <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(s.get("code", ""))}</span>
-                    <span><strong>{safe_string(s.get("name", "-"))}</strong></span>
-                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("contact_name", ""))}</span>
-                    <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span>
-                    <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
-                    <span style="text-align:right;">
-                        <a href="/supplier/{sup_id}" style="color:var(--primary);font-size:11px;" onclick="event.stopPropagation();">View</a>
-                    </span>
-                </div>
-            </summary>
-            <div style="padding:0 10px 8px 10px;">
-                {f"""<table class="table" style="font-size:11px;">
-                    <thead>
-                        <tr>
-                            <th style="padding:4px;">Date</th>
-                            <th style="padding:4px;">Description</th>
-                            <th style="padding:4px;text-align:right;">Amount</th>
-                            <th style="padding:4px;">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {trans_rows}
-                    </tbody>
-                </table>""" if trans_rows else "<p style='color:var(--text-muted);text-align:center;padding:10px;'>No transactions yet</p>"}
+        <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;">
+            <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
+                <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(s.get("code", ""))}</span>
+                <span><strong>{safe_string(s.get("name", "-"))}</strong></span>
+                <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("contact_name", ""))}</span>
+                <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span>
+                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(s.get("email", ""))}</span>
+                <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("vat_number", ""))}</span>
+                <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
+                <span style="text-align:right;">
+                    <a href="/supplier/{sup_id}" style="color:var(--primary);font-size:11px;">View</a>
+                </span>
             </div>
-        </details>
+        </div>
         '''
     
-    # Sticky header
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:80px 2fr 1fr 1fr 1fr 80px;align-items:center;font-size:13px;font-weight:bold;">
+        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
             <span>Supplier</span>
             <span>Contact</span>
             <span>Phone</span>
+            <span>Email</span>
+            <span>VAT No</span>
             <span style="text-align:right;">We Owe</span>
             <span style="text-align:right;">Actions</span>
         </div>
@@ -16259,10 +16694,8 @@ def suppliers_page():
     
     {summary_html}
     
-    <p style="color:var(--text-muted);margin-bottom:10px;font-size:12px;">Click on a supplier to see transactions</p>
-    
     {header_row}
-    {suppliers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No suppliers yet! Add suppliers to track purchases and creditors.</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/supplier/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
+    {suppliers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No suppliers yet!</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/supplier/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
     '''
     
     return render_page("Suppliers", content, user, "suppliers")
@@ -16282,6 +16715,10 @@ def supplier_new():
         phone = request.form.get("phone", "").strip()
         email = request.form.get("email", "").strip()
         address = request.form.get("address", "").strip()
+        code = request.form.get("code", "").strip()
+        contact_name = request.form.get("contact_name", "").strip()
+        category = request.form.get("category", "").strip()
+        vat_number = request.form.get("vat_number", "").strip()
         
         if not name:
             flash("Supplier name is required", "error")
@@ -16289,9 +16726,13 @@ def supplier_new():
             supplier = RecordFactory.supplier(
                 business_id=biz_id,
                 name=name,
+                code=code,
                 phone=phone,
                 email=email,
                 address=address,
+                contact_name=contact_name,
+                category=category,
+                vat_number=vat_number,
                 created_by=user.get("id", "") if user else ""
             )
             supplier_id = supplier["id"]
@@ -16307,17 +16748,39 @@ def supplier_new():
     <div class="card" style="max-width: 600px;">
         <h2 style="margin-bottom: 20px;">New Supplier</h2>
         <form method="POST">
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
-                <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
+                    <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
+                    <input type="text" name="code" placeholder="e.g. SUP001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Contact Person</label>
+                    <input type="text" name="contact_name" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Category</label>
+                    <input type="text" name="category" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
+                    <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
+                    <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
             </div>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
-                <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
-                <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
+                <input type="text" name="vat_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
             </div>
             <div style="margin-bottom: 20px;">
                 <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
@@ -16462,11 +16925,19 @@ def supplier_view(supplier_id):
         <div style="display:flex;justify-content:space-between;align-items:start;">
             <div>
                 <h2 style="margin:0;">{safe_string(supplier.get("name", "-"))}</h2>
+                <p style="color:var(--text-muted);margin:5px 0;font-family:monospace;font-size:12px;">
+                    Code: {safe_string(supplier.get("code", "-"))}
+                </p>
                 <p style="color:var(--text-muted);margin:5px 0;">
-                    📞 {safe_string(supplier.get("phone", "-"))} | ✉️ {safe_string(supplier.get("email", "-"))}
+                    📞 {safe_string(supplier.get("phone", "-"))} &nbsp;|&nbsp; ✉️ {safe_string(supplier.get("email", "-"))}
                 </p>
                 <p style="color:var(--text-muted);margin:5px 0;">
                     📍 {safe_string(supplier.get("address", "-"))}
+                </p>
+                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
+                    {"👤 " + safe_string(supplier.get("contact_name")) if supplier.get("contact_name") else ""}
+                    {"&nbsp;|&nbsp; VAT: " + safe_string(supplier.get("vat_number")) if supplier.get("vat_number") else ""}
+                    {"&nbsp;|&nbsp; Category: " + safe_string(supplier.get("category")) if supplier.get("category") else ""}
                 </p>
             </div>
             {balance_section}
@@ -16638,17 +17109,21 @@ def supplier_edit(supplier_id):
 @app.route("/quotes")
 @login_required  
 def quotes_page():
-    """Quotes list"""
+    """Quotes list - FAST direct query"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
-    quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
+    # FAST: Direct query with order and limit
+    try:
+        result = db.table("quotes").select("*").eq("business_id", biz_id).order("date", desc=True).limit(200).execute()
+        quotes = result.data if result.data else []
+    except:
+        quotes = []
     
     rows = ""
-    for q in quotes[:500]:
+    for q in quotes:
         status = q.get("status", "pending")
         status_color = "var(--green)" if status == "accepted" else "var(--red)" if status == "declined" else "var(--orange)"
         rows += f'''
@@ -16664,7 +17139,7 @@ def quotes_page():
     content = f'''
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <h3 class="card-title" style="margin:0;">Quotes</h3>
+            <h3 class="card-title" style="margin:0;">Quotes ({len(quotes)})</h3>
             <a href="/quote/new" class="btn btn-primary">+ New Quote</a>
         </div>
         <table class="table">
@@ -28503,11 +28978,921 @@ def api_bulk_statements():
 # 
 # SMART IMPORT - Zane analyzes your CSV
 # 
+# DIRECT MIGRATION CONNECTORS - Sage, Xero, QuickBooks
+# Pull data directly from competitor systems - zero stress for users
+# 
 
 import csv
 import io
 import tempfile
 import os as os_module
+
+
+@app.route("/migrate")
+@login_required
+def migrate_page():
+    """Migration Hub - Connect directly to competitor systems"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_name = business.get("name", "your business") if business else "your business"
+    
+    content = f'''
+    <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.15), rgba(34,197,94,0.1));margin-bottom:20px;text-align:center;padding:30px;">
+        <h2 style="margin-bottom:10px;">🚀 Switch to ClickAI in Minutes</h2>
+        <p style="color:var(--text-muted);font-size:15px;">Connect your current system and we pull everything automatically.<br>Your data stays safe - we only <strong>read</strong>, never write to your old system.</p>
+    </div>
+    
+    <!-- SAGE BUSINESS CLOUD -->
+    <div class="card" style="margin-bottom:15px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div style="flex:1;min-width:250px;">
+                <h3 style="color:#1a8d48;margin-bottom:8px;">🟢 Sage Business Cloud</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">
+                    Direct API connection. Enter your Sage credentials and we pull Customers, Suppliers, Stock, and Chart of Accounts automatically.
+                    <br><strong>Auth:</strong> Basic Auth (your Sage email + password). Read-only, zero risk.
+                </p>
+            </div>
+            <button onclick="document.getElementById('sagePanel').style.display=document.getElementById('sagePanel').style.display==='none'?'block':'none'" class="btn btn-primary" style="background:#1a8d48;white-space:nowrap;">Connect Sage →</button>
+        </div>
+        <div id="sagePanel" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid var(--border);">
+            <div class="form-group">
+                <label class="form-label">Sage Email</label>
+                <input type="email" id="sageEmail" class="form-input" placeholder="your@email.com">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Sage Password</label>
+                <input type="password" id="sagePassword" class="form-input" placeholder="Your Sage password">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Sage Company ID <span style="color:var(--text-muted);font-size:12px;">(find this in Sage → Settings → Company)</span></label>
+                <input type="text" id="sageCompanyId" class="form-input" placeholder="e.g. 12345">
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="sagePullCustomers" checked> Customers</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="sagePullSuppliers" checked> Suppliers</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="sagePullStock" checked> Stock Items</label>
+                <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="sagePullAccounts" checked> Chart of Accounts</label>
+            </div>
+            <button onclick="startSageMigration()" class="btn btn-primary" style="background:#1a8d48;margin-top:15px;" id="sagePullBtn">
+                🔄 Pull My Data from Sage
+            </button>
+            <div id="sageProgress" style="display:none;margin-top:15px;">
+                <div style="background:var(--border);border-radius:10px;overflow:hidden;">
+                    <div id="sageProgressBar" style="height:20px;background:#1a8d48;width:0%;transition:width 0.5s;"></div>
+                </div>
+                <p id="sageProgressText" style="text-align:center;margin-top:8px;color:var(--text-muted);font-size:13px;"></p>
+            </div>
+            <div id="sageResult" style="display:none;margin-top:15px;"></div>
+        </div>
+    </div>
+    
+    <!-- XERO -->
+    <div class="card" style="margin-bottom:15px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div style="flex:1;min-width:250px;">
+                <h3 style="color:#13B5EA;margin-bottom:8px;">🔵 Xero</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">
+                    OAuth 2.0 connection. Click Connect, log in to Xero, and we pull your Contacts, Inventory, and Chart of Accounts.
+                    <br><strong>Auth:</strong> Secure OAuth (you approve access in Xero). Read-only.
+                </p>
+            </div>
+            <a href="/api/xero/connect" class="btn btn-primary" style="background:#13B5EA;white-space:nowrap;text-decoration:none;">Connect Xero →</a>
+        </div>
+        <div id="xeroStatus" style="display:none;margin-top:15px;padding:12px;border-radius:8px;background:rgba(19,181,234,0.1);font-size:13px;"></div>
+    </div>
+    
+    <!-- QUICKBOOKS -->
+    <div class="card" style="margin-bottom:15px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div style="flex:1;min-width:250px;">
+                <h3 style="color:#2CA01C;margin-bottom:8px;">🟢 QuickBooks Online</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">
+                    OAuth 2.0 connection. Click Connect, log in to QuickBooks, and we pull Customers, Vendors, Items, and Chart of Accounts.
+                    <br><strong>Auth:</strong> Secure OAuth (you approve access in QuickBooks). Read-only.
+                </p>
+            </div>
+            <a href="/api/qb/connect" class="btn btn-primary" style="background:#2CA01C;white-space:nowrap;text-decoration:none;">Connect QuickBooks →</a>
+        </div>
+        <div id="qbStatus" style="display:none;margin-top:15px;padding:12px;border-radius:8px;background:rgba(44,160,28,0.1);font-size:13px;"></div>
+    </div>
+    
+    <!-- SAGE PASTEL DESKTOP -->
+    <div class="card" style="margin-bottom:15px;opacity:0.85;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div style="flex:1;min-width:250px;">
+                <h3 style="color:var(--text-muted);margin-bottom:8px;">📁 Sage Pastel Desktop / Excel / CSV</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">
+                    Sage Pastel Desktop doesn't have an API. Export your data to Excel/CSV, then upload it.
+                    Our AI handles messy files - headers, formatting, R signs, everything.
+                </p>
+            </div>
+            <a href="/import" class="btn" style="white-space:nowrap;text-decoration:none;">Upload File →</a>
+        </div>
+    </div>
+    
+    <script>
+    async function startSageMigration() {{
+        const email = document.getElementById('sageEmail').value.trim();
+        const password = document.getElementById('sagePassword').value;
+        const companyId = document.getElementById('sageCompanyId').value.trim();
+        
+        if (!email || !password) {{
+            alert('Please enter your Sage email and password');
+            return;
+        }}
+        
+        const pullTypes = [];
+        if (document.getElementById('sagePullCustomers').checked) pullTypes.push('customers');
+        if (document.getElementById('sagePullSuppliers').checked) pullTypes.push('suppliers');
+        if (document.getElementById('sagePullStock').checked) pullTypes.push('stock');
+        if (document.getElementById('sagePullAccounts').checked) pullTypes.push('accounts');
+        
+        if (pullTypes.length === 0) {{
+            alert('Select at least one data type to import');
+            return;
+        }}
+        
+        const btn = document.getElementById('sagePullBtn');
+        const progress = document.getElementById('sageProgress');
+        const progressBar = document.getElementById('sageProgressBar');
+        const progressText = document.getElementById('sageProgressText');
+        const resultDiv = document.getElementById('sageResult');
+        
+        btn.disabled = true;
+        btn.textContent = '⏳ Connecting to Sage...';
+        progress.style.display = 'block';
+        resultDiv.style.display = 'none';
+        
+        let completed = 0;
+        const total = pullTypes.length;
+        const results = [];
+        
+        for (const pullType of pullTypes) {{
+            progressText.textContent = `Pulling ${{pullType}}...`;
+            progressBar.style.width = `${{(completed / total) * 100}}%`;
+            
+            try {{
+                const resp = await fetch('/api/sage/pull', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{
+                        email: email,
+                        password: password,
+                        company_id: companyId,
+                        pull_type: pullType
+                    }})
+                }});
+                const data = await resp.json();
+                results.push({{type: pullType, ...data}});
+            }} catch (err) {{
+                results.push({{type: pullType, success: false, error: err.message}});
+            }}
+            completed++;
+        }}
+        
+        progressBar.style.width = '100%';
+        progressText.textContent = 'Done!';
+        
+        let html = '<div style="padding:15px;background:rgba(16,185,129,0.1);border-radius:8px;">';
+        html += '<h4 style="margin-bottom:10px;">📊 Migration Results</h4>';
+        for (const r of results) {{
+            if (r.success) {{
+                html += `<div style="color:var(--green);font-size:13px;margin-bottom:4px;">✅ ${{r.type}}: ${{r.imported || 0}} imported, ${{r.skipped || 0}} skipped</div>`;
+            }} else {{
+                html += `<div style="color:var(--red);font-size:13px;margin-bottom:4px;">❌ ${{r.type}}: ${{r.error || 'Failed'}}</div>`;
+            }}
+        }}
+        html += '</div>';
+        resultDiv.innerHTML = html;
+        resultDiv.style.display = 'block';
+        
+        btn.disabled = false;
+        btn.textContent = '🔄 Pull My Data from Sage';
+    }}
+    
+    // Check URL params for Xero/QB callback results
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('xero_status') === 'success') {{
+        const xeroDiv = document.getElementById('xeroStatus');
+        xeroDiv.style.display = 'block';
+        const imported = urlParams.get('imported') || '0';
+        xeroDiv.innerHTML = `<strong>✅ Xero import complete!</strong> ${{imported}} records imported. <a href="/dashboard">Go to Dashboard →</a>`;
+    }} else if (urlParams.get('xero_status') === 'error') {{
+        const xeroDiv = document.getElementById('xeroStatus');
+        xeroDiv.style.display = 'block';
+        xeroDiv.innerHTML = `<strong>❌ Xero connection failed:</strong> ${{urlParams.get('error') || 'Unknown error'}}. Try again.`;
+        xeroDiv.style.background = 'rgba(239,68,68,0.1)';
+    }}
+    if (urlParams.get('qb_status') === 'success') {{
+        const qbDiv = document.getElementById('qbStatus');
+        qbDiv.style.display = 'block';
+        const imported = urlParams.get('imported') || '0';
+        qbDiv.innerHTML = `<strong>✅ QuickBooks import complete!</strong> ${{imported}} records imported. <a href="/dashboard">Go to Dashboard →</a>`;
+    }} else if (urlParams.get('qb_status') === 'error') {{
+        const qbDiv = document.getElementById('qbStatus');
+        qbDiv.style.display = 'block';
+        qbDiv.innerHTML = `<strong>❌ QuickBooks connection failed:</strong> ${{urlParams.get('error') || 'Unknown error'}}. Try again.`;
+        qbDiv.style.background = 'rgba(239,68,68,0.1)';
+    }}
+    </script>
+    '''
+    return render_page("Migrate to ClickAI", content, user, "import")
+
+
+# ═══════════════════════════════════════════════════
+# SAGE BUSINESS CLOUD - Direct API Integration
+# ═══════════════════════════════════════════════════
+
+@app.route("/api/sage/pull", methods=["POST"])
+@login_required
+def api_sage_pull():
+    """Pull data from Sage Business Cloud API"""
+    import base64
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+    
+    try:
+        data = request.get_json()
+        email = data.get("email", "")
+        password = data.get("password", "")
+        company_id = data.get("company_id", "")
+        pull_type = data.get("pull_type", "")
+        
+        if not email or not password:
+            return jsonify({"success": False, "error": "Email and password required"})
+        
+        # Build auth headers
+        auth_str = base64.b64encode(f"{email}:{password}".encode()).decode()
+        headers = {
+            "Authorization": f"Basic {auth_str}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        sage_base = "https://accounting.sageone.co.za/api/2.0.0"
+        if company_id:
+            headers["X-Site"] = company_id
+        
+        if SAGE_CLIENT_ID:
+            headers["X-API-Key"] = SAGE_CLIENT_ID
+        
+        imported = 0
+        skipped = 0
+        
+        if pull_type == "customers":
+            try:
+                resp = requests.get(f"{sage_base}/Customer/Get", headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    sage_data = resp.json()
+                    customers = sage_data.get("Results", sage_data) if isinstance(sage_data, dict) else sage_data
+                    if not isinstance(customers, list):
+                        customers = [customers] if customers else []
+                    
+                    for cust in customers:
+                        try:
+                            name = cust.get("Name", "").strip()
+                            if not name:
+                                skipped += 1
+                                continue
+                            existing = db.get("customers", {"business_id": biz_id, "name": name})
+                            if existing:
+                                skipped += 1
+                                continue
+                            record = {
+                                "business_id": biz_id,
+                                "name": name,
+                                "email": cust.get("Email", ""),
+                                "phone": cust.get("Telephone", cust.get("Mobile", "")),
+                                "contact_name": cust.get("ContactName", cust.get("Contact", "")),
+                                "address": _sage_build_address(cust),
+                                "vat_number": cust.get("TaxNumber", ""),
+                                "balance": float(cust.get("Balance", 0) or 0),
+                                "account_code": cust.get("AccountCode", cust.get("Code", "")),
+                                "credit_limit": float(cust.get("CreditLimit", 0) or 0),
+                                "source": "sage_import"
+                            }
+                            success, _ = db.save("customers", record)
+                            if success:
+                                imported += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            logger.error(f"[SAGE] Customer error: {e}")
+                            skipped += 1
+                else:
+                    return jsonify({"success": False, "error": f"Sage API error {resp.status_code}: {resp.text[:200]}"})
+            except requests.exceptions.ConnectionError:
+                return jsonify({"success": False, "error": "Cannot connect to Sage API. Check your internet connection."})
+            except requests.exceptions.Timeout:
+                return jsonify({"success": False, "error": "Sage API timeout. Try again."})
+        
+        elif pull_type == "suppliers":
+            try:
+                resp = requests.get(f"{sage_base}/Supplier/Get", headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    sage_data = resp.json()
+                    suppliers = sage_data.get("Results", sage_data) if isinstance(sage_data, dict) else sage_data
+                    if not isinstance(suppliers, list):
+                        suppliers = [suppliers] if suppliers else []
+                    for supp in suppliers:
+                        try:
+                            name = supp.get("Name", "").strip()
+                            if not name:
+                                skipped += 1
+                                continue
+                            existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                            if existing:
+                                skipped += 1
+                                continue
+                            record = {
+                                "business_id": biz_id,
+                                "name": name,
+                                "email": supp.get("Email", ""),
+                                "phone": supp.get("Telephone", supp.get("Mobile", "")),
+                                "contact_name": supp.get("ContactName", supp.get("Contact", "")),
+                                "address": _sage_build_address(supp),
+                                "vat_number": supp.get("TaxNumber", ""),
+                                "balance": float(supp.get("Balance", 0) or 0),
+                                "account_code": supp.get("AccountCode", supp.get("Code", "")),
+                                "source": "sage_import"
+                            }
+                            success, _ = db.save("suppliers", record)
+                            if success:
+                                imported += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            logger.error(f"[SAGE] Supplier error: {e}")
+                            skipped += 1
+                else:
+                    return jsonify({"success": False, "error": f"Sage API error {resp.status_code}: {resp.text[:200]}"})
+            except requests.exceptions.ConnectionError:
+                return jsonify({"success": False, "error": "Cannot connect to Sage API."})
+        
+        elif pull_type == "stock":
+            try:
+                resp = requests.get(f"{sage_base}/Item/Get", headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    sage_data = resp.json()
+                    items = sage_data.get("Results", sage_data) if isinstance(sage_data, dict) else sage_data
+                    if not isinstance(items, list):
+                        items = [items] if items else []
+                    for item in items:
+                        try:
+                            desc = item.get("Description", item.get("ItemName", "")).strip()
+                            code = item.get("Code", item.get("ItemCode", "")).strip()
+                            if not desc and not code:
+                                skipped += 1
+                                continue
+                            if code:
+                                existing = db.get_all_stock(biz_id)
+                                if existing and any(s.get("code") == code for s in existing):
+                                    skipped += 1
+                                    continue
+                            record = {
+                                "business_id": biz_id,
+                                "description": desc or code,
+                                "code": code,
+                                "cost_price": float(item.get("CostPrice", item.get("Cost", 0)) or 0),
+                                "selling_price": float(item.get("SellingPrice", item.get("PriceInclusive", 0)) or 0),
+                                "qty": float(item.get("QuantityOnHand", item.get("Quantity", 0)) or 0),
+                                "quantity": float(item.get("QuantityOnHand", item.get("Quantity", 0)) or 0),
+                                "category": item.get("Category", item.get("ItemGroup", "")),
+                                "unit": item.get("Unit", "each"),
+                                "source": "sage_import"
+                            }
+                            success, _ = db.save_stock(record)
+                            if success:
+                                imported += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            logger.error(f"[SAGE] Stock error: {e}")
+                            skipped += 1
+                else:
+                    return jsonify({"success": False, "error": f"Sage API error {resp.status_code}: {resp.text[:200]}"})
+            except requests.exceptions.ConnectionError:
+                return jsonify({"success": False, "error": "Cannot connect to Sage API."})
+        
+        elif pull_type == "accounts":
+            try:
+                resp = requests.get(f"{sage_base}/Account/Get", headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    sage_data = resp.json()
+                    accounts = sage_data.get("Results", sage_data) if isinstance(sage_data, dict) else sage_data
+                    if not isinstance(accounts, list):
+                        accounts = [accounts] if accounts else []
+                    for acct in accounts:
+                        try:
+                            name = acct.get("Name", acct.get("AccountName", "")).strip()
+                            if not name:
+                                skipped += 1
+                                continue
+                            sage_cat = acct.get("Category", acct.get("Type", "")).lower()
+                            acct_type = "expense"
+                            if "asset" in sage_cat:
+                                acct_type = "asset"
+                            elif "liability" in sage_cat or "liabilit" in sage_cat:
+                                acct_type = "liability"
+                            elif "equity" in sage_cat or "capital" in sage_cat:
+                                acct_type = "equity"
+                            elif "income" in sage_cat or "revenue" in sage_cat or "sales" in sage_cat:
+                                acct_type = "income"
+                            elif "expense" in sage_cat or "cost" in sage_cat:
+                                acct_type = "expense"
+                            record = {
+                                "business_id": biz_id,
+                                "account_name": name,
+                                "account_code": acct.get("Code", acct.get("AccountCode", "")),
+                                "account_type": acct_type,
+                                "description": acct.get("Description", ""),
+                                "is_active": acct.get("Active", True),
+                                "source": "sage_import"
+                            }
+                            success, _ = db.save("chart_of_accounts", record)
+                            if success:
+                                imported += 1
+                            else:
+                                skipped += 1
+                        except Exception as e:
+                            logger.error(f"[SAGE] Account error: {e}")
+                            skipped += 1
+                else:
+                    return jsonify({"success": False, "error": f"Sage API error {resp.status_code}: {resp.text[:200]}"})
+            except requests.exceptions.ConnectionError:
+                return jsonify({"success": False, "error": "Cannot connect to Sage API."})
+        
+        else:
+            return jsonify({"success": False, "error": f"Unknown pull type: {pull_type}"})
+        
+        logger.info(f"[SAGE] Pull complete: type={pull_type}, imported={imported}, skipped={skipped}")
+        return jsonify({"success": True, "imported": imported, "skipped": skipped})
+    
+    except Exception as e:
+        logger.error(f"[SAGE] Pull error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+def _sage_build_address(entity):
+    """Build address string from Sage entity fields"""
+    parts = []
+    for field in ["PostalAddress01", "PostalAddress02", "PostalAddress03", "PostalAddress04", "PostalAddress05",
+                   "PhysicalAddress01", "PhysicalAddress02", "PhysicalAddress03"]:
+        val = entity.get(field, "")
+        if val and val.strip():
+            parts.append(val.strip())
+    if not parts:
+        for field in ["Address", "City", "State", "PostalCode"]:
+            val = entity.get(field, "")
+            if val and val.strip():
+                parts.append(val.strip())
+    return ", ".join(parts)
+
+
+# ═══════════════════════════════════════════════════
+# XERO - OAuth 2.0 Integration
+# ═══════════════════════════════════════════════════
+
+@app.route("/api/xero/connect")
+@login_required
+def api_xero_connect():
+    """Start Xero OAuth flow"""
+    if not XERO_CLIENT_ID or not XERO_CLIENT_SECRET:
+        flash("Xero not configured yet. Set XERO_CLIENT_ID and XERO_CLIENT_SECRET environment variables.", "error")
+        return redirect("/migrate")
+    
+    import urllib.parse
+    
+    callback_url = request.url_root.rstrip("/") + "/api/xero/callback"
+    state = generate_id()
+    session["xero_state"] = state
+    session["xero_callback"] = callback_url
+    
+    params = {
+        "response_type": "code",
+        "client_id": XERO_CLIENT_ID,
+        "redirect_uri": callback_url,
+        "scope": "openid profile email accounting.contacts.read accounting.settings.read accounting.reports.read",
+        "state": state
+    }
+    auth_url = f"https://login.xero.com/identity/connect/authorize?{urllib.parse.urlencode(params)}"
+    return redirect(auth_url)
+
+
+@app.route("/api/xero/callback")
+@login_required
+def api_xero_callback():
+    """Handle Xero OAuth callback - exchange code for token, then pull data"""
+    import urllib.parse
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return redirect("/migrate?xero_status=error&error=No+business+selected")
+    
+    state = request.args.get("state", "")
+    expected_state = session.pop("xero_state", "")
+    if state != expected_state:
+        return redirect("/migrate?xero_status=error&error=Invalid+state+parameter")
+    
+    code = request.args.get("code", "")
+    error = request.args.get("error", "")
+    
+    if error or not code:
+        return redirect(f"/migrate?xero_status=error&error={urllib.parse.quote(error or 'No authorization code')}")
+    
+    callback_url = session.pop("xero_callback", request.url_root.rstrip("/") + "/api/xero/callback")
+    
+    try:
+        # Exchange code for access token
+        token_resp = requests.post("https://identity.xero.com/connect/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": callback_url,
+            "client_id": XERO_CLIENT_ID,
+            "client_secret": XERO_CLIENT_SECRET
+        }, headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=15)
+        
+        if token_resp.status_code != 200:
+            logger.error(f"[XERO] Token exchange failed: {token_resp.text}")
+            return redirect(f"/migrate?xero_status=error&error=Token+exchange+failed")
+        
+        token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        
+        if not access_token:
+            return redirect("/migrate?xero_status=error&error=No+access+token")
+        
+        # Get tenant ID
+        connections_resp = requests.get("https://api.xero.com/connections", headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }, timeout=10)
+        
+        tenants = connections_resp.json() if connections_resp.status_code == 200 else []
+        if not tenants:
+            return redirect("/migrate?xero_status=error&error=No+Xero+organisation+found")
+        
+        tenant_id = tenants[0].get("tenantId", "")
+        
+        xero_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Xero-tenant-id": tenant_id,
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        total_imported = 0
+        
+        # Pull Contacts
+        try:
+            contacts_resp = requests.get("https://api.xero.com/api.xro/2.0/Contacts", headers=xero_headers, timeout=30)
+            if contacts_resp.status_code == 200:
+                contacts = contacts_resp.json().get("Contacts", [])
+                for contact in contacts:
+                    name = contact.get("Name", "").strip()
+                    if not name:
+                        continue
+                    is_customer = contact.get("IsCustomer", False)
+                    is_supplier = contact.get("IsSupplier", False)
+                    address = ""
+                    addresses = contact.get("Addresses", [])
+                    for addr in addresses:
+                        if addr.get("AddressType") in ("POBOX", "STREET"):
+                            parts = [addr.get(f"AddressLine{i}", "") for i in range(1, 5)]
+                            parts += [addr.get("City", ""), addr.get("Region", ""), addr.get("PostalCode", "")]
+                            address = ", ".join(p for p in parts if p)
+                            break
+                    phone = ""
+                    phones = contact.get("Phones", [])
+                    for ph in phones:
+                        if ph.get("PhoneNumber"):
+                            phone = f"{ph.get('PhoneCountryCode', '')}{ph.get('PhoneAreaCode', '')}{ph.get('PhoneNumber', '')}"
+                            break
+                    record = {
+                        "business_id": biz_id,
+                        "name": name,
+                        "email": contact.get("EmailAddress", ""),
+                        "phone": phone,
+                        "contact_name": (contact.get("FirstName", "") + " " + contact.get("LastName", "")).strip(),
+                        "address": address,
+                        "vat_number": contact.get("TaxNumber", ""),
+                        "balance": float(contact.get("Balances", {}).get("AccountsReceivable", {}).get("Outstanding", 0) or 0),
+                        "source": "xero_import"
+                    }
+                    if is_customer or (not is_customer and not is_supplier):
+                        existing = db.get("customers", {"business_id": biz_id, "name": name})
+                        if not existing:
+                            db.save("customers", record)
+                            total_imported += 1
+                    if is_supplier:
+                        record["balance"] = float(contact.get("Balances", {}).get("AccountsPayable", {}).get("Outstanding", 0) or 0)
+                        existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                        if not existing:
+                            db.save("suppliers", record)
+                            total_imported += 1
+        except Exception as e:
+            logger.error(f"[XERO] Contacts error: {e}")
+        
+        # Pull Items
+        try:
+            items_resp = requests.get("https://api.xero.com/api.xro/2.0/Items", headers=xero_headers, timeout=30)
+            if items_resp.status_code == 200:
+                items = items_resp.json().get("Items", [])
+                for item in items:
+                    desc = item.get("Name", item.get("Description", "")).strip()
+                    code = item.get("Code", "").strip()
+                    if not desc and not code:
+                        continue
+                    record = {
+                        "business_id": biz_id,
+                        "description": desc or code,
+                        "code": code,
+                        "cost_price": float(item.get("PurchaseDetails", {}).get("UnitPrice", 0) or 0),
+                        "selling_price": float(item.get("SalesDetails", {}).get("UnitPrice", 0) or 0),
+                        "qty": float(item.get("QuantityOnHand", 0) or 0),
+                        "quantity": float(item.get("QuantityOnHand", 0) or 0),
+                        "unit": "each",
+                        "source": "xero_import"
+                    }
+                    db.save_stock(record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[XERO] Items error: {e}")
+        
+        # Pull Chart of Accounts
+        try:
+            accounts_resp = requests.get("https://api.xero.com/api.xro/2.0/Accounts", headers=xero_headers, timeout=30)
+            if accounts_resp.status_code == 200:
+                accounts = accounts_resp.json().get("Accounts", [])
+                for acct in accounts:
+                    name = acct.get("Name", "").strip()
+                    if not name:
+                        continue
+                    xero_type = acct.get("Type", "").upper()
+                    acct_type = "expense"
+                    if xero_type in ["BANK", "CURRENT", "FIXED", "INVENTORY", "PREPAYMENT"]:
+                        acct_type = "asset"
+                    elif xero_type in ["CURRLIAB", "LIABILITY", "TERMLIAB", "WAGESBYABLE"]:
+                        acct_type = "liability"
+                    elif xero_type in ["EQUITY"]:
+                        acct_type = "equity"
+                    elif xero_type in ["REVENUE", "SALES", "OTHERINCOME"]:
+                        acct_type = "income"
+                    elif xero_type in ["DIRECTCOSTS", "EXPENSE", "OVERHEADS", "DEPRECIATN"]:
+                        acct_type = "expense"
+                    record = {
+                        "business_id": biz_id,
+                        "account_name": name,
+                        "account_code": acct.get("Code", ""),
+                        "account_type": acct_type,
+                        "description": acct.get("Description", ""),
+                        "is_active": acct.get("Status", "ACTIVE") == "ACTIVE",
+                        "source": "xero_import"
+                    }
+                    db.save("chart_of_accounts", record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[XERO] Accounts error: {e}")
+        
+        logger.info(f"[XERO] Migration complete: {total_imported} records imported for business {biz_id}")
+        return redirect(f"/migrate?xero_status=success&imported={total_imported}")
+    
+    except Exception as e:
+        logger.error(f"[XERO] Callback error: {e}")
+        return redirect(f"/migrate?xero_status=error&error={urllib.parse.quote(str(e))}")
+
+
+# ═══════════════════════════════════════════════════
+# QUICKBOOKS ONLINE - OAuth 2.0 Integration
+# ═══════════════════════════════════════════════════
+
+@app.route("/api/qb/connect")
+@login_required
+def api_qb_connect():
+    """Start QuickBooks OAuth flow"""
+    if not QB_CLIENT_ID or not QB_CLIENT_SECRET:
+        flash("QuickBooks not configured yet. Set QB_CLIENT_ID and QB_CLIENT_SECRET environment variables.", "error")
+        return redirect("/migrate")
+    
+    import urllib.parse
+    
+    callback_url = request.url_root.rstrip("/") + "/api/qb/callback"
+    state = generate_id()
+    session["qb_state"] = state
+    session["qb_callback"] = callback_url
+    
+    params = {
+        "client_id": QB_CLIENT_ID,
+        "response_type": "code",
+        "scope": "com.intuit.quickbooks.accounting",
+        "redirect_uri": callback_url,
+        "state": state
+    }
+    auth_url = f"https://appcenter.intuit.com/connect/oauth2?{urllib.parse.urlencode(params)}"
+    return redirect(auth_url)
+
+
+@app.route("/api/qb/callback")
+@login_required
+def api_qb_callback():
+    """Handle QuickBooks OAuth callback"""
+    import base64
+    import urllib.parse
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return redirect("/migrate?qb_status=error&error=No+business+selected")
+    
+    state = request.args.get("state", "")
+    expected_state = session.pop("qb_state", "")
+    if state != expected_state:
+        return redirect("/migrate?qb_status=error&error=Invalid+state")
+    
+    code = request.args.get("code", "")
+    realm_id = request.args.get("realmId", "")
+    error = request.args.get("error", "")
+    
+    if error or not code:
+        return redirect(f"/migrate?qb_status=error&error={urllib.parse.quote(error or 'No code')}")
+    
+    callback_url = session.pop("qb_callback", request.url_root.rstrip("/") + "/api/qb/callback")
+    
+    try:
+        # Exchange code for token
+        auth_header = base64.b64encode(f"{QB_CLIENT_ID}:{QB_CLIENT_SECRET}".encode()).decode()
+        token_resp = requests.post("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": callback_url
+        }, headers={
+            "Authorization": f"Basic {auth_header}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json"
+        }, timeout=15)
+        
+        if token_resp.status_code != 200:
+            logger.error(f"[QB] Token error: {token_resp.text}")
+            return redirect("/migrate?qb_status=error&error=Token+exchange+failed")
+        
+        token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        
+        if not access_token:
+            return redirect("/migrate?qb_status=error&error=No+access+token")
+        
+        qb_base = f"https://quickbooks.api.intuit.com/v3/company/{realm_id}"
+        qb_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        
+        total_imported = 0
+        
+        # Pull Customers
+        try:
+            resp = requests.get(f"{qb_base}/query?query=SELECT * FROM Customer MAXRESULTS 1000", headers=qb_headers, timeout=30)
+            if resp.status_code == 200:
+                customers = resp.json().get("QueryResponse", {}).get("Customer", [])
+                for cust in customers:
+                    name = cust.get("DisplayName", cust.get("CompanyName", "")).strip()
+                    if not name:
+                        continue
+                    existing = db.get("customers", {"business_id": biz_id, "name": name})
+                    if existing:
+                        continue
+                    address = ""
+                    bill_addr = cust.get("BillAddr", {})
+                    if bill_addr:
+                        parts = [bill_addr.get(f"Line{i}", "") for i in range(1, 6)]
+                        parts += [bill_addr.get("City", ""), bill_addr.get("CountrySubDivisionCode", ""), bill_addr.get("PostalCode", "")]
+                        address = ", ".join(p for p in parts if p)
+                    phone = cust.get("PrimaryPhone", {}).get("FreeFormNumber", "") if cust.get("PrimaryPhone") else ""
+                    email = cust.get("PrimaryEmailAddr", {}).get("Address", "") if cust.get("PrimaryEmailAddr") else ""
+                    record = {
+                        "business_id": biz_id,
+                        "name": name,
+                        "email": email,
+                        "phone": phone,
+                        "contact_name": (cust.get("GivenName", "") + " " + cust.get("FamilyName", "")).strip(),
+                        "address": address,
+                        "balance": float(cust.get("Balance", 0) or 0),
+                        "source": "quickbooks_import"
+                    }
+                    db.save("customers", record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[QB] Customers error: {e}")
+        
+        # Pull Vendors (suppliers)
+        try:
+            resp = requests.get(f"{qb_base}/query?query=SELECT * FROM Vendor MAXRESULTS 1000", headers=qb_headers, timeout=30)
+            if resp.status_code == 200:
+                vendors = resp.json().get("QueryResponse", {}).get("Vendor", [])
+                for vendor in vendors:
+                    name = vendor.get("DisplayName", vendor.get("CompanyName", "")).strip()
+                    if not name:
+                        continue
+                    existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                    if existing:
+                        continue
+                    phone = vendor.get("PrimaryPhone", {}).get("FreeFormNumber", "") if vendor.get("PrimaryPhone") else ""
+                    email = vendor.get("PrimaryEmailAddr", {}).get("Address", "") if vendor.get("PrimaryEmailAddr") else ""
+                    record = {
+                        "business_id": biz_id,
+                        "name": name,
+                        "email": email,
+                        "phone": phone,
+                        "balance": float(vendor.get("Balance", 0) or 0),
+                        "source": "quickbooks_import"
+                    }
+                    db.save("suppliers", record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[QB] Vendors error: {e}")
+        
+        # Pull Items (stock)
+        try:
+            resp = requests.get(f"{qb_base}/query?query=SELECT * FROM Item MAXRESULTS 1000", headers=qb_headers, timeout=30)
+            if resp.status_code == 200:
+                items = resp.json().get("QueryResponse", {}).get("Item", [])
+                for item in items:
+                    if item.get("Type") not in ["Inventory", "NonInventory", "Service"]:
+                        continue
+                    name = item.get("Name", item.get("Description", "")).strip()
+                    if not name:
+                        continue
+                    record = {
+                        "business_id": biz_id,
+                        "description": name,
+                        "code": item.get("Sku", ""),
+                        "cost_price": float(item.get("PurchaseCost", 0) or 0),
+                        "selling_price": float(item.get("UnitPrice", 0) or 0),
+                        "qty": float(item.get("QtyOnHand", 0) or 0),
+                        "quantity": float(item.get("QtyOnHand", 0) or 0),
+                        "unit": "each",
+                        "source": "quickbooks_import"
+                    }
+                    db.save_stock(record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[QB] Items error: {e}")
+        
+        # Pull Chart of Accounts
+        try:
+            resp = requests.get(f"{qb_base}/query?query=SELECT * FROM Account MAXRESULTS 1000", headers=qb_headers, timeout=30)
+            if resp.status_code == 200:
+                accounts = resp.json().get("QueryResponse", {}).get("Account", [])
+                for acct in accounts:
+                    name = acct.get("Name", "").strip()
+                    if not name:
+                        continue
+                    qb_type = acct.get("AccountType", "").lower()
+                    acct_type = "expense"
+                    if "asset" in qb_type or "bank" in qb_type:
+                        acct_type = "asset"
+                    elif "liabilit" in qb_type or "credit card" in qb_type:
+                        acct_type = "liability"
+                    elif "equity" in qb_type:
+                        acct_type = "equity"
+                    elif "income" in qb_type or "revenue" in qb_type:
+                        acct_type = "income"
+                    record = {
+                        "business_id": biz_id,
+                        "account_name": name,
+                        "account_code": acct.get("AcctNum", ""),
+                        "account_type": acct_type,
+                        "description": acct.get("Description", ""),
+                        "is_active": acct.get("Active", True),
+                        "source": "quickbooks_import"
+                    }
+                    db.save("chart_of_accounts", record)
+                    total_imported += 1
+        except Exception as e:
+            logger.error(f"[QB] Accounts error: {e}")
+        
+        logger.info(f"[QB] Migration complete: {total_imported} records imported for business {biz_id}")
+        return redirect(f"/migrate?qb_status=success&imported={total_imported}")
+    
+    except Exception as e:
+        logger.error(f"[QB] Callback error: {e}")
+        return redirect(f"/migrate?qb_status=error&error={urllib.parse.quote(str(e))}")
+
+
+# ═══════════════════════════════════════════════════
+# SMART IMPORT - CSV/Excel Upload
+# ═══════════════════════════════════════════════════
 
 @app.route("/import")
 @login_required
@@ -28517,6 +29902,17 @@ def import_page():
     user = Auth.get_current_user()
     
     content = '''
+    <!-- Migration Hub Banner -->
+    <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.15), rgba(34,197,94,0.1));margin-bottom:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:15px;">
+            <div>
+                <h3 style="margin-bottom:5px;">🔗 Direct Import from Sage, Xero, QuickBooks?</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:0;">Connect directly to your old system - no export needed. We pull everything automatically.</p>
+            </div>
+            <a href="/migrate" class="btn btn-primary" style="white-space:nowrap;text-decoration:none;">Open Migration Hub →</a>
+        </div>
+    </div>
+    
     <div class="card" style="background:linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1));margin-bottom:20px;">
         <h3 style="margin-bottom:15px;">[FORM] Recommended Import Order</h3>
         <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:13px;">
@@ -28912,7 +30308,7 @@ def import_page():
 @app.route("/api/import/analyze", methods=["POST"])
 @login_required
 def api_import_analyze():
-    """Analyze CSV with AI - shows data quality issues"""
+    """Analyze CSV with AI - shows data quality issues - v2.1 PRUNE"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -28920,20 +30316,92 @@ def api_import_analyze():
     try:
         import_type = request.form.get("import_type", "")
         file = request.files.get("file")
+        print(f"[IMPORT-V2.1] ========== ANALYZE START ==========", flush=True)
+        print(f"[IMPORT-V2.1] Type: {import_type}, File: {file.filename if file else 'None'}", flush=True)
         
         if not import_type or not file:
             return jsonify({"success": False, "error": "Please select type and file"})
         
-        # Read CSV
-        content = file.read().decode('utf-8', errors='ignore')
-        lines = content.strip().split('\n')
+        filename = file.filename.lower() if file.filename else ""
         
-        if len(lines) < 2:
-            return jsonify({"success": False, "error": "File is empty or has no data rows"})
-        
-        # Parse CSV
-        reader = csv.reader(io.StringIO(content))
-        rows = list(reader)
+        # === HANDLE BOTH CSV AND XLSX ===
+        if filename.endswith(('.xlsx', '.xls')):
+            # Excel file - convert to CSV-like rows using openpyxl
+            try:
+                import openpyxl
+                import tempfile, os
+                
+                # Save to temp file
+                temp_dir = tempfile.gettempdir()
+                temp_path = os.path.join(temp_dir, f"import_{generate_id()}.xlsx")
+                file.save(temp_path)
+                
+                wb = openpyxl.load_workbook(temp_path, read_only=True, data_only=True)
+                ws = wb.active
+                
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    rows.append([str(cell) if cell is not None else "" for cell in row])
+                
+                wb.close()
+                os.remove(temp_path)
+                
+                if len(rows) < 2:
+                    return jsonify({"success": False, "error": "Excel file is empty or has no data rows"})
+                
+                # Convert to CSV string for downstream compatibility
+                output = io.StringIO()
+                writer = csv.writer(output)
+                for row in rows:
+                    writer.writerow(row)
+                content = output.getvalue()
+                lines = content.strip().split('\n')
+                
+                logger.info(f"[IMPORT] Converted Excel file: {len(rows)} rows from {filename}")
+                
+            except Exception as xlsx_err:
+                logger.error(f"[IMPORT] Excel read error: {xlsx_err}")
+                return jsonify({"success": False, "error": f"Could not read Excel file: {str(xlsx_err)}"})
+        else:
+            # CSV file - original logic
+            content = file.read().decode('utf-8', errors='ignore')
+            lines = content.strip().split('\n')
+            
+            if len(lines) < 2:
+                return jsonify({"success": False, "error": "File is empty or has no data rows"})
+            
+            # ═══════════════════════════════════════════════════════════════
+            # AUTO-DETECT DELIMITER (comma, semicolon, tab, pipe)
+            # Sage SA often exports with semicolons, Pastel uses commas/tabs
+            # ═══════════════════════════════════════════════════════════════
+            detected_delimiter = ','
+            try:
+                # Use Python's csv.Sniffer to auto-detect
+                sample = '\n'.join(lines[:5])
+                dialect = csv.Sniffer().sniff(sample, delimiters=',;\t|')
+                detected_delimiter = dialect.delimiter
+                logger.info(f"[IMPORT] Auto-detected delimiter: '{detected_delimiter}' (repr: {repr(detected_delimiter)})")
+            except csv.Error:
+                # Sniffer failed - do manual detection
+                # Count delimiters in first 3 non-empty lines
+                test_lines = [l for l in lines[:5] if l.strip()][:3]
+                counts = {',': 0, ';': 0, '\t': 0, '|': 0}
+                for line in test_lines:
+                    for delim in counts:
+                        counts[delim] += line.count(delim)
+                
+                # Pick the delimiter that appears most consistently
+                if counts[';'] > counts[','] * 1.5:
+                    detected_delimiter = ';'
+                elif counts['\t'] > counts[','] * 1.5:
+                    detected_delimiter = '\t'
+                elif counts['|'] > counts[','] * 1.5:
+                    detected_delimiter = '|'
+                logger.info(f"[IMPORT] Manual delimiter detection: '{detected_delimiter}' (counts: {counts})")
+            
+            # Parse CSV with detected delimiter
+            reader = csv.reader(io.StringIO(content), delimiter=detected_delimiter)
+            rows = list(reader)
         
         # === SMART HEADER DETECTION ===
         # Many accounting exports have report titles in first few rows
@@ -29033,12 +30501,139 @@ def api_import_analyze():
         data_rows = filtered_rows
         logger.info(f"[IMPORT] After footer filter: {len(data_rows)} rows (removed {len(sanitized_rows) - len(filtered_rows)} footer rows)")
         
+        # ═══════════════════════════════════════════════════════════════
+        # SMART COLUMN PRUNING - Strip out mostly-empty & irrelevant columns
+        # Sage/Pastel exports have 50+ columns, most are empty or useless
+        # This makes the preview clean and mapping accurate
+        # ═══════════════════════════════════════════════════════════════
+        if len(headers) > 15 and import_type in ("customers", "suppliers"):
+            print(f"[IMPORT-PRUNE] ★★★ PRUNING ACTIVE ★★★ {len(headers)} columns detected", flush=True)
+            logger.info(f"[IMPORT-PRUNE] Starting column pruning: {len(headers)} columns detected")
+            
+            # Step 1: Calculate fill rate for each column
+            col_fill_rates = {}
+            for col_idx in range(len(headers)):
+                filled = 0
+                total = min(len(data_rows), 50)  # Sample first 50 rows
+                for row in data_rows[:50]:
+                    if col_idx < len(row):
+                        val = str(row[col_idx]).strip()
+                        # Don't count "0.0000", "False", "None", empty, or "0" as filled
+                        if val and val not in ("0.0000", "0", "0.00", "False", "false", "None", "none", ""):
+                            filled += 1
+                col_fill_rates[col_idx] = filled / total if total > 0 else 0
+            
+            # Step 2: Identify which columns to KEEP
+            # Always keep: Name, Contact, Phone, Cell, Email, VAT, Balance, Category, Code
+            # Keep if: >10% fill rate AND not a known useless column
+            
+            useless_patterns = [
+                "additional delivery", "text user field", "numeric user field", 
+                "date user field", "yes/no user field", "web address",
+                "auto allocate", "statement distribution", "enable customer zone",
+                "cash sale customer", "default price list", "default discount",
+                "default vat type", "subject to drc", "accepts electronic",
+                "credit limit"
+            ]
+            
+            # Important columns to ALWAYS keep (by header name pattern)
+            important_patterns = [
+                "name", "contact", "telephone", "phone", "cell", "mobile", "fax",
+                "email", "vat", "balance", "opening balance", "category", "code",
+                "active", "sales rep"
+            ]
+            
+            # Address columns - we'll combine these into ONE
+            address_col_indices = []
+            address_combined_header = "address"
+            
+            keep_cols = []
+            for col_idx, h in enumerate(headers):
+                h_low = h.lower().strip()
+                fill_rate = col_fill_rates.get(col_idx, 0)
+                
+                # Check if it's a known useless column
+                is_useless = any(pat in h_low for pat in useless_patterns)
+                
+                # Check if it's important
+                is_important = any(pat in h_low for pat in important_patterns)
+                
+                # Check if it's an address-related column
+                is_address = any(kw in h_low for kw in ["address", "postal code", "delivery"])
+                # BUT exclude "email address" and "web address" - those are NOT physical addresses
+                if is_address and any(excl in h_low for excl in ["email", "web", "e-mail"]):
+                    is_address = False
+                
+                if is_address:
+                    # Track address columns for combining
+                    if fill_rate > 0.05:  # Only include if at least some data
+                        address_col_indices.append(col_idx)
+                    continue  # Don't add individually
+                
+                if is_useless:
+                    logger.info(f"[IMPORT-PRUNE] Dropping useless column {col_idx}: '{h}' (fill={fill_rate:.0%})")
+                    continue
+                
+                if is_important or fill_rate > 0.10:
+                    keep_cols.append(col_idx)
+                else:
+                    logger.info(f"[IMPORT-PRUNE] Dropping empty column {col_idx}: '{h}' (fill={fill_rate:.0%})")
+            
+            # Step 3: Combine address columns into one "Address" column
+            if address_col_indices:
+                logger.info(f"[IMPORT-PRUNE] Combining {len(address_col_indices)} address columns into one")
+                
+                # Add a virtual "Address" column at the end
+                combined_address_idx = len(headers)  # Will be at the end
+                headers.append("Address")
+                
+                for row_idx, row in enumerate(data_rows):
+                    parts = []
+                    for ac in address_col_indices:
+                        if ac < len(row):
+                            part = str(row[ac]).strip()
+                            if part and part not in ("0.0000", "0", "False", "None"):
+                                parts.append(part)
+                    # Remove duplicates while preserving order
+                    seen = set()
+                    unique_parts = []
+                    for p in parts:
+                        if p.lower() not in seen:
+                            seen.add(p.lower())
+                            unique_parts.append(p)
+                    combined = ", ".join(unique_parts)
+                    # Pad row if needed
+                    while len(data_rows[row_idx]) <= combined_address_idx:
+                        data_rows[row_idx].append("")
+                    data_rows[row_idx][combined_address_idx] = combined
+                
+                keep_cols.append(combined_address_idx)
+            
+            # Step 4: Rebuild headers and data with only kept columns
+            if len(keep_cols) < len(headers) - 1:  # Only prune if we're actually removing columns
+                new_headers = [headers[i] for i in keep_cols]
+                new_data_rows = []
+                for row in data_rows:
+                    new_row = []
+                    for col_idx in keep_cols:
+                        if col_idx < len(row):
+                            new_row.append(row[col_idx])
+                        else:
+                            new_row.append("")
+                    new_data_rows.append(new_row)
+                
+                logger.info(f"[IMPORT-PRUNE] ✅ Pruned {len(headers)} → {len(new_headers)} columns: {new_headers}")
+                print(f"[IMPORT-PRUNE] ★★★ PRUNED {len(headers)} → {len(new_headers)} columns ★★★", flush=True)
+                print(f"[IMPORT-PRUNE] Final headers: {new_headers}", flush=True)
+                headers = new_headers
+                data_rows = new_data_rows
+        
         
         # Define required fields per type
         field_specs = {
-            "customers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name"]},
-            "suppliers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "fax"]},
-            "stock": {"required": ["description"], "optional": ["code", "cost_price", "selling_price", "quantity", "category", "unit"]},
+            "customers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
+            "suppliers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
+            "stock": {"required": ["description"], "optional": ["code", "cost_price", "selling_price", "price_wholesale", "price_trade", "price_vip", "quantity", "category", "unit"]},
             "employees": {"required": ["name"], "optional": ["code", "id_number", "position", "role", "department", "salary", "rate", "start_date", "bank", "account", "branch", "phone", "email", "status"]},
             "opening_balances": {"required": ["account"], "optional": ["code", "amount", "debit", "credit", "type"]},
             "chart_of_accounts": {"required": ["name"], "optional": ["code", "type", "parent"]},
@@ -29081,7 +30676,7 @@ def api_import_analyze():
                 
                 all_fields = list(set(specs["required"] + specs["optional"]))
                 
-                ai_map_prompt = f"""You are a CSV column mapper for a business accounting system.
+                ai_map_prompt = f"""You are a CSV column mapper for a South African business accounting system.
 
 Import type: {import_type}
 
@@ -29099,6 +30694,15 @@ YOUR JOB: Map each CSV header to the correct database field.
 - Handle abbreviations (Qty = quantity, Desc = description, etc)  
 - If a CSV column doesn't match any field, skip it
 - NEVER map two CSV columns to the same field
+
+CRITICAL - SOUTH AFRICAN DATA PATTERNS:
+- Phone numbers have 10+ digits, start with 0 or +27 (e.g. 0821234567, +27821234567, 012 345 6789)
+- Postal codes are EXACTLY 4 digits (e.g. 1612, 2000, 0157) - do NOT map these as phone!
+- Suburb/city names like DOWERGLEN, KRUGERSDORP, WESTWOOD are ADDRESS parts, NOT contact names
+- "Delivery Address 1/2/3", "Postal Address 1/2/3" are address fields - combine into "address"
+- Multiple address columns should ALL map to "address" - pick the FIRST/main one
+- If you see columns like "Town", "City", "Suburb", "Region", "Postal Code" - these are address parts, skip them or map to address
+- Contact person names are PEOPLE names (e.g. "John Smith", "Mrs van der Merwe"), NOT place names
 
 Return ONLY a JSON object mapping CSV column index (0-based) to field name.
 Example: {{"0": "code", "1": "name", "3": "quantity", "4": "cost_price"}}
@@ -29165,14 +30769,23 @@ ONLY return the JSON object, nothing else."""
                      "cust code", "cust_code", "sup code", "sup_code", "vendor code", "vendor_code", "part number", "part_number",
                      "kode", "nommer"],  # Afrikaans
             "contact_name": ["contact_name", "contact name", "contact_person", "contactname", "attention", "attn", "contact",
-                            "representative", "rep", "salesperson", "sales rep", "account manager", "kontak"],
+                            "kontak", "kontak persoon"],
             
             # ===== CONTACT INFO =====
-            "phone": ["phone", "tel no", "tel_no", "mobile", "cell", "telephone", "contact_number", "cell_no", "phone_number", 
-                     "tel", "phone no", "phone_no", "landline", "fax", "cellphone", "telefoon", "sel", "nommer"],
-            "email": ["email", "e-mail", "mail", "email_address", "e_mail", "epos"],
-            "address": ["address", "street", "addr", "physical", "postal", "street_address", "physical address", "postal address",
-                       "delivery address", "billing address", "ship to", "bill to", "location", "adres", "straat"],
+            "phone": ["phone", "tel no", "tel_no", "mobile", "telephone", "contact_number", "phone_number", 
+                     "tel", "phone no", "phone_no", "landline", "cellphone", "telefoon", "nommer",
+                     "main phone", "main_phone", "telephone 1", "telephone1", "mobile number", "mobile_number",
+                     "work phone", "work_phone", "business phone", "business_phone", "phone number 1",
+                     "telephone number"],
+            "cell": ["cell", "cell_no", "cell no", "cell number", "cell_number", "mobile", "mobile no", 
+                    "mobile_no", "mobile number", "mobile_number", "cellphone", "sel", "selnommer"],
+            "fax": ["fax", "fax no", "fax_no", "fax number", "fax_number", "facsimile"],
+            "email": ["email", "e-mail", "mail", "email_address", "e_mail", "epos",
+                     "email address", "e-mail address", "main email", "main_email", "email 1"],
+            "address": ["address", "street", "addr", "physical", "street_address", "physical address",
+                       "delivery address", "billing address", "ship to", "bill to", "location", "adres", "straat",
+                       "main address", "main_address", "address 1", "address_1", "address line 1", "registered address",
+                       "delivery address 1", "postal address 1", "street address 1"],
             
             # ===== FINANCIAL - BALANCES =====
             "balance": ["balance", "balance owing", "balance_owing", "owing", "owed", "outstanding", "open", "amount_due", 
@@ -29227,9 +30840,18 @@ ONLY return the JSON object, nothing else."""
             "cost_price": ["cost", "cost_price", "cost price", "purchase", "buy", "landed", "avg cost", "avg_cost", 
                           "average cost", "unit cost", "unit_cost", "purchase price", "purchase_price", "buy price",
                           "landed cost", "landed_cost", "kosprys", "aankoopprys"],
+            "last_cost": ["last cost", "last_cost", "latest cost", "recent cost"],
             "selling_price": ["sell", "selling", "selling_price", "selling price", "retail", "sale", "price", "unit price", 
                              "unit_price", "sale price", "sale_price", "retail price", "retail_price", "list price",
+                             "price list 1", "price_list_1", "pricelist1", "price excl", "price excl.",
                              "verkoopprys", "prys"],
+            # Multi-tier pricing (Sage: Price List 2-4)
+            "price_wholesale": ["wholesale", "wholesale price", "wholesale_price", "trade", "trade price", 
+                               "price list 2", "price_list_2", "pricelist2", "groothandel", "groothandelprys"],
+            "price_trade": ["contractor", "contractor price", "contractor_price", "builder", "builder price",
+                           "price list 3", "price_list_3", "pricelist3", "kontrakteur", "bouer"],
+            "price_vip": ["vip", "vip price", "vip_price", "special", "special price", "preferred",
+                         "price list 4", "price_list_4", "pricelist4", "spesiale prys"],
             "quantity": ["qty", "quantity", "stock", "onhand", "on_hand", "on hand", "qty on hand", "qty_on_hand", "units",
                         "soh", "in stock", "in_stock", "available", "count", "aantal", "hoeveelheid", "voorraad"],
             "unit": ["unit", "uom", "unit of measure", "measure", "unit_of_measure", "pack", "pack size", "eenheid"],
@@ -29238,7 +30860,7 @@ ONLY return the JSON object, nothing else."""
             
             # ===== VAT/TAX =====
             "vat_number": ["vat no", "vat_no", "vat_number", "tax_no", "tax number", "tax_number", "vat reg", "vat registration",
-                          "btw nommer"],
+                          "vat reference", "vat_reference", "btw nommer"],
             
             # ===== EMPLOYEES/PAYROLL =====
             "id_number": ["id number", "id_number", "identity", "sa_id", "id_no", "id no", "national id", "id", "rsa id",
@@ -29350,6 +30972,12 @@ ONLY return the JSON object, nothing else."""
                 # Partial match - but only for short keywords
                 for kw in keywords:
                     if len(kw) > 3 and kw in h:
+                        # SAFETY: Don't let "contact" match headers that are phone/address/email
+                        if field == "contact_name":
+                            skip_words = ["phone", "tel", "mobile", "cell", "email", "mail", "address", "addr",
+                                         "city", "town", "suburb", "postal", "zip", "fax", "number"]
+                            if any(sw in h for sw in skip_words):
+                                continue  # Skip - this is a phone/address column, not contact name
                         mapping[field] = i
                         break
                 if field in mapping:
@@ -29542,6 +31170,222 @@ Rules:
                 # Continue with normal mapping if AI fails
         
         # Analyze data quality
+        
+        # ═══════════════════════════════════════════════════════════════
+        # POST-MAPPING DATA VALIDATION
+        # Check actual data values to catch mapping errors
+        # E.g. postal codes mapped as phones, suburbs as contact names
+        # ═══════════════════════════════════════════════════════════════
+        if import_type in ("customers", "suppliers") and data_rows:
+            import re as _re
+            
+            def _get_samples(col_idx, max_rows=15):
+                """Get non-empty sample values from a column"""
+                samples = []
+                for r in data_rows[:max_rows]:
+                    if col_idx < len(r):
+                        v = str(r[col_idx]).strip()
+                        if v:
+                            samples.append(v)
+                return samples
+            
+            def _looks_like_phone(values):
+                """Check if values look like phone numbers (7+ digits)"""
+                if not values:
+                    return 0
+                phone_count = 0
+                for v in values:
+                    digits = _re.sub(r'[^\d]', '', v)
+                    if len(digits) >= 7:
+                        phone_count += 1
+                return phone_count / len(values)  # ratio 0-1
+            
+            def _looks_like_postal_code(values):
+                """Check if values look like SA postal codes (exactly 4 digits)"""
+                if not values:
+                    return 0
+                postal_count = 0
+                for v in values:
+                    digits = _re.sub(r'[^\d]', '', v)
+                    if len(digits) == 4 and v.strip().isdigit():
+                        postal_count += 1
+                return postal_count / len(values)
+            
+            def _looks_like_suburb_city(values):
+                """Check if values look like suburb/city names (all caps, no digits, SA places)"""
+                if not values:
+                    return 0
+                place_count = 0
+                for v in values:
+                    v_clean = v.strip().upper()
+                    digits = _re.sub(r'[^\d]', '', v)
+                    # All text, no digits, looks like a place name
+                    if len(digits) == 0 and len(v_clean) > 2 and v_clean.replace(" ", "").replace("_", "").isalpha():
+                        place_count += 1
+                return place_count / len(values)
+            
+            def _looks_like_email(values):
+                """Check if values look like email addresses"""
+                if not values:
+                    return 0
+                email_count = 0
+                for v in values:
+                    if "@" in v and "." in v:
+                        email_count += 1
+                return email_count / len(values)
+            
+            # CHECK PHONE MAPPING - is it really phone numbers?
+            phone_fixed = False
+            if "phone" in mapping:
+                phone_samples = _get_samples(mapping["phone"])
+                phone_score = _looks_like_phone(phone_samples)
+                postal_score = _looks_like_postal_code(phone_samples)
+                suburb_score = _looks_like_suburb_city(phone_samples)
+                
+                if phone_score < 0.3 and (postal_score > 0.3 or suburb_score > 0.3):
+                    # Current "phone" column doesn't contain phone numbers!
+                    bad_col = mapping["phone"]
+                    logger.warning(f"[IMPORT-VALIDATE] ⚠️ Column {bad_col} ({headers[bad_col]}) mapped as 'phone' but contains {'postal codes' if postal_score > 0.3 else 'suburbs/cities'} (phone_score={phone_score:.1%}, postal={postal_score:.1%}, suburb={suburb_score:.1%})")
+                    
+                    # Remove bad mapping
+                    del mapping["phone"]
+                    
+                    # Scan ALL columns to find the REAL phone column
+                    mapped_indices = set(mapping.values())
+                    best_phone_col = None
+                    best_phone_score = 0
+                    
+                    for col_idx in range(len(headers)):
+                        if col_idx in mapped_indices:
+                            continue  # Skip already-mapped columns
+                        samples = _get_samples(col_idx)
+                        if not samples:
+                            continue
+                        score = _looks_like_phone(samples)
+                        if score > best_phone_score and score > 0.2:
+                            best_phone_score = score
+                            best_phone_col = col_idx
+                    
+                    if best_phone_col is not None:
+                        mapping["phone"] = best_phone_col
+                        phone_fixed = True
+                        logger.info(f"[IMPORT-VALIDATE] ✅ Re-mapped 'phone' to column {best_phone_col} ({headers[best_phone_col]}) (score={best_phone_score:.1%})")
+                    else:
+                        logger.info(f"[IMPORT-VALIDATE] No suitable phone column found in data")
+            
+            # If no phone mapped at all, scan for one
+            if "phone" not in mapping:
+                mapped_indices = set(mapping.values())
+                best_phone_col = None
+                best_phone_score = 0
+                
+                for col_idx in range(len(headers)):
+                    if col_idx in mapped_indices:
+                        continue
+                    samples = _get_samples(col_idx)
+                    if not samples:
+                        continue
+                    score = _looks_like_phone(samples)
+                    if score > best_phone_score and score > 0.3:
+                        best_phone_score = score
+                        best_phone_col = col_idx
+                
+                if best_phone_col is not None:
+                    mapping["phone"] = best_phone_col
+                    phone_fixed = True
+                    logger.info(f"[IMPORT-VALIDATE] ✅ Found unmapped phone column {best_phone_col} ({headers[best_phone_col]}) (score={best_phone_score:.1%})")
+            
+            # CHECK CONTACT_NAME MAPPING - is it really contact names?
+            # IMPORTANT: After column pruning, Contact Name is already correctly identified
+            # Only validate if the column header itself suggests it's NOT a contact
+            # (e.g. "City", "Suburb", "Town" mapped as contact_name by mistake)
+            if "contact_name" in mapping:
+                bad_col = mapping["contact_name"]
+                col_header = headers[bad_col].lower() if bad_col < len(headers) else ""
+                # Only flag as wrong if the HEADER NAME itself indicates an address/location column
+                address_header_words = ["city", "town", "suburb", "region", "province", "district", 
+                                       "area", "postal", "address", "delivery", "street", "dorp", "wyk"]
+                header_is_address = any(word in col_header for word in address_header_words)
+                
+                if header_is_address:
+                    contact_samples = _get_samples(mapping["contact_name"])
+                    suburb_score = _looks_like_suburb_city(contact_samples)
+                    if suburb_score > 0.5:
+                        logger.warning(f"[IMPORT-VALIDATE] ⚠️ Column {bad_col} ({headers[bad_col]}) mapped as 'contact_name' but header indicates address (suburb_score={suburb_score:.1%})")
+                        if "address" not in mapping:
+                            mapping["address"] = bad_col
+                            logger.info(f"[IMPORT-VALIDATE] Re-mapped column {bad_col} from 'contact_name' to 'address'")
+                        del mapping["contact_name"]
+                    else:
+                        logger.info(f"[IMPORT-VALIDATE] ✅ contact_name column '{headers[bad_col]}' looks valid despite address-like header")
+                else:
+                    logger.info(f"[IMPORT-VALIDATE] ✅ contact_name column '{col_header}' header OK - keeping mapping")
+            
+            # CHECK EMAIL MAPPING - make sure email column has actual emails
+            if "email" in mapping:
+                email_samples = _get_samples(mapping["email"])
+                email_score = _looks_like_email(email_samples)
+                
+                if email_score < 0.1 and email_samples:
+                    bad_col = mapping["email"]
+                    logger.warning(f"[IMPORT-VALIDATE] ⚠️ Column {bad_col} ({headers[bad_col]}) mapped as 'email' but doesn't contain emails (score={email_score:.1%})")
+                    del mapping["email"]
+                    
+                    # Scan for real email column
+                    mapped_indices = set(mapping.values())
+                    for col_idx in range(len(headers)):
+                        if col_idx in mapped_indices:
+                            continue
+                        samples = _get_samples(col_idx)
+                        if _looks_like_email(samples) > 0.3:
+                            mapping["email"] = col_idx
+                            logger.info(f"[IMPORT-VALIDATE] ✅ Re-mapped 'email' to column {col_idx} ({headers[col_idx]})")
+                            break
+            
+            # BUILD ADDRESS FROM MULTIPLE COLUMNS
+            # Sage/Pastel often split address into: Address 1, Address 2, City, Region, Postal Code
+            # We should combine them into one address field
+            address_parts_cols = []
+            for col_idx, h in enumerate(headers):
+                h_low = h.lower().strip()
+                if col_idx in set(mapping.values()):
+                    if mapping.get("address") == col_idx:
+                        continue  # Don't double-count the already-mapped address
+                    continue
+                # Check if this looks like an address part column
+                addr_keywords = ["address", "addr", "street", "city", "town", "suburb", "region", 
+                                "province", "state", "postal", "zip", "post code", "postcode",
+                                "delivery", "physical", "postal address", "dorp", "stad", "provinsie", "poskode"]
+                if any(kw in h_low for kw in addr_keywords):
+                    address_parts_cols.append(col_idx)
+            
+            if address_parts_cols and "address" not in mapping:
+                # Use the first address part as main address
+                mapping["address"] = address_parts_cols[0]
+                logger.info(f"[IMPORT-VALIDATE] ✅ Mapped address to column {address_parts_cols[0]} ({headers[address_parts_cols[0]]})")
+            
+            # If we found extra address columns, combine them into the main address
+            if address_parts_cols:
+                addr_main = mapping.get("address")
+                extra_addr_cols = [c for c in address_parts_cols if c != addr_main]
+                
+                if extra_addr_cols and addr_main is not None:
+                    logger.info(f"[IMPORT-VALIDATE] Combining address columns: main={addr_main}, extras={extra_addr_cols}")
+                    for row_idx, row in enumerate(data_rows):
+                        if addr_main < len(row):
+                            parts = [str(row[addr_main]).strip()]
+                            for ec in extra_addr_cols:
+                                if ec < len(row):
+                                    part = str(row[ec]).strip()
+                                    if part and part != parts[0]:
+                                        parts.append(part)
+                            combined = ", ".join(p for p in parts if p)
+                            data_rows[row_idx][addr_main] = combined
+                    logger.info(f"[IMPORT-VALIDATE] ✅ Combined {len(extra_addr_cols) + 1} address columns into one")
+            
+            if phone_fixed or "contact_name" not in mapping:
+                logger.info(f"[IMPORT-VALIDATE] Final validated mapping: {mapping}")
+        
         issues = []
         warnings = []
         stats = {"total": len(data_rows), "empty_rows": 0, "duplicates": 0}
@@ -29659,6 +31503,18 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
         os_module.makedirs(temp_dir, exist_ok=True)
         temp_path = f"{temp_dir}/{session_id}.csv"
 
+        # DEBUG: Verify data right before save
+        print(f"[IMPORT-SAVE] Headers ({len(headers)}): {headers}", flush=True)
+        print(f"[IMPORT-SAVE] Mapping: {mapping}", flush=True)
+        if data_rows:
+            print(f"[IMPORT-SAVE] Row 0 ({len(data_rows[0])} cols): {data_rows[0][:8]}", flush=True)
+            # Verify contact_name specifically
+            cn_idx = mapping.get("contact_name")
+            if cn_idx is not None and data_rows[0] and cn_idx < len(data_rows[0]):
+                print(f"[IMPORT-SAVE] contact_name at idx {cn_idx} = '{data_rows[0][cn_idx]}'", flush=True)
+            else:
+                print(f"[IMPORT-SAVE] ⚠️ contact_name NOT MAPPED (idx={cn_idx})", flush=True)
+
         # CRITICAL: Save the CLEANED/SANITIZED data, not the original content
         # This ensures row 0 is always the headers, and row 1+ is always data
         # This makes save-edits and import execution consistent
@@ -29672,12 +31528,117 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
         with open(json_path, 'w') as f:
             json.dump({"headers": headers, "rows": data_rows}, f)
 
+        # ═══════════════════════════════════════════════════════════════
+        # PRE-EXTRACT RECORDS - Build ready-to-import records NOW
+        # This ensures execute uses EXACTLY what the preview shows
+        # No second mapping pass, no validation re-run, no data loss
+        # ═══════════════════════════════════════════════════════════════
+        pre_extracted = []
+        if import_type in ("customers", "suppliers"):
+            for row in data_rows:
+                def _get(field):
+                    idx = mapping.get(field)
+                    if idx is not None and idx < len(row):
+                        return str(row[idx]).strip()
+                    return ""
+                
+                name = _get("name")
+                if not name:
+                    continue
+                
+                phone = _get("phone")
+                cell = _get("cell")
+                if not phone and cell:
+                    phone = cell
+                elif phone and cell and phone != cell:
+                    phone = f"{phone} / {cell}"
+                
+                # Parse balance
+                balance = 0
+                bal_str = _get("balance")
+                if bal_str:
+                    try:
+                        bal_str = bal_str.replace("R", "").replace("r", "").replace("$", "").replace(",", "").replace(" ", "").strip()
+                        if bal_str.startswith("(") and bal_str.endswith(")"):
+                            bal_str = "-" + bal_str[1:-1]
+                        if bal_str.upper().endswith("CR"):
+                            bal_str = bal_str[:-2]
+                        elif bal_str.upper().endswith("DR"):
+                            bal_str = bal_str[:-2]
+                        balance = float(bal_str) if bal_str and bal_str != "-" else 0
+                    except:
+                        balance = 0
+                
+                rec = {
+                    "name": name,
+                    "code": _get("code"),
+                    "phone": phone,
+                    "email": _get("email"),
+                    "address": _get("address"),
+                    "contact_name": _get("contact_name"),
+                    "category": _get("category"),
+                    "vat_number": _get("vat_number"),
+                    "balance": balance
+                }
+                pre_extracted.append(rec)
+            
+            print(f"[IMPORT-PRE] ✅ Pre-extracted {len(pre_extracted)} {import_type} records", flush=True)
+            if pre_extracted:
+                print(f"[IMPORT-PRE] Sample: {pre_extracted[0]}", flush=True)
+
+        elif import_type == "stock":
+            # Stock pre-extraction with multi-price support
+            def _parse_price(val):
+                """Parse price string to float"""
+                if not val:
+                    return 0.0
+                try:
+                    val = str(val).replace("R", "").replace("r", "").replace("$", "").replace(",", "").replace(" ", "").strip()
+                    return float(val) if val else 0.0
+                except:
+                    return 0.0
+            
+            for row in data_rows:
+                def _get(field):
+                    idx = mapping.get(field)
+                    if idx is not None and idx < len(row):
+                        return str(row[idx]).strip()
+                    return ""
+                
+                desc = _get("description")
+                if not desc:
+                    continue
+                
+                rec = {
+                    "description": desc,
+                    "code": _get("code"),
+                    "category": _get("category"),
+                    "unit": _get("unit"),
+                    "quantity": int(float(_get("quantity") or 0)),
+                    "cost_price": _parse_price(_get("cost_price")),
+                    "selling_price": _parse_price(_get("selling_price")),
+                    "price_wholesale": _parse_price(_get("price_wholesale")),
+                    "price_trade": _parse_price(_get("price_trade")),
+                    "price_vip": _parse_price(_get("price_vip")),
+                }
+                pre_extracted.append(rec)
+            
+            print(f"[IMPORT-PRE] ✅ Pre-extracted {len(pre_extracted)} stock items", flush=True)
+            if pre_extracted:
+                print(f"[IMPORT-PRE] Sample: {pre_extracted[0]}", flush=True)
+
+        # Save pre-extracted records
+        pre_path = f"{temp_dir}/{session_id}_records.json"
+        with open(pre_path, 'w') as f:
+            json.dump(pre_extracted, f)
+
         # Save metadata to file instead of session (prevents 4KB cookie limit)
         metadata_path = f"{temp_dir}/{session_id}_meta.json"
         metadata = {
             "type": import_type,
             "path": temp_path,
             "json_path": json_path,
+            "pre_path": pre_path,
             "mapping": mapping,
             "row_count": len(data_rows),
             "headers": headers,
@@ -29760,6 +31721,8 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
         
         # Editable Preview HTML - show first 20 rows for editing
         edit_rows = min(20, len(data_rows))
+        print(f"[IMPORT-PREVIEW] Building preview with {len(headers)} headers: {headers[:10]}", flush=True)
+        print(f"[IMPORT-PREVIEW] Data rows: {len(data_rows)}, cols per row: {len(data_rows[0]) if data_rows else 0}", flush=True)
         preview_html = f'''
         <div style="margin-top:20px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -30397,6 +32360,120 @@ def api_import_execute():
         mapping = import_data.get("mapping", {})
         
         logger.info(f"[IMPORT] Type: {import_type}, mapping: {mapping}")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # FAST PATH: Use pre-extracted records (built during analyze)
+        # This ensures execute saves EXACTLY what the preview showed
+        # No re-mapping, no re-validation, no data loss
+        # ═══════════════════════════════════════════════════════════════
+        pre_path = import_data.get("pre_path")
+        if pre_path and import_type in ("customers", "suppliers"):
+            try:
+                with open(pre_path, 'r') as f:
+                    pre_records = json.load(f)
+                
+                if pre_records:
+                    print(f"[IMPORT-FAST] ★ Using pre-extracted records: {len(pre_records)} {import_type}", flush=True)
+                    
+                    batch = pre_records[offset:offset + limit]
+                    records = []
+                    skipped = 0
+                    
+                    for rec in batch:
+                        name = rec.get("name", "").strip()
+                        if not name:
+                            skipped += 1
+                            continue
+                        
+                        factory = RecordFactory.customer if import_type == "customers" else RecordFactory.supplier
+                        record = factory(
+                            business_id=biz_id,
+                            name=name,
+                            code=rec.get("code", ""),
+                            phone=rec.get("phone", ""),
+                            email=rec.get("email", ""),
+                            address=rec.get("address", ""),
+                            contact_name=rec.get("contact_name", ""),
+                            category=rec.get("category", ""),
+                            balance=float(rec.get("balance", 0)),
+                            vat_number=rec.get("vat_number", ""),
+                            created_by=user.get("id", "") if user else ""
+                        )
+                        records.append(record)
+                    
+                    # Bulk insert
+                    if records:
+                        table = "customers" if import_type == "customers" else "suppliers"
+                        db.table(table).insert(records).execute()
+                        print(f"[IMPORT-FAST] ✅ Inserted {len(records)} {import_type}, skipped {skipped}", flush=True)
+                    
+                    return jsonify({
+                        "success": True,
+                        "imported": len(records),
+                        "skipped": skipped,
+                        "total": len(pre_records),
+                        "has_more": (offset + limit) < len(pre_records)
+                    })
+            except FileNotFoundError:
+                print(f"[IMPORT-FAST] Pre-extracted file not found, falling back to CSV", flush=True)
+            except Exception as fast_err:
+                print(f"[IMPORT-FAST] Error: {fast_err}, falling back to CSV", flush=True)
+        
+        # FAST PATH: Stock items with multi-price support
+        if pre_path and import_type == "stock":
+            try:
+                with open(pre_path, 'r') as f:
+                    pre_records = json.load(f)
+                
+                if pre_records:
+                    print(f"[IMPORT-FAST] ★ Using pre-extracted records: {len(pre_records)} stock items", flush=True)
+                    
+                    batch = pre_records[offset:offset + limit]
+                    records = []
+                    skipped = 0
+                    
+                    for rec in batch:
+                        desc = rec.get("description", "").strip()
+                        if not desc:
+                            skipped += 1
+                            continue
+                        
+                        record = RecordFactory.stock_item(
+                            business_id=biz_id,
+                            description=desc,
+                            code=rec.get("code", ""),
+                            category=rec.get("category", ""),
+                            unit=rec.get("unit", ""),
+                            quantity=int(rec.get("quantity", 0)),
+                            cost_price=float(rec.get("cost_price", 0)),
+                            selling_price=float(rec.get("selling_price", 0)),
+                            price_wholesale=float(rec.get("price_wholesale", 0)),
+                            price_trade=float(rec.get("price_trade", 0)),
+                            price_vip=float(rec.get("price_vip", 0)),
+                            created_by=user.get("id", "") if user else ""
+                        )
+                        records.append(record)
+                    
+                    # Bulk insert
+                    if records:
+                        db.table("stock_items").insert(records).execute()
+                        print(f"[IMPORT-FAST] ✅ Inserted {len(records)} stock items, skipped {skipped}", flush=True)
+                    
+                    return jsonify({
+                        "success": True,
+                        "imported": len(records),
+                        "skipped": skipped,
+                        "total": len(pre_records),
+                        "has_more": (offset + limit) < len(pre_records)
+                    })
+            except FileNotFoundError:
+                print(f"[IMPORT-FAST] Pre-extracted file not found, falling back to CSV", flush=True)
+            except Exception as fast_err:
+                print(f"[IMPORT-FAST] Error: {fast_err}, falling back to CSV", flush=True)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # STANDARD PATH: Read CSV and map columns (for stock, employees, etc)
+        # ═══════════════════════════════════════════════════════════════
         logger.info(f"[IMPORT-DEBUG] Mapping details - name: {mapping.get('name')}, phone: {mapping.get('phone')}, contact_name: {mapping.get('contact_name')}, balance: {mapping.get('balance')}")
         
         # Read CSV with proper encoding (handles BOM)
@@ -30484,6 +32561,23 @@ def api_import_execute():
                     if phone_idx is not None and phone_idx < len(row):
                         phone = str(row[phone_idx]).strip()
                     
+                    # Get cell number - use as phone if phone is empty
+                    cell = ""
+                    cell_idx = mapping.get("cell")
+                    if cell_idx is not None and cell_idx < len(row):
+                        cell = str(row[cell_idx]).strip()
+                    if not phone and cell:
+                        phone = cell
+                    elif phone and cell and phone != cell:
+                        # Combine: "011-412-2900 / 082-855-1576"
+                        phone = f"{phone} / {cell}"
+                    
+                    # Get VAT number
+                    vat_number = ""
+                    vat_idx = mapping.get("vat_number")
+                    if vat_idx is not None and vat_idx < len(row):
+                        vat_number = str(row[vat_idx]).strip()
+                    
                     # Get contact name
                     contact_name = ""
                     contact_idx = mapping.get("contact_name")
@@ -30544,6 +32638,7 @@ def api_import_execute():
                         contact_name=contact_name,
                         category=category,
                         balance=balance,
+                        vat_number=vat_number,
                         created_by=user.get("id", "") if user else ""
                     )
                     
@@ -30566,6 +32661,22 @@ def api_import_execute():
                     phone = ""
                     if mapping.get("phone") is not None and mapping.get("phone") < len(row):
                         phone = str(row[mapping.get("phone")]).strip()
+                    
+                    # Get cell number - use as phone if phone is empty
+                    cell = ""
+                    cell_idx = mapping.get("cell")
+                    if cell_idx is not None and cell_idx < len(row):
+                        cell = str(row[cell_idx]).strip()
+                    if not phone and cell:
+                        phone = cell
+                    elif phone and cell and phone != cell:
+                        phone = f"{phone} / {cell}"
+                    
+                    # Get VAT number
+                    vat_number = ""
+                    vat_idx = mapping.get("vat_number")
+                    if vat_idx is not None and vat_idx < len(row):
+                        vat_number = str(row[vat_idx]).strip()
                     
                     # Get contact name
                     contact_name = ""
@@ -30618,6 +32729,7 @@ def api_import_execute():
                         contact_name=contact_name,
                         category=category,
                         balance=balance,
+                        vat_number=vat_number,
                         created_by=user.get("id", "") if user else ""
                     )
                     
@@ -30683,6 +32795,15 @@ def api_import_execute():
                     if mapping.get("cost_price") is not None and mapping.get("cost_price") < len(row):
                         try:
                             val = str(row[mapping.get("cost_price")]).replace("R", "").replace(",", "").strip()
+                            if val:
+                                cost_price = float(val)
+                        except:
+                            pass
+                    
+                    # Fallback to last_cost if cost_price is 0 (Sage often has 0 for Avg Cost but real Last Cost)
+                    if cost_price == 0 and mapping.get("last_cost") is not None and mapping.get("last_cost") < len(row):
+                        try:
+                            val = str(row[mapping.get("last_cost")]).replace("R", "").replace(",", "").strip()
                             if val:
                                 cost_price = float(val)
                         except:
@@ -43953,6 +46074,49 @@ def settings_page():
             <p style="color:var(--text-muted)">Zane, Diane, Jayden & Jacqo</p>
         </div>
     </div>
+    
+    <!-- PayFast Online Payments Setup -->
+    <div class="card" style="margin-top:20px;">
+        <h3 style="margin-bottom:15px;">💳 Online Payments (PayFast)</h3>
+        <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
+            Enable "Pay Now" buttons on your invoices. Customers can pay with card, EFT, SnapScan, Zapper, or Capitec Pay.
+            Register at <a href="https://www.payfast.co.za" target="_blank" style="color:#4F46E5;">payfast.co.za</a> to get your credentials.
+        </p>
+        ''' + (f'''
+        <div style="padding:10px;background:rgba(16,185,129,0.1);border-radius:8px;margin-bottom:15px;">
+            <strong style="color:var(--green);">✅ PayFast Configured</strong>
+            <span style="color:var(--text-muted);font-size:12px;margin-left:10px;">{"SANDBOX MODE" if PAYFAST_SANDBOX else "LIVE"}</span>
+        </div>
+        ''' if (PAYFAST_MERCHANT_ID or (business and business.get("payfast_merchant_id"))) else '''
+        <div style="padding:10px;background:rgba(239,68,68,0.1);border-radius:8px;margin-bottom:15px;">
+            <strong style="color:var(--red);">Not configured</strong>
+            <span style="color:var(--text-muted);font-size:12px;margin-left:10px;">Set up PayFast to enable online payments</span>
+        </div>
+        ''') + '''
+        <form action="/api/settings/payfast" method="POST">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="form-group">
+                    <label class="form-label">Merchant ID</label>
+                    <input type="text" name="payfast_merchant_id" class="form-input" 
+                        value="''' + safe_string(business.get("payfast_merchant_id", "") if business else "") + '''"
+                        placeholder="e.g. 10000100">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Merchant Key</label>
+                    <input type="text" name="payfast_merchant_key" class="form-input" 
+                        value="''' + safe_string(business.get("payfast_merchant_key", "") if business else "") + '''"
+                        placeholder="e.g. 46f0cd694581a">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Passphrase <span style="color:var(--text-muted);font-size:12px;">(set this in your PayFast dashboard under Settings → Security)</span></label>
+                <input type="text" name="payfast_passphrase" class="form-input" 
+                    value="''' + safe_string(business.get("payfast_passphrase", "") if business else "") + '''"
+                    placeholder="Your PayFast passphrase">
+            </div>
+            <button type="submit" class="btn btn-primary">💳 Save PayFast Settings</button>
+        </form>
+    </div>
     '''
     
     return render_page("Settings", content, user, "settings")
@@ -44417,6 +46581,8 @@ def api_switch_business():
         
         if business_id:
             session["business_id"] = business_id
+            # Clear cache so next request loads new business
+            Auth.clear_cache()
             return jsonify({"success": True})
         
         return jsonify({"success": False, "error": "No business ID provided"})
@@ -44453,6 +46619,34 @@ def api_create_business():
     except Exception as e:
         logger.error(f"[CREATE BIZ] Error: {e}")
         return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/settings/payfast", methods=["POST"])
+@login_required
+def api_settings_payfast():
+    """Save PayFast payment settings"""
+    try:
+        business = Auth.get_current_business()
+        if not business:
+            flash("No business selected", "error")
+            return redirect("/settings")
+        
+        update = {
+            "id": business["id"],
+            "payfast_merchant_id": request.form.get("payfast_merchant_id", "").strip(),
+            "payfast_merchant_key": request.form.get("payfast_merchant_key", "").strip(),
+            "payfast_passphrase": request.form.get("payfast_passphrase", "").strip()
+        }
+        
+        success, _ = db.save("businesses", update)
+        if success:
+            flash("PayFast settings saved! Online payments are now enabled on your invoices.", "success")
+        else:
+            flash("Error saving PayFast settings", "error")
+    except Exception as e:
+        flash(f"Error: {str(e)}", "error")
+    
+    return redirect("/settings")
 
 
 @app.route("/api/settings/email", methods=["POST"])
@@ -45165,6 +47359,206 @@ def api_mobile_save():
 # Added: SARS eFiling, WhatsApp, Audit Trail, Cash Flow AI, Collections,
 #        Bank Import, Customer Portal, Accountant Access
 # ============================================================================
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOCAL-FIRST SYNC APIs
+# ═══════════════════════════════════════════════════════════════════════════════
+# These endpoints enable the local-first architecture:
+# - Browser has local IndexedDB copy of data
+# - Pull: Get data from cloud to local
+# - Push: Send local changes to cloud
+# - Result: Instant UI, background sync
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/sync/pull")
+@login_required
+def api_sync_pull():
+    """Pull records from cloud to local database"""
+    
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    table = request.args.get("table", "")
+    since = request.args.get("since")  # ISO timestamp for incremental sync
+    offset = int(request.args.get("offset", 0))
+    limit = int(request.args.get("limit", 500))
+    
+    # Validate table name
+    allowed_tables = ["stock_items", "stock", "customers", "suppliers", "invoices", "quotes", "receipts", "jobs"]
+    if table not in allowed_tables:
+        return jsonify({"success": False, "error": f"Invalid table: {table}"})
+    
+    try:
+        # Build query
+        query = db.table(table).select("*").eq("business_id", biz_id)
+        
+        # Incremental sync - only records updated since last pull
+        if since:
+            query = query.gte("updated_at", since)
+        
+        # Pagination
+        query = query.range(offset, offset + limit - 1)
+        
+        result = query.execute()
+        records = result.data if result.data else []
+        
+        # Get total count for progress
+        count_result = db.table(table).select("id", count="exact").eq("business_id", biz_id).execute()
+        total = count_result.count if hasattr(count_result, 'count') else len(records)
+        
+        return jsonify({
+            "success": True,
+            "table": table,
+            "records": records,
+            "count": len(records),
+            "total": total,
+            "offset": offset,
+            "has_more": (offset + limit) < total
+        })
+        
+    except Exception as e:
+        logger.error(f"[SYNC] Pull error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/sync/push", methods=["POST"])
+@login_required
+def api_sync_push():
+    """Push single record from local to cloud"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    data = request.get_json()
+    table = data.get("table", "")
+    record = data.get("record", {})
+    
+    # Validate
+    allowed_tables = ["stock_items", "customers", "suppliers", "invoices", "quotes", "receipts", "jobs"]
+    if table not in allowed_tables:
+        return jsonify({"success": False, "error": f"Invalid table: {table}"})
+    
+    if not record or not record.get("id"):
+        return jsonify({"success": False, "error": "Invalid record"})
+    
+    # Ensure business_id matches
+    record["business_id"] = biz_id
+    record["updated_at"] = now()
+    
+    # Remove local-only fields
+    record.pop("sync_status", None)
+    
+    try:
+        # Check if delete
+        if record.get("deleted_at"):
+            db.table(table).delete().eq("id", record["id"]).execute()
+            logger.info(f"[SYNC] Deleted {table}/{record['id']}")
+        else:
+            # Upsert
+            db.table(table).upsert(record).execute()
+            logger.info(f"[SYNC] Upserted {table}/{record['id']}")
+        
+        return jsonify({"success": True, "id": record["id"]})
+        
+    except Exception as e:
+        logger.error(f"[SYNC] Push error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/sync/push-batch", methods=["POST"])
+@login_required
+def api_sync_push_batch():
+    """Push multiple records from local to cloud"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    data = request.get_json()
+    table = data.get("table", "")
+    records = data.get("records", [])
+    
+    # Validate
+    allowed_tables = ["stock_items", "customers", "suppliers", "invoices", "quotes", "receipts", "jobs"]
+    if table not in allowed_tables:
+        return jsonify({"success": False, "error": f"Invalid table: {table}"})
+    
+    if not records:
+        return jsonify({"success": True, "synced": 0})
+    
+    try:
+        to_upsert = []
+        to_delete = []
+        
+        for record in records:
+            record["business_id"] = biz_id
+            record["updated_at"] = now()
+            record.pop("sync_status", None)
+            
+            if record.get("deleted_at"):
+                to_delete.append(record["id"])
+            else:
+                to_upsert.append(record)
+        
+        # Batch upsert
+        if to_upsert:
+            db.table(table).upsert(to_upsert).execute()
+            logger.info(f"[SYNC] Batch upserted {len(to_upsert)} {table} records")
+        
+        # Batch delete
+        for rid in to_delete:
+            db.table(table).delete().eq("id", rid).execute()
+        if to_delete:
+            logger.info(f"[SYNC] Batch deleted {len(to_delete)} {table} records")
+        
+        return jsonify({
+            "success": True, 
+            "synced": len(to_upsert),
+            "deleted": len(to_delete)
+        })
+        
+    except Exception as e:
+        logger.error(f"[SYNC] Batch push error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/sync/status")
+@login_required  
+def api_sync_status():
+    """Get sync status and counts for all tables"""
+    
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    tables = ["stock_items", "customers", "suppliers", "invoices", "quotes"]
+    counts = {}
+    
+    for table in tables:
+        try:
+            result = db.table(table).select("id", count="exact").eq("business_id", biz_id).execute()
+            counts[table] = result.count if hasattr(result, 'count') else 0
+        except:
+            counts[table] = 0
+    
+    return jsonify({
+        "success": True,
+        "counts": counts,
+        "timestamp": now()
+    })
 
 
 # 
@@ -46917,6 +49311,380 @@ def portal_invoice(invoice_id):
     </div>
 </body>
 </html>'''
+
+
+# ═══════════════════════════════════════════════════
+# PAYFAST ONLINE PAYMENTS
+# Customer clicks "Pay Now" on invoice → PayFast → auto-mark as paid
+# Like TakeAlot checkout - card, EFT, SnapScan, Zapper, Capitec Pay
+# ═══════════════════════════════════════════════════
+
+@app.route("/portal/pay/<invoice_id>")
+def portal_pay(invoice_id):
+    """Redirect customer to PayFast payment page"""
+    import hashlib
+    import urllib.parse
+    
+    invoice = db.get_one("invoices", invoice_id)
+    if not invoice:
+        return "Invoice not found", 404
+    
+    if invoice.get("status") == "paid":
+        return f'''<!DOCTYPE html><html><head><title>Already Paid</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>body{{font-family:Arial;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#f5f5f5;margin:0;}}
+        .card{{background:#fff;border-radius:12px;padding:40px;text-align:center;max-width:400px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}}
+        .check{{font-size:60px;margin-bottom:15px;}}</style></head>
+        <body><div class="card"><div class="check">✅</div><h2>Already Paid</h2>
+        <p style="color:#666;">This invoice has already been paid. Thank you!</p>
+        <a href="/portal/invoice/{invoice_id}" style="color:#4F46E5;margin-top:15px;display:inline-block;">View Invoice</a>
+        </div></body></html>'''
+    
+    business = db.get_one("businesses", invoice.get("business_id"))
+    customer = db.get_one("customers", invoice.get("customer_id"))
+    
+    # Check if PayFast is configured for this business
+    merchant_id = ""
+    merchant_key = ""
+    passphrase = ""
+    
+    # First check business-level PayFast settings, then fall back to global
+    if business:
+        merchant_id = business.get("payfast_merchant_id", "") or PAYFAST_MERCHANT_ID
+        merchant_key = business.get("payfast_merchant_key", "") or PAYFAST_MERCHANT_KEY
+        passphrase = business.get("payfast_passphrase", "") or PAYFAST_PASSPHRASE
+    else:
+        merchant_id = PAYFAST_MERCHANT_ID
+        merchant_key = PAYFAST_MERCHANT_KEY
+        passphrase = PAYFAST_PASSPHRASE
+    
+    if not merchant_id or not merchant_key:
+        return f'''<!DOCTYPE html><html><head><title>Payment Not Available</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>body{{font-family:Arial;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#f5f5f5;margin:0;}}
+        .card{{background:#fff;border-radius:12px;padding:40px;text-align:center;max-width:400px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}}</style></head>
+        <body><div class="card"><h2>Online Payment Not Available</h2>
+        <p style="color:#666;">This business has not set up online payments yet. Please pay via EFT using the banking details on the invoice.</p>
+        <a href="/portal/invoice/{invoice_id}" style="color:#4F46E5;margin-top:15px;display:inline-block;">← Back to Invoice</a>
+        </div></body></html>'''
+    
+    # Calculate amount
+    total = float(invoice.get("total", invoice.get("amount", 0)) or 0)
+    amount_paid = float(invoice.get("amount_paid", 0) or 0)
+    amount_due = total - amount_paid
+    
+    if amount_due <= 0:
+        return redirect(f"/portal/invoice/{invoice_id}")
+    
+    biz_name = business.get("name", "Business") if business else "Business"
+    cust_name = customer.get("name", "Customer") if customer else "Customer"
+    cust_email = customer.get("email", "") if customer else ""
+    inv_number = invoice.get("invoice_number", invoice_id[:8])
+    
+    # Build PayFast URL
+    payfast_url = "https://sandbox.payfast.co.za/eng/process" if PAYFAST_SANDBOX else "https://www.payfast.co.za/eng/process"
+    
+    # Callback URLs
+    base_url = request.url_root.rstrip("/")
+    
+    # PayFast data - ORDER MATTERS for signature
+    pf_data = {
+        "merchant_id": merchant_id,
+        "merchant_key": merchant_key,
+        "return_url": f"{base_url}/portal/pay/success/{invoice_id}",
+        "cancel_url": f"{base_url}/portal/pay/cancel/{invoice_id}",
+        "notify_url": f"{base_url}/api/payfast/notify",
+        "name_first": cust_name.split()[0] if cust_name else "Customer",
+        "name_last": cust_name.split()[-1] if cust_name and len(cust_name.split()) > 1 else "",
+        "email_address": cust_email,
+        "m_payment_id": invoice_id,
+        "amount": f"{amount_due:.2f}",
+        "item_name": f"Invoice {inv_number} - {biz_name}"[:100],
+        "item_description": f"Payment for invoice {inv_number}"[:255],
+    }
+    
+    # Remove empty values for signature
+    pf_clean = {k: v for k, v in pf_data.items() if v}
+    
+    # Generate signature
+    sig_string = "&".join(f"{k}={urllib.parse.quote_plus(str(v))}" for k, v in pf_clean.items())
+    if passphrase:
+        sig_string += f"&passphrase={urllib.parse.quote_plus(passphrase)}"
+    
+    signature = hashlib.md5(sig_string.encode()).hexdigest()
+    pf_clean["signature"] = signature
+    
+    # Build auto-submit form
+    form_fields = "\n".join(f'<input type="hidden" name="{k}" value="{v}">' for k, v in pf_clean.items())
+    
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>Redirecting to Payment...</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {{ font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f5f5f5; margin: 0; }}
+        .card {{ background: #fff; border-radius: 12px; padding: 40px; text-align: center; max-width: 400px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+        .spinner {{ border: 4px solid #f3f3f3; border-top: 4px solid #4F46E5; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px; }}
+        @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+        .amount {{ font-size: 28px; font-weight: bold; color: #1a1a1a; margin: 15px 0; }}
+        .manual-btn {{ display: inline-block; margin-top: 15px; padding: 12px 30px; background: #4F46E5; color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="spinner"></div>
+        <h2>Redirecting to PayFast...</h2>
+        <p style="color:#666;">Invoice {inv_number}</p>
+        <div class="amount">R{amount_due:,.2f}</div>
+        <p style="color:#888;font-size:14px;">You'll be redirected to PayFast to complete your payment securely.</p>
+        <form id="pfForm" method="POST" action="{payfast_url}">
+            {form_fields}
+        </form>
+        <noscript>
+            <a href="#" onclick="document.getElementById('pfForm').submit(); return false;" class="manual-btn">Click to Pay</a>
+        </noscript>
+    </div>
+    <script>document.getElementById('pfForm').submit();</script>
+</body>
+</html>'''
+
+
+@app.route("/portal/pay/success/<invoice_id>")
+def portal_pay_success(invoice_id):
+    """Payment success return page - NOTE: actual payment confirmation comes via notify webhook"""
+    invoice = db.get_one("invoices", invoice_id)
+    inv_number = invoice.get("invoice_number", "") if invoice else ""
+    
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Successful</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {{ font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f5f5f5; margin: 0; }}
+        .card {{ background: #fff; border-radius: 12px; padding: 40px; text-align: center; max-width: 450px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+        .check {{ font-size: 70px; margin-bottom: 15px; }}
+        .btn {{ display: inline-block; margin-top: 20px; padding: 12px 30px; background: #27ae60; color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="check">✅</div>
+        <h2>Payment Received!</h2>
+        <p style="color:#666;font-size:16px;">Thank you for your payment for invoice <strong>{inv_number}</strong>.</p>
+        <p style="color:#888;font-size:14px;">Your payment is being processed and the invoice will be updated shortly.</p>
+        <a href="/portal/invoice/{invoice_id}" class="btn">View Invoice</a>
+    </div>
+</body>
+</html>'''
+
+
+@app.route("/portal/pay/cancel/<invoice_id>")
+def portal_pay_cancel(invoice_id):
+    """Payment cancelled return page"""
+    invoice = db.get_one("invoices", invoice_id)
+    inv_number = invoice.get("invoice_number", "") if invoice else ""
+    
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Cancelled</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {{ font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f5f5f5; margin: 0; }}
+        .card {{ background: #fff; border-radius: 12px; padding: 40px; text-align: center; max-width: 450px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+        .icon {{ font-size: 70px; margin-bottom: 15px; }}
+        .btn {{ display: inline-block; margin-top: 15px; padding: 12px 30px; background: #4F46E5; color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600; }}
+        .btn-secondary {{ background: #e5e7eb; color: #374151; margin-left: 10px; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">↩️</div>
+        <h2>Payment Cancelled</h2>
+        <p style="color:#666;font-size:16px;">You cancelled the payment for invoice <strong>{inv_number}</strong>.</p>
+        <p style="color:#888;font-size:14px;">No charges were made. You can try again or pay later.</p>
+        <div style="margin-top:20px;">
+            <a href="/portal/pay/{invoice_id}" class="btn">Try Again</a>
+            <a href="/portal/invoice/{invoice_id}" class="btn btn-secondary">View Invoice</a>
+        </div>
+    </div>
+</body>
+</html>'''
+
+
+@app.route("/api/payfast/notify", methods=["POST"])
+def api_payfast_notify():
+    """PayFast ITN (Instant Transaction Notification) webhook
+    PayFast POSTs here when payment is confirmed - this is the REAL confirmation
+    """
+    import hashlib
+    import urllib.parse
+    
+    try:
+        # Get POST data from PayFast
+        pf_data = request.form.to_dict()
+        
+        logger.info(f"[PAYFAST] ITN received: payment_id={pf_data.get('m_payment_id')}, status={pf_data.get('payment_status')}, amount={pf_data.get('amount_gross')}")
+        
+        # Step 1: Verify signature
+        signature = pf_data.pop("signature", "")
+        sig_string = "&".join(f"{k}={urllib.parse.quote_plus(str(v))}" for k, v in pf_data.items() if v)
+        
+        passphrase = PAYFAST_PASSPHRASE
+        if passphrase:
+            sig_string += f"&passphrase={urllib.parse.quote_plus(passphrase)}"
+        
+        expected_sig = hashlib.md5(sig_string.encode()).hexdigest()
+        
+        if signature != expected_sig:
+            logger.error(f"[PAYFAST] Signature mismatch! Expected={expected_sig}, Got={signature}")
+            # Still process in sandbox mode
+            if not PAYFAST_SANDBOX:
+                return "Signature mismatch", 400
+        
+        # Step 2: Check payment status
+        payment_status = pf_data.get("payment_status", "")
+        invoice_id = pf_data.get("m_payment_id", "")
+        amount_gross = float(pf_data.get("amount_gross", 0) or 0)
+        amount_fee = float(pf_data.get("amount_fee", 0) or 0)
+        amount_net = float(pf_data.get("amount_net", 0) or 0)
+        pf_payment_id = pf_data.get("pf_payment_id", "")
+        
+        if not invoice_id:
+            logger.error("[PAYFAST] No invoice ID in ITN")
+            return "No payment ID", 400
+        
+        invoice = db.get_one("invoices", invoice_id)
+        if not invoice:
+            logger.error(f"[PAYFAST] Invoice not found: {invoice_id}")
+            return "Invoice not found", 404
+        
+        if payment_status == "COMPLETE":
+            # Payment successful - mark invoice as paid
+            biz_id = invoice.get("business_id")
+            customer_id = invoice.get("customer_id")
+            total = float(invoice.get("total", invoice.get("amount", 0)) or 0)
+            
+            # Update invoice
+            update_data = {
+                "id": invoice_id,
+                "status": "paid",
+                "amount_paid": total,
+                "payment_method": "payfast",
+                "payment_date": datetime.now().strftime("%Y-%m-%d"),
+                "payfast_payment_id": pf_payment_id,
+                "payfast_amount": amount_gross,
+                "payfast_fee": amount_fee,
+                "payfast_net": amount_net
+            }
+            db.save("invoices", update_data)
+            
+            # Record receipt/payment
+            receipt = {
+                "business_id": biz_id,
+                "customer_id": customer_id,
+                "invoice_id": invoice_id,
+                "amount": amount_gross,
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "method": "PayFast Online",
+                "reference": f"PF-{pf_payment_id}",
+                "notes": f"Online payment via PayFast. Fee: R{amount_fee:.2f}, Net: R{amount_net:.2f}",
+                "source": "payfast"
+            }
+            db.save("receipts", receipt)
+            
+            # Update customer balance
+            if customer_id:
+                customer = db.get_one("customers", customer_id)
+                if customer:
+                    old_balance = float(customer.get("balance", 0) or 0)
+                    new_balance = max(0, old_balance - amount_gross)
+                    db.save("customers", {"id": customer_id, "balance": new_balance})
+            
+            # Post GL entries - Debit Bank, Credit Debtors
+            try:
+                # Bank entry (amount received minus fee)
+                db.save("gl_entries", {
+                    "business_id": biz_id,
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "account_name": "Bank - PayFast",
+                    "account_type": "asset",
+                    "debit": amount_net,
+                    "credit": 0,
+                    "description": f"PayFast payment received - Invoice {invoice.get('invoice_number', '')}",
+                    "reference": f"PF-{pf_payment_id}",
+                    "source": "payfast"
+                })
+                
+                # PayFast fee expense
+                if amount_fee > 0:
+                    db.save("gl_entries", {
+                        "business_id": biz_id,
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "account_name": "Bank Charges - PayFast",
+                        "account_type": "expense",
+                        "debit": amount_fee,
+                        "credit": 0,
+                        "description": f"PayFast fee - Invoice {invoice.get('invoice_number', '')}",
+                        "reference": f"PF-{pf_payment_id}",
+                        "source": "payfast"
+                    })
+                
+                # Credit Debtors
+                db.save("gl_entries", {
+                    "business_id": biz_id,
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "account_name": "Trade Debtors",
+                    "account_type": "asset",
+                    "debit": 0,
+                    "credit": amount_gross,
+                    "description": f"PayFast payment - Invoice {invoice.get('invoice_number', '')}",
+                    "reference": f"PF-{pf_payment_id}",
+                    "source": "payfast"
+                })
+            except Exception as gl_err:
+                logger.error(f"[PAYFAST] GL posting error: {gl_err}")
+            
+            logger.info(f"[PAYFAST] ✅ Invoice {invoice.get('invoice_number')} marked as PAID - R{amount_gross:.2f}")
+        
+        elif payment_status == "CANCELLED":
+            logger.info(f"[PAYFAST] Payment cancelled for invoice {invoice_id}")
+        
+        else:
+            logger.info(f"[PAYFAST] Payment status: {payment_status} for invoice {invoice_id}")
+        
+        return "OK", 200
+    
+    except Exception as e:
+        logger.error(f"[PAYFAST] ITN error: {e}")
+        return "Error", 500
+
+
+@app.route("/api/payfast/test")
+@login_required
+def api_payfast_test():
+    """Test PayFast configuration"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    
+    merchant_id = ""
+    if business:
+        merchant_id = business.get("payfast_merchant_id", "") or PAYFAST_MERCHANT_ID
+    else:
+        merchant_id = PAYFAST_MERCHANT_ID
+    
+    configured = bool(merchant_id and (PAYFAST_MERCHANT_KEY or (business and business.get("payfast_merchant_key"))))
+    
+    return jsonify({
+        "success": True,
+        "configured": configured,
+        "sandbox": PAYFAST_SANDBOX,
+        "merchant_id_set": bool(merchant_id),
+        "merchant_key_set": bool(PAYFAST_MERCHANT_KEY or (business and business.get("payfast_merchant_key"))),
+        "passphrase_set": bool(PAYFAST_PASSPHRASE or (business and business.get("payfast_passphrase")))
+    })
 
 
 @app.route("/portal/statement/<customer_id>")
