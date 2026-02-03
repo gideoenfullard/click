@@ -2120,6 +2120,7 @@ class RecordFactory:
             "created_by": kwargs.get("created_by", ""),
             "category": kwargs.get("category", ""),
             "contact_name": kwargs.get("contact_name", ""),
+            "price_list": kwargs.get("price_list", "retail"),  # retail, wholesale, trade, vip
             "payment_intelligence": kwargs.get("payment_intelligence")
         }
     
@@ -2169,8 +2170,8 @@ class RecordFactory:
     @staticmethod
     def stock_item(business_id: str, description: str, **kwargs) -> dict:
         """
-        Create a stock item record for the 'stock_items' table (text ids, quantity/cost_price/selling_price)
-        This is the NEWER table structure
+        Create a stock item record for the 'stock_items' table
+        Supports multiple price tiers for different customer types
         """
         return {
             "id": kwargs.get("id") or generate_id(),
@@ -2178,9 +2179,15 @@ class RecordFactory:
             "code": kwargs.get("code", ""),
             "description": description,
             "category": kwargs.get("category", ""),
+            "unit": kwargs.get("unit", ""),
             "quantity": int(kwargs.get("quantity") or kwargs.get("qty", 0)),
             "cost_price": float(kwargs.get("cost_price") or kwargs.get("cost", 0)),
-            "selling_price": float(kwargs.get("selling_price") or kwargs.get("price", 0)),
+            # Multiple price tiers
+            "selling_price": float(kwargs.get("selling_price") or kwargs.get("price", 0)),  # Default/Retail
+            "price_wholesale": float(kwargs.get("price_wholesale", 0)),
+            "price_trade": float(kwargs.get("price_trade", 0)),
+            "price_vip": float(kwargs.get("price_vip", 0)),
+            # Other fields
             "reorder_level": int(kwargs.get("reorder_level", 0)),
             "active": kwargs.get("active", True),
             "created_at": kwargs.get("created_at") or now(),
@@ -7805,8 +7812,14 @@ class Context:
             return {"customers": customers, "debtors": debtors}
         
         elif page == "stock":
+            # Performance: Only load first 100 items initially
+            # Full list loaded via API search
             stock = db.get_all_stock(biz_id) if biz_id else []
-            return {"stock": stock}
+            total_count = len(stock)
+            # Sort by description for consistent display
+            stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("description") or ""))
+            # Only return first 100 for initial page load
+            return {"stock": stock[:100], "total_count": total_count, "showing": min(100, total_count)}
         
         elif page == "invoices":
             invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
@@ -13349,6 +13362,7 @@ def customer_view(customer_id):
                     {"👤 " + safe_string(customer.get("contact_name")) if customer.get("contact_name") else ""}
                     {"&nbsp;|&nbsp; VAT: " + safe_string(customer.get("vat_number")) if customer.get("vat_number") else ""}
                     {"&nbsp;|&nbsp; Category: " + safe_string(customer.get("category")) if customer.get("category") else ""}
+                    {"&nbsp;|&nbsp; 💰 " + safe_string(customer.get("price_list", "retail")).upper() + " pricing" if customer.get("price_list") and customer.get("price_list") != "retail" else ""}
                 </p>
             </div>
             <div style="text-align:right;">
@@ -13446,6 +13460,7 @@ def customer_new():
         contact_name = request.form.get("contact_name", "").strip()
         category = request.form.get("category", "").strip()
         vat_number = request.form.get("vat_number", "").strip()
+        price_list = request.form.get("price_list", "retail").strip()
         
         if not name:
             flash("Customer name is required", "error")
@@ -13460,6 +13475,7 @@ def customer_new():
                 contact_name=contact_name,
                 category=category,
                 vat_number=vat_number,
+                price_list=price_list,
                 created_by=user.get("id", "") if user else ""
             )
             customer_id = customer["id"]
@@ -13505,9 +13521,20 @@ def customer_new():
                     <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
             </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
-                <input type="text" name="vat_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
+                    <input type="text" name="vat_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Price List</label>
+                    <select name="price_list" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <option value="retail">Retail (Default)</option>
+                        <option value="wholesale">Wholesale</option>
+                        <option value="trade">Trade</option>
+                        <option value="vip">VIP/Special</option>
+                    </select>
+                </div>
             </div>
             <div style="margin-bottom: 20px;">
                 <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
@@ -13543,15 +13570,18 @@ def stock_page():
     for job in active_jobs:
         job_options_html += f'<option value="{job.get("id")}">{job.get("job_number")} - {safe_string(job.get("title", "")[:30])}</option>'
     
-    # Calculate stats
-    total_items = len(stock)
+    # Get pagination info from context
+    total_count = context.get("total_count", len(stock))
+    showing_count = context.get("showing", len(stock))
+    has_more = total_count > showing_count
+    
+    # Calculate stats on displayed items (full stats would require loading all)
+    total_items = total_count  # Use full count for display
     total_qty = sum(float(s.get("qty") or s.get("quantity") or 0) for s in stock)
     stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock)
     low_stock_count = len([s for s in stock if float(s.get("qty") or s.get("quantity") or 0) < 5])
     
-    # Sort by category then description for grouped display
-    stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("description") or ""))
-    
+    # Stock is already sorted from context
     rows = ""
     current_category = None
     for s in stock:
@@ -13667,17 +13697,43 @@ def stock_page():
                     <th>Action</th>
                 </tr>
             </thead>
-            <tbody>
-                {rows or "<tr><td colspan='6' style='text-align:center;padding:40px;'><div style='color:var(--text-muted);'><strong>Tip:</strong> No stock items yet!</div><div style='margin-top:10px;'><a href='/import' class='btn btn-primary'>Import from Excel</a> <span style='color:var(--text-muted);margin:0 10px;'>or</span> <a href='/stock/new' class='btn btn-secondary'>Add manually</a></div></td></tr>"}
+            <tbody id="stockTableBody">
+                {rows or "<tr><td colspan='9' style='text-align:center;padding:40px;'><div style='color:var(--text-muted);'><strong>Tip:</strong> No stock items yet!</div><div style='margin-top:10px;'><a href='/import' class='btn btn-primary'>Import from Excel</a> <span style='color:var(--text-muted);margin:0 10px;'>or</span> <a href='/stock/new' class='btn btn-secondary'>Add manually</a></div></td></tr>"}
             </tbody>
         </table>
+        
+        <!-- Pagination info and Load More -->
+        <div id="paginationInfo" style="text-align:center;padding:20px;{'display:none;' if not has_more else ''}">
+            <p style="color:var(--text-muted);margin-bottom:10px;">
+                Showing <span id="showingCount">{showing_count}</span> of <span id="totalCount">{total_count}</span> items
+            </p>
+            <button onclick="loadMoreStock()" class="btn btn-primary" id="loadMoreBtn">
+                Load More
+            </button>
+            <span id="loadingSpinner" style="display:none;color:var(--text-muted);">Loading...</span>
+        </div>
     </div>
     
     <script>
+    let currentOffset = {showing_count};
+    const pageSize = 100;
+    let searchTimeout = null;
+    
     function filterStockTable() {{
+        // For small datasets, use client-side filtering (already loaded)
+        // For search queries, use server-side search
         const search = document.getElementById('stockSearch').value.toLowerCase().trim();
         const categoryFilter = document.getElementById('categoryFilter').value;
         
+        // If searching and we have more items on server, do server-side search
+        if (search.length >= 2 && {total_count} > 100) {{
+            // Debounce server search
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => serverSearch(search, categoryFilter), 300);
+            return;
+        }}
+        
+        // Client-side filtering for loaded items
         const rows = document.querySelectorAll('.stock-data-row');
         const categoryHeaders = document.querySelectorAll('.category-header-row');
         
@@ -13704,6 +13760,61 @@ def stock_page():
             const cat = header.getAttribute('data-category') || '';
             header.style.display = visibleCategories.has(cat) ? '' : 'none';
         }});
+        
+        // Show pagination info only if not searching
+        const pagInfo = document.getElementById('paginationInfo');
+        if (pagInfo) pagInfo.style.display = search ? 'none' : '';
+    }}
+    
+    async function serverSearch(query, category) {{
+        const tbody = document.getElementById('stockTableBody');
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;">Searching...</td></tr>';
+        
+        try {{
+            const params = new URLSearchParams({{q: query, limit: 200}});
+            if (category) params.append('category', category);
+            
+            const resp = await fetch('/api/stock/search?' + params);
+            const data = await resp.json();
+            
+            if (data.success) {{
+                tbody.innerHTML = data.html || '<tr><td colspan="9" style="text-align:center;padding:20px;">No items found</td></tr>';
+                document.getElementById('showingCount').textContent = data.total;
+                document.getElementById('totalCount').textContent = data.total;
+                document.getElementById('paginationInfo').style.display = 'none';
+            }}
+        }} catch (err) {{
+            console.error('Search error:', err);
+        }}
+    }}
+    
+    async function loadMoreStock() {{
+        const btn = document.getElementById('loadMoreBtn');
+        const spinner = document.getElementById('loadingSpinner');
+        btn.style.display = 'none';
+        spinner.style.display = 'inline';
+        
+        try {{
+            const resp = await fetch('/api/stock/search?offset=' + currentOffset + '&limit=' + pageSize);
+            const data = await resp.json();
+            
+            if (data.success && data.html) {{
+                const tbody = document.getElementById('stockTableBody');
+                tbody.insertAdjacentHTML('beforeend', data.html);
+                currentOffset += pageSize;
+                
+                document.getElementById('showingCount').textContent = currentOffset;
+                
+                if (!data.has_more) {{
+                    document.getElementById('paginationInfo').style.display = 'none';
+                }}
+            }}
+        }} catch (err) {{
+            console.error('Load more error:', err);
+        }}
+        
+        btn.style.display = '';
+        spinner.style.display = 'none';
     }}
     
     function openZaneEdit() {{
@@ -14046,6 +14157,90 @@ def stock_new():
     '''
     
     return render_page("Add Stock", content, user, "stock")
+
+
+# ═══════════════════════════════════════════════════════════════
+# STOCK SEARCH API - Server-side search and pagination for 7000+ items
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/api/stock/search")
+@login_required
+def api_stock_search():
+    """Search stock items - handles 7000+ items efficiently"""
+    
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    query = request.args.get("q", "").strip().lower()
+    offset = int(request.args.get("offset", 0))
+    limit = int(request.args.get("limit", 100))
+    category = request.args.get("category", "").strip()
+    
+    # Get all stock (cached in production, fast from Supabase)
+    all_stock = db.get_all_stock(biz_id)
+    
+    # Filter by search query
+    if query:
+        filtered = []
+        for s in all_stock:
+            code = str(s.get("code", "")).lower()
+            desc = str(s.get("description", "")).lower()
+            cat = str(s.get("category", "")).lower()
+            if query in code or query in desc or query in cat:
+                filtered.append(s)
+        all_stock = filtered
+    
+    # Filter by category
+    if category:
+        all_stock = [s for s in all_stock if str(s.get("category", "")).lower() == category.lower()]
+    
+    # Sort by category then description
+    all_stock = sorted(all_stock, key=lambda x: (x.get("category") or "ZZZ", x.get("description") or ""))
+    
+    total = len(all_stock)
+    items = all_stock[offset:offset + limit]
+    
+    # Build HTML rows
+    rows_html = ""
+    for s in items:
+        qty = float(s.get("qty") or s.get("quantity") or 0)
+        cost = float(s.get("cost") or s.get("cost_price") or 0)
+        price = float(s.get("price") or s.get("selling_price") or 0)
+        unit = safe_string(s.get("unit", ""))
+        total_value = qty * cost
+        qty_class = "color: var(--red);" if qty < 5 else ""
+        code = safe_string(s.get("code", "-"))
+        desc = safe_string(s.get("description", "-"))
+        desc_escaped = desc.replace("'", "&#39;")
+        stock_id = s.get("id", "")
+        cat = safe_string(s.get("category", ""))
+        
+        rows_html += f'''
+        <tr class="stock-data-row" data-search="{code.lower()} {desc.lower()}" data-category="{cat}">
+            <td><strong>{code}</strong></td>
+            <td>{desc}</td>
+            <td style="color:var(--text-muted);font-size:11px;">{cat}</td>
+            <td style="{qty_class} text-align:right;">{qty:.0f}</td>
+            <td style="text-align:center;color:var(--text-muted);">{unit}</td>
+            <td style="text-align:right;">R{cost:,.2f}</td>
+            <td style="text-align:right;color:var(--text-muted);">R{total_value:,.2f}</td>
+            <td style="text-align:right;">R{price:,.2f}</td>
+            <td><button class="btn btn-sm" style="background:#8b5cf6;color:white;padding:4px 8px;font-size:11px;" 
+                onclick="showIssueToJob('{stock_id}', '{code}', '{desc_escaped}', {qty}, {cost})">Issue</button></td>
+        </tr>
+        '''
+    
+    return jsonify({
+        "success": True,
+        "html": rows_html,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": (offset + limit) < total
+    })
 
 
 # Store pending edits temporarily
@@ -29788,7 +29983,7 @@ def api_import_analyze():
         field_specs = {
             "customers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
             "suppliers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
-            "stock": {"required": ["description"], "optional": ["code", "cost_price", "selling_price", "quantity", "category", "unit"]},
+            "stock": {"required": ["description"], "optional": ["code", "cost_price", "selling_price", "price_wholesale", "price_trade", "price_vip", "quantity", "category", "unit"]},
             "employees": {"required": ["name"], "optional": ["code", "id_number", "position", "role", "department", "salary", "rate", "start_date", "bank", "account", "branch", "phone", "email", "status"]},
             "opening_balances": {"required": ["account"], "optional": ["code", "amount", "debit", "credit", "type"]},
             "chart_of_accounts": {"required": ["name"], "optional": ["code", "type", "parent"]},
@@ -29997,7 +30192,15 @@ ONLY return the JSON object, nothing else."""
                           "landed cost", "landed_cost", "kosprys", "aankoopprys"],
             "selling_price": ["sell", "selling", "selling_price", "selling price", "retail", "sale", "price", "unit price", 
                              "unit_price", "sale price", "sale_price", "retail price", "retail_price", "list price",
+                             "price list 1", "price_list_1", "pricelist1",
                              "verkoopprys", "prys"],
+            # Multi-tier pricing (Sage: Price List 2-4)
+            "price_wholesale": ["wholesale", "wholesale price", "wholesale_price", "trade", "trade price", 
+                               "price list 2", "price_list_2", "pricelist2", "groothandel", "groothandelprys"],
+            "price_trade": ["contractor", "contractor price", "contractor_price", "builder", "builder price",
+                           "price list 3", "price_list_3", "pricelist3", "kontrakteur", "bouer"],
+            "price_vip": ["vip", "vip price", "vip_price", "special", "special price", "preferred",
+                         "price list 4", "price_list_4", "pricelist4", "spesiale prys"],
             "quantity": ["qty", "quantity", "stock", "onhand", "on_hand", "on hand", "qty on hand", "qty_on_hand", "units",
                         "soh", "in stock", "in_stock", "available", "count", "aantal", "hoeveelheid", "voorraad"],
             "unit": ["unit", "uom", "unit of measure", "measure", "unit_of_measure", "pack", "pack size", "eenheid"],
@@ -30729,6 +30932,47 @@ Be concise and helpful. Format as bullet points. Focus on practical issues."""
                 pre_extracted.append(rec)
             
             print(f"[IMPORT-PRE] ✅ Pre-extracted {len(pre_extracted)} {import_type} records", flush=True)
+            if pre_extracted:
+                print(f"[IMPORT-PRE] Sample: {pre_extracted[0]}", flush=True)
+
+        elif import_type == "stock":
+            # Stock pre-extraction with multi-price support
+            def _parse_price(val):
+                """Parse price string to float"""
+                if not val:
+                    return 0.0
+                try:
+                    val = str(val).replace("R", "").replace("r", "").replace("$", "").replace(",", "").replace(" ", "").strip()
+                    return float(val) if val else 0.0
+                except:
+                    return 0.0
+            
+            for row in data_rows:
+                def _get(field):
+                    idx = mapping.get(field)
+                    if idx is not None and idx < len(row):
+                        return str(row[idx]).strip()
+                    return ""
+                
+                desc = _get("description")
+                if not desc:
+                    continue
+                
+                rec = {
+                    "description": desc,
+                    "code": _get("code"),
+                    "category": _get("category"),
+                    "unit": _get("unit"),
+                    "quantity": int(float(_get("quantity") or 0)),
+                    "cost_price": _parse_price(_get("cost_price")),
+                    "selling_price": _parse_price(_get("selling_price")),
+                    "price_wholesale": _parse_price(_get("price_wholesale")),
+                    "price_trade": _parse_price(_get("price_trade")),
+                    "price_vip": _parse_price(_get("price_vip")),
+                }
+                pre_extracted.append(rec)
+            
+            print(f"[IMPORT-PRE] ✅ Pre-extracted {len(pre_extracted)} stock items", flush=True)
             if pre_extracted:
                 print(f"[IMPORT-PRE] Sample: {pre_extracted[0]}", flush=True)
 
@@ -31511,6 +31755,58 @@ def api_import_execute():
                         table = "customers" if import_type == "customers" else "suppliers"
                         db.table(table).insert(records).execute()
                         print(f"[IMPORT-FAST] ✅ Inserted {len(records)} {import_type}, skipped {skipped}", flush=True)
+                    
+                    return jsonify({
+                        "success": True,
+                        "imported": len(records),
+                        "skipped": skipped,
+                        "total": len(pre_records),
+                        "has_more": (offset + limit) < len(pre_records)
+                    })
+            except FileNotFoundError:
+                print(f"[IMPORT-FAST] Pre-extracted file not found, falling back to CSV", flush=True)
+            except Exception as fast_err:
+                print(f"[IMPORT-FAST] Error: {fast_err}, falling back to CSV", flush=True)
+        
+        # FAST PATH: Stock items with multi-price support
+        if pre_path and import_type == "stock":
+            try:
+                with open(pre_path, 'r') as f:
+                    pre_records = json.load(f)
+                
+                if pre_records:
+                    print(f"[IMPORT-FAST] ★ Using pre-extracted records: {len(pre_records)} stock items", flush=True)
+                    
+                    batch = pre_records[offset:offset + limit]
+                    records = []
+                    skipped = 0
+                    
+                    for rec in batch:
+                        desc = rec.get("description", "").strip()
+                        if not desc:
+                            skipped += 1
+                            continue
+                        
+                        record = RecordFactory.stock_item(
+                            business_id=biz_id,
+                            description=desc,
+                            code=rec.get("code", ""),
+                            category=rec.get("category", ""),
+                            unit=rec.get("unit", ""),
+                            quantity=int(rec.get("quantity", 0)),
+                            cost_price=float(rec.get("cost_price", 0)),
+                            selling_price=float(rec.get("selling_price", 0)),
+                            price_wholesale=float(rec.get("price_wholesale", 0)),
+                            price_trade=float(rec.get("price_trade", 0)),
+                            price_vip=float(rec.get("price_vip", 0)),
+                            created_by=user.get("id", "") if user else ""
+                        )
+                        records.append(record)
+                    
+                    # Bulk insert
+                    if records:
+                        db.table("stock_items").insert(records).execute()
+                        print(f"[IMPORT-FAST] ✅ Inserted {len(records)} stock items, skipped {skipped}", flush=True)
                     
                     return jsonify({
                         "success": True,
