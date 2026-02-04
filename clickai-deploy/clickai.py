@@ -5494,9 +5494,11 @@ class Actions:
                 customer = c
                 break
         
-        # Calculate VAT
-        vat_amount = (amount * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-        excl_amount = amount - vat_amount
+        # Prices are EXCL VAT - ADD VAT
+        # 'amount' is sum of line items (EXCL VAT)
+        subtotal = amount
+        vat_amount = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+        total = subtotal + vat_amount
         
         # Generate invoice number
         inv_count = db.count("invoices", {"business_id": biz_id})
@@ -5513,9 +5515,9 @@ class Actions:
             items=items,
             invoice_number=inv_number,
             date=today(),
-            subtotal=float(excl_amount),
+            subtotal=float(subtotal),
             vat=float(vat_amount),
-            total=float(amount),
+            total=float(total),
             status="outstanding",
             created_by=context.get("user_id", "")
         )
@@ -5676,9 +5678,10 @@ class Actions:
                 customer = c
                 break
         
-        # Calculate VAT
-        vat_amount = (amount * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-        excl_amount = amount - vat_amount
+        # Prices are EXCL VAT - ADD VAT
+        subtotal = amount
+        vat_amount = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+        total = subtotal + vat_amount
         
         # Generate quote number
         quote_count = db.count("quotes", {"business_id": biz_id})
@@ -5695,9 +5698,9 @@ class Actions:
             quote_number=quote_number,
             date=today(),
             valid_until=(datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d"),
-            subtotal=float(excl_amount),
+            subtotal=float(subtotal),
             vat=float(vat_amount),
-            total=float(amount),
+            total=float(total),
             status="draft",
             created_by=context.get("user_id")
         )
@@ -5984,11 +5987,12 @@ class Actions:
         if current_qty < quantity:
             return {"success": False, "message": f"Not enough stock. Only {current_qty} available."}
         
-        # Calculate
+        # Calculate - prices are EXCL VAT, ADD VAT
         price = Decimal(str(item.get("selling_price", 0)))
         cost = Decimal(str(item.get("cost_price", 0)))
-        line_total = price * quantity
-        vat_amount = (line_total * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
+        subtotal = price * quantity  # EXCL VAT
+        vat_amount = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+        total = subtotal + vat_amount
         
         # Find customer if specified
         customer = None
@@ -6015,11 +6019,11 @@ class Actions:
                 "quantity": quantity,
                 "price": float(price),
                 "cost": float(cost),
-                "total": float(line_total)
+                "total": float(subtotal)
             }]),
-            "subtotal": float(line_total - vat_amount),
+            "subtotal": float(subtotal),
             "vat": float(vat_amount),
-            "total": float(line_total),
+            "total": float(total),
             "created_at": now()
         }
         
@@ -14606,7 +14610,8 @@ def invoice_new():
         if not items:
             return redirect("/invoice/new?error=No+items")
         
-        # Calculate VAT
+        # Prices are EXCL VAT - ADD VAT to get total
+        # subtotal = sum of line items (EXCL VAT)
         vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
         total = subtotal + vat
         
@@ -14855,6 +14860,28 @@ def invoice_view(invoice_id):
     invoice = db.get_one("invoices", invoice_id)
     if not invoice:
         return redirect("/invoices")
+    
+    # FAILSAFE: Calculate total if missing
+    if not invoice.get("total"):
+        subtotal = float(invoice.get("subtotal", 0))
+        vat = float(invoice.get("vat", 0))
+        # If we have subtotal and vat, calculate total
+        if subtotal and vat:
+            invoice["total"] = subtotal + vat
+        # If we only have items, calculate from line totals
+        elif invoice.get("items"):
+            raw_items = invoice.get("items", [])
+            if isinstance(raw_items, str):
+                try:
+                    raw_items = json.loads(raw_items)
+                except:
+                    raw_items = []
+            line_total = sum(float(item.get("total", 0)) for item in raw_items)
+            if line_total > 0:
+                # Line totals are EXCL VAT - ADD VAT
+                invoice["subtotal"] = line_total
+                invoice["vat"] = line_total * 0.15
+                invoice["total"] = line_total + invoice["vat"]
     
     # Get customer details if customer_id exists
     customer = None
@@ -16360,6 +16387,7 @@ def quote_new():
         if not items:
             return redirect("/quote/new?error=No+items")
         
+        # Prices are EXCL VAT - ADD VAT to get total
         vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
         total = subtotal + vat
         
@@ -24306,15 +24334,16 @@ def pos_page():
         container.innerHTML = html;
         count.textContent = itemCount + ' item' + (itemCount !== 1 ? 's' : '');
         
-        // Round total to nearest 10 cents
-        total = Math.round(total * 10) / 10;
-        const vat = total * 0.15 / 1.15;
-        const subtotal = total - vat;
+        // Round to nearest cent
+        // 'total' here is sum of line items (qty × price) - prices are EXCL VAT
+        let subtotal = Math.round(total * 100) / 100;
+        const vat = Math.round(subtotal * 0.15 * 100) / 100;  // ADD 15% VAT
+        const grandTotal = Math.round((subtotal + vat) * 100) / 100;
         
         document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
         document.getElementById('vatAmount').textContent = 'R' + vat.toFixed(2);
-        document.getElementById('grandTotal').textContent = 'R' + total.toFixed(2);
-        document.getElementById('headerTotal').textContent = 'R' + total.toFixed(2);
+        document.getElementById('grandTotal').textContent = 'R' + grandTotal.toFixed(2);
+        document.getElementById('headerTotal').textContent = 'R' + grandTotal.toFixed(2);
         
         document.getElementById('btnCash').disabled = false;
         document.getElementById('btnCard').disabled = false;
@@ -24670,10 +24699,11 @@ def pos_page():
             return;
         }
         
-        // Build preview of items
-        let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-        // Round to nearest 10 cents
-        total = Math.round(total * 10) / 10;
+        // Build preview of items - prices are EXCL VAT
+        let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+        subtotal = Math.round(subtotal * 100) / 100;
+        const vat = Math.round(subtotal * 0.15 * 100) / 100;  // ADD 15% VAT
+        const grandTotal = Math.round((subtotal + vat) * 100) / 100;
         const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
         
         let preview = '═══════════════════════\\n';
@@ -24689,7 +24719,9 @@ def pos_page():
         });
         
         preview += '───────────────────────\\n';
-        preview += 'TOTAL: R' + total.toFixed(2) + ' (' + itemCount + ' items)\\n';
+        preview += 'Subtotal: R' + subtotal.toFixed(2) + '\\n';
+        preview += 'VAT (15%): R' + vat.toFixed(2) + '\\n';
+        preview += 'TOTAL: R' + grandTotal.toFixed(2) + ' (' + itemCount + ' items)\\n';
         preview += '═══════════════════════\\n\\n';
         preview += 'Proceed with sale?';
         
@@ -24701,7 +24733,7 @@ def pos_page():
         let changeGiven = 0;
         
         if (method === 'cash') {
-            const received = prompt('💵 CASH SALE\\n\\nTotal: R' + total.toFixed(2) + '\\n\\nCash received:', total.toFixed(2));
+            const received = prompt('💵 CASH SALE\\n\\nTotal: R' + grandTotal.toFixed(2) + '\\n\\nCash received:', grandTotal.toFixed(2));
             
             if (received === null) return;
             
@@ -24711,9 +24743,9 @@ def pos_page():
                 return;
             }
             
-            changeGiven = cashReceived - total;
+            changeGiven = cashReceived - grandTotal;
             if (changeGiven < -0.01) {
-                alert('INSUFFICIENT\\n\\nTotal: R' + total.toFixed(2) + '\\nReceived: R' + cashReceived.toFixed(2) + '\\nShort: R' + Math.abs(changeGiven).toFixed(2));
+                alert('INSUFFICIENT\\n\\nTotal: R' + grandTotal.toFixed(2) + '\\nReceived: R' + cashReceived.toFixed(2) + '\\nShort: R' + Math.abs(changeGiven).toFixed(2));
                 return;
             }
             
@@ -24740,7 +24772,9 @@ def pos_page():
                     customer_id: customerId,
                     customer_name: customerName,
                     payment_method: method,
-                    total: total
+                    subtotal: subtotal,
+                    vat: vat,
+                    total: grandTotal
                 })
             });
             
@@ -24748,7 +24782,7 @@ def pos_page():
             
             if (data.success) {
                 // Show print dialog based on settings - pass cash info for cash sales
-                showPrintDialog(data.sale_number, data.sale_id, method, customerName, items, total, cashReceived, changeGiven);
+                showPrintDialog(data.sale_number, data.sale_id, method, customerName, items, grandTotal, cashReceived, changeGiven);
                 clearCart();
             } else {
                 alert('Error: ' + (data.error || 'Sale failed'));
@@ -24792,7 +24826,10 @@ def pos_page():
             total: item.price * item.qty
         }));
         
-        const total = items.reduce((sum, item) => sum + item.total, 0);
+        // Prices are EXCL VAT - ADD VAT
+        const subtotal = Math.round(items.reduce((sum, item) => sum + item.total, 0) * 100) / 100;
+        const vat = Math.round(subtotal * 0.15 * 100) / 100;
+        const grandTotal = Math.round((subtotal + vat) * 100) / 100;
         
         try {
             const response = await fetch('/api/pos/quote', {
@@ -24802,7 +24839,9 @@ def pos_page():
                     items: items,
                     customer_id: customerId,
                     customer_name: customerName,
-                    total: total
+                    subtotal: subtotal,
+                    vat: vat,
+                    total: grandTotal
                 })
             });
             
@@ -24836,9 +24875,11 @@ def pos_page():
             return;
         }
         
-        // Build preview
-        let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-        total = Math.round(total * 10) / 10;
+        // Build preview - prices are EXCL VAT, ADD VAT
+        let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+        subtotal = Math.round(subtotal * 100) / 100;
+        const vat = Math.round(subtotal * 0.15 * 100) / 100;
+        const grandTotal = Math.round((subtotal + vat) * 100) / 100;
         const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
         
         let preview = '═══════════════════════\\n';
@@ -24854,7 +24895,9 @@ def pos_page():
         });
         
         preview += '───────────────────────\\n';
-        preview += 'TOTAL: R' + total.toFixed(2) + ' (' + itemCount + ' items)\\n';
+        preview += 'Subtotal: R' + subtotal.toFixed(2) + '\\n';
+        preview += 'VAT (15%): R' + vat.toFixed(2) + '\\n';
+        preview += 'TOTAL: R' + grandTotal.toFixed(2) + ' (' + itemCount + ' items)\\n';
         preview += '═══════════════════════\\n\\n';
         preview += 'Create invoice?';
         
@@ -24879,7 +24922,9 @@ def pos_page():
                     items: items,
                     customer_id: customerId,
                     customer_name: customerName,
-                    total: total
+                    subtotal: subtotal,
+                    vat: vat,
+                    total: grandTotal
                 })
             });
             
@@ -24977,7 +25022,7 @@ def pos_page():
         
         // Build preview
         let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-        total = Math.round(total * 10) / 10;
+        total = Math.round(total * 100) / 100;
         const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
         
         let preview = '═══════════════════════\\n';
@@ -27147,14 +27192,20 @@ def api_pos_sale():
         customer_id = data.get("customer_id", "")
         customer_name = data.get("customer_name", "Cash")
         payment_method = data.get("payment_method", "cash")
-        total = Decimal(str(data.get("total", 0)))
         
         if not items:
             return jsonify({"success": False, "error": "No items in cart"})
         
-        # Calculate VAT
-        vat = (total * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-        subtotal = total - vat
+        # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
+        subtotal = Decimal(str(data.get("subtotal", 0)))
+        vat = Decimal(str(data.get("vat", 0)))
+        total = Decimal(str(data.get("total", 0)))
+        
+        # Fallback calculation if frontend didn't send values
+        if subtotal == 0:
+            subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            total = subtotal + vat
         
         # Create sale record
         sale_id = generate_id()
@@ -27286,7 +27337,6 @@ def api_pos_quote():
         items = data.get("items", [])
         customer_id = data.get("customer_id", "")
         customer_name = data.get("customer_name", "")
-        total = Decimal(str(data.get("total", 0)))
         
         # DEBUG LOG
         logger.info(f"[POS QUOTE] Received customer_id: '{customer_id}' name: '{customer_name}'")
@@ -27302,9 +27352,16 @@ def api_pos_quote():
         
         logger.info(f"[POS QUOTE] UUID valid: {safe_customer_id is not None}, using: {safe_customer_id}")
         
-        # Calculate VAT
-        vat = (total * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-        subtotal = total - vat
+        # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
+        subtotal = Decimal(str(data.get("subtotal", 0)))
+        vat = Decimal(str(data.get("vat", 0)))
+        total = Decimal(str(data.get("total", 0)))
+        
+        # Fallback calculation if frontend didn't send values
+        if subtotal == 0:
+            subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            total = subtotal + vat
         
         # Generate quote number
         existing = db.get("quotes", {"business_id": biz_id}) if biz_id else []
@@ -27433,6 +27490,7 @@ def api_pos_quick_quote():
                 "total": float(line_total)
             })
         
+        # Prices are EXCL VAT - ADD VAT to get total
         vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
         total = subtotal + vat
         
@@ -27610,7 +27668,6 @@ def api_pos_invoice():
         items = data.get("items", [])
         customer_id = data.get("customer_id", "")
         customer_name = data.get("customer_name", "")
-        total = Decimal(str(data.get("total", 0)))
         
         if not items:
             return jsonify({"success": False, "error": "No items in cart"})
@@ -27620,9 +27677,16 @@ def api_pos_invoice():
         if not safe_customer_id:
             return jsonify({"success": False, "error": "Please select a valid customer from the list"})
         
-        # Calculate VAT
-        vat = (total * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-        subtotal = total - vat
+        # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
+        subtotal = Decimal(str(data.get("subtotal", 0)))
+        vat = Decimal(str(data.get("vat", 0)))
+        total = Decimal(str(data.get("total", 0)))
+        
+        # Fallback calculation if frontend didn't send values
+        if subtotal == 0:
+            subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            total = subtotal + vat
         
         # Generate invoice number
         existing = db.get("invoices", {"business_id": biz_id}) if biz_id else []
