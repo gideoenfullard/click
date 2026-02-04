@@ -3819,6 +3819,17 @@ Once you have a customer, you can invoice! 📝"""
                         "suggestions": [{"label": "📋 Invoices", "url": "/invoices"}]
                     }
         
+        # BANK IMPORT quick command - help users find bank import
+        bank_import_words = ["bank import", "import bank", "bank statement", "bankstaat", "upload bank", "load bank", "import statement", "laai bank", "import my bank", "how do i import bank", "waar laai ek bank"]
+        if any(x in msg_lower for x in bank_import_words):
+            return {
+                "response": f"📥 **Bank Statement Import**\n\nJy kan jou bankstaat invoer by die **Banking** page:\n\n**Hoe om dit te doen:**\n1. Gaan na **Banking** (in die menu)\n2. Klik **📥 Import Statement**\n3. Kies jou CSV file\n4. Transactions word outomaties imported\n\n**Ondersteunde banke:** FNB, ABSA, Standard Bank, Nedbank, Capitec\n\n**Tip:** Download jou statement as CSV van jou bank se app of online banking.",
+                "actions_taken": [],
+                "data": {},
+                "suggestions": [{"label": "🏦 Go to Banking", "url": "/banking"}],
+                "navigate": "/banking"
+            }
+        
         # BULK EMAIL STATEMENTS quick command
         if any(x in msg_lower for x in ["email all statements", "send all statements", "bulk email statements", "email statements to all", "stuur alle state"]):
             biz_id = context.get("business_id")
@@ -12109,6 +12120,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("delivery-notes", "/delivery-notes", "Delivery Notes"),
             ("jobs", "/jobs", "Jobs"),
             ("expenses", "/expenses", "Expenses"),
+            ("banking", "/banking", "Banking"),
             ("reports", "/reports", "Reports"),
             ("inbox", "/scan-inbox", "Inbox"),
         ]
@@ -35239,129 +35251,256 @@ def payments_page():
 @app.route("/banking")
 @login_required
 def banking_page():
-    """Bank Reconciliation"""
+    """Bank Reconciliation - Smart Dashboard"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Get unmatched transactions
-    transactions = db.get("bank_transactions", {"business_id": biz_id, "matched": False}) if biz_id else []
-    transactions = sorted(transactions, key=lambda x: x.get("date", ""), reverse=True)
+    # Get ALL transactions, not just unmatched
+    all_transactions = db.get("bank_transactions", {"business_id": biz_id}) if biz_id else []
+    all_transactions = sorted(all_transactions, key=lambda x: x.get("date", ""), reverse=True)
     
-    # Get industry-specific expense categories
+    # Categorize transactions
+    auto_matched = [t for t in all_transactions if t.get("auto_matched") and not t.get("manually_reviewed")]
+    suggested = [t for t in all_transactions if t.get("suggested_category") and not t.get("matched") and t.get("suggestion_confidence", 0) < 0.85]
+    needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category")]
+    already_done = [t for t in all_transactions if t.get("matched") and t.get("manually_reviewed")]
+    
+    # Get expense categories
     expense_categories = IndustryKnowledge.get_expense_categories(biz_id) if biz_id else ["General Expenses"]
     category_options = "".join([f'<option value="{c}">{c}</option>' for c in expense_categories])
     
-    # Get learning stats
-    bank_stats = BankLearning.get_learning_stats(biz_id) if biz_id else {}
-    auto_rate = bank_stats.get("coverage_estimate", "0%")
+    # Add common categories
+    extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan", "Refund", "Transfer", "Ignore"]
+    for cat in extra_cats:
+        if cat not in expense_categories:
+            category_options += f'<option value="{cat}">{cat}</option>'
     
-    # Calculate totals
-    total_debit = sum(float(t.get("debit", 0)) for t in transactions)
-    total_credit = sum(float(t.get("credit", 0)) for t in transactions)
+    # Stats
+    total_count = len(all_transactions)
+    auto_count = len(auto_matched)
+    suggested_count = len(suggested)
+    needs_count = len(needs_attention)
+    done_count = len(already_done)
     
-    rows = ""
-    for txn in transactions[:500]:
-        amount = float(txn.get("amount", 0))
+    # Calculate totals for unmatched
+    unmatched = [t for t in all_transactions if not t.get("matched")]
+    total_debit = sum(float(t.get("debit", 0)) for t in unmatched)
+    total_credit = sum(float(t.get("credit", 0)) for t in unmatched)
+    
+    # Build rows for each section
+    def build_row(txn, show_approve=False, show_suggestion=True):
+        txn_id = txn.get("id", "")
         debit = float(txn.get("debit", 0))
         credit = float(txn.get("credit", 0))
-        
-        # If no debit/credit but has amount, derive them
-        if debit == 0 and credit == 0 and amount != 0:
-            if amount < 0:
-                debit = abs(amount)
-            else:
-                credit = amount
-        
-        # Show AI suggestion if available
-        suggested = txn.get("suggested_category", "")
+        desc = safe_string(txn.get("description", "-"))
+        suggested_cat = txn.get("suggested_category", "")
         confidence = txn.get("suggestion_confidence", 0)
+        match_ref = txn.get("match_reference", "")
+        match_type = txn.get("match_type", "")
         
-        if suggested and confidence >= 0.7:
-            suggestion_html = f'<span style="color:var(--green);font-size:11px;">AI: {suggested}</span>'
-        elif suggested:
-            suggestion_html = f'<span style="color:var(--text-muted);font-size:11px;">AI: {suggested}?</span>'
-        else:
-            suggestion_html = ""
+        # Suggestion display
+        suggestion_html = ""
+        if show_suggestion and suggested_cat:
+            conf_pct = int(confidence * 100)
+            if confidence >= 0.85:
+                suggestion_html = f'<div style="font-size:11px;color:var(--green);margin-top:3px;">🤖 {suggested_cat} ({conf_pct}%)</div>'
+            elif confidence >= 0.6:
+                suggestion_html = f'<div style="font-size:11px;color:var(--yellow);margin-top:3px;">🤖 {suggested_cat}? ({conf_pct}%)</div>'
+            else:
+                suggestion_html = f'<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">🤖 Maybe {suggested_cat}?</div>'
+            
+            if match_ref:
+                suggestion_html += f'<div style="font-size:10px;color:var(--text-muted);">{match_ref}</div>'
         
-        rows += f'''
-        <tr>
-            <td>{txn.get("date", "-")}</td>
-            <td>
-                {safe_string(txn.get("description", "-"))}
-                <br>{suggestion_html}
-            </td>
-            <td style="text-align:right;color:var(--red);">{money(debit) if debit > 0 else "-"}</td>
-            <td style="text-align:right;color:var(--green);">{money(credit) if credit > 0 else "-"}</td>
-            <td>
-                <select class="form-input" style="width:150px;padding:4px;font-size:12px;" 
-                        onchange="categorizeTransaction('{txn.get("id")}', this.value, '{safe_string(txn.get("description", ""))}')">
-                    <option value="">Select category...</option>
+        # Action buttons
+        if show_approve and suggested_cat and confidence >= 0.6:
+            action_html = f'''
+            <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                <button onclick="approveMatch('{txn_id}', '{suggested_cat}')" class="btn" style="padding:4px 8px;font-size:11px;background:var(--green);border:none;color:white;">✓ Yes</button>
+                <select class="form-input" style="width:120px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{desc}')">
+                    <option value="">Other...</option>
                     {category_options}
                 </select>
+            </div>
+            '''
+        else:
+            action_html = f'''
+            <select class="form-input" style="width:140px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{desc}')">
+                <option value="">Select...</option>
+                {category_options}
+            </select>
+            '''
+        
+        return f'''
+        <tr data-id="{txn_id}">
+            <td style="white-space:nowrap;">{txn.get("date", "-")}</td>
+            <td>
+                <div style="max-width:300px;">{desc}</div>
+                {suggestion_html}
             </td>
+            <td style="text-align:right;color:var(--red);white-space:nowrap;">{money(debit) if debit > 0 else "-"}</td>
+            <td style="text-align:right;color:var(--green);white-space:nowrap;">{money(credit) if credit > 0 else "-"}</td>
+            <td>{action_html}</td>
         </tr>
         '''
     
+    # Build sections
+    auto_rows = "".join([build_row(t, show_approve=True) for t in auto_matched[:100]])
+    suggested_rows = "".join([build_row(t, show_approve=True) for t in suggested[:100]])
+    needs_rows = "".join([build_row(t, show_approve=False, show_suggestion=False) for t in needs_attention[:100]])
+    
     content = f'''
-    <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05));">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div>
-                <strong>🧠 AI Auto-Categorization:</strong> {auto_rate} of transactions can be auto-categorized
-                <br><span style="font-size:12px;color:var(--text-muted);">The more you categorize, the smarter it gets!</span>
-            </div>
-            <a href="/intelligence" class="btn btn-secondary" style="padding:8px 15px;">View AI Insights</a>
-        </div>
+    <style>
+    .recon-tabs {{ display: flex; gap: 5px; margin-bottom: 20px; flex-wrap: wrap; }}
+    .recon-tab {{ padding: 12px 20px; border-radius: 8px; cursor: pointer; background: var(--card); border: 1px solid var(--border); transition: all 0.2s; }}
+    .recon-tab:hover {{ background: rgba(139,92,246,0.1); }}
+    .recon-tab.active {{ background: var(--primary); color: white; border-color: var(--primary); }}
+    .recon-tab .count {{ background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 10px; margin-left: 8px; font-size: 12px; }}
+    .recon-section {{ display: none; }}
+    .recon-section.active {{ display: block; }}
+    .bulk-bar {{ background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.1)); padding: 15px; border-radius: 8px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }}
+    </style>
+    
+    <!-- HEADER -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+        <h2 style="margin:0;">🏦 Bank Reconciliation</h2>
+        <label class="btn btn-primary" style="cursor:pointer;">
+            📥 Import Statement
+            <input type="file" accept=".csv" style="display:none;" onchange="uploadStatement(this.files[0])">
+        </label>
     </div>
     
+    <!-- SUMMARY CARDS -->
     <div class="stats-grid" style="margin-bottom:20px;">
-        <div class="stat-card">
-            <div class="stat-value">{len(transactions)}</div>
-            <div class="stat-label">Unmatched</div>
+        <div class="stat-card" style="background:rgba(16,185,129,0.1);border-color:var(--green);cursor:pointer;" onclick="showTab('auto')">
+            <div class="stat-value" style="color:var(--green);">{auto_count}</div>
+            <div class="stat-label">✅ Auto-Matched</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">High confidence - just approve</div>
         </div>
-        <div class="stat-card" style="background:rgba(239,68,68,0.1);border-color:var(--red);">
-            <div class="stat-value" style="color:var(--red);">{money(total_debit)}</div>
-            <div class="stat-label">Total Debit (Out)</div>
+        <div class="stat-card" style="background:rgba(245,158,11,0.1);border-color:var(--yellow);cursor:pointer;" onclick="showTab('suggested')">
+            <div class="stat-value" style="color:var(--yellow);">{suggested_count}</div>
+            <div class="stat-label">🤖 AI Suggested</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">Review suggestions</div>
         </div>
-        <div class="stat-card" style="background:rgba(16,185,129,0.1);border-color:var(--green);">
-            <div class="stat-value" style="color:var(--green);">{money(total_credit)}</div>
-            <div class="stat-label">Total Credit (In)</div>
+        <div class="stat-card" style="background:rgba(239,68,68,0.1);border-color:var(--red);cursor:pointer;" onclick="showTab('needs')">
+            <div class="stat-value" style="color:var(--red);">{needs_count}</div>
+            <div class="stat-label">❓ Needs You</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">No suggestion - you decide</div>
+        </div>
+        <div class="stat-card" style="cursor:pointer;" onclick="showTab('done')">
+            <div class="stat-value">{done_count}</div>
+            <div class="stat-label">✓ Done</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">Already categorized</div>
         </div>
     </div>
     
-    <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-            <h3 class="card-title" style="margin:0;"> Bank Reconciliation</h3>
-            <label class="btn btn-primary" style="cursor:pointer;">
-                 Import Statement
-                <input type="file" accept=".csv" style="display:none;" onchange="uploadStatement(this.files[0])">
-            </label>
+    <!-- TABS -->
+    <div class="recon-tabs">
+        <div class="recon-tab active" onclick="showTab('auto')">✅ Auto-Matched <span class="count">{auto_count}</span></div>
+        <div class="recon-tab" onclick="showTab('suggested')">🤖 Suggested <span class="count">{suggested_count}</span></div>
+        <div class="recon-tab" onclick="showTab('needs')">❓ Needs You <span class="count">{needs_count}</span></div>
+    </div>
+    
+    <!-- AUTO-MATCHED SECTION -->
+    <div id="section-auto" class="recon-section active">
+        {f"""
+        <div class="bulk-bar">
+            <div>
+                <strong>🎉 Zane matched {auto_count} transactions automatically!</strong><br>
+                <span style="font-size:13px;color:var(--text-muted);">These are high-confidence matches. Approve all or review individually.</span>
+            </div>
+            <button onclick="bulkApprove()" class="btn btn-primary" style="background:var(--green);">✓ Approve All ({auto_count})</button>
+        </div>
+        """ if auto_count > 0 else ""}
+        
+        <div class="card">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th style="width:100px;">Date</th>
+                        <th>Description</th>
+                        <th style="text-align:right;width:100px;">Out</th>
+                        <th style="text-align:right;width:100px;">In</th>
+                        <th style="width:180px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {auto_rows or "<tr><td colspan='5' style='text-align:center;padding:40px;color:var(--text-muted);'>🎉 No auto-matched transactions waiting for approval!</td></tr>"}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- SUGGESTED SECTION -->
+    <div id="section-suggested" class="recon-section">
+        <div class="card" style="margin-bottom:15px;background:rgba(245,158,11,0.1);">
+            <p style="margin:0;"><strong>🤖 AI Suggestions</strong> - Zane thinks these might be correct, but confidence is lower. Please verify.</p>
         </div>
         
-        <p style="color:var(--text-muted);margin-bottom:20px;">
-            {len(transactions)} unmatched transactions. Select a category to match, or ask Zane.
+        <div class="card">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th style="width:100px;">Date</th>
+                        <th>Description</th>
+                        <th style="text-align:right;width:100px;">Out</th>
+                        <th style="text-align:right;width:100px;">In</th>
+                        <th style="width:180px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {suggested_rows or "<tr><td colspan='5' style='text-align:center;padding:40px;color:var(--text-muted);'>No suggestions pending</td></tr>"}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- NEEDS ATTENTION SECTION -->
+    <div id="section-needs" class="recon-section">
+        <div class="card" style="margin-bottom:15px;background:rgba(239,68,68,0.1);">
+            <p style="margin:0;"><strong>❓ These need your help</strong> - Zane couldn't figure these out. Select a category to teach him!</p>
+        </div>
+        
+        <div class="card">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th style="width:100px;">Date</th>
+                        <th>Description</th>
+                        <th style="text-align:right;width:100px;">Out</th>
+                        <th style="text-align:right;width:100px;">In</th>
+                        <th style="width:180px;">Category</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {needs_rows or "<tr><td colspan='5' style='text-align:center;padding:40px;color:var(--green);'>🎉 Nothing needs your attention!</td></tr>"}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- TIPS -->
+    <div class="card" style="margin-top:20px;background:linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05));">
+        <h4 style="margin-top:0;">💡 How Zane Learns</h4>
+        <p style="color:var(--text-muted);margin:0;">
+            Every time you categorize a transaction, Zane remembers the pattern. Next time he sees "TELKOM", he'll know it's Telephone. 
+            The more you teach him, the faster reconciliation becomes!
         </p>
-        
-        <div style="overflow-x:auto;">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Description</th>
-                    <th style="text-align:right;">Debit (Out)</th>
-                    <th style="text-align:right;">Credit (In)</th>
-                    <th>Category</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No unmatched transactions. Import a bank statement to start.</td></tr>"}
-            </tbody>
-        </table>
-        </div>
     </div>
     
     <script>
+    function showTab(tab) {{
+        // Hide all sections
+        document.querySelectorAll('.recon-section').forEach(s => s.classList.remove('active'));
+        document.querySelectorAll('.recon-tab').forEach(t => t.classList.remove('active'));
+        
+        // Show selected
+        document.getElementById('section-' + tab).classList.add('active');
+        event.target.closest('.recon-tab')?.classList.add('active');
+    }}
+    
     async function categorizeTransaction(id, category, description) {{
         if (!category) return;
         
@@ -35375,8 +35514,16 @@ def banking_page():
             const data = await response.json();
             
             if (data.success) {{
-                // Remove the row from the table
-                event.target.closest('tr').style.display = 'none';
+                // Remove the row
+                const row = document.querySelector(`tr[data-id="${{id}}"]`);
+                if (row) {{
+                    row.style.background = 'rgba(16,185,129,0.2)';
+                    row.style.transition = 'all 0.3s';
+                    setTimeout(() => row.remove(), 300);
+                }}
+                
+                // Update counts (simple decrement)
+                updateCounts();
             }} else {{
                 alert('Error: ' + data.error);
             }}
@@ -35385,11 +35532,54 @@ def banking_page():
         }}
     }}
     
+    async function approveMatch(id, category) {{
+        await categorizeTransaction(id, category, '');
+    }}
+    
+    async function bulkApprove() {{
+        if (!confirm('Approve all {auto_count} auto-matched transactions?')) return;
+        
+        const rows = document.querySelectorAll('#section-auto tbody tr[data-id]');
+        let approved = 0;
+        
+        for (const row of rows) {{
+            const id = row.dataset.id;
+            const btn = row.querySelector('button');
+            if (btn) {{
+                const category = btn.onclick.toString().match(/approveMatch\\('.*?',\\s*'(.*?)'\\)/)?.[1];
+                if (category) {{
+                    try {{
+                        await fetch('/api/banking/categorize', {{
+                            method: 'POST',
+                            headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify({{id, category, description: ''}})
+                        }});
+                        approved++;
+                        row.style.display = 'none';
+                    }} catch(e) {{}}
+                }}
+            }}
+        }}
+        
+        alert(`✅ Approved ${{approved}} transactions!`);
+        location.reload();
+    }}
+    
+    function updateCounts() {{
+        // Simple reload after a few categorizations
+        // Could be smarter but this works
+    }}
+    
     async function uploadStatement(file) {{
         if (!file) return;
         
         const formData = new FormData();
         formData.append('file', file);
+        
+        // Show loading
+        const btn = event.target.closest('label');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '⏳ Importing...';
         
         try {{
             const response = await fetch('/api/banking/import', {{
@@ -35400,13 +35590,19 @@ def banking_page():
             const data = await response.json();
             
             if (data.success) {{
-                alert(' ' + data.message);
+                const stats = data.stats || {{}};
+                alert(`✅ Imported ${{stats.total || 0}} transactions!\\n\\n` +
+                      `🤖 Auto-matched: ${{stats.auto_matched || 0}}\\n` +
+                      `💡 Suggested: ${{stats.suggested || 0}}\\n` +
+                      `❓ Needs you: ${{stats.needs_attention || 0}}`);
                 location.reload();
             }} else {{
-                alert(' ' + data.error);
+                alert('❌ ' + data.error);
             }}
         }} catch (err) {{
-            alert(' Upload failed');
+            alert('❌ Upload failed');
+        }} finally {{
+            btn.innerHTML = originalText;
         }}
     }}
     </script>
@@ -35418,7 +35614,7 @@ def banking_page():
 @app.route("/api/banking/import", methods=["POST"])
 @login_required
 def api_banking_import():
-    """Import bank statement CSV"""
+    """Import bank statement CSV with SMART AUTO-MATCHING"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -35439,27 +35635,19 @@ def api_banking_import():
         headers = [str(h).lower() if not isinstance(h, list) else str(h[0]).lower() for h in rows[0]]
         data_rows = rows[1:]
         
-        # Helper function to safely get cell value as string - FIXED for nested lists
         def cell_str(cell):
-            """Convert any cell value to a clean string"""
             if cell is None:
                 return ""
             if isinstance(cell, (list, tuple)):
-                # Handle nested lists/tuples by recursively taking first element
                 while isinstance(cell, (list, tuple)) and cell:
                     cell = cell[0]
                 return str(cell).strip() if cell is not None else ""
             return str(cell).strip()
         
-        # Sanitize all data rows
         data_rows = [[cell_str(cell) for cell in row] for row in data_rows]
         
         # Find columns
-        date_col = None
-        desc_col = None
-        amount_col = None
-        debit_col = None
-        credit_col = None
+        date_col = desc_col = amount_col = debit_col = credit_col = None
         
         for i, h in enumerate(headers):
             if "date" in h:
@@ -35473,7 +35661,65 @@ def api_banking_import():
             elif "credit" in h:
                 credit_col = i
         
+        # ═══════════════════════════════════════════════════════════════
+        # GET DATA FOR SMART MATCHING
+        # ═══════════════════════════════════════════════════════════════
+        
+        # POS daily totals for matching deposits
+        sales = db.get("sales", {"business_id": biz_id}) or []
+        pos_daily = {}
+        for s in sales:
+            d = str(s.get("date", ""))[:10]
+            if d not in pos_daily:
+                pos_daily[d] = 0
+            pos_daily[d] += float(s.get("total", 0))
+        
+        # Outstanding invoices for matching customer payments
+        invoices = db.get("invoices", {"business_id": biz_id}) or []
+        outstanding = [i for i in invoices if i.get("status") != "paid"]
+        
+        # Customers for name matching
+        customers = db.get("customers", {"business_id": biz_id}) or []
+        customer_names = {c.get("name", "").upper(): c for c in customers if c.get("name")}
+        
+        # Known expense keywords
+        expense_keywords = {
+            "SARS": "Tax",
+            "TELKOM": "Telephone",
+            "VODACOM": "Telephone",
+            "MTN": "Telephone",
+            "CELL C": "Telephone",
+            "ESKOM": "Electricity",
+            "CITY POWER": "Electricity",
+            "MUNICIPAL": "Municipal Charges",
+            "ENGEN": "Fuel",
+            "SHELL": "Fuel",
+            "SASOL": "Fuel",
+            "CALTEX": "Fuel",
+            "BP ": "Fuel",
+            "TOTAL ": "Fuel",
+            "MAKRO": "Stock Purchase",
+            "BUILDERS": "Stock Purchase",
+            "CASHBUILD": "Stock Purchase",
+            "TAKEALOT": "General Expenses",
+            "AMAZON": "General Expenses",
+            "PAYROLL": "Salaries",
+            "SALARY": "Salaries",
+            "WAGES": "Salaries",
+            "INSURANCE": "Insurance",
+            "OUTSURANCE": "Insurance",
+            "SANTAM": "Insurance",
+            "DISCOVERY": "Insurance",
+            "RENT": "Rent",
+            "LEASE": "Rent",
+            "BANK CHARGE": "Bank Charges",
+            "SERVICE FEE": "Bank Charges",
+            "INTEREST": "Interest",
+        }
+        
         imported = 0
+        auto_matched = 0
+        suggested = 0
         
         for row in data_rows:
             try:
@@ -35481,11 +35727,13 @@ def api_banking_import():
                 description = row[desc_col] if desc_col is not None else ""
                 
                 if amount_col is not None:
-                    amt_str = row[amount_col].replace(",", "").replace("R", "").strip()
+                    amt_str = row[amount_col].replace(",", "").replace("R", "").replace(" ", "").strip()
                     amount = float(amt_str or 0)
+                    debit = abs(amount) if amount < 0 else 0
+                    credit = amount if amount > 0 else 0
                 elif debit_col is not None and credit_col is not None:
-                    deb_str = row[debit_col].replace(",", "").replace("R", "").strip()
-                    cred_str = row[credit_col].replace(",", "").replace("R", "").strip()
+                    deb_str = row[debit_col].replace(",", "").replace("R", "").replace(" ", "").strip()
+                    cred_str = row[credit_col].replace(",", "").replace("R", "").replace(" ", "").strip()
                     debit = float(deb_str or 0)
                     credit = float(cred_str or 0)
                     amount = credit - debit
@@ -35495,8 +35743,73 @@ def api_banking_import():
                 if not description:
                     continue
                 
-                # Get AI suggestion for category
-                suggestion = BankLearning.suggest_category(biz_id, description)
+                desc_upper = description.upper()
+                
+                # ═══════════════════════════════════════════════════════════════
+                # SMART MATCHING LOGIC
+                # ═══════════════════════════════════════════════════════════════
+                
+                match_type = None
+                match_category = None
+                match_confidence = 0
+                match_reference = None
+                
+                # 1. TRY: Match credit to POS daily total
+                if credit > 0:
+                    # Normalize date for comparison
+                    txn_date_str = str(txn_date)[:10]
+                    if txn_date_str in pos_daily:
+                        pos_total = pos_daily[txn_date_str]
+                        # Allow 1% tolerance for bank fees
+                        if abs(credit - pos_total) < (pos_total * 0.01 + 1):
+                            match_type = "pos_deposit"
+                            match_category = "POS Deposit"
+                            match_confidence = 0.95
+                            match_reference = f"POS {txn_date_str}"
+                            auto_matched += 1
+                
+                # 2. TRY: Match credit to outstanding invoice
+                if credit > 0 and not match_type:
+                    for inv in outstanding:
+                        inv_total = float(inv.get("total", 0))
+                        cust_name = (inv.get("customer_name") or "").upper()
+                        
+                        # Exact amount match + customer name in description
+                        if abs(credit - inv_total) < 1 and cust_name and cust_name[:5] in desc_upper:
+                            match_type = "customer_payment"
+                            match_category = "Customer Payment"
+                            match_confidence = 0.9
+                            match_reference = f"{inv.get('invoice_number')} - {inv.get('customer_name')}"
+                            auto_matched += 1
+                            break
+                        # Just amount match
+                        elif abs(credit - inv_total) < 1:
+                            match_type = "possible_payment"
+                            match_category = "Customer Payment?"
+                            match_confidence = 0.6
+                            match_reference = f"Maybe {inv.get('invoice_number')}?"
+                
+                # 3. TRY: Match debit to known expense keywords
+                if debit > 0 and not match_type:
+                    for keyword, category in expense_keywords.items():
+                        if keyword in desc_upper:
+                            match_type = "expense_keyword"
+                            match_category = category
+                            match_confidence = 0.85
+                            suggested += 1
+                            break
+                
+                # 4. TRY: Check learned patterns
+                if not match_type:
+                    pattern_match = BankLearning.suggest_category(biz_id, description)
+                    if pattern_match.get("confidence", 0) > 0.5:
+                        match_type = "learned_pattern"
+                        match_category = pattern_match.get("category")
+                        match_confidence = pattern_match.get("confidence", 0)
+                        if match_confidence >= 0.8:
+                            auto_matched += 1
+                        else:
+                            suggested += 1
                 
                 txn = {
                     "id": generate_id(),
@@ -35504,21 +35817,39 @@ def api_banking_import():
                     "date": txn_date,
                     "description": description,
                     "amount": amount,
-                    "matched": False,
-                    "suggested_category": suggestion.get("category"),
-                    "suggestion_confidence": suggestion.get("confidence", 0),
+                    "debit": debit,
+                    "credit": credit,
+                    "match_type": match_type,
+                    "suggested_category": match_category,
+                    "suggestion_confidence": match_confidence,
+                    "match_reference": match_reference,
+                    "matched": match_confidence >= 0.85,  # Auto-approve high confidence
+                    "auto_matched": match_confidence >= 0.85,
                     "created_at": now()
                 }
                 
                 db.save("bank_transactions", txn)
                 imported += 1
                 
-            except:
+            except Exception as row_err:
+                logger.warning(f"[BANK] Row error: {row_err}")
                 continue
         
-        return jsonify({"success": True, "message": f"Imported {imported} transactions"})
+        needs_attention = imported - auto_matched - suggested
+        
+        return jsonify({
+            "success": True, 
+            "message": f"Imported {imported} transactions",
+            "stats": {
+                "total": imported,
+                "auto_matched": auto_matched,
+                "suggested": suggested,
+                "needs_attention": max(0, needs_attention)
+            }
+        })
         
     except Exception as e:
+        logger.error(f"[BANK] Import error: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 
@@ -35547,29 +35878,59 @@ def api_banking_categorize():
         if not txn:
             return jsonify({"success": False, "error": "Transaction not found"})
         
+        # Use transaction description if none provided
+        if not description:
+            description = txn.get("description", "")
+        
         # Mark as matched and save category
         txn["matched"] = True
+        txn["manually_reviewed"] = True
         txn["category"] = category
         txn["matched_at"] = now()
         db.save("bank_transactions", txn)
         
         # LEARN from this categorization!
-        BankLearning.learn_from_categorization(biz_id, description, category)
+        if description:
+            BankLearning.learn_from_categorization(biz_id, description, category)
         
-        # Create expense record if it's an outgoing payment
+        # Handle based on category type
+        debit = float(txn.get("debit", 0))
+        credit = float(txn.get("credit", 0))
         amount = float(txn.get("amount", 0))
-        if amount < 0:
-            expense = RecordFactory.expense(
-                business_id=biz_id,
-                description=description,
-                amount=abs(amount),
-                date=txn.get("date", today()),
-                category=category,
-                reference=f"Bank: {txn_id[:8]}"
-            )
-            db.save("expenses", expense)
         
-        return jsonify({"success": True})
+        # Determine if money out (expense) or money in (payment/deposit)
+        if debit > 0 or amount < 0:
+            # Money out - could be expense or other
+            if category not in ["Customer Payment", "POS Deposit", "Transfer", "Ignore", "Owner Drawings", "Loan"]:
+                # Create expense record
+                expense = RecordFactory.expense(
+                    business_id=biz_id,
+                    description=description,
+                    amount=debit if debit > 0 else abs(amount),
+                    date=txn.get("date", today()),
+                    category=category,
+                    reference=f"Bank: {txn_id[:8]}"
+                )
+                db.save("expenses", expense)
+                logger.info(f"[BANK] Created expense: {category} R{debit or abs(amount)}")
+        
+        elif credit > 0 or amount > 0:
+            # Money in - could be customer payment
+            if category == "Customer Payment" and txn.get("match_reference"):
+                # Try to mark invoice as paid
+                ref = txn.get("match_reference", "")
+                inv_num = ref.split(" - ")[0] if " - " in ref else ref
+                if inv_num.startswith("INV"):
+                    invoices = db.get("invoices", {"business_id": biz_id, "invoice_number": inv_num})
+                    if invoices:
+                        inv = invoices[0]
+                        inv["status"] = "paid"
+                        inv["paid_date"] = txn.get("date", today())
+                        inv["paid_amount"] = credit if credit > 0 else amount
+                        db.save("invoices", inv)
+                        logger.info(f"[BANK] Marked {inv_num} as paid")
+        
+        return jsonify({"success": True, "message": f"Categorized as {category}"})
         
     except Exception as e:
         logger.error(f"[BANK] Categorize failed: {e}")
