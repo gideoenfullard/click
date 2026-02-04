@@ -31978,7 +31978,8 @@ ONLY return the JSON object, nothing else."""
             # ===== FINANCIAL - BALANCES =====
             "balance": ["balance", "balance owing", "balance_owing", "owing", "owed", "outstanding", "open", "amount_due", 
                        "bal", "total_due", "acc_bal", "account_balance", "current_balance", "amount owing", "amount_owing",
-                       "open balance", "open_balance", "closing balance", "closing_balance", "running balance", "balans", "uitstaande"],
+                       "open balance", "open_balance", "closing balance", "closing_balance", "running balance", "balans", "uitstaande",
+                       "opening balance", "opening_balance", "opening bal", "opening_bal", "op bal", "ob"],
             
             # ===== FINANCIAL - AMOUNTS =====
             "amount": ["amount", "excl amount", "excl_amount", "incl amount", "incl_amount", "balance", "bal", "value", "val",
