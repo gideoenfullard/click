@@ -22211,320 +22211,371 @@ def report_gl():
 @app.route("/reports/tb")
 @login_required
 def report_tb():
-    """Trial Balance - builds from actual transaction data with expandable details"""
+    """Trial Balance - Shows imported TB with AI Analysis option"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
+    biz_name = business.get("name", "Business") if business else "Business"
     
     if not biz_id:
         return render_page("Trial Balance", "<div class='card'><p>No business selected</p></div>", user, "reports")
     
-    # Get real data from tables
-    try:
-        customers = db.get("customers", {"business_id": biz_id}) or []
-        suppliers = db.get("suppliers", {"business_id": biz_id}) or []
-        invoices = db.get("invoices", {"business_id": biz_id}) or []
-        expenses = db.get("expenses", {"business_id": biz_id}) or []
-        sales = db.get("sales", {"business_id": biz_id}) or []
-        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
-    except Exception as e:
-        logger.error(f"TB data fetch error: {e}")
-        customers = suppliers = invoices = expenses = sales = supplier_invoices = []
+    # ═══════════════════════════════════════════════════════════════
+    # GET ALL DATA SOURCES
+    # ═══════════════════════════════════════════════════════════════
     
-    # Build TB accounts with transaction details (like GL)
-    tb_accounts = {}
+    # 1. Imported opening balances (from journal_entries with ref=OB)
+    journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
+    opening_entries = [je for je in journal_entries if je.get("reference") == "OB"]
     
-    # 1000 - Bank (from paid invoices via card/eft + POS card sales)
-    bank_entries = []
-    for inv in invoices:
-        # Only card/eft payments go to bank (NOT account - that goes to debtors)
-        if inv.get("status") == "paid" and inv.get("payment_method") in ("card", "eft"):
-            bank_entries.append({
-                "date": inv.get("date", "-"),
-                "description": f"Payment - {inv.get('customer_name', 'Customer')}",
-                "ref": inv.get("invoice_number", "-"),
-                "amount": float(inv.get("total", 0))
-            })
-    # Add POS card sales to bank
-    for s in sales:
-        if s.get("payment_method") == "card":
-            bank_entries.append({
-                "date": s.get("date", "-"),
-                "description": f"POS Card - {s.get('customer_name', 'Cash')}",
-                "ref": "POS",
-                "amount": float(s.get("total", 0))
-            })
-    # Subtract expenses paid
-    for exp in expenses:
-        bank_entries.append({
-            "date": exp.get("date", "-"),
-            "description": f"Paid - {exp.get('description', 'Expense')[:30]}",
-            "ref": "EXP",
-            "amount": -float(exp.get("amount", 0))
-        })
-    bank_total = sum(e["amount"] for e in bank_entries)
-    if bank_entries:
-        tb_accounts["1000"] = {"name": "Bank", "type": "asset", "debit": max(0, bank_total), "credit": max(0, -bank_total), "entries": bank_entries}
+    # 2. Live transaction data (fallback if no imported TB)
+    customers = db.get("customers", {"business_id": biz_id}) or []
+    suppliers = db.get("suppliers", {"business_id": biz_id}) or []
+    invoices = db.get("invoices", {"business_id": biz_id}) or []
+    expenses = db.get("expenses", {"business_id": biz_id}) or []
+    sales = db.get("sales", {"business_id": biz_id}) or []
     
-    # 1100 - Petty Cash (from cash sales + POS)
-    cash_entries = []
-    for inv in invoices:
-        if inv.get("status") == "paid" and inv.get("payment_method") == "cash":
-            cash_entries.append({
-                "date": inv.get("date", "-"),
-                "description": f"Cash - {inv.get('customer_name', 'Customer')}",
-                "ref": inv.get("invoice_number", "-"),
-                "amount": float(inv.get("total", 0))
-            })
-    for s in sales:
-        # Only cash sales go to Petty Cash
-        if s.get("payment_method", "cash") == "cash":
-            cash_entries.append({
-                "date": s.get("date", "-"),
-                "description": f"POS Sale - {s.get('customer_name', 'Cash')}",
-                "ref": "POS",
-                "amount": float(s.get("total", 0))
-            })
-    cash_total = sum(e["amount"] for e in cash_entries)
-    if cash_entries:
-        tb_accounts["1100"] = {"name": "Petty Cash", "type": "asset", "debit": cash_total, "credit": 0, "entries": cash_entries}
+    # ═══════════════════════════════════════════════════════════════
+    # BUILD TRIAL BALANCE
+    # ═══════════════════════════════════════════════════════════════
     
-    # 1200 - Debtors Control (from customers with balance)
-    debtor_entries = []
-    for c in customers:
-        bal = float(c.get("balance", 0))
-        if bal > 0:
-            debtor_entries.append({
-                "date": "-",
-                "description": c.get("name", "Customer"),
-                "ref": "BAL",
-                "amount": bal
-            })
-    debtors_total = sum(e["amount"] for e in debtor_entries)
-    if debtor_entries:
-        tb_accounts["1200"] = {"name": "Debtors Control", "type": "asset", "debit": debtors_total, "credit": 0, "entries": debtor_entries}
+    tb_accounts = {}  # code -> {name, debit, credit, type}
     
-    # 1400 - VAT Input (from supplier invoices)
-    vat_in_entries = []
-    for si in supplier_invoices:
-        vat = float(si.get("vat", 0))
-        if vat > 0:
-            vat_in_entries.append({
-                "date": si.get("date", "-"),
-                "description": f"VAT - {si.get('supplier_name', 'Supplier')}",
-                "ref": "PINV",
-                "amount": vat
-            })
-    vat_in_total = sum(e["amount"] for e in vat_in_entries)
-    if vat_in_entries:
-        tb_accounts["1400"] = {"name": "VAT Input", "type": "asset", "debit": vat_in_total, "credit": 0, "entries": vat_in_entries}
+    def add_account(code, name, debit=0, credit=0, acc_type=""):
+        if code not in tb_accounts:
+            tb_accounts[code] = {"name": name, "debit": 0, "credit": 0, "type": acc_type}
+        tb_accounts[code]["debit"] += debit
+        tb_accounts[code]["credit"] += credit
     
-    # 2000 - Creditors Control (from suppliers with balance)
-    creditor_entries = []
-    for s in suppliers:
-        bal = float(s.get("balance", 0))
-        if bal > 0:
-            creditor_entries.append({
-                "date": "-",
-                "description": s.get("name", "Supplier"),
-                "ref": "BAL",
-                "amount": bal
-            })
-    creditors_total = sum(e["amount"] for e in creditor_entries)
-    if creditor_entries:
-        tb_accounts["2000"] = {"name": "Creditors Control", "type": "liability", "debit": 0, "credit": creditors_total, "entries": creditor_entries}
+    # Load imported opening balances
+    for oe in opening_entries:
+        acc_name = oe.get("account", "Unknown")
+        acc_code = oe.get("account_code", "") or oe.get("code", "")
+        debit = float(oe.get("debit", 0) or 0)
+        credit = float(oe.get("credit", 0) or 0)
+        
+        if not acc_code:
+            acc_code = f"9{len(tb_accounts):03d}"
+        
+        add_account(acc_code, acc_name, debit, credit)
     
-    # 2100 - VAT Output (from invoices AND POS sales)
-    vat_out_entries = []
-    for inv in invoices:
-        if inv.get("status") != "credited":
-            vat = float(inv.get("vat", 0))
-            if vat > 0:
-                vat_out_entries.append({
-                    "date": inv.get("date", "-"),
-                    "description": f"VAT - {inv.get('invoice_number', '-')}",
-                    "ref": inv.get("invoice_number", "-"),
-                    "amount": vat
-                })
-    # Add POS sales VAT
-    for s in sales:
-        vat = float(s.get("vat", 0))
-        if vat > 0:
-            vat_out_entries.append({
-                "date": s.get("date", "-"),
-                "description": f"VAT - POS {s.get('sale_number', 'Sale')}",
-                "ref": "POS",
-                "amount": vat
-            })
-    vat_out_total = sum(e["amount"] for e in vat_out_entries)
-    if vat_out_entries:
-        tb_accounts["2100"] = {"name": "VAT Output", "type": "liability", "debit": 0, "credit": vat_out_total, "entries": vat_out_entries}
-    
-    # 4000 - Sales (from invoices)
-    sales_entries = []
-    for inv in invoices:
-        if inv.get("status") != "credited":
-            sales_entries.append({
-                "date": inv.get("date", "-"),
-                "description": f"{inv.get('invoice_number', '-')} - {inv.get('customer_name', 'Customer')}",
-                "ref": inv.get("invoice_number", "-"),
-                "amount": float(inv.get("subtotal", 0))
-            })
-    sales_total = sum(e["amount"] for e in sales_entries)
-    if sales_entries:
-        tb_accounts["4000"] = {"name": "Sales", "type": "income", "debit": 0, "credit": sales_total, "entries": sales_entries}
-    
-    # 4100 - POS Sales (ex VAT amounts)
-    pos_entries = []
-    for s in sales:
-        pos_entries.append({
-            "date": s.get("date", "-"),
-            "description": f"POS - {s.get('customer_name', 'Cash')}",
-            "ref": "POS",
-            "amount": float(s.get("subtotal", 0))  # Ex VAT
-        })
-    pos_total = sum(e["amount"] for e in pos_entries)
-    if pos_entries:
-        tb_accounts["4100"] = {"name": "POS Sales", "type": "income", "debit": 0, "credit": pos_total, "entries": pos_entries}
-    
-    # 5100 - Purchases (from supplier invoices)
-    purchase_entries = []
-    for si in supplier_invoices:
-        purchase_entries.append({
-            "date": si.get("date", "-"),
-            "description": f"Purchase - {si.get('supplier_name', 'Supplier')}",
-            "ref": "PINV",
-            "amount": float(si.get("subtotal", si.get("total", 0))) - float(si.get("vat", 0))
-        })
-    purchase_total = sum(e["amount"] for e in purchase_entries)
-    if purchase_entries:
-        tb_accounts["5100"] = {"name": "Purchases", "type": "expense", "debit": purchase_total, "credit": 0, "entries": purchase_entries}
-    
-    # 6000 - Operating Expenses
-    expense_entries = []
-    for exp in expenses:
-        expense_entries.append({
-            "date": exp.get("date", "-"),
-            "description": f"{exp.get('category', 'General')}: {exp.get('description', '-')[:25]}",
-            "ref": "EXP",
-            "amount": float(exp.get("amount", 0))
-        })
-    expense_total = sum(e["amount"] for e in expense_entries)
-    if expense_entries:
-        tb_accounts["6000"] = {"name": "Operating Expenses", "type": "expense", "debit": expense_total, "credit": 0, "entries": expense_entries}
+    # If no imported TB, build from live data
+    if not opening_entries:
+        debtors_total = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
+        if debtors_total > 0:
+            add_account("1200", "Debtors Control", debit=debtors_total)
+        
+        creditors_total = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
+        if creditors_total > 0:
+            add_account("3000", "Creditors Control", credit=creditors_total)
+        
+        sales_total = sum(float(inv.get("subtotal", 0)) for inv in invoices if inv.get("status") != "credited")
+        sales_total += sum(float(s.get("subtotal", 0)) for s in sales)
+        if sales_total > 0:
+            add_account("5000", "Sales", credit=sales_total)
+        
+        exp_total = sum(float(e.get("amount", 0)) for e in expenses)
+        if exp_total > 0:
+            add_account("6000", "Operating Expenses", debit=exp_total)
     
     # Calculate totals
     total_debit = sum(acc.get("debit", 0) for acc in tb_accounts.values())
     total_credit = sum(acc.get("credit", 0) for acc in tb_accounts.values())
-    
-    # Build accordion HTML (same style as GL)
-    accounts_html = ""
-    for code in sorted(tb_accounts.keys()):
-        acc = tb_accounts[code]
-        entries = acc.get("entries", [])
-        debit = acc.get("debit", 0)
-        credit = acc.get("credit", 0)
-        
-        # Build transaction rows
-        trans_rows = ""
-        for e in entries[:30]:
-            amt = e.get("amount", 0)
-            trans_rows += f'''
-            <tr>
-                <td>{e.get("date", "-")}</td>
-                <td>{safe_string(e.get("description", "-"))}</td>
-                <td>{e.get("ref", "-")}</td>
-                <td style="text-align:right;">{money(abs(amt))}</td>
-            </tr>
-            '''
-        
-        accounts_html += f'''
-        <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-            <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                    <span><strong>{code}</strong> - {acc["name"]} ({len(entries)})</span>
-                    <span style="text-align:right;color:var(--green);">{money(debit) if debit else "-"}</span>
-                    <span style="text-align:right;color:var(--red);">{money(credit) if credit else "-"}</span>
-                </div>
-            </summary>
-            <div style="padding:0 10px 8px 10px;">
-                <table class="table" style="font-size:11px;">
-                    <thead>
-                        <tr>
-                            <th style="padding:4px;">Date</th>
-                            <th style="padding:4px;">Description</th>
-                            <th style="padding:4px;">Ref</th>
-                            <th style="padding:4px;text-align:right;">Amount</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {trans_rows or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);'>No entries</td></tr>"}
-                    </tbody>
-                    <tfoot style="font-weight:bold;background:rgba(255,255,255,0.05);">
-                        <tr>
-                            <td colspan="3" style="padding:4px;">Total</td>
-                            <td style="padding:4px;text-align:right;">{money(debit or credit)}</td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-        </details>
-        '''
-    
-    if not accounts_html:
-        accounts_html = '''
-        <div class="card" style="text-align:center;padding:40px;">
-            <p style="color:var(--text-muted);">No transactions yet</p>
-            <p>Create invoices, expenses, or sales to see data here.</p>
-        </div>
-        '''
-    
-    # Check if balanced
     difference = abs(total_debit - total_credit)
-    balanced = difference < 0.01
+    is_balanced = difference < 0.01
     
-    # Header row - sticky and compact
-    header_row = '''
-    <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;font-weight:bold;">
-            <span>Account</span>
-            <span style="text-align:right;color:var(--green);">Debit</span>
-            <span style="text-align:right;color:var(--red);">Credit</span>
-        </div>
-    </div>
-    '''
+    # Build table rows
+    sorted_codes = sorted(tb_accounts.keys())
+    rows_html = ""
+    for code in sorted_codes:
+        acc = tb_accounts[code]
+        name = acc["name"]
+        debit = acc["debit"]
+        credit = acc["credit"]
+        
+        debit_str = f"R {debit:,.2f}" if debit > 0 else ""
+        credit_str = f"R {credit:,.2f}" if credit > 0 else ""
+        
+        rows_html += f'''
+        <tr>
+            <td style="font-family:monospace;color:var(--text-muted);">{code}</td>
+            <td>{safe_string(name)}</td>
+            <td style="text-align:right;">{debit_str}</td>
+            <td style="text-align:right;">{credit_str}</td>
+        </tr>
+        '''
     
-    # Totals row - compact
-    totals_row = f'''
-    <div style="margin-top:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;font-weight:bold;">
-            <span>TOTAL</span>
-            <span style="text-align:right;color:var(--green);">{money(total_debit)}</span>
-            <span style="text-align:right;color:var(--red);">{money(total_credit)}</span>
-        </div>
-    </div>
-    '''
+    if not tb_accounts:
+        rows_html = '''
+        <tr>
+            <td colspan="4" style="text-align:center;padding:40px;color:var(--text-muted);">
+                No trial balance data yet.<br><br>
+                <a href="/import">Import Opening Trial Balance</a>
+            </td>
+        </tr>
+        '''
+    
+    # Build TB data for AI analysis (JSON)
+    tb_data_json = json.dumps([
+        {"code": code, "name": acc["name"], "debit": acc["debit"], "credit": acc["credit"]}
+        for code, acc in sorted(tb_accounts.items())
+    ])
     
     content = f'''
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+    <style>
+    @media print {{
+        .no-print {{ display: none !important; }}
+        body {{ background: white !important; color: black !important; }}
+        .tb-table {{ border: 1px solid #333; }}
+        .tb-table th, .tb-table td {{ border: 1px solid #ccc; padding: 8px !important; }}
+    }}
+    .analysis-section {{ background: linear-gradient(135deg, rgba(139,92,246,0.1), rgba(99,102,241,0.05)); border: 1px solid rgba(139,92,246,0.3); border-radius: 12px; padding: 20px; margin-top: 20px; }}
+    .analysis-content {{ white-space: pre-wrap; line-height: 1.8; }}
+    .analysis-content h4 {{ color: var(--primary); margin-top: 20px; }}
+    </style>
+    
+    <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
         <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-        <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        <div style="display:flex;gap:10px;">
+            <button class="btn btn-primary" onclick="analyzeWithZane()" id="analyzeBtn">🤖 Analyze with Zane</button>
+            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        </div>
     </div>
     
-    <h2 style="margin-bottom:5px;">[CHART] Trial Balance</h2>
-    <p style="color:var(--text-muted);margin-bottom:15px;font-size:13px;">As at {today()} - Click on an account to see transactions</p>
-    
-    {header_row}
-    {accounts_html}
-    {totals_row}
-    
-    <div style="margin-top:15px;padding:12px;border-radius:6px;font-size:13px;background:{"rgba(16,185,129,0.1)" if balanced else "rgba(239,68,68,0.1)"};">
-        {"✓ Trial Balance is balanced" if balanced else f"[!] Difference: {money(difference)} - This is normal if you have outstanding invoices"}
+    <div class="card" style="padding:30px;">
+        <!-- HEADER -->
+        <div style="text-align:center;margin-bottom:30px;">
+            <h2 style="margin:0;">{safe_string(biz_name)}</h2>
+            <h3 style="margin:10px 0;color:var(--text-muted);font-weight:normal;">Trial Balance</h3>
+            <p style="color:var(--text-muted);margin:0;">As at {today()}</p>
+        </div>
+        
+        <!-- TABLE -->
+        <table class="table tb-table" style="width:100%;">
+            <thead>
+                <tr style="background:var(--bg);">
+                    <th style="width:100px;">Code</th>
+                    <th>Account</th>
+                    <th style="text-align:right;width:150px;">Debit (Dr)</th>
+                    <th style="text-align:right;width:150px;">Credit (Cr)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+            <tfoot>
+                <tr style="font-weight:bold;background:var(--bg);border-top:2px solid var(--border);">
+                    <td></td>
+                    <td>TOTAL</td>
+                    <td style="text-align:right;border-top:2px solid var(--text);">R {total_debit:,.2f}</td>
+                    <td style="text-align:right;border-top:2px solid var(--text);">R {total_credit:,.2f}</td>
+                </tr>
+            </tfoot>
+        </table>
+        
+        <!-- BALANCE STATUS -->
+        <div style="margin-top:20px;padding:15px;border-radius:8px;text-align:center;background:{"rgba(16,185,129,0.1)" if is_balanced else "rgba(239,68,68,0.1)"};">
+            {"✅ Trial Balance is balanced" if is_balanced else f"⚠️ Difference: R {difference:,.2f}"}
+        </div>
     </div>
+    
+    <!-- AI ANALYSIS SECTION -->
+    <div id="analysisSection" class="analysis-section" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;">🤖 Zane's Analysis</h3>
+            <span id="analysisDate" style="color:var(--text-muted);font-size:12px;"></span>
+        </div>
+        <div id="analysisContent" class="analysis-content">
+            <div style="text-align:center;padding:30px;">
+                <div class="spinner" style="border:3px solid rgba(139,92,246,0.3);border-top:3px solid #8b5cf6;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:0 auto 15px;"></div>
+                <p style="color:var(--text-muted);margin:0;">Zane is analyzing your trial balance...</p>
+            </div>
+        </div>
+    </div>
+    <style>@keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}</style>
+    
+    <script>
+    const tbData = {tb_data_json};
+    const totalDebit = {total_debit};
+    const totalCredit = {total_credit};
+    const isBalanced = {"true" if is_balanced else "false"};
+    
+    async function analyzeWithZane() {{
+        const btn = document.getElementById('analyzeBtn');
+        const section = document.getElementById('analysisSection');
+        const content = document.getElementById('analysisContent');
+        const dateSpan = document.getElementById('analysisDate');
+        
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Analyzing...';
+        section.style.display = 'block';
+        
+        try {{
+            const response = await fetch('/api/reports/tb/analyze', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{
+                    accounts: tbData,
+                    total_debit: totalDebit,
+                    total_credit: totalCredit,
+                    is_balanced: isBalanced
+                }})
+            }});
+            
+            const data = await response.json();
+            
+            if (data.success) {{
+                content.innerHTML = data.analysis;
+                dateSpan.innerHTML = 'Analyzed: ' + new Date().toLocaleString();
+            }} else {{
+                content.innerHTML = '<p style="color:var(--red);">❌ ' + (data.error || 'Analysis failed') + '</p>';
+            }}
+        }} catch (err) {{
+            content.innerHTML = '<p style="color:var(--red);">❌ Error: ' + err.message + '</p>';
+        }}
+        
+        btn.disabled = false;
+        btn.innerHTML = '🤖 Re-analyze';
+    }}
+    </script>
     '''
     
     return render_page("Trial Balance", content, user, "reports")
+
+
+@app.route("/api/reports/tb/analyze", methods=["POST"])
+@login_required
+def api_tb_analyze():
+    """AI Analysis of Trial Balance using Sonnet"""
+    
+    business = Auth.get_current_business()
+    biz_name = business.get("name", "Business") if business else "Business"
+    industry = business.get("industry", "general") if business else "general"
+    
+    try:
+        data = request.get_json()
+        accounts = data.get("accounts", [])
+        total_debit = data.get("total_debit", 0)
+        total_credit = data.get("total_credit", 0)
+        is_balanced = data.get("is_balanced", False)
+        
+        if not accounts:
+            return jsonify({"success": False, "error": "No trial balance data to analyze"})
+        
+        # Build TB text for analysis
+        tb_text = "TRIAL BALANCE\n"
+        tb_text += "=" * 60 + "\n"
+        tb_text += f"{'Code':<10} {'Account':<30} {'Debit':>12} {'Credit':>12}\n"
+        tb_text += "-" * 60 + "\n"
+        
+        for acc in accounts:
+            code = acc.get("code", "")
+            name = acc.get("name", "")[:30]
+            debit = acc.get("debit", 0)
+            credit = acc.get("credit", 0)
+            
+            debit_str = f"R {debit:,.2f}" if debit > 0 else ""
+            credit_str = f"R {credit:,.2f}" if credit > 0 else ""
+            
+            tb_text += f"{code:<10} {name:<30} {debit_str:>12} {credit_str:>12}\n"
+        
+        tb_text += "-" * 60 + "\n"
+        tb_text += f"{'TOTAL':<40} R {total_debit:>10,.2f} R {total_credit:>10,.2f}\n"
+        tb_text += "=" * 60 + "\n"
+        
+        # Calculate key metrics for context
+        assets = sum(a["debit"] for a in accounts if a["code"].startswith(("1", "2")) and a["debit"] > 0)
+        liabilities = sum(a["credit"] for a in accounts if a["code"].startswith("3") and a["credit"] > 0)
+        equity = sum(a["credit"] for a in accounts if a["code"].startswith("4") and a["credit"] > 0)
+        revenue = sum(a["credit"] for a in accounts if a["code"].startswith("5") and a["credit"] > 0)
+        cos = sum(a["debit"] for a in accounts if "cost of sales" in a["name"].lower() or a["code"].startswith("51"))
+        expenses = sum(a["debit"] for a in accounts if a["code"].startswith(("6", "7")) and a["debit"] > 0)
+        
+        # Build analysis prompt
+        prompt = f"""You are Zane, a senior Chartered Accountant (CA(SA)) with 20 years experience analyzing South African businesses. You have an MBA and specialize in SME financial analysis.
+
+Analyze this Trial Balance for {biz_name} (Industry: {industry}):
+
+{tb_text}
+
+KEY METRICS I'VE CALCULATED:
+- Total Assets: R {assets:,.2f}
+- Total Liabilities: R {liabilities:,.2f}  
+- Equity: R {equity:,.2f}
+- Revenue: R {revenue:,.2f}
+- Cost of Sales: R {cos:,.2f}
+- Operating Expenses: R {expenses:,.2f}
+- Gross Profit: R {revenue - cos:,.2f} ({((revenue - cos) / revenue * 100) if revenue > 0 else 0:.1f}%)
+- Net Profit: R {revenue - cos - expenses:,.2f}
+- Trial Balance Difference: R {abs(total_debit - total_credit):,.2f}
+
+Provide a comprehensive analysis in this EXACT format:
+
+## ⚠️ Key Observations
+
+[List 5-8 specific observations about this TB. Be specific with numbers. Include:]
+- Balance status (balanced/unbalanced)
+- Any missing accounts you'd expect
+- Large or unusual balances
+- VAT position (Input vs Output)
+- Debtors/Creditors concerns
+- Stock if present
+- Depreciation alignment
+
+## 📊 Financial Health Indicators
+
+[Analyze these metrics with industry context:]
+- Gross Profit Margin: X% (comment if good/bad for industry)
+- Current Ratio estimate
+- Debt to Equity
+- Any red flags
+
+## 💡 Recommendations
+
+**Immediate Actions Required:**
+[List 3-5 specific, actionable recommendations]
+
+**Month-End Procedures:**
+[What should be checked/done]
+
+## 🎯 Overall Assessment
+
+[2-3 sentences summarizing the financial position and any urgent concerns]
+
+---
+*Analysis by Zane | {today()}*
+
+Be specific, use the actual numbers, and provide actionable South African business advice. Reference SARS compliance where relevant (VAT, provisional tax, etc)."""
+
+        # Call Sonnet for analysis
+        if not ANTHROPIC_API_KEY:
+            return jsonify({"success": False, "error": "AI service not configured"})
+        
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        if message.content:
+            analysis = message.content[0].text
+            
+            # Convert markdown to HTML
+            analysis_html = analysis
+            analysis_html = re.sub(r'^## (.+)$', r'<h4>\1</h4>', analysis_html, flags=re.MULTILINE)
+            analysis_html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', analysis_html)
+            analysis_html = re.sub(r'^- (.+)$', r'• \1', analysis_html, flags=re.MULTILINE)
+            analysis_html = re.sub(r'\n\n', r'<br><br>', analysis_html)
+            
+            return jsonify({"success": True, "analysis": analysis_html})
+        else:
+            return jsonify({"success": False, "error": "No analysis generated"})
+        
+    except Exception as e:
+        logger.error(f"[TB ANALYZE] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
 
 
 # 
