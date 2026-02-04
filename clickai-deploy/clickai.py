@@ -5500,6 +5500,120 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                 ]
             }
         
+        # EMAIL INVOICE pattern - "email inv 0051 to email@email.com" or "send invoice X to email"
+        import re
+        email_inv_pattern = re.search(r'(?:email|send|stuur)\s*(?:inv|invoice|faktuur)\s*[#]?(\d+|[\w-]+)\s*(?:to|na|aan)\s*([\w\.-]+@[\w\.-]+)', msg_lower)
+        if email_inv_pattern or ('inv' in msg_lower and '@' in msg_lower):
+            # Try to extract invoice number and email
+            inv_num = None
+            to_email = None
+            
+            if email_inv_pattern:
+                inv_num = email_inv_pattern.group(1)
+                to_email = email_inv_pattern.group(2)
+            else:
+                # Fallback extraction
+                email_match = re.search(r'([\w\.-]+@[\w\.-]+)', msg_lower)
+                inv_match = re.search(r'(?:inv|invoice|faktuur)[#\s-]*(\d+)', msg_lower)
+                if email_match:
+                    to_email = email_match.group(1)
+                if inv_match:
+                    inv_num = inv_match.group(1)
+            
+            if inv_num and to_email:
+                # Find the invoice
+                biz_id = context.get("business_id")
+                invoices = db.get("invoices", {"business_id": biz_id})
+                invoice = None
+                
+                for inv in invoices:
+                    inv_number = inv.get("invoice_number", "")
+                    if inv_num in inv_number or inv_number.endswith(inv_num):
+                        invoice = inv
+                        break
+                
+                if invoice:
+                    # Build email content
+                    biz_name = context.get("business_name", "Business")
+                    inv_no = invoice.get("invoice_number", "")
+                    total = float(invoice.get("total", 0))
+                    date = invoice.get("date", today())
+                    cust_name = invoice.get("customer_name", "Customer")
+                    
+                    subject = f"Invoice {inv_no} from {biz_name}"
+                    
+                    body_html = f'''
+                    <html>
+                    <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
+                        <div style="max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
+                            <h2 style="color: #333;">Invoice {inv_no}</h2>
+                            
+                            <p>Dear {cust_name},</p>
+                            
+                            <p>Please find your invoice details below:</p>
+                            
+                            <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
+                                <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Invoice #:</strong></td><td>{inv_no}</td></tr>
+                                <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Date:</strong></td><td>{date}</td></tr>
+                                <tr><td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Amount:</strong></td><td style="font-size: 20px; font-weight: bold; color: #10b981;">R{total:,.2f}</td></tr>
+                            </table>
+                            
+                            <p>Thank you for your business!</p>
+                            
+                            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                            
+                            <p style="color: #888; font-size: 12px;">
+                                {biz_name}<br>
+                                Sent via Click AI
+                            </p>
+                        </div>
+                    </body>
+                    </html>
+                    '''
+                    
+                    body_text = f"Invoice {inv_no} from {biz_name}\n\nDear {cust_name},\n\nInvoice #: {inv_no}\nDate: {date}\nAmount: R{total:,.2f}\n\nThank you for your business!\n\n{biz_name}"
+                    
+                    # Get business for SMTP settings
+                    business = Auth.get_current_business()
+                    
+                    try:
+                        success = Email.send(to_email, subject, body_html, body_text, business=business)
+                        if success:
+                            return {
+                                "response": f"✅ **Invoice {inv_no} emailed to {to_email}!**",
+                                "actions_taken": [f"Emailed invoice to {to_email}"],
+                                "data": {"invoice_id": invoice.get("id"), "email": to_email},
+                                "suggestions": [{"label": "📄 View Invoice", "url": f"/invoice/{invoice.get('id')}"}]
+                            }
+                        else:
+                            return {
+                                "response": f"❌ **Email failed!**\n\nMake sure SMTP is configured in Settings.\n\nYou can also manually email from the invoice page.",
+                                "actions_taken": [],
+                                "data": {},
+                                "suggestions": [{"label": "⚙️ Settings", "url": "/settings"}, {"label": "📄 View Invoice", "url": f"/invoice/{invoice.get('id')}"}]
+                            }
+                    except Exception as e:
+                        return {
+                            "response": f"❌ **Email error:** {str(e)}\n\nCheck SMTP settings in Settings page.",
+                            "actions_taken": [],
+                            "data": {},
+                            "suggestions": [{"label": "⚙️ Settings", "url": "/settings"}]
+                        }
+                else:
+                    return {
+                        "response": f"❌ **Invoice {inv_num} not found.**\n\nTry the full invoice number like INV-00051.",
+                        "actions_taken": [],
+                        "data": {},
+                        "suggestions": [{"label": "📋 View Invoices", "url": "/invoices"}]
+                    }
+            elif to_email and not inv_num:
+                return {
+                    "response": f"📧 Which invoice do you want to send to {to_email}?\n\nTry: \"email inv 0051 to {to_email}\"",
+                    "actions_taken": [],
+                    "data": {},
+                    "suggestions": []
+                }
+        
         # Test scanner connection pattern
         if any(x in msg_lower for x in ["test scanner", "test connection", "check scanner", "is scanner working"]):
             result = Actions.test_scanner_connection({}, context)
@@ -11600,6 +11714,46 @@ select.form-input optgroup {
     
     th {
         background: #f5f5f5 !important;
+    }
+    
+    /* HIDE ALL SCROLLBARS AND SCROLL INDICATORS */
+    * {
+        overflow: visible !important;
+        scrollbar-width: none !important;
+        -ms-overflow-style: none !important;
+    }
+    *::-webkit-scrollbar {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+    }
+    
+    /* Hide scroll containers */
+    .main-scroll, [style*="overflow"], [style*="scroll"] {
+        overflow: visible !important;
+        max-height: none !important;
+        height: auto !important;
+    }
+    
+    /* PAGE BREAKS - Long invoices continue on next page */
+    table {
+        page-break-inside: auto !important;
+    }
+    tr {
+        page-break-inside: avoid !important;
+        page-break-after: auto !important;
+    }
+    thead {
+        display: table-header-group !important;
+    }
+    tfoot {
+        display: table-footer-group !important;
+    }
+    
+    /* Keep totals section together */
+    #invoiceTotals, #quoteTotals, .totals-section {
+        page-break-inside: avoid !important;
+        page-break-before: auto !important;
     }
     
     /* Links and status badges */
