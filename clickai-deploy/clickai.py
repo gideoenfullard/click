@@ -13961,8 +13961,36 @@ def customers_page():
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
         <h2 style="margin:0;">Customers ({total_customers})</h2>
         <div style="display:flex;gap:10px;">
-            <button class="btn btn-secondary" onclick="bulkEmailStatements()" title="Email statements to all customers with balance > 0">📧 Email All Statements</button>
+            <button class="btn btn-secondary" onclick="showEmailOptions()">📧 Email Statements</button>
             <a href="/customer/new" class="btn btn-primary">+ Add Customer</a>
+        </div>
+    </div>
+    
+    <!-- EMAIL OPTIONS MODAL -->
+    <div id="emailOptionsModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:400px;">
+            <h3 style="margin-top:0;">📧 Email Statements</h3>
+            <p style="color:var(--text-muted);margin-bottom:20px;">Choose who to email:</p>
+            
+            <div style="display:flex;flex-direction:column;gap:10px;">
+                <button onclick="bulkEmailStatements('all')" class="btn btn-secondary" style="width:100%;padding:15px;text-align:left;">
+                    📋 <strong>All Customers</strong><br>
+                    <small style="color:var(--text-muted);">{total_customers} customers (with email addresses)</small>
+                </button>
+                
+                <button onclick="bulkEmailStatements('debtors')" class="btn btn-primary" style="width:100%;padding:15px;text-align:left;background:var(--orange);">
+                    💰 <strong>Only Debtors</strong><br>
+                    <small style="color:rgba(255,255,255,0.8);">{len(debtors)} customers with outstanding balance</small>
+                </button>
+                
+                <div style="text-align:center;color:var(--text-muted);padding:10px;">— or —</div>
+                
+                <p style="color:var(--text-muted);font-size:13px;">To email one customer, click their name → Statement → 📧 Email</p>
+            </div>
+            
+            <div style="margin-top:20px;text-align:right;">
+                <button onclick="closeEmailOptions()" class="btn btn-secondary">Cancel</button>
+            </div>
         </div>
     </div>
     
@@ -13972,28 +14000,38 @@ def customers_page():
     {customers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No customers yet!</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/customer/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
     
     <script>
-    async function bulkEmailStatements() {{
-        const debtorCount = {len(debtors)};
-        if (debtorCount === 0) {{
-            alert('No customers with outstanding balances to email.');
+    function showEmailOptions() {{
+        document.getElementById('emailOptionsModal').style.display = 'flex';
+    }}
+    
+    function closeEmailOptions() {{
+        document.getElementById('emailOptionsModal').style.display = 'none';
+    }}
+    
+    async function bulkEmailStatements(mode) {{
+        const countText = mode === 'all' ? '{total_customers} customers' : '{len(debtors)} customers with balances';
+        
+        if (!confirm(`📧 Email statements to ${{countText}}?\\n\\nThis will send a statement to each customer who has an email address.`)) {{
             return;
         }}
         
-        if (!confirm(`📧 Email statements to ${{debtorCount}} customers with outstanding balances?\\n\\nThis will send a statement to each customer who has an email address and owes money.`)) {{
-            return;
-        }}
+        closeEmailOptions();
         
-        // Show progress
-        const btn = event.target;
-        btn.disabled = true;
-        btn.textContent = '📧 Sending...';
+        // Show progress overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'sendingOverlay';
+        overlay.innerHTML = '<div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:10000;display:flex;align-items:center;justify-content:center;"><div style="background:var(--card);padding:30px;border-radius:12px;text-align:center;"><div style="font-size:24px;margin-bottom:10px;">📧</div><div>Sending statements...</div></div></div>';
+        document.body.appendChild(overlay);
         
         try {{
             const response = await fetch('/api/customers/bulk-email-statements', {{
                 method: 'POST',
-                headers: {{'Content-Type': 'application/json'}}
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{mode: mode}})
             }});
             const result = await response.json();
+            
+            document.getElementById('sendingOverlay').remove();
             
             if (result.success) {{
                 alert(`✅ Statements sent!\\n\\n📧 Emailed: ${{result.sent}}\\n⏭️ Skipped (no email): ${{result.skipped}}\\n❌ Failed: ${{result.failed}}`);
@@ -14001,12 +14039,14 @@ def customers_page():
                 alert('❌ ' + (result.error || 'Failed to send statements'));
             }}
         }} catch (err) {{
+            document.getElementById('sendingOverlay')?.remove();
             alert('❌ Error: ' + err.message);
-        }} finally {{
-            btn.disabled = false;
-            btn.textContent = '📧 Email All Statements';
         }}
     }}
+    
+    document.addEventListener('keydown', function(e) {{
+        if (e.key === 'Escape') closeEmailOptions();
+    }});
     </script>
     '''
     
@@ -14941,20 +14981,30 @@ def api_customers_all():
 @app.route("/api/customers/bulk-email-statements", methods=["POST"])
 @login_required
 def api_customers_bulk_email_statements():
-    """Email statements to all customers with balance > 0 and email address"""
+    """Email statements to customers - mode: 'all' or 'debtors'"""
     try:
+        data = request.get_json() or {}
+        mode = data.get("mode", "debtors")  # default to debtors only
+        
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
         if not biz_id:
             return jsonify({"success": False, "error": "No business"})
         
-        # Get all customers with balance > 0
+        # Get all customers
         customers = db.get("customers", {"business_id": biz_id}) or []
-        debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
         
-        if not debtors:
-            return jsonify({"success": True, "sent": 0, "skipped": 0, "failed": 0, "message": "No customers with outstanding balances"})
+        # Filter based on mode
+        if mode == "all":
+            # All customers (with email)
+            target_customers = customers
+        else:
+            # Only debtors (balance > 0)
+            target_customers = [c for c in customers if float(c.get("balance", 0)) > 0]
+        
+        if not target_customers:
+            return jsonify({"success": True, "sent": 0, "skipped": 0, "failed": 0, "message": "No customers to email"})
         
         # Get all invoices for statement building
         all_invoices = db.get("invoices", {"business_id": biz_id}) or []
@@ -14963,7 +15013,7 @@ def api_customers_bulk_email_statements():
         skipped = 0
         failed = 0
         
-        for customer in debtors:
+        for customer in target_customers:
             email = customer.get("email", "").strip()
             
             if not email or "@" not in email:
@@ -14985,7 +15035,7 @@ def api_customers_bulk_email_statements():
                 failed += 1
                 logger.error(f"[BULK-EMAIL] Error sending to {customer.get('name')}: {e}")
         
-        logger.info(f"[BULK-EMAIL] Complete: sent={sent}, skipped={skipped}, failed={failed}")
+        logger.info(f"[BULK-EMAIL] Complete: mode={mode}, sent={sent}, skipped={skipped}, failed={failed}")
         
         return jsonify({
             "success": True,
@@ -15942,7 +15992,7 @@ def invoice_view(invoice_id):
             {dn_btn}
             {cn_btn}
             {email_btn}
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+            <button class="btn btn-secondary" onclick="printDocument();">🖨️ Print</button>
         </div>
     </div>
     
@@ -16101,6 +16151,56 @@ def invoice_view(invoice_id):
     document.addEventListener('keydown', function(e) {{
         if (e.key === 'Escape') closeEmailModal();
     }});
+    
+    // PRINT FUNCTION - Opens new window for reliable multi-page printing
+    function printDocument() {{
+        const content = document.getElementById('invoicePrint').innerHTML;
+        const printWindow = window.open('', '_blank', 'width=800,height=600');
+        
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Invoice</title>
+                <style>
+                    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                    body {{ 
+                        font-family: Arial, sans-serif; 
+                        padding: 20px;
+                        color: #333;
+                        background: white;
+                    }}
+                    table {{ 
+                        width: 100%; 
+                        border-collapse: collapse; 
+                        page-break-inside: auto;
+                    }}
+                    tr {{ page-break-inside: avoid; }}
+                    thead {{ display: table-header-group; }}
+                    th, td {{ 
+                        padding: 10px; 
+                        border-bottom: 1px solid #ddd; 
+                    }}
+                    th {{ background: #10b981; color: white; }}
+                    @media print {{
+                        body {{ padding: 0; }}
+                        @page {{ size: A4; margin: 15mm; }}
+                    }}
+                </style>
+            </head>
+            <body>${{content}}</body>
+            </html>
+        `);
+        
+        printWindow.document.close();
+        printWindow.focus();
+        
+        // Wait for content to load then print
+        setTimeout(function() {{
+            printWindow.print();
+            printWindow.close();
+        }}, 250);
+    }}
     </script>
     '''
     
@@ -17860,7 +17960,7 @@ def quote_view(quote_id):
         <a href="/quotes" style="color:var(--text-muted);">← Back to Quotes</a>
         <div style="display:flex;gap:10px;">
             <button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">📧 Email</button>
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+            <button class="btn btn-secondary" onclick="printDocument();">🖨️ Print</button>
             {action_buttons}
         </div>
     </div>
@@ -18014,6 +18114,55 @@ def quote_view(quote_id):
     document.addEventListener('keydown', function(e) {{
         if (e.key === 'Escape') closeEmailModal();
     }});
+    
+    // PRINT FUNCTION - Opens new window for reliable multi-page printing
+    function printDocument() {{
+        const content = document.getElementById('printArea').innerHTML;
+        const printWindow = window.open('', '_blank', 'width=800,height=600');
+        
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Quote</title>
+                <style>
+                    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                    body {{ 
+                        font-family: Arial, sans-serif; 
+                        padding: 20px;
+                        color: #333;
+                        background: white;
+                    }}
+                    table {{ 
+                        width: 100%; 
+                        border-collapse: collapse; 
+                        page-break-inside: auto;
+                    }}
+                    tr {{ page-break-inside: avoid; }}
+                    thead {{ display: table-header-group; }}
+                    th, td {{ 
+                        padding: 10px; 
+                        border-bottom: 1px solid #ddd; 
+                    }}
+                    th {{ background: #3b82f6; color: white; }}
+                    @media print {{
+                        body {{ padding: 0; }}
+                        @page {{ size: A4; margin: 15mm; }}
+                    }}
+                </style>
+            </head>
+            <body>${{content}}</body>
+            </html>
+        `);
+        
+        printWindow.document.close();
+        printWindow.focus();
+        
+        setTimeout(function() {{
+            printWindow.print();
+            printWindow.close();
+        }}, 250);
+    }}
     </script>
     '''
     
@@ -21464,13 +21613,30 @@ def customer_statement(customer_id):
     
     biz_name = business.get("name", "Business") if business else "Business"
     final_balance = float(customer.get("balance", 0))
+    cust_email = customer.get("email", "")
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <a href="/customer/{customer_id}" style="color:var(--text-muted);">-> Back to Customer</a>
+        <a href="/customer/{customer_id}" style="color:var(--text-muted);">← Back to Customer</a>
         <div style="display:flex;gap:10px;">
-            <button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Email statement to {safe_string(customer.get("name", ""))}';document.getElementById('sendBtn').click();"> Email Statement</button>
-            <button class="btn btn-secondary" onclick="window.print();"> Print</button>
+            <button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">📧 Email Statement</button>
+            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        </div>
+    </div>
+    
+    <!-- EMAIL MODAL -->
+    <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
+            <h3 style="margin-top:0;">📧 Email Statement</h3>
+            <p style="color:var(--text-muted);margin-bottom:20px;">Send statement to <strong>{safe_string(customer.get("name", ""))}</strong>:</p>
+            
+            <input type="email" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
+                   style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
+            
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="closeEmailModal()" class="btn btn-secondary">Cancel</button>
+                <button onclick="sendStatementEmail()" class="btn btn-primary" style="background:#10b981;">Send Email</button>
+            </div>
         </div>
     </div>
     
@@ -21519,9 +21685,102 @@ def customer_statement(customer_id):
             Generated by Click AI | {today()}
         </div>
     </div>
+    
+    <script>
+    function showEmailModal() {{
+        document.getElementById('emailModal').style.display = 'flex';
+        document.getElementById('emailTo').focus();
+    }}
+    
+    function closeEmailModal() {{
+        document.getElementById('emailModal').style.display = 'none';
+    }}
+    
+    async function sendStatementEmail() {{
+        const email = document.getElementById('emailTo').value.trim();
+        if (!email || !email.includes('@')) {{
+            alert('Please enter a valid email address');
+            return;
+        }}
+        
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = 'Sending...';
+        
+        try {{
+            const response = await fetch('/api/statement/{customer_id}/email', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{to_email: email}})
+            }});
+            const result = await response.json();
+            if (result.success) {{
+                alert('✅ Statement emailed to ' + email);
+                closeEmailModal();
+            }} else {{
+                alert('❌ ' + (result.error || 'Failed to send email'));
+            }}
+        }} catch (err) {{
+            alert('❌ Error: ' + err.message);
+        }} finally {{
+            btn.disabled = false;
+            btn.textContent = 'Send Email';
+        }}
+    }}
+    
+    document.addEventListener('keydown', function(e) {{
+        if (e.key === 'Escape') closeEmailModal();
+    }});
+    </script>
     '''
     
     return render_page("Statement", content, user, "customers")
+
+
+@app.route("/api/statement/<customer_id>/email", methods=["POST"])
+@login_required
+def api_statement_email(customer_id):
+    """Send statement to single customer via email"""
+    try:
+        data = request.get_json()
+        to_email = data.get("to_email", "").strip()
+        
+        if not to_email or "@" not in to_email:
+            return jsonify({"success": False, "error": "Valid email address required"})
+        
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        customer = db.get_one("customers", customer_id)
+        if not customer:
+            return jsonify({"success": False, "error": "Customer not found"})
+        
+        # Get customer's invoices
+        all_invoices = db.get("invoices", {"business_id": biz_id}) or []
+        cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer_id]
+        
+        # Use existing Email.send_statement method
+        try:
+            # Temporarily override customer email for this send
+            original_email = customer.get("email")
+            customer["email"] = to_email
+            
+            success = Email.send_statement(customer, cust_invoices, business)
+            
+            # Restore original email
+            customer["email"] = original_email
+            
+            if success:
+                logger.info(f"[EMAIL] Statement sent to {customer.get('name')} ({to_email})")
+                return jsonify({"success": True, "message": f"Statement sent to {to_email}"})
+            else:
+                return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings."})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+        
+    except Exception as e:
+        logger.error(f"[EMAIL] Error sending statement: {e}")
+        return jsonify({"success": False, "error": str(e)})
 
 
 # 
@@ -23517,6 +23776,8 @@ def api_po_email(po_id):
     try:
         business = Auth.get_current_business()
         biz_name = business.get("name", "Your Customer") if business else "Your Customer"
+        biz_phone = business.get("phone", "") if business else ""
+        biz_email = business.get("email", "") if business else ""
         
         po = db.get_one("purchase_orders", po_id)
         if not po:
@@ -23524,7 +23785,7 @@ def api_po_email(po_id):
         
         supplier_email = po.get("supplier_email", "")
         if not supplier_email:
-            return jsonify({"success": False, "error": "No supplier email address"})
+            return jsonify({"success": False, "error": "No supplier email address. Add email to supplier first."})
         
         # Build email body - NO PRICES
         try:
@@ -23532,6 +23793,15 @@ def api_po_email(po_id):
         except:
             items = []
         
+        # Build HTML items table
+        items_html = ""
+        for item in items:
+            code = item.get('code', '')
+            desc = item.get('description', '')
+            qty = item.get('qty') or item.get('quantity', 1)
+            items_html += f'<tr><td style="padding:10px;border-bottom:1px solid #eee;">{code}</td><td style="padding:10px;border-bottom:1px solid #eee;">{desc}</td><td style="padding:10px;border-bottom:1px solid #eee;text-align:center;">{qty}</td></tr>'
+        
+        # Plain text version
         items_text = ""
         for item in items:
             code = item.get('code', '')
@@ -23539,36 +23809,89 @@ def api_po_email(po_id):
             qty = item.get('qty') or item.get('quantity', 1)
             items_text += f"- {code} {desc}: Qty {qty}\n"
         
-        email_body = f"""
-Dear {po.get('supplier_name', 'Supplier')},
+        po_number = po.get('po_number', '')
+        supplier_name = po.get('supplier_name', 'Supplier')
+        expected_date = po.get('expected_date', '')
+        notes = po.get('notes', '')
+        
+        subject = f"Purchase Order {po_number} from {biz_name}"
+        
+        body_html = f'''
+        <html>
+        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
+            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
+                <div style="border-bottom: 2px solid #8b5cf6; padding-bottom: 15px; margin-bottom: 20px;">
+                    <h1 style="color: #8b5cf6; margin: 0;">PURCHASE ORDER</h1>
+                    <p style="margin: 5px 0; font-size: 18px; font-weight: bold;">{po_number}</p>
+                </div>
+                
+                <p>Dear {supplier_name},</p>
+                <p>Please find below our purchase order:</p>
+                
+                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                    <thead>
+                        <tr style="background: #8b5cf6; color: white;">
+                            <th style="padding: 10px; text-align: left;">Code</th>
+                            <th style="padding: 10px; text-align: left;">Description</th>
+                            <th style="padding: 10px; text-align: center;">Qty</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {items_html}
+                    </tbody>
+                </table>
+                
+                {f'<p><strong>Expected Delivery:</strong> {expected_date}</p>' if expected_date else ''}
+                {f'<p><strong>Notes:</strong> {notes}</p>' if notes else ''}
+                
+                <p style="margin-top: 30px;">Please confirm receipt of this order and provide your quotation.</p>
+                
+                <p>Thank you!</p>
+                
+                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                <p style="color: #888; font-size: 12px;">
+                    {biz_name}<br>
+                    {biz_phone}<br>
+                    {biz_email}<br>
+                    Sent via Click AI
+                </p>
+            </div>
+        </body>
+        </html>
+        '''
+        
+        body_text = f"""Purchase Order {po_number} from {biz_name}
 
-Please find below our Purchase Order {po.get('po_number')}:
+Dear {supplier_name},
+
+Please find below our purchase order:
 
 ITEMS REQUIRED:
 {items_text}
-{f"Expected delivery: {po.get('expected_date')}" if po.get('expected_date') else ""}
-{f"Notes: {po.get('notes')}" if po.get('notes') else ""}
+{f"Expected delivery: {expected_date}" if expected_date else ""}
+{f"Notes: {notes}" if notes else ""}
 
 Please confirm receipt of this order and provide your quotation.
 
 Thank you,
 {biz_name}
-        """.strip()
+{biz_phone}
+{biz_email}
+"""
         
-        Email.send(
-            to=supplier_email,
-            subject=f"Purchase Order {po.get('po_number')} from {biz_name}",
-            body=email_body
-        )
+        success = Email.send(supplier_email, subject, body_html, body_text, business=business)
         
-        # Update PO
-        po["emailed"] = True
-        po["emailed_at"] = now()
-        if po.get("status") == "draft":
-            po["status"] = "sent"
-        db.save("purchase_orders", po)
-        
-        return jsonify({"success": True, "message": f"PO emailed to {supplier_email}"})
+        if success:
+            # Update PO
+            db.update("purchase_orders", po_id, {
+                "emailed": True,
+                "emailed_at": now(),
+                "status": "sent" if po.get("status") == "draft" else po.get("status")
+            })
+            
+            return jsonify({"success": True, "message": f"PO emailed to {supplier_email}"})
+        else:
+            return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings."})
         
     except Exception as e:
         logger.error(f"[PO] Email failed: {e}")
@@ -26367,11 +26690,37 @@ def pos_page():
             const data = await response.json();
             
             if (data.success) {
-                alert('PO ' + data.po_number + ' created!');
                 clearCart();
-                if (confirm('Open PO now?')) {
+                
+                // Offer options: View, Email, or Done
+                const choice = prompt(
+                    'PO ' + data.po_number + ' created!\\n\\n' +
+                    'What would you like to do?\\n\\n' +
+                    '1 = Open PO\\n' +
+                    '2 = Email to Supplier\\n' +
+                    '3 = Done\\n\\n' +
+                    'Enter 1, 2, or 3:',
+                    '2'
+                );
+                
+                if (choice === '1') {
                     window.location = '/purchase/' + data.po_id;
+                } else if (choice === '2') {
+                    // Email PO directly
+                    try {
+                        const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST'});
+                        const emailData = await emailResp.json();
+                        if (emailData.success) {
+                            alert('✅ ' + emailData.message);
+                        } else {
+                            alert('❌ ' + emailData.error + '\\n\\nOpen PO to add supplier email.');
+                            window.location = '/purchase/' + data.po_id;
+                        }
+                    } catch(e) {
+                        alert('Email error: ' + e.message);
+                    }
                 }
+                // choice === '3' or cancelled = just stay on POS
             } else {
                 alert('Error: ' + (data.error || 'PO failed'));
             }
@@ -27317,9 +27666,33 @@ def pos_page():
             
             if (data.success) {
                 closeQuickPOModal();
-                alert('PO ' + data.po_number + ' created!');
-                if (confirm('Open PO now?')) {
+                
+                // Offer options: View, Email, or Done
+                const choice = prompt(
+                    'PO ' + data.po_number + ' created!\\n\\n' +
+                    'What would you like to do?\\n\\n' +
+                    '1 = Open PO\\n' +
+                    '2 = Email to Supplier\\n' +
+                    '3 = Done\\n\\n' +
+                    'Enter 1, 2, or 3:',
+                    '2'
+                );
+                
+                if (choice === '1') {
                     window.location = '/purchase/' + data.po_id;
+                } else if (choice === '2') {
+                    try {
+                        const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST'});
+                        const emailData = await emailResp.json();
+                        if (emailData.success) {
+                            alert('✅ ' + emailData.message);
+                        } else {
+                            alert('❌ ' + emailData.error + '\\n\\nOpen PO to add supplier email.');
+                            window.location = '/purchase/' + data.po_id;
+                        }
+                    } catch(e) {
+                        alert('Email error: ' + e.message);
+                    }
                 }
             } else {
                 alert('Error: ' + (data.error || 'PO creation failed'));
@@ -27660,6 +28033,78 @@ def pos_page():
         document.getElementById('printSlipModal').style.display = 'none';
         location.reload();
     }
+    
+    function showEmailSlipModal() {
+        // Try to get customer email if one was selected
+        const customer = getCurrentCustomer ? getCurrentCustomer() : {id: '', name: ''};
+        let customerEmail = '';
+        
+        // Look up customer email from customerData
+        try {
+            const customers = JSON.parse(document.getElementById('customerData').value);
+            const found = customers.find(c => c.id === customer.id);
+            if (found && found.email) customerEmail = found.email;
+        } catch(e) {}
+        
+        document.getElementById('slipEmailTo').value = customerEmail;
+        document.getElementById('emailSlipModal').style.display = 'flex';
+        document.getElementById('slipEmailTo').focus();
+    }
+    
+    function closeEmailSlipModal() {
+        document.getElementById('emailSlipModal').style.display = 'none';
+    }
+    
+    async function sendSlipEmail() {
+        const email = document.getElementById('slipEmailTo').value.trim();
+        if (!email || !email.includes('@')) {
+            alert('Please enter a valid email address');
+            return;
+        }
+        
+        if (!lastSaleData) {
+            alert('No sale data available');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/pos/email-slip', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    to_email: email,
+                    sale_number: lastSaleData.saleNum,
+                    sale_id: lastSaleData.saleId,
+                    customer_name: lastSaleData.customerName,
+                    items: lastSaleData.items,
+                    subtotal: lastSaleData.subtotal,
+                    vat: lastSaleData.vat,
+                    total: lastSaleData.total,
+                    payment_method: lastSaleData.method
+                })
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                alert('✅ Slip emailed to ' + email);
+                closeEmailSlipModal();
+            } else {
+                alert('❌ ' + (data.error || 'Failed to send email'));
+            }
+        } catch(e) {
+            alert('❌ Error: ' + e.message);
+        }
+    }
+    
+    // Add keyboard shortcut for email (4)
+    document.addEventListener('keydown', function(e) {
+        if (document.getElementById('printSlipModal').style.display === 'flex' && e.key === '4') {
+            showEmailSlipModal();
+        }
+        if (document.getElementById('emailSlipModal').style.display === 'flex' && e.key === 'Escape') {
+            closeEmailSlipModal();
+        }
+    });
     </script>
     
     <!-- Custom Item Modal - BIG & WELCOMING -->
@@ -27993,8 +28438,24 @@ def pos_page():
                     onblur="this.style.outline='none';this.style.transform='scale(1)'"
                     style="flex:1;padding:18px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;transition:transform 0.1s;">✕ Skip [3]</button>
             </div>
+            <div style="padding:10px 20px 20px 20px;border-top:1px solid #eee;">
+                <button onclick="showEmailSlipModal()" style="width:100%;padding:15px;border-radius:8px;border:2px solid #8b5cf6;background:white;color:#8b5cf6;cursor:pointer;font-size:14px;">📧 Email Slip to Customer [4]</button>
+            </div>
             <div style="text-align:center;padding:10px;color:#666;font-size:12px;">
-                Use Tab/Arrows to navigate • Enter to select • Or press 1, 2, 3
+                Use Tab/Arrows to navigate • Enter to select • Or press 1, 2, 3, 4
+            </div>
+        </div>
+    </div>
+    
+    <!-- Email Slip Modal -->
+    <div id="emailSlipModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:10000;justify-content:center;align-items:center;">
+        <div style="background:var(--card);border-radius:12px;max-width:400px;width:90%;padding:25px;">
+            <h3 style="margin:0 0 15px 0;">📧 Email Slip</h3>
+            <input type="email" id="slipEmailTo" placeholder="customer@email.com" 
+                   style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
+            <div style="display:flex;gap:10px;">
+                <button onclick="closeEmailSlipModal()" style="flex:1;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;">Cancel</button>
+                <button onclick="sendSlipEmail()" style="flex:1;padding:12px;border-radius:8px;border:none;background:#10b981;color:white;cursor:pointer;font-weight:bold;">Send</button>
             </div>
         </div>
     </div>
@@ -28537,6 +28998,99 @@ def view_sale(sale_id):
     '''
     
     return render_page(f"Sale {sale.get('sale_number', '')}", content, user, "pos")
+
+
+@app.route("/api/pos/email-slip", methods=["POST"])
+@login_required
+def api_pos_email_slip():
+    """Email POS slip to customer"""
+    try:
+        data = request.get_json()
+        to_email = data.get("to_email", "").strip()
+        
+        if not to_email or "@" not in to_email:
+            return jsonify({"success": False, "error": "Valid email address required"})
+        
+        business = Auth.get_current_business()
+        biz_name = business.get("name", "Business") if business else "Business"
+        biz_phone = business.get("phone", "") if business else ""
+        biz_vat = business.get("vat_number", "") if business else ""
+        
+        sale_number = data.get("sale_number", "")
+        customer_name = data.get("customer_name", "Customer")
+        items = data.get("items", [])
+        subtotal = float(data.get("subtotal", 0))
+        vat = float(data.get("vat", 0))
+        total = float(data.get("total", 0))
+        payment_method = data.get("payment_method", "cash")
+        
+        # Build items HTML
+        items_html = ""
+        for item in items:
+            desc = item.get("description") or item.get("code", "Item")
+            qty = item.get("quantity", 1)
+            price = float(item.get("price", 0))
+            line_total = float(item.get("total", price * qty))
+            items_html += f'<tr><td style="padding:8px;border-bottom:1px solid #eee;">{qty}x {desc}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">R{line_total:,.2f}</td></tr>'
+        
+        method_label = {"cash": "💵 Cash", "card": "💳 Card", "account": "📒 Account"}.get(payment_method, payment_method.upper())
+        
+        subject = f"Receipt {sale_number} from {biz_name}"
+        
+        body_html = f'''
+        <html>
+        <body style="font-family: 'Courier New', monospace; padding: 20px; background: #f5f5f5;">
+            <div style="max-width: 400px; margin: 0 auto; background: white; padding: 25px; border-radius: 8px; border: 1px solid #ddd;">
+                <div style="text-align: center; border-bottom: 2px dashed #333; padding-bottom: 15px; margin-bottom: 15px;">
+                    <div style="font-size: 24px; font-weight: bold;">{biz_name}</div>
+                    {f'<div style="color: #666;">Tel: {biz_phone}</div>' if biz_phone else ''}
+                    {f'<div style="color: #666;">VAT: {biz_vat}</div>' if biz_vat else ''}
+                    <div style="margin-top: 10px; font-size: 18px; font-weight: bold;">{sale_number}</div>
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <span style="background: #333; color: white; padding: 4px 8px; border-radius: 3px; font-size: 12px;">{method_label}</span>
+                    <span style="margin-left: 10px;">{customer_name}</span>
+                </div>
+                
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+                    {items_html}
+                </table>
+                
+                <div style="border-top: 2px dashed #333; padding-top: 10px;">
+                    <div style="display: flex; justify-content: space-between; color: #666; padding: 4px 0;">
+                        <span>Subtotal</span><span>R{subtotal:,.2f}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; color: #666; padding: 4px 0;">
+                        <span>VAT (15%)</span><span>R{vat:,.2f}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; font-size: 20px; font-weight: bold; margin-top: 10px;">
+                        <span>TOTAL</span><span>R{total:,.2f}</span>
+                    </div>
+                </div>
+                
+                <div style="text-align: center; margin-top: 15px; padding-top: 15px; border-top: 2px dashed #333; color: #666;">
+                    Thank you for your purchase!
+                </div>
+            </div>
+        </body>
+        </html>
+        '''
+        
+        body_text = f"Receipt {sale_number} from {biz_name}\n\nCustomer: {customer_name}\nPayment: {method_label}\n\nSubtotal: R{subtotal:,.2f}\nVAT: R{vat:,.2f}\nTOTAL: R{total:,.2f}\n\nThank you for your purchase!"
+        
+        success = Email.send(to_email, subject, body_html, body_text, business=business)
+        
+        if success:
+            logger.info(f"[POS] Slip {sale_number} emailed to {to_email}")
+            return jsonify({"success": True, "message": f"Slip emailed to {to_email}"})
+        else:
+            return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings."})
+        
+    except Exception as e:
+        logger.error(f"[POS] Email slip error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
 
 @app.route("/api/pos/sale", methods=["POST"])
 @login_required
