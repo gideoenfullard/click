@@ -159,6 +159,109 @@ class fulltech_addon:
         price = round((weight_g / 1000) * rkg, 2)
         return {"success": True, "m_size": m_size, "length": length, "weight_g": round(weight_g, 1), "rkg": rkg, "price": price}
     
+    @classmethod
+    def bulk_recalc_bolt_prices(cls, stock_items: list, rkg_tiers: dict = None, markup: float = 1.0) -> dict:
+        """
+        Bulk recalculate bolt/nut/washer prices based on weight with TIERED R/kg.
+        
+        Args:
+            stock_items: List of stock items from database
+            rkg_tiers: Dict with keys 'small' (M3-M6), 'medium' (M8-M12), 'large' (M14-M20), 'xl' (M22+)
+            markup: Markup multiplier (1.0 = no markup, 1.3 = 30% markup)
+        
+        Returns:
+            {"updated": [...], "skipped": [...], "errors": [...]}
+        """
+        import re
+        
+        # Default tiers if not provided
+        if rkg_tiers is None or isinstance(rkg_tiers, (int, float)):
+            # Backwards compatibility - single R/kg
+            single_rkg = float(rkg_tiers) if rkg_tiers else 250.0
+            rkg_tiers = {"small": single_rkg, "medium": single_rkg, "large": single_rkg, "xl": single_rkg}
+        
+        updated = []
+        skipped = []
+        errors = []
+        
+        # Patterns to match bolt/nut/washer codes
+        # Matches: M6x50, M8X70, BOLT M10x40, NUT M12, WASHER M8, etc.
+        bolt_pattern = re.compile(r'M(\d+)[xX](\d+)', re.IGNORECASE)
+        nut_pattern = re.compile(r'NUT.*M(\d+)|M(\d+).*NUT', re.IGNORECASE)
+        washer_pattern = re.compile(r'WASH.*M(\d+)|M(\d+).*WASH', re.IGNORECASE)
+        
+        def get_rkg_for_size(m_size):
+            """Get R/kg tier based on M-size"""
+            if m_size <= 6:
+                return rkg_tiers.get("small", 350)
+            elif m_size <= 12:
+                return rkg_tiers.get("medium", 280)
+            elif m_size <= 20:
+                return rkg_tiers.get("large", 220)
+            else:
+                return rkg_tiers.get("xl", 180)
+        
+        for item in stock_items:
+            code = item.get("code", "") or ""
+            desc = item.get("description", "") or ""
+            text = f"{code} {desc}".upper()
+            
+            item_type = None
+            m_size = None
+            length = None
+            
+            # Check what type of item
+            if "NUT" in text:
+                match = nut_pattern.search(text)
+                if match:
+                    m_size = int(match.group(1) or match.group(2))
+                    item_type = "nut"
+            elif "WASH" in text:
+                match = washer_pattern.search(text)
+                if match:
+                    m_size = int(match.group(1) or match.group(2))
+                    item_type = "washer"
+            else:
+                # Try bolt pattern
+                match = bolt_pattern.search(text)
+                if match:
+                    m_size = int(match.group(1))
+                    length = int(match.group(2))
+                    item_type = "bolt"
+            
+            if not item_type or not m_size:
+                skipped.append({"id": item.get("id"), "code": code, "reason": "No M-size pattern found"})
+                continue
+            
+            # Get R/kg for this size tier
+            rkg = get_rkg_for_size(m_size)
+            
+            # Calculate price
+            result = cls.calc_bolt_price(m_size, length, rkg, item_type)
+            
+            if not result.get("success"):
+                errors.append({"id": item.get("id"), "code": code, "error": result.get("error")})
+                continue
+            
+            new_price = round(result["price"] * markup, 2)
+            old_price = float(item.get("selling_price", 0) or 0)
+            
+            updated.append({
+                "id": item.get("id"),
+                "code": code,
+                "description": desc,
+                "item_type": item_type,
+                "m_size": m_size,
+                "length": length,
+                "weight_g": result["weight_g"],
+                "rkg": rkg,
+                "old_price": old_price,
+                "new_price": new_price,
+                "change": round(new_price - old_price, 2)
+            })
+        
+        return {"updated": updated, "skipped": skipped, "errors": errors}
+    
     # Cold rolled finishing (up to 3mm) - per sqm
     FINISH_COLD = {
         "N4 + PVC": 34.08, "N4 LASER PVC": 34.08, "LASER PVC": 28.78,
@@ -3029,6 +3132,93 @@ class Brain:
             context["delete_confirmed"] = True
             logger.info(f"[BRAIN] Delete confirmation detected: {msg_lower[:50]}")
         
+        # ═══════════════════════════════════════════════════════════════════
+        # SMART PRE-CHECK - Catch common issues BEFORE calling AI
+        # This prevents crashes/confusion when user asks why things don't work
+        # ═══════════════════════════════════════════════════════════════════
+        
+        # Check if user is asking about problems/issues
+        problem_keywords = ["why can't", "hoekom kan", "doesn't work", "werk nie", "disabled", 
+                          "can't create", "kan nie maak", "not working", "wat is fout", 
+                          "what's wrong", "button", "knoppie", "invoice", "faktuur", "quote", "kwotasie",
+                          "help me", "wat aangaan", "what happened", "what's happening"]
+        is_asking_about_problem = any(kw in msg_lower for kw in problem_keywords)
+        
+        # Check business state
+        stock_count = context.get("stock_count", 0)
+        customer_count = context.get("customer_count", 0)
+        current_page = context.get("current_page", "")
+        
+        # If asking about problems and no stock exists
+        if is_asking_about_problem and stock_count == 0:
+            is_afrikaans = any(w in msg_lower for w in ["hoekom", "wat", "kan", "nie", "faktuur", "kwotasie"])
+            
+            if is_afrikaans:
+                response = """🚨 **Probleem gevind:** Daar's geen stock in jou sisteem nie!
+
+Jy kan nie invoices of quotes maak sonder stock items nie. 
+
+**Wat om te doen:**
+1. Gaan na Stock → Import Stock (of click hierdie link: /import)
+2. Of voeg stock handmatig by: /stock/new
+3. Of sê vir my: "Add stock item M10x50 bolt at R5.00"
+
+Sodra jy stock het, sal alles werk! 🔧"""
+            else:
+                response = """🚨 **Problem found:** There's no stock in your system!
+
+You can't create invoices or quotes without stock items.
+
+**What to do:**
+1. Go to Stock → Import Stock (or click: /import)
+2. Or add stock manually: /stock/new  
+3. Or tell me: "Add stock item M10x50 bolt at R5.00"
+
+Once you have stock, everything will work! 🔧"""
+            
+            logger.info(f"[BRAIN] Pre-check caught: No stock, user asking about problems")
+            return {
+                "response": response,
+                "actions_taken": [],
+                "data": {"issue": "no_stock", "stock_count": 0},
+                "suggestions": ["Import stock from CSV", "Add stock manually"]
+            }
+        
+        # If asking about invoice problems but no customers
+        if is_asking_about_problem and customer_count == 0 and stock_count > 0:
+            is_afrikaans = any(w in msg_lower for w in ["hoekom", "wat", "kan", "nie", "faktuur", "kwotasie"])
+            
+            if is_afrikaans:
+                response = f"""🚨 **Probleem gevind:** Daar's geen customers in jou sisteem nie!
+
+Jy het {stock_count} stock items, maar jy kan nie invoices maak sonder customers nie.
+
+**Wat om te doen:**
+1. Gaan na Customers → Add Customer
+2. Of import customers: /import
+3. Of in POS: druk F8 en kies "+ Add New"
+
+Sodra jy 'n customer het, kan jy invoice! 📝"""
+            else:
+                response = f"""🚨 **Problem found:** There's no customers in your system!
+
+You have {stock_count} stock items, but you can't create invoices without customers.
+
+**What to do:**
+1. Go to Customers → Add Customer
+2. Or import customers: /import
+3. Or in POS: press F8 and select "+ Add New"
+
+Once you have a customer, you can invoice! 📝"""
+            
+            logger.info(f"[BRAIN] Pre-check caught: No customers, user asking about problems")
+            return {
+                "response": response,
+                "actions_taken": [],
+                "data": {"issue": "no_customers", "customer_count": 0},
+                "suggestions": ["Add customer", "Import customers"]
+            }
+        
         # Stock search - "do we have X", "any X in stock", "how many X", "price of X", "wat kos X", etc.
         # BUT NOT for quote/invoice creation requests!
         is_quote_or_invoice = any(kw in msg_lower for kw in ["quote vir", "quote for", "quote op", "quote on", "kwotasie vir", "invoice vir", "invoice for", "invoice op", "faktuur vir", "create quote", "create invoice", "maak quote", "maak faktuur", "maak kwotasie"])
@@ -4093,6 +4283,15 @@ Based on current_page, adjust your help:
 - "/dashboard" or "/" → User is on dashboard. Give overview help.
 - "/settings" → User is configuring settings.
 - "/reports" → User wants reports. Suggest available reports.
+
+**🚨 POS PAGE SPECIAL RULES (/pos):**
+When user is on /pos page:
+1. **NEVER navigate away** - they will lose their cart and customer selection!
+2. **NEVER include "navigate" in your response** - just answer their question
+3. If they ask "why can't I create invoice?" - explain: "You need items in your cart first. Search for stock items at the top and click to add them. Then you can create an invoice."
+4. If they ask about buttons being disabled: Invoice/Account buttons need a customer selected (F8). Cash/Card buttons work without customer.
+5. Be brief and helpful - they're busy selling!
+6. If they created a customer and it "disappeared" - explain: "Your customer selection is still there! Just click the Customer button (F8) to see them. The cart being empty just means you need to add items."
 
 {get_steel_context()}
 
@@ -5486,13 +5685,31 @@ class Actions:
         if not customer_name or amount <= 0:
             return {"success": False, "message": "Need customer name and amount"}
         
-        # Find customer
+        # Find customer - try exact match first, then partial
         customers = db.get("customers", {"business_id": biz_id})
         customer = None
+        
+        # First try exact match (case insensitive)
         for c in customers:
-            if customer_name.lower() in c.get("name", "").lower():
+            if customer_name.lower() == c.get("name", "").lower():
                 customer = c
                 break
+        
+        # If no exact match, try partial match
+        if not customer:
+            for c in customers:
+                if customer_name.lower() in c.get("name", "").lower():
+                    customer = c
+                    break
+        
+        # If still no customer found, return helpful message
+        if not customer:
+            # Get similar customers for suggestion
+            similar = [c.get("name") for c in customers if any(word.lower() in c.get("name", "").lower() for word in customer_name.split())][:3]
+            if similar:
+                return {"success": False, "message": f"Customer '{customer_name}' not found. Did you mean: {', '.join(similar)}? You can also go to Customers and create them first."}
+            else:
+                return {"success": False, "message": f"Customer '{customer_name}' not found. Please create them first at /customers or use POS to add a quick customer."}
         
         # Prices are EXCL VAT - ADD VAT
         # 'amount' is sum of line items (EXCL VAT)
@@ -12203,8 +12420,11 @@ How can I assist you?</div>
             
             // ═══════════════════════════════════════════════════════════
             // ZANE NAVIGATION - He can take you places and show you what to click!
+            // Only navigate if action was SUCCESSFUL, not on errors
+            // NEVER navigate away from POS - user will lose cart/customer!
             // ═══════════════════════════════════════════════════════════
-            if (data.navigate) {
+            const onPOS = window.location.pathname === '/pos' || window.location.pathname.startsWith('/pos/');
+            if (data.navigate && !data.error && !onPOS && data.response && !data.response.includes('not found') && !data.response.includes('Error')) {
                 // Only navigate if it's a valid path and we're not already there
                 const targetPath = data.navigate;
                 const currentPath = window.location.pathname;
@@ -12249,8 +12469,10 @@ How can I assist you?</div>
             }
             
         } catch (e) {
-            document.getElementById('zaneLoading').remove();
-            body.innerHTML += `<div class="zane-msg zane">Sorry, something went wrong.</div>`;
+            console.error('Zane error:', e);
+            const loadingEl = document.getElementById('zaneLoading');
+            if (loadingEl) loadingEl.remove();
+            body.innerHTML += `<div class="zane-msg zane">Sorry, something went wrong. Please try again.</div>`;
         }
     }
     
@@ -13742,6 +13964,7 @@ def stock_page():
                     style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);">
                     <option value="">All Categories</option>
                 </select>
+                <a href="/fulltech" class="btn" style="background:#8b5cf6;">🔩 Bolt Pricer</a>
                 <a href="/stock/new" class="btn btn-primary">+ Add Stock</a>
             </div>
         </div>
@@ -14011,6 +14234,282 @@ def stock_new():
     '''
     
     return render_page("Add Stock", content, user, "stock")
+
+
+# ═══════════════════════════════════════════════════════════════
+# FULLTECH TOOLS - Bolt Weight Calculator & Price Recalculator
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/fulltech")
+@login_required
+def fulltech_tools():
+    """Fulltech addon tools - bolt pricing, weight calculations"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    
+    content = f'''
+    <div class="card" style="margin-bottom:20px;">
+        <h2 style="margin:0 0 10px 0;">🔩 Fulltech Tools</h2>
+        <p style="color:#888;">Weight-based pricing for bolts, nuts, and washers</p>
+    </div>
+    
+    <div class="card">
+        <h3>⚖️ Bolt Price Calculator</h3>
+        <p style="color:#888;margin-bottom:20px;">Calculate individual bolt/nut/washer prices based on weight</p>
+        
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin-bottom:20px;">
+            <div>
+                <label style="display:block;margin-bottom:5px;color:#888;">Type</label>
+                <select id="calcType" class="form-control" style="width:100%;padding:10px;">
+                    <option value="bolt">Bolt</option>
+                    <option value="nut">Nut</option>
+                    <option value="washer">Washer</option>
+                </select>
+            </div>
+            <div>
+                <label style="display:block;margin-bottom:5px;color:#888;">M Size</label>
+                <select id="calcSize" class="form-control" style="width:100%;padding:10px;">
+                    <option value="3">M3</option>
+                    <option value="4">M4</option>
+                    <option value="5">M5</option>
+                    <option value="6" selected>M6</option>
+                    <option value="8">M8</option>
+                    <option value="10">M10</option>
+                    <option value="12">M12</option>
+                    <option value="14">M14</option>
+                    <option value="16">M16</option>
+                    <option value="18">M18</option>
+                    <option value="20">M20</option>
+                    <option value="22">M22</option>
+                    <option value="24">M24</option>
+                    <option value="27">M27</option>
+                    <option value="30">M30</option>
+                </select>
+            </div>
+            <div id="lengthDiv">
+                <label style="display:block;margin-bottom:5px;color:#888;">Length (mm)</label>
+                <input type="number" id="calcLength" class="form-control" value="50" min="5" max="200" style="width:100%;padding:10px;">
+            </div>
+            <div>
+                <label style="display:block;margin-bottom:5px;color:#888;">R/kg</label>
+                <input type="number" id="calcRkg" class="form-control" value="250" step="10" style="width:100%;padding:10px;">
+            </div>
+        </div>
+        
+        <button onclick="calcBoltPrice()" class="btn btn-primary" style="margin-bottom:20px;">Calculate</button>
+        
+        <div id="calcResult" style="display:none;padding:20px;background:rgba(16,185,129,0.1);border-radius:8px;border:1px solid rgba(16,185,129,0.3);">
+        </div>
+    </div>
+    
+    <div class="card" style="margin-top:20px;">
+        <h3>🔄 Bulk Recalculate Stock Prices</h3>
+        <p style="color:#888;margin-bottom:20px;">Recalculate ALL bolt/nut/washer prices in your stock based on weight. Smaller sizes = higher R/kg (more work per kg).</p>
+        
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:15px;margin-bottom:20px;">
+            <div style="background:rgba(239,68,68,0.1);padding:15px;border-radius:8px;border:1px solid rgba(239,68,68,0.3);">
+                <label style="display:block;margin-bottom:5px;color:#ef4444;font-weight:bold;">M3 - M6</label>
+                <input type="number" id="rkgSmall" class="form-control" value="350" step="10" style="width:100%;padding:10px;">
+                <small style="color:#888;">Small fasteners</small>
+            </div>
+            <div style="background:rgba(251,191,36,0.1);padding:15px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);">
+                <label style="display:block;margin-bottom:5px;color:#fbbf24;font-weight:bold;">M8 - M12</label>
+                <input type="number" id="rkgMedium" class="form-control" value="280" step="10" style="width:100%;padding:10px;">
+                <small style="color:#888;">Medium fasteners</small>
+            </div>
+            <div style="background:rgba(16,185,129,0.1);padding:15px;border-radius:8px;border:1px solid rgba(16,185,129,0.3);">
+                <label style="display:block;margin-bottom:5px;color:#10b981;font-weight:bold;">M14 - M20</label>
+                <input type="number" id="rkgLarge" class="form-control" value="220" step="10" style="width:100%;padding:10px;">
+                <small style="color:#888;">Large fasteners</small>
+            </div>
+            <div style="background:rgba(59,130,246,0.1);padding:15px;border-radius:8px;border:1px solid rgba(59,130,246,0.3);">
+                <label style="display:block;margin-bottom:5px;color:#3b82f6;font-weight:bold;">M22+</label>
+                <input type="number" id="rkgXL" class="form-control" value="180" step="10" style="width:100%;padding:10px;">
+                <small style="color:#888;">Extra large</small>
+            </div>
+            <div>
+                <label style="display:block;margin-bottom:5px;color:#888;">Markup %</label>
+                <input type="number" id="bulkMarkup" class="form-control" value="30" step="5" style="width:100%;padding:10px;">
+                <small style="color:#666;">30% = cost × 1.30</small>
+            </div>
+        </div>
+        
+        <button onclick="previewRecalc()" class="btn btn-primary" style="margin-right:10px;">Preview Changes</button>
+        <button onclick="applyRecalc()" class="btn" style="background:#ef4444;" id="applyBtn" disabled>Apply Changes</button>
+        
+        <div id="recalcResult" style="margin-top:20px;"></div>
+    </div>
+    
+    <script>
+    document.getElementById('calcType').addEventListener('change', function() {{
+        document.getElementById('lengthDiv').style.display = this.value === 'bolt' ? 'block' : 'none';
+    }});
+    
+    async function calcBoltPrice() {{
+        const type = document.getElementById('calcType').value;
+        const size = document.getElementById('calcSize').value;
+        const length = document.getElementById('calcLength').value;
+        const rkg = document.getElementById('calcRkg').value;
+        
+        const res = await fetch('/api/fulltech/calc-bolt?' + new URLSearchParams({{
+            type, m_size: size, length, rkg
+        }}));
+        const data = await res.json();
+        
+        const div = document.getElementById('calcResult');
+        if (data.success) {{
+            div.innerHTML = `
+                <div style="font-size:24px;font-weight:bold;color:#10b981;margin-bottom:10px;">
+                    R${{data.price.toFixed(2)}}
+                </div>
+                <div style="color:#888;">
+                    ${{type === 'bolt' ? 'M' + size + 'x' + length : type.toUpperCase() + ' M' + size}}<br>
+                    Weight: ${{data.weight_g}}g<br>
+                    @ R${{rkg}}/kg
+                </div>
+            `;
+        }} else {{
+            div.innerHTML = `<div style="color:#ef4444;">${{data.error}}</div>`;
+        }}
+        div.style.display = 'block';
+    }}
+    
+    let pendingUpdates = [];
+    
+    async function previewRecalc() {{
+        const rkgSmall = document.getElementById('rkgSmall').value;
+        const rkgMedium = document.getElementById('rkgMedium').value;
+        const rkgLarge = document.getElementById('rkgLarge').value;
+        const rkgXL = document.getElementById('rkgXL').value;
+        const markup = 1 + (parseFloat(document.getElementById('bulkMarkup').value) / 100);
+        
+        document.getElementById('recalcResult').innerHTML = '<div style="text-align:center;padding:20px;">⏳ Analysing stock...</div>';
+        
+        const res = await fetch('/api/fulltech/preview-recalc?' + new URLSearchParams({{ 
+            rkg_small: rkgSmall, rkg_medium: rkgMedium, rkg_large: rkgLarge, rkg_xl: rkgXL, markup 
+        }}));
+        const data = await res.json();
+        
+        pendingUpdates = data.updated || [];
+        
+        let html = '<div style="margin-bottom:15px;padding:15px;background:rgba(59,130,246,0.1);border-radius:8px;">';
+        html += `<strong>${{data.updated?.length || 0}}</strong> items will be updated<br>`;
+        html += `<strong>${{data.skipped?.length || 0}}</strong> items skipped (no M-size pattern)<br>`;
+        html += `<strong>${{data.errors?.length || 0}}</strong> errors`;
+        html += '</div>';
+        
+        if (data.updated?.length > 0) {{
+            html += '<table style="width:100%;border-collapse:collapse;font-size:14px;">';
+            html += '<tr style="background:#333;"><th style="padding:10px;text-align:left;">Code</th><th>Type</th><th>Weight</th><th>R/kg</th><th style="text-align:right;">Old Price</th><th style="text-align:right;">New Price</th><th style="text-align:right;">Change</th></tr>';
+            
+            data.updated.slice(0, 50).forEach(item => {{
+                const changeColor = item.change > 0 ? '#10b981' : item.change < 0 ? '#ef4444' : '#888';
+                html += `<tr style="border-bottom:1px solid #333;">
+                    <td style="padding:8px;">${{item.code}}</td>
+                    <td style="text-align:center;">${{item.item_type}} M${{item.m_size}}${{item.length ? 'x' + item.length : ''}}</td>
+                    <td style="text-align:center;">${{item.weight_g}}g</td>
+                    <td style="text-align:center;color:#888;">R${{item.rkg}}</td>
+                    <td style="text-align:right;">R${{item.old_price.toFixed(2)}}</td>
+                    <td style="text-align:right;font-weight:bold;">R${{item.new_price.toFixed(2)}}</td>
+                    <td style="text-align:right;color:${{changeColor}};">${{item.change > 0 ? '+' : ''}}R${{item.change.toFixed(2)}}</td>
+                </tr>`;
+            }});
+            
+            if (data.updated.length > 50) {{
+                html += `<tr><td colspan="7" style="padding:10px;text-align:center;color:#888;">... and ${{data.updated.length - 50}} more items</td></tr>`;
+            }}
+            html += '</table>';
+            
+            document.getElementById('applyBtn').disabled = false;
+        }}
+        
+        document.getElementById('recalcResult').innerHTML = html;
+    }}
+    
+    async function applyRecalc() {{
+        if (!confirm('This will update ' + pendingUpdates.length + ' stock prices. Continue?')) return;
+        
+        document.getElementById('applyBtn').disabled = true;
+        document.getElementById('applyBtn').textContent = 'Applying...';
+        
+        const res = await fetch('/api/fulltech/apply-recalc', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{ updates: pendingUpdates }})
+        }});
+        const data = await res.json();
+        
+        if (data.success) {{
+            alert('✅ Updated ' + data.count + ' stock prices!');
+            location.reload();
+        }} else {{
+            alert('Error: ' + data.error);
+            document.getElementById('applyBtn').disabled = false;
+            document.getElementById('applyBtn').textContent = 'Apply Changes';
+        }}
+    }}
+    </script>
+    '''
+    
+    return render_page("Fulltech Tools", content, user, "stock")
+
+
+@app.route("/api/fulltech/calc-bolt")
+@login_required
+def api_fulltech_calc_bolt():
+    """Calculate single bolt/nut/washer price"""
+    item_type = request.args.get("type", "bolt")
+    m_size = int(request.args.get("m_size", 6))
+    length = int(request.args.get("length", 50)) if item_type == "bolt" else None
+    rkg = float(request.args.get("rkg", 250))
+    
+    result = fulltech_addon.calc_bolt_price(m_size, length, rkg, item_type)
+    return jsonify(result)
+
+
+@app.route("/api/fulltech/preview-recalc")
+@login_required
+def api_fulltech_preview_recalc():
+    """Preview bulk price recalculation with tiered R/kg"""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    # Tiered R/kg: smaller fasteners cost more per kg
+    rkg_tiers = {
+        "small": float(request.args.get("rkg_small", 350)),   # M3-M6
+        "medium": float(request.args.get("rkg_medium", 280)), # M8-M12
+        "large": float(request.args.get("rkg_large", 220)),   # M14-M20
+        "xl": float(request.args.get("rkg_xl", 180)),         # M22+
+    }
+    markup = float(request.args.get("markup", 1.3))
+    
+    # Get all stock
+    stock = db.get_stock(biz_id) or []
+    
+    result = fulltech_addon.bulk_recalc_bolt_prices(stock, rkg_tiers, markup)
+    return jsonify(result)
+
+
+@app.route("/api/fulltech/apply-recalc", methods=["POST"])
+@login_required
+def api_fulltech_apply_recalc():
+    """Apply bulk price recalculation"""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    data = request.get_json()
+    updates = data.get("updates", [])
+    
+    count = 0
+    for item in updates:
+        stock_id = item.get("id")
+        new_price = item.get("new_price")
+        if stock_id and new_price is not None:
+            db.update_stock(stock_id, {"selling_price": new_price}, biz_id)
+            count += 1
+    
+    return jsonify({"success": True, "count": count})
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -24327,10 +24826,13 @@ def pos_page():
             document.getElementById('headerTotal').textContent = 'R0.00';
             document.getElementById('btnCash').disabled = true;
             document.getElementById('btnCard').disabled = true;
-            document.getElementById('btnAccount').disabled = true;
+            // Account/Invoice - enabled if customer selected (will show "cart empty" message)
+            const hasCustomer = !!document.getElementById('entityValue').value;
+            document.getElementById('btnAccount').disabled = !hasCustomer;
             document.getElementById('btnQuote').disabled = true;
-            document.getElementById('btnInvoice').disabled = true;
+            document.getElementById('btnInvoice').disabled = !hasCustomer;
             document.getElementById('btnPO').disabled = true;
+            document.getElementById('btnCredit').disabled = true;
             return;
         }
         
@@ -24558,6 +25060,9 @@ def pos_page():
                             window.supplierList.push(newItem);
                         }
                         closeEntityDropdown(true);
+                        // Enable buttons now that customer is selected!
+                        document.getElementById('btnAccount').disabled = false;
+                        document.getElementById('btnInvoice').disabled = false;
                     } else {
                         alert('Failed: ' + (data.error || 'Unknown error'));
                     }
@@ -24571,9 +25076,9 @@ def pos_page():
         document.getElementById('entityValue').value = id;
         closeEntityDropdown(true);
         
-        // Update button states
-        document.getElementById('btnAccount').disabled = !id || cart.length === 0;
-        document.getElementById('btnInvoice').disabled = !id || cart.length === 0;
+        // Update button states - Invoice/Account/Credit need customer, cart can be empty (will show message)
+        document.getElementById('btnAccount').disabled = !id;
+        document.getElementById('btnInvoice').disabled = !id;
         document.getElementById('btnCredit').disabled = !id || cart.length === 0;
     }
     
@@ -24715,7 +25220,11 @@ def pos_page():
     }
     
     async function completeSale(method) {
-        if (cart.length === 0) return;
+        if (cart.length === 0) {
+            alert('🛒 Cart is empty!\\n\\nAdd items to cart first.\\n\\nTip: Search for stock items above and click to add them.');
+            document.getElementById('stockSearch').focus();
+            return;
+        }
         
         // Use getCurrentCustomer - works even if supplier is selected
         const customer = getCurrentCustomer();
@@ -24891,7 +25400,11 @@ def pos_page():
     }
     
     async function createInvoice() {
-        if (cart.length === 0) return;
+        if (cart.length === 0) {
+            alert('🛒 Cart is empty!\\n\\nAdd items to cart first, then click Invoice.\\n\\nTip: Search for stock items above and click to add them.');
+            document.getElementById('stockSearch').focus();
+            return;
+        }
         
         // Use getCurrentCustomer - works even if supplier is selected
         const customer = getCurrentCustomer();
