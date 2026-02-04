@@ -13543,9 +13543,11 @@ def customers_page():
     
     # FAST: Direct query with order, limit to 300
     try:
-        result = db.table("customers").select("*").eq("business_id", biz_id).order("name").limit(300).execute()
-        customers = result.data if result.data else []
-    except:
+        customers = db.get("customers", {"business_id": biz_id}, limit=300)
+        # Sort by name
+        customers = sorted(customers, key=lambda x: (x.get("name") or "").lower())
+    except Exception as e:
+        logger.error(f"[CUSTOMERS] Error loading: {e}")
         customers = []
     _t("db_customers")
     
@@ -15038,9 +15040,11 @@ def invoices_page():
     
     # FAST: Direct query with order and limit
     try:
-        result = db.table("invoices").select("*").eq("business_id", biz_id).order("date", desc=True).limit(200).execute()
-        invoices = result.data if result.data else []
-    except:
+        invoices = db.get("invoices", {"business_id": biz_id}, limit=200)
+        # Sort by date descending
+        invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
+    except Exception as e:
+        logger.error(f"[INVOICES] Error loading: {e}")
         invoices = []
     
     rows = ""
@@ -16336,9 +16340,11 @@ def suppliers_page():
     
     # FAST: Direct query with order, limit
     try:
-        result = db.table("suppliers").select("*").eq("business_id", biz_id).order("name").limit(300).execute()
-        suppliers = result.data if result.data else []
-    except:
+        suppliers = db.get("suppliers", {"business_id": biz_id}, limit=300)
+        # Sort by name
+        suppliers = sorted(suppliers, key=lambda x: (x.get("name") or "").lower())
+    except Exception as e:
+        logger.error(f"[SUPPLIERS] Error loading: {e}")
         suppliers = []
     
     total_suppliers = len(suppliers)
@@ -16824,9 +16830,11 @@ def quotes_page():
     
     # FAST: Direct query with order and limit
     try:
-        result = db.table("quotes").select("*").eq("business_id", biz_id).order("date", desc=True).limit(200).execute()
-        quotes = result.data if result.data else []
-    except:
+        quotes = db.get("quotes", {"business_id": biz_id}, limit=200)
+        # Sort by date descending
+        quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
+    except Exception as e:
+        logger.error(f"[QUOTES] Error loading: {e}")
         quotes = []
     
     rows = ""
@@ -32193,8 +32201,8 @@ def api_import_execute():
                     # Bulk insert
                     if records:
                         table = "customers" if import_type == "customers" else "suppliers"
-                        db.table(table).insert(records).execute()
-                        print(f"[IMPORT-FAST] ✅ Inserted {len(records)} {import_type}, skipped {skipped}", flush=True)
+                        success_count, error_count = db.save_many(table, records)
+                        print(f"[IMPORT-FAST] ✅ Inserted {success_count} {import_type}, errors {error_count}, skipped {skipped}", flush=True)
                     
                     return jsonify({
                         "success": True,
@@ -32245,8 +32253,8 @@ def api_import_execute():
                     
                     # Bulk insert
                     if records:
-                        db.table("stock_items").insert(records).execute()
-                        print(f"[IMPORT-FAST] ✅ Inserted {len(records)} stock items, skipped {skipped}", flush=True)
+                        success_count, error_count = db.save_many("stock_items", records)
+                        print(f"[IMPORT-FAST] ✅ Inserted {success_count} stock items, errors {error_count}, skipped {skipped}", flush=True)
                     
                     return jsonify({
                         "success": True,
@@ -47182,22 +47190,18 @@ def api_sync_pull():
         return jsonify({"success": False, "error": f"Invalid table: {table}"})
     
     try:
-        # Build query
-        query = db.table(table).select("*").eq("business_id", biz_id)
+        # Get records with filters
+        records = db.get(table, {"business_id": biz_id}, limit=limit)
         
-        # Incremental sync - only records updated since last pull
+        # Filter by since if provided (incremental sync)
         if since:
-            query = query.gte("updated_at", since)
+            records = [r for r in records if r.get("updated_at", "") >= since]
         
-        # Pagination
-        query = query.range(offset, offset + limit - 1)
+        # Apply offset (pagination)
+        records = records[offset:offset + limit]
         
-        result = query.execute()
-        records = result.data if result.data else []
-        
-        # Get total count for progress
-        count_result = db.table(table).select("id", count="exact").eq("business_id", biz_id).execute()
-        total = count_result.count if hasattr(count_result, 'count') else len(records)
+        # Get total count
+        total = db.count(table, {"business_id": biz_id})
         
         return jsonify({
             "success": True,
@@ -47248,12 +47252,12 @@ def api_sync_push():
     try:
         # Check if delete
         if record.get("deleted_at"):
-            db.table(table).delete().eq("id", record["id"]).execute()
+            db.delete(table, record["id"], biz_id)
             logger.info(f"[SYNC] Deleted {table}/{record['id']}")
         else:
-            # Upsert
-            db.table(table).upsert(record).execute()
-            logger.info(f"[SYNC] Upserted {table}/{record['id']}")
+            # Save (upsert)
+            db.save(table, record)
+            logger.info(f"[SYNC] Saved {table}/{record['id']}")
         
         return jsonify({"success": True, "id": record["id"]})
         
@@ -47302,14 +47306,13 @@ def api_sync_push_batch():
         
         # Batch upsert
         if to_upsert:
-            db.table(table).upsert(to_upsert).execute()
-            logger.info(f"[SYNC] Batch upserted {len(to_upsert)} {table} records")
+            success_count, error_count = db.save_many(table, to_upsert)
+            logger.info(f"[SYNC] Batch saved {success_count} {table} records")
         
         # Batch delete
-        for rid in to_delete:
-            db.table(table).delete().eq("id", rid).execute()
         if to_delete:
-            logger.info(f"[SYNC] Batch deleted {len(to_delete)} {table} records")
+            del_success, del_errors = db.delete_many(table, to_delete, biz_id)
+            logger.info(f"[SYNC] Batch deleted {del_success} {table} records")
         
         return jsonify({
             "success": True, 
@@ -47338,8 +47341,7 @@ def api_sync_status():
     
     for table in tables:
         try:
-            result = db.table(table).select("id", count="exact").eq("business_id", biz_id).execute()
-            counts[table] = result.count if hasattr(result, 'count') else 0
+            counts[table] = db.count(table, {"business_id": biz_id})
         except:
             counts[table] = 0
     
