@@ -11408,6 +11408,16 @@ select.form-input optgroup {
         print-color-adjust: exact !important;
     }
     
+    /* Ensure totals table prints */
+    #invoiceTotals, #quoteTotals {
+        display: block !important;
+        page-break-inside: avoid !important;
+    }
+    
+    #invoiceTotals table, #quoteTotals table {
+        border: 1px solid #333 !important;
+    }
+    
     /* Print table header backgrounds */
     #printArea th, #invoicePrint th {
         background: #f5f5f5 !important;
@@ -14861,27 +14871,30 @@ def invoice_view(invoice_id):
     if not invoice:
         return redirect("/invoices")
     
-    # FAILSAFE: Calculate total if missing
-    if not invoice.get("total"):
-        subtotal = float(invoice.get("subtotal", 0))
-        vat = float(invoice.get("vat", 0))
-        # If we have subtotal and vat, calculate total
-        if subtotal and vat:
-            invoice["total"] = subtotal + vat
-        # If we only have items, calculate from line totals
-        elif invoice.get("items"):
-            raw_items = invoice.get("items", [])
-            if isinstance(raw_items, str):
-                try:
-                    raw_items = json.loads(raw_items)
-                except:
-                    raw_items = []
-            line_total = sum(float(item.get("total", 0)) for item in raw_items)
-            if line_total > 0:
-                # Line totals are EXCL VAT - ADD VAT
-                invoice["subtotal"] = line_total
-                invoice["vat"] = line_total * 0.15
-                invoice["total"] = line_total + invoice["vat"]
+    # FAILSAFE: Calculate totals from items if missing or zero
+    raw_items = invoice.get("items", [])
+    if isinstance(raw_items, str):
+        try:
+            raw_items = json.loads(raw_items)
+        except:
+            raw_items = []
+    
+    # Calculate from line items
+    if raw_items:
+        line_total = sum(float(item.get("total", 0)) for item in raw_items)
+        if line_total > 0:
+            # Line totals are EXCL VAT - ADD VAT
+            calculated_subtotal = line_total
+            calculated_vat = round(line_total * 0.15, 2)
+            calculated_total = round(line_total + calculated_vat, 2)
+            
+            # Use calculated values if stored values are missing or wrong
+            if not invoice.get("subtotal") or float(invoice.get("subtotal", 0)) == 0:
+                invoice["subtotal"] = calculated_subtotal
+            if not invoice.get("vat") or float(invoice.get("vat", 0)) == 0:
+                invoice["vat"] = calculated_vat
+            if not invoice.get("total") or float(invoice.get("total", 0)) == 0:
+                invoice["total"] = calculated_total
     
     # Get customer details if customer_id exists
     customer = None
@@ -15019,22 +15032,22 @@ def invoice_view(invoice_id):
             </tbody>
         </table>
         
-        <!-- TOTALS -->
-        <div style="display:flex;justify-content:flex-end;">
-            <div style="width:300px;background:#f8f9fa;padding:20px;border-radius:8px;">
-                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #ddd;color:#333;font-size:16px;">
-                    <span style="color:#666;">Subtotal</span>
-                    <span>{money(invoice.get("subtotal", 0))}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #ddd;color:#333;font-size:16px;">
-                    <span style="color:#666;">VAT (15%)</span>
-                    <span>{money(invoice.get("vat", 0))}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:15px 0;font-size:24px;font-weight:bold;color:#10b981;">
-                    <span>TOTAL</span>
-                    <span>{money(invoice.get("total", 0))}</span>
-                </div>
-            </div>
+        <!-- TOTALS - using table for reliable printing -->
+        <div id="invoiceTotals" style="text-align:right;margin-top:20px;">
+            <table style="margin-left:auto;width:300px;border-collapse:collapse;background:#f8f9fa;">
+                <tr style="border-bottom:1px solid #ddd;">
+                    <td style="padding:12px;text-align:left;color:#666;font-size:16px;">Subtotal</td>
+                    <td style="padding:12px;text-align:right;color:#333;font-size:16px;">{money(invoice.get("subtotal", 0))}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #ddd;">
+                    <td style="padding:12px;text-align:left;color:#666;font-size:16px;">VAT (15%)</td>
+                    <td style="padding:12px;text-align:right;color:#333;font-size:16px;">{money(invoice.get("vat", 0))}</td>
+                </tr>
+                <tr style="border-top:2px solid #333;">
+                    <td style="padding:15px;text-align:left;font-size:20px;font-weight:bold;color:#000;">TOTAL</td>
+                    <td style="padding:15px;text-align:right;font-size:20px;font-weight:bold;color:#000;">{money(invoice.get("total", 0))}</td>
+                </tr>
+            </table>
         </div>
         
         <!-- FOOTER -->
@@ -16590,20 +16603,36 @@ def quote_view(quote_id):
     if not quote:
         return redirect("/quotes")
     
+    # FAILSAFE: Calculate totals from items if missing or zero
+    raw_items = quote.get("items", [])
+    if isinstance(raw_items, str):
+        try:
+            raw_items = json.loads(raw_items)
+        except:
+            raw_items = []
+    
+    if raw_items:
+        line_total = sum(float(item.get("total", 0)) for item in raw_items)
+        if line_total > 0:
+            # Line totals are EXCL VAT - ADD VAT
+            calculated_subtotal = line_total
+            calculated_vat = round(line_total * 0.15, 2)
+            calculated_total = round(line_total + calculated_vat, 2)
+            
+            if not quote.get("subtotal") or float(quote.get("subtotal", 0)) == 0:
+                quote["subtotal"] = calculated_subtotal
+            if not quote.get("vat") or float(quote.get("vat", 0)) == 0:
+                quote["vat"] = calculated_vat
+            if not quote.get("total") or float(quote.get("total", 0)) == 0:
+                quote["total"] = calculated_total
+    
     # Get customer details if customer_id exists
     customer = None
     if quote.get("customer_id"):
         customer = db.get_one("customers", quote.get("customer_id"))
     
-    # Parse items - handle both JSON string and list
-    raw_items = quote.get("items", [])
-    if isinstance(raw_items, str):
-        try:
-            items = json.loads(raw_items)
-        except:
-            items = []
-    else:
-        items = raw_items if raw_items else []
+    # Parse items for display
+    items = raw_items
     
     items_html = ""
     for item in items:
@@ -16740,22 +16769,22 @@ def quote_view(quote_id):
             </tbody>
         </table>
         
-        <!-- TOTALS -->
-        <div style="display:flex;justify-content:flex-end;">
-            <div style="width:300px;background:#f8f9fa;padding:20px;border-radius:8px;">
-                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #ddd;color:#333;font-size:16px;">
-                    <span style="color:#666;">Subtotal</span>
-                    <span>{money(quote.get("subtotal", 0))}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #ddd;color:#333;font-size:16px;">
-                    <span style="color:#666;">VAT (15%)</span>
-                    <span>{money(quote.get("vat", 0))}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:15px 0;font-size:24px;font-weight:bold;color:#2563eb;">
-                    <span>TOTAL</span>
-                    <span>{money(quote.get("total", 0))}</span>
-                </div>
-            </div>
+        <!-- TOTALS - using table for reliable printing -->
+        <div id="quoteTotals" style="text-align:right;margin-top:20px;">
+            <table style="margin-left:auto;width:300px;border-collapse:collapse;background:#f8f9fa;">
+                <tr style="border-bottom:1px solid #ddd;">
+                    <td style="padding:12px;text-align:left;color:#666;font-size:16px;">Subtotal</td>
+                    <td style="padding:12px;text-align:right;color:#333;font-size:16px;">{money(quote.get("subtotal", 0))}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #ddd;">
+                    <td style="padding:12px;text-align:left;color:#666;font-size:16px;">VAT (15%)</td>
+                    <td style="padding:12px;text-align:right;color:#333;font-size:16px;">{money(quote.get("vat", 0))}</td>
+                </tr>
+                <tr style="border-top:2px solid #333;">
+                    <td style="padding:15px;text-align:left;font-size:20px;font-weight:bold;color:#000;">TOTAL</td>
+                    <td style="padding:15px;text-align:right;font-size:20px;font-weight:bold;color:#000;">{money(quote.get("total", 0))}</td>
+                </tr>
+            </table>
         </div>
         
         <!-- FOOTER -->
@@ -24782,7 +24811,7 @@ def pos_page():
             
             if (data.success) {
                 // Show print dialog based on settings - pass cash info for cash sales
-                showPrintDialog(data.sale_number, data.sale_id, method, customerName, items, grandTotal, cashReceived, changeGiven);
+                showPrintDialog(data.sale_number, data.sale_id, method, customerName, items, subtotal, vat, grandTotal, cashReceived, changeGiven);
                 clearCart();
             } else {
                 alert('Error: ' + (data.error || 'Sale failed'));
@@ -25020,9 +25049,11 @@ def pos_page():
             return;
         }
         
-        // Build preview
-        let total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-        total = Math.round(total * 100) / 100;
+        // Build preview - prices are EXCL VAT, ADD VAT
+        let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+        subtotal = Math.round(subtotal * 100) / 100;
+        const vat = Math.round(subtotal * 0.15 * 100) / 100;
+        const grandTotal = Math.round((subtotal + vat) * 100) / 100;
         const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
         
         let preview = '═══════════════════════\\n';
@@ -25038,7 +25069,9 @@ def pos_page():
         });
         
         preview += '───────────────────────\\n';
-        preview += 'CREDIT TOTAL: -R' + total.toFixed(2) + '\\n';
+        preview += 'Subtotal: R' + subtotal.toFixed(2) + '\\n';
+        preview += 'VAT (15%): R' + vat.toFixed(2) + '\\n';
+        preview += 'CREDIT TOTAL: -R' + grandTotal.toFixed(2) + '\\n';
         preview += '═══════════════════════\\n\\n';
         preview += 'This will REDUCE customer balance.\\nCreate credit note?';
         
@@ -25063,14 +25096,16 @@ def pos_page():
                     items: items,
                     customer_id: customerId,
                     customer_name: customerName,
-                    total: total
+                    subtotal: subtotal,
+                    vat: vat,
+                    total: grandTotal
                 })
             });
             
             const data = await response.json();
             
             if (data.success) {
-                alert('Credit Note ' + data.credit_note_number + ' created!\\nCustomer balance reduced by R' + total.toFixed(2));
+                alert('Credit Note ' + data.credit_note_number + ' created!\\nCustomer balance reduced by R' + grandTotal.toFixed(2));
                 clearCart();
                 if (confirm('View credit note?')) {
                     window.location = '/credit-note/' + data.credit_note_id;
@@ -26112,10 +26147,10 @@ def pos_page():
         }
     }
     
-    function showPrintDialog(saleNum, saleId, method, customerName, items, total, cashReceived = 0, changeGiven = 0) {
+    function showPrintDialog(saleNum, saleId, method, customerName, items, subtotal, vat, total, cashReceived = 0, changeGiven = 0) {
         loadPosSettings();
         
-        lastSaleData = { saleNum, saleId, method, customerName, items, total, cashReceived, changeGiven };
+        lastSaleData = { saleNum, saleId, method, customerName, items, subtotal, vat, total, cashReceived, changeGiven };
         
         // Build slip content
         const now = new Date();
@@ -26123,8 +26158,6 @@ def pos_page():
         const date = now.toLocaleDateString('en-ZA');
         
         const methodLabel = {cash: '💵 CASH', card: '💳 CARD', account: '📒 ACCOUNT'}[method] || method.toUpperCase();
-        const subtotal = total / 1.15;
-        const vat = total - subtotal;
         
         let itemsHtml = '';
         items.forEach(item => {
@@ -27836,9 +27869,16 @@ def api_pos_credit_note():
         if not customer_id:
             return jsonify({"success": False, "error": "Customer required for credit note"})
         
-        # Calculate VAT
-        vat = (total * VAT_RATE / (1 + VAT_RATE)).quantize(Decimal("0.01"))
-        subtotal = total - vat
+        # Use frontend-calculated values (prices are EXCL VAT, VAT is ADDED)
+        subtotal = Decimal(str(data.get("subtotal", 0)))
+        vat = Decimal(str(data.get("vat", 0)))
+        total = Decimal(str(data.get("total", 0)))
+        
+        # Fallback calculation if frontend didn't send values
+        if subtotal == 0:
+            subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+            vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            total = subtotal + vat
         
         # Generate credit note number
         existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
