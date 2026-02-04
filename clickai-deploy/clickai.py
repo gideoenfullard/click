@@ -3723,6 +3723,125 @@ Once you have a customer, you can invoice! 📝"""
                     "suggestions": []
                 }
         
+        # ═══════════════════════════════════════════════════════════════════
+        # EMAIL INVOICE QUICK COMMAND - Catch before AI call
+        # "email inv 0051 to email@email.com", "yes inv 0051 to email", etc
+        # ═══════════════════════════════════════════════════════════════════
+        import re
+        has_email = re.search(r'[\w\.-]+@[\w\.-]+', msg_lower)
+        has_inv_ref = re.search(r'(?:inv|invoice|faktuur)[#\s\-]*(\d+)|(\d{3,5})', msg_lower)
+        
+        if has_email and (has_inv_ref or 'inv' in msg_lower):
+            # Extract email (use original message for correct case)
+            email_match = re.search(r'([\w\.-]+@[\w\.-]+)', user_message)
+            to_email = email_match.group(1) if email_match else None
+            
+            # Extract invoice number
+            inv_num = None
+            inv_match = re.search(r'(?:inv|invoice|faktuur)[#\s\-]*(\d+)', msg_lower)
+            if inv_match:
+                inv_num = inv_match.group(1)
+            else:
+                num_match = re.search(r'\b(\d{3,5})\b', msg_lower)
+                if num_match:
+                    inv_num = num_match.group(1)
+            
+            if inv_num and to_email:
+                biz_id = context.get("business_id")
+                invoices = db.get("invoices", {"business_id": biz_id})
+                invoice = None
+                
+                for inv in invoices:
+                    inv_number = str(inv.get("invoice_number", ""))
+                    if inv_num in inv_number or inv_number.lower().endswith(inv_num.lower().lstrip('0')):
+                        invoice = inv
+                        break
+                    inv_num_only = re.search(r'(\d+)', inv_number)
+                    if inv_num_only and inv_num.lstrip('0') == inv_num_only.group(1).lstrip('0'):
+                        invoice = inv
+                        break
+                
+                if invoice:
+                    biz_name = context.get("business_name", "Business")
+                    inv_no = invoice.get("invoice_number", "")
+                    total = float(invoice.get("total", 0))
+                    date = invoice.get("date", today())
+                    cust_name = invoice.get("customer_name", "Customer")
+                    
+                    subject = f"Invoice {inv_no} from {biz_name}"
+                    body_html = f'''<html><body style="font-family:Arial,sans-serif;padding:20px;background:#f5f5f5;">
+                        <div style="max-width:600px;margin:0 auto;background:white;padding:30px;border-radius:10px;">
+                            <h2 style="color:#333;">Invoice {inv_no}</h2>
+                            <p>Dear {cust_name},</p>
+                            <p>Please find your invoice details below:</p>
+                            <table style="width:100%;margin:20px 0;border-collapse:collapse;">
+                                <tr><td style="padding:8px;border-bottom:1px solid #eee;"><strong>Invoice #:</strong></td><td>{inv_no}</td></tr>
+                                <tr><td style="padding:8px;border-bottom:1px solid #eee;"><strong>Date:</strong></td><td>{date}</td></tr>
+                                <tr><td style="padding:8px;border-bottom:1px solid #eee;"><strong>Amount:</strong></td><td style="font-size:20px;font-weight:bold;color:#10b981;">R{total:,.2f}</td></tr>
+                            </table>
+                            <p>Thank you for your business!</p>
+                            <hr style="border:none;border-top:1px solid #eee;margin:20px 0;">
+                            <p style="color:#888;font-size:12px;">{biz_name}<br>Sent via Click AI</p>
+                        </div></body></html>'''
+                    body_text = f"Invoice {inv_no} from {biz_name}\n\nDear {cust_name},\n\nInvoice #: {inv_no}\nDate: {date}\nAmount: R{total:,.2f}\n\nThank you!\n\n{biz_name}"
+                    
+                    business = Auth.get_current_business()
+                    try:
+                        success = Email.send(to_email, subject, body_html, body_text, business=business)
+                        if success:
+                            return {
+                                "response": f"✅ **Invoice {inv_no} emailed to {to_email}!**",
+                                "actions_taken": [f"Emailed invoice to {to_email}"],
+                                "data": {"invoice_id": invoice.get("id"), "email": to_email},
+                                "suggestions": [{"label": "📄 View Invoice", "url": f"/invoice/{invoice.get('id')}"}]
+                            }
+                        else:
+                            return {
+                                "response": f"❌ **Email failed!** Check SMTP settings in Settings.\n\nOr click 📧 Email on the invoice page.",
+                                "actions_taken": [],
+                                "data": {},
+                                "suggestions": [{"label": "⚙️ Settings", "url": "/settings"}, {"label": "📄 View Invoice", "url": f"/invoice/{invoice.get('id')}"}]
+                            }
+                    except Exception as e:
+                        return {
+                            "response": f"❌ **Email error:** {str(e)}\n\nCheck SMTP settings.",
+                            "actions_taken": [],
+                            "data": {},
+                            "suggestions": [{"label": "⚙️ Settings", "url": "/settings"}]
+                        }
+                else:
+                    recent_invs = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)[:5]
+                    inv_list = ", ".join([inv.get("invoice_number", "") for inv in recent_invs])
+                    return {
+                        "response": f"❌ **Invoice '{inv_num}' not found.**\n\nRecent invoices: {inv_list}",
+                        "actions_taken": [],
+                        "data": {},
+                        "suggestions": [{"label": "📋 Invoices", "url": "/invoices"}]
+                    }
+        
+        # BULK EMAIL STATEMENTS quick command
+        if any(x in msg_lower for x in ["email all statements", "send all statements", "bulk email statements", "email statements to all", "stuur alle state"]):
+            biz_id = context.get("business_id")
+            customers = db.get("customers", {"business_id": biz_id}) or []
+            debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
+            debtors_with_email = [c for c in debtors if c.get("email")]
+            
+            if not debtors:
+                return {
+                    "response": "✅ **Geen uitstaande balanse nie!** Alle customers is betaal.",
+                    "actions_taken": [],
+                    "data": {},
+                    "suggestions": []
+                }
+            
+            return {
+                "response": f"📧 **{len(debtors_with_email)} customers** gereed om statements te ontvang.\n\nGaan na **Customers** en klik die **📧 Email All Statements** button.",
+                "actions_taken": [],
+                "data": {},
+                "suggestions": [{"label": "📧 Go to Customers", "url": "/customers"}],
+                "navigate": "/customers"
+            }
+        
         # SMART PROMPT SELECTION - LITE saves ~5000 tokens!
         # LITE = summaries only (95% of queries)
         # FULL = all data lists (only for analysis)
