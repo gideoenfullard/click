@@ -5500,25 +5500,34 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                 ]
             }
         
-        # EMAIL INVOICE pattern - "email inv 0051 to email@email.com" or "send invoice X to email"
+        # EMAIL INVOICE pattern - catches many variations:
+        # "email inv 0051 to email@email.com"
+        # "yes inv 0051 to email@email.com" 
+        # "send invoice 45 to test@test.com"
+        # "stuur faktuur 0051 na email@email.com"
+        # "inv 0051 email@email.com"
         import re
-        email_inv_pattern = re.search(r'(?:email|send|stuur)\s*(?:inv|invoice|faktuur)\s*[#]?(\d+|[\w-]+)\s*(?:to|na|aan)\s*([\w\.-]+@[\w\.-]+)', msg_lower)
-        if email_inv_pattern or ('inv' in msg_lower and '@' in msg_lower):
-            # Try to extract invoice number and email
-            inv_num = None
-            to_email = None
+        
+        # Check if message contains invoice reference AND email address
+        has_email = re.search(r'[\w\.-]+@[\w\.-]+', msg_lower)
+        has_inv_ref = re.search(r'(?:inv|invoice|faktuur)[#\s\-]*(\d+)|(\d{3,5})', msg_lower)
+        
+        if has_email and (has_inv_ref or 'inv' in msg_lower):
+            # Extract email
+            email_match = re.search(r'([\w\.-]+@[\w\.-]+)', message)  # Use original message for correct case
+            to_email = email_match.group(1) if email_match else None
             
-            if email_inv_pattern:
-                inv_num = email_inv_pattern.group(1)
-                to_email = email_inv_pattern.group(2)
+            # Extract invoice number - try multiple patterns
+            inv_num = None
+            # Pattern 1: "inv 0051" or "invoice 0051" or "faktuur 0051"
+            inv_match = re.search(r'(?:inv|invoice|faktuur)[#\s\-]*(\d+)', msg_lower)
+            if inv_match:
+                inv_num = inv_match.group(1)
             else:
-                # Fallback extraction
-                email_match = re.search(r'([\w\.-]+@[\w\.-]+)', msg_lower)
-                inv_match = re.search(r'(?:inv|invoice|faktuur)[#\s-]*(\d+)', msg_lower)
-                if email_match:
-                    to_email = email_match.group(1)
-                if inv_match:
-                    inv_num = inv_match.group(1)
+                # Pattern 2: Just a number that could be invoice
+                num_match = re.search(r'\b(\d{3,5})\b', msg_lower)
+                if num_match:
+                    inv_num = num_match.group(1)
             
             if inv_num and to_email:
                 # Find the invoice
@@ -5526,9 +5535,16 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                 invoices = db.get("invoices", {"business_id": biz_id})
                 invoice = None
                 
+                # Try to match invoice number
                 for inv in invoices:
-                    inv_number = inv.get("invoice_number", "")
-                    if inv_num in inv_number or inv_number.endswith(inv_num):
+                    inv_number = str(inv.get("invoice_number", ""))
+                    # Match if inv_num is in the invoice number OR invoice number ends with inv_num
+                    if inv_num in inv_number or inv_number.lower().endswith(inv_num.lower().lstrip('0')):
+                        invoice = inv
+                        break
+                    # Also try matching just the numeric part
+                    inv_num_only = re.search(r'(\d+)', inv_number)
+                    if inv_num_only and inv_num.lstrip('0') == inv_num_only.group(1).lstrip('0'):
                         invoice = inv
                         break
                 
@@ -5587,7 +5603,7 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                             }
                         else:
                             return {
-                                "response": f"❌ **Email failed!**\n\nMake sure SMTP is configured in Settings.\n\nYou can also manually email from the invoice page.",
+                                "response": f"❌ **Email failed!**\n\nMake sure SMTP is configured in Settings.\n\nYou can also click the 📧 Email button on the invoice page.",
                                 "actions_taken": [],
                                 "data": {},
                                 "suggestions": [{"label": "⚙️ Settings", "url": "/settings"}, {"label": "📄 View Invoice", "url": f"/invoice/{invoice.get('id')}"}]
@@ -5600,8 +5616,11 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                             "suggestions": [{"label": "⚙️ Settings", "url": "/settings"}]
                         }
                 else:
+                    # List available invoices to help user
+                    recent_invs = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)[:5]
+                    inv_list = ", ".join([inv.get("invoice_number", "") for inv in recent_invs])
                     return {
-                        "response": f"❌ **Invoice {inv_num} not found.**\n\nTry the full invoice number like INV-00051.",
+                        "response": f"❌ **Invoice '{inv_num}' not found.**\n\nRecent invoices: {inv_list}\n\nTry: \"email inv [number] to {to_email}\"",
                         "actions_taken": [],
                         "data": {},
                         "suggestions": [{"label": "📋 View Invoices", "url": "/invoices"}]
@@ -5611,8 +5630,40 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                     "response": f"📧 Which invoice do you want to send to {to_email}?\n\nTry: \"email inv 0051 to {to_email}\"",
                     "actions_taken": [],
                     "data": {},
+                    "suggestions": [{"label": "📋 View Invoices", "url": "/invoices"}]
+                }
+        
+        # BULK EMAIL STATEMENTS pattern
+        if any(x in msg_lower for x in ["email all statements", "send all statements", "bulk email", "email statements", "stuur alle state", "email alle"]):
+            # Get debtors count
+            biz_id = context.get("business_id")
+            customers = db.get("customers", {"business_id": biz_id}) or []
+            debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
+            debtors_with_email = [c for c in debtors if c.get("email")]
+            
+            if not debtors:
+                return {
+                    "response": "✅ **No outstanding balances!**\n\nAll your customers are paid up. Nothing to send.",
+                    "actions_taken": [],
+                    "data": {},
                     "suggestions": []
                 }
+            
+            if not debtors_with_email:
+                return {
+                    "response": f"⚠️ **{len(debtors)} customers** owe money, but none have email addresses.\n\nAdd emails to customers first, then I can send statements.",
+                    "actions_taken": [],
+                    "data": {},
+                    "suggestions": [{"label": "👥 Customers", "url": "/customers"}]
+                }
+            
+            return {
+                "response": f"📧 **Ready to email {len(debtors_with_email)} statements!**\n\n{len(debtors_with_email)} customers have balances and email addresses.\n{len(debtors) - len(debtors_with_email)} customers have no email (will be skipped).\n\nGo to **Customers** and click the **📧 Email All Statements** button to send.",
+                "actions_taken": [],
+                "data": {"debtors": len(debtors), "with_email": len(debtors_with_email)},
+                "suggestions": [{"label": "📧 Go to Customers", "url": "/customers"}],
+                "navigate": "/customers"
+            }
         
         # Test scanner connection pattern
         if any(x in msg_lower for x in ["test scanner", "test connection", "check scanner", "is scanner working"]):
@@ -11658,7 +11709,8 @@ select.form-input optgroup {
     .btn, button, .no-print, 
     a[href="/quotes"], a[href="/invoices"], a[href="/customers"],
     [onclick*="print"], [onclick*="Email"],
-    form, select, input {
+    form, select, input,
+    #emailModal {
         display: none !important;
     }
     
@@ -11680,30 +11732,37 @@ select.form-input optgroup {
         --border: #ddd;
     }
     
-    /* Main container full width */
+    /* Main container full width - CRITICAL: allow height to expand */
     .container, .main-scroll, main {
         width: 100% !important;
         max-width: 100% !important;
         padding: 0 !important;
         margin: 0 !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
     }
     
-    /* Card (the actual document) styles */
+    /* Card styles - DO NOT prevent page break, let content flow */
     .card {
         background: white !important;
         color: black !important;
-        border: 2px solid #333 !important;
+        border: none !important;
         border-radius: 0 !important;
         box-shadow: none !important;
         padding: 20px !important;
         margin: 0 !important;
-        page-break-inside: avoid;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        /* NO page-break-inside: avoid - allows multi-page */
     }
     
     /* Table styles for print */
     table {
         border-collapse: collapse !important;
         width: 100% !important;
+        page-break-inside: auto !important;
     }
     
     th, td {
@@ -11718,7 +11777,6 @@ select.form-input optgroup {
     
     /* HIDE ALL SCROLLBARS AND SCROLL INDICATORS */
     * {
-        overflow: visible !important;
         scrollbar-width: none !important;
         -ms-overflow-style: none !important;
     }
@@ -11728,7 +11786,7 @@ select.form-input optgroup {
         height: 0 !important;
     }
     
-    /* Hide scroll containers */
+    /* Hide scroll containers - make content flow */
     .main-scroll, [style*="overflow"], [style*="scroll"] {
         overflow: visible !important;
         max-height: none !important;
@@ -11736,9 +11794,6 @@ select.form-input optgroup {
     }
     
     /* PAGE BREAKS - Long invoices continue on next page */
-    table {
-        page-break-inside: auto !important;
-    }
     tr {
         page-break-inside: avoid !important;
         page-break-after: auto !important;
@@ -11750,10 +11805,25 @@ select.form-input optgroup {
         display: table-footer-group !important;
     }
     
-    /* Keep totals section together */
+    /* Keep totals section together on same page */
     #invoiceTotals, #quoteTotals, .totals-section {
         page-break-inside: avoid !important;
         page-break-before: auto !important;
+    }
+    
+    /* Keep header/bill-to section together */
+    #invoicePrint > div:first-child,
+    #printArea > div:first-child {
+        page-break-after: avoid !important;
+    }
+    
+    /* Invoice/Quote print areas - MUST allow page breaks */
+    #invoicePrint, #printArea {
+        display: block !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        page-break-inside: auto !important;
     }
     
     /* Links and status badges */
@@ -11766,11 +11836,6 @@ select.form-input optgroup {
     .no-print,
     div.no-print {
         display: none !important;
-    }
-    
-    /* Ensure document headers print */
-    #printArea, #invoicePrint {
-        display: block !important;
     }
     
     #printArea *, #invoicePrint * {
@@ -11805,6 +11870,21 @@ select.form-input optgroup {
     @page {
         size: A4;
         margin: 15mm;
+    }
+    
+    /* CRITICAL: Remove all height/overflow constraints from document */
+    html, body {
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+    }
+    
+    /* Force main-scroll to expand */
+    #mainScroll, .main-scroll {
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        position: static !important;
     }
 }
 </style>
@@ -13762,6 +13842,7 @@ def customers_page():
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
         <h2 style="margin:0;">Customers ({total_customers})</h2>
         <div style="display:flex;gap:10px;">
+            <button class="btn btn-secondary" onclick="bulkEmailStatements()" title="Email statements to all customers with balance > 0">📧 Email All Statements</button>
             <a href="/customer/new" class="btn btn-primary">+ Add Customer</a>
         </div>
     </div>
@@ -13770,6 +13851,44 @@ def customers_page():
     
     {header_row}
     {customers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No customers yet!</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/customer/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
+    
+    <script>
+    async function bulkEmailStatements() {{
+        const debtorCount = {len(debtors)};
+        if (debtorCount === 0) {{
+            alert('No customers with outstanding balances to email.');
+            return;
+        }}
+        
+        if (!confirm(`📧 Email statements to ${{debtorCount}} customers with outstanding balances?\\n\\nThis will send a statement to each customer who has an email address and owes money.`)) {{
+            return;
+        }}
+        
+        // Show progress
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = '📧 Sending...';
+        
+        try {{
+            const response = await fetch('/api/customers/bulk-email-statements', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}}
+            }});
+            const result = await response.json();
+            
+            if (result.success) {{
+                alert(`✅ Statements sent!\\n\\n📧 Emailed: ${{result.sent}}\\n⏭️ Skipped (no email): ${{result.skipped}}\\n❌ Failed: ${{result.failed}}`);
+            }} else {{
+                alert('❌ ' + (result.error || 'Failed to send statements'));
+            }}
+        }} catch (err) {{
+            alert('❌ Error: ' + err.message);
+        }} finally {{
+            btn.disabled = false;
+            btn.textContent = '📧 Email All Statements';
+        }}
+    }}
+    </script>
     '''
     
     _t("before_render")
@@ -14700,6 +14819,68 @@ def api_customers_all():
     return jsonify({"success": True, "items": items})
 
 
+@app.route("/api/customers/bulk-email-statements", methods=["POST"])
+@login_required
+def api_customers_bulk_email_statements():
+    """Email statements to all customers with balance > 0 and email address"""
+    try:
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business"})
+        
+        # Get all customers with balance > 0
+        customers = db.get("customers", {"business_id": biz_id}) or []
+        debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
+        
+        if not debtors:
+            return jsonify({"success": True, "sent": 0, "skipped": 0, "failed": 0, "message": "No customers with outstanding balances"})
+        
+        # Get all invoices for statement building
+        all_invoices = db.get("invoices", {"business_id": biz_id}) or []
+        
+        sent = 0
+        skipped = 0
+        failed = 0
+        
+        for customer in debtors:
+            email = customer.get("email", "").strip()
+            
+            if not email or "@" not in email:
+                skipped += 1
+                continue
+            
+            # Get this customer's invoices
+            cust_invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer.get("id")]
+            
+            try:
+                success = Email.send_statement(customer, cust_invoices, business)
+                if success:
+                    sent += 1
+                    logger.info(f"[BULK-EMAIL] Statement sent to {customer.get('name')} ({email})")
+                else:
+                    failed += 1
+                    logger.error(f"[BULK-EMAIL] Failed to send to {customer.get('name')} ({email})")
+            except Exception as e:
+                failed += 1
+                logger.error(f"[BULK-EMAIL] Error sending to {customer.get('name')}: {e}")
+        
+        logger.info(f"[BULK-EMAIL] Complete: sent={sent}, skipped={skipped}, failed={failed}")
+        
+        return jsonify({
+            "success": True,
+            "sent": sent,
+            "skipped": skipped,
+            "failed": failed,
+            "message": f"Statements sent to {sent} customers"
+        })
+        
+    except Exception as e:
+        logger.error(f"[BULK-EMAIL] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
 @app.route("/api/suppliers/all")
 @login_required
 def api_suppliers_all():
@@ -15628,6 +15809,9 @@ def invoice_view(invoice_id):
     cust_email = customer.get("email", "") if customer else ""
     cust_address = safe_string(customer.get("address", "")).replace("\n", "<br>") if customer else ""
     
+    # Email button - show customer email if available
+    email_btn = f'<button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">📧 Email</button>'
+    
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
@@ -15638,7 +15822,24 @@ def invoice_view(invoice_id):
             {payment_btns}
             {dn_btn}
             {cn_btn}
+            {email_btn}
             <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        </div>
+    </div>
+    
+    <!-- EMAIL MODAL -->
+    <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
+            <h3 style="margin-top:0;">📧 Email Invoice</h3>
+            <p style="color:var(--text-muted);margin-bottom:20px;">Send invoice <strong>{invoice.get("invoice_number", "")}</strong> to:</p>
+            
+            <input type="email" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
+                   style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
+            
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="closeEmailModal()" class="btn btn-secondary">Cancel</button>
+                <button onclick="sendInvoiceEmail()" class="btn btn-primary" style="background:#10b981;">Send Email</button>
+            </div>
         </div>
     </div>
     
@@ -15734,6 +15935,53 @@ def invoice_view(invoice_id):
             alert('Error: ' + err.message);
         }}
     }}
+    
+    // EMAIL FUNCTIONS
+    function showEmailModal() {{
+        document.getElementById('emailModal').style.display = 'flex';
+        document.getElementById('emailTo').focus();
+    }}
+    
+    function closeEmailModal() {{
+        document.getElementById('emailModal').style.display = 'none';
+    }}
+    
+    async function sendInvoiceEmail() {{
+        const email = document.getElementById('emailTo').value.trim();
+        if (!email || !email.includes('@')) {{
+            alert('Please enter a valid email address');
+            return;
+        }}
+        
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = 'Sending...';
+        
+        try {{
+            const response = await fetch('/api/invoice/{invoice_id}/email', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{to_email: email}})
+            }});
+            const result = await response.json();
+            if (result.success) {{
+                alert('✅ Invoice emailed to ' + email);
+                closeEmailModal();
+            }} else {{
+                alert('❌ ' + (result.error || 'Failed to send email'));
+            }}
+        }} catch (err) {{
+            alert('❌ Error: ' + err.message);
+        }} finally {{
+            btn.disabled = false;
+            btn.textContent = 'Send Email';
+        }}
+    }}
+    
+    // Close modal on escape key
+    document.addEventListener('keydown', function(e) {{
+        if (e.key === 'Escape') closeEmailModal();
+    }});
     </script>
     '''
     
@@ -15863,6 +16111,125 @@ def api_invoice_pay(invoice_id):
         
     except Exception as e:
         logger.error(f"[PAYMENT] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/invoice/<invoice_id>/email", methods=["POST"])
+@login_required
+def api_invoice_email(invoice_id):
+    """Send invoice via email"""
+    try:
+        data = request.get_json()
+        to_email = data.get("to_email", "").strip()
+        
+        if not to_email or "@" not in to_email:
+            return jsonify({"success": False, "error": "Valid email address required"})
+        
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        invoice = db.get_one("invoices", invoice_id)
+        if not invoice:
+            return jsonify({"success": False, "error": "Invoice not found"})
+        
+        # Build email content
+        biz_name = business.get("name", "Business") if business else "Business"
+        inv_no = invoice.get("invoice_number", "")
+        total = float(invoice.get("total", 0))
+        date = invoice.get("date", today())
+        cust_name = invoice.get("customer_name", "Customer")
+        status = invoice.get("status", "outstanding")
+        
+        # Parse items for email
+        raw_items = invoice.get("items", [])
+        if isinstance(raw_items, str):
+            try:
+                items = json.loads(raw_items)
+            except:
+                items = []
+        else:
+            items = raw_items if raw_items else []
+        
+        # Build items table
+        items_html = ""
+        for item in items:
+            qty = item.get("qty") or item.get("quantity") or 1
+            desc = item.get("description") or item.get("desc") or "-"
+            price = float(item.get("price", 0))
+            item_total = float(item.get("total", 0))
+            items_html += f'<tr><td style="padding:8px;border-bottom:1px solid #eee;">{safe_string(desc)}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">{qty}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">R{price:,.2f}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">R{item_total:,.2f}</td></tr>'
+        
+        subtotal = float(invoice.get("subtotal", 0))
+        vat = float(invoice.get("vat", 0))
+        
+        subject = f"Invoice {inv_no} from {biz_name}"
+        
+        body_html = f'''
+        <html>
+        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
+            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #10b981;padding-bottom:15px;">
+                    <h1 style="color:#333;margin:0;font-size:24px;">{biz_name}</h1>
+                    <div style="text-align:right;">
+                        <h2 style="color:#10b981;margin:0;">INVOICE</h2>
+                        <p style="margin:5px 0;font-weight:bold;">{inv_no}</p>
+                    </div>
+                </div>
+                
+                <p>Dear {cust_name},</p>
+                <p>Please find your invoice details below:</p>
+                
+                <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+                    <tr style="background:#10b981;color:white;">
+                        <th style="padding:10px;text-align:left;">Description</th>
+                        <th style="padding:10px;text-align:center;">Qty</th>
+                        <th style="padding:10px;text-align:right;">Price</th>
+                        <th style="padding:10px;text-align:right;">Total</th>
+                    </tr>
+                    {items_html}
+                </table>
+                
+                <table style="width:250px;margin-left:auto;border-collapse:collapse;">
+                    <tr><td style="padding:8px;">Subtotal:</td><td style="padding:8px;text-align:right;">R{subtotal:,.2f}</td></tr>
+                    <tr><td style="padding:8px;">VAT (15%):</td><td style="padding:8px;text-align:right;">R{vat:,.2f}</td></tr>
+                    <tr style="font-weight:bold;font-size:18px;border-top:2px solid #333;">
+                        <td style="padding:10px;">TOTAL:</td>
+                        <td style="padding:10px;text-align:right;color:#10b981;">R{total:,.2f}</td>
+                    </tr>
+                </table>
+                
+                <p style="margin-top:30px;"><strong>Date:</strong> {date}</p>
+                <p><strong>Status:</strong> {status.upper()}</p>
+                
+                {f'<div style="margin-top:20px;padding:15px;background:#f0fdf4;border-radius:8px;"><strong>Banking Details:</strong><br>{business.get("bank_name", "")} | Acc: {business.get("bank_account", "")} | Branch: {business.get("bank_branch", "")}</div>' if business and business.get("bank_account") else ''}
+                
+                <p style="margin-top:30px;">Thank you for your business!</p>
+                
+                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                <p style="color: #888; font-size: 12px;">
+                    {biz_name}<br>
+                    {business.get("phone", "") if business else ""}<br>
+                    {business.get("email", "") if business else ""}<br>
+                    Sent via Click AI
+                </p>
+            </div>
+        </body>
+        </html>
+        '''
+        
+        body_text = f"Invoice {inv_no} from {biz_name}\n\nDear {cust_name},\n\nInvoice #: {inv_no}\nDate: {date}\nTotal: R{total:,.2f}\nStatus: {status.upper()}\n\nThank you for your business!\n\n{biz_name}"
+        
+        # Send email
+        success = Email.send(to_email, subject, body_html, body_text, business=business)
+        
+        if success:
+            logger.info(f"[EMAIL] Invoice {inv_no} sent to {to_email}")
+            return jsonify({"success": True, "message": f"Invoice sent to {to_email}"})
+        else:
+            return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings in Settings page."})
+        
+    except Exception as e:
+        logger.error(f"[EMAIL] Error sending invoice: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 
@@ -17373,9 +17740,25 @@ def quote_view(quote_id):
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/quotes" style="color:var(--text-muted);">← Back to Quotes</a>
         <div style="display:flex;gap:10px;">
+            <button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">📧 Email</button>
             <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-            <button class="btn btn-secondary" onclick="document.getElementById('aiInput').value='Email quote {quote.get("quote_number")} to customer';document.getElementById('sendBtn').click();">📧 Email</button>
             {action_buttons}
+        </div>
+    </div>
+    
+    <!-- EMAIL MODAL -->
+    <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
+            <h3 style="margin-top:0;">📧 Email Quote</h3>
+            <p style="color:var(--text-muted);margin-bottom:20px;">Send quote <strong>{quote.get("quote_number", "")}</strong> to:</p>
+            
+            <input type="email" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
+                   style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
+            
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="closeEmailModal()" class="btn btn-secondary">Cancel</button>
+                <button onclick="sendQuoteEmail()" class="btn btn-primary" style="background:#10b981;">Send Email</button>
+            </div>
         </div>
     </div>
     
@@ -17466,6 +17849,52 @@ def quote_view(quote_id):
         const data = await response.json();
         if (data.success) location.reload();
     }}
+    
+    // EMAIL FUNCTIONS
+    function showEmailModal() {{
+        document.getElementById('emailModal').style.display = 'flex';
+        document.getElementById('emailTo').focus();
+    }}
+    
+    function closeEmailModal() {{
+        document.getElementById('emailModal').style.display = 'none';
+    }}
+    
+    async function sendQuoteEmail() {{
+        const email = document.getElementById('emailTo').value.trim();
+        if (!email || !email.includes('@')) {{
+            alert('Please enter a valid email address');
+            return;
+        }}
+        
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = 'Sending...';
+        
+        try {{
+            const response = await fetch('/api/quote/{quote_id}/email', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{to_email: email}})
+            }});
+            const result = await response.json();
+            if (result.success) {{
+                alert('✅ Quote emailed to ' + email);
+                closeEmailModal();
+            }} else {{
+                alert('❌ ' + (result.error || 'Failed to send email'));
+            }}
+        }} catch (err) {{
+            alert('❌ Error: ' + err.message);
+        }} finally {{
+            btn.disabled = false;
+            btn.textContent = 'Send Email';
+        }}
+    }}
+    
+    document.addEventListener('keydown', function(e) {{
+        if (e.key === 'Escape') closeEmailModal();
+    }});
     </script>
     '''
     
@@ -17486,6 +17915,129 @@ def api_quote_status(quote_id):
         db.update("quotes", quote_id, {"status": new_status})
         return jsonify({"success": True})
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/quote/<quote_id>/email", methods=["POST"])
+@login_required
+def api_quote_email(quote_id):
+    """Send quote via email"""
+    try:
+        data = request.get_json()
+        to_email = data.get("to_email", "").strip()
+        
+        if not to_email or "@" not in to_email:
+            return jsonify({"success": False, "error": "Valid email address required"})
+        
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        quote = db.get_one("quotes", quote_id)
+        if not quote:
+            return jsonify({"success": False, "error": "Quote not found"})
+        
+        # Build email content
+        biz_name = business.get("name", "Business") if business else "Business"
+        quote_no = quote.get("quote_number", "")
+        total = float(quote.get("total", 0))
+        date = quote.get("date", today())
+        valid_until = quote.get("valid_until", "14 days")
+        cust_name = quote.get("customer_name", "Customer")
+        status = quote.get("status", "pending")
+        
+        # Parse items for email
+        raw_items = quote.get("items", [])
+        if isinstance(raw_items, str):
+            try:
+                items = json.loads(raw_items)
+            except:
+                items = []
+        else:
+            items = raw_items if raw_items else []
+        
+        # Build items table
+        items_html = ""
+        for item in items:
+            qty = item.get("qty") or item.get("quantity") or 1
+            desc = item.get("description") or item.get("desc") or "-"
+            price = float(item.get("price", 0))
+            item_total = float(item.get("total", 0))
+            items_html += f'<tr><td style="padding:8px;border-bottom:1px solid #eee;">{safe_string(desc)}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">{qty}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">R{price:,.2f}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">R{item_total:,.2f}</td></tr>'
+        
+        subtotal = float(quote.get("subtotal", 0))
+        vat = float(quote.get("vat", 0))
+        
+        subject = f"Quotation {quote_no} from {biz_name}"
+        
+        body_html = f'''
+        <html>
+        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
+            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #2563eb;padding-bottom:15px;">
+                    <h1 style="color:#333;margin:0;font-size:24px;">{biz_name}</h1>
+                    <div style="text-align:right;">
+                        <h2 style="color:#2563eb;margin:0;">QUOTATION</h2>
+                        <p style="margin:5px 0;font-weight:bold;">{quote_no}</p>
+                    </div>
+                </div>
+                
+                <p>Dear {cust_name},</p>
+                <p>Thank you for your enquiry. Please find our quotation below:</p>
+                
+                <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+                    <tr style="background:#2563eb;color:white;">
+                        <th style="padding:10px;text-align:left;">Description</th>
+                        <th style="padding:10px;text-align:center;">Qty</th>
+                        <th style="padding:10px;text-align:right;">Price</th>
+                        <th style="padding:10px;text-align:right;">Total</th>
+                    </tr>
+                    {items_html}
+                </table>
+                
+                <table style="width:250px;margin-left:auto;border-collapse:collapse;">
+                    <tr><td style="padding:8px;">Subtotal:</td><td style="padding:8px;text-align:right;">R{subtotal:,.2f}</td></tr>
+                    <tr><td style="padding:8px;">VAT (15%):</td><td style="padding:8px;text-align:right;">R{vat:,.2f}</td></tr>
+                    <tr style="font-weight:bold;font-size:18px;border-top:2px solid #333;">
+                        <td style="padding:10px;">TOTAL:</td>
+                        <td style="padding:10px;text-align:right;color:#2563eb;">R{total:,.2f}</td>
+                    </tr>
+                </table>
+                
+                <p style="margin-top:30px;"><strong>Date:</strong> {date}</p>
+                <p><strong>Valid Until:</strong> {valid_until}</p>
+                
+                <div style="margin-top:20px;padding:15px;background:#eff6ff;border-radius:8px;border-left:4px solid #2563eb;">
+                    <strong>To accept this quotation:</strong><br>
+                    Reply to this email or contact us directly.
+                </div>
+                
+                <p style="margin-top:30px;">We look forward to hearing from you!</p>
+                
+                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                <p style="color: #888; font-size: 12px;">
+                    {biz_name}<br>
+                    {business.get("phone", "") if business else ""}<br>
+                    {business.get("email", "") if business else ""}<br>
+                    Sent via Click AI
+                </p>
+            </div>
+        </body>
+        </html>
+        '''
+        
+        body_text = f"Quotation {quote_no} from {biz_name}\n\nDear {cust_name},\n\nThank you for your enquiry.\n\nQuote #: {quote_no}\nDate: {date}\nValid Until: {valid_until}\nTotal: R{total:,.2f}\n\nTo accept this quotation, please reply to this email.\n\nWe look forward to hearing from you!\n\n{biz_name}"
+        
+        # Send email
+        success = Email.send(to_email, subject, body_html, body_text, business=business)
+        
+        if success:
+            logger.info(f"[EMAIL] Quote {quote_no} sent to {to_email}")
+            return jsonify({"success": True, "message": f"Quote sent to {to_email}"})
+        else:
+            return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings in Settings page."})
+        
+    except Exception as e:
+        logger.error(f"[EMAIL] Error sending quote: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 
