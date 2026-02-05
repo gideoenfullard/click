@@ -31210,7 +31210,19 @@ def smart_import_page():
         </div>
     </div>
     
-    <!-- STATE 4: Success -->
+    <!-- STATE 4: Importing Progress -->
+    <div id="importingState" class="card" style="display:none;">
+        <div style="text-align:center;margin-bottom:20px;">
+            <h2 style="margin-bottom:8px;">📥 Importing Data...</h2>
+            <p style="color:var(--text-muted);margin:0;" id="importProgress">Starting import...</p>
+        </div>
+        <div id="importLog" style="background:var(--bg);border-radius:8px;padding:15px;max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;line-height:1.8;"></div>
+        <div style="margin-top:15px;background:var(--border);border-radius:10px;overflow:hidden;">
+            <div id="importProgressBar" style="height:8px;background:var(--green);width:0%;transition:width 0.3s;"></div>
+        </div>
+    </div>
+    
+    <!-- STATE 5: Success -->
     <div id="successState" class="card success-state" style="display:none;">
         <div class="success-icon">🎉</div>
         <div class="success-title">Import Complete!</div>
@@ -31223,6 +31235,7 @@ def smart_import_page():
     
     <script>
     let analysisResult = null;
+    let importData = null;  // Store the actual data to import
     let uploadedFileName = '';
     
     const dropZone = document.getElementById('dropZone');
@@ -31286,6 +31299,11 @@ def smart_import_page():
             
             if (result.success) {
                 analysisResult = result;
+                importData = {
+                    data_type: result.data_type,
+                    data_type_label: result.data_type_label,
+                    all_data: result.all_data
+                };
                 showPreview(result);
             } else {
                 showError(result.error || 'Could not analyse the file. Try a different format.');
@@ -31307,55 +31325,50 @@ def smart_import_page():
         html += '<span style="color:var(--text-muted);margin-left:15px;">' + (result.source_hint || 'Auto-detected') + '</span>';
         html += '</div>';
         
-        for (const dataset of result.datasets || []) {
-            const icons = { 'customers': '👥', 'suppliers': '🏭', 'stock': '📦', 'chart_of_accounts': '📊', 'transactions': '💰', 'invoices': '🧾' };
-            const icon = icons[dataset.type] || '📄';
-            const iconClass = dataset.type.replace('chart_of_accounts', 'accounts');
+        // Single dataset display (new format)
+        const icons = { 'customers': '👥', 'suppliers': '🏭', 'stock': '📦', 'chart_of_accounts': '📊', 'transactions': '💰', 'invoices': '🧾' };
+        const icon = icons[result.data_type] || '📄';
+        const iconClass = (result.data_type || '').replace('chart_of_accounts', 'accounts');
+        
+        html += '<div class="preview-card">';
+        html += '<div class="preview-header">';
+        html += '<div class="preview-type">';
+        html += '<div class="preview-icon ' + iconClass + '">' + icon + '</div>';
+        html += '<div>';
+        html += '<div class="preview-title">' + (result.data_type_label || result.data_type) + '</div>';
+        html += '<div class="preview-count">' + result.count + ' records detected</div>';
+        html += '</div></div>';
+        html += '<div class="preview-badge">Ready to import</div>';
+        html += '</div>';
+        
+        if (result.preview && result.preview.length > 0) {
+            const cols = result.columns || Object.keys(result.preview[0]);
+            html += '<div style="overflow-x:auto;"><table class="preview-table"><thead><tr>';
+            for (const col of cols.slice(0, 5)) {
+                html += '<th>' + col + '</th>';
+            }
+            if (cols.length > 5) html += '<th style="color:var(--text-muted);">+' + (cols.length - 5) + ' more</th>';
+            html += '</tr></thead><tbody>';
             
-            html += '<div class="preview-card">';
-            html += '<div class="preview-header">';
-            html += '<div class="preview-type">';
-            html += '<div class="preview-icon ' + iconClass + '">' + icon + '</div>';
-            html += '<div>';
-            html += '<div class="preview-title">' + (dataset.type_label || dataset.type) + '</div>';
-            html += '<div class="preview-count">' + dataset.count + ' records detected</div>';
-            html += '</div></div>';
-            html += '<div class="preview-badge">Ready to import</div>';
-            html += '</div>';
-            
-            if (dataset.preview && dataset.preview.length > 0) {
-                const cols = dataset.columns || Object.keys(dataset.preview[0]);
-                html += '<div style="overflow-x:auto;"><table class="preview-table"><thead><tr>';
+            for (const row of result.preview.slice(0, 4)) {
+                html += '<tr>';
                 for (const col of cols.slice(0, 5)) {
-                    html += '<th>' + col + '</th>';
+                    let val = row[col] || '';
+                    if (typeof val === 'number') val = val.toLocaleString();
+                    if (String(val).length > 30) val = String(val).substring(0, 30) + '...';
+                    html += '<td>' + val + '</td>';
                 }
-                if (cols.length > 5) html += '<th style="color:var(--text-muted);">+' + (cols.length - 5) + ' more</th>';
-                html += '</tr></thead><tbody>';
-                
-                for (const row of dataset.preview.slice(0, 4)) {
-                    html += '<tr>';
-                    for (const col of cols.slice(0, 5)) {
-                        let val = row[col] || '';
-                        if (typeof val === 'number') val = val.toLocaleString();
-                        if (String(val).length > 30) val = String(val).substring(0, 30) + '...';
-                        html += '<td>' + val + '</td>';
-                    }
-                    if (cols.length > 5) html += '<td style="color:var(--text-muted);">...</td>';
-                    html += '</tr>';
-                }
-                html += '</tbody></table></div>';
-                
-                if (dataset.count > 4) {
-                    html += '<div style="text-align:center;padding:10px;color:var(--text-muted);font-size:12px;">Showing 4 of ' + dataset.count + ' records</div>';
-                }
+                if (cols.length > 5) html += '<td style="color:var(--text-muted);">...</td>';
+                html += '</tr>';
             }
+            html += '</tbody></table></div>';
             
-            if (dataset.warnings && dataset.warnings.length > 0) {
-                html += '<div class="warning-box">⚠️ ' + dataset.warnings.join(' | ') + '</div>';
+            if (result.count > 4) {
+                html += '<div style="text-align:center;padding:10px;color:var(--text-muted);font-size:12px;">Showing 4 of ' + result.count + ' records</div>';
             }
-            
-            html += '</div>';
         }
+        
+        html += '</div>';
         
         if (result.confidence) {
             const confColor = result.confidence > 0.8 ? 'var(--green)' : result.confidence > 0.5 ? '#f59e0b' : '#ef4444';
@@ -31375,37 +31388,97 @@ def smart_import_page():
     }
     
     async function executeImport() {
-        if (!analysisResult) return;
-        
-        const btn = document.getElementById('importBtn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner" style="width:20px;height:20px;border-width:2px;margin:0;"></span> Importing...';
-        
-        try {
-            const response = await fetch('/api/smart-import/execute', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ analysis_id: analysisResult.analysis_id })
-            });
-            
-            const result = await response.json();
-            
-            if (result.success) {
-                showSuccess(result);
-            } else {
-                alert('Import failed: ' + (result.error || 'Unknown error'));
-                btn.disabled = false;
-                btn.innerHTML = '<span>🚀</span> Import Everything';
-            }
-        } catch (err) {
-            alert('Connection error. Please try again.');
-            btn.disabled = false;
-            btn.innerHTML = '<span>🚀</span> Import Everything';
+        if (!importData || !importData.all_data) {
+            alert('No data to import');
+            return;
         }
+        
+        // Hide preview, show importing state
+        document.getElementById('previewState').style.display = 'none';
+        document.getElementById('importingState').style.display = 'block';
+        
+        const logDiv = document.getElementById('importLog');
+        const progressBar = document.getElementById('importProgressBar');
+        const progressText = document.getElementById('importProgress');
+        
+        logDiv.innerHTML = '';
+        
+        function addLog(msg, type) {
+            const color = type === 'success' ? 'var(--green)' : type === 'error' ? '#ef4444' : type === 'skip' ? '#f59e0b' : 'var(--text-muted)';
+            const icon = type === 'success' ? '✓' : type === 'error' ? '✗' : type === 'skip' ? '○' : '→';
+            logDiv.innerHTML += '<div style="color:' + color + ';">' + icon + ' ' + msg + '</div>';
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        const total = importData.all_data.length;
+        addLog('Starting import of ' + total + ' ' + importData.data_type_label + '...', 'info');
+        progressText.textContent = 'Importing ' + total + ' records...';
+        
+        // Import in batches of 10 for visual feedback
+        const batchSize = 10;
+        let imported = 0;
+        let skipped = 0;
+        let errors = 0;
+        
+        for (let i = 0; i < importData.all_data.length; i += batchSize) {
+            const batch = importData.all_data.slice(i, i + batchSize);
+            
+            try {
+                const response = await fetch('/api/smart-import/batch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        data_type: importData.data_type,
+                        records: batch
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    for (const r of result.results) {
+                        if (r.status === 'imported') {
+                            imported++;
+                            addLog(r.name, 'success');
+                        } else if (r.status === 'skipped') {
+                            skipped++;
+                            addLog(r.name + ' (already exists)', 'skip');
+                        } else {
+                            errors++;
+                            addLog(r.name + ' - ' + (r.error || 'failed'), 'error');
+                        }
+                    }
+                } else {
+                    errors += batch.length;
+                    addLog('Batch failed: ' + (result.error || 'Unknown error'), 'error');
+                }
+                
+            } catch (err) {
+                errors += batch.length;
+                addLog('Connection error: ' + err.message, 'error');
+            }
+            
+            // Update progress
+            const pct = Math.round(((i + batch.length) / total) * 100);
+            progressBar.style.width = pct + '%';
+            progressText.textContent = 'Imported: ' + imported + ' | Skipped: ' + skipped + ' | Errors: ' + errors;
+        }
+        
+        // Done!
+        progressBar.style.width = '100%';
+        addLog('', 'info');
+        addLog('✨ Import complete! ' + imported + ' records imported.', 'success');
+        
+        setTimeout(() => {
+            const importedObj = {};
+            importedObj[importData.data_type_label] = imported;
+            showSuccess({ imported: importedObj });
+        }, 1500);
     }
     
     function showSuccess(result) {
         document.getElementById('previewState').style.display = 'none';
+        document.getElementById('importingState').style.display = 'none';
         document.getElementById('successState').style.display = 'block';
         
         let statsHtml = '';
@@ -31419,10 +31492,12 @@ def smart_import_page():
     
     function resetImport() {
         analysisResult = null;
+        importData = null;
         uploadedFileName = '';
         document.getElementById('fileInput').value = '';
         document.getElementById('previewState').style.display = 'none';
         document.getElementById('successState').style.display = 'none';
+        document.getElementById('importingState').style.display = 'none';
         document.getElementById('processingState').classList.remove('active');
         document.getElementById('dropState').style.display = 'block';
         document.getElementById('importBtn').style.display = 'inline-flex';
@@ -31614,28 +31689,17 @@ Return ONLY the JSON, no markdown, no explanation."""
         if not all_data:
             return jsonify({"success": False, "error": "No valid data found. Check file format."})
         
-        # Store for import
-        analysis_id = generate_id()
-        _smart_import_cache[analysis_id] = {
-            "business_id": biz_id,
-            "user_id": user.get("id"),
-            "datasets": [{"type": data_type, "type_label": result.get("data_type_label", data_type.title()), "all_data": all_data, "count": len(all_data)}],
-            "created_at": datetime.now().isoformat()
-        }
-        
+        # Return data directly to frontend (no cache needed - avoids multi-worker issues)
         return jsonify({
             "success": True,
-            "analysis_id": analysis_id,
             "source_hint": result.get("source_hint", "Auto-detected"),
             "confidence": result.get("confidence", 0.8),
-            "datasets": [{
-                "type": data_type,
-                "type_label": result.get("data_type_label", data_type.title()),
-                "count": len(all_data),
-                "columns": result.get("columns_found", list(column_mapping.values())),
-                "preview": preview_data,
-                "warnings": []
-            }]
+            "data_type": data_type,
+            "data_type_label": result.get("data_type_label", data_type.title()),
+            "columns": result.get("columns_found", list(column_mapping.values())),
+            "all_data": all_data,  # Send all data to frontend
+            "preview": preview_data,
+            "count": len(all_data)
         })
         
     except anthropic.APIError as e:
@@ -31647,7 +31711,401 @@ Return ONLY the JSON, no markdown, no explanation."""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# EXECUTE THE IMPORT
+# BATCH IMPORT - Receives data directly from frontend (no cache needed)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/smart-import/batch", methods=["POST"])
+@login_required
+def api_smart_import_batch():
+    """Import a batch of records - data comes directly from frontend"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+    
+    try:
+        data = request.get_json()
+        data_type = data.get("data_type")
+        records = data.get("records", [])
+        
+        if not records:
+            return jsonify({"success": False, "error": "No records to import"})
+        
+        results = []
+        
+        for row in records:
+            name = ""
+            status = "error"
+            error_msg = ""
+            
+            try:
+                if data_type == "customers":
+                    name = str(row.get("name", "")).strip()
+                    if not name:
+                        status = "skipped"
+                        error_msg = "No name"
+                    else:
+                        existing = db.get("customers", {"business_id": biz_id, "name": name})
+                        if existing:
+                            status = "skipped"
+                        else:
+                            record = {
+                                "business_id": biz_id,
+                                "name": name,
+                                "email": str(row.get("email", "")).strip(),
+                                "phone": str(row.get("phone", "")).strip(),
+                                "contact_name": str(row.get("contact_name", "")).strip(),
+                                "address": str(row.get("address", "")).strip(),
+                                "vat_number": str(row.get("vat_number", "")).strip(),
+                                "account_code": str(row.get("account_code", "")).strip(),
+                                "balance": float(row.get("balance", 0) or 0),
+                                "credit_limit": float(row.get("credit_limit", 0) or 0),
+                                "source": "smart_import"
+                            }
+                            success, resp = db.save("customers", record)
+                            if success:
+                                status = "imported"
+                            else:
+                                status = "error"
+                                error_msg = str(resp)[:50]
+                
+                elif data_type == "suppliers":
+                    name = str(row.get("name", "")).strip()
+                    if not name:
+                        status = "skipped"
+                    else:
+                        existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                        if existing:
+                            status = "skipped"
+                        else:
+                            record = {
+                                "business_id": biz_id,
+                                "name": name,
+                                "email": str(row.get("email", "")).strip(),
+                                "phone": str(row.get("phone", "")).strip(),
+                                "contact_name": str(row.get("contact_name", "")).strip(),
+                                "address": str(row.get("address", "")).strip(),
+                                "vat_number": str(row.get("vat_number", "")).strip(),
+                                "account_code": str(row.get("account_code", "")).strip(),
+                                "balance": float(row.get("balance", 0) or 0),
+                                "source": "smart_import"
+                            }
+                            success, resp = db.save("suppliers", record)
+                            if success:
+                                status = "imported"
+                            else:
+                                status = "error"
+                                error_msg = str(resp)[:50]
+                
+                elif data_type == "stock":
+                    name = str(row.get("description", row.get("code", ""))).strip()
+                    code = str(row.get("code", "")).strip()
+                    if not name and not code:
+                        status = "skipped"
+                    else:
+                        record = {
+                            "business_id": biz_id,
+                            "description": name or code,
+                            "code": code,
+                            "cost_price": float(row.get("cost_price", 0) or 0),
+                            "selling_price": float(row.get("selling_price", 0) or 0),
+                            "qty": float(row.get("qty", row.get("quantity", 0)) or 0),
+                            "quantity": float(row.get("qty", row.get("quantity", 0)) or 0),
+                            "category": str(row.get("category", "")).strip(),
+                            "unit": str(row.get("unit", "each")).strip() or "each",
+                            "source": "smart_import"
+                        }
+                        success, resp = db.save_stock(record)
+                        if success:
+                            status = "imported"
+                        else:
+                            status = "error"
+                            error_msg = str(resp)[:50]
+                
+                elif data_type == "chart_of_accounts":
+                    name = str(row.get("account_name", "")).strip()
+                    if not name:
+                        status = "skipped"
+                    else:
+                        record = {
+                            "business_id": biz_id,
+                            "account_name": name,
+                            "account_code": str(row.get("account_code", "")).strip(),
+                            "account_type": str(row.get("account_type", "expense")).strip().lower(),
+                            "is_active": True,
+                            "source": "smart_import"
+                        }
+                        success, resp = db.save("chart_of_accounts", record)
+                        if success:
+                            status = "imported"
+                        else:
+                            status = "error"
+                            error_msg = str(resp)[:50]
+                
+                elif data_type == "transactions":
+                    name = str(row.get("description", row.get("reference", "Transaction"))).strip()[:50]
+                    record = {
+                        "business_id": biz_id,
+                        "date": str(row.get("date", "")).strip(),
+                        "account_code": str(row.get("account_code", "")).strip(),
+                        "account_name": str(row.get("account_name", "")).strip(),
+                        "reference": str(row.get("reference", "")).strip(),
+                        "description": str(row.get("description", "")).strip(),
+                        "debit": float(row.get("debit", 0) or 0),
+                        "credit": float(row.get("credit", 0) or 0),
+                        "source": "smart_import"
+                    }
+                    success, resp = db.save("gl_transactions", record)
+                    if success:
+                        status = "imported"
+                    else:
+                        status = "error"
+                        error_msg = str(resp)[:50]
+                
+                else:
+                    status = "error"
+                    error_msg = f"Unknown type: {data_type}"
+                    
+            except Exception as e:
+                status = "error"
+                error_msg = str(e)[:50]
+                logger.error(f"[SMART-IMPORT] Batch error: {e}")
+            
+            results.append({
+                "name": name or "Record",
+                "status": status,
+                "error": error_msg
+            })
+        
+        return jsonify({"success": True, "results": results})
+        
+    except Exception as e:
+        logger.error(f"[SMART-IMPORT] Batch endpoint error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STREAMING IMPORT - Shows real-time progress (LEGACY - uses cache)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/smart-import/stream")
+@login_required
+def api_smart_import_stream():
+    """Stream import progress using Server-Sent Events"""
+    from flask import Response
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    analysis_id = request.args.get("analysis_id")
+    
+    if not biz_id or not analysis_id or analysis_id not in _smart_import_cache:
+        def error_stream():
+            yield f"data: {json.dumps({'type': 'error', 'error': 'Invalid session'})}\n\n"
+        return Response(error_stream(), mimetype='text/event-stream')
+    
+    analysis = _smart_import_cache[analysis_id]
+    
+    if analysis.get("business_id") != biz_id:
+        def error_stream():
+            yield f"data: {json.dumps({'type': 'error', 'error': 'Access denied'})}\n\n"
+        return Response(error_stream(), mimetype='text/event-stream')
+    
+    def generate():
+        imported = {}
+        current = 0
+        
+        for dataset in analysis.get("datasets", []):
+            data_type = dataset.get("type")
+            all_data = dataset.get("all_data", [])
+            total = len(all_data)
+            
+            if not all_data:
+                continue
+            
+            # Send start event
+            yield f"data: {json.dumps({'type': 'start', 'total': total, 'data_type': data_type})}\n\n"
+            
+            count = 0
+            
+            for row in all_data:
+                current += 1
+                name = ""
+                status = "error"
+                error_msg = ""
+                
+                try:
+                    if data_type == "customers":
+                        name = str(row.get("name", "")).strip()
+                        if not name:
+                            status = "skipped"
+                        else:
+                            existing = db.get("customers", {"business_id": biz_id, "name": name})
+                            if existing:
+                                status = "skipped"
+                            else:
+                                record = {
+                                    "business_id": biz_id,
+                                    "name": name,
+                                    "email": str(row.get("email", "")).strip(),
+                                    "phone": str(row.get("phone", "")).strip(),
+                                    "contact_name": str(row.get("contact_name", "")).strip(),
+                                    "address": str(row.get("address", "")).strip(),
+                                    "vat_number": str(row.get("vat_number", "")).strip(),
+                                    "account_code": str(row.get("account_code", "")).strip(),
+                                    "balance": float(row.get("balance", 0) or 0),
+                                    "credit_limit": float(row.get("credit_limit", 0) or 0),
+                                    "source": "smart_import"
+                                }
+                                success, _ = db.save("customers", record)
+                                if success:
+                                    status = "imported"
+                                    count += 1
+                                else:
+                                    status = "error"
+                                    error_msg = "DB save failed"
+                    
+                    elif data_type == "suppliers":
+                        name = str(row.get("name", "")).strip()
+                        if not name:
+                            status = "skipped"
+                        else:
+                            existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                            if existing:
+                                status = "skipped"
+                            else:
+                                record = {
+                                    "business_id": biz_id,
+                                    "name": name,
+                                    "email": str(row.get("email", "")).strip(),
+                                    "phone": str(row.get("phone", "")).strip(),
+                                    "contact_name": str(row.get("contact_name", "")).strip(),
+                                    "address": str(row.get("address", "")).strip(),
+                                    "vat_number": str(row.get("vat_number", "")).strip(),
+                                    "account_code": str(row.get("account_code", "")).strip(),
+                                    "balance": float(row.get("balance", 0) or 0),
+                                    "source": "smart_import"
+                                }
+                                success, _ = db.save("suppliers", record)
+                                if success:
+                                    status = "imported"
+                                    count += 1
+                                else:
+                                    status = "error"
+                                    error_msg = "DB save failed"
+                    
+                    elif data_type == "stock":
+                        name = str(row.get("description", row.get("code", ""))).strip()
+                        code = str(row.get("code", "")).strip()
+                        if not name and not code:
+                            status = "skipped"
+                        else:
+                            if code:
+                                existing = db.get_all_stock(biz_id)
+                                if existing and any(s.get("code") == code for s in existing):
+                                    status = "skipped"
+                                    name = code
+                                else:
+                                    record = {
+                                        "business_id": biz_id,
+                                        "description": name or code,
+                                        "code": code,
+                                        "cost_price": float(row.get("cost_price", 0) or 0),
+                                        "selling_price": float(row.get("selling_price", 0) or 0),
+                                        "qty": float(row.get("qty", row.get("quantity", 0)) or 0),
+                                        "quantity": float(row.get("qty", row.get("quantity", 0)) or 0),
+                                        "category": str(row.get("category", "")).strip(),
+                                        "unit": str(row.get("unit", "each")).strip() or "each",
+                                        "source": "smart_import"
+                                    }
+                                    success, _ = db.save_stock(record)
+                                    if success:
+                                        status = "imported"
+                                        count += 1
+                                    else:
+                                        status = "error"
+                                        error_msg = "DB save failed"
+                            else:
+                                record = {
+                                    "business_id": biz_id,
+                                    "description": name,
+                                    "code": "",
+                                    "cost_price": float(row.get("cost_price", 0) or 0),
+                                    "selling_price": float(row.get("selling_price", 0) or 0),
+                                    "qty": float(row.get("qty", row.get("quantity", 0)) or 0),
+                                    "source": "smart_import"
+                                }
+                                success, _ = db.save_stock(record)
+                                if success:
+                                    status = "imported"
+                                    count += 1
+                    
+                    elif data_type == "chart_of_accounts":
+                        name = str(row.get("account_name", "")).strip()
+                        if not name:
+                            status = "skipped"
+                        else:
+                            record = {
+                                "business_id": biz_id,
+                                "account_name": name,
+                                "account_code": str(row.get("account_code", "")).strip(),
+                                "account_type": str(row.get("account_type", "expense")).strip().lower(),
+                                "is_active": True,
+                                "source": "smart_import"
+                            }
+                            success, _ = db.save("chart_of_accounts", record)
+                            if success:
+                                status = "imported"
+                                count += 1
+                    
+                    elif data_type == "transactions":
+                        name = str(row.get("description", row.get("reference", "Transaction"))).strip()[:50]
+                        record = {
+                            "business_id": biz_id,
+                            "date": str(row.get("date", "")).strip(),
+                            "account_code": str(row.get("account_code", "")).strip(),
+                            "account_name": str(row.get("account_name", "")).strip(),
+                            "reference": str(row.get("reference", "")).strip(),
+                            "description": str(row.get("description", "")).strip(),
+                            "debit": float(row.get("debit", 0) or 0),
+                            "credit": float(row.get("credit", 0) or 0),
+                            "source": "smart_import"
+                        }
+                        success, _ = db.save("gl_transactions", record)
+                        if success:
+                            status = "imported"
+                            count += 1
+                    
+                except Exception as e:
+                    status = "error"
+                    error_msg = str(e)[:50]
+                    logger.error(f"[SMART-IMPORT] Error: {e}")
+                
+                # Send progress event
+                yield f"data: {json.dumps({'type': 'progress', 'current': current, 'total': total, 'name': name or f'Record {current}', 'status': status, 'error': error_msg})}\n\n"
+            
+            imported[dataset.get("type_label", data_type.title())] = count
+        
+        # Clean up cache
+        try:
+            del _smart_import_cache[analysis_id]
+        except:
+            pass
+        
+        # Send done event
+        yield f"data: {json.dumps({'type': 'done', 'imported': imported})}\n\n"
+    
+    return Response(generate(), mimetype='text/event-stream', headers={
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no'
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXECUTE THE IMPORT (kept for backwards compatibility)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/smart-import/execute", methods=["POST"])
