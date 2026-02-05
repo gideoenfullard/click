@@ -31443,8 +31443,8 @@ def smart_import_page():
 @login_required
 def api_smart_import_analyse():
     """
-    THE MAGIC ENDPOINT - Takes any file, Opus figures out what to do with it.
-    No column mapping. No configuration. Just works.
+    ROBUST MAGIC ENDPOINT - AI analyzes structure only, Python does the parsing.
+    This avoids JSON issues from special characters in data.
     """
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -31474,7 +31474,6 @@ def api_smart_import_analyse():
                 file_content = raw_bytes.decode('utf-8', errors='ignore')
                 
         elif filename.endswith('.xlsx') or filename.endswith('.xls'):
-            # Try to read Excel without pandas
             try:
                 import openpyxl
                 file.seek(0)
@@ -31486,174 +31485,162 @@ def api_smart_import_analyse():
                     rows.append(row_str)
                 file_content = '\n'.join(rows)
             except ImportError:
-                return jsonify({"success": False, "error": "Excel support not available. Please export your file as CSV and try again."})
+                return jsonify({"success": False, "error": "Excel support not available. Please export as CSV."})
             except Exception as e:
-                return jsonify({"success": False, "error": f"Could not read Excel file: {str(e)}. Try exporting as CSV."})
+                return jsonify({"success": False, "error": f"Could not read Excel: {str(e)}. Try CSV."})
         else:
-            return jsonify({"success": False, "error": "Unsupported file type. Use CSV, Excel (.xlsx/.xls), or TXT."})
+            return jsonify({"success": False, "error": "Unsupported file type. Use CSV or Excel."})
         
         lines = file_content.split('\n')
-        sample_content = '\n'.join(lines[:500])
+        sample_lines = [l for l in lines[:40] if l.strip()]
+        sample_content = '\n'.join(sample_lines[:25])
         total_lines = len([l for l in lines if l.strip()])
         
         # ═══════════════════════════════════════════════════════════════════════
-        # OPUS ANALYSIS - The Brain
+        # AI ANALYSIS - Just get STRUCTURE, not data (avoids JSON issues)
         # ═══════════════════════════════════════════════════════════════════════
         
-        opus_prompt = f"""You are a data import specialist for ClickAI, a South African accounting system.
+        opus_prompt = f"""Analyze this CSV file structure. Return ONLY a small JSON with column mapping.
 
-Analyse this file and extract structured data. The file is likely exported from Sage, Pastel, Xero, QuickBooks, or similar.
-
-FILE CONTENT (first 500 lines):
+FIRST 25 LINES:
 ```
 {sample_content}
 ```
 
-TOTAL LINES IN FILE: {total_lines}
+TOTAL LINES: {total_lines}
 
-YOUR TASK:
-1. Identify what type(s) of data this contains:
-   - customers (client/customer list with names, contacts, addresses)
-   - suppliers (vendor/supplier list)
-   - stock (inventory/product list with codes, descriptions, prices)
-   - chart_of_accounts (GL accounts with codes and types)
-   - transactions (journal entries, GL transactions with debits/credits)
-   - invoices (sales or purchase invoices)
+Return this EXACT JSON format (nothing else):
+{{"success":true,"source_hint":"Sage Export","confidence":0.9,"data_type":"customers","data_type_label":"Customers","header_row":0,"data_start_row":1,"column_mapping":{{"0":"name","1":"email","2":"phone"}},"columns_found":["name","email","phone"]}}
 
-2. Find where the actual data starts (skip any header rows, titles, empty rows)
+RULES:
+- data_type: customers, suppliers, stock, chart_of_accounts, or transactions
+- header_row: row index (0-based) with headers, or -1 if none
+- data_start_row: row index where data starts
+- column_mapping: column index (as string) to field name
 
-3. Map the columns to our standard fields
+FIELDS:
+- customers/suppliers: name, email, phone, contact_name, address, vat_number, account_code, balance, credit_limit
+- stock: code, description, cost_price, selling_price, qty, category, unit
+- chart_of_accounts: account_code, account_name, account_type
+- transactions: date, account_code, account_name, reference, description, debit, credit
 
-4. Clean the data:
-   - Remove "R" or "R " from amounts, handle "1,234.56" format
-   - Parse South African dates (DD/MM/YYYY or YYYY-MM-DD)
-   - Trim whitespace
-   - Handle empty values
-
-5. Return ONLY valid JSON in this exact format:
-
-{{
-    "success": true,
-    "source_hint": "Sage Pastel Customer Export" or similar guess,
-    "confidence": 0.95,
-    "datasets": [
-        {{
-            "type": "customers",
-            "type_label": "Customers",
-            "count": 150,
-            "columns": ["name", "email", "phone", "address", "vat_number", "account_code", "balance"],
-            "preview": [
-                {{"name": "ABC Company", "email": "info@abc.co.za", "phone": "011 123 4567", "address": "123 Main Rd, Sandton", "vat_number": "4123456789", "account_code": "ABC001", "balance": 15000.00}}
-            ],
-            "all_data": [
-                ... (ALL rows, properly cleaned and mapped)
-            ],
-            "warnings": ["3 rows had missing names and were skipped"]
-        }}
-    ]
-}}
-
-FIELD MAPPINGS:
-
-For CUSTOMERS/SUPPLIERS:
-- name (required): Customer/Client/Company/Supplier/Vendor Name
-- email: Email/E-mail/Email Address
-- phone: Phone/Tel/Telephone/Mobile/Cell
-- contact_name: Contact/Contact Person/Contact Name
-- address: Address/Physical Address/Postal Address (combine multiple address fields)
-- vat_number: VAT/VAT No/Tax Number/Tax No
-- account_code: Code/Account/Acc/Customer Code/Supplier Code
-- balance: Balance/Amount Owing/Outstanding
-- credit_limit: Credit Limit/Limit
-
-For STOCK:
-- code (required): Code/Item Code/Stock Code/SKU/Product Code
-- description (required): Description/Item/Product/Stock Description/Name
-- cost_price: Cost/Cost Price/Avg Cost/Average Cost
-- selling_price: Price/Selling Price/Sales Price/Retail/Sell
-- qty/quantity: Qty/Quantity/On Hand/Stock on Hand/SOH
-- category: Category/Group/Item Group/Type
-- unit: Unit/UOM/Unit of Measure
-
-For CHART OF ACCOUNTS:
-- account_code: Code/Account Code/Acc No/Number
-- account_name: Name/Account/Account Name/Description
-- account_type: Type/Category (map to: asset/liability/equity/income/expense)
-
-For TRANSACTIONS:
-- date: Date/Trans Date/Transaction Date
-- account_code: Account/Code/GL Code
-- account_name: Account Name/Description
-- reference: Ref/Reference/Doc No
-- description: Description/Narration/Details
-- debit: Debit/Dr
-- credit: Credit/Cr
-
-IMPORTANT:
-- Return ONLY the JSON, no explanation text
-- Include ALL data rows in all_data
-- Clean all monetary values to plain numbers (no R, no commas for thousands)
-- If uncertain, set confidence lower"""
+Return ONLY the JSON, no markdown, no explanation."""
 
         client = anthropic.Anthropic()
         
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=16000,
+            max_tokens=1000,
             messages=[{"role": "user", "content": opus_prompt}]
         )
         
         opus_response = response.content[0].text.strip()
         
-        if '```json' in opus_response:
-            opus_response = opus_response.split('```json')[1].split('```')[0]
-        elif '```' in opus_response:
-            opus_response = opus_response.split('```')[1].split('```')[0]
+        # Clean response
+        if '```' in opus_response:
+            opus_response = opus_response.replace('```json', '').replace('```', '')
+        opus_response = opus_response.strip()
         
+        # Parse JSON
         try:
             result = json.loads(opus_response)
-        except json.JSONDecodeError as e:
-            match = re.search(r'\{[\s\S]*\}', opus_response)
+        except json.JSONDecodeError:
+            # Try to find JSON in response
+            match = re.search(r'\{[^{}]*"success"[^{}]*\}', opus_response)
             if match:
-                result = json.loads(match.group())
+                try:
+                    result = json.loads(match.group())
+                except:
+                    logger.error(f"[SMART-IMPORT] JSON failed: {opus_response[:300]}")
+                    return jsonify({"success": False, "error": "Could not analyze file. Try a simpler CSV."})
             else:
-                logger.error(f"[SMART-IMPORT] JSON parse failed: {e}")
-                return jsonify({"success": False, "error": "AI could not parse this file format. Try exporting as a simpler CSV."})
+                return jsonify({"success": False, "error": "Could not analyze file structure."})
         
         if not result.get("success"):
-            return jsonify({"success": False, "error": result.get("error", "Could not understand file format")})
+            return jsonify({"success": False, "error": "Could not understand file format"})
         
+        # ═══════════════════════════════════════════════════════════════════════
+        # PYTHON PARSING - Use the mapping to extract data
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        data_type = result.get("data_type", "customers")
+        header_row = int(result.get("header_row", 0))
+        data_start = int(result.get("data_start_row", 1))
+        column_mapping = result.get("column_mapping", {})
+        
+        all_data = []
+        preview_data = []
+        
+        for i, line in enumerate(lines):
+            if i < data_start or not line.strip():
+                continue
+            
+            # Parse CSV line properly
+            try:
+                import csv as csv_mod
+                reader = csv_mod.reader([line])
+                cols = next(reader)
+            except:
+                cols = line.split(',')
+            
+            # Map to fields
+            row_data = {}
+            for col_idx, field_name in column_mapping.items():
+                try:
+                    idx = int(col_idx)
+                    if idx < len(cols):
+                        val = cols[idx].strip().strip('"').strip("'")
+                        # Clean money values
+                        if field_name in ['balance', 'credit_limit', 'cost_price', 'selling_price', 'debit', 'credit', 'qty']:
+                            val = re.sub(r'[R\s,]', '', str(val))
+                            try:
+                                val = float(val) if val else 0
+                            except:
+                                val = 0
+                        row_data[field_name] = val
+                except:
+                    pass
+            
+            # Check for key field
+            key_fields = {'customers': 'name', 'suppliers': 'name', 'stock': 'description',
+                          'chart_of_accounts': 'account_name', 'transactions': 'account_code'}
+            key = key_fields.get(data_type, 'name')
+            
+            if row_data.get(key):
+                all_data.append(row_data)
+                if len(preview_data) < 5:
+                    preview_data.append(row_data)
+        
+        if not all_data:
+            return jsonify({"success": False, "error": "No valid data found. Check file format."})
+        
+        # Store for import
         analysis_id = generate_id()
         _smart_import_cache[analysis_id] = {
             "business_id": biz_id,
             "user_id": user.get("id"),
-            "datasets": result.get("datasets", []),
+            "datasets": [{"type": data_type, "type_label": result.get("data_type_label", data_type.title()), "all_data": all_data, "count": len(all_data)}],
             "created_at": datetime.now().isoformat()
         }
         
-        preview_result = {
+        return jsonify({
             "success": True,
             "analysis_id": analysis_id,
-            "source_hint": result.get("source_hint"),
+            "source_hint": result.get("source_hint", "Auto-detected"),
             "confidence": result.get("confidence", 0.8),
-            "datasets": []
-        }
-        
-        for ds in result.get("datasets", []):
-            preview_result["datasets"].append({
-                "type": ds.get("type"),
-                "type_label": ds.get("type_label", ds.get("type", "").title()),
-                "count": ds.get("count", len(ds.get("all_data", []))),
-                "columns": ds.get("columns", []),
-                "preview": ds.get("preview", ds.get("all_data", [])[:5]),
-                "warnings": ds.get("warnings", [])
-            })
-        
-        return jsonify(preview_result)
+            "datasets": [{
+                "type": data_type,
+                "type_label": result.get("data_type_label", data_type.title()),
+                "count": len(all_data),
+                "columns": result.get("columns_found", list(column_mapping.values())),
+                "preview": preview_data,
+                "warnings": []
+            }]
+        })
         
     except anthropic.APIError as e:
-        logger.error(f"[SMART-IMPORT] Anthropic API error: {e}")
-        return jsonify({"success": False, "error": "AI service temporarily unavailable. Try again."})
+        logger.error(f"[SMART-IMPORT] API error: {e}")
+        return jsonify({"success": False, "error": "AI service unavailable. Try again."})
     except Exception as e:
         logger.error(f"[SMART-IMPORT] Error: {e}")
         return jsonify({"success": False, "error": str(e)})
