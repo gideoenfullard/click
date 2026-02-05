@@ -2366,12 +2366,15 @@ class RecordFactory:
             "address": kwargs.get("address", ""),
             "vat_number": kwargs.get("vat_number", ""),
             "balance": float(kwargs.get("balance", 0)),
+            "credit_limit": float(kwargs.get("credit_limit", 0)),
             "active": kwargs.get("active", True),
             "created_at": kwargs.get("created_at") or now(),
             "created_by": kwargs.get("created_by", ""),
             "category": kwargs.get("category", ""),
             "contact_name": kwargs.get("contact_name", ""),
             "price_list": kwargs.get("price_list", "retail"),  # retail, wholesale, trade, vip
+            "payment_terms": kwargs.get("payment_terms", ""),  # e.g. "30 days", "COD"
+            "notes": kwargs.get("notes", ""),
             "payment_intelligence": kwargs.get("payment_intelligence")
         }
     
@@ -2388,11 +2391,14 @@ class RecordFactory:
             "address": kwargs.get("address", ""),
             "vat_number": kwargs.get("vat_number", ""),
             "balance": float(kwargs.get("balance", 0)),
+            "credit_limit": float(kwargs.get("credit_limit", 0)),
             "active": kwargs.get("active", True),
             "created_at": kwargs.get("created_at") or now(),
             "created_by": kwargs.get("created_by", ""),
             "category": kwargs.get("category", ""),
-            "contact_name": kwargs.get("contact_name", "")
+            "contact_name": kwargs.get("contact_name", ""),
+            "payment_terms": kwargs.get("payment_terms", ""),
+            "notes": kwargs.get("notes", "")
         }
     
     @staticmethod
@@ -31594,7 +31600,7 @@ RULES:
 - column_mapping: column index (as string) to field name
 
 FIELDS:
-- customers/suppliers: name, email, phone, contact_name, address, vat_number, account_code, balance, credit_limit
+- customers/suppliers: name, email, phone, contact_name, address, vat_number, account_code, balance, credit_limit, payment_terms, notes, category
 - stock: code, description, cost_price, selling_price, qty, category, unit
 - chart_of_accounts: account_code, account_name, account_type
 - transactions: date, account_code, account_name, reference, description, debit, credit
@@ -31751,19 +31757,22 @@ def api_smart_import_batch():
                         if existing:
                             status = "skipped"
                         else:
-                            record = {
-                                "business_id": biz_id,
-                                "name": name,
-                                "email": str(row.get("email", "")).strip(),
-                                "phone": str(row.get("phone", "")).strip(),
-                                "contact_name": str(row.get("contact_name", "")).strip(),
-                                "address": str(row.get("address", "")).strip(),
-                                "vat_number": str(row.get("vat_number", "")).strip(),
-                                "account_code": str(row.get("account_code", "")).strip(),
-                                "balance": float(row.get("balance", 0) or 0),
-                                "credit_limit": float(row.get("credit_limit", 0) or 0),
-                                "source": "smart_import"
-                            }
+                            # Use RecordFactory to ensure correct schema
+                            record = RecordFactory.customer(
+                                business_id=biz_id,
+                                name=name,
+                                code=str(row.get("account_code", row.get("code", ""))).strip(),
+                                phone=str(row.get("phone", "")).strip(),
+                                email=str(row.get("email", "")).strip(),
+                                address=str(row.get("address", "")).strip(),
+                                vat_number=str(row.get("vat_number", "")).strip(),
+                                contact_name=str(row.get("contact_name", "")).strip(),
+                                balance=float(row.get("balance", 0) or 0),
+                                credit_limit=float(row.get("credit_limit", 0) or 0),
+                                category=str(row.get("category", "")).strip(),
+                                payment_terms=str(row.get("payment_terms", "")).strip(),
+                                notes=str(row.get("notes", "")).strip()
+                            )
                             success, resp = db.save("customers", record)
                             if success:
                                 status = "imported"
@@ -31780,18 +31789,22 @@ def api_smart_import_batch():
                         if existing:
                             status = "skipped"
                         else:
-                            record = {
-                                "business_id": biz_id,
-                                "name": name,
-                                "email": str(row.get("email", "")).strip(),
-                                "phone": str(row.get("phone", "")).strip(),
-                                "contact_name": str(row.get("contact_name", "")).strip(),
-                                "address": str(row.get("address", "")).strip(),
-                                "vat_number": str(row.get("vat_number", "")).strip(),
-                                "account_code": str(row.get("account_code", "")).strip(),
-                                "balance": float(row.get("balance", 0) or 0),
-                                "source": "smart_import"
-                            }
+                            # Use RecordFactory to ensure correct schema
+                            record = RecordFactory.supplier(
+                                business_id=biz_id,
+                                name=name,
+                                code=str(row.get("account_code", row.get("code", ""))).strip(),
+                                phone=str(row.get("phone", "")).strip(),
+                                email=str(row.get("email", "")).strip(),
+                                address=str(row.get("address", "")).strip(),
+                                vat_number=str(row.get("vat_number", "")).strip(),
+                                contact_name=str(row.get("contact_name", "")).strip(),
+                                balance=float(row.get("balance", 0) or 0),
+                                credit_limit=float(row.get("credit_limit", 0) or 0),
+                                category=str(row.get("category", "")).strip(),
+                                payment_terms=str(row.get("payment_terms", "")).strip(),
+                                notes=str(row.get("notes", "")).strip()
+                            )
                             success, resp = db.save("suppliers", record)
                             if success:
                                 status = "imported"
@@ -31805,18 +31818,17 @@ def api_smart_import_batch():
                     if not name and not code:
                         status = "skipped"
                     else:
-                        record = {
-                            "business_id": biz_id,
-                            "description": name or code,
-                            "code": code,
-                            "cost_price": float(row.get("cost_price", 0) or 0),
-                            "selling_price": float(row.get("selling_price", 0) or 0),
-                            "qty": float(row.get("qty", row.get("quantity", 0)) or 0),
-                            "quantity": float(row.get("qty", row.get("quantity", 0)) or 0),
-                            "category": str(row.get("category", "")).strip(),
-                            "unit": str(row.get("unit", "each")).strip() or "each",
-                            "source": "smart_import"
-                        }
+                        # Use RecordFactory to ensure correct schema
+                        record = RecordFactory.stock_item(
+                            business_id=biz_id,
+                            description=name or code,
+                            code=code,
+                            cost_price=float(row.get("cost_price", 0) or 0),
+                            selling_price=float(row.get("selling_price", 0) or 0),
+                            quantity=int(float(row.get("qty", row.get("quantity", 0)) or 0)),
+                            category=str(row.get("category", "")).strip(),
+                            unit=str(row.get("unit", "each")).strip() or "each"
+                        )
                         success, resp = db.save_stock(record)
                         if success:
                             status = "imported"
@@ -31830,12 +31842,13 @@ def api_smart_import_batch():
                         status = "skipped"
                     else:
                         record = {
+                            "id": generate_id(),
                             "business_id": biz_id,
                             "account_name": name,
                             "account_code": str(row.get("account_code", "")).strip(),
                             "account_type": str(row.get("account_type", "expense")).strip().lower(),
                             "is_active": True,
-                            "source": "smart_import"
+                            "created_at": now()
                         }
                         success, resp = db.save("chart_of_accounts", record)
                         if success:
@@ -31847,6 +31860,7 @@ def api_smart_import_batch():
                 elif data_type == "transactions":
                     name = str(row.get("description", row.get("reference", "Transaction"))).strip()[:50]
                     record = {
+                        "id": generate_id(),
                         "business_id": biz_id,
                         "date": str(row.get("date", "")).strip(),
                         "account_code": str(row.get("account_code", "")).strip(),
@@ -31855,7 +31869,7 @@ def api_smart_import_batch():
                         "description": str(row.get("description", "")).strip(),
                         "debit": float(row.get("debit", 0) or 0),
                         "credit": float(row.get("credit", 0) or 0),
-                        "source": "smart_import"
+                        "created_at": now()
                     }
                     success, resp = db.save("gl_transactions", record)
                     if success:
