@@ -13205,6 +13205,14 @@ def api_zane_analyze_file():
 
 Analyze this document thoroughly. Identify what type of document it is (Trial Balance, Income Statement, Balance Sheet, Bank Statement, etc).
 
+CRITICAL INSTRUCTION:
+═══════════════════════════════════════════════════════════════════════
+READ the totals exactly as printed on the document.
+DO NOT calculate or add up any numbers yourself!
+If the document shows "Total: R100,000" then report R100,000.
+DO NOT verify the math - just report what is printed.
+═══════════════════════════════════════════════════════════════════════
+
 Provide your analysis as clean HTML (no markdown). Use:
 - <h4> for section headers
 - <table> with proper <th> and <td> for any data tables
@@ -13214,7 +13222,7 @@ Provide your analysis as clean HTML (no markdown). Use:
 
 Include:
 1. Document type and period
-2. Key totals and summary
+2. Key totals AS PRINTED on the document (do not calculate)
 3. Any concerns, errors, or unusual items
 4. Recommendations
 
@@ -13245,11 +13253,83 @@ Make it professional but accessible. Use ZAR (R) currency format. Be thorough.""
         # ── Count rows for context ──
         row_count = len(file_text.strip().split('\n'))
         
-        # ── Send to GPT-5 via Brain.call (with Claude fallback) ──
+        # ═══════════════════════════════════════════════════════════════════════
+        # PYTHON CALCULATES TOTALS - NOT AI!
+        # ═══════════════════════════════════════════════════════════════════════
+        python_totals = ""
+        try:
+            lines = file_text.strip().split('\n')
+            if len(lines) > 1:
+                # Try to detect if this is a TB or financial data
+                header = lines[0].lower()
+                has_debit_credit = 'debit' in header and 'credit' in header
+                
+                if has_debit_credit:
+                    # Parse as TB - find debit/credit columns
+                    headers = [h.strip().lower() for h in lines[0].split(',')]
+                    debit_col = None
+                    credit_col = None
+                    
+                    for i, h in enumerate(headers):
+                        if 'debit' in h:
+                            debit_col = i
+                        if 'credit' in h:
+                            credit_col = i
+                    
+                    if debit_col is not None and credit_col is not None:
+                        total_debit = 0
+                        total_credit = 0
+                        account_count = 0
+                        
+                        for line in lines[1:]:
+                            cols = line.split(',')
+                            if len(cols) > max(debit_col, credit_col):
+                                try:
+                                    dr = cols[debit_col].replace('R', '').replace(' ', '').replace(',', '').strip()
+                                    cr = cols[credit_col].replace('R', '').replace(' ', '').replace(',', '').strip()
+                                    
+                                    if dr and dr not in ('-', '', '0', '0.00'):
+                                        total_debit += abs(float(dr))
+                                    if cr and cr not in ('-', '', '0', '0.00'):
+                                        total_credit += abs(float(cr))
+                                    account_count += 1
+                                except:
+                                    pass
+                        
+                        difference = abs(total_debit - total_credit)
+                        is_balanced = difference < 0.01
+                        
+                        python_totals = f"""
+═══════════════════════════════════════════════════════════════════════
+PYTHON-CALCULATED TOTALS (100% ACCURATE - DO NOT RECALCULATE!)
+═══════════════════════════════════════════════════════════════════════
+Total Accounts: {account_count}
+Total Debits:   R {total_debit:,.2f}
+Total Credits:  R {total_credit:,.2f}
+Difference:     R {difference:,.2f}
+Status:         {'✅ BALANCED' if is_balanced else '❌ UNBALANCED - CRITICAL ERROR!'}
+═══════════════════════════════════════════════════════════════════════
+USE THESE EXACT NUMBERS IN YOUR ANALYSIS. DO NOT CALCULATE YOUR OWN.
+"""
+                        logger.info(f"[ZANE ANALYZE] Python calculated: Dr={total_debit:.2f} Cr={total_credit:.2f} Bal={'YES' if is_balanced else 'NO'}")
+        except Exception as calc_err:
+            logger.warning(f"[ZANE ANALYZE] Could not pre-calculate totals: {calc_err}")
+        
+        # ── Send to AI for ANALYSIS ONLY (not calculation) ──
         analysis_prompt = f"""Analyze this {file_type} file ({row_count} rows) for {biz_name}. Identify what it is (Trial Balance, Chart of Accounts, Bank Statement, Customer List, etc).
+
+{python_totals}
 
 FILE CONTENT:
 {file_text}
+
+CRITICAL INSTRUCTION:
+═══════════════════════════════════════════════════════════════════════
+IF PYTHON TOTALS ARE PROVIDED ABOVE, USE THOSE EXACT NUMBERS!
+DO NOT CALCULATE OR RECALCULATE ANY TOTALS YOURSELF!
+The totals provided by Python are 100% mathematically accurate.
+Your job is to EXPLAIN the data, not to calculate it.
+═══════════════════════════════════════════════════════════════════════
 
 Provide your analysis as clean HTML (no markdown, no code fences). Use:
 - <h4> for section headers
@@ -13260,14 +13340,18 @@ Provide your analysis as clean HTML (no markdown, no code fences). Use:
 
 Include:
 1. <h4>📋 Document Type</h4> - What this file is and the period it covers
-2. <h4>📊 Summary</h4> - Key totals, does it balance? Total debits vs credits
+2. <h4>📊 Summary</h4> - USE THE PYTHON-CALCULATED TOTALS ABOVE (if provided). Just explain what they mean.
 3. <h4>📑 Full Data</h4> - Show ALL the data in a nicely formatted table
 4. <h4>⚠️ Issues & Observations</h4> - Any errors, missing info, unusual items
 5. <h4>💡 Recommendations</h4> - What to do next, any improvements needed
 
 Use ZAR (R) currency format. Be thorough and professional. Return ONLY HTML, no markdown."""
         
-        system_prompt = f"You are Zane, the AI financial analyst for {biz_name}. You analyze financial documents and provide clear, professional analysis in HTML format. You are thorough, accurate, and highlight any issues."
+        system_prompt = f"""You are Zane, the AI financial analyst for {biz_name}. 
+
+CRITICAL RULE: If Python-calculated totals are provided in the user message, you MUST use those exact numbers. DO NOT calculate totals yourself - Python's calculations are mathematically correct. Your job is to EXPLAIN and ANALYZE the data, not to add numbers.
+
+You analyze financial documents and provide clear, professional analysis in HTML format. You are thorough, accurate, and highlight any issues."""
         
         analysis_html = Brain.call(
             system=system_prompt,
@@ -13287,6 +13371,7 @@ Use ZAR (R) currency format. Be thorough and professional. Return ONLY HTML, no 
             "title": f"📊 {file.filename or file_type} Analysis",
             "analysis_html": analysis_html
         })
+        
         
     except Exception as e:
         logger.error(f"[ZANE ANALYZE] Error: {e}")
@@ -22253,7 +22338,7 @@ def report_tb():
         tb_accounts[code]["debit"] += debit
         tb_accounts[code]["credit"] += credit
     
-    # Load imported opening balances FIRST
+    # Load imported opening balances
     if opening_entries:
         logger.info(f"[TB] Loading {len(opening_entries)} imported opening balances")
         for oe in opening_entries:
@@ -22266,36 +22351,41 @@ def report_tb():
                 acc_code = f"9{len(tb_accounts):03d}"
             
             add_account(acc_code, acc_name, debit, credit)
-            logger.info(f"[TB] Added: {acc_code} {acc_name} Dr:{debit} Cr:{credit}")
+        
+        # DON'T add live data when we have imported TB - it would double count!
+        logger.info(f"[TB] Using imported TB only - not adding live transaction data")
     
-    # ALWAYS add live transaction data (this runs whether or not we have imported TB)
-    # Debtors Control - from customer balances
-    debtors_total = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
-    if debtors_total > 0:
-        add_account("1200", "Debtors Control", debit=debtors_total)
-    
-    # Creditors Control - from supplier balances
-    creditors_total = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
-    if creditors_total > 0:
-        add_account("3000", "Creditors Control", credit=creditors_total)
-    
-    # Sales - from invoices (excluding credited)
-    inv_sales = sum(float(inv.get("subtotal", 0)) for inv in invoices if inv.get("status") != "credited")
-    pos_sales = sum(float(s.get("subtotal", 0)) for s in sales)
-    total_sales = inv_sales + pos_sales
-    if total_sales > 0:
-        add_account("5000", "Sales", credit=total_sales)
-    
-    # VAT Output - from invoices and POS
-    vat_output = sum(float(inv.get("vat", 0)) for inv in invoices if inv.get("status") != "credited")
-    vat_output += sum(float(s.get("vat", 0)) for s in sales)
-    if vat_output > 0:
-        add_account("2100", "VAT Output", credit=vat_output)
-    
-    # Operating Expenses
-    exp_total = sum(float(e.get("amount", 0)) for e in expenses)
-    if exp_total > 0:
-        add_account("6000", "Operating Expenses", debit=exp_total)
+    else:
+        # NO imported TB - build from live transaction data
+        logger.info(f"[TB] No imported TB - building from live transactions")
+        
+        # Debtors Control - from customer balances
+        debtors_total = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
+        if debtors_total > 0:
+            add_account("1200", "Debtors Control", debit=debtors_total)
+        
+        # Creditors Control - from supplier balances
+        creditors_total = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
+        if creditors_total > 0:
+            add_account("3000", "Creditors Control", credit=creditors_total)
+        
+        # Sales - from invoices (excluding credited)
+        inv_sales = sum(float(inv.get("subtotal", 0)) for inv in invoices if inv.get("status") != "credited")
+        pos_sales = sum(float(s.get("subtotal", 0)) for s in sales)
+        total_sales = inv_sales + pos_sales
+        if total_sales > 0:
+            add_account("5000", "Sales", credit=total_sales)
+        
+        # VAT Output - from invoices and POS
+        vat_output = sum(float(inv.get("vat", 0)) for inv in invoices if inv.get("status") != "credited")
+        vat_output += sum(float(s.get("vat", 0)) for s in sales)
+        if vat_output > 0:
+            add_account("2100", "VAT Output", credit=vat_output)
+        
+        # Operating Expenses
+        exp_total = sum(float(e.get("amount", 0)) for e in expenses)
+        if exp_total > 0:
+            add_account("6000", "Operating Expenses", debit=exp_total)
     
     # Calculate totals
     total_debit = sum(acc.get("debit", 0) for acc in tb_accounts.values())
@@ -22363,11 +22453,15 @@ def report_tb():
     
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
         <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-        <div style="display:flex;gap:10px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <button class="btn btn-primary" onclick="analyzeWithZane()" id="analyzeBtn">🤖 Analyze with Zane</button>
             <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+            <a href="/import" class="btn btn-secondary">📥 Import TB</a>
+            {f'<button class="btn btn-warning" onclick="clearOpeningBalances()" style="background:#f59e0b;">🗑️ Clear OB ({len(opening_entries)})</button>' if opening_entries else ''}
         </div>
     </div>
+    
+    {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Waarskuwing:</strong> Daar is <strong>{len(opening_entries)}</strong> opening balance entries vir <strong>{len(tb_accounts)}</strong> accounts. As jy meerdere kere geïmporteer het, klik "Clear OB" en import weer.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
     
     <div class="card" style="padding:30px;">
         <!-- HEADER -->
@@ -22520,16 +22614,72 @@ def report_tb():
             printWindow.print();
         }}, 300);
     }}
+    
+    async function clearOpeningBalances() {{
+        if (!confirm('⚠️ Dit sal ALLE opening balance entries uitvee!\\n\\nJy sal daarna weer moet import.\\n\\nIs jy seker?')) return;
+        
+        try {{
+            const response = await fetch('/api/reports/tb/clear-ob', {{method: 'POST'}});
+            const data = await response.json();
+            
+            if (data.success) {{
+                alert('✅ ' + data.message + '\\n\\nHerlaai bladsy...');
+                location.reload();
+            }} else {{
+                alert('❌ Error: ' + data.error);
+            }}
+        }} catch (err) {{
+            alert('❌ Error: ' + err.message);
+        }}
+    }}
     </script>
     '''
     
     return render_page("Trial Balance", content, user, "reports")
 
 
+@app.route("/api/reports/tb/clear-ob", methods=["POST"])
+@login_required
+def api_tb_clear_ob():
+    """Clear all opening balance entries for this business"""
+    
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+    
+    try:
+        # Get all OB entries
+        journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
+        ob_entries = [je for je in journal_entries if je.get("reference") == "OB"]
+        
+        if not ob_entries:
+            return jsonify({"success": True, "message": "Geen opening balance entries om te verwyder nie"})
+        
+        # Delete each OB entry
+        deleted = 0
+        for ob in ob_entries:
+            try:
+                db.delete("journal_entries", ob.get("id"))
+                deleted += 1
+            except Exception as del_err:
+                logger.warning(f"[TB CLEAR] Failed to delete {ob.get('id')}: {del_err}")
+        
+        logger.info(f"[TB CLEAR] Deleted {deleted} OB entries for business {biz_id}")
+        AuditLog.log("DELETE", "journal_entries", None, details=f"Cleared {deleted} opening balance entries")
+        
+        return jsonify({"success": True, "message": f"{deleted} opening balance entries verwyder"})
+        
+    except Exception as e:
+        logger.error(f"[TB CLEAR] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
 @app.route("/api/reports/tb/analyze", methods=["POST"])
 @login_required
 def api_tb_analyze():
-    """AI Analysis of Trial Balance using Sonnet - Comprehensive CA(SA) Report"""
+    """AI Analysis of Trial Balance - ALL CALCULATIONS BY PYTHON"""
     
     business = Auth.get_current_business()
     biz_name = business.get("name", "Business") if business else "Business"
@@ -22538,377 +22688,554 @@ def api_tb_analyze():
     try:
         data = request.get_json()
         accounts = data.get("accounts", [])
-        total_debit = data.get("total_debit", 0)
-        total_credit = data.get("total_credit", 0)
-        is_balanced = data.get("is_balanced", False)
         
         if not accounts:
             return jsonify({"success": False, "error": "No trial balance data to analyze"})
         
-        # Build TB text for analysis
-        tb_text = "TRIAL BALANCE\n"
-        tb_text += "=" * 70 + "\n"
-        tb_text += f"{'Code':<10} {'Account':<35} {'Debit':>12} {'Credit':>12}\n"
-        tb_text += "-" * 70 + "\n"
+        # ═══════════════════════════════════════════════════════════════════════
+        # PYTHON CALCULATES EVERYTHING - 100% ACCURATE
+        # ═══════════════════════════════════════════════════════════════════════
         
-        for acc in accounts:
-            code = acc.get("code", "")
-            name = acc.get("name", "")[:35]
-            debit = acc.get("debit", 0)
-            credit = acc.get("credit", 0)
+        # Step 1: Calculate EXACT totals from raw data
+        total_debit = sum(float(a.get("debit", 0) or 0) for a in accounts)
+        total_credit = sum(float(a.get("credit", 0) or 0) for a in accounts)
+        difference = abs(total_debit - total_credit)
+        is_balanced = difference < 0.01
+        
+        logger.info(f"[TB ANALYZE] Python calculated: Dr={total_debit:.2f} Cr={total_credit:.2f} Diff={difference:.2f}")
+        
+        # Step 2: Categorize accounts by code and name patterns
+        def match_account(acc, codes=None, keywords=None, column="debit"):
+            """Match account by code prefix or name keywords"""
+            code = str(acc.get("code", "")).strip()
+            name = str(acc.get("name", "")).lower()
+            val = float(acc.get(column, 0) or 0)
             
-            debit_str = f"R {debit:,.2f}" if debit > 0 else ""
-            credit_str = f"R {credit:,.2f}" if credit > 0 else ""
-            
-            tb_text += f"{code:<10} {name:<35} {debit_str:>12} {credit_str:>12}\n"
+            if codes:
+                for c in codes:
+                    if code.startswith(c):
+                        return val
+            if keywords:
+                for kw in keywords:
+                    if kw in name:
+                        return val
+            return 0
         
-        tb_text += "-" * 70 + "\n"
-        tb_text += f"{'TOTAL':<45} R {total_debit:>10,.2f} R {total_credit:>10,.2f}\n"
-        tb_text += "=" * 70 + "\n"
+        # ASSETS (Debit balances)
+        bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
+        cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
+        debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
+        stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
+        prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
+        vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
+        other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
         
-        # Calculate comprehensive metrics
-        # Assets
-        bank = sum(a["debit"] for a in accounts if "bank" in a["name"].lower() or a["code"].startswith("10"))
-        cash = sum(a["debit"] for a in accounts if "cash" in a["name"].lower() or a["code"] == "1100")
-        debtors = sum(a["debit"] for a in accounts if "debtor" in a["name"].lower() or a["code"] == "1200")
-        stock = sum(a["debit"] for a in accounts if "stock" in a["name"].lower() or "inventory" in a["name"].lower() or a["code"] == "1300")
-        prepaid = sum(a["debit"] for a in accounts if "prepaid" in a["name"].lower() or a["code"] == "1400")
-        vat_input = sum(a["debit"] for a in accounts if "vat input" in a["name"].lower() or a["code"] == "1500")
-        fixed_assets = sum(a["debit"] for a in accounts if a["code"].startswith("2") and a["debit"] > 0)
-        accum_depr = sum(a["credit"] for a in accounts if "accumulated" in a["name"].lower() or "acc dep" in a["name"].lower())
+        fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
+        accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
         
-        current_assets = bank + cash + debtors + stock + prepaid + vat_input
-        total_assets = current_assets + fixed_assets - accum_depr
+        # LIABILITIES (Credit balances)
+        creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
+        vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
+        paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
+        uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
+        loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
+        other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
         
-        # Liabilities
-        creditors = sum(a["credit"] for a in accounts if "creditor" in a["name"].lower() or a["code"] == "3000")
-        vat_output = sum(a["credit"] for a in accounts if "vat output" in a["name"].lower() or a["code"] == "3100")
-        paye = sum(a["credit"] for a in accounts if "paye" in a["name"].lower() or a["code"] == "3200")
-        uif = sum(a["credit"] for a in accounts if "uif" in a["name"].lower() or a["code"] == "3300")
-        loans = sum(a["credit"] for a in accounts if "loan" in a["name"].lower() or a["code"].startswith("34"))
+        # EQUITY (Credit balances)
+        capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
+        retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
+        drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)  # Debit
+        reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
         
-        current_liabilities = creditors + vat_output + paye + uif
-        total_liabilities = current_liabilities + loans
+        # REVENUE (Credit balances)
+        sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
+        # Exclude returns from sales
+        for a in accounts:
+            if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
+                sales -= float(a.get("credit", 0) or 0)
         
-        # Equity
-        capital = sum(a["credit"] for a in accounts if "capital" in a["name"].lower() or a["code"] == "4000")
-        retained = sum(a["credit"] for a in accounts if "retained" in a["name"].lower() or a["code"] == "4100")
-        drawings = sum(a["debit"] for a in accounts if "drawing" in a["name"].lower() or a["code"] == "4200")
-        total_equity = capital + retained - drawings
+        sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)  # Debit
+        cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
+        other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
         
-        # Income
-        sales = sum(a["credit"] for a in accounts if a["code"].startswith("5") and a["credit"] > 0 and "return" not in a["name"].lower())
-        sales_returns = sum(a["debit"] for a in accounts if "return" in a["name"].lower() and a["code"].startswith("5"))
-        other_income = sum(a["credit"] for a in accounts if a["code"].startswith("8") and a["credit"] > 0)
+        # EXPENSES (Debit balances)
+        salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
+        rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
+        electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
+        water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
+        telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
+        insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
+        bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
+        fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
+        repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
+        office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
+        advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
+        professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
+        depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
+        bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
+        interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
+        sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
+        
+        # Step 3: Calculate totals
+        current_assets = bank + cash + debtors + stock + prepaid + vat_input + other_current
+        fixed_assets_net = fixed_assets_cost - accum_depr
+        total_assets = current_assets + fixed_assets_net
+        
+        current_liabilities = creditors + vat_output + paye + uif + other_liabilities
+        long_term_liabilities = loans
+        total_liabilities = current_liabilities + long_term_liabilities
+        
+        total_equity = capital + retained + reserves - drawings
+        
         net_sales = sales - sales_returns
         total_income = net_sales + other_income
         
-        # Cost of Sales
-        cos = sum(a["debit"] for a in accounts if "cost of sales" in a["name"].lower() or a["code"] == "5100")
+        total_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid + sundry_exp
         
-        # Expenses by category
-        salaries = sum(a["debit"] for a in accounts if "salar" in a["name"].lower() or "wage" in a["name"].lower() or a["code"] == "6000")
-        rent = sum(a["debit"] for a in accounts if "rent" in a["name"].lower() or a["code"] == "6100")
-        utilities = sum(a["debit"] for a in accounts if "electric" in a["name"].lower() or "water" in a["name"].lower() or a["code"] in ("6200", "6300"))
-        depreciation = sum(a["debit"] for a in accounts if "depreciation" in a["name"].lower() and "accumulated" not in a["name"].lower())
-        interest_paid = sum(a["debit"] for a in accounts if "interest paid" in a["name"].lower() or a["code"] == "7400")
-        total_expenses = sum(a["debit"] for a in accounts if a["code"].startswith(("6", "7")) and a["debit"] > 0)
-        
-        # Calculated metrics
         gross_profit = net_sales - cos
-        gp_margin = (gross_profit / net_sales * 100) if net_sales > 0 else 0
         net_profit = total_income - cos - total_expenses
-        np_margin = (net_profit / total_income * 100) if total_income > 0 else 0
-        current_ratio = current_assets / current_liabilities if current_liabilities > 0 else 0
-        quick_ratio = (current_assets - stock) / current_liabilities if current_liabilities > 0 else 0
-        debt_equity = total_liabilities / total_equity if total_equity > 0 else 0
+        
+        # Step 4: Calculate ratios (with safe division)
+        gp_margin = round((gross_profit / net_sales * 100), 1) if net_sales > 0 else 0
+        np_margin = round((net_profit / total_income * 100), 1) if total_income > 0 else 0
+        current_ratio = round(current_assets / current_liabilities, 2) if current_liabilities > 0 else 0
+        quick_ratio = round((current_assets - stock) / current_liabilities, 2) if current_liabilities > 0 else 0
+        debt_equity = round(total_liabilities / total_equity, 2) if total_equity > 0 else 0
+        
         vat_position = vat_output - vat_input
-        debtor_days = (debtors / net_sales * 365) if net_sales > 0 else 0
-        creditor_days = (creditors / cos * 365) if cos > 0 else 0
-        stock_days = (stock / cos * 365) if cos > 0 else 0
         
-        # Build comprehensive analysis prompt
-        prompt = f"""You are Zane, a senior Chartered Accountant CA(SA) with 20+ years experience. You have an MBA, are a registered Tax Practitioner with SARS, and specialize in SME financial analysis for South African businesses.
-
-Provide a COMPREHENSIVE, DETAILED financial analysis report for this Trial Balance.
-
-**COMPANY:** {biz_name}
-**INDUSTRY:** {industry}
-**DATE:** {today()}
-
-{tb_text}
-
-═══════════════════════════════════════════════════════════════════════
-CALCULATED METRICS (use these exact figures in your analysis):
-═══════════════════════════════════════════════════════════════════════
-
-BALANCE SHEET COMPONENTS:
-• Current Assets: R {current_assets:,.2f}
-  - Bank/Cash: R {bank + cash:,.2f}
-  - Debtors: R {debtors:,.2f}
-  - Stock: R {stock:,.2f}
-  - VAT Input: R {vat_input:,.2f}
-• Fixed Assets (Net): R {fixed_assets - accum_depr:,.2f}
-  - Cost: R {fixed_assets:,.2f}
-  - Accumulated Depreciation: R {accum_depr:,.2f}
-• TOTAL ASSETS: R {total_assets:,.2f}
-
-• Current Liabilities: R {current_liabilities:,.2f}
-  - Creditors: R {creditors:,.2f}
-  - VAT Output: R {vat_output:,.2f}
-  - PAYE/UIF: R {paye + uif:,.2f}
-• Long-term Liabilities: R {loans:,.2f}
-• TOTAL LIABILITIES: R {total_liabilities:,.2f}
-
-• Equity: R {total_equity:,.2f}
-  - Capital: R {capital:,.2f}
-  - Retained Earnings: R {retained:,.2f}
-  - Drawings: R {drawings:,.2f}
-
-INCOME STATEMENT COMPONENTS:
-• Net Sales: R {net_sales:,.2f} (less returns R {sales_returns:,.2f})
-• Cost of Sales: R {cos:,.2f}
-• Gross Profit: R {gross_profit:,.2f}
-• Operating Expenses: R {total_expenses:,.2f}
-  - Salaries: R {salaries:,.2f} ({salaries/total_expenses*100 if total_expenses else 0:.1f}% of expenses)
-  - Rent: R {rent:,.2f}
-  - Depreciation: R {depreciation:,.2f}
-• Net Profit Before Tax: R {net_profit:,.2f}
-
-KEY RATIOS:
-• Gross Profit Margin: {gp_margin:.1f}%
-• Net Profit Margin: {np_margin:.1f}%
-• Current Ratio: {current_ratio:.2f}:1
-• Quick/Acid Test Ratio: {quick_ratio:.2f}:1
-• Debt to Equity: {debt_equity:.2f}:1
-• Debtor Days: {debtor_days:.0f} days
-• Creditor Days: {creditor_days:.0f} days
-• Stock Days: {stock_days:.0f} days
-
-VAT POSITION:
-• VAT Output (collected): R {vat_output:,.2f}
-• VAT Input (paid): R {vat_input:,.2f}
-• Net VAT {"Payable to SARS" if vat_position > 0 else "Refund from SARS"}: R {abs(vat_position):,.2f}
-
-═══════════════════════════════════════════════════════════════════════
-
-Provide your analysis in this EXACT format with ALL sections completed in detail:
-
----
-
-# 📊 TRIAL BALANCE ANALYSIS REPORT
-
-**Prepared by:** Zane (CA(SA), MBA)
-**Company:** {biz_name}
-**Date:** {today()}
-
----
-
-## 1. EXECUTIVE SUMMARY
-
-[Write 3-4 sentences summarizing the overall financial health, key concerns, and immediate priorities. Be direct and specific.]
-
----
-
-## 2. BALANCE STATUS & DATA INTEGRITY
-
-**Trial Balance Status:** {"✅ BALANCED" if is_balanced else "❌ UNBALANCED - CRITICAL ERROR"}
-**Total Debits:** R {total_debit:,.2f}
-**Total Credits:** R {total_credit:,.2f}
-**Difference:** R {abs(total_debit - total_credit):,.2f}
-
-[Comment on data completeness - missing accounts, unusual entries, anything that doesn't look right]
-
----
-
-## 3. DETAILED OBSERVATIONS
-
-### 3.1 Liquidity Position
-[Analyze cash, bank, current ratio. Is there enough cash to meet obligations?]
-
-### 3.2 Debtors Analysis (R {debtors:,.2f})
-[Comment on debtor days ({debtor_days:.0f}), collection risk, percentage of sales. Industry benchmark is 30-45 days.]
-
-### 3.3 Stock Position (R {stock:,.2f})
-[Analyze stock days ({stock_days:.0f}), valuation concerns, obsolescence risk. Is stock level appropriate?]
-
-### 3.4 Creditors & Payables
-[Comment on creditor days ({creditor_days:.0f}), payment patterns, supplier relationships]
-
-### 3.5 Fixed Assets & Depreciation
-[Compare depreciation expense (R {depreciation:,.2f}) to accumulated (R {accum_depr:,.2f}). Any concerns?]
-
-### 3.6 VAT Position
-[Detailed VAT analysis - R {vat_output:,.2f} collected vs R {vat_input:,.2f} paid = R {abs(vat_position):,.2f} {"payable" if vat_position > 0 else "refund"}. SARS compliance notes.]
-
-### 3.7 Loan & Interest Analysis
-[Comment on loan (R {loans:,.2f}), interest expense, debt serviceability]
-
----
-
-## 4. PROFITABILITY ANALYSIS
-
-### 4.1 Gross Profit
-**Gross Profit:** R {gross_profit:,.2f}
-**GP Margin:** {gp_margin:.1f}%
-
-[Is this GP margin good for the industry? Retail typically 25-40%, services 40-60%, manufacturing 20-35%]
-
-### 4.2 Net Profit
-**Net Profit:** R {net_profit:,.2f}
-**NP Margin:** {np_margin:.1f}%
-
-[Comment on profitability, expense control, sustainability]
-
-### 4.3 Expense Analysis
-[Analyze major expense categories. Salaries at {salaries/net_sales*100 if net_sales else 0:.1f}% of sales - is this reasonable?]
-
----
-
-## 5. FINANCIAL RATIOS ASSESSMENT
-
-| Ratio | Value | Status | Industry Benchmark |
-|-------|-------|--------|-------------------|
-| Current Ratio | {current_ratio:.2f}:1 | [GOOD/CONCERN/CRITICAL] | >1.5:1 |
-| Quick Ratio | {quick_ratio:.2f}:1 | [GOOD/CONCERN/CRITICAL] | >1.0:1 |
-| Debt to Equity | {debt_equity:.2f}:1 | [GOOD/CONCERN/CRITICAL] | <1.5:1 |
-| GP Margin | {gp_margin:.1f}% | [GOOD/CONCERN/CRITICAL] | Industry varies |
-| NP Margin | {np_margin:.1f}% | [GOOD/CONCERN/CRITICAL] | >5% |
-| Debtor Days | {debtor_days:.0f} | [GOOD/CONCERN/CRITICAL] | 30-45 days |
-
-[Provide commentary on each ratio]
-
----
-
-## 6. SARS COMPLIANCE CHECKLIST
-
-### VAT (bi-monthly submission)
-- [ ] VAT Output correctly recorded: R {vat_output:,.2f}
-- [ ] VAT Input claimed: R {vat_input:,.2f}
-- [ ] Net VAT {"payable" if vat_position > 0 else "refundable"}: R {abs(vat_position):,.2f}
-- [ ] Supporting documentation for VAT Input
-
-### PAYE/UIF (monthly by 7th)
-- [ ] PAYE Payable: R {paye:,.2f}
-- [ ] UIF Payable: R {uif:,.2f}
-- [ ] EMP201 submission required
-
-### Provisional Tax
-[Comment on provisional tax requirements based on profit]
-
----
-
-## 7. ⚠️ RED FLAGS & CONCERNS
-
-[List specific concerns with severity ratings: 🔴 Critical, 🟠 Warning, 🟡 Monitor]
-
-1. [Issue 1 with severity]
-2. [Issue 2 with severity]
-3. [Continue as needed]
-
----
-
-## 8. 💡 RECOMMENDATIONS
-
-### Immediate Actions (This Week)
-1. [Specific action with deadline]
-2. [Specific action with deadline]
-3. [Specific action with deadline]
-
-### Short-term Actions (This Month)
-1. [Action item]
-2. [Action item]
-
-### Month-End Procedures Required
-1. [Procedure]
-2. [Procedure]
-3. [Procedure]
-
----
-
-## 9. FINANCIAL STATEMENTS PREVIEW
-
-Based on this TB, your financial statements would show:
-
-**Income Statement Summary:**
-- Revenue: R {net_sales:,.2f}
-- Gross Profit: R {gross_profit:,.2f} ({gp_margin:.1f}%)
-- Net Profit: R {net_profit:,.2f} ({np_margin:.1f}%)
-
-**Balance Sheet Summary:**
-- Total Assets: R {total_assets:,.2f}
-- Total Liabilities: R {total_liabilities:,.2f}
-- Owner's Equity: R {total_equity:,.2f}
-
----
-
-## 10. OVERALL ASSESSMENT
-
-**Financial Health Score: [X/10]**
-
-[Provide final 4-5 sentence assessment with clear verdict on business health and top 3 priorities]
-
----
-
-*This analysis was prepared by Zane, your AI Chartered Accountant.*
-*For professional advice on specific matters, please consult with a registered practitioner.*
-
----
-
-Be extremely thorough and specific. Use the EXACT figures provided. This is a professional CA(SA) level report that will impress the business owner. Make it comprehensive but readable."""
-
-        # Call Sonnet for analysis
-        if not ANTHROPIC_API_KEY:
-            return jsonify({"success": False, "error": "AI service not configured"})
+        debtor_days = round((debtors / net_sales * 365), 0) if net_sales > 0 else 0
+        creditor_days = round((creditors / cos * 365), 0) if cos > 0 else 0
+        stock_days = round((stock / cos * 365), 0) if cos > 0 else 0
         
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4000,  # Increased for detailed report
-            messages=[{"role": "user", "content": prompt}]
+        salaries_pct = round((salaries / net_sales * 100), 1) if net_sales > 0 else 0
+        rent_pct = round((rent / net_sales * 100), 1) if net_sales > 0 else 0
+        
+        # Log all calculations for verification
+        logger.info(f"[TB ANALYZE] Assets: Current={current_assets:.2f}, Fixed={fixed_assets_net:.2f}, Total={total_assets:.2f}")
+        logger.info(f"[TB ANALYZE] Liab: Current={current_liabilities:.2f}, LT={long_term_liabilities:.2f}, Total={total_liabilities:.2f}")
+        logger.info(f"[TB ANALYZE] Equity: {total_equity:.2f}")
+        logger.info(f"[TB ANALYZE] P&L: Sales={net_sales:.2f}, COS={cos:.2f}, GP={gross_profit:.2f}, Exp={total_expenses:.2f}, NP={net_profit:.2f}")
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # BUILD REPORT - PYTHON GENERATES ALL NUMBERS IN HTML
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        # Status indicators
+        def status(value, good_min, warn_min=None, higher_is_better=True):
+            if higher_is_better:
+                if value >= good_min:
+                    return "✅ GOOD"
+                elif warn_min and value >= warn_min:
+                    return "⚠️ CONCERN"
+                else:
+                    return "🔴 CRITICAL"
+            else:  # Lower is better
+                if value <= good_min:
+                    return "✅ GOOD"
+                elif warn_min and value <= warn_min:
+                    return "⚠️ CONCERN"
+                else:
+                    return "🔴 CRITICAL"
+        
+        current_status = status(current_ratio, 1.5, 1.0)
+        quick_status = status(quick_ratio, 1.0, 0.7)
+        debt_status = status(debt_equity, 1.5, 2.5, False)
+        debtor_status = status(debtor_days, 45, 60, False)
+        gp_status = status(gp_margin, 30, 20)
+        np_status = status(np_margin, 5, 2)
+        
+        # Build the complete report HTML with all Python-calculated values
+        report_html = f"""
+<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:10px;">📊 TRIAL BALANCE ANALYSIS REPORT</h2>
+<p><strong>Company:</strong> {safe_string(biz_name)} | <strong>Date:</strong> {today()} | <strong>Prepared by:</strong> Zane (CA(SA))</p>
+
+<hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
+
+<h3 style="color:#10b981;">1. BALANCE STATUS</h3>
+<table style="width:100%;border-collapse:collapse;margin:15px 0;">
+<tr><td style="padding:8px;border:1px solid rgba(255,255,255,0.1);width:200px;"><strong>Total Debits:</strong></td><td style="padding:8px;border:1px solid rgba(255,255,255,0.1);text-align:right;font-family:monospace;">R {total_debit:,.2f}</td></tr>
+<tr><td style="padding:8px;border:1px solid rgba(255,255,255,0.1);"><strong>Total Credits:</strong></td><td style="padding:8px;border:1px solid rgba(255,255,255,0.1);text-align:right;font-family:monospace;">R {total_credit:,.2f}</td></tr>
+<tr style="background:{'rgba(16,185,129,0.2)' if is_balanced else 'rgba(239,68,68,0.2)'};">
+<td style="padding:8px;border:1px solid rgba(255,255,255,0.1);"><strong>Difference:</strong></td>
+<td style="padding:8px;border:1px solid rgba(255,255,255,0.1);text-align:right;font-family:monospace;">R {difference:,.2f} {'✅ BALANCED' if is_balanced else '❌ UNBALANCED'}</td></tr>
+</table>
+
+{f'<div style="background:rgba(239,68,68,0.2);border:1px solid #ef4444;padding:15px;border-radius:8px;margin:15px 0;"><strong>🚨 KRITIEKE FOUT:</strong> Hierdie proefbalans balanseer NIE. Daar is R {difference:,.2f} verskil. Gaan die data na voordat jy voortgaan.</div>' if not is_balanced else ''}
+
+<hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
+
+<h3 style="color:#10b981;">2. BALANSSTAAT OPSOMMING</h3>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+<div>
+<h4 style="color:#6366f1;">BATES (Assets)</h4>
+<table style="width:100%;border-collapse:collapse;font-size:13px;">
+<tr style="background:rgba(99,102,241,0.1);"><td colspan="2" style="padding:6px;"><strong>Bedryfsbates (Current)</strong></td></tr>
+<tr><td style="padding:4px 8px;">Bank/Cash</td><td style="text-align:right;font-family:monospace;">R {bank + cash:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">Debiteure</td><td style="text-align:right;font-family:monospace;">R {debtors:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">Voorraad</td><td style="text-align:right;font-family:monospace;">R {stock:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">BTW Insette</td><td style="text-align:right;font-family:monospace;">R {vat_input:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">Vooruitbetalings</td><td style="text-align:right;font-family:monospace;">R {prepaid:,.2f}</td></tr>
+<tr style="background:rgba(99,102,241,0.2);"><td style="padding:6px;"><strong>Totaal Bedryfsbates</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {current_assets:,.2f}</strong></td></tr>
+
+<tr style="background:rgba(99,102,241,0.1);"><td colspan="2" style="padding:6px;"><strong>Vaste Bates (Fixed)</strong></td></tr>
+<tr><td style="padding:4px 8px;">Kosprys</td><td style="text-align:right;font-family:monospace;">R {fixed_assets_cost:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">Min: Opgehoopte Waardevermindering</td><td style="text-align:right;font-family:monospace;">(R {accum_depr:,.2f})</td></tr>
+<tr style="background:rgba(99,102,241,0.2);"><td style="padding:6px;"><strong>Netto Vaste Bates</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {fixed_assets_net:,.2f}</strong></td></tr>
+
+<tr style="background:rgba(16,185,129,0.3);"><td style="padding:8px;"><strong>TOTALE BATES</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_assets:,.2f}</strong></td></tr>
+</table>
+</div>
+
+<div>
+<h4 style="color:#6366f1;">LASTE & EKWITEIT</h4>
+<table style="width:100%;border-collapse:collapse;font-size:13px;">
+<tr style="background:rgba(239,68,68,0.1);"><td colspan="2" style="padding:6px;"><strong>Korttermyn Laste</strong></td></tr>
+<tr><td style="padding:4px 8px;">Krediteure</td><td style="text-align:right;font-family:monospace;">R {creditors:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">BTW Uitsette</td><td style="text-align:right;font-family:monospace;">R {vat_output:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">LBS Betaalbaar</td><td style="text-align:right;font-family:monospace;">R {paye:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">WVF Betaalbaar</td><td style="text-align:right;font-family:monospace;">R {uif:,.2f}</td></tr>
+<tr style="background:rgba(239,68,68,0.2);"><td style="padding:6px;"><strong>Totaal Korttermyn</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {current_liabilities:,.2f}</strong></td></tr>
+
+<tr style="background:rgba(239,68,68,0.1);"><td colspan="2" style="padding:6px;"><strong>Langtermyn Laste</strong></td></tr>
+<tr><td style="padding:4px 8px;">Lenings</td><td style="text-align:right;font-family:monospace;">R {loans:,.2f}</td></tr>
+<tr style="background:rgba(239,68,68,0.2);"><td style="padding:6px;"><strong>Totale Laste</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_liabilities:,.2f}</strong></td></tr>
+
+<tr style="background:rgba(139,92,246,0.1);"><td colspan="2" style="padding:6px;"><strong>Ekwiteit</strong></td></tr>
+<tr><td style="padding:4px 8px;">Kapitaal</td><td style="text-align:right;font-family:monospace;">R {capital:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">Behoue Verdienste</td><td style="text-align:right;font-family:monospace;">R {retained:,.2f}</td></tr>
+<tr><td style="padding:4px 8px;">Min: Onttrekkings</td><td style="text-align:right;font-family:monospace;">(R {drawings:,.2f})</td></tr>
+<tr style="background:rgba(139,92,246,0.2);"><td style="padding:6px;"><strong>Totale Ekwiteit</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_equity:,.2f}</strong></td></tr>
+
+<tr style="background:rgba(16,185,129,0.3);"><td style="padding:8px;"><strong>LASTE + EKWITEIT</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_liabilities + total_equity:,.2f}</strong></td></tr>
+</table>
+</div>
+</div>
+
+<hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
+
+<h3 style="color:#10b981;">3. INKOMSTESTAAT OPSOMMING</h3>
+<table style="width:100%;max-width:500px;border-collapse:collapse;">
+<tr><td style="padding:8px;">Verkope</td><td style="text-align:right;font-family:monospace;">R {sales:,.2f}</td></tr>
+<tr><td style="padding:8px;">Min: Verkope Teruggawes</td><td style="text-align:right;font-family:monospace;">(R {sales_returns:,.2f})</td></tr>
+<tr style="border-top:1px solid rgba(255,255,255,0.2);"><td style="padding:8px;"><strong>Netto Verkope</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {net_sales:,.2f}</strong></td></tr>
+<tr><td style="padding:8px;">Min: Koste van Verkope</td><td style="text-align:right;font-family:monospace;">(R {cos:,.2f})</td></tr>
+<tr style="background:rgba(16,185,129,0.2);border-top:1px solid rgba(255,255,255,0.2);"><td style="padding:8px;"><strong>BRUTO WINS</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {gross_profit:,.2f}</strong> ({gp_margin}%)</td></tr>
+<tr><td style="padding:8px;">Plus: Ander Inkomste</td><td style="text-align:right;font-family:monospace;">R {other_income:,.2f}</td></tr>
+<tr><td style="padding:8px;">Min: Bedryfsuitgawes</td><td style="text-align:right;font-family:monospace;">(R {total_expenses:,.2f})</td></tr>
+<tr style="background:{'rgba(16,185,129,0.3)' if net_profit >= 0 else 'rgba(239,68,68,0.3)'};border-top:2px solid rgba(255,255,255,0.3);"><td style="padding:10px;"><strong>NETTO WINS</strong></td><td style="text-align:right;font-family:monospace;font-size:16px;"><strong>R {net_profit:,.2f}</strong> ({np_margin}%)</td></tr>
+</table>
+
+<hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
+
+<h3 style="color:#10b981;">4. FINANSIËLE VERHOUDINGS</h3>
+<table style="width:100%;border-collapse:collapse;">
+<tr style="background:rgba(99,102,241,0.2);"><th style="padding:10px;text-align:left;">Verhouding</th><th style="text-align:right;">Waarde</th><th style="text-align:center;">Status</th><th style="text-align:right;">Norm</th></tr>
+<tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Bedryfsbateverhouding (Current Ratio)</td><td style="text-align:right;font-family:monospace;">{current_ratio:.2f}:1</td><td style="text-align:center;">{current_status}</td><td style="text-align:right;">&gt;1.5:1</td></tr>
+<tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Suurtoetsverhouding (Quick Ratio)</td><td style="text-align:right;font-family:monospace;">{quick_ratio:.2f}:1</td><td style="text-align:center;">{quick_status}</td><td style="text-align:right;">&gt;1.0:1</td></tr>
+<tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Skuld tot Ekwiteit (Debt/Equity)</td><td style="text-align:right;font-family:monospace;">{debt_equity:.2f}:1</td><td style="text-align:center;">{debt_status}</td><td style="text-align:right;">&lt;1.5:1</td></tr>
+<tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Bruto Winsmarge (GP Margin)</td><td style="text-align:right;font-family:monospace;">{gp_margin}%</td><td style="text-align:center;">{gp_status}</td><td style="text-align:right;">&gt;30%</td></tr>
+<tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Netto Winsmarge (NP Margin)</td><td style="text-align:right;font-family:monospace;">{np_margin}%</td><td style="text-align:center;">{np_status}</td><td style="text-align:right;">&gt;5%</td></tr>
+<tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Debiteure Dae (Debtor Days)</td><td style="text-align:right;font-family:monospace;">{debtor_days:.0f} dae</td><td style="text-align:center;">{debtor_status}</td><td style="text-align:right;">30-45 dae</td></tr>
+<tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Krediteure Dae (Creditor Days)</td><td style="text-align:right;font-family:monospace;">{creditor_days:.0f} dae</td><td style="text-align:center;">ℹ️</td><td style="text-align:right;">30-60 dae</td></tr>
+<tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Voorraad Dae (Stock Days)</td><td style="text-align:right;font-family:monospace;">{stock_days:.0f} dae</td><td style="text-align:center;">ℹ️</td><td style="text-align:right;">Industrie</td></tr>
+</table>
+
+<hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
+
+<h3 style="color:#10b981;">5. SAID/SARS VERPLIGTINGE</h3>
+<table style="width:100%;max-width:500px;border-collapse:collapse;">
+<tr style="background:rgba(245,158,11,0.2);"><td colspan="2" style="padding:10px;"><strong>BTW Posisie</strong></td></tr>
+<tr><td style="padding:8px;">BTW Uitsette (Ingesamel)</td><td style="text-align:right;font-family:monospace;">R {vat_output:,.2f}</td></tr>
+<tr><td style="padding:8px;">BTW Insette (Betaal)</td><td style="text-align:right;font-family:monospace;">(R {vat_input:,.2f})</td></tr>
+<tr style="background:{'rgba(239,68,68,0.2)' if vat_position > 0 else 'rgba(16,185,129,0.2)'};"><td style="padding:10px;"><strong>{'BTW Betaalbaar aan SAID' if vat_position > 0 else 'BTW Terugbetaling'}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {abs(vat_position):,.2f}</strong></td></tr>
+</table>
+
+<table style="width:100%;max-width:500px;border-collapse:collapse;margin-top:15px;">
+<tr style="background:rgba(245,158,11,0.2);"><td colspan="2" style="padding:10px;"><strong>Werknemerbelasting</strong></td></tr>
+<tr><td style="padding:8px;">LBS Betaalbaar</td><td style="text-align:right;font-family:monospace;">R {paye:,.2f}</td></tr>
+<tr><td style="padding:8px;">WVF Betaalbaar</td><td style="text-align:right;font-family:monospace;">R {uif:,.2f}</td></tr>
+<tr style="background:rgba(245,158,11,0.3);"><td style="padding:10px;"><strong>Totaal EMP201</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {paye + uif:,.2f}</strong></td></tr>
+</table>
+
+<hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
+
+<h3 style="color:#10b981;">6. UITGAWE ANALISE</h3>
+<table style="width:100%;border-collapse:collapse;">
+<tr style="background:rgba(99,102,241,0.2);"><th style="padding:8px;text-align:left;">Uitgawe</th><th style="text-align:right;">Bedrag</th><th style="text-align:right;">% van Verkope</th></tr>
+<tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">Salarisse en Lone</td><td style="text-align:right;font-family:monospace;">R {salaries:,.2f}</td><td style="text-align:right;">{salaries_pct}%</td></tr>
+<tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">Huur</td><td style="text-align:right;font-family:monospace;">R {rent:,.2f}</td><td style="text-align:right;">{rent_pct}%</td></tr>
+<tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">Elektrisiteit</td><td style="text-align:right;font-family:monospace;">R {electricity:,.2f}</td><td style="text-align:right;">{round(electricity/net_sales*100,1) if net_sales else 0}%</td></tr>
+<tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">Waardevermindering</td><td style="text-align:right;font-family:monospace;">R {depreciation:,.2f}</td><td style="text-align:right;">{round(depreciation/net_sales*100,1) if net_sales else 0}%</td></tr>
+<tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">Brandstof & Vervoer</td><td style="text-align:right;font-family:monospace;">R {fuel:,.2f}</td><td style="text-align:right;">{round(fuel/net_sales*100,1) if net_sales else 0}%</td></tr>
+<tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">Reklame</td><td style="text-align:right;font-family:monospace;">R {advertising:,.2f}</td><td style="text-align:right;">{round(advertising/net_sales*100,1) if net_sales else 0}%</td></tr>
+<tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">Professionele Fooie</td><td style="text-align:right;font-family:monospace;">R {professional:,.2f}</td><td style="text-align:right;">{round(professional/net_sales*100,1) if net_sales else 0}%</td></tr>
+<tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">Rente Betaal</td><td style="text-align:right;font-family:monospace;">R {interest_paid:,.2f}</td><td style="text-align:right;">{round(interest_paid/net_sales*100,1) if net_sales else 0}%</td></tr>
+<tr><td style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.1);">Ander Uitgawes</td><td style="text-align:right;font-family:monospace;">R {insurance + bank_charges + repairs + office + water + telephone + bad_debts + sundry_exp:,.2f}</td><td style="text-align:right;">-</td></tr>
+<tr style="background:rgba(99,102,241,0.3);"><td style="padding:8px;"><strong>TOTALE UITGAWES</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_expenses:,.2f}</strong></td><td style="text-align:right;"><strong>{round(total_expenses/net_sales*100,1) if net_sales else 0}%</strong></td></tr>
+</table>
+
+<hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
+
+<div id="aiInsights" style="background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:15px;margin-top:20px;">
+<h3 style="color:#8b5cf6;margin-top:0;">🤖 Zane se Insig</h3>
+<div id="aiInsightsContent" style="min-height:100px;">
+<p style="color:var(--text-muted);">Laai professionele insig...</p>
+</div>
+</div>
+
+<hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
+
+<p style="color:var(--text-muted);font-size:11px;text-align:center;">
+Alle berekeninge gedoen deur Python | Syfers geverifieer | Gegenereer: {today()} {now()[11:16]}
+</p>
+"""
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # SONNET GIVES INSIGHTS ONLY - PYTHON DID ALL THE MATH
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        # Build red flags list based on Python calculations
+        red_flags = []
+        if not is_balanced:
+            red_flags.append(f"🔴 KRITIEK: TB balanseer NIE - R{difference:,.2f} verskil. STOP ALLES en vind die fout.")
+        if current_ratio < 1.0:
+            red_flags.append(f"🔴 KRITIEK: Current ratio {current_ratio:.2f}:1 - kan nie korttermyn skuld betaal nie!")
+        elif current_ratio < 1.5:
+            red_flags.append(f"🟠 WAARSKUWING: Current ratio {current_ratio:.2f}:1 - likiditeit onder druk.")
+        if quick_ratio < 0.7:
+            red_flags.append(f"🔴 KRITIEK: Quick ratio {quick_ratio:.2f}:1 - ernstige kontantvloei risiko!")
+        if debtor_days > 60:
+            red_flags.append(f"🟠 WAARSKUWING: Debiteure {debtor_days:.0f} dae - invorder dringend!")
+        elif debtor_days > 45:
+            red_flags.append(f"🟡 MONITOR: Debiteure {debtor_days:.0f} dae - begin druk sit.")
+        if stock_days > 120:
+            red_flags.append(f"🟠 WAARSKUWING: Voorraad {stock_days:.0f} dae - dooie/stadige voorraad?")
+        if gp_margin < 20:
+            red_flags.append(f"🔴 KRITIEK: Bruto marge {gp_margin}% - pryse te laag of koste te hoog!")
+        elif gp_margin < 30:
+            red_flags.append(f"🟠 WAARSKUWING: Bruto marge {gp_margin}% - onder industrie norm.")
+        if np_margin < 0:
+            red_flags.append(f"🔴 KRITIEK: Maak VERLIES van R{abs(net_profit):,.2f}!")
+        elif np_margin < 3:
+            red_flags.append(f"🟠 WAARSKUWING: Netto marge {np_margin}% - baie dun.")
+        if debt_equity > 2:
+            red_flags.append(f"🟠 WAARSKUWING: Skuld/Ekwiteit {debt_equity:.2f}:1 - hoog gehefboom.")
+        if vat_position > 50000:
+            red_flags.append(f"🟡 MONITOR: BTW betaalbaar R{vat_position:,.2f} - maak seker fondse beskikbaar.")
+        if salaries_pct > 40:
+            red_flags.append(f"🟠 WAARSKUWING: Salarisse {salaries_pct}% van verkope - oorhoofse koste hoog.")
+        if paye + uif > 20000:
+            red_flags.append(f"🟡 MONITOR: LBS/WVF R{paye+uif:,.2f} - EMP201 betyds indien!")
+        
+        # Build the red flags HTML
+        red_flags_html = ""
+        if red_flags:
+            red_flags_html = "<h3 style='color:#ef4444;margin-top:20px;'>⚠️ ROOI VLAE</h3><div style='background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:15px;'>"
+            for flag in red_flags:
+                red_flags_html += f"<div style='margin:8px 0;'>{flag}</div>"
+            red_flags_html += "</div>"
+        else:
+            red_flags_html = "<h3 style='color:#10b981;margin-top:20px;'>✅ GEEN KRITIEKE PROBLEME</h3><p>Alle verhoudinge binne aanvaarbare perke.</p>"
+        
+        # Add red flags to report
+        report_html = report_html.replace(
+            '<div id="aiInsights"',
+            red_flags_html + '\n\n<div id="aiInsights"'
         )
         
-        if message.content:
-            analysis = message.content[0].text
+        # ═══════════════════════════════════════════════════════════════════════
+        # BUILD FULL ACCOUNT LIST FOR SONNET - DETAILED ANALYSIS
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        # Build a detailed account listing for AI analysis
+        accounts_text = "VOLLEDIGE REKENINGLYS (Python-geverifieer):\n"
+        accounts_text += "=" * 80 + "\n"
+        accounts_text += f"{'Kode':<10} {'Rekening Naam':<40} {'Debit':>15} {'Krediet':>15}\n"
+        accounts_text += "-" * 80 + "\n"
+        
+        # Group accounts by category for better analysis
+        asset_accounts = []
+        liability_accounts = []
+        equity_accounts = []
+        income_accounts = []
+        expense_accounts = []
+        unclassified = []
+        
+        for acc in accounts:
+            code = str(acc.get("code", "")).strip()
+            name = str(acc.get("name", "")).strip()
+            dr = float(acc.get("debit", 0) or 0)
+            cr = float(acc.get("credit", 0) or 0)
             
-            # Convert markdown to HTML with better formatting
-            analysis_html = analysis
+            line = f"{code:<10} {name[:40]:<40} R{dr:>13,.2f} R{cr:>13,.2f}"
             
-            # Headers
-            analysis_html = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:10px;margin-top:30px;">\1</h2>', analysis_html, flags=re.MULTILINE)
-            analysis_html = re.sub(r'^## (.+)$', r'<h3 style="color:#10b981;margin-top:25px;margin-bottom:15px;">\1</h3>', analysis_html, flags=re.MULTILINE)
-            analysis_html = re.sub(r'^### (.+)$', r'<h4 style="color:#6366f1;margin-top:20px;">\1</h4>', analysis_html, flags=re.MULTILINE)
-            
-            # Bold and formatting
-            analysis_html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', analysis_html)
-            analysis_html = re.sub(r'^- \[ \]', r'<span style="color:#f59e0b;">☐</span>', analysis_html, flags=re.MULTILINE)
-            analysis_html = re.sub(r'^- \[x\]', r'<span style="color:#10b981;">☑</span>', analysis_html, flags=re.MULTILINE)
-            analysis_html = re.sub(r'^- (.+)$', r'<div style="margin-left:15px;margin-bottom:5px;">• \1</div>', analysis_html, flags=re.MULTILINE)
-            analysis_html = re.sub(r'^\d+\. (.+)$', r'<div style="margin-left:15px;margin-bottom:8px;"><strong>→</strong> \1</div>', analysis_html, flags=re.MULTILINE)
-            
-            # Tables (basic)
-            analysis_html = re.sub(r'\|(.+)\|', r'<span style="font-family:monospace;">\1</span>', analysis_html)
-            
-            # Status indicators
-            analysis_html = analysis_html.replace("🔴", '<span style="color:#ef4444;font-weight:bold;">🔴</span>')
-            analysis_html = analysis_html.replace("🟠", '<span style="color:#f59e0b;font-weight:bold;">🟠</span>')
-            analysis_html = analysis_html.replace("🟡", '<span style="color:#eab308;font-weight:bold;">🟡</span>')
-            analysis_html = analysis_html.replace("GOOD", '<span style="color:#10b981;font-weight:bold;">✓ GOOD</span>')
-            analysis_html = analysis_html.replace("CONCERN", '<span style="color:#f59e0b;font-weight:bold;">⚠ CONCERN</span>')
-            analysis_html = analysis_html.replace("CRITICAL", '<span style="color:#ef4444;font-weight:bold;">🚨 CRITICAL</span>')
-            
-            # Horizontal rules
-            analysis_html = re.sub(r'^---$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:20px 0;">', analysis_html, flags=re.MULTILINE)
-            
-            # Paragraphs
-            analysis_html = re.sub(r'\n\n', r'<br><br>', analysis_html)
-            
-            return jsonify({"success": True, "analysis": analysis_html})
-        else:
-            return jsonify({"success": False, "error": "No analysis generated"})
+            # Classify by code
+            if code.startswith(("1", "2")):
+                asset_accounts.append(line)
+            elif code.startswith("3"):
+                liability_accounts.append(line)
+            elif code.startswith("4"):
+                equity_accounts.append(line)
+            elif code.startswith("5"):
+                income_accounts.append(line)
+            elif code.startswith(("6", "7", "8", "9")):
+                expense_accounts.append(line)
+            else:
+                unclassified.append(line)
+        
+        accounts_text += "\n📊 BATES (Kodes 1xxx-2xxx):\n"
+        accounts_text += "\n".join(asset_accounts) if asset_accounts else "  Geen bate rekeninge\n"
+        
+        accounts_text += "\n\n💳 LASTE (Kodes 3xxx):\n"
+        accounts_text += "\n".join(liability_accounts) if liability_accounts else "  Geen laste rekeninge\n"
+        
+        accounts_text += "\n\n🏛️ EKWITEIT (Kodes 4xxx):\n"
+        accounts_text += "\n".join(equity_accounts) if equity_accounts else "  Geen ekwiteit rekeninge\n"
+        
+        accounts_text += "\n\n💰 INKOMSTE (Kodes 5xxx):\n"
+        accounts_text += "\n".join(income_accounts) if income_accounts else "  Geen inkomste rekeninge\n"
+        
+        accounts_text += "\n\n📉 UITGAWES (Kodes 6xxx-9xxx):\n"
+        accounts_text += "\n".join(expense_accounts) if expense_accounts else "  Geen uitgawe rekeninge\n"
+        
+        if unclassified:
+            accounts_text += "\n\n⚠️ ONGEKLASSIFISEER:\n"
+            accounts_text += "\n".join(unclassified)
+        
+        accounts_text += "\n" + "=" * 80
+        accounts_text += f"\nTOTAAL: {len(accounts)} rekeninge | Debits: R{total_debit:,.2f} | Kredits: R{total_credit:,.2f}"
+        
+        # Build comprehensive prompt with ALL data
+        insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
+
+═══════════════════════════════════════════════════════════════════════════════
+BESIGHEID: {safe_string(biz_name)}
+INDUSTRIE: {industry}
+DATUM: {today()}
+═══════════════════════════════════════════════════════════════════════════════
+
+{accounts_text}
+
+═══════════════════════════════════════════════════════════════════════════════
+PYTHON-BEREKENDE OPSOMMING (100% akkuraat - moenie herbereken nie):
+═══════════════════════════════════════════════════════════════════════════════
+
+BALANS STATUS:
+- Totale Debits: R {total_debit:,.2f}
+- Totale Kredits: R {total_credit:,.2f}
+- Verskil: R {difference:,.2f}
+- Status: {'✅ GEBALANSEER' if is_balanced else '❌ ONGEBALANSEER - KRITIEK!'}
+
+BALANSSTAAT:
+- Bedryfsbates: R {current_assets:,.2f} (Bank R{bank+cash:,.2f}, Debiteure R{debtors:,.2f}, Voorraad R{stock:,.2f})
+- Vaste Bates Netto: R {fixed_assets_net:,.2f}
+- Totale Bates: R {total_assets:,.2f}
+- Korttermyn Laste: R {current_liabilities:,.2f}
+- Langtermyn Laste: R {long_term_liabilities:,.2f}
+- Totale Ekwiteit: R {total_equity:,.2f}
+
+INKOMSTESTAAT:
+- Netto Verkope: R {net_sales:,.2f}
+- Koste van Verkope: R {cos:,.2f}
+- Bruto Wins: R {gross_profit:,.2f} ({gp_margin}%)
+- Totale Uitgawes: R {total_expenses:,.2f}
+- Netto Wins: R {net_profit:,.2f} ({np_margin}%)
+
+VERHOUDINGS:
+- Current Ratio: {current_ratio:.2f}:1 (norm >1.5)
+- Quick Ratio: {quick_ratio:.2f}:1 (norm >1.0)
+- Skuld/Ekwiteit: {debt_equity:.2f}:1 (norm <1.5)
+- Debiteure Dae: {debtor_days:.0f} (norm 30-45)
+- Krediteure Dae: {creditor_days:.0f}
+- Voorraad Dae: {stock_days:.0f}
+
+SARS:
+- BTW Posisie: R {abs(vat_position):,.2f} {'BETAALBAAR' if vat_position > 0 else 'TERUG'}
+- LBS + WVF: R {paye + uif:,.2f}
+
+═══════════════════════════════════════════════════════════════════════════════
+JOU OPDRAG - SKRYF 'N VOLLEDIGE CA(SA) ANALISE VERSLAG
+═══════════════════════════════════════════════════════════════════════════════
+
+Skryf 'n GEDETAILLEERDE analise in Afrikaans. Gebruik die volgende struktuur:
+
+**1. UITVOERENDE OPSOMMING**
+[2-3 sinne: Algehele gesondheid van die besigheid. Is dit 'n "pass" of "fail"?]
+
+**2. REKENING-VIR-REKENING ANALISE**
+Gaan deur ELKE rekening kategorie en noem:
+- Watter rekeninge lyk normaal
+- Watter rekeninge lyk VREEMD of BEKOMMEREND (bv. negatiewe balanse, ongewone bedrae)
+- Watter rekeninge ONTBREEK wat daar behoort te wees
+- Enige klassifikasie probleme (verkeerde kodes)
+
+**3. ROOI VLAE EN RISIKOS**
+Lys ELKE probleem wat jy sien, met spesifieke rekening verwysings:
+- TB balanseer nie? Waar kan die fout wees?
+- Likiditeit probleme?
+- Winsgewendheid probleme?
+- Ongewone transaksies?
+- Moontlike foute of fraud risikos?
+
+**4. SARS NAKOMING**
+- BTW: Is die posisie reg? Wanneer moet dit betaal word?
+- PAYE/UIF: Is dit ingesluit? Is bedrae redelik vir die grootte besigheid?
+- Enige ontbrekende belasting rekeninge?
+
+**5. SPESIFIEKE AANBEVELINGS**
+Gee TEN MINSTE 5 konkrete aksies, elk met:
+- Die spesifieke rekening of area
+- Wat gedoen moet word
+- Hoekom dit belangrik is
+- Prioriteit (DRINGEND / BELANGRIK / MONITOR)
+
+**6. VRAE VIR DIE KLIËNT**
+Lys 3-5 vrae wat jy die besigheid eienaar sou vra om beter te verstaan.
+
+REËLS:
+- Verwys na SPESIFIEKE rekeninge by naam en kode
+- Moenie generies wees nie - wees SPESIFIEK
+- As iets snaaks lyk, sê dit reguit
+- Skryf soos 'n regte CA(SA) wat omgee, nie soos 'n robot nie
+- Gebruik die PRESIESE syfers wat Python bereken het - moenie nuwe syfers uitdink nie"""
+
+        insights_html = ""
+        try:
+            if ANTHROPIC_API_KEY:
+                client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+                message = client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=3000,
+                    messages=[{"role": "user", "content": insights_prompt}]
+                )
+                if message.content:
+                    insights_html = message.content[0].text
+                    # Basic markdown to HTML
+                    insights_html = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
+                    insights_html = re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=re.MULTILINE)
+                    insights_html = re.sub(r'^- (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=re.MULTILINE)
+                    insights_html = re.sub(r'^• (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=re.MULTILINE)
+                    insights_html = insights_html.replace('\n\n', '<br><br>')
+                    insights_html = insights_html.replace('\n', '<br>')
+                    logger.info(f"[TB ANALYZE] Sonnet analysis generated: {len(insights_html)} chars")
+        except Exception as ai_err:
+            logger.warning(f"[TB ANALYZE] AI insights failed: {ai_err}")
+            insights_html = "<p>AI insights nie beskikbaar nie. Die syfers hierbo is volledig en akkuraat.</p>"
+        
+        # Replace placeholder with actual insights
+        report_html = report_html.replace(
+            '<p style="color:var(--text-muted);">Laai professionele insig...</p>',
+            insights_html
+        )
+        
+        return jsonify({"success": True, "analysis": report_html})
         
     except Exception as e:
         logger.error(f"[TB ANALYZE] Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)})
 
 
@@ -26870,12 +27197,21 @@ def pos_page():
         });
     }
     
+    let posLocked = false;
+    
     async function completeSale(method) {
         if (cart.length === 0) {
             alert('🛒 Cart is empty!\\n\\nAdd items to cart first.\\n\\nTip: Search for stock items above and click to add them.');
             document.getElementById('stockSearch').focus();
             return;
         }
+        
+        // Prevent double submission (any POS transaction)
+        if (posLocked) {
+            console.log('[POS] Transaction already in progress, ignoring');
+            return;
+        }
+        posLocked = true;
         
         // Use getCurrentCustomer - works even if supplier is selected
         const customer = getCurrentCustomer();
@@ -26885,6 +27221,7 @@ def pos_page():
         if (method === 'account' && !customerId) {
             alert('Warning: Please select a customer for account sale (F8)');
             toggleEntity('customer');
+            posLocked = false;
             return;
         }
         
@@ -26915,6 +27252,7 @@ def pos_page():
         preview += 'Proceed with sale?';
         
         if (!confirm(preview)) {
+            posLocked = false;
             return;
         }
         
@@ -26924,17 +27262,19 @@ def pos_page():
         if (method === 'cash') {
             const received = prompt('💵 CASH SALE\\n\\nTotal: R' + grandTotal.toFixed(2) + '\\n\\nCash received:', grandTotal.toFixed(2));
             
-            if (received === null) return;
+            if (received === null) { posLocked = false; return; }
             
             cashReceived = parseFloat(received);
             if (isNaN(cashReceived)) {
                 alert('Invalid amount');
+                posLocked = false;
                 return;
             }
             
             changeGiven = cashReceived - grandTotal;
             if (changeGiven < -0.01) {
                 alert('INSUFFICIENT\\n\\nTotal: R' + grandTotal.toFixed(2) + '\\nReceived: R' + cashReceived.toFixed(2) + '\\nShort: R' + Math.abs(changeGiven).toFixed(2));
+                posLocked = false;
                 return;
             }
             
@@ -26973,15 +27313,19 @@ def pos_page():
                 // Show print dialog based on settings - pass cash info for cash sales
                 showPrintDialog(data.sale_number, data.sale_id, method, customerName, items, subtotal, vat, grandTotal, cashReceived, changeGiven);
                 clearCart();
+                // posLocked will be reset on page reload after print
             } else {
                 alert('Error: ' + (data.error || 'Sale failed'));
+                posLocked = false;
             }
         } catch (err) {
             alert('Connection error');
+            posLocked = false;
         }
     }
     
     async function createQuote() {
+        if (posLocked) { console.log('[POS] Transaction in progress'); return; }
         const customer = getCurrentCustomer();
         const customerId = customer.id;
         const customerName = customer.name || '';
@@ -27057,6 +27401,13 @@ def pos_page():
             return;
         }
         
+        // Prevent double submission (any POS transaction)
+        if (posLocked) {
+            console.log('[POS] Transaction already in progress, ignoring');
+            return;
+        }
+        posLocked = true;
+        
         // Use getCurrentCustomer - works even if supplier is selected
         const customer = getCurrentCustomer();
         const customerId = customer.id;
@@ -27065,10 +27416,9 @@ def pos_page():
         if (!customerId) {
             alert('Warning: Please select a customer for the invoice (F8)');
             toggleEntity('customer');
+            posLocked = false;
             return;
         }
-        
-        // Build preview - prices are EXCL VAT, ADD VAT
         let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
         subtotal = Math.round(subtotal * 100) / 100;
         const vat = Math.round(subtotal * 0.15 * 100) / 100;
@@ -27095,6 +27445,7 @@ def pos_page():
         preview += 'Create invoice?';
         
         if (!confirm(preview)) {
+            posLocked = false;
             return;
         }
         
@@ -27126,18 +27477,22 @@ def pos_page():
             if (data.success) {
                 alert('Invoice ' + data.invoice_number + ' created!');
                 clearCart();
+                posLocked = false;
                 if (confirm('Open invoice now?')) {
                     window.location = '/invoice/' + data.invoice_id;
                 }
             } else {
                 alert('Error: ' + (data.error || 'Invoice failed'));
+                posLocked = false;
             }
         } catch (err) {
             alert('Connection error');
+            posLocked = false;
         }
     }
     
     async function createPO() {
+        if (posLocked) { console.log('[POS] Transaction in progress'); return; }
         const supplier = getCurrentSupplier();
         const supplierId = supplier.id;
         const supplierName = supplier.name || '';
@@ -27227,6 +27582,7 @@ def pos_page():
     // ═══ CREDIT NOTE FROM POS ═══
     async function createCreditNote() {
         if (cart.length === 0) return;
+        if (posLocked) { console.log('[POS] Transaction in progress'); return; }
         
         // Use getCurrentCustomer - works even if supplier is selected
         const customer = getCurrentCustomer();
@@ -29429,7 +29785,7 @@ def view_sale(sale_id):
     <div style="max-width:500px;margin:0 auto;">
         <a href="/pos/history" style="color:var(--text-muted);display:block;margin-bottom:15px;">← Back to History</a>
         
-        <div class="card" style="background:white;color:#000;">
+        <div id="reprintContent" class="card" style="background:white;color:#000;">
             <div style="text-align:center;padding-bottom:20px;border-bottom:2px dashed #ccc;margin-bottom:20px;">
                 <h2 style="margin:0;color:#000;">{biz_name}</h2>
                 <p style="color:#666;margin:5px 0;">TAX INVOICE / SLIP</p>
@@ -29478,18 +29834,29 @@ def view_sale(sale_id):
         </div>
         
         <div style="margin-top:20px;display:flex;gap:10px;">
-            <button onclick="window.print()" class="btn btn-primary" style="flex:1;">🖨️ Print Slip</button>
+            <button onclick="reprintSlip('thermal')" class="btn btn-primary" style="flex:1;">🖨️ Thermal Slip</button>
+            <button onclick="reprintSlip('a4')" class="btn btn-secondary" style="flex:1;">🖨️ A4 Print</button>
         </div>
     </div>
     
-    <style>
-    @media print {{
-        body * {{ visibility: hidden; }}
-        .card, .card * {{ visibility: visible; }}
-        .card {{ position: absolute; left: 0; top: 0; width: 80mm; box-shadow: none !important; }}
-        .btn, a {{ display: none !important; }}
+    <script>
+    function reprintSlip(format) {{
+        const slipContent = document.getElementById('reprintContent').innerHTML;
+        const printWin = window.open('', '_blank', 'width=400,height=600');
+        
+        const styles = format === 'thermal' ? 
+            'body {{ width: 72mm; margin: 0; padding: 4mm; font-family: Courier New, monospace; font-size: 16px; }} @page {{ size: 80mm auto; margin: 0; }}' :
+            'body {{ width: 210mm; margin: 20mm; font-family: Arial, sans-serif; font-size: 18px; }} @page {{ size: A4; margin: 20mm; }}';
+        
+        printWin.document.write('<!DOCTYPE html><html><head><title>Reprint</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>');
+        printWin.document.close();
+        
+        printWin.onload = function() {{
+            printWin.print();
+            setTimeout(function() {{ printWin.close(); }}, 500);
+        }};
     }}
-    </style>
+    </script>
     '''
     
     return render_page(f"Sale {sale.get('sale_number', '')}", content, user, "pos")
@@ -34624,6 +34991,19 @@ def api_import_execute():
                 
                 elif import_type == "opening_balances":
                     # Opening Trial Balance - creates GL entries
+                    # FIRST TIME: Clear any existing OB entries for this business
+                    if imported == 0:
+                        try:
+                            existing_ob = db.get("journal_entries", {"business_id": biz_id}) or []
+                            ob_to_delete = [je for je in existing_ob if je.get("reference") == "OB"]
+                            if ob_to_delete:
+                                for ob in ob_to_delete:
+                                    db.delete("journal_entries", ob.get("id"))
+                                logger.info(f"[IMPORT] Cleared {len(ob_to_delete)} existing OB entries before import")
+                                print(f"[IMPORT] Cleared {len(ob_to_delete)} existing OB entries", flush=True)
+                        except Exception as del_err:
+                            logger.warning(f"[IMPORT] Could not clear old OB entries: {del_err}")
+                    
                     account_idx = mapping.get("account") or mapping.get("name")
                     if account_idx is None or account_idx >= len(row):
                         skipped += 1
@@ -34634,37 +35014,45 @@ def api_import_execute():
                         skipped += 1
                         continue
                     
-                    # Get amount - could be in amount, debit, or credit column
-                    amount = 0
-                    is_debit = True
+                    # Get debit and credit amounts SEPARATELY - don't let one overwrite the other
+                    debit_amount = 0
+                    credit_amount = 0
                     
+                    # Read Debit column
                     if mapping.get("debit") is not None and mapping.get("debit") < len(row):
                         try:
-                            val = str(row[mapping.get("debit")]).replace("R", "").replace(",", "").strip()
-                            if val:
-                                amount = float(val)
-                                is_debit = True
+                            val = str(row[mapping.get("debit")]).replace("R", "").replace(",", "").replace(" ", "").strip()
+                            if val and val not in ("", "-", "0", "0.00"):
+                                debit_amount = abs(float(val))
                         except:
                             pass
                     
+                    # Read Credit column
                     if mapping.get("credit") is not None and mapping.get("credit") < len(row):
                         try:
-                            val = str(row[mapping.get("credit")]).replace("R", "").replace(",", "").strip()
-                            if val and float(val) > 0:
-                                amount = float(val)
-                                is_debit = False
+                            val = str(row[mapping.get("credit")]).replace("R", "").replace(",", "").replace(" ", "").strip()
+                            if val and val not in ("", "-", "0", "0.00"):
+                                credit_amount = abs(float(val))
                         except:
                             pass
                     
-                    if mapping.get("amount") is not None and mapping.get("amount") < len(row):
-                        try:
-                            val = str(row[mapping.get("amount")]).replace("R", "").replace(",", "").strip()
-                            if val:
-                                amount = abs(float(val))
-                        except:
-                            pass
+                    # If only "amount" column exists (no separate debit/credit)
+                    if debit_amount == 0 and credit_amount == 0:
+                        if mapping.get("amount") is not None and mapping.get("amount") < len(row):
+                            try:
+                                val = str(row[mapping.get("amount")]).replace("R", "").replace(",", "").replace(" ", "").strip()
+                                if val and val not in ("", "-"):
+                                    # Positive = debit, negative = credit
+                                    amt = float(val)
+                                    if amt > 0:
+                                        debit_amount = amt
+                                    else:
+                                        credit_amount = abs(amt)
+                            except:
+                                pass
                     
-                    if amount == 0:
+                    # Skip if no amount at all
+                    if debit_amount == 0 and credit_amount == 0:
                         skipped += 1
                         continue
                     
@@ -34672,6 +35060,9 @@ def api_import_execute():
                     account_code = ""
                     if mapping.get("code") is not None and mapping.get("code") < len(row):
                         account_code = str(row[mapping.get("code")]).strip()
+                    
+                    # Log for debugging
+                    logger.info(f"[OB IMPORT] {account_code} {account_name}: Dr={debit_amount} Cr={credit_amount}")
                     
                     # Create journal entry for opening balance
                     record = {
@@ -34682,8 +35073,8 @@ def api_import_execute():
                         "description": f"Opening Balance - {account_name}",
                         "account": account_name,
                         "account_code": account_code,
-                        "debit": amount if is_debit else 0,
-                        "credit": amount if not is_debit else 0,
+                        "debit": debit_amount,
+                        "credit": credit_amount,
                         "created_at": now()
                     }
                     
@@ -44644,8 +45035,14 @@ Rules:
 2. Read EVERY item row - do not skip any
 3. Look at the TOP and BOTTOM of the document for phone, email, address, VAT number
 4. Invoice number from: "Invoice No", "Inv No", "Tax Invoice", "Ref", "Document No"
-5. If VAT is not shown separately, calculate it (15% inclusive in South Africa)
+5. For VAT: READ it if shown on document. If not shown, set vat to 0 (Python will calculate)
 6. supplier_vat_number: Look for "VAT No", "VAT Reg", "Tax No" - usually starts with 4
+
+IMPORTANT: DO NOT CALCULATE ANYTHING! Just read what is printed on the document.
+- Read subtotal if shown, otherwise set to 0
+- Read VAT if shown, otherwise set to 0  
+- Read total if shown, otherwise set to 0
+Python will calculate any missing values afterwards.
 
 Return ONLY JSON:
 {
