@@ -31077,8 +31077,6 @@ def api_bulk_statements():
 #
 # ═══════════════════════════════════════════════════════════════════════════════
 
-import pandas as pd
-
 # Temporary storage for analysis results
 _smart_import_cache = {}
 
@@ -31476,11 +31474,21 @@ def api_smart_import_analyse():
                 file_content = raw_bytes.decode('utf-8', errors='ignore')
                 
         elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+            # Try to read Excel without pandas
             try:
-                df = pd.read_excel(file, sheet_name=0, header=None)
-                file_content = df.to_csv(index=False, header=False)
+                import openpyxl
+                file.seek(0)
+                wb = openpyxl.load_workbook(file, data_only=True)
+                ws = wb.active
+                rows = []
+                for row in ws.iter_rows(values_only=True):
+                    row_str = ','.join([str(cell) if cell is not None else '' for cell in row])
+                    rows.append(row_str)
+                file_content = '\n'.join(rows)
+            except ImportError:
+                return jsonify({"success": False, "error": "Excel support not available. Please export your file as CSV and try again."})
             except Exception as e:
-                return jsonify({"success": False, "error": f"Could not read Excel file: {str(e)}"})
+                return jsonify({"success": False, "error": f"Could not read Excel file: {str(e)}. Try exporting as CSV."})
         else:
             return jsonify({"success": False, "error": "Unsupported file type. Use CSV, Excel (.xlsx/.xls), or TXT."})
         
