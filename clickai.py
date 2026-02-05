@@ -757,6 +757,49 @@ def _start_timer():
     g._request_start = _time.time()
     g._timings = []
 
+@app.before_request
+def _enforce_role_access():
+    """Block staff/pos_only from accessing restricted routes"""
+    # Skip for static files, auth, API, health checks
+    path = request.path
+    if path.startswith(('/static/', '/login', '/logout', '/health', '/favicon')):
+        return None
+    
+    # Only check logged-in users
+    user = Auth.get_current_user()
+    if not user:
+        return None
+    
+    role = get_user_role()
+    
+    # Owner/admin/manager - no restrictions
+    if role in ('owner', 'admin', 'manager'):
+        return None
+    
+    # POS-only: can ONLY access POS-related routes
+    if role == 'pos_only':
+        allowed = ('/pos', '/sale/', '/api/pos/', '/api/chat', '/')
+        if not any(path == p or path.startswith(p) for p in allowed):
+            return redirect('/pos')
+    
+    # Staff: operational routes only (no financial totals - handled in templates)
+    if role in ('staff', 'cashier', 'sales', 'waiter'):
+        allowed_exact = ('/', )
+        allowed_prefix = (
+            '/pos', '/sale/', '/customers', '/customer/', '/stock', '/jobs', '/job/',
+            '/suppliers', '/supplier/', '/purchases', '/purchase/',
+            '/delivery-notes', '/delivery-note/',
+            '/api/pos/', '/api/chat', '/api/stock', '/api/customer', '/api/supplier',
+            '/api/email', '/api/send',
+            '/invoice/', '/quote/',  # Can VIEW individual docs
+        )
+        if path in allowed_exact:
+            return None
+        if any(path.startswith(p) for p in allowed_prefix):
+            return None
+        # Block everything else
+        return redirect('/?error=Access+denied')
+
 @app.after_request
 def _log_request_time(response):
     if hasattr(g, '_request_start'):
@@ -12097,12 +12140,15 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("pos", "/pos", "POS"),
         ]
     elif role == "staff":
-        # Staff can see basic operational items
+        # Staff can see basic operational items (no financial pages)
         nav_items = [
             ("dashboard", "/", "Dashboard"),
             ("pos", "/pos", "POS"),
             ("customers", "/customers", "Customers"),
+            ("suppliers", "/suppliers", "Suppliers"),
             ("stock", "/stock", "Stock"),
+            ("purchases", "/purchases", "Purchases"),
+            ("delivery-notes", "/delivery-notes", "Delivery Notes"),
             ("jobs", "/jobs", "Jobs"),
         ]
     elif role == "manager":
@@ -12144,8 +12190,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("reports", "/reports", "Reports"),
             ("intelligence", "/intelligence", "AI"),
             ("tools", "/tools", "Tools"),
-            ("import", "/import", "Import"),
-            ("import", "/migrate", "Migrate"),
+            ("import", "/smart-import", "Import"),
             ("inbox", "/scan-inbox", "Inbox"),
             ("settings", "/settings", "Settings"),
         ]
@@ -14001,15 +14046,19 @@ def customers_page():
         customers = []
     _t("db_customers")
     
+    role = get_user_role()
+    can_see_balances = role in ("owner", "admin", "manager", "bookkeeper", "accountant")
+    
     total_customers = len(customers)
     debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
-    total_owed = sum(float(c.get("balance", 0)) for c in debtors)
+    total_owed = sum(float(c.get("balance", 0)) for c in debtors) if can_see_balances else 0
     
     # Build rows
     customers_html = ""
     for c in customers:
         balance = float(c.get("balance", 0))
         balance_color = "var(--red)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
+        balance_display = money(balance) if can_see_balances else "---"
         cust_id = c.get("id")
         
         customers_html += f'''
@@ -14021,7 +14070,7 @@ def customers_page():
                 <span style="color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
                 <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(c.get("email", ""))}</span>
                 <span style="color:var(--text-muted);font-size:11px;">{safe_string(c.get("vat_number", ""))}</span>
-                <span style="text-align:right;color:{balance_color};font-weight:bold;">{money(balance)}</span>
+                <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
                 <span style="text-align:right;">
                     <a href="/customer/{cust_id}" style="color:var(--primary);font-size:11px;">View</a>
                     <a href="/statement/{cust_id}" style="color:var(--text-muted);font-size:11px;margin-left:8px;">Stmt</a>
@@ -14047,18 +14096,20 @@ def customers_page():
     '''
     
     summary_html = ""
-    if total_owed > 0:
+    if total_owed > 0 and can_see_balances:
         summary_html = f'''
         <div style="background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); padding:10px 15px; border-radius: 8px; margin-bottom: 15px;font-size:13px;">
             <strong>{len(debtors)} customers</strong> owe a total of <strong style="color: var(--red);">{money(total_owed)}</strong>
         </div>
         '''
     
+    email_btn = '<button class="btn btn-secondary" onclick="showEmailOptions()">📧 Email Statements</button>' if can_see_balances else ''
+    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
         <h2 style="margin:0;">Customers ({total_customers})</h2>
         <div style="display:flex;gap:10px;">
-            <button class="btn btn-secondary" onclick="showEmailOptions()">📧 Email Statements</button>
+            {email_btn}
             <a href="/customer/new" class="btn btn-primary">+ Add Customer</a>
         </div>
     </div>
@@ -14160,6 +14211,9 @@ def customer_view(customer_id):
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
+    role = get_user_role()
+    can_see_balances = role in ("owner", "admin", "manager", "bookkeeper", "accountant")
+    
     customer = db.get_one("customers", customer_id)
     if not customer:
         return redirect("/customers")
@@ -14207,7 +14261,7 @@ def customer_view(customer_id):
         <tr>
             <td>{s.get("sale_number", "-")}</td>
             <td>{s.get("date", "-")}</td>
-            <td>{money(s.get("total", 0))}</td>
+            <td>{money(s.get("total", 0)) if can_see_balances else "---"}</td>
             <td style="color:{method_color};">{method.upper()}</td>
         </tr>
         '''
@@ -14220,7 +14274,7 @@ def customer_view(customer_id):
         <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
             <td>{inv.get("invoice_number", "-")}</td>
             <td>{inv.get("date", "-")}</td>
-            <td>{money(inv.get("total", 0))}</td>
+            <td>{money(inv.get("total", 0)) if can_see_balances else "---"}</td>
             <td style="color:{status_color};">{status}</td>
         </tr>
         '''
@@ -14231,7 +14285,7 @@ def customer_view(customer_id):
         <tr>
             <td>{r.get("receipt_number", "-")}</td>
             <td>{r.get("date", "-")}</td>
-            <td style="color:var(--green);">{money(r.get("amount", 0))}</td>
+            <td style="color:var(--green);">{money(r.get("amount", 0)) if can_see_balances else "---"}</td>
             <td>{r.get("method", "-")}</td>
         </tr>
         '''
@@ -14270,7 +14324,7 @@ def customer_view(customer_id):
             <div style="text-align:right;">
                 <p style="color:var(--text-muted);margin:0;font-size:12px;">BALANCE</p>
                 <p style="font-size:28px;font-weight:bold;margin:0;color:{"var(--red)" if balance > 0 else "var(--green)"};">
-                    {money(balance)}
+                    {money(balance) if can_see_balances else "---"}
                 </p>
             </div>
         </div>
@@ -14282,11 +14336,11 @@ def customer_view(customer_id):
             <div class="stat-label">Invoices</div>
         </div>
         <div class="stat-card green">
-            <div class="stat-value">{money(total_invoiced)}</div>
+            <div class="stat-value">{money(total_invoiced) if can_see_balances else "---"}</div>
             <div class="stat-label">Total Invoiced</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">{money(total_paid)}</div>
+            <div class="stat-value">{money(total_paid) if can_see_balances else "---"}</div>
             <div class="stat-label">Total Paid</div>
         </div>
         <div class="stat-card">
@@ -14298,7 +14352,7 @@ def customer_view(customer_id):
             <div class="stat-label">POS Sales</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">{money(total_sales)}</div>
+            <div class="stat-value">{money(total_sales) if can_see_balances else "---"}</div>
             <div class="stat-label">Sales Total</div>
         </div>
     </div>
@@ -27879,6 +27933,7 @@ def pos_page():
                     e.preventDefault();
                     e.stopPropagation();
                     closePrintModal();
+                    location.reload();
                     return;
                 } else if (e.key === '1') {
                     e.preventDefault();
@@ -27894,6 +27949,7 @@ def pos_page():
                     e.preventDefault();
                     e.stopPropagation();
                     closePrintModal();
+                    location.reload();
                     return;
                 }
             }
@@ -28882,7 +28938,6 @@ def pos_page():
     
     function closePrintModal() {
         document.getElementById('printSlipModal').style.display = 'none';
-        location.reload();
     }
     
     function showEmailSlipModal() {
@@ -29284,7 +29339,7 @@ def pos_page():
                     onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
                     onblur="this.style.outline='none';this.style.transform='scale(1)'"
                     style="flex:1;padding:18px;border-radius:8px;border:3px solid #3b82f6;background:#3b82f6;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;">📄 A4 [2]</button>
-                <button id="btnPrintSkip" tabindex="0" onclick="closePrintModal()" 
+                <button id="btnPrintSkip" tabindex="0" onclick="closePrintModal(); location.reload();" 
                     onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
                     onblur="this.style.outline='none';this.style.transform='scale(1)'"
                     style="flex:1;padding:18px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;transition:transform 0.1s;">✕ Skip [3]</button>
@@ -31011,8 +31066,790 @@ def api_bulk_statements():
 
 # 
 # SMART IMPORT - Zane analyzes your CSV
+# ═══════════════════════════════════════════════════════════════════════════════
+#                    CLICKAI SMART IMPORT - OPUS POWERED
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+#   "Drop any file. We figure it out."
+#
+#   This is the killer feature. No column mapping. No config. No headaches.
+#   User uploads a messy Sage export → ClickAI just handles it.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import pandas as pd
+
+# Temporary storage for analysis results
+_smart_import_cache = {}
+
+@app.route("/smart-import")
+@login_required
+def smart_import_page():
+    """The painless import experience - just drop your file"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_name = business.get("name", "your business") if business else "your business"
+    
+    content = '''
+    <style>
+        .drop-zone {
+            border: 3px dashed var(--border);
+            border-radius: 20px;
+            padding: 60px 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, rgba(16,185,129,0.03), rgba(34,197,94,0.02));
+            position: relative;
+            overflow: hidden;
+        }
+        .drop-zone:hover, .drop-zone.drag-over {
+            border-color: var(--green);
+            background: linear-gradient(135deg, rgba(16,185,129,0.08), rgba(34,197,94,0.05));
+            transform: scale(1.01);
+        }
+        .drop-zone.drag-over::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: rgba(16,185,129,0.1);
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+        .drop-icon { font-size: 64px; margin-bottom: 20px; display: block; }
+        .drop-title { font-size: 24px; font-weight: 600; margin-bottom: 10px; color: var(--text); }
+        .drop-subtitle { color: var(--text-muted); font-size: 15px; margin-bottom: 20px; }
+        .file-types { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 15px; }
+        .file-type { background: var(--card); border: 1px solid var(--border); padding: 6px 14px; border-radius: 20px; font-size: 12px; color: var(--text-muted); }
+        .processing-state { display: none; text-align: center; padding: 40px; }
+        .processing-state.active { display: block; }
+        .spinner { width: 60px; height: 60px; border: 4px solid var(--border); border-top-color: var(--green); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 20px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .processing-text { font-size: 18px; color: var(--text); margin-bottom: 8px; }
+        .processing-sub { color: var(--text-muted); font-size: 14px; }
+        .preview-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 15px; }
+        .preview-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
+        .preview-type { display: flex; align-items: center; gap: 12px; }
+        .preview-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+        .preview-icon.customers { background: rgba(59,130,246,0.15); }
+        .preview-icon.suppliers { background: rgba(249,115,22,0.15); }
+        .preview-icon.stock { background: rgba(16,185,129,0.15); }
+        .preview-icon.accounts { background: rgba(139,92,246,0.15); }
+        .preview-icon.transactions { background: rgba(236,72,153,0.15); }
+        .preview-title { font-size: 18px; font-weight: 600; }
+        .preview-count { color: var(--text-muted); font-size: 14px; }
+        .preview-badge { background: rgba(16,185,129,0.15); color: var(--green); padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 500; }
+        .preview-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+        .preview-table th { text-align: left; padding: 10px 12px; background: var(--bg); border-bottom: 1px solid var(--border); color: var(--text-muted); font-weight: 500; }
+        .preview-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+        .preview-table tr:last-child td { border-bottom: none; }
+        .import-btn { background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; padding: 16px 40px; font-size: 18px; font-weight: 600; border-radius: 12px; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 10px; }
+        .import-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(16,185,129,0.3); }
+        .import-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .success-state { text-align: center; padding: 60px 40px; }
+        .success-icon { font-size: 80px; margin-bottom: 20px; }
+        .success-title { font-size: 28px; font-weight: 600; color: var(--green); margin-bottom: 10px; }
+        .success-stats { display: flex; gap: 30px; justify-content: center; margin: 30px 0; flex-wrap: wrap; }
+        .stat-box { text-align: center; }
+        .stat-number { font-size: 36px; font-weight: 700; color: var(--text); }
+        .stat-label { color: var(--text-muted); font-size: 14px; }
+        .warning-box { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); border-radius: 8px; padding: 12px 16px; margin-top: 15px; font-size: 13px; color: #b45309; }
+        .error-box { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 12px; padding: 20px; text-align: center; color: #dc2626; }
+    </style>
+    
+    <!-- STATE 1: Drop Zone -->
+    <div id="dropState" class="card">
+        <div class="drop-zone" id="dropZone">
+            <span class="drop-icon">📄</span>
+            <div class="drop-title">Drop jou file hier</div>
+            <div class="drop-subtitle">Of klik om te kies. Ons AI figure uit wat om daarmee te doen.</div>
+            <input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.txt" style="display:none;">
+            <div class="file-types">
+                <span class="file-type">CSV</span>
+                <span class="file-type">Excel (.xlsx)</span>
+                <span class="file-type">Excel 97-2003 (.xls)</span>
+                <span class="file-type">Text (.txt)</span>
+            </div>
+        </div>
+        <div style="margin-top:20px;padding:20px;background:var(--bg);border-radius:12px;">
+            <h4 style="margin-bottom:12px;font-size:15px;">💡 Pro Tips:</h4>
+            <ul style="color:var(--text-muted);font-size:13px;margin:0;padding-left:20px;line-height:1.8;">
+                <li><strong>Sage Pastel:</strong> File → Export → Customer List / Supplier List / Inventory</li>
+                <li><strong>Sage Business Cloud:</strong> Reports → Export to Excel</li>
+                <li><strong>QuickBooks:</strong> Reports → Export → Excel</li>
+                <li><strong>Xero:</strong> Contacts → Export / Reports → Export</li>
+                <li><strong>Any system:</strong> As jy kan export na Excel of CSV, kan ons dit import</li>
+            </ul>
+        </div>
+    </div>
+    
+    <!-- STATE 2: Processing -->
+    <div id="processingState" class="card processing-state">
+        <div class="spinner"></div>
+        <div class="processing-text" id="processingText">Analysing your file...</div>
+        <div class="processing-sub" id="processingSub">Opus AI is figuring out what's in here</div>
+    </div>
+    
+    <!-- STATE 3: Preview -->
+    <div id="previewState" class="card" style="display:none;">
+        <div style="text-align:center;margin-bottom:25px;">
+            <h2 style="margin-bottom:8px;">✨ Here's what I found</h2>
+            <p style="color:var(--text-muted);margin:0;">Check the preview below. If it looks good, hit Import.</p>
+        </div>
+        <div id="previewContent"></div>
+        <div style="text-align:center;margin-top:30px;padding-top:20px;border-top:1px solid var(--border);">
+            <button onclick="executeImport()" class="import-btn" id="importBtn">
+                <span>🚀</span> Import Everything
+            </button>
+            <div style="margin-top:12px;">
+                <button onclick="resetImport()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;">
+                    ← Start over with different file
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- STATE 4: Success -->
+    <div id="successState" class="card success-state" style="display:none;">
+        <div class="success-icon">🎉</div>
+        <div class="success-title">Import Complete!</div>
+        <p style="color:var(--text-muted);font-size:16px;">Your data is now in ClickAI. Welcome aboard.</p>
+        <div class="success-stats" id="successStats"></div>
+        <div style="margin-top:20px;">
+            <a href="/dashboard" class="import-btn" style="text-decoration:none;">Go to Dashboard →</a>
+        </div>
+    </div>
+    
+    <script>
+    let analysisResult = null;
+    let uploadedFileName = '';
+    
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    
+    dropZone.addEventListener('click', () => fileInput.click());
+    
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+    
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        const file = e.dataTransfer.files[0];
+        if (file) handleFile(file);
+    });
+    
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) handleFile(file);
+    });
+    
+    async function handleFile(file) {
+        uploadedFileName = file.name;
+        
+        document.getElementById('dropState').style.display = 'none';
+        document.getElementById('processingState').classList.add('active');
+        
+        const messages = [
+            { text: 'Reading your file...', sub: 'Extracting data' },
+            { text: 'AI is analysing...', sub: 'Detecting data types and columns' },
+            { text: 'Mapping to ClickAI fields...', sub: 'Almost there' },
+            { text: 'Preparing preview...', sub: 'Just a moment' }
+        ];
+        
+        let msgIndex = 0;
+        const msgInterval = setInterval(() => {
+            msgIndex = (msgIndex + 1) % messages.length;
+            document.getElementById('processingText').textContent = messages[msgIndex].text;
+            document.getElementById('processingSub').textContent = messages[msgIndex].sub;
+        }, 2500);
+        
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const response = await fetch('/api/smart-import/analyse', {
+                method: 'POST',
+                body: formData
+            });
+            
+            clearInterval(msgInterval);
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                analysisResult = result;
+                showPreview(result);
+            } else {
+                showError(result.error || 'Could not analyse the file. Try a different format.');
+            }
+        } catch (err) {
+            clearInterval(msgInterval);
+            showError('Connection error. Please try again.');
+        }
+    }
+    
+    function showPreview(result) {
+        document.getElementById('processingState').classList.remove('active');
+        document.getElementById('previewState').style.display = 'block';
+        
+        let html = '';
+        
+        html += '<div style="background:var(--bg);padding:12px 16px;border-radius:8px;margin-bottom:20px;font-size:13px;">';
+        html += '<strong>📄 ' + uploadedFileName + '</strong>';
+        html += '<span style="color:var(--text-muted);margin-left:15px;">' + (result.source_hint || 'Auto-detected') + '</span>';
+        html += '</div>';
+        
+        for (const dataset of result.datasets || []) {
+            const icons = { 'customers': '👥', 'suppliers': '🏭', 'stock': '📦', 'chart_of_accounts': '📊', 'transactions': '💰', 'invoices': '🧾' };
+            const icon = icons[dataset.type] || '📄';
+            const iconClass = dataset.type.replace('chart_of_accounts', 'accounts');
+            
+            html += '<div class="preview-card">';
+            html += '<div class="preview-header">';
+            html += '<div class="preview-type">';
+            html += '<div class="preview-icon ' + iconClass + '">' + icon + '</div>';
+            html += '<div>';
+            html += '<div class="preview-title">' + (dataset.type_label || dataset.type) + '</div>';
+            html += '<div class="preview-count">' + dataset.count + ' records detected</div>';
+            html += '</div></div>';
+            html += '<div class="preview-badge">Ready to import</div>';
+            html += '</div>';
+            
+            if (dataset.preview && dataset.preview.length > 0) {
+                const cols = dataset.columns || Object.keys(dataset.preview[0]);
+                html += '<div style="overflow-x:auto;"><table class="preview-table"><thead><tr>';
+                for (const col of cols.slice(0, 5)) {
+                    html += '<th>' + col + '</th>';
+                }
+                if (cols.length > 5) html += '<th style="color:var(--text-muted);">+' + (cols.length - 5) + ' more</th>';
+                html += '</tr></thead><tbody>';
+                
+                for (const row of dataset.preview.slice(0, 4)) {
+                    html += '<tr>';
+                    for (const col of cols.slice(0, 5)) {
+                        let val = row[col] || '';
+                        if (typeof val === 'number') val = val.toLocaleString();
+                        if (String(val).length > 30) val = String(val).substring(0, 30) + '...';
+                        html += '<td>' + val + '</td>';
+                    }
+                    if (cols.length > 5) html += '<td style="color:var(--text-muted);">...</td>';
+                    html += '</tr>';
+                }
+                html += '</tbody></table></div>';
+                
+                if (dataset.count > 4) {
+                    html += '<div style="text-align:center;padding:10px;color:var(--text-muted);font-size:12px;">Showing 4 of ' + dataset.count + ' records</div>';
+                }
+            }
+            
+            if (dataset.warnings && dataset.warnings.length > 0) {
+                html += '<div class="warning-box">⚠️ ' + dataset.warnings.join(' | ') + '</div>';
+            }
+            
+            html += '</div>';
+        }
+        
+        if (result.confidence) {
+            const confColor = result.confidence > 0.8 ? 'var(--green)' : result.confidence > 0.5 ? '#f59e0b' : '#ef4444';
+            html += '<div style="text-align:center;margin-top:15px;font-size:13px;color:var(--text-muted);">';
+            html += 'AI Confidence: <span style="color:' + confColor + ';font-weight:600;">' + Math.round(result.confidence * 100) + '%</span>';
+            html += '</div>';
+        }
+        
+        document.getElementById('previewContent').innerHTML = html;
+    }
+    
+    function showError(message) {
+        document.getElementById('processingState').classList.remove('active');
+        document.getElementById('previewState').style.display = 'block';
+        document.getElementById('previewContent').innerHTML = '<div class="error-box"><div style="font-size:48px;margin-bottom:15px;">😕</div><div style="font-size:18px;font-weight:600;margin-bottom:10px;">Couldn\\'t process this file</div><div style="font-size:14px;">' + message + '</div></div>';
+        document.getElementById('importBtn').style.display = 'none';
+    }
+    
+    async function executeImport() {
+        if (!analysisResult) return;
+        
+        const btn = document.getElementById('importBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner" style="width:20px;height:20px;border-width:2px;margin:0;"></span> Importing...';
+        
+        try {
+            const response = await fetch('/api/smart-import/execute', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ analysis_id: analysisResult.analysis_id })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showSuccess(result);
+            } else {
+                alert('Import failed: ' + (result.error || 'Unknown error'));
+                btn.disabled = false;
+                btn.innerHTML = '<span>🚀</span> Import Everything';
+            }
+        } catch (err) {
+            alert('Connection error. Please try again.');
+            btn.disabled = false;
+            btn.innerHTML = '<span>🚀</span> Import Everything';
+        }
+    }
+    
+    function showSuccess(result) {
+        document.getElementById('previewState').style.display = 'none';
+        document.getElementById('successState').style.display = 'block';
+        
+        let statsHtml = '';
+        for (const [key, val] of Object.entries(result.imported || {})) {
+            if (val > 0) {
+                statsHtml += '<div class="stat-box"><div class="stat-number">' + val + '</div><div class="stat-label">' + key + '</div></div>';
+            }
+        }
+        document.getElementById('successStats').innerHTML = statsHtml;
+    }
+    
+    function resetImport() {
+        analysisResult = null;
+        uploadedFileName = '';
+        document.getElementById('fileInput').value = '';
+        document.getElementById('previewState').style.display = 'none';
+        document.getElementById('successState').style.display = 'none';
+        document.getElementById('processingState').classList.remove('active');
+        document.getElementById('dropState').style.display = 'block';
+        document.getElementById('importBtn').style.display = 'inline-flex';
+        document.getElementById('importBtn').disabled = false;
+        document.getElementById('importBtn').innerHTML = '<span>🚀</span> Import Everything';
+    }
+    </script>
+    '''
+    
+    return render_page("Smart Import", content, user, "import")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OPUS-POWERED FILE ANALYSIS API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/smart-import/analyse", methods=["POST"])
+@login_required
+def api_smart_import_analyse():
+    """
+    THE MAGIC ENDPOINT - Takes any file, Opus figures out what to do with it.
+    No column mapping. No configuration. Just works.
+    """
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+    
+    if 'file' not in request.files:
+        return jsonify({"success": False, "error": "No file uploaded"})
+    
+    file = request.files['file']
+    filename = file.filename.lower()
+    
+    try:
+        file_content = ""
+        
+        if filename.endswith('.csv') or filename.endswith('.txt'):
+            raw_bytes = file.read()
+            for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                try:
+                    file_content = raw_bytes.decode(encoding)
+                    break
+                except:
+                    continue
+            if not file_content:
+                file_content = raw_bytes.decode('utf-8', errors='ignore')
+                
+        elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+            try:
+                df = pd.read_excel(file, sheet_name=0, header=None)
+                file_content = df.to_csv(index=False, header=False)
+            except Exception as e:
+                return jsonify({"success": False, "error": f"Could not read Excel file: {str(e)}"})
+        else:
+            return jsonify({"success": False, "error": "Unsupported file type. Use CSV, Excel (.xlsx/.xls), or TXT."})
+        
+        lines = file_content.split('\n')
+        sample_content = '\n'.join(lines[:500])
+        total_lines = len([l for l in lines if l.strip()])
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # OPUS ANALYSIS - The Brain
+        # ═══════════════════════════════════════════════════════════════════════
+        
+        opus_prompt = f"""You are a data import specialist for ClickAI, a South African accounting system.
+
+Analyse this file and extract structured data. The file is likely exported from Sage, Pastel, Xero, QuickBooks, or similar.
+
+FILE CONTENT (first 500 lines):
+```
+{sample_content}
+```
+
+TOTAL LINES IN FILE: {total_lines}
+
+YOUR TASK:
+1. Identify what type(s) of data this contains:
+   - customers (client/customer list with names, contacts, addresses)
+   - suppliers (vendor/supplier list)
+   - stock (inventory/product list with codes, descriptions, prices)
+   - chart_of_accounts (GL accounts with codes and types)
+   - transactions (journal entries, GL transactions with debits/credits)
+   - invoices (sales or purchase invoices)
+
+2. Find where the actual data starts (skip any header rows, titles, empty rows)
+
+3. Map the columns to our standard fields
+
+4. Clean the data:
+   - Remove "R" or "R " from amounts, handle "1,234.56" format
+   - Parse South African dates (DD/MM/YYYY or YYYY-MM-DD)
+   - Trim whitespace
+   - Handle empty values
+
+5. Return ONLY valid JSON in this exact format:
+
+{{
+    "success": true,
+    "source_hint": "Sage Pastel Customer Export" or similar guess,
+    "confidence": 0.95,
+    "datasets": [
+        {{
+            "type": "customers",
+            "type_label": "Customers",
+            "count": 150,
+            "columns": ["name", "email", "phone", "address", "vat_number", "account_code", "balance"],
+            "preview": [
+                {{"name": "ABC Company", "email": "info@abc.co.za", "phone": "011 123 4567", "address": "123 Main Rd, Sandton", "vat_number": "4123456789", "account_code": "ABC001", "balance": 15000.00}}
+            ],
+            "all_data": [
+                ... (ALL rows, properly cleaned and mapped)
+            ],
+            "warnings": ["3 rows had missing names and were skipped"]
+        }}
+    ]
+}}
+
+FIELD MAPPINGS:
+
+For CUSTOMERS/SUPPLIERS:
+- name (required): Customer/Client/Company/Supplier/Vendor Name
+- email: Email/E-mail/Email Address
+- phone: Phone/Tel/Telephone/Mobile/Cell
+- contact_name: Contact/Contact Person/Contact Name
+- address: Address/Physical Address/Postal Address (combine multiple address fields)
+- vat_number: VAT/VAT No/Tax Number/Tax No
+- account_code: Code/Account/Acc/Customer Code/Supplier Code
+- balance: Balance/Amount Owing/Outstanding
+- credit_limit: Credit Limit/Limit
+
+For STOCK:
+- code (required): Code/Item Code/Stock Code/SKU/Product Code
+- description (required): Description/Item/Product/Stock Description/Name
+- cost_price: Cost/Cost Price/Avg Cost/Average Cost
+- selling_price: Price/Selling Price/Sales Price/Retail/Sell
+- qty/quantity: Qty/Quantity/On Hand/Stock on Hand/SOH
+- category: Category/Group/Item Group/Type
+- unit: Unit/UOM/Unit of Measure
+
+For CHART OF ACCOUNTS:
+- account_code: Code/Account Code/Acc No/Number
+- account_name: Name/Account/Account Name/Description
+- account_type: Type/Category (map to: asset/liability/equity/income/expense)
+
+For TRANSACTIONS:
+- date: Date/Trans Date/Transaction Date
+- account_code: Account/Code/GL Code
+- account_name: Account Name/Description
+- reference: Ref/Reference/Doc No
+- description: Description/Narration/Details
+- debit: Debit/Dr
+- credit: Credit/Cr
+
+IMPORTANT:
+- Return ONLY the JSON, no explanation text
+- Include ALL data rows in all_data
+- Clean all monetary values to plain numbers (no R, no commas for thousands)
+- If uncertain, set confidence lower"""
+
+        client = anthropic.Anthropic()
+        
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=16000,
+            messages=[{"role": "user", "content": opus_prompt}]
+        )
+        
+        opus_response = response.content[0].text.strip()
+        
+        if '```json' in opus_response:
+            opus_response = opus_response.split('```json')[1].split('```')[0]
+        elif '```' in opus_response:
+            opus_response = opus_response.split('```')[1].split('```')[0]
+        
+        try:
+            result = json.loads(opus_response)
+        except json.JSONDecodeError as e:
+            match = re.search(r'\{[\s\S]*\}', opus_response)
+            if match:
+                result = json.loads(match.group())
+            else:
+                logger.error(f"[SMART-IMPORT] JSON parse failed: {e}")
+                return jsonify({"success": False, "error": "AI could not parse this file format. Try exporting as a simpler CSV."})
+        
+        if not result.get("success"):
+            return jsonify({"success": False, "error": result.get("error", "Could not understand file format")})
+        
+        analysis_id = generate_id()
+        _smart_import_cache[analysis_id] = {
+            "business_id": biz_id,
+            "user_id": user.get("id"),
+            "datasets": result.get("datasets", []),
+            "created_at": datetime.now().isoformat()
+        }
+        
+        preview_result = {
+            "success": True,
+            "analysis_id": analysis_id,
+            "source_hint": result.get("source_hint"),
+            "confidence": result.get("confidence", 0.8),
+            "datasets": []
+        }
+        
+        for ds in result.get("datasets", []):
+            preview_result["datasets"].append({
+                "type": ds.get("type"),
+                "type_label": ds.get("type_label", ds.get("type", "").title()),
+                "count": ds.get("count", len(ds.get("all_data", []))),
+                "columns": ds.get("columns", []),
+                "preview": ds.get("preview", ds.get("all_data", [])[:5]),
+                "warnings": ds.get("warnings", [])
+            })
+        
+        return jsonify(preview_result)
+        
+    except anthropic.APIError as e:
+        logger.error(f"[SMART-IMPORT] Anthropic API error: {e}")
+        return jsonify({"success": False, "error": "AI service temporarily unavailable. Try again."})
+    except Exception as e:
+        logger.error(f"[SMART-IMPORT] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXECUTE THE IMPORT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/smart-import/execute", methods=["POST"])
+@login_required
+def api_smart_import_execute():
+    """Execute the import based on Opus analysis."""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+    
+    try:
+        data = request.get_json()
+        analysis_id = data.get("analysis_id")
+        
+        if not analysis_id or analysis_id not in _smart_import_cache:
+            return jsonify({"success": False, "error": "Analysis expired. Please upload the file again."})
+        
+        analysis = _smart_import_cache[analysis_id]
+        
+        if analysis.get("business_id") != biz_id:
+            return jsonify({"success": False, "error": "Access denied"})
+        
+        imported = {}
+        
+        for dataset in analysis.get("datasets", []):
+            data_type = dataset.get("type")
+            all_data = dataset.get("all_data", [])
+            
+            if not all_data:
+                continue
+            
+            count = 0
+            
+            if data_type == "customers":
+                for row in all_data:
+                    try:
+                        name = str(row.get("name", "")).strip()
+                        if not name:
+                            continue
+                        existing = db.get("customers", {"business_id": biz_id, "name": name})
+                        if existing:
+                            continue
+                        record = {
+                            "business_id": biz_id,
+                            "name": name,
+                            "email": str(row.get("email", "")).strip(),
+                            "phone": str(row.get("phone", "")).strip(),
+                            "contact_name": str(row.get("contact_name", "")).strip(),
+                            "address": str(row.get("address", "")).strip(),
+                            "vat_number": str(row.get("vat_number", "")).strip(),
+                            "account_code": str(row.get("account_code", "")).strip(),
+                            "balance": float(row.get("balance", 0) or 0),
+                            "credit_limit": float(row.get("credit_limit", 0) or 0),
+                            "source": "smart_import"
+                        }
+                        success, _ = db.save("customers", record)
+                        if success:
+                            count += 1
+                    except Exception as e:
+                        logger.error(f"[SMART-IMPORT] Customer error: {e}")
+                imported["Customers"] = count
+                
+            elif data_type == "suppliers":
+                for row in all_data:
+                    try:
+                        name = str(row.get("name", "")).strip()
+                        if not name:
+                            continue
+                        existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                        if existing:
+                            continue
+                        record = {
+                            "business_id": biz_id,
+                            "name": name,
+                            "email": str(row.get("email", "")).strip(),
+                            "phone": str(row.get("phone", "")).strip(),
+                            "contact_name": str(row.get("contact_name", "")).strip(),
+                            "address": str(row.get("address", "")).strip(),
+                            "vat_number": str(row.get("vat_number", "")).strip(),
+                            "account_code": str(row.get("account_code", "")).strip(),
+                            "balance": float(row.get("balance", 0) or 0),
+                            "source": "smart_import"
+                        }
+                        success, _ = db.save("suppliers", record)
+                        if success:
+                            count += 1
+                    except Exception as e:
+                        logger.error(f"[SMART-IMPORT] Supplier error: {e}")
+                imported["Suppliers"] = count
+                
+            elif data_type == "stock":
+                for row in all_data:
+                    try:
+                        desc = str(row.get("description", "")).strip()
+                        code = str(row.get("code", "")).strip()
+                        if not desc and not code:
+                            continue
+                        if code:
+                            existing = db.get_all_stock(biz_id)
+                            if existing and any(s.get("code") == code for s in existing):
+                                continue
+                        record = {
+                            "business_id": biz_id,
+                            "description": desc or code,
+                            "code": code,
+                            "cost_price": float(row.get("cost_price", 0) or 0),
+                            "selling_price": float(row.get("selling_price", 0) or 0),
+                            "qty": float(row.get("qty", row.get("quantity", 0)) or 0),
+                            "quantity": float(row.get("qty", row.get("quantity", 0)) or 0),
+                            "category": str(row.get("category", "")).strip(),
+                            "unit": str(row.get("unit", "each")).strip() or "each",
+                            "source": "smart_import"
+                        }
+                        success, _ = db.save_stock(record)
+                        if success:
+                            count += 1
+                    except Exception as e:
+                        logger.error(f"[SMART-IMPORT] Stock error: {e}")
+                imported["Stock Items"] = count
+                
+            elif data_type == "chart_of_accounts":
+                for row in all_data:
+                    try:
+                        name = str(row.get("account_name", "")).strip()
+                        if not name:
+                            continue
+                        record = {
+                            "business_id": biz_id,
+                            "account_name": name,
+                            "account_code": str(row.get("account_code", "")).strip(),
+                            "account_type": str(row.get("account_type", "expense")).strip().lower(),
+                            "description": str(row.get("description", "")).strip(),
+                            "is_active": True,
+                            "source": "smart_import"
+                        }
+                        success, _ = db.save("chart_of_accounts", record)
+                        if success:
+                            count += 1
+                    except Exception as e:
+                        logger.error(f"[SMART-IMPORT] Account error: {e}")
+                imported["Accounts"] = count
+                
+            elif data_type == "transactions":
+                for row in all_data:
+                    try:
+                        record = {
+                            "business_id": biz_id,
+                            "date": str(row.get("date", "")).strip(),
+                            "account_code": str(row.get("account_code", "")).strip(),
+                            "account_name": str(row.get("account_name", "")).strip(),
+                            "reference": str(row.get("reference", "")).strip(),
+                            "description": str(row.get("description", "")).strip(),
+                            "debit": float(row.get("debit", 0) or 0),
+                            "credit": float(row.get("credit", 0) or 0),
+                            "source": "smart_import"
+                        }
+                        success, _ = db.save("gl_transactions", record)
+                        if success:
+                            count += 1
+                    except Exception as e:
+                        logger.error(f"[SMART-IMPORT] Transaction error: {e}")
+                imported["Transactions"] = count
+        
+        del _smart_import_cache[analysis_id]
+        
+        try:
+            db.save("audit_log", {
+                "id": generate_id(),
+                "user_id": user.get("id"),
+                "business_id": biz_id,
+                "action": "SMART_IMPORT",
+                "table_name": "multiple",
+                "details": json.dumps(imported),
+                "timestamp": now()
+            })
+        except:
+            pass
+        
+        logger.info(f"[SMART-IMPORT] Complete for business {biz_id}: {imported}")
+        
+        return jsonify({"success": True, "imported": imported})
+        
+    except Exception as e:
+        logger.error(f"[SMART-IMPORT] Execute error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# END SMART IMPORT MODULE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
 # 
-# DIRECT MIGRATION CONNECTORS - Sage, Xero, QuickBooks
+# DIRECT MIGRATION CONNECTORS - Sage, Xero, QuickBooks (LEGACY - kept for OAuth flows)
 # Pull data directly from competitor systems - zero stress for users
 # 
 
