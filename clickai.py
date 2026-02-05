@@ -2356,6 +2356,15 @@ class RecordFactory:
     @staticmethod
     def customer(business_id: str, name: str, **kwargs) -> dict:
         """Create a customer record with all required fields"""
+        # Known fields
+        known_fields = {'id', 'business_id', 'code', 'name', 'phone', 'email', 'address', 
+                        'vat_number', 'balance', 'credit_limit', 'active', 'created_at',
+                        'created_by', 'category', 'contact_name', 'price_list', 'payment_terms',
+                        'notes', 'payment_intelligence'}
+        
+        # Collect extra fields not in known_fields
+        extra = {k: v for k, v in kwargs.items() if k not in known_fields and v}
+        
         return {
             "id": kwargs.get("id") or generate_id(),
             "business_id": business_id,
@@ -2365,22 +2374,31 @@ class RecordFactory:
             "email": kwargs.get("email", ""),
             "address": kwargs.get("address", ""),
             "vat_number": kwargs.get("vat_number", ""),
-            "balance": float(kwargs.get("balance", 0)),
-            "credit_limit": float(kwargs.get("credit_limit", 0)),
+            "balance": float(kwargs.get("balance", 0) or 0),
+            "credit_limit": float(kwargs.get("credit_limit", 0) or 0),
             "active": kwargs.get("active", True),
             "created_at": kwargs.get("created_at") or now(),
             "created_by": kwargs.get("created_by", ""),
             "category": kwargs.get("category", ""),
             "contact_name": kwargs.get("contact_name", ""),
-            "price_list": kwargs.get("price_list", "retail"),  # retail, wholesale, trade, vip
-            "payment_terms": kwargs.get("payment_terms", ""),  # e.g. "30 days", "COD"
+            "price_list": kwargs.get("price_list", "retail"),
+            "payment_terms": kwargs.get("payment_terms", ""),
             "notes": kwargs.get("notes", ""),
-            "payment_intelligence": kwargs.get("payment_intelligence")
+            "payment_intelligence": kwargs.get("payment_intelligence"),
+            "extra_data": extra if extra else None  # Store any unknown fields as JSON
         }
     
     @staticmethod
     def supplier(business_id: str, name: str, **kwargs) -> dict:
         """Create a supplier record with all required fields"""
+        # Known fields
+        known_fields = {'id', 'business_id', 'code', 'name', 'phone', 'email', 'address',
+                        'vat_number', 'balance', 'credit_limit', 'active', 'created_at',
+                        'created_by', 'category', 'contact_name', 'payment_terms', 'notes'}
+        
+        # Collect extra fields
+        extra = {k: v for k, v in kwargs.items() if k not in known_fields and v}
+        
         return {
             "id": kwargs.get("id") or generate_id(),
             "business_id": business_id,
@@ -2390,15 +2408,16 @@ class RecordFactory:
             "email": kwargs.get("email", ""),
             "address": kwargs.get("address", ""),
             "vat_number": kwargs.get("vat_number", ""),
-            "balance": float(kwargs.get("balance", 0)),
-            "credit_limit": float(kwargs.get("credit_limit", 0)),
+            "balance": float(kwargs.get("balance", 0) or 0),
+            "credit_limit": float(kwargs.get("credit_limit", 0) or 0),
             "active": kwargs.get("active", True),
             "created_at": kwargs.get("created_at") or now(),
             "created_by": kwargs.get("created_by", ""),
             "category": kwargs.get("category", ""),
             "contact_name": kwargs.get("contact_name", ""),
             "payment_terms": kwargs.get("payment_terms", ""),
-            "notes": kwargs.get("notes", "")
+            "notes": kwargs.get("notes", ""),
+            "extra_data": extra if extra else None
         }
     
     @staticmethod
@@ -2428,28 +2447,55 @@ class RecordFactory:
     def stock_item(business_id: str, description: str, **kwargs) -> dict:
         """
         Create a stock item record for the 'stock_items' table
-        Supports multiple price tiers for different customer types
+        Supports multiple price tiers (price_1 through price_10 for Sage compatibility)
         """
-        return {
+        # Known fields
+        known_fields = {'id', 'business_id', 'code', 'description', 'category', 'unit',
+                        'quantity', 'qty', 'cost_price', 'cost', 'selling_price', 'price',
+                        'price_wholesale', 'price_trade', 'price_vip', 'reorder_level',
+                        'active', 'created_at', 'created_by'}
+        
+        # Add price tier fields to known
+        for i in range(1, 11):
+            known_fields.add(f'price_{i}')
+            known_fields.add(f'cost_{i}')
+        
+        # Collect extra fields
+        extra = {k: v for k, v in kwargs.items() if k not in known_fields and v}
+        
+        result = {
             "id": kwargs.get("id") or generate_id(),
             "business_id": business_id,
             "code": kwargs.get("code", ""),
             "description": description,
             "category": kwargs.get("category", ""),
             "unit": kwargs.get("unit", ""),
-            "quantity": int(kwargs.get("quantity") or kwargs.get("qty", 0)),
-            "cost_price": float(kwargs.get("cost_price") or kwargs.get("cost", 0)),
+            "quantity": int(float(kwargs.get("quantity") or kwargs.get("qty", 0) or 0)),
+            "cost_price": float(kwargs.get("cost_price") or kwargs.get("cost", 0) or 0),
             # Multiple price tiers
-            "selling_price": float(kwargs.get("selling_price") or kwargs.get("price", 0)),  # Default/Retail
-            "price_wholesale": float(kwargs.get("price_wholesale", 0)),
-            "price_trade": float(kwargs.get("price_trade", 0)),
-            "price_vip": float(kwargs.get("price_vip", 0)),
+            "selling_price": float(kwargs.get("selling_price") or kwargs.get("price", 0) or 0),
+            "price_wholesale": float(kwargs.get("price_wholesale") or kwargs.get("price_2", 0) or 0),
+            "price_trade": float(kwargs.get("price_trade") or kwargs.get("price_3", 0) or 0),
+            "price_vip": float(kwargs.get("price_vip") or kwargs.get("price_4", 0) or 0),
+            # Sage price tiers (price_1 through price_10)
+            "price_1": float(kwargs.get("price_1") or kwargs.get("selling_price") or kwargs.get("price", 0) or 0),
+            "price_2": float(kwargs.get("price_2") or kwargs.get("price_wholesale", 0) or 0),
+            "price_3": float(kwargs.get("price_3") or kwargs.get("price_trade", 0) or 0),
+            "price_4": float(kwargs.get("price_4") or kwargs.get("price_vip", 0) or 0),
+            "price_5": float(kwargs.get("price_5", 0) or 0),
+            "price_6": float(kwargs.get("price_6", 0) or 0),
+            "price_7": float(kwargs.get("price_7", 0) or 0),
+            "price_8": float(kwargs.get("price_8", 0) or 0),
+            "price_9": float(kwargs.get("price_9", 0) or 0),
+            "price_10": float(kwargs.get("price_10", 0) or 0),
             # Other fields
-            "reorder_level": int(kwargs.get("reorder_level", 0)),
+            "reorder_level": int(float(kwargs.get("reorder_level", 0) or 0)),
             "active": kwargs.get("active", True),
             "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", "")
+            "created_by": kwargs.get("created_by", ""),
+            "extra_data": extra if extra else None
         }
+        return result
     
     @staticmethod
     def stock_movement(business_id: str, stock_id: str, movement_type: str, quantity: float, **kwargs) -> dict:
@@ -14044,7 +14090,7 @@ def customers_page():
     
     # FAST: Direct query with order, limit to 300
     try:
-        customers = db.get("customers", {"business_id": biz_id}, limit=300)
+        customers = db.get("customers", {"business_id": biz_id}, limit=2000)
         # Sort by name
         customers = sorted(customers, key=lambda x: (x.get("name") or "").lower())
     except Exception as e:
@@ -14063,20 +14109,28 @@ def customers_page():
     customers_html = ""
     for c in customers:
         balance = float(c.get("balance", 0))
+        credit_limit = float(c.get("credit_limit", 0) or 0)
         balance_color = "var(--red)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
         balance_display = money(balance) if can_see_balances else "---"
         cust_id = c.get("id")
         
+        # Show credit warning if over limit
+        over_limit = balance > credit_limit > 0
+        limit_indicator = ' <span style="color:var(--red);font-size:9px;">⚠️OVER</span>' if over_limit else ''
+        
         customers_html += f'''
         <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;">
-            <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
+            <div style="display:grid;grid-template-columns:70px 2fr 1.5fr 1fr 1fr 1fr 100px 70px;align-items:center;font-size:13px;">
                 <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(c.get("code", ""))}</span>
-                <span><strong>{safe_string(c.get("name", "-"))}</strong></span>
-                <span style="color:var(--text-muted);">{safe_string(c.get("contact_name", ""))}</span>
-                <span style="color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
-                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(c.get("email", ""))}</span>
-                <span style="color:var(--text-muted);font-size:11px;">{safe_string(c.get("vat_number", ""))}</span>
-                <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
+                <span>
+                    <strong>{safe_string(c.get("name", "-"))}</strong>
+                    <span style="color:var(--text-muted);font-size:10px;display:block;">{safe_string(c.get("contact_name", ""))}</span>
+                </span>
+                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(c.get("address", ""))}">{safe_string(c.get("address", ""))[:30]}{"..." if len(c.get("address", "")) > 30 else ""}</span>
+                <span style="color:var(--text-muted);font-size:11px;">{safe_string(c.get("phone", ""))}</span>
+                <span style="color:var(--text-muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(c.get("email", ""))}">{safe_string(c.get("email", ""))}</span>
+                <span style="color:var(--text-muted);font-size:10px;">{safe_string(c.get("vat_number", ""))}</span>
+                <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}{limit_indicator}</span>
                 <span style="text-align:right;">
                     <a href="/customer/{cust_id}" style="color:var(--primary);font-size:11px;">View</a>
                     <a href="/statement/{cust_id}" style="color:var(--text-muted);font-size:11px;margin-left:8px;">Stmt</a>
@@ -14088,10 +14142,10 @@ def customers_page():
     # Sticky header
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
+        <div style="display:grid;grid-template-columns:70px 2fr 1.5fr 1fr 1fr 1fr 100px 70px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
-            <span>Name</span>
-            <span>Contact</span>
+            <span>Name / Contact</span>
+            <span>Address</span>
             <span>Phone</span>
             <span>Email</span>
             <span>VAT No</span>
@@ -14326,6 +14380,11 @@ def customer_view(customer_id):
                     {"&nbsp;|&nbsp; Category: " + safe_string(customer.get("category")) if customer.get("category") else ""}
                     {"&nbsp;|&nbsp; 💰 " + safe_string(customer.get("price_list", "retail")).upper() + " pricing" if customer.get("price_list") and customer.get("price_list") != "retail" else ""}
                 </p>
+                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
+                    {"💳 Credit Limit: " + money(customer.get("credit_limit", 0)) + "&nbsp;|&nbsp;" if float(customer.get("credit_limit", 0) or 0) > 0 else ""}
+                    {"📅 Payment Terms: " + safe_string(customer.get("payment_terms")) if customer.get("payment_terms") else ""}
+                </p>
+                {"<p style='color:var(--text-muted);margin:10px 0;font-size:12px;background:var(--bg);padding:10px;border-radius:6px;'>📝 " + safe_string(customer.get("notes")) + "</p>" if customer.get("notes") else ""}
             </div>
             <div style="text-align:right;">
                 <p style="color:var(--text-muted);margin:0;font-size:12px;">BALANCE</p>
@@ -17241,7 +17300,7 @@ def suppliers_page():
     
     # FAST: Direct query with order, limit
     try:
-        suppliers = db.get("suppliers", {"business_id": biz_id}, limit=300)
+        suppliers = db.get("suppliers", {"business_id": biz_id}, limit=2000)
         # Sort by name
         suppliers = sorted(suppliers, key=lambda x: (x.get("name") or "").lower())
     except Exception as e:
@@ -17256,19 +17315,23 @@ def suppliers_page():
     suppliers_html = ""
     for s in suppliers:
         balance = float(s.get("balance", 0))
+        credit_limit = float(s.get("credit_limit", 0) or 0)
         balance_color = "var(--orange)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
         balance_display = money(balance) if can_see_balances else "---"
         sup_id = s.get("id")
         
         suppliers_html += f'''
         <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;">
-            <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;">
+            <div style="display:grid;grid-template-columns:70px 2fr 1.5fr 1fr 1fr 1fr 100px 70px;align-items:center;font-size:13px;">
                 <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(s.get("code", ""))}</span>
-                <span><strong>{safe_string(s.get("name", "-"))}</strong></span>
-                <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("contact_name", ""))}</span>
+                <span>
+                    <strong>{safe_string(s.get("name", "-"))}</strong>
+                    <span style="color:var(--text-muted);font-size:10px;display:block;">{safe_string(s.get("contact_name", ""))}</span>
+                </span>
+                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(s.get("address", ""))}">{safe_string(s.get("address", ""))[:30]}{"..." if len(s.get("address", "")) > 30 else ""}</span>
                 <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span>
-                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{safe_string(s.get("email", ""))}</span>
-                <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("vat_number", ""))}</span>
+                <span style="color:var(--text-muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(s.get("email", ""))}">{safe_string(s.get("email", ""))}</span>
+                <span style="color:var(--text-muted);font-size:10px;">{safe_string(s.get("vat_number", ""))}</span>
                 <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
                 <span style="text-align:right;">
                     <a href="/supplier/{sup_id}" style="color:var(--primary);font-size:11px;">View</a>
@@ -17279,10 +17342,10 @@ def suppliers_page():
     
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:70px 2fr 1fr 1fr 1.2fr 1fr 1fr 70px;align-items:center;font-size:13px;font-weight:bold;">
+        <div style="display:grid;grid-template-columns:70px 2fr 1.5fr 1fr 1fr 1fr 100px 70px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
-            <span>Supplier</span>
-            <span>Contact</span>
+            <span>Supplier / Contact</span>
+            <span>Address</span>
             <span>Phone</span>
             <span>Email</span>
             <span>VAT No</span>
@@ -17553,6 +17616,11 @@ def supplier_view(supplier_id):
                     {"&nbsp;|&nbsp; VAT: " + safe_string(supplier.get("vat_number")) if supplier.get("vat_number") else ""}
                     {"&nbsp;|&nbsp; Category: " + safe_string(supplier.get("category")) if supplier.get("category") else ""}
                 </p>
+                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
+                    {"💳 Credit Limit: " + money(supplier.get("credit_limit", 0)) + "&nbsp;|&nbsp;" if float(supplier.get("credit_limit", 0) or 0) > 0 else ""}
+                    {"📅 Payment Terms: " + safe_string(supplier.get("payment_terms")) if supplier.get("payment_terms") else ""}
+                </p>
+                {"<p style='color:var(--text-muted);margin:10px 0;font-size:12px;background:var(--bg);padding:10px;border-radius:6px;'>📝 " + safe_string(supplier.get("notes")) + "</p>" if supplier.get("notes") else ""}
             </div>
             {balance_section}
         </div>
@@ -31578,34 +31646,36 @@ def api_smart_import_analyse():
         total_lines = len([l for l in lines if l.strip()])
         
         # ═══════════════════════════════════════════════════════════════════════
-        # AI ANALYSIS - Just get STRUCTURE, not data (avoids JSON issues)
+        # AI ANALYSIS - DYNAMIC: Map ALL columns, not just known ones
         # ═══════════════════════════════════════════════════════════════════════
         
-        opus_prompt = f"""Analyze this CSV file structure. Return ONLY a small JSON with column mapping.
+        opus_prompt = f"""Analyze this CSV/Excel file and map ALL columns. This is critical - DO NOT skip any columns!
 
-FIRST 25 LINES:
+FILE SAMPLE (first 25 lines):
 ```
 {sample_content}
 ```
 
-TOTAL LINES: {total_lines}
+TOTAL ROWS: {total_lines}
 
-Return this EXACT JSON format (nothing else):
-{{"success":true,"source_hint":"Sage Export","confidence":0.9,"data_type":"customers","data_type_label":"Customers","header_row":0,"data_start_row":1,"column_mapping":{{"0":"name","1":"email","2":"phone"}},"columns_found":["name","email","phone"]}}
+Return ONLY this JSON format:
+{{"success":true,"source_hint":"Sage Pastel","confidence":0.9,"data_type":"customers","data_type_label":"Customers","header_row":0,"data_start_row":1,"name_column":0,"column_mapping":{{"0":"name","1":"code","2":"phone","3":"email","4":"address","5":"vat_number","6":"balance","7":"credit_limit","8":"contact_name","9":"category","10":"payment_terms","11":"notes","12":"price_1","13":"price_2"}}}}
 
-RULES:
-- data_type: customers, suppliers, stock, chart_of_accounts, or transactions
-- header_row: row index (0-based) with headers, or -1 if none
-- data_start_row: row index where data starts
-- column_mapping: column index (as string) to field name
+CRITICAL RULES:
+1. data_type must be: customers, suppliers, stock, chart_of_accounts, or transactions
+2. name_column: The column index containing the PRIMARY identifier (company name, item description, account name)
+3. column_mapping: Map EVERY column in the file, not just common ones!
+4. For unknown columns, use the header name as the field name (lowercase, underscores for spaces)
+5. For price columns like "Selling Price 1", "Price Level 2", use: price_1, price_2, price_3, etc.
+6. For cost columns use: cost_price, cost_1, cost_2, etc.
 
-FIELDS:
-- customers/suppliers: name, email, phone, contact_name, address, vat_number, account_code, balance, credit_limit, payment_terms, notes, category
-- stock: code, description, cost_price, selling_price, qty, category, unit
+STANDARD FIELD NAMES (use these when you recognize them):
+- customers/suppliers: name, code, phone, email, address, vat_number, balance, credit_limit, contact_name, category, payment_terms, notes
+- stock: code, description, cost_price, selling_price, qty, category, unit, price_1, price_2, price_3... (for price tiers)
 - chart_of_accounts: account_code, account_name, account_type
 - transactions: date, account_code, account_name, reference, description, debit, credit
 
-Return ONLY the JSON, no markdown, no explanation."""
+Return ONLY the JSON, nothing else."""
 
         client = anthropic.Anthropic()
         
@@ -31641,13 +31711,17 @@ Return ONLY the JSON, no markdown, no explanation."""
             return jsonify({"success": False, "error": "Could not understand file format"})
         
         # ═══════════════════════════════════════════════════════════════════════
-        # PYTHON PARSING - Use the mapping to extract data
+        # PYTHON PARSING - Use the mapping to extract ALL data
         # ═══════════════════════════════════════════════════════════════════════
         
         data_type = result.get("data_type", "customers")
         header_row = int(result.get("header_row", 0))
         data_start = int(result.get("data_start_row", 1))
         column_mapping = result.get("column_mapping", {})
+        name_column = result.get("name_column", 0)  # Primary identifier column
+        
+        # Money/numeric field patterns - be generous
+        money_patterns = ['balance', 'credit', 'debit', 'price', 'cost', 'qty', 'quantity', 'amount', 'total', 'limit']
         
         all_data = []
         preview_data = []
@@ -31664,30 +31738,52 @@ Return ONLY the JSON, no markdown, no explanation."""
             except:
                 cols = line.split(',')
             
-            # Map to fields
+            # Map ALL columns to fields
             row_data = {}
             for col_idx, field_name in column_mapping.items():
                 try:
                     idx = int(col_idx)
                     if idx < len(cols):
                         val = cols[idx].strip().strip('"').strip("'")
-                        # Clean money values
-                        if field_name in ['balance', 'credit_limit', 'cost_price', 'selling_price', 'debit', 'credit', 'qty']:
-                            val = re.sub(r'[R\s,]', '', str(val))
+                        
+                        # Clean money/numeric values - check if field name contains any money pattern
+                        is_money_field = any(pattern in field_name.lower() for pattern in money_patterns)
+                        if is_money_field and val:
+                            val = re.sub(r'[R\s,$]', '', str(val))  # Remove R, spaces, commas, $
                             try:
                                 val = float(val) if val else 0
                             except:
                                 val = 0
+                        
                         row_data[field_name] = val
                 except:
                     pass
             
-            # Check for key field
-            key_fields = {'customers': 'name', 'suppliers': 'name', 'stock': 'description',
-                          'chart_of_accounts': 'account_name', 'transactions': 'account_code'}
-            key = key_fields.get(data_type, 'name')
+            # Use name_column to get the key value, or fall back to known key fields
+            key_value = None
+            try:
+                name_col_idx = int(name_column)
+                if name_col_idx < len(cols):
+                    key_value = cols[name_col_idx].strip().strip('"').strip("'")
+            except:
+                pass
             
-            if row_data.get(key):
+            # Fallback: check standard key fields
+            if not key_value:
+                key_fields = {'customers': 'name', 'suppliers': 'name', 'stock': 'description',
+                              'chart_of_accounts': 'account_name', 'transactions': 'account_code'}
+                key = key_fields.get(data_type, 'name')
+                key_value = row_data.get(key) or row_data.get('name') or row_data.get('description') or row_data.get('code')
+            
+            # Only skip if there's truly no identifying value at all
+            if key_value or any(row_data.values()):
+                # Ensure we have a name/identifier field
+                if not row_data.get('name') and not row_data.get('description'):
+                    if data_type in ['customers', 'suppliers']:
+                        row_data['name'] = key_value or f"Record {i}"
+                    elif data_type == 'stock':
+                        row_data['description'] = key_value or row_data.get('code', f"Item {i}")
+                
                 all_data.append(row_data)
                 if len(preview_data) < 5:
                     preview_data.append(row_data)
@@ -31757,21 +31853,12 @@ def api_smart_import_batch():
                         if existing:
                             status = "skipped"
                         else:
-                            # Use RecordFactory to ensure correct schema
+                            # Pass ALL row data to RecordFactory - it will handle known/unknown fields
                             record = RecordFactory.customer(
                                 business_id=biz_id,
                                 name=name,
                                 code=str(row.get("account_code", row.get("code", ""))).strip(),
-                                phone=str(row.get("phone", "")).strip(),
-                                email=str(row.get("email", "")).strip(),
-                                address=str(row.get("address", "")).strip(),
-                                vat_number=str(row.get("vat_number", "")).strip(),
-                                contact_name=str(row.get("contact_name", "")).strip(),
-                                balance=float(row.get("balance", 0) or 0),
-                                credit_limit=float(row.get("credit_limit", 0) or 0),
-                                category=str(row.get("category", "")).strip(),
-                                payment_terms=str(row.get("payment_terms", "")).strip(),
-                                notes=str(row.get("notes", "")).strip()
+                                **{k: v for k, v in row.items() if k not in ['name', 'account_code']}
                             )
                             success, resp = db.save("customers", record)
                             if success:
@@ -31789,21 +31876,12 @@ def api_smart_import_batch():
                         if existing:
                             status = "skipped"
                         else:
-                            # Use RecordFactory to ensure correct schema
+                            # Pass ALL row data to RecordFactory
                             record = RecordFactory.supplier(
                                 business_id=biz_id,
                                 name=name,
                                 code=str(row.get("account_code", row.get("code", ""))).strip(),
-                                phone=str(row.get("phone", "")).strip(),
-                                email=str(row.get("email", "")).strip(),
-                                address=str(row.get("address", "")).strip(),
-                                vat_number=str(row.get("vat_number", "")).strip(),
-                                contact_name=str(row.get("contact_name", "")).strip(),
-                                balance=float(row.get("balance", 0) or 0),
-                                credit_limit=float(row.get("credit_limit", 0) or 0),
-                                category=str(row.get("category", "")).strip(),
-                                payment_terms=str(row.get("payment_terms", "")).strip(),
-                                notes=str(row.get("notes", "")).strip()
+                                **{k: v for k, v in row.items() if k not in ['name', 'account_code']}
                             )
                             success, resp = db.save("suppliers", record)
                             if success:
@@ -31818,16 +31896,11 @@ def api_smart_import_batch():
                     if not name and not code:
                         status = "skipped"
                     else:
-                        # Use RecordFactory to ensure correct schema
+                        # Pass ALL row data to RecordFactory - including all price tiers
                         record = RecordFactory.stock_item(
                             business_id=biz_id,
                             description=name or code,
-                            code=code,
-                            cost_price=float(row.get("cost_price", 0) or 0),
-                            selling_price=float(row.get("selling_price", 0) or 0),
-                            quantity=int(float(row.get("qty", row.get("quantity", 0)) or 0)),
-                            category=str(row.get("category", "")).strip(),
-                            unit=str(row.get("unit", "each")).strip() or "each"
+                            **{k: v for k, v in row.items() if k != 'description'}
                         )
                         success, resp = db.save_stock(record)
                         if success:
