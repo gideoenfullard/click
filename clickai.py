@@ -31646,10 +31646,54 @@ def api_smart_import_analyse():
         total_lines = len([l for l in lines if l.strip()])
         
         # ═══════════════════════════════════════════════════════════════════════
-        # AI ANALYSIS - DYNAMIC: Map ALL columns, not just known ones
+        # SAGE PASTEL AUTO-DETECTION - Skip AI if we recognize the format
         # ═══════════════════════════════════════════════════════════════════════
         
-        opus_prompt = f"""Analyze this CSV/Excel file and map ALL columns. This is critical - DO NOT skip any columns!
+        header_line = lines[0] if lines else ""
+        is_sage_customers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line
+        is_sage_suppliers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line and 'Supplier' in filename
+        
+        if is_sage_customers or is_sage_suppliers:
+            # HARDCODED SAGE PASTEL MAPPING - 100% reliable
+            logger.info(f"[SMART-IMPORT] Detected Sage Pastel {'Suppliers' if is_sage_suppliers else 'Customers'} format")
+            result = {
+                "success": True,
+                "source_hint": "Sage Pastel",
+                "confidence": 1.0,
+                "data_type": "suppliers" if is_sage_suppliers else "customers",
+                "data_type_label": "Suppliers" if is_sage_suppliers else "Customers",
+                "header_row": 0,
+                "data_start_row": 1,
+                "name_column": 0,
+                "column_mapping": {
+                    "0": "name",           # Name (contains CODE : NAME)
+                    "1": "category",       # Category
+                    "2": "balance",        # Opening Balance
+                    "4": "postal_address_1",
+                    "5": "postal_address_2",
+                    "6": "postal_address_3",
+                    "7": "postal_address_4",
+                    "9": "delivery_address_1",
+                    "10": "delivery_address_2",
+                    "11": "delivery_address_3",
+                    "12": "delivery_address_4",
+                    "41": "credit_limit",  # Credit Limit
+                    "42": "contact_name",  # Contact Name
+                    "43": "phone",         # Telephone Number
+                    "45": "cell",          # Cell Number
+                    "46": "email",         # Email Address
+                    "48": "vat_number",    # VAT Reference
+                    "55": "sales_rep",     # Sales Rep
+                    "56": "price_list",    # Default Price List
+                    "57": "discount_percentage"  # Default Discount Percentage
+                }
+            }
+        else:
+            # ═══════════════════════════════════════════════════════════════════════
+            # AI ANALYSIS - For non-Sage formats
+            # ═══════════════════════════════════════════════════════════════════════
+            
+            opus_prompt = f"""Analyze this CSV/Excel file and map ALL columns. This is from Sage Pastel accounting software.
 
 FILE SAMPLE (first 25 lines):
 ```
@@ -31659,56 +31703,74 @@ FILE SAMPLE (first 25 lines):
 TOTAL ROWS: {total_lines}
 
 Return ONLY this JSON format:
-{{"success":true,"source_hint":"Sage Pastel","confidence":0.9,"data_type":"customers","data_type_label":"Customers","header_row":0,"data_start_row":1,"name_column":0,"column_mapping":{{"0":"name","1":"code","2":"phone","3":"email","4":"address","5":"vat_number","6":"balance","7":"credit_limit","8":"contact_name","9":"category","10":"payment_terms","11":"notes","12":"price_1","13":"price_2"}}}}
+{{"success":true,"source_hint":"Sage Pastel","confidence":0.9,"data_type":"customers","data_type_label":"Customers","header_row":0,"data_start_row":1,"name_column":0,"column_mapping":{{"0":"name","1":"category","2":"balance","42":"credit_limit","43":"contact_name","44":"phone","46":"cell","47":"email","49":"vat_number"}}}}
 
-CRITICAL RULES:
+SAGE PASTEL COLUMN MAPPINGS (CRITICAL - use these exact mappings):
+- "Name" → name (NOTE: Sage often has "CODE : NAME" format in this field)
+- "Category" → category
+- "Opening Balance" → balance
+- "Credit Limit" → credit_limit
+- "Contact Name" → contact_name
+- "Telephone Number" → phone
+- "Cell Number" → cell
+- "Email Address" → email
+- "VAT Reference" → vat_number
+- "Postal Address Line 1/2/3/4" → postal_address_1, postal_address_2, etc.
+- "Physical Address Line 1/2/3/4" → physical_address_1, physical_address_2, etc.
+- "Delivery Address Line 1/2/3/4" → delivery_address_1, delivery_address_2, etc.
+- "Default Price List" → price_list
+- "Sales Rep" → sales_rep
+- "Active" → active
+- "Default Discount Percentage" → discount_percentage
+
+FOR STOCK FILES:
+- "Item Code" or "Stock Code" → code
+- "Description" → description
+- "Cost Price" or "Average Cost" → cost_price
+- "Selling Price" or "Selling Price Incl" → selling_price
+- "Quantity On Hand" → qty
+- "Selling Price 1/2/3..." → price_1, price_2, price_3...
+
+RULES:
 1. data_type must be: customers, suppliers, stock, chart_of_accounts, or transactions
-2. name_column: The column index containing the PRIMARY identifier (company name, item description, account name)
-3. column_mapping: Map EVERY column in the file, not just common ones!
-4. For unknown columns, use the header name as the field name (lowercase, underscores for spaces)
-5. For price columns like "Selling Price 1", "Price Level 2", use: price_1, price_2, price_3, etc.
-6. For cost columns use: cost_price, cost_1, cost_2, etc.
-
-STANDARD FIELD NAMES (use these when you recognize them):
-- customers/suppliers: name, code, phone, email, address, vat_number, balance, credit_limit, contact_name, category, payment_terms, notes
-- stock: code, description, cost_price, selling_price, qty, category, unit, price_1, price_2, price_3... (for price tiers)
-- chart_of_accounts: account_code, account_name, account_type
-- transactions: date, account_code, account_name, reference, description, debit, credit
+2. name_column: The column index containing the PRIMARY identifier
+3. Map EVERY column - don't skip any!
+4. Column indices are 0-based
 
 Return ONLY the JSON, nothing else."""
 
-        client = anthropic.Anthropic()
-        
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            messages=[{"role": "user", "content": opus_prompt}]
-        )
-        
-        opus_response = response.content[0].text.strip()
-        
-        # Clean response
-        if '```' in opus_response:
-            opus_response = opus_response.replace('```json', '').replace('```', '')
-        opus_response = opus_response.strip()
-        
-        # Parse JSON
-        try:
-            result = json.loads(opus_response)
-        except json.JSONDecodeError:
-            # Try to find JSON in response
-            match = re.search(r'\{[^{}]*"success"[^{}]*\}', opus_response)
-            if match:
-                try:
-                    result = json.loads(match.group())
-                except:
-                    logger.error(f"[SMART-IMPORT] JSON failed: {opus_response[:300]}")
-                    return jsonify({"success": False, "error": "Could not analyze file. Try a simpler CSV."})
-            else:
-                return jsonify({"success": False, "error": "Could not analyze file structure."})
-        
-        if not result.get("success"):
-            return jsonify({"success": False, "error": "Could not understand file format"})
+            client = anthropic.Anthropic()
+            
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1000,
+                messages=[{"role": "user", "content": opus_prompt}]
+            )
+            
+            opus_response = response.content[0].text.strip()
+            
+            # Clean response
+            if '```' in opus_response:
+                opus_response = opus_response.replace('```json', '').replace('```', '')
+            opus_response = opus_response.strip()
+            
+            # Parse JSON
+            try:
+                result = json.loads(opus_response)
+            except json.JSONDecodeError:
+                # Try to find JSON in response
+                match = re.search(r'\{[^{}]*"success"[^{}]*\}', opus_response)
+                if match:
+                    try:
+                        result = json.loads(match.group())
+                    except:
+                        logger.error(f"[SMART-IMPORT] JSON failed: {opus_response[:300]}")
+                        return jsonify({"success": False, "error": "Could not analyze file. Try a simpler CSV."})
+                else:
+                    return jsonify({"success": False, "error": "Could not analyze file structure."})
+            
+            if not result.get("success"):
+                return jsonify({"success": False, "error": "Could not understand file format"})
         
         # ═══════════════════════════════════════════════════════════════════════
         # PYTHON PARSING - Use the mapping to extract ALL data
@@ -31777,7 +31839,35 @@ Return ONLY the JSON, nothing else."""
             
             # Only skip if there's truly no identifying value at all
             if key_value or any(row_data.values()):
-                # Ensure we have a name/identifier field
+                # ═══════════════════════════════════════════════════════════════
+                # SAGE PASTEL POST-PROCESSING
+                # ═══════════════════════════════════════════════════════════════
+                
+                # 1. Split "Name" field if it contains " : " (Sage format: "CODE : NAME")
+                if row_data.get('name') and ' : ' in str(row_data.get('name', '')):
+                    parts = str(row_data['name']).split(' : ', 1)
+                    if len(parts) == 2:
+                        row_data['code'] = parts[0].strip()
+                        row_data['name'] = parts[1].strip()
+                
+                # 2. Combine address fields into single address
+                address_parts = []
+                for addr_field in ['postal_address_1', 'postal_address_2', 'postal_address_3', 'postal_address_4',
+                                   'physical_address_1', 'physical_address_2', 'physical_address_3', 'physical_address_4',
+                                   'delivery_address_1', 'delivery_address_2', 'delivery_address_3', 'delivery_address_4']:
+                    if row_data.get(addr_field):
+                        val = str(row_data[addr_field]).strip()
+                        if val and val not in ['CASH SALE', 'CASH ACCOUNT', '']:
+                            address_parts.append(val)
+                
+                if address_parts and not row_data.get('address'):
+                    row_data['address'] = ', '.join(address_parts[:4])  # Max 4 parts
+                
+                # 3. Use cell as phone if phone is empty
+                if not row_data.get('phone') and row_data.get('cell'):
+                    row_data['phone'] = row_data['cell']
+                
+                # 4. Ensure we have a name/identifier field
                 if not row_data.get('name') and not row_data.get('description'):
                     if data_type in ['customers', 'suppliers']:
                         row_data['name'] = key_value or f"Record {i}"
