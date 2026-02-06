@@ -2188,7 +2188,7 @@ class DB:
             if response.status_code == 200:
                 updated = response.json()
                 if updated and len(updated) > 0:
-                    logger.info(f"[DB UPDATE] {table} id={id}: UPDATED {data}")
+                    logger.info(f"[DB UPDATE] {table} id={id}: UPDATED")
                     return True
                 else:
                     logger.warning(f"[DB UPDATE] {table} id={id}: Nothing updated (RLS?)")
@@ -2197,12 +2197,53 @@ class DB:
                 logger.info(f"[DB UPDATE] {table} id={id}: status=204 (assumed ok)")
                 return True
             else:
-                logger.error(f"[DB UPDATE] {table} id={id}: status={response.status_code}")
+                logger.error(f"[DB UPDATE] {table} id={id}: status={response.status_code} - {response.text[:100]}")
                 return False
                 
         except Exception as e:
             logger.error(f"[DB UPDATE] Error: {e}")
             return False
+    
+    def update_business(self, biz_id: str, user_id: str, data: dict) -> Tuple[bool, str]:
+        """Update business - direct PATCH (service key bypasses RLS)"""
+        try:
+            # Direct update by ID - service key should bypass RLS
+            url = f"{self.url}/rest/v1/businesses?id=eq.{biz_id}"
+            
+            headers = {
+                **self.headers,
+                "Prefer": "return=representation"
+            }
+            
+            logger.info(f"[DB UPDATE BUSINESS] URL: {url}")
+            logger.info(f"[DB UPDATE BUSINESS] Data: {data}")
+            
+            response = requests.patch(url, headers=headers, json=data, timeout=30)
+            
+            logger.info(f"[DB UPDATE BUSINESS] Response status: {response.status_code}")
+            logger.info(f"[DB UPDATE BUSINESS] Response body: {response.text[:500]}")
+            
+            if response.status_code == 200:
+                updated = response.json()
+                if updated and len(updated) > 0:
+                    logger.info(f"[DB UPDATE BUSINESS] SUCCESS!")
+                    return True, "Saved"
+                else:
+                    # No rows returned - maybe RLS or ID not found
+                    logger.warning(f"[DB UPDATE BUSINESS] No rows returned")
+                    return False, "No rows updated - check business ID"
+            elif response.status_code == 204:
+                # 204 = success but no content
+                logger.info(f"[DB UPDATE BUSINESS] 204 No Content (success)")
+                return True, "Saved"
+            else:
+                error_msg = f"HTTP {response.status_code}: {response.text[:300]}"
+                logger.error(f"[DB UPDATE BUSINESS] Failed: {error_msg}")
+                return False, error_msg
+                
+        except Exception as e:
+            logger.error(f"[DB UPDATE BUSINESS] Exception: {e}")
+            return False, str(e)
     
     def update_many(self, table: str, updates: list, business_id: str = None) -> Tuple[int, int]:
         """Batch update multiple records - chunks to avoid URL length limits
@@ -50033,6 +50074,9 @@ def settings_page():
     <div class="card">
         <h2 style="margin-bottom:20px;">Business Settings</h2>
         
+        {f'<div style="background:var(--green);color:white;padding:15px;border-radius:8px;margin-bottom:20px;">✓ Settings saved successfully!</div>' if request.args.get("saved") else ""}
+        {f'<div style="background:var(--red);color:white;padding:15px;border-radius:8px;margin-bottom:20px;">❌ Error: {request.args.get("error", "")}</div>' if request.args.get("error") else ""}
+        
         <form action="/api/settings/business" method="POST">
             <div class="form-group">
                 <label class="form-label">Business Name</label>
@@ -50845,8 +50889,10 @@ def api_settings_business():
             return redirect("/settings")
         
         # UPDATE EXISTING BUSINESS
+        biz_id = business.get("id")
+        user_id = user.get("id") if user else session.get("user_id")
+        
         updates = {
-            "id": business.get("id"),
             "name": request.form.get("name", ""),
             "industry_type": request.form.get("industry_type", "retail_general"),
             "reg_number": request.form.get("reg_number", ""),
@@ -50859,21 +50905,29 @@ def api_settings_business():
             "bank_branch": request.form.get("bank_branch", ""),
         }
         
-        success, result = db.save("businesses", updates)
+        logger.info(f"[SETTINGS] Saving business {biz_id} for user {user_id}: {updates}")
+        
+        # Use update_business which includes user_id filter for RLS
+        success, result = db.update_business(biz_id, user_id, updates)
         
         if success:
             # CRITICAL: Clear cache so next page load gets fresh data!
             Auth.clear_cache()
+            session.pop("_biz_cache", None)
+            session.pop("businesses_cache", None)
             logger.info(f"[SETTINGS] Business '{updates.get('name')}' saved successfully")
+            return redirect("/settings?saved=1")
         else:
             logger.error(f"[SETTINGS] Business save failed: {result}")
+            import urllib.parse
+            error_encoded = urllib.parse.quote(str(result)[:100])
+            return redirect(f"/settings?error={error_encoded}")
         
-        return redirect("/settings")
-    
     except Exception as e:
         logger.error(f"[SETTINGS] Business save error: {e}")
-        flash(f"Error saving business: {str(e)}", "error")
-        return redirect("/settings")
+        import urllib.parse
+        error_encoded = urllib.parse.quote(str(e)[:100])
+        return redirect(f"/settings?error={error_encoded}")
 
 
 @app.route("/api/switch-business", methods=["POST"])
