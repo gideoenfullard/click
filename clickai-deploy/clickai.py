@@ -17724,9 +17724,13 @@ def rentals_page():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Get all rental properties
-    rentals = db.get("rentals", {"business_id": biz_id}) or []
-    rentals = sorted(rentals, key=lambda x: x.get("property_name", "").lower())
+    # Get all rental properties - with safety check
+    try:
+        rentals = db.get("rentals", {"business_id": biz_id}) or []
+        rentals = sorted(rentals, key=lambda x: x.get("property_name", "").lower())
+    except Exception as e:
+        logger.error(f"[RENTALS] Error loading: {e}")
+        rentals = []
     
     # Stats
     active_rentals = [r for r in rentals if r.get("status") == "active"]
@@ -18012,7 +18016,12 @@ def rental_view(rental_id):
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    rental = db.get_one("rentals", rental_id)
+    try:
+        rental = db.get_one("rentals", rental_id)
+    except Exception as e:
+        logger.error(f"[RENTAL VIEW] Error: {e}")
+        rental = None
+        
     if not rental:
         return redirect("/rentals")
     
@@ -18446,9 +18455,13 @@ def subscriptions_page():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Get subscriptions
-    subscriptions = db.get("subscriptions", {"business_id": biz_id}) or []
-    subscriptions = sorted(subscriptions, key=lambda x: x.get("name", "").lower())
+    # Get subscriptions - with safety check
+    try:
+        subscriptions = db.get("subscriptions", {"business_id": biz_id}) or []
+        subscriptions = sorted(subscriptions, key=lambda x: x.get("name", "").lower())
+    except Exception as e:
+        logger.error(f"[SUBSCRIPTIONS] Error loading: {e}")
+        subscriptions = []
     
     active = [s for s in subscriptions if s.get("status") == "active"]
     total_monthly = sum(float(s.get("amount", 0)) for s in active if s.get("frequency") == "monthly")
@@ -23498,6 +23511,21 @@ def bulk_statements_page():
     schedule_mode = settings.get("mode", "debtors")
     last_sent = settings.get("last_sent", "Never")
     
+    # Build debtors preview HTML separately to avoid f-string nesting issues
+    debtors_preview = ""
+    sorted_debtors = sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)[:20]
+    for c in sorted_debtors:
+        debtors_preview += f'''<tr>
+            <td>{safe_string(c.get("name", "-"))}</td>
+            <td style="color:var(--text-muted);">{safe_string(c.get("email", "-"))}</td>
+            <td style="text-align:right;color:var(--orange);font-weight:bold;">{money(c.get("balance", 0))}</td>
+        </tr>'''
+    
+    if not debtors_preview:
+        debtors_preview = '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);">No debtors with email addresses</td></tr>'
+    
+    showing_text = f'<p style="color:var(--text-muted);text-align:center;margin-top:10px;">Showing top 20 of {debtors_count} debtors</p>' if debtors_count > 20 else ''
+    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
@@ -23626,14 +23654,10 @@ def bulk_statements_page():
                     </tr>
                 </thead>
                 <tbody>
-                    {"".join(f'''<tr>
-                        <td>{safe_string(c.get("name", "-"))}</td>
-                        <td style="color:var(--text-muted);">{safe_string(c.get("email", "-"))}</td>
-                        <td style="text-align:right;color:var(--orange);font-weight:bold;">{money(c.get("balance", 0))}</td>
-                    </tr>''' for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)[:20]) or '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);">No debtors with email addresses</td></tr>'}
+                    {debtors_preview}
                 </tbody>
             </table>
-            {f'<p style="color:var(--text-muted);text-align:center;margin-top:10px;">Showing top 20 of {debtors_count} debtors</p>' if debtors_count > 20 else ''}
+            {showing_text}
         </div>
     </div>
     
