@@ -14108,11 +14108,12 @@ def customers_page():
     # Build rows
     customers_html = ""
     for c in customers:
-        balance = float(c.get("balance", 0))
+        balance = float(c.get("balance", 0) or 0)
         credit_limit = float(c.get("credit_limit", 0) or 0)
         balance_color = "var(--red)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
         balance_display = money(balance) if can_see_balances else "---"
         cust_id = c.get("id")
+        address = c.get("address") or ""
         
         # Show credit warning if over limit
         over_limit = balance > credit_limit > 0
@@ -14126,7 +14127,7 @@ def customers_page():
                     <strong>{safe_string(c.get("name", "-"))}</strong>
                     <span style="color:var(--text-muted);font-size:10px;display:block;">{safe_string(c.get("contact_name", ""))}</span>
                 </span>
-                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(c.get("address", ""))}">{safe_string(c.get("address", ""))[:30]}{"..." if len(c.get("address", "")) > 30 else ""}</span>
+                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(address)}">{safe_string(address)[:30]}{"..." if len(address) > 30 else ""}</span>
                 <span style="color:var(--text-muted);font-size:11px;">{safe_string(c.get("phone", ""))}</span>
                 <span style="color:var(--text-muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(c.get("email", ""))}">{safe_string(c.get("email", ""))}</span>
                 <span style="color:var(--text-muted);font-size:10px;">{safe_string(c.get("vat_number", ""))}</span>
@@ -17314,11 +17315,12 @@ def suppliers_page():
     # Build rows
     suppliers_html = ""
     for s in suppliers:
-        balance = float(s.get("balance", 0))
+        balance = float(s.get("balance", 0) or 0)
         credit_limit = float(s.get("credit_limit", 0) or 0)
         balance_color = "var(--orange)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
         balance_display = money(balance) if can_see_balances else "---"
         sup_id = s.get("id")
+        address = s.get("address") or ""
         
         suppliers_html += f'''
         <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;">
@@ -17328,7 +17330,7 @@ def suppliers_page():
                     <strong>{safe_string(s.get("name", "-"))}</strong>
                     <span style="color:var(--text-muted);font-size:10px;display:block;">{safe_string(s.get("contact_name", ""))}</span>
                 </span>
-                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(s.get("address", ""))}">{safe_string(s.get("address", ""))[:30]}{"..." if len(s.get("address", "")) > 30 else ""}</span>
+                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(address)}">{safe_string(address)[:30]}{"..." if len(address) > 30 else ""}</span>
                 <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span>
                 <span style="color:var(--text-muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(s.get("email", ""))}">{safe_string(s.get("email", ""))}</span>
                 <span style="color:var(--text-muted);font-size:10px;">{safe_string(s.get("vat_number", ""))}</span>
