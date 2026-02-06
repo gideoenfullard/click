@@ -31651,7 +31651,7 @@ def api_smart_import_analyse():
         
         header_line = lines[0] if lines else ""
         is_sage_customers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line
-        is_sage_suppliers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line and 'Supplier' in filename
+        is_sage_suppliers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line and 'supplier' in filename.lower()
         
         if is_sage_customers or is_sage_suppliers:
             # HARDCODED SAGE PASTEL MAPPING - 100% reliable
@@ -31898,8 +31898,10 @@ Return ONLY the JSON, nothing else."""
         logger.error(f"[SMART-IMPORT] API error: {e}")
         return jsonify({"success": False, "error": "AI service unavailable. Try again."})
     except Exception as e:
-        logger.error(f"[SMART-IMPORT] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"[SMART-IMPORT] Error: {e}\nTraceback:\n{tb}")
+        return jsonify({"success": False, "error": f"Import error: {str(e)[:200]}"})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -32067,8 +32069,10 @@ def api_smart_import_batch():
         return jsonify({"success": True, "results": results})
         
     except Exception as e:
-        logger.error(f"[SMART-IMPORT] Batch endpoint error: {e}")
-        return jsonify({"success": False, "error": str(e)})
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"[SMART-IMPORT] Batch endpoint error: {e}\nTraceback:\n{tb}")
+        return jsonify({"success": False, "error": f"Batch error: {str(e)[:200]}"})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
