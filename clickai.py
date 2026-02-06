@@ -1831,38 +1831,79 @@ Thank you for your business!
         name = safe(customer.get("name", "Customer"))
         balance = float(customer.get("balance", 0))
         biz_name = safe(business.get("name", "Business")) if business else "Business"
+        biz_address = safe(business.get("address", "")).replace("\n", "<br>") if business else ""
+        biz_phone = business.get("phone", "") if business else ""
+        biz_email = business.get("email", "") if business else ""
+        biz_vat = business.get("vat_number", "") if business else ""
+        bank_name = business.get("bank_name", "") if business else ""
+        bank_account = business.get("bank_account", "") if business else ""
+        bank_branch = business.get("bank_branch", "") if business else ""
         
         # Build invoice list
         invoice_rows = ""
         for inv in invoices:
+            status = inv.get("status", "outstanding")
+            status_color = "#10b981" if status == "paid" else "#f59e0b"
             invoice_rows += f'''
             <tr>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">{safe(inv.get("invoice_number", "-"))}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">{safe(inv.get("date", "-"))}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">R{float(inv.get("total", 0)):,.2f}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">{safe(inv.get("status", "-"))}</td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee;">{safe(inv.get("invoice_number", "-"))}</td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee;">{safe(inv.get("date", "-"))}</td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">R{float(inv.get("total", 0)):,.2f}</td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee;"><span style="color:{status_color};font-weight:bold;">{status.upper()}</span></td>
             </tr>
             '''
         
+        if not invoice_rows:
+            invoice_rows = '<tr><td colspan="4" style="padding:20px;text-align:center;color:#888;">No invoices on record</td></tr>'
+        
         subject = f"Statement of Account - {biz_name}"
+        
+        # Build bank details section
+        bank_section = ""
+        if bank_name and bank_account:
+            bank_section = f'''
+            <div style="background:#f0fdf4;padding:15px;border-radius:8px;margin:20px 0;">
+                <h4 style="margin:0 0 10px 0;color:#166534;">Banking Details for Payment:</h4>
+                <table style="font-size:14px;">
+                    <tr><td style="padding:3px 15px 3px 0;color:#666;">Bank:</td><td><strong>{bank_name}</strong></td></tr>
+                    <tr><td style="padding:3px 15px 3px 0;color:#666;">Account:</td><td><strong>{bank_account}</strong></td></tr>
+                    {f'<tr><td style="padding:3px 15px 3px 0;color:#666;">Branch:</td><td>{bank_branch}</td></tr>' if bank_branch else ''}
+                    <tr><td style="padding:3px 15px 3px 0;color:#666;">Reference:</td><td><strong>{customer.get("code", name[:10])}</strong></td></tr>
+                </table>
+            </div>
+            '''
         
         body_html = f'''
         <html>
         <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
-            <div style="max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
-                <h2 style="color: #333;">Statement of Account</h2>
+            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                <!-- Header with Business Details -->
+                <div style="border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 20px;">
+                    <h1 style="color: #333; margin: 0; font-size: 28px;">{biz_name}</h1>
+                    {f'<p style="color:#666;margin:5px 0;font-size:13px;">{biz_address}</p>' if biz_address else ''}
+                    {f'<p style="color:#666;margin:5px 0;font-size:13px;">Tel: {biz_phone}</p>' if biz_phone else ''}
+                    {f'<p style="color:#666;margin:5px 0;font-size:13px;">Email: {biz_email}</p>' if biz_email else ''}
+                    {f'<p style="color:#666;margin:5px 0;font-size:13px;">VAT No: {biz_vat}</p>' if biz_vat else ''}
+                </div>
                 
-                <p>Dear {name},</p>
+                <h2 style="color: #333; text-align:center; margin-bottom:20px;">STATEMENT OF ACCOUNT</h2>
                 
-                <p>Please find your statement of account below:</p>
+                <!-- Customer Details -->
+                <div style="background:#f8f9fa;padding:15px;border-radius:8px;margin-bottom:20px;">
+                    <p style="margin:0;font-size:12px;color:#666;text-transform:uppercase;">Statement To:</p>
+                    <p style="margin:5px 0 0 0;font-size:18px;font-weight:bold;">{name}</p>
+                    {f'<p style="margin:5px 0 0 0;color:#666;">{safe(customer.get("address", "")).replace(chr(10), ", ")}</p>' if customer.get("address") else ''}
+                    <p style="margin:10px 0 0 0;font-size:14px;">Statement Date: <strong>{today()}</strong></p>
+                </div>
                 
+                <!-- Invoices Table -->
                 <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
                     <thead>
-                        <tr style="background: #f5f5f5;">
-                            <th style="padding: 10px; text-align: left;">Invoice</th>
-                            <th style="padding: 10px; text-align: left;">Date</th>
-                            <th style="padding: 10px; text-align: right;">Amount</th>
-                            <th style="padding: 10px; text-align: left;">Status</th>
+                        <tr style="background: #333; color: white;">
+                            <th style="padding: 12px; text-align: left;">Invoice #</th>
+                            <th style="padding: 12px; text-align: left;">Date</th>
+                            <th style="padding: 12px; text-align: right;">Amount</th>
+                            <th style="padding: 12px; text-align: left;">Status</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1870,15 +1911,21 @@ Thank you for your business!
                     </tbody>
                 </table>
                 
-                <p style="font-size: 20px; font-weight: bold; text-align: right;">
-                    Balance Due: <span style="color: #e74c3c;">R{balance:,.2f}</span>
-                </p>
+                <!-- Balance Due -->
+                <div style="text-align: right; padding: 20px; background: {'#fef2f2' if balance > 0 else '#f0fdf4'}; border-radius: 8px; margin: 20px 0;">
+                    <p style="font-size: 14px; color: #666; margin: 0;">Balance Due:</p>
+                    <p style="font-size: 32px; font-weight: bold; color: {'#dc2626' if balance > 0 else '#16a34a'}; margin: 5px 0;">
+                        R{balance:,.2f}
+                    </p>
+                </div>
+                
+                {bank_section}
                 
                 <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
                 
-                <p style="color: #888; font-size: 12px;">
-                    {biz_name}<br>
-                    Generated by Click AI on {today()}
+                <p style="color: #888; font-size: 12px; text-align:center;">
+                    This statement was generated automatically by {biz_name}<br>
+                    {today()} • Powered by Click AI
                 </p>
             </div>
         </body>
@@ -2028,7 +2075,8 @@ class DB:
             if not data.get("created_at"):
                 data["created_at"] = now()
             
-            url = f"{self.url}/rest/v1/{table}"
+            # Use on_conflict for proper upsert on id column
+            url = f"{self.url}/rest/v1/{table}?on_conflict=id"
             
             response = requests.post(
                 url,
@@ -2036,6 +2084,8 @@ class DB:
                 json=data,
                 timeout=30
             )
+            
+            logger.info(f"[DB SAVE] {table} response: {response.status_code} - {response.text[:200]}")
             
             if response.status_code in (200, 201):
                 result = response.json()
@@ -14218,7 +14268,7 @@ def customers_page():
         </div>
         '''
     
-    email_btn = '<button class="btn btn-secondary" onclick="showEmailOptions()">📧 Email Statements</button>' if can_see_balances else ''
+    email_btn = '<a href="/bulk-statements" class="btn btn-secondary">📧 Bulk Statements</a>' if can_see_balances else ''
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
@@ -14642,6 +14692,34 @@ def customer_new():
         vat_number = request.form.get("vat_number", "").strip()
         price_list = request.form.get("price_list", "retail").strip()
         
+        # AUTO-GENERATE SMART CODE if not provided (e.g., AFR001 for Afrisam)
+        if not code and biz_id and name:
+            try:
+                import re
+                # Get prefix from name (first 3 letters, uppercase, letters only)
+                clean_name = re.sub(r'[^a-zA-Z]', '', name)  # Remove non-letters
+                prefix = clean_name[:3].upper() if len(clean_name) >= 3 else clean_name.upper().ljust(3, 'X')
+                
+                # Get existing codes with this prefix
+                existing = db.get("customers", {"business_id": biz_id}, limit=5000)
+                max_num = 0
+                for c in existing:
+                    existing_code = c.get("code", "")
+                    if existing_code and existing_code.upper().startswith(prefix):
+                        # Extract number part (e.g., "AFR001" -> 1)
+                        nums = re.findall(r'\d+', existing_code)
+                        if nums:
+                            num = int(nums[-1])
+                            if num > max_num:
+                                max_num = num
+                
+                # Generate code: PREFIX + 3-digit number
+                code = f"{prefix}{(max_num + 1):03d}"  # e.g. AFR001, AFR002
+                logger.info(f"[CUSTOMER] Smart code for '{name}': {code}")
+            except Exception as e:
+                logger.error(f"[CUSTOMER] Smart code error: {e}")
+                code = f"C{generate_id()[:6].upper()}"  # Fallback
+        
         if not name:
             flash("Customer name is required", "error")
         else:
@@ -14678,7 +14756,8 @@ def customer_new():
                 </div>
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
-                    <input type="text" name="code" placeholder="e.g. AFR001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <input type="text" name="code" placeholder="Auto: AFR001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <small style="color:var(--text-muted);">Leave empty - auto-generates from name (e.g. Afrisam → AFR001)</small>
                 </div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
@@ -15508,13 +15587,17 @@ def api_customers_all():
 @app.route("/api/customers/bulk-email-statements", methods=["POST"])
 @login_required
 def api_customers_bulk_email_statements():
-    """Email statements to customers - mode: 'all' or 'debtors'"""
+    """Email statements to customers - mode: 'all', 'debtors', or 'zero'"""
     try:
         data = request.get_json() or {}
         mode = data.get("mode", "debtors")  # default to debtors only
         
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
+        
+        # Reload business fresh for accurate details
+        if biz_id:
+            business = db.get_one("businesses", biz_id) or business
         
         if not biz_id:
             return jsonify({"success": False, "error": "No business"})
@@ -15526,6 +15609,9 @@ def api_customers_bulk_email_statements():
         if mode == "all":
             # All customers (with email)
             target_customers = customers
+        elif mode == "zero":
+            # Only zero balance customers
+            target_customers = [c for c in customers if float(c.get("balance", 0)) == 0]
         else:
             # Only debtors (balance > 0)
             target_customers = [c for c in customers if float(c.get("balance", 0)) > 0]
@@ -15561,6 +15647,21 @@ def api_customers_bulk_email_statements():
             except Exception as e:
                 failed += 1
                 logger.error(f"[BULK-EMAIL] Error sending to {customer.get('name')}: {e}")
+        
+        # Update last sent timestamp
+        try:
+            user = Auth.get_current_user()
+            user_id = user.get("id") if user else None
+            settings = business.get("statement_settings", {})
+            if isinstance(settings, str):
+                try:
+                    settings = json.loads(settings)
+                except:
+                    settings = {}
+            settings["last_sent"] = now()
+            db.update_business(biz_id, user_id, {"statement_settings": json.dumps(settings)})
+        except:
+            pass
         
         logger.info(f"[BULK-EMAIL] Complete: mode={mode}, sent={sent}, skipped={skipped}, failed={failed}")
         
@@ -16097,8 +16198,10 @@ def invoices_page():
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <h3 class="card-title" style="margin:0;">Invoices ({len(invoices)})</h3>
-            <div style="display: flex; gap: 10px;">
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <a href="/recurring-invoices" class="btn btn-secondary">🔄 Recurring</a>
+                <a href="/rentals" class="btn btn-secondary">🏠 Rentals</a>
+                <a href="/subscriptions" class="btn btn-secondary">📦 Subscriptions</a>
                 <a href="/invoice/new" class="btn btn-primary">+ New Invoice</a>
             </div>
         </div>
@@ -16403,7 +16506,10 @@ def invoice_view(invoice_id):
     """View single invoice with PDF option"""
     
     user = Auth.get_current_user()
-    business = Auth.get_current_business()
+    
+    # Load business FRESH from DB (not cached) for accurate details on invoice
+    biz_id = session.get("business_id")
+    business = db.get_one("businesses", biz_id) if biz_id else Auth.get_current_business()
     
     invoice = db.get_one("invoices", invoice_id)
     if not invoice:
@@ -17607,6 +17713,1132 @@ def api_recurring_delete(recurring_id):
         return jsonify({"success": False, "error": str(e)})
 
 
+# ==================== RENTAL / PROPERTY MANAGEMENT ====================
+
+@app.route("/rentals")
+@login_required
+def rentals_page():
+    """Property/Rental management with municipal passthrough"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    # Get all rental properties
+    rentals = db.get("rentals", {"business_id": biz_id}) or []
+    rentals = sorted(rentals, key=lambda x: x.get("property_name", "").lower())
+    
+    # Stats
+    active_rentals = [r for r in rentals if r.get("status") == "active"]
+    total_monthly = sum(float(r.get("monthly_rent", 0)) for r in active_rentals)
+    
+    # Build rows
+    rows_html = ""
+    for r in rentals:
+        status = r.get("status", "active")
+        status_color = "var(--green)" if status == "active" else "var(--orange)" if status == "pending" else "var(--text-muted)"
+        
+        # Calculate next invoice date
+        next_date = r.get("next_invoice_date", "-")
+        
+        rows_html += f'''
+        <tr onclick="window.location='/rental/{r.get("id")}'" style="cursor:pointer;">
+            <td>
+                <strong>{safe_string(r.get("property_name", "-"))}</strong>
+                <div style="color:var(--text-muted);font-size:12px;">{safe_string(r.get("property_address", ""))[:40]}</div>
+            </td>
+            <td>{safe_string(r.get("tenant_name", "-"))}</td>
+            <td style="text-align:right;font-weight:bold;">{money(r.get("monthly_rent", 0))}</td>
+            <td style="text-align:center;"><span style="color:{status_color};font-weight:bold;">● {status.title()}</span></td>
+            <td>{next_date}</td>
+        </tr>
+        '''
+    
+    content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+            <h2 style="margin:0;">🏠 Rental Properties</h2>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">Manage properties, tenants & municipal passthroughs</p>
+        </div>
+        <a href="/rental/new" class="btn btn-primary">+ Add Property</a>
+    </div>
+    
+    <!-- Stats -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:20px;">
+        <div class="stat-card">
+            <div class="stat-value">{len(rentals)}</div>
+            <div class="stat-label">Properties</div>
+        </div>
+        <div class="stat-card" style="border-left:3px solid var(--green);">
+            <div class="stat-value" style="color:var(--green);">{len(active_rentals)}</div>
+            <div class="stat-label">Active</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{money(total_monthly)}</div>
+            <div class="stat-label">Monthly Income</div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Property</th>
+                    <th>Tenant</th>
+                    <th style="text-align:right;">Monthly Rent</th>
+                    <th style="text-align:center;">Status</th>
+                    <th>Next Invoice</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html or '<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--text-muted);">No rental properties yet.<br><br><a href="/rental/new" class="btn btn-primary">Add Your First Property</a></td></tr>'}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="card" style="margin-top:20px;background:var(--card);">
+        <h3 style="margin:0 0 10px 0;">💡 How Rental Management Works</h3>
+        <ul style="color:var(--text-muted);margin:0;padding-left:20px;line-height:1.8;">
+            <li><strong>Add properties</strong> with tenant details and monthly rent</li>
+            <li><strong>Municipal passthrough</strong> - Add rates, electricity, water that get added to rent invoices</li>
+            <li><strong>Auto-invoice</strong> - Generate rent invoices automatically each month</li>
+            <li><strong>AI Scan</strong> - Upload municipal bills and AI extracts the amounts</li>
+        </ul>
+    </div>
+    '''
+    
+    return render_page("Rentals", content, user, "invoices")
+
+
+@app.route("/rental/new", methods=["GET", "POST"])
+@login_required
+def rental_new():
+    """Create new rental property"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if request.method == "POST":
+        # Save rental property
+        rental = {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "property_name": request.form.get("property_name", "").strip(),
+            "property_address": request.form.get("property_address", "").strip(),
+            "tenant_name": request.form.get("tenant_name", "").strip(),
+            "tenant_email": request.form.get("tenant_email", "").strip(),
+            "tenant_phone": request.form.get("tenant_phone", "").strip(),
+            "tenant_customer_id": request.form.get("customer_id", ""),
+            "monthly_rent": float(request.form.get("monthly_rent", 0) or 0),
+            "invoice_day": int(request.form.get("invoice_day", 1) or 1),
+            "lease_start": request.form.get("lease_start", ""),
+            "lease_end": request.form.get("lease_end", ""),
+            "deposit": float(request.form.get("deposit", 0) or 0),
+            "include_municipal": request.form.get("include_municipal") == "on",
+            "municipal_items": json.dumps([
+                {"name": "Rates & Taxes", "amount": 0, "auto_scan": True},
+                {"name": "Electricity", "amount": 0, "auto_scan": True},
+                {"name": "Water", "amount": 0, "auto_scan": True},
+                {"name": "Refuse", "amount": 0, "auto_scan": True},
+                {"name": "Sewerage", "amount": 0, "auto_scan": True}
+            ]),
+            "status": "active",
+            "next_invoice_date": request.form.get("lease_start", today()),
+            "notes": request.form.get("notes", ""),
+            "created_at": now()
+        }
+        
+        success, result = db.save("rentals", rental)
+        
+        if success:
+            # Also create as customer if not linked
+            if not rental.get("tenant_customer_id") and rental.get("tenant_name"):
+                import re
+                name_clean = re.sub(r'[^a-zA-Z]', '', rental["tenant_name"]).upper()
+                prefix = name_clean[:3] if len(name_clean) >= 3 else name_clean.ljust(3, 'X')
+                
+                tenant_customer = {
+                    "id": generate_id(),
+                    "business_id": biz_id,
+                    "name": rental["tenant_name"],
+                    "code": f"{prefix}001",
+                    "email": rental.get("tenant_email", ""),
+                    "phone": rental.get("tenant_phone", ""),
+                    "address": rental.get("property_address", ""),
+                    "category": "Tenant",
+                    "created_at": now()
+                }
+                db.save("customers", tenant_customer)
+                
+                # Update rental with customer_id
+                db.update("rentals", rental["id"], {"tenant_customer_id": tenant_customer["id"]})
+            
+            return redirect(f"/rental/{rental['id']}")
+        else:
+            flash(f"Error: {result}", "error")
+    
+    # GET - show form
+    customers = db.get("customers", {"business_id": biz_id}) or []
+    customers = sorted(customers, key=lambda x: x.get("name", "").lower())
+    
+    customer_options = '<option value="">-- Create New Tenant --</option>'
+    for c in customers:
+        customer_options += f'<option value="{c.get("id")}" data-email="{safe_string(c.get("email", ""))}" data-phone="{safe_string(c.get("phone", ""))}">{safe_string(c.get("name", ""))}</option>'
+    
+    content = f'''
+    <div style="margin-bottom:20px;">
+        <a href="/rentals" style="color:var(--text-muted);">← Back to Rentals</a>
+    </div>
+    
+    <div class="card" style="max-width:700px;">
+        <h2 style="margin:0 0 20px 0;">🏠 Add Rental Property</h2>
+        
+        <form method="POST">
+            <h4 style="color:var(--text-muted);margin-bottom:15px;border-bottom:1px solid var(--border);padding-bottom:10px;">Property Details</h4>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:20px;">
+                <div>
+                    <label class="form-label">Property Name *</label>
+                    <input type="text" name="property_name" class="form-input" required placeholder="e.g. Unit 5 Parkview">
+                </div>
+                <div>
+                    <label class="form-label">Monthly Rent *</label>
+                    <input type="number" name="monthly_rent" class="form-input" required placeholder="8500" step="0.01">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Property Address</label>
+                <textarea name="property_address" class="form-input" rows="2" placeholder="Full address"></textarea>
+            </div>
+            
+            <h4 style="color:var(--text-muted);margin:25px 0 15px 0;border-bottom:1px solid var(--border);padding-bottom:10px;">Tenant Details</h4>
+            
+            <div class="form-group">
+                <label class="form-label">Link to Existing Customer</label>
+                <select name="customer_id" id="customerSelect" class="form-input" onchange="fillTenantDetails()">
+                    {customer_options}
+                </select>
+                <small style="color:var(--text-muted);">Or enter new tenant details below</small>
+            </div>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label class="form-label">Tenant Name</label>
+                    <input type="text" name="tenant_name" id="tenantName" class="form-input" placeholder="John Smith">
+                </div>
+                <div>
+                    <label class="form-label">Tenant Email</label>
+                    <input type="email" name="tenant_email" id="tenantEmail" class="form-input" placeholder="john@email.com">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Tenant Phone</label>
+                <input type="text" name="tenant_phone" id="tenantPhone" class="form-input" placeholder="082 123 4567">
+            </div>
+            
+            <h4 style="color:var(--text-muted);margin:25px 0 15px 0;border-bottom:1px solid var(--border);padding-bottom:10px;">Lease & Invoicing</h4>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label class="form-label">Lease Start</label>
+                    <input type="date" name="lease_start" class="form-input" value="{today()}">
+                </div>
+                <div>
+                    <label class="form-label">Lease End</label>
+                    <input type="date" name="lease_end" class="form-input">
+                </div>
+                <div>
+                    <label class="form-label">Invoice Day</label>
+                    <select name="invoice_day" class="form-input">
+                        <option value="1">1st of month</option>
+                        <option value="15">15th of month</option>
+                        <option value="25">25th of month</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Deposit Amount</label>
+                <input type="number" name="deposit" class="form-input" placeholder="0.00" step="0.01">
+            </div>
+            
+            <div class="form-group" style="background:var(--bg);padding:15px;border-radius:8px;">
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                    <input type="checkbox" name="include_municipal" checked style="width:20px;height:20px;">
+                    <div>
+                        <strong>Include Municipal Charges</strong><br>
+                        <small style="color:var(--text-muted);">Add rates, electricity, water, etc. to rent invoices</small>
+                    </div>
+                </label>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea name="notes" class="form-input" rows="2" placeholder="Special terms, etc."></textarea>
+            </div>
+            
+            <div style="display:flex;gap:10px;margin-top:20px;">
+                <button type="submit" class="btn btn-primary">💾 Save Property</button>
+                <a href="/rentals" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+    function fillTenantDetails() {{
+        const sel = document.getElementById('customerSelect');
+        const opt = sel.options[sel.selectedIndex];
+        if (opt.value) {{
+            document.getElementById('tenantName').value = opt.text;
+            document.getElementById('tenantEmail').value = opt.dataset.email || '';
+            document.getElementById('tenantPhone').value = opt.dataset.phone || '';
+        }}
+    }}
+    </script>
+    '''
+    
+    return render_page("New Rental", content, user, "invoices")
+
+
+@app.route("/rental/<rental_id>")
+@login_required
+def rental_view(rental_id):
+    """View rental property with municipal management"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    rental = db.get_one("rentals", rental_id)
+    if not rental:
+        return redirect("/rentals")
+    
+    # Parse municipal items
+    municipal_items = rental.get("municipal_items", "[]")
+    if isinstance(municipal_items, str):
+        try:
+            municipal_items = json.loads(municipal_items)
+        except:
+            municipal_items = []
+    
+    # Build municipal items form
+    municipal_html = ""
+    for i, item in enumerate(municipal_items):
+        municipal_html += f'''
+        <div style="display:grid;grid-template-columns:1fr 120px 80px;gap:10px;align-items:center;margin-bottom:10px;">
+            <span>{item.get("name", "Item")}</span>
+            <input type="number" name="municipal_amount_{i}" value="{item.get('amount', 0)}" 
+                   class="form-input" style="text-align:right;" step="0.01" placeholder="0.00">
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                <input type="checkbox" name="municipal_auto_{i}" {"checked" if item.get("auto_scan") else ""}>
+                <small>AI</small>
+            </label>
+        </div>
+        '''
+    
+    # Get invoices for this property
+    all_invoices = db.get("invoices", {"business_id": biz_id}) or []
+    property_invoices = [inv for inv in all_invoices if inv.get("rental_id") == rental_id]
+    property_invoices = sorted(property_invoices, key=lambda x: x.get("date", ""), reverse=True)[:10]
+    
+    invoices_html = ""
+    for inv in property_invoices:
+        status = inv.get("status", "outstanding")
+        status_color = "var(--green)" if status == "paid" else "var(--orange)"
+        invoices_html += f'''
+        <tr onclick="window.location='/invoice/{inv.get("id")}'" style="cursor:pointer;">
+            <td>{inv.get("invoice_number", "-")}</td>
+            <td>{inv.get("date", "-")}</td>
+            <td style="text-align:right;">{money(inv.get("total", 0))}</td>
+            <td><span style="color:{status_color};">● {status.title()}</span></td>
+        </tr>
+        '''
+    
+    status = rental.get("status", "active")
+    status_badge = f'<span style="background:{"var(--green)" if status == "active" else "var(--orange)"};color:white;padding:4px 12px;border-radius:20px;font-size:12px;">{status.upper()}</span>'
+    
+    content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+            <a href="/rentals" style="color:var(--text-muted);">← Back to Rentals</a>
+            <h2 style="margin:10px 0 5px 0;">{safe_string(rental.get("property_name", "Property"))}</h2>
+            {status_badge}
+        </div>
+        <div style="display:flex;gap:10px;">
+            <button onclick="generateRentInvoice()" class="btn btn-primary">📄 Generate Invoice</button>
+            <a href="/rental/{rental_id}/edit" class="btn btn-secondary">✏️ Edit</a>
+        </div>
+    </div>
+    
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+        <!-- Property & Tenant Info -->
+        <div class="card">
+            <h3 style="margin:0 0 15px 0;">🏠 Property Details</h3>
+            <table style="width:100%;">
+                <tr><td style="color:var(--text-muted);padding:5px 0;">Address:</td><td>{safe_string(rental.get("property_address", "-"))}</td></tr>
+                <tr><td style="color:var(--text-muted);padding:5px 0;">Monthly Rent:</td><td style="font-weight:bold;font-size:18px;">{money(rental.get("monthly_rent", 0))}</td></tr>
+                <tr><td style="color:var(--text-muted);padding:5px 0;">Invoice Day:</td><td>{rental.get("invoice_day", 1)}st of month</td></tr>
+                <tr><td style="color:var(--text-muted);padding:5px 0;">Lease Period:</td><td>{rental.get("lease_start", "-")} to {rental.get("lease_end", "Ongoing")}</td></tr>
+            </table>
+            
+            <h4 style="margin:20px 0 10px 0;color:var(--text-muted);">Tenant</h4>
+            <table style="width:100%;">
+                <tr><td style="color:var(--text-muted);padding:5px 0;">Name:</td><td><strong>{safe_string(rental.get("tenant_name", "-"))}</strong></td></tr>
+                <tr><td style="color:var(--text-muted);padding:5px 0;">Email:</td><td>{safe_string(rental.get("tenant_email", "-"))}</td></tr>
+                <tr><td style="color:var(--text-muted);padding:5px 0;">Phone:</td><td>{safe_string(rental.get("tenant_phone", "-"))}</td></tr>
+            </table>
+        </div>
+        
+        <!-- Municipal Charges -->
+        <div class="card">
+            <h3 style="margin:0 0 15px 0;">💡 Municipal Charges</h3>
+            <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
+                These amounts will be added to the rent invoice. Check "AI" to auto-extract from scanned bills.
+            </p>
+            
+            <form action="/api/rental/{rental_id}/municipal" method="POST">
+                {municipal_html}
+                
+                <div style="display:flex;gap:10px;margin-top:15px;">
+                    <button type="submit" class="btn btn-primary">💾 Save Amounts</button>
+                    <button type="button" onclick="showScanModal()" class="btn btn-secondary">📷 Scan Bill</button>
+                </div>
+            </form>
+            
+            <div style="margin-top:15px;padding:10px;background:var(--bg);border-radius:6px;">
+                <strong>Total Municipal:</strong> 
+                <span id="municipalTotal" style="font-size:18px;font-weight:bold;color:var(--primary);">
+                    {money(sum(float(item.get("amount", 0)) for item in municipal_items))}
+                </span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recent Invoices -->
+    <div class="card" style="margin-top:20px;">
+        <h3 style="margin:0 0 15px 0;">📄 Recent Invoices</h3>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Invoice #</th>
+                    <th>Date</th>
+                    <th style="text-align:right;">Amount</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {invoices_html or '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">No invoices generated yet</td></tr>'}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Scan Modal -->
+    <div id="scanModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:500px;">
+            <h3 style="margin-top:0;">📷 Scan Municipal Bill</h3>
+            <p style="color:var(--text-muted);">Upload a municipal bill and AI will extract the amounts automatically.</p>
+            
+            <input type="file" id="billFile" accept="image/*,.pdf" style="margin:20px 0;">
+            
+            <div id="scanResult" style="display:none;padding:15px;background:var(--bg);border-radius:8px;margin:15px 0;">
+                <strong>AI Extracted:</strong>
+                <div id="extractedAmounts"></div>
+            </div>
+            
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="closeScanModal()" class="btn btn-secondary">Cancel</button>
+                <button onclick="scanBill()" class="btn btn-primary">🤖 Scan with AI</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    function showScanModal() {{
+        document.getElementById('scanModal').style.display = 'flex';
+    }}
+    
+    function closeScanModal() {{
+        document.getElementById('scanModal').style.display = 'none';
+    }}
+    
+    async function scanBill() {{
+        const file = document.getElementById('billFile').files[0];
+        if (!file) {{
+            alert('Please select a file first');
+            return;
+        }}
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('rental_id', '{rental_id}');
+        
+        try {{
+            const response = await fetch('/api/rental/scan-municipal', {{
+                method: 'POST',
+                body: formData
+            }});
+            const result = await response.json();
+            
+            if (result.success) {{
+                document.getElementById('scanResult').style.display = 'block';
+                document.getElementById('extractedAmounts').innerHTML = result.html || 'Amounts extracted - refresh to see';
+                setTimeout(() => location.reload(), 1500);
+            }} else {{
+                alert('Error: ' + result.error);
+            }}
+        }} catch (err) {{
+            alert('Error: ' + err.message);
+        }}
+    }}
+    
+    async function generateRentInvoice() {{
+        if (!confirm('Generate rent invoice for this month?')) return;
+        
+        const response = await fetch('/api/rental/{rental_id}/generate-invoice', {{method: 'POST'}});
+        const result = await response.json();
+        
+        if (result.success) {{
+            alert('✓ Invoice ' + result.invoice_number + ' generated!');
+            window.location = '/invoice/' + result.invoice_id;
+        }} else {{
+            alert('Error: ' + result.error);
+        }}
+    }}
+    </script>
+    '''
+    
+    return render_page(rental.get("property_name", "Rental"), content, user, "invoices")
+
+
+@app.route("/api/rental/<rental_id>/municipal", methods=["POST"])
+@login_required
+def api_rental_municipal(rental_id):
+    """Update municipal amounts"""
+    try:
+        rental = db.get_one("rentals", rental_id)
+        if not rental:
+            return redirect(f"/rental/{rental_id}?error=Not+found")
+        
+        # Parse existing items
+        municipal_items = rental.get("municipal_items", "[]")
+        if isinstance(municipal_items, str):
+            try:
+                municipal_items = json.loads(municipal_items)
+            except:
+                municipal_items = []
+        
+        # Update amounts from form
+        for i, item in enumerate(municipal_items):
+            amount = request.form.get(f"municipal_amount_{i}", "0")
+            auto_scan = request.form.get(f"municipal_auto_{i}") == "on"
+            item["amount"] = float(amount or 0)
+            item["auto_scan"] = auto_scan
+        
+        db.update("rentals", rental_id, {"municipal_items": json.dumps(municipal_items)})
+        
+        return redirect(f"/rental/{rental_id}?saved=1")
+        
+    except Exception as e:
+        logger.error(f"[RENTAL] Municipal update error: {e}")
+        return redirect(f"/rental/{rental_id}?error={str(e)[:50]}")
+
+
+@app.route("/api/rental/<rental_id>/generate-invoice", methods=["POST"])
+@login_required
+def api_rental_generate_invoice(rental_id):
+    """Generate rent invoice for a property"""
+    try:
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        rental = db.get_one("rentals", rental_id)
+        if not rental:
+            return jsonify({"success": False, "error": "Rental not found"})
+        
+        # Parse municipal items
+        municipal_items = rental.get("municipal_items", "[]")
+        if isinstance(municipal_items, str):
+            try:
+                municipal_items = json.loads(municipal_items)
+            except:
+                municipal_items = []
+        
+        # Build invoice items
+        items = [
+            {
+                "description": f"Monthly Rent - {rental.get('property_name', 'Property')}",
+                "quantity": 1,
+                "price": float(rental.get("monthly_rent", 0)),
+                "total": float(rental.get("monthly_rent", 0))
+            }
+        ]
+        
+        # Add municipal charges if enabled
+        if rental.get("include_municipal"):
+            for muni in municipal_items:
+                amount = float(muni.get("amount", 0))
+                if amount > 0:
+                    items.append({
+                        "description": muni.get("name", "Municipal"),
+                        "quantity": 1,
+                        "price": amount,
+                        "total": amount
+                    })
+        
+        # Calculate totals
+        subtotal = sum(item["total"] for item in items)
+        vat = round(subtotal * 0.15, 2)
+        total = round(subtotal + vat, 2)
+        
+        # Generate invoice number
+        year_month = today()[:7].replace("-", "")
+        existing = db.get("invoices", {"business_id": biz_id}) or []
+        count = len([inv for inv in existing if inv.get("invoice_number", "").startswith(f"INV{year_month}")]) + 1
+        invoice_number = f"INV{year_month}{count:03d}"
+        
+        invoice = {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "invoice_number": invoice_number,
+            "date": today(),
+            "due_date": today(),  # Rent due immediately
+            "customer_id": rental.get("tenant_customer_id", ""),
+            "customer_name": rental.get("tenant_name", ""),
+            "rental_id": rental_id,
+            "items": json.dumps(items),
+            "subtotal": subtotal,
+            "vat": vat,
+            "total": total,
+            "status": "outstanding",
+            "notes": f"Rental invoice for {rental.get('property_name', 'Property')}",
+            "created_at": now()
+        }
+        
+        success, result = db.save("invoices", invoice)
+        
+        if success:
+            # Update customer balance
+            if rental.get("tenant_customer_id"):
+                customer = db.get_one("customers", rental.get("tenant_customer_id"))
+                if customer:
+                    new_balance = float(customer.get("balance", 0)) + total
+                    db.update("customers", rental.get("tenant_customer_id"), {"balance": new_balance})
+            
+            logger.info(f"[RENTAL] Generated invoice {invoice_number} for {rental.get('property_name')}")
+            return jsonify({
+                "success": True,
+                "invoice_id": invoice["id"],
+                "invoice_number": invoice_number
+            })
+        
+        return jsonify({"success": False, "error": "Failed to save invoice"})
+        
+    except Exception as e:
+        logger.error(f"[RENTAL] Invoice generation error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/rental/scan-municipal", methods=["POST"])
+@login_required
+def api_rental_scan_municipal():
+    """AI scan municipal bill and extract amounts"""
+    try:
+        rental_id = request.form.get("rental_id")
+        file = request.files.get("file")
+        
+        if not file or not rental_id:
+            return jsonify({"success": False, "error": "Missing file or rental_id"})
+        
+        rental = db.get_one("rentals", rental_id)
+        if not rental:
+            return jsonify({"success": False, "error": "Rental not found"})
+        
+        # Read file as base64
+        import base64
+        file_content = file.read()
+        base64_data = base64.b64encode(file_content).decode("utf-8")
+        
+        # Determine media type
+        filename = file.filename.lower()
+        if filename.endswith(".pdf"):
+            media_type = "application/pdf"
+        elif filename.endswith(".png"):
+            media_type = "image/png"
+        else:
+            media_type = "image/jpeg"
+        
+        # Call Claude to extract amounts
+        prompt = """Look at this municipal bill/account statement and extract the amounts for each service.
+        
+Return ONLY a JSON object with these exact keys (use 0 if not found):
+{
+    "rates_taxes": 0.00,
+    "electricity": 0.00,
+    "water": 0.00,
+    "refuse": 0.00,
+    "sewerage": 0.00,
+    "total": 0.00
+}
+
+Extract the current month charges only, not arrears. Return valid JSON only, no other text."""
+
+        try:
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=500,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }]
+            )
+            
+            result_text = response.content[0].text.strip()
+            
+            # Parse JSON from response
+            import re
+            json_match = re.search(r'\{[^}]+\}', result_text, re.DOTALL)
+            if json_match:
+                amounts = json.loads(json_match.group())
+            else:
+                return jsonify({"success": False, "error": "Could not parse AI response"})
+            
+            # Update rental municipal items
+            municipal_items = [
+                {"name": "Rates & Taxes", "amount": amounts.get("rates_taxes", 0), "auto_scan": True},
+                {"name": "Electricity", "amount": amounts.get("electricity", 0), "auto_scan": True},
+                {"name": "Water", "amount": amounts.get("water", 0), "auto_scan": True},
+                {"name": "Refuse", "amount": amounts.get("refuse", 0), "auto_scan": True},
+                {"name": "Sewerage", "amount": amounts.get("sewerage", 0), "auto_scan": True}
+            ]
+            
+            db.update("rentals", rental_id, {"municipal_items": json.dumps(municipal_items)})
+            
+            # Build result HTML
+            result_html = "<br>".join([f"{item['name']}: R{item['amount']:,.2f}" for item in municipal_items if item['amount'] > 0])
+            
+            logger.info(f"[RENTAL SCAN] Extracted municipal amounts for rental {rental_id}")
+            return jsonify({"success": True, "amounts": amounts, "html": result_html})
+            
+        except Exception as ai_err:
+            logger.error(f"[RENTAL SCAN] AI error: {ai_err}")
+            return jsonify({"success": False, "error": f"AI extraction failed: {str(ai_err)}"})
+        
+    except Exception as e:
+        logger.error(f"[RENTAL SCAN] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+# ==================== SUBSCRIPTIONS / RECURRING EXPENSES ====================
+
+@app.route("/subscriptions")
+@login_required
+def subscriptions_page():
+    """Subscription and recurring expense management"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    # Get subscriptions
+    subscriptions = db.get("subscriptions", {"business_id": biz_id}) or []
+    subscriptions = sorted(subscriptions, key=lambda x: x.get("name", "").lower())
+    
+    active = [s for s in subscriptions if s.get("status") == "active"]
+    total_monthly = sum(float(s.get("amount", 0)) for s in active if s.get("frequency") == "monthly")
+    total_yearly = sum(float(s.get("amount", 0)) for s in active if s.get("frequency") == "yearly")
+    
+    # Build rows
+    rows_html = ""
+    for s in subscriptions:
+        status = s.get("status", "active")
+        status_color = "var(--green)" if status == "active" else "var(--text-muted)"
+        freq = s.get("frequency", "monthly")
+        
+        rows_html += f'''
+        <tr>
+            <td>
+                <strong>{safe_string(s.get("name", "-"))}</strong>
+                <div style="color:var(--text-muted);font-size:12px;">{safe_string(s.get("supplier_name", ""))}</div>
+            </td>
+            <td>{safe_string(s.get("category", "-"))}</td>
+            <td style="text-align:right;font-weight:bold;">{money(s.get("amount", 0))}</td>
+            <td>{freq.title()}</td>
+            <td style="text-align:center;"><span style="color:{status_color};">● {status.title()}</span></td>
+            <td>
+                <button onclick="editSubscription('{s.get("id")}')" class="btn btn-secondary" style="padding:5px 10px;font-size:12px;">✏️</button>
+                <button onclick="deleteSubscription('{s.get("id")}')" class="btn btn-secondary" style="padding:5px 10px;font-size:12px;">🗑️</button>
+            </td>
+        </tr>
+        '''
+    
+    content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+            <h2 style="margin:0;">📦 Subscriptions & Recurring Expenses</h2>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">Track monthly/yearly subscriptions - manual or AI scanned</p>
+        </div>
+        <div style="display:flex;gap:10px;">
+            <button onclick="showAddModal()" class="btn btn-primary">+ Add Subscription</button>
+            <button onclick="showScanModal()" class="btn btn-secondary">📷 Scan Invoice</button>
+        </div>
+    </div>
+    
+    <!-- Stats -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:20px;">
+        <div class="stat-card">
+            <div class="stat-value">{len(subscriptions)}</div>
+            <div class="stat-label">Total</div>
+        </div>
+        <div class="stat-card" style="border-left:3px solid var(--green);">
+            <div class="stat-value" style="color:var(--green);">{len(active)}</div>
+            <div class="stat-label">Active</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{money(total_monthly)}</div>
+            <div class="stat-label">Monthly</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{money(total_yearly)}</div>
+            <div class="stat-label">Yearly</div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Subscription</th>
+                    <th>Category</th>
+                    <th style="text-align:right;">Amount</th>
+                    <th>Frequency</th>
+                    <th style="text-align:center;">Status</th>
+                    <th style="width:100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html or '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);">No subscriptions yet.<br><br><button onclick="showAddModal()" class="btn btn-primary">Add Your First Subscription</button></td></tr>'}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Add/Edit Modal -->
+    <div id="addModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
+            <h3 style="margin-top:0;" id="modalTitle">➕ Add Subscription</h3>
+            
+            <form action="/api/subscription/save" method="POST" id="subscriptionForm">
+                <input type="hidden" name="id" id="subId">
+                
+                <div class="form-group">
+                    <label class="form-label">Name *</label>
+                    <input type="text" name="name" id="subName" class="form-input" required placeholder="e.g. Microsoft 365">
+                </div>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <div class="form-group">
+                        <label class="form-label">Amount *</label>
+                        <input type="number" name="amount" id="subAmount" class="form-input" required step="0.01" placeholder="199.00">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Frequency</label>
+                        <select name="frequency" id="subFrequency" class="form-input">
+                            <option value="monthly">Monthly</option>
+                            <option value="yearly">Yearly</option>
+                            <option value="quarterly">Quarterly</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <div class="form-group">
+                        <label class="form-label">Category</label>
+                        <select name="category" id="subCategory" class="form-input">
+                            <option value="Software">Software</option>
+                            <option value="Insurance">Insurance</option>
+                            <option value="Utilities">Utilities</option>
+                            <option value="Services">Services</option>
+                            <option value="Marketing">Marketing</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Supplier</label>
+                        <input type="text" name="supplier_name" id="subSupplier" class="form-input" placeholder="e.g. Microsoft">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Next Due Date</label>
+                    <input type="date" name="next_due" id="subNextDue" class="form-input">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Notes</label>
+                    <input type="text" name="notes" id="subNotes" class="form-input" placeholder="Account details, etc.">
+                </div>
+                
+                <div style="display:flex;gap:10px;margin-top:20px;">
+                    <button type="submit" class="btn btn-primary">💾 Save</button>
+                    <button type="button" onclick="closeAddModal()" class="btn btn-secondary">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Scan Modal -->
+    <div id="scanModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:500px;">
+            <h3 style="margin-top:0;">📷 Scan Subscription Invoice</h3>
+            <p style="color:var(--text-muted);">Upload an invoice and AI will extract subscription details.</p>
+            
+            <input type="file" id="invoiceFile" accept="image/*,.pdf" style="margin:20px 0;">
+            
+            <div id="scanProgress" style="display:none;padding:15px;background:var(--bg);border-radius:8px;text-align:center;">
+                🤖 Scanning with AI...
+            </div>
+            
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="closeScanModal()" class="btn btn-secondary">Cancel</button>
+                <button onclick="scanInvoice()" class="btn btn-primary">🤖 Scan & Add</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    function showAddModal() {{
+        document.getElementById('modalTitle').textContent = '➕ Add Subscription';
+        document.getElementById('subscriptionForm').reset();
+        document.getElementById('subId').value = '';
+        document.getElementById('addModal').style.display = 'flex';
+    }}
+    
+    function closeAddModal() {{
+        document.getElementById('addModal').style.display = 'none';
+    }}
+    
+    function showScanModal() {{
+        document.getElementById('scanModal').style.display = 'flex';
+    }}
+    
+    function closeScanModal() {{
+        document.getElementById('scanModal').style.display = 'none';
+    }}
+    
+    function editSubscription(id) {{
+        fetch('/api/subscription/' + id)
+            .then(r => r.json())
+            .then(data => {{
+                if (data.success) {{
+                    const s = data.subscription;
+                    document.getElementById('modalTitle').textContent = '✏️ Edit Subscription';
+                    document.getElementById('subId').value = s.id;
+                    document.getElementById('subName').value = s.name || '';
+                    document.getElementById('subAmount').value = s.amount || '';
+                    document.getElementById('subFrequency').value = s.frequency || 'monthly';
+                    document.getElementById('subCategory').value = s.category || 'Software';
+                    document.getElementById('subSupplier').value = s.supplier_name || '';
+                    document.getElementById('subNextDue').value = s.next_due || '';
+                    document.getElementById('subNotes').value = s.notes || '';
+                    document.getElementById('addModal').style.display = 'flex';
+                }}
+            }});
+    }}
+    
+    function deleteSubscription(id) {{
+        if (!confirm('Delete this subscription?')) return;
+        fetch('/api/subscription/' + id + '/delete', {{method: 'POST'}})
+            .then(r => r.json())
+            .then(data => {{
+                if (data.success) location.reload();
+                else alert('Error: ' + data.error);
+            }});
+    }}
+    
+    async function scanInvoice() {{
+        const file = document.getElementById('invoiceFile').files[0];
+        if (!file) {{
+            alert('Please select a file first');
+            return;
+        }}
+        
+        document.getElementById('scanProgress').style.display = 'block';
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {{
+            const response = await fetch('/api/subscription/scan', {{
+                method: 'POST',
+                body: formData
+            }});
+            const result = await response.json();
+            
+            if (result.success) {{
+                closeScanModal();
+                // Pre-fill form with scanned data
+                document.getElementById('subName').value = result.name || '';
+                document.getElementById('subAmount').value = result.amount || '';
+                document.getElementById('subSupplier').value = result.supplier || '';
+                document.getElementById('subCategory').value = result.category || 'Software';
+                showAddModal();
+                document.getElementById('modalTitle').textContent = '✓ Scanned - Review & Save';
+            }} else {{
+                alert('Error: ' + result.error);
+            }}
+        }} catch (err) {{
+            alert('Error: ' + err.message);
+        }}
+        
+        document.getElementById('scanProgress').style.display = 'none';
+    }}
+    </script>
+    '''
+    
+    return render_page("Subscriptions", content, user, "expenses")
+
+
+@app.route("/api/subscription/save", methods=["POST"])
+@login_required
+def api_subscription_save():
+    """Save subscription"""
+    try:
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        sub_id = request.form.get("id", "").strip()
+        
+        subscription = {
+            "id": sub_id or generate_id(),
+            "business_id": biz_id,
+            "name": request.form.get("name", "").strip(),
+            "amount": float(request.form.get("amount", 0) or 0),
+            "frequency": request.form.get("frequency", "monthly"),
+            "category": request.form.get("category", "Software"),
+            "supplier_name": request.form.get("supplier_name", "").strip(),
+            "next_due": request.form.get("next_due", ""),
+            "notes": request.form.get("notes", "").strip(),
+            "status": "active",
+            "created_at": now() if not sub_id else None
+        }
+        
+        # Remove None values
+        subscription = {k: v for k, v in subscription.items() if v is not None}
+        
+        db.save("subscriptions", subscription)
+        
+        return redirect("/subscriptions?saved=1")
+        
+    except Exception as e:
+        logger.error(f"[SUBSCRIPTION] Save error: {e}")
+        return redirect(f"/subscriptions?error={str(e)[:50]}")
+
+
+@app.route("/api/subscription/<sub_id>")
+@login_required
+def api_subscription_get(sub_id):
+    """Get subscription details"""
+    subscription = db.get_one("subscriptions", sub_id)
+    if subscription:
+        return jsonify({"success": True, "subscription": subscription})
+    return jsonify({"success": False, "error": "Not found"})
+
+
+@app.route("/api/subscription/<sub_id>/delete", methods=["POST"])
+@login_required
+def api_subscription_delete(sub_id):
+    """Delete subscription"""
+    try:
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        db.delete("subscriptions", sub_id, biz_id)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/subscription/scan", methods=["POST"])
+@login_required
+def api_subscription_scan():
+    """AI scan invoice to extract subscription details"""
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"success": False, "error": "No file provided"})
+        
+        # Read file as base64
+        import base64
+        file_content = file.read()
+        base64_data = base64.b64encode(file_content).decode("utf-8")
+        
+        filename = file.filename.lower()
+        if filename.endswith(".pdf"):
+            media_type = "application/pdf"
+        elif filename.endswith(".png"):
+            media_type = "image/png"
+        else:
+            media_type = "image/jpeg"
+        
+        prompt = """Look at this invoice/receipt and extract subscription/service details.
+
+Return ONLY a JSON object:
+{
+    "name": "Service name",
+    "supplier": "Company name",
+    "amount": 0.00,
+    "category": "Software|Insurance|Utilities|Services|Marketing|Other",
+    "frequency": "monthly|yearly|quarterly"
+}
+
+Extract the recurring amount. Return valid JSON only."""
+
+        try:
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=500,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }]
+            )
+            
+            result_text = response.content[0].text.strip()
+            
+            import re
+            json_match = re.search(r'\{[^}]+\}', result_text, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                return jsonify({
+                    "success": True,
+                    "name": data.get("name", ""),
+                    "supplier": data.get("supplier", ""),
+                    "amount": data.get("amount", 0),
+                    "category": data.get("category", "Software"),
+                    "frequency": data.get("frequency", "monthly")
+                })
+            
+            return jsonify({"success": False, "error": "Could not parse response"})
+            
+        except Exception as ai_err:
+            logger.error(f"[SUBSCRIPTION SCAN] AI error: {ai_err}")
+            return jsonify({"success": False, "error": str(ai_err)})
+        
+    except Exception as e:
+        logger.error(f"[SUBSCRIPTION SCAN] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
 @app.route("/suppliers")
 @login_required
 def suppliers_page():
@@ -17760,6 +18992,33 @@ def supplier_new():
         category = request.form.get("category", "").strip()
         vat_number = request.form.get("vat_number", "").strip()
         
+        # AUTO-GENERATE SMART CODE if not provided (e.g., AFR001 for Afrisam)
+        if not code and biz_id and name:
+            try:
+                import re
+                # Get first 3 letters of name (uppercase, letters only)
+                name_clean = re.sub(r'[^a-zA-Z]', '', name).upper()
+                prefix = name_clean[:3] if len(name_clean) >= 3 else name_clean.ljust(3, 'X')
+                
+                # Get existing codes with this prefix
+                existing = db.get("suppliers", {"business_id": biz_id}, limit=5000)
+                max_num = 0
+                for s in existing:
+                    existing_code = s.get("code", "")
+                    if existing_code.upper().startswith(prefix):
+                        nums = re.findall(r'\d+', existing_code)
+                        if nums:
+                            num = int(nums[-1])
+                            if num > max_num:
+                                max_num = num
+                
+                # Generate next code: AFR001, AFR002, etc.
+                code = f"{prefix}{(max_num + 1):03d}"
+                logger.info(f"[SUPPLIER] Smart code for '{name}': {code}")
+            except Exception as e:
+                logger.error(f"[SUPPLIER] Smart code error: {e}")
+                code = f"S{generate_id()[:6].upper()}"
+        
         if not name:
             flash("Supplier name is required", "error")
         else:
@@ -17795,7 +19054,8 @@ def supplier_new():
                 </div>
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
-                    <input type="text" name="code" placeholder="e.g. SUP001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <input type="text" name="code" placeholder="Auto: AFR001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <small style="color:var(--text-muted);">Leave empty - auto-generates from name (e.g. Afrisam → AFR001)</small>
                 </div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
@@ -18488,7 +19748,10 @@ def quote_view(quote_id):
     """View quote with convert to invoice option"""
     
     user = Auth.get_current_user()
-    business = Auth.get_current_business()
+    
+    # Load business FRESH from DB (not cached) for accurate details on quote
+    biz_id = session.get("business_id")
+    business = db.get_one("businesses", biz_id) if biz_id else Auth.get_current_business()
     
     quote = db.get_one("quotes", quote_id)
     if not quote:
@@ -22199,6 +23462,262 @@ def report_creditors_aging():
 
 # 
 # CUSTOMER STATEMENT
+# ==================== BULK STATEMENTS ====================
+
+@app.route("/bulk-statements")
+@login_required
+def bulk_statements_page():
+    """Bulk email statements - send to all customers or debtors"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    # Get customer stats
+    customers = db.get("customers", {"business_id": biz_id}) or []
+    
+    total_customers = len(customers)
+    customers_with_email = len([c for c in customers if c.get("email") and "@" in c.get("email", "")])
+    debtors = [c for c in customers if float(c.get("balance", 0)) > 0 and c.get("email") and "@" in c.get("email", "")]
+    debtors_count = len(debtors)
+    zero_balance = len([c for c in customers if float(c.get("balance", 0)) == 0 and c.get("email") and "@" in c.get("email", "")])
+    credit_balance = len([c for c in customers if float(c.get("balance", 0)) < 0 and c.get("email") and "@" in c.get("email", "")])
+    
+    total_debtors_balance = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
+    
+    # Get scheduled statement settings
+    settings = business.get("statement_settings", {}) if business else {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except:
+            settings = {}
+    
+    schedule_1st = settings.get("send_1st", False)
+    schedule_15th = settings.get("send_15th", False)
+    schedule_mode = settings.get("mode", "debtors")
+    last_sent = settings.get("last_sent", "Never")
+    
+    content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+            <h2 style="margin:0;">📧 Bulk Statements</h2>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">Email statements to multiple customers at once</p>
+        </div>
+        <a href="/customers" class="btn btn-secondary">← Back to Customers</a>
+    </div>
+    
+    <!-- Stats Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:30px;">
+        <div class="stat-card">
+            <div class="stat-value">{customers_with_email}</div>
+            <div class="stat-label">With Email</div>
+        </div>
+        <div class="stat-card" style="border-left:3px solid var(--orange);">
+            <div class="stat-value" style="color:var(--orange);">{debtors_count}</div>
+            <div class="stat-label">Debtors</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{zero_balance}</div>
+            <div class="stat-label">Zero Balance</div>
+        </div>
+        <div class="stat-card" style="border-left:3px solid var(--green);">
+            <div class="stat-value" style="color:var(--green);">{money(total_debtors_balance)}</div>
+            <div class="stat-label">Total Owed</div>
+        </div>
+    </div>
+    
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+        <!-- SEND NOW -->
+        <div class="card">
+            <h3 style="margin-top:0;margin-bottom:20px;">📤 Send Now</h3>
+            
+            <div style="display:flex;flex-direction:column;gap:15px;">
+                <button onclick="sendStatements('all')" class="btn" style="width:100%;padding:20px;text-align:left;background:var(--primary);color:white;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div>
+                            <strong style="font-size:16px;">📋 All Customers</strong><br>
+                            <small style="opacity:0.8;">Everyone with an email address</small>
+                        </div>
+                        <span style="font-size:24px;font-weight:bold;">{customers_with_email}</span>
+                    </div>
+                </button>
+                
+                <button onclick="sendStatements('debtors')" class="btn" style="width:100%;padding:20px;text-align:left;background:var(--orange);color:white;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div>
+                            <strong style="font-size:16px;">💰 Debtors Only</strong><br>
+                            <small style="opacity:0.8;">Customers who owe money</small>
+                        </div>
+                        <span style="font-size:24px;font-weight:bold;">{debtors_count}</span>
+                    </div>
+                </button>
+                
+                <button onclick="sendStatements('zero')" class="btn btn-secondary" style="width:100%;padding:20px;text-align:left;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div>
+                            <strong style="font-size:16px;">✓ Zero Balance</strong><br>
+                            <small style="color:var(--text-muted);">Customers with no outstanding balance</small>
+                        </div>
+                        <span style="font-size:24px;font-weight:bold;color:var(--text);">{zero_balance}</span>
+                    </div>
+                </button>
+            </div>
+            
+            <div id="sendProgress" style="display:none;margin-top:20px;padding:15px;background:var(--bg);border-radius:8px;text-align:center;">
+                <div style="font-size:20px;margin-bottom:10px;">📧</div>
+                <div id="progressText">Sending statements...</div>
+            </div>
+        </div>
+        
+        <!-- SCHEDULE -->
+        <div class="card">
+            <h3 style="margin-top:0;margin-bottom:20px;">📅 Schedule (Twice Monthly)</h3>
+            
+            <form action="/api/bulk-statements/schedule" method="POST">
+                <div style="background:var(--bg);padding:15px;border-radius:8px;margin-bottom:20px;">
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:15px;">
+                        <input type="checkbox" name="send_1st" {"checked" if schedule_1st else ""} style="width:20px;height:20px;">
+                        <div>
+                            <strong>1st of Every Month</strong><br>
+                            <small style="color:var(--text-muted);">Send statements on the 1st</small>
+                        </div>
+                    </label>
+                    
+                    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                        <input type="checkbox" name="send_15th" {"checked" if schedule_15th else ""} style="width:20px;height:20px;">
+                        <div>
+                            <strong>15th of Every Month</strong><br>
+                            <small style="color:var(--text-muted);">Send statements mid-month</small>
+                        </div>
+                    </label>
+                </div>
+                
+                <div style="margin-bottom:20px;">
+                    <label style="display:block;margin-bottom:8px;font-weight:500;">Send To:</label>
+                    <select name="schedule_mode" class="form-input">
+                        <option value="all" {"selected" if schedule_mode == "all" else ""}>All Customers (met email)</option>
+                        <option value="debtors" {"selected" if schedule_mode == "debtors" else ""}>Only Debtors (balance > 0)</option>
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn btn-primary" style="width:100%;">💾 Save Schedule</button>
+                
+                <div style="margin-top:15px;padding:10px;background:var(--card);border-radius:6px;font-size:13px;">
+                    <strong>Last Sent:</strong> {last_sent}<br>
+                    <strong>Status:</strong> {"✅ Active" if (schedule_1st or schedule_15th) else "⏸️ Not scheduled"}
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Preview Section -->
+    <div class="card" style="margin-top:20px;">
+        <h3 style="margin-top:0;">👁️ Preview: Debtors List</h3>
+        <p style="color:var(--text-muted);margin-bottom:15px;">Customers who will receive statements when sending to "Debtors Only":</p>
+        
+        <div style="max-height:300px;overflow-y:auto;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Customer</th>
+                        <th>Email</th>
+                        <th style="text-align:right;">Balance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {"".join(f'''<tr>
+                        <td>{safe_string(c.get("name", "-"))}</td>
+                        <td style="color:var(--text-muted);">{safe_string(c.get("email", "-"))}</td>
+                        <td style="text-align:right;color:var(--orange);font-weight:bold;">{money(c.get("balance", 0))}</td>
+                    </tr>''' for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)[:20]) or '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);">No debtors with email addresses</td></tr>'}
+                </tbody>
+            </table>
+            {f'<p style="color:var(--text-muted);text-align:center;margin-top:10px;">Showing top 20 of {debtors_count} debtors</p>' if debtors_count > 20 else ''}
+        </div>
+    </div>
+    
+    <script>
+    async function sendStatements(mode) {{
+        const counts = {{
+            'all': {customers_with_email},
+            'debtors': {debtors_count},
+            'zero': {zero_balance}
+        }};
+        const labels = {{
+            'all': 'all customers',
+            'debtors': 'debtors only',
+            'zero': 'zero balance customers'
+        }};
+        
+        if (!confirm(`📧 Send statements to ${{counts[mode]}} ${{labels[mode]}}?\\n\\nThis will email a statement to each customer.`)) {{
+            return;
+        }}
+        
+        document.getElementById('sendProgress').style.display = 'block';
+        document.getElementById('progressText').textContent = 'Sending statements...';
+        
+        try {{
+            const response = await fetch('/api/customers/bulk-email-statements', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{mode: mode}})
+            }});
+            const result = await response.json();
+            
+            if (result.success) {{
+                document.getElementById('progressText').innerHTML = `
+                    <div style="color:var(--green);font-size:18px;margin-bottom:10px;">✅ Complete!</div>
+                    <div>📧 Sent: <strong>${{result.sent}}</strong></div>
+                    <div>⏭️ Skipped: ${{result.skipped}} (no email)</div>
+                    <div>❌ Failed: ${{result.failed}}</div>
+                `;
+            }} else {{
+                document.getElementById('progressText').innerHTML = `<div style="color:var(--red);">❌ Error: ${{result.error}}</div>`;
+            }}
+        }} catch (err) {{
+            document.getElementById('progressText').innerHTML = `<div style="color:var(--red);">❌ Error: ${{err.message}}</div>`;
+        }}
+    }}
+    </script>
+    '''
+    
+    return render_page("Bulk Statements", content, user, "customers")
+
+
+@app.route("/api/bulk-statements/schedule", methods=["POST"])
+@login_required
+def api_bulk_statements_schedule():
+    """Save statement schedule settings"""
+    try:
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        user = Auth.get_current_user()
+        user_id = user.get("id") if user else None
+        
+        if not biz_id:
+            return redirect("/bulk-statements?error=no_business")
+        
+        settings = {
+            "send_1st": request.form.get("send_1st") == "on",
+            "send_15th": request.form.get("send_15th") == "on",
+            "mode": request.form.get("schedule_mode", "debtors"),
+            "last_updated": now()
+        }
+        
+        # Save to business record
+        db.update_business(biz_id, user_id, {"statement_settings": json.dumps(settings)})
+        
+        # Clear cache
+        Auth.clear_cache()
+        
+        return redirect("/bulk-statements?saved=1")
+        
+    except Exception as e:
+        logger.error(f"[BULK-STATEMENTS] Schedule save error: {e}")
+        return redirect(f"/bulk-statements?error={str(e)[:50]}")
+
+
 # 
 
 @app.route("/statement/<customer_id>")
@@ -50008,7 +51527,24 @@ def settings_page():
     """Business Settings"""
     
     user = Auth.get_current_user()
-    business = Auth.get_current_business()
+    
+    # ALWAYS clear cache and reload fresh from DB for settings page
+    Auth.clear_cache()
+    session.pop("_biz_cache", None)
+    session.pop("businesses_cache", None)
+    session.pop("business_name", None)
+    
+    # Get business DIRECTLY from DB (not cached)
+    biz_id = session.get("business_id")
+    business = None
+    if biz_id:
+        business = db.get_one("businesses", biz_id)
+        logger.info(f"[SETTINGS PAGE] Loaded business from DB: id={biz_id}, name={business.get('name') if business else 'None'}")
+    
+    if not business:
+        # Fallback to Auth method
+        business = Auth.get_current_business()
+        logger.info(f"[SETTINGS PAGE] Fallback to Auth: {business.get('name') if business else 'None'}")
     
     # Check if action=new to create new business
     if request.args.get("action") == "new":
@@ -50074,8 +51610,21 @@ def settings_page():
     <div class="card">
         <h2 style="margin-bottom:20px;">Business Settings</h2>
         
-        {f'<div style="background:var(--green);color:white;padding:15px;border-radius:8px;margin-bottom:20px;">✓ Settings saved successfully!</div>' if request.args.get("saved") else ""}
-        {f'<div style="background:var(--red);color:white;padding:15px;border-radius:8px;margin-bottom:20px;">❌ Error: {request.args.get("error", "")}</div>' if request.args.get("error") else ""}
+        {f'<div style="background:#10b981;color:white;padding:15px;border-radius:8px;margin-bottom:20px;font-weight:bold;">✓ Settings saved successfully!</div>' if request.args.get("saved") else ""}
+        {f'<div style="background:#ef4444;color:white;padding:15px;border-radius:8px;margin-bottom:20px;">❌ Error saving: {safe_string(request.args.get("error", ""))}</div>' if request.args.get("error") else ""}
+        
+        <!-- DEBUG INFO -->
+        <details style="background:var(--card);border:1px solid var(--border);padding:10px;border-radius:8px;margin-bottom:20px;">
+            <summary style="cursor:pointer;font-weight:bold;color:var(--text-muted);">🔧 Debug Info (click to expand)</summary>
+            <div style="margin-top:10px;font-size:12px;font-family:monospace;white-space:pre-wrap;">
+Business ID: {business.get("id") if business else "None"}
+Business Name: {business.get("name") if business else "None"}
+Session biz_id: {session.get("business_id")}
+VAT: {business.get("vat_number") if business else "None"}
+Phone: {business.get("phone") if business else "None"}
+Address: {business.get("address")[:50] if business and business.get("address") else "None"}
+            </div>
+        </details>
         
         <form action="/api/settings/business" method="POST">
             <div class="form-group">
@@ -50086,12 +51635,12 @@ def settings_page():
             <div class="form-group">
                 <label class="form-label">Industry Type</label>
                 <select name="industry_type" class="form-input">
-                    <option value="retail_general" {"selected" if business.get("industry_type") == "retail_general" else ""}>General Retail</option>
-                    <option value="steel_supplier" {"selected" if business.get("industry_type") == "steel_supplier" else ""}>Steel & Metal Supplier</option>
-                    <option value="hardware_store" {"selected" if business.get("industry_type") == "hardware_store" else ""}>Hardware Store</option>
-                    <option value="restaurant" {"selected" if business.get("industry_type") == "restaurant" else ""}>Restaurant / Pub</option>
-                    <option value="guest_house" {"selected" if business.get("industry_type") == "guest_house" else ""}>Guest House / B&B</option>
-                    <option value="professional_services" {"selected" if business.get("industry_type") == "professional_services" else ""}>Professional Services</option>
+                    <option value="retail_general" {"selected" if business and business.get("industry_type") == "retail_general" else ""}>General Retail</option>
+                    <option value="steel_supplier" {"selected" if business and business.get("industry_type") == "steel_supplier" else ""}>Steel & Metal Supplier</option>
+                    <option value="hardware_store" {"selected" if business and business.get("industry_type") == "hardware_store" else ""}>Hardware Store</option>
+                    <option value="restaurant" {"selected" if business and business.get("industry_type") == "restaurant" else ""}>Restaurant / Pub</option>
+                    <option value="guest_house" {"selected" if business and business.get("industry_type") == "guest_house" else ""}>Guest House / B&B</option>
+                    <option value="professional_services" {"selected" if business and business.get("industry_type") == "professional_services" else ""}>Professional Services</option>
                 </select>
                 <small style="color:var(--text-muted);">This helps Zane understand your business better - expense categories, terminology, and insights.</small>
             </div>
@@ -50889,8 +52438,23 @@ def api_settings_business():
             return redirect("/settings")
         
         # UPDATE EXISTING BUSINESS
-        biz_id = business.get("id")
+        biz_id = business.get("id") if business else None
         user_id = user.get("id") if user else session.get("user_id")
+        
+        # DEBUG: Log what we have
+        logger.info(f"[SETTINGS DEBUG] business object: {business}")
+        logger.info(f"[SETTINGS DEBUG] biz_id: {biz_id}")
+        logger.info(f"[SETTINGS DEBUG] user_id: {user_id}")
+        logger.info(f"[SETTINGS DEBUG] session business_id: {session.get('business_id')}")
+        
+        # If biz_id is None, try to get it from session
+        if not biz_id:
+            biz_id = session.get("business_id")
+            logger.info(f"[SETTINGS DEBUG] Got biz_id from session: {biz_id}")
+        
+        if not biz_id:
+            logger.error("[SETTINGS] No business ID found!")
+            return redirect("/settings?error=No+business+ID+found")
         
         updates = {
             "name": request.form.get("name", ""),
@@ -50905,17 +52469,30 @@ def api_settings_business():
             "bank_branch": request.form.get("bank_branch", ""),
         }
         
-        logger.info(f"[SETTINGS] Saving business {biz_id} for user {user_id}: {updates}")
+        logger.info(f"[SETTINGS] Saving business {biz_id} for user {user_id}")
+        logger.info(f"[SETTINGS] Updates: {updates}")
         
-        # Use update_business which includes user_id filter for RLS
-        success, result = db.update_business(biz_id, user_id, updates)
+        # UPSERT: Include id and preserve existing fields
+        updates["id"] = biz_id
+        # Preserve user_id and created_at from existing business
+        if business:
+            updates["user_id"] = business.get("user_id", user_id)
+            updates["created_at"] = business.get("created_at", now())
+        
+        logger.info(f"[SETTINGS] Full upsert data: {updates}")
+        
+        success, result = db.save("businesses", updates)
+        
+        logger.info(f"[SETTINGS] Save result: success={success}, result={result}")
         
         if success:
-            # CRITICAL: Clear cache so next page load gets fresh data!
+            # CRITICAL: Clear ALL caches so next page load gets fresh data!
             Auth.clear_cache()
             session.pop("_biz_cache", None)
             session.pop("businesses_cache", None)
-            logger.info(f"[SETTINGS] Business '{updates.get('name')}' saved successfully")
+            session.pop("business_name", None)  # Also clear the name cache
+            session["_biz_cache"] = None  # Explicitly set to None
+            logger.info(f"[SETTINGS] Business '{updates.get('name')}' saved successfully - caches cleared")
             return redirect("/settings?saved=1")
         else:
             logger.error(f"[SETTINGS] Business save failed: {result}")
