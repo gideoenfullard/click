@@ -14140,8 +14140,11 @@ def customers_page():
         # Get best phone (prefer cell, then phone)
         phone = c.get("cell") or c.get("phone") or ""
         
+        # Search data for JS filtering
+        search_text = f"{c.get('code', '')} {c.get('name', '')} {c.get('contact_name', '')} {phone} {c.get('email', '')}".lower()
+        
         customers_html += f'''
-        <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:10px 12px;cursor:pointer;" onclick="window.location='/customer/{cust_id}'">
+        <div class="customer-row" data-search="{safe_string(search_text)}" data-balance="{balance}" style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:10px 12px;cursor:pointer;" onclick="window.location='/customer/{cust_id}'">
             <div style="display:grid;grid-template-columns:80px 2fr 1fr 120px;align-items:center;font-size:13px;">
                 <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(c.get("code", ""))}</span>
                 <span>
@@ -14177,9 +14180,18 @@ def customers_page():
     email_btn = '<button class="btn btn-secondary" onclick="showEmailOptions()">📧 Email Statements</button>' if can_see_balances else ''
     
     content = f'''
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-        <h2 style="margin:0;">Customers ({total_customers})</h2>
-        <div style="display:flex;gap:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
+        <h2 style="margin:0;">Customers (<span id="customerCount">{total_customers}</span>)</h2>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="customerSearch" placeholder="🔍 Search name, code, phone..." 
+                oninput="filterCustomers()" 
+                style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:250px;">
+            <select id="balanceFilter" onchange="filterCustomers()" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                <option value="">All</option>
+                <option value="debtors">Debtors Only</option>
+                <option value="credit">In Credit</option>
+                <option value="zero">Zero Balance</option>
+            </select>
             {email_btn}
             <a href="/customer/new" class="btn btn-primary">+ Add Customer</a>
         </div>
@@ -14216,7 +14228,9 @@ def customers_page():
     {summary_html}
     
     {header_row}
+    <div id="customersList">
     {customers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No customers yet!</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/customer/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
+    </div>
     
     <script>
     function showEmailOptions() {{
@@ -14266,6 +14280,39 @@ def customers_page():
     document.addEventListener('keydown', function(e) {{
         if (e.key === 'Escape') closeEmailOptions();
     }});
+    
+    // Filter customers
+    function filterCustomers() {{
+        const search = document.getElementById('customerSearch').value.toLowerCase();
+        const balanceFilter = document.getElementById('balanceFilter').value;
+        const rows = document.querySelectorAll('.customer-row');
+        let visible = 0;
+        
+        rows.forEach(row => {{
+            const searchText = row.dataset.search || '';
+            const balance = parseFloat(row.dataset.balance) || 0;
+            
+            let show = true;
+            
+            // Text search
+            if (search && !searchText.includes(search)) {{
+                show = false;
+            }}
+            
+            // Balance filter
+            if (balanceFilter === 'debtors' && balance <= 0) show = false;
+            if (balanceFilter === 'credit' && balance >= 0) show = false;
+            if (balanceFilter === 'zero' && balance !== 0) show = false;
+            
+            row.style.display = show ? '' : 'none';
+            if (show) visible++;
+        }});
+        
+        document.getElementById('customerCount').textContent = visible;
+    }}
+    
+    // Focus search on page load
+    document.getElementById('customerSearch')?.focus();
     </script>
     '''
     
@@ -14363,12 +14410,12 @@ def customer_view(customer_id):
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <a href="/customers" style="color:var(--text-muted);">-> Back to Customers</a>
+        <a href="/customers" style="color:var(--text-muted);">← Back to Customers</a>
         <div style="display:flex;gap:10px;">
-            <a href="/statement/{customer_id}" class="btn btn-secondary"> Statement</a>
-            <a href="/recurring-invoice/new?customer_id={customer_id}" class="btn btn-secondary">🔄 Recurring</a>
-            <button class="btn btn-secondary" onclick="document.getElementById('aiInput').value='Send statement to {safe_string(customer.get("name", ""))}';document.getElementById('sendBtn').click();"> Email Statement</button>
-            <button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Invoice {safe_string(customer.get("name", ""))} R';document.getElementById('aiInput').focus();"> New Invoice</button>
+            <a href="/customer/{customer_id}/edit" class="btn btn-secondary">✏️ Edit</a>
+            <a href="/statement/{customer_id}" class="btn btn-secondary">📄 Statement</a>
+            <a href="/statement/{customer_id}?email=1" class="btn btn-secondary">📧 Email Statement</a>
+            <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
         </div>
     </div>
     
@@ -14641,6 +14688,158 @@ def customer_new():
     '''
     
     return render_page("New Customer", content, user, "customers")
+
+
+@app.route("/customer/<customer_id>/edit", methods=["GET", "POST"])
+@login_required
+def customer_edit(customer_id):
+    """Edit existing customer"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    customer = db.get_one("customers", customer_id)
+    if not customer:
+        flash("Customer not found", "error")
+        return redirect("/customers")
+    
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        phone = request.form.get("phone", "").strip()
+        cell = request.form.get("cell", "").strip()
+        email = request.form.get("email", "").strip()
+        address = request.form.get("address", "").strip()
+        code = request.form.get("code", "").strip()
+        contact_name = request.form.get("contact_name", "").strip()
+        category = request.form.get("category", "").strip()
+        vat_number = request.form.get("vat_number", "").strip()
+        price_list = request.form.get("price_list", "retail").strip()
+        credit_limit = request.form.get("credit_limit", "0").strip()
+        payment_terms = request.form.get("payment_terms", "").strip()
+        sales_rep = request.form.get("sales_rep", "").strip()
+        notes = request.form.get("notes", "").strip()
+        
+        if not name:
+            flash("Customer name is required", "error")
+        else:
+            try:
+                credit_limit_val = float(credit_limit) if credit_limit else 0
+            except:
+                credit_limit_val = 0
+            
+            updates = {
+                "name": name,
+                "code": code,
+                "phone": phone,
+                "cell": cell,
+                "email": email,
+                "address": address,
+                "contact_name": contact_name,
+                "category": category,
+                "vat_number": vat_number,
+                "price_list": price_list,
+                "credit_limit": credit_limit_val,
+                "payment_terms": payment_terms,
+                "sales_rep": sales_rep,
+                "notes": notes
+            }
+            
+            success, err = db.update("customers", customer_id, updates)
+            if success:
+                flash(f"Customer '{name}' updated", "success")
+                return redirect(f"/customer/{customer_id}")
+            else:
+                flash(f"Error updating customer: {err}", "error")
+    
+    # GET - show form with current values
+    c = customer
+    price_list_options = ""
+    for pl in ["retail", "wholesale", "trade", "vip"]:
+        selected = "selected" if c.get("price_list") == pl else ""
+        price_list_options += f'<option value="{pl}" {selected}>{pl.title()}</option>'
+    
+    content = f'''
+    <div class="card" style="max-width: 700px;">
+        <h2 style="margin-bottom: 20px;">Edit Customer</h2>
+        <form method="POST">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
+                    <input type="text" name="name" value="{safe_string(c.get('name', ''))}" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
+                    <input type="text" name="code" value="{safe_string(c.get('code', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Contact Person</label>
+                    <input type="text" name="contact_name" value="{safe_string(c.get('contact_name', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Category</label>
+                    <input type="text" name="category" value="{safe_string(c.get('category', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
+                    <input type="text" name="phone" value="{safe_string(c.get('phone', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Cell</label>
+                    <input type="text" name="cell" value="{safe_string(c.get('cell', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
+                    <input type="email" name="email" value="{safe_string(c.get('email', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
+                    <input type="text" name="vat_number" value="{safe_string(c.get('vat_number', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Price List</label>
+                    <select name="price_list" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        {price_list_options}
+                    </select>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Credit Limit</label>
+                    <input type="number" name="credit_limit" value="{c.get('credit_limit', 0) or 0}" step="0.01" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Payment Terms</label>
+                    <input type="text" name="payment_terms" value="{safe_string(c.get('payment_terms', ''))}" placeholder="e.g. 30 days" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Sales Rep</label>
+                    <input type="text" name="sales_rep" value="{safe_string(c.get('sales_rep', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
+                <textarea name="address" rows="2" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">{safe_string(c.get('address', ''))}</textarea>
+            </div>
+            <div style="margin-bottom: 20px;">
+                <label style="display:block;margin-bottom:5px;font-weight:500;">Notes</label>
+                <textarea name="notes" rows="3" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">{safe_string(c.get('notes', ''))}</textarea>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <a href="/customer/{customer_id}" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+    '''
+    
+    return render_page("Edit Customer", content, user, "customers")
 
 
 @app.route("/stock")
@@ -15991,10 +16190,14 @@ def invoice_new():
     customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
     stock = db.get_all_stock(biz_id)
     
+    # Check if customer_id is passed in URL
+    preselect_customer_id = request.args.get("customer_id", "")
+    
     customer_options = '<option value="">-- Select Customer --</option>'
     customer_options += '<option value="NEW" style="color:var(--primary);">+ Add New Customer</option>'
     for c in sorted(customers, key=lambda x: x.get("name", "")):
-        customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}">{safe_string(c.get("name", ""))}</option>'
+        selected = 'selected' if c.get("id") == preselect_customer_id else ''
+        customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}" {selected}>{safe_string(c.get("name", ""))}</option>'
     
     # Stock datalist for autocomplete
     stock_options = '<option value="NEW" data-price="0">+ Add New Stock Item</option>'
@@ -17393,8 +17596,11 @@ def suppliers_page():
         # Use cell as phone fallback
         phone = s.get("phone") or s.get("cell") or ""
         
+        # Search data for JS filtering
+        search_text = f"{s.get('code', '')} {s.get('name', '')} {s.get('contact_name', '')} {phone} {s.get('email', '')}".lower()
+        
         suppliers_html += f'''
-        <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;cursor:pointer;" onclick="window.location='/supplier/{sup_id}'">
+        <div class="supplier-row" data-search="{safe_string(search_text)}" data-balance="{balance}" style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;cursor:pointer;" onclick="window.location='/supplier/{sup_id}'">
             <div style="display:grid;grid-template-columns:80px 2fr 1fr 120px;align-items:center;font-size:13px;">
                 <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(s.get("code", ""))}</span>
                 <span>
@@ -17427,15 +17633,62 @@ def suppliers_page():
         '''
     
     content = f'''
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-        <h2 style="margin:0;">Suppliers ({total_suppliers})</h2>
-        <a href="/supplier/new" class="btn btn-primary">+ Add Supplier</a>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
+        <h2 style="margin:0;">Suppliers (<span id="supplierCount">{total_suppliers}</span>)</h2>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="supplierSearch" placeholder="🔍 Search name, code, phone..." 
+                oninput="filterSuppliers()" 
+                style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:250px;">
+            <select id="balanceFilter" onchange="filterSuppliers()" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                <option value="">All</option>
+                <option value="creditors">We Owe</option>
+                <option value="credit">In Credit</option>
+                <option value="zero">Zero Balance</option>
+            </select>
+            <a href="/supplier/new" class="btn btn-primary">+ Add Supplier</a>
+        </div>
     </div>
     
     {summary_html}
     
     {header_row}
+    <div id="suppliersList">
     {suppliers_html or '<div class="card" style="text-align:center;padding:40px;"><p style="color:var(--text-muted);margin-bottom:15px;"><strong>Tip:</strong> No suppliers yet!</p><div><a href="/import" class="btn btn-primary">Import from Excel</a> <a href="/supplier/new" class="btn btn-secondary" style="margin-left:10px;">Add manually</a></div></div>'}
+    </div>
+    
+    <script>
+    function filterSuppliers() {{
+        const search = document.getElementById('supplierSearch').value.toLowerCase();
+        const balanceFilter = document.getElementById('balanceFilter').value;
+        const rows = document.querySelectorAll('.supplier-row');
+        let visible = 0;
+        
+        rows.forEach(row => {{
+            const searchText = row.dataset.search || '';
+            const balance = parseFloat(row.dataset.balance) || 0;
+            
+            let show = true;
+            
+            // Text search
+            if (search && !searchText.includes(search)) {{
+                show = false;
+            }}
+            
+            // Balance filter
+            if (balanceFilter === 'creditors' && balance <= 0) show = false;
+            if (balanceFilter === 'credit' && balance >= 0) show = false;
+            if (balanceFilter === 'zero' && balance !== 0) show = false;
+            
+            row.style.display = show ? '' : 'none';
+            if (show) visible++;
+        }});
+        
+        document.getElementById('supplierCount').textContent = visible;
+    }}
+    
+    // Focus search on page load
+    document.getElementById('supplierSearch')?.focus();
+    </script>
     '''
     
     return render_page("Suppliers", content, user, "suppliers")
@@ -22075,6 +22328,11 @@ def customer_statement(customer_id):
     document.addEventListener('keydown', function(e) {{
         if (e.key === 'Escape') closeEmailModal();
     }});
+    
+    // Auto-show email modal if ?email=1
+    if (window.location.search.includes('email=1')) {{
+        showEmailModal();
+    }}
     </script>
     '''
     
