@@ -31943,12 +31943,15 @@ def api_smart_import_batch():
                         if existing:
                             status = "skipped"
                         else:
-                            # Pass ALL row data to RecordFactory - it will handle known/unknown fields
+                            # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
+                            code = str(row.get("account_code", row.get("code", ""))).strip()
+                            exclude_fields = {'name', 'account_code', 'code', 'business_id'}
+                            extra_kwargs = {k: v for k, v in row.items() if k not in exclude_fields}
                             record = RecordFactory.customer(
                                 business_id=biz_id,
                                 name=name,
-                                code=str(row.get("account_code", row.get("code", ""))).strip(),
-                                **{k: v for k, v in row.items() if k not in ['name', 'account_code']}
+                                code=code,
+                                **extra_kwargs
                             )
                             success, resp = db.save("customers", record)
                             if success:
@@ -31966,12 +31969,15 @@ def api_smart_import_batch():
                         if existing:
                             status = "skipped"
                         else:
-                            # Pass ALL row data to RecordFactory
+                            # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
+                            code = str(row.get("account_code", row.get("code", ""))).strip()
+                            exclude_fields = {'name', 'account_code', 'code', 'business_id'}
+                            extra_kwargs = {k: v for k, v in row.items() if k not in exclude_fields}
                             record = RecordFactory.supplier(
                                 business_id=biz_id,
                                 name=name,
-                                code=str(row.get("account_code", row.get("code", ""))).strip(),
-                                **{k: v for k, v in row.items() if k not in ['name', 'account_code']}
+                                code=code,
+                                **extra_kwargs
                             )
                             success, resp = db.save("suppliers", record)
                             if success:
@@ -31986,11 +31992,13 @@ def api_smart_import_batch():
                     if not name and not code:
                         status = "skipped"
                     else:
-                        # Pass ALL row data to RecordFactory - including all price tiers
+                        # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
+                        exclude_fields = {'description', 'business_id'}
+                        extra_kwargs = {k: v for k, v in row.items() if k not in exclude_fields}
                         record = RecordFactory.stock_item(
                             business_id=biz_id,
                             description=name or code,
-                            **{k: v for k, v in row.items() if k != 'description'}
+                            **extra_kwargs
                         )
                         success, resp = db.save_stock(record)
                         if success:
