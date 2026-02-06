@@ -2356,13 +2356,14 @@ class RecordFactory:
     @staticmethod
     def customer(business_id: str, name: str, **kwargs) -> dict:
         """Create a customer record with all required fields"""
-        # Known fields
-        known_fields = {'id', 'business_id', 'code', 'name', 'phone', 'email', 'address', 
-                        'vat_number', 'balance', 'credit_limit', 'active', 'created_at',
-                        'created_by', 'category', 'contact_name', 'price_list', 'payment_terms',
-                        'notes', 'payment_intelligence'}
+        # Known fields - anything not here goes to extra_data
+        known_fields = {'id', 'business_id', 'code', 'name', 'phone', 'cell', 'fax', 'email', 
+                        'website', 'address', 'vat_number', 'balance', 'credit_limit', 'active', 
+                        'created_at', 'created_by', 'category', 'contact_name', 'price_list', 
+                        'payment_terms', 'notes', 'payment_intelligence', 'sales_rep', 
+                        'discount_percentage', 'vat_type'}
         
-        # Collect extra fields not in known_fields
+        # Collect extra fields not in known_fields (for Sage custom fields etc)
         extra = {k: v for k, v in kwargs.items() if k not in known_fields and v}
         
         return {
@@ -2371,7 +2372,10 @@ class RecordFactory:
             "code": kwargs.get("code", ""),
             "name": name,
             "phone": kwargs.get("phone", ""),
+            "cell": kwargs.get("cell", ""),
+            "fax": kwargs.get("fax", ""),
             "email": kwargs.get("email", ""),
+            "website": kwargs.get("website", ""),
             "address": kwargs.get("address", ""),
             "vat_number": kwargs.get("vat_number", ""),
             "balance": float(kwargs.get("balance", 0) or 0),
@@ -2382,21 +2386,25 @@ class RecordFactory:
             "category": kwargs.get("category", ""),
             "contact_name": kwargs.get("contact_name", ""),
             "price_list": kwargs.get("price_list", "retail"),
+            "sales_rep": kwargs.get("sales_rep", ""),
+            "discount_percentage": float(kwargs.get("discount_percentage", 0) or 0),
+            "vat_type": kwargs.get("vat_type", ""),
             "payment_terms": kwargs.get("payment_terms", ""),
             "notes": kwargs.get("notes", ""),
             "payment_intelligence": kwargs.get("payment_intelligence"),
-            "extra_data": extra if extra else None  # Store any unknown fields as JSON
+            "extra_data": extra if extra else None  # Store Sage user fields etc as JSON
         }
     
     @staticmethod
     def supplier(business_id: str, name: str, **kwargs) -> dict:
         """Create a supplier record with all required fields"""
-        # Known fields
-        known_fields = {'id', 'business_id', 'code', 'name', 'phone', 'email', 'address',
-                        'vat_number', 'balance', 'credit_limit', 'active', 'created_at',
-                        'created_by', 'category', 'contact_name', 'payment_terms', 'notes'}
+        # Known fields - anything not here goes to extra_data
+        known_fields = {'id', 'business_id', 'code', 'name', 'phone', 'cell', 'fax', 'email',
+                        'website', 'address', 'vat_number', 'balance', 'credit_limit', 'active', 
+                        'created_at', 'created_by', 'category', 'contact_name', 'payment_terms', 
+                        'notes', 'discount_percentage', 'vat_type'}
         
-        # Collect extra fields
+        # Collect extra fields (for Sage custom fields etc)
         extra = {k: v for k, v in kwargs.items() if k not in known_fields and v}
         
         return {
@@ -2405,7 +2413,10 @@ class RecordFactory:
             "code": kwargs.get("code", ""),
             "name": name,
             "phone": kwargs.get("phone", ""),
+            "cell": kwargs.get("cell", ""),
+            "fax": kwargs.get("fax", ""),
             "email": kwargs.get("email", ""),
+            "website": kwargs.get("website", ""),
             "address": kwargs.get("address", ""),
             "vat_number": kwargs.get("vat_number", ""),
             "balance": float(kwargs.get("balance", 0) or 0),
@@ -2416,6 +2427,8 @@ class RecordFactory:
             "category": kwargs.get("category", ""),
             "contact_name": kwargs.get("contact_name", ""),
             "payment_terms": kwargs.get("payment_terms", ""),
+            "discount_percentage": float(kwargs.get("discount_percentage", 0) or 0),
+            "vat_type": kwargs.get("vat_type", ""),
             "notes": kwargs.get("notes", ""),
             "extra_data": extra if extra else None
         }
@@ -13842,6 +13855,12 @@ def api_stock_dedup():
         "remaining": final_count
     })
 
+@app.route("/dashboard")
+@login_required
+def dashboard_redirect():
+    """Redirect /dashboard to /"""
+    return redirect("/")
+
 @app.route("/")
 @login_required
 def dashboard():
@@ -14105,7 +14124,7 @@ def customers_page():
     debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
     total_owed = sum(float(c.get("balance", 0)) for c in debtors) if can_see_balances else 0
     
-    # Build rows
+    # Build rows - SIMPLIFIED: Only essential columns, click View for details
     customers_html = ""
     for c in customers:
         balance = float(c.get("balance", 0) or 0)
@@ -14113,45 +14132,36 @@ def customers_page():
         balance_color = "var(--red)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
         balance_display = money(balance) if can_see_balances else "---"
         cust_id = c.get("id")
-        address = c.get("address") or ""
         
         # Show credit warning if over limit
         over_limit = balance > credit_limit > 0
-        limit_indicator = ' <span style="color:var(--red);font-size:9px;">⚠️OVER</span>' if over_limit else ''
+        limit_indicator = ' <span style="color:var(--red);font-size:9px;">⚠️</span>' if over_limit else ''
+        
+        # Get best phone (prefer cell, then phone)
+        phone = c.get("cell") or c.get("phone") or ""
         
         customers_html += f'''
-        <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;">
-            <div style="display:grid;grid-template-columns:70px 2fr 1.5fr 1fr 1fr 1fr 100px 70px;align-items:center;font-size:13px;">
+        <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:10px 12px;cursor:pointer;" onclick="window.location='/customer/{cust_id}'">
+            <div style="display:grid;grid-template-columns:80px 2fr 1fr 120px;align-items:center;font-size:13px;">
                 <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(c.get("code", ""))}</span>
                 <span>
                     <strong>{safe_string(c.get("name", "-"))}</strong>
-                    <span style="color:var(--text-muted);font-size:10px;display:block;">{safe_string(c.get("contact_name", ""))}</span>
+                    <span style="color:var(--text-muted);font-size:11px;margin-left:10px;">{safe_string(c.get("contact_name", ""))}</span>
                 </span>
-                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(address)}">{safe_string(address)[:30]}{"..." if len(address) > 30 else ""}</span>
-                <span style="color:var(--text-muted);font-size:11px;">{safe_string(c.get("phone", ""))}</span>
-                <span style="color:var(--text-muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(c.get("email", ""))}">{safe_string(c.get("email", ""))}</span>
-                <span style="color:var(--text-muted);font-size:10px;">{safe_string(c.get("vat_number", ""))}</span>
-                <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}{limit_indicator}</span>
-                <span style="text-align:right;">
-                    <a href="/customer/{cust_id}" style="color:var(--primary);font-size:11px;">View</a>
-                    <a href="/statement/{cust_id}" style="color:var(--text-muted);font-size:11px;margin-left:8px;">Stmt</a>
-                </span>
+                <span style="color:var(--text-muted);font-size:12px;">{safe_string(phone)}</span>
+                <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;font-size:14px;">{balance_display}{limit_indicator}</span>
             </div>
         </div>
         '''
     
-    # Sticky header
+    # Sticky header - matches simplified rows
     header_row = '''
-    <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:70px 2fr 1.5fr 1fr 1fr 1fr 100px 70px;align-items:center;font-size:13px;font-weight:bold;">
+    <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:10px 12px;background:var(--card);border-radius:6px;">
+        <div style="display:grid;grid-template-columns:80px 2fr 1fr 120px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
             <span>Name / Contact</span>
-            <span>Address</span>
             <span>Phone</span>
-            <span>Email</span>
-            <span>VAT No</span>
             <span style="text-align:right;">Balance</span>
-            <span style="text-align:right;">Actions</span>
         </div>
     </div>
     '''
@@ -14364,36 +14374,96 @@ def customer_view(customer_id):
     
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:start;">
-            <div>
+            <div style="flex:1;">
                 <h2 style="margin:0;">{safe_string(customer.get("name", "-"))}</h2>
                 <p style="color:var(--text-muted);margin:5px 0;font-family:monospace;font-size:12px;">
                     Code: {safe_string(customer.get("code", "-"))}
                 </p>
-                <p style="color:var(--text-muted);margin:5px 0;">
-                    📞 {safe_string(customer.get("phone", "-"))} &nbsp;|&nbsp; ✉️ {safe_string(customer.get("email", "-"))}
-                </p>
-                <p style="color:var(--text-muted);margin:5px 0;">
-                    📍 {safe_string(customer.get("address", "-"))}
-                </p>
-                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
-                    {"👤 " + safe_string(customer.get("contact_name")) if customer.get("contact_name") else ""}
-                    {"&nbsp;|&nbsp; VAT: " + safe_string(customer.get("vat_number")) if customer.get("vat_number") else ""}
-                    {"&nbsp;|&nbsp; Category: " + safe_string(customer.get("category")) if customer.get("category") else ""}
-                    {"&nbsp;|&nbsp; 💰 " + safe_string(customer.get("price_list", "retail")).upper() + " pricing" if customer.get("price_list") and customer.get("price_list") != "retail" else ""}
-                </p>
-                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
-                    {"💳 Credit Limit: " + money(customer.get("credit_limit", 0)) + "&nbsp;|&nbsp;" if float(customer.get("credit_limit", 0) or 0) > 0 else ""}
-                    {"📅 Payment Terms: " + safe_string(customer.get("payment_terms")) if customer.get("payment_terms") else ""}
-                </p>
-                {"<p style='color:var(--text-muted);margin:10px 0;font-size:12px;background:var(--bg);padding:10px;border-radius:6px;'>📝 " + safe_string(customer.get("notes")) + "</p>" if customer.get("notes") else ""}
             </div>
             <div style="text-align:right;">
                 <p style="color:var(--text-muted);margin:0;font-size:12px;">BALANCE</p>
                 <p style="font-size:28px;font-weight:bold;margin:0;color:{"var(--red)" if balance > 0 else "var(--green)"};">
                     {money(balance) if can_see_balances else "---"}
                 </p>
+                {"<span style='color:var(--red);font-size:11px;'>⚠️ Over credit limit!</span>" if balance > float(customer.get("credit_limit", 0) or 0) > 0 else ""}
             </div>
         </div>
+        
+        <!-- Contact Details Grid -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:15px;margin-top:20px;padding-top:15px;border-top:1px solid var(--border);">
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CONTACT PERSON</span>
+                <span style="font-size:14px;">{safe_string(customer.get("contact_name", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">PHONE</span>
+                <span style="font-size:14px;">{safe_string(customer.get("phone", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CELL</span>
+                <span style="font-size:14px;">{safe_string(customer.get("cell", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">EMAIL</span>
+                <span style="font-size:14px;">{safe_string(customer.get("email", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">FAX</span>
+                <span style="font-size:14px;">{safe_string(customer.get("fax", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">WEBSITE</span>
+                <span style="font-size:14px;">{safe_string(customer.get("website", "-"))}</span>
+            </div>
+        </div>
+        
+        <!-- Address -->
+        <div style="margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
+            <span style="color:var(--text-muted);font-size:11px;display:block;">ADDRESS</span>
+            <span style="font-size:14px;">{safe_string(customer.get("address", "-"))}</span>
+        </div>
+        
+        <!-- Financial Details Grid -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">VAT NUMBER</span>
+                <span style="font-size:14px;">{safe_string(customer.get("vat_number", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CREDIT LIMIT</span>
+                <span style="font-size:14px;">{money(customer.get("credit_limit", 0)) if can_see_balances else "---"}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">PRICE LIST</span>
+                <span style="font-size:14px;">{safe_string(customer.get("price_list", "Retail")).upper()}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">DISCOUNT %</span>
+                <span style="font-size:14px;">{customer.get("discount_percentage", 0) or 0}%</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">PAYMENT TERMS</span>
+                <span style="font-size:14px;">{safe_string(customer.get("payment_terms", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">SALES REP</span>
+                <span style="font-size:14px;">{safe_string(customer.get("sales_rep", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CATEGORY</span>
+                <span style="font-size:14px;">{safe_string(customer.get("category", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">VAT TYPE</span>
+                <span style="font-size:14px;">{safe_string(customer.get("vat_type", "-"))}</span>
+            </div>
+        </div>
+        
+        <!-- Notes -->
+        {"<div style='margin-top:15px;padding-top:15px;border-top:1px solid var(--border);'><span style='color:var(--text-muted);font-size:11px;display:block;'>NOTES</span><p style='font-size:14px;margin:5px 0;background:var(--bg);padding:10px;border-radius:6px;'>" + safe_string(customer.get("notes")) + "</p></div>" if customer.get("notes") else ""}
+        
+        <!-- Extra Data (Sage User Fields) -->
+        {"<div style='margin-top:15px;padding-top:15px;border-top:1px solid var(--border);'><span style='color:var(--text-muted);font-size:11px;display:block;'>ADDITIONAL INFO</span><pre style='font-size:11px;margin:5px 0;background:var(--bg);padding:10px;border-radius:6px;overflow-x:auto;'>" + str(customer.get("extra_data")) + "</pre></div>" if customer.get("extra_data") else ""}
     </div>
     
     <div class="stats-grid">
@@ -17312,47 +17382,38 @@ def suppliers_page():
     creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
     total_owed = sum(float(s.get("balance", 0)) for s in creditors) if can_see_balances else 0
     
-    # Build rows
+    # Build rows - COMPACT VIEW (details on View page)
     suppliers_html = ""
     for s in suppliers:
         balance = float(s.get("balance", 0) or 0)
-        credit_limit = float(s.get("credit_limit", 0) or 0)
         balance_color = "var(--orange)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
         balance_display = money(balance) if can_see_balances else "---"
         sup_id = s.get("id")
-        address = s.get("address") or ""
+        
+        # Use cell as phone fallback
+        phone = s.get("phone") or s.get("cell") or ""
         
         suppliers_html += f'''
-        <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;">
-            <div style="display:grid;grid-template-columns:70px 2fr 1.5fr 1fr 1fr 1fr 100px 70px;align-items:center;font-size:13px;">
+        <div style="background:var(--card);border-radius:6px;margin-bottom:4px;padding:8px 12px;cursor:pointer;" onclick="window.location='/supplier/{sup_id}'">
+            <div style="display:grid;grid-template-columns:80px 2fr 1fr 120px;align-items:center;font-size:13px;">
                 <span style="color:var(--text-muted);font-family:monospace;font-size:11px;">{safe_string(s.get("code", ""))}</span>
                 <span>
                     <strong>{safe_string(s.get("name", "-"))}</strong>
                     <span style="color:var(--text-muted);font-size:10px;display:block;">{safe_string(s.get("contact_name", ""))}</span>
                 </span>
-                <span style="color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(address)}">{safe_string(address)[:30]}{"..." if len(address) > 30 else ""}</span>
-                <span style="color:var(--text-muted);font-size:11px;">{safe_string(s.get("phone", ""))}</span>
-                <span style="color:var(--text-muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{safe_string(s.get("email", ""))}">{safe_string(s.get("email", ""))}</span>
-                <span style="color:var(--text-muted);font-size:10px;">{safe_string(s.get("vat_number", ""))}</span>
-                <span style="text-align:right;color:{balance_color if can_see_balances else 'var(--text-muted)'};font-weight:bold;">{balance_display}</span>
-                <span style="text-align:right;">
-                    <a href="/supplier/{sup_id}" style="color:var(--primary);font-size:11px;">View</a>
-                </span>
+                <span style="color:var(--text-muted);font-size:12px;">{safe_string(phone)}</span>
+                <span style="text-align:right;color:{balance_color};font-weight:bold;">{balance_display}</span>
             </div>
         </div>
         '''
     
     header_row = '''
     <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:70px 2fr 1.5fr 1fr 1fr 1fr 100px 70px;align-items:center;font-size:13px;font-weight:bold;">
+        <div style="display:grid;grid-template-columns:80px 2fr 1fr 120px;align-items:center;font-size:13px;font-weight:bold;">
             <span>Code</span>
             <span>Supplier / Contact</span>
-            <span>Address</span>
             <span>Phone</span>
-            <span>Email</span>
-            <span>VAT No</span>
             <span style="text-align:right;">We Owe</span>
-            <span style="text-align:right;">Actions</span>
         </div>
     </div>
     '''
@@ -17602,30 +17663,82 @@ def supplier_view(supplier_id):
     
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:start;">
-            <div>
+            <div style="flex:1;">
                 <h2 style="margin:0;">{safe_string(supplier.get("name", "-"))}</h2>
                 <p style="color:var(--text-muted);margin:5px 0;font-family:monospace;font-size:12px;">
                     Code: {safe_string(supplier.get("code", "-"))}
                 </p>
-                <p style="color:var(--text-muted);margin:5px 0;">
-                    📞 {safe_string(supplier.get("phone", "-"))} &nbsp;|&nbsp; ✉️ {safe_string(supplier.get("email", "-"))}
-                </p>
-                <p style="color:var(--text-muted);margin:5px 0;">
-                    📍 {safe_string(supplier.get("address", "-"))}
-                </p>
-                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
-                    {"👤 " + safe_string(supplier.get("contact_name")) if supplier.get("contact_name") else ""}
-                    {"&nbsp;|&nbsp; VAT: " + safe_string(supplier.get("vat_number")) if supplier.get("vat_number") else ""}
-                    {"&nbsp;|&nbsp; Category: " + safe_string(supplier.get("category")) if supplier.get("category") else ""}
-                </p>
-                <p style="color:var(--text-muted);margin:5px 0;font-size:12px;">
-                    {"💳 Credit Limit: " + money(supplier.get("credit_limit", 0)) + "&nbsp;|&nbsp;" if float(supplier.get("credit_limit", 0) or 0) > 0 else ""}
-                    {"📅 Payment Terms: " + safe_string(supplier.get("payment_terms")) if supplier.get("payment_terms") else ""}
-                </p>
-                {"<p style='color:var(--text-muted);margin:10px 0;font-size:12px;background:var(--bg);padding:10px;border-radius:6px;'>📝 " + safe_string(supplier.get("notes")) + "</p>" if supplier.get("notes") else ""}
             </div>
             {balance_section}
         </div>
+        
+        <!-- Contact Details Grid -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:15px;margin-top:20px;padding-top:15px;border-top:1px solid var(--border);">
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CONTACT PERSON</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("contact_name", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">PHONE</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("phone", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CELL</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("cell", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">EMAIL</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("email", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">FAX</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("fax", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">WEBSITE</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("website", "-"))}</span>
+            </div>
+        </div>
+        
+        <!-- Address -->
+        <div style="margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
+            <span style="color:var(--text-muted);font-size:11px;display:block;">ADDRESS</span>
+            <span style="font-size:14px;">{safe_string(supplier.get("address", "-"))}</span>
+        </div>
+        
+        <!-- Financial Details Grid -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">VAT NUMBER</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("vat_number", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CREDIT LIMIT</span>
+                <span style="font-size:14px;">{money(supplier.get("credit_limit", 0)) if can_see_balances else "---"}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">DISCOUNT %</span>
+                <span style="font-size:14px;">{supplier.get("discount_percentage", 0) or 0}%</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">PAYMENT TERMS</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("payment_terms", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CATEGORY</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("category", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">VAT TYPE</span>
+                <span style="font-size:14px;">{safe_string(supplier.get("vat_type", "-"))}</span>
+            </div>
+        </div>
+        
+        <!-- Notes -->
+        {"<div style='margin-top:15px;padding-top:15px;border-top:1px solid var(--border);'><span style='color:var(--text-muted);font-size:11px;display:block;'>NOTES</span><p style='font-size:14px;margin:5px 0;background:var(--bg);padding:10px;border-radius:6px;'>" + safe_string(supplier.get("notes")) + "</p></div>" if supplier.get("notes") else ""}
+        
+        <!-- Extra Data (Sage User Fields) -->
+        {"<div style='margin-top:15px;padding-top:15px;border-top:1px solid var(--border);'><span style='color:var(--text-muted);font-size:11px;display:block;'>ADDITIONAL INFO</span><pre style='font-size:11px;margin:5px 0;background:var(--bg);padding:10px;border-radius:6px;overflow-x:auto;'>" + str(supplier.get("extra_data")) + "</pre></div>" if supplier.get("extra_data") else ""}
     </div>
     
     {stats_section}
@@ -31305,7 +31418,7 @@ def smart_import_page():
         <p style="color:var(--text-muted);font-size:16px;">Your data is now in ClickAI. Welcome aboard.</p>
         <div class="success-stats" id="successStats"></div>
         <div style="margin-top:20px;">
-            <a href="/dashboard" class="import-btn" style="text-decoration:none;">Go to Dashboard →</a>
+            <a href="/" class="import-btn" style="text-decoration:none;">Go to Dashboard →</a>
         </div>
     </div>
     
@@ -31668,26 +31781,45 @@ def api_smart_import_analyse():
                 "data_start_row": 1,
                 "name_column": 0,
                 "column_mapping": {
+                    # Core fields
                     "0": "name",           # Name (contains CODE : NAME)
                     "1": "category",       # Category
                     "2": "balance",        # Opening Balance
+                    # Postal Address
                     "4": "postal_address_1",
                     "5": "postal_address_2",
                     "6": "postal_address_3",
                     "7": "postal_address_4",
+                    "8": "postal_code",
+                    # Delivery/Physical Address
                     "9": "delivery_address_1",
                     "10": "delivery_address_2",
                     "11": "delivery_address_3",
                     "12": "delivery_address_4",
+                    "13": "delivery_postal_code",
+                    # User Fields (Sage custom fields)
+                    "29": "user_field_1",
+                    "30": "user_field_2",
+                    "31": "user_field_3",
+                    "32": "numeric_field_1",
+                    "33": "numeric_field_2",
+                    "34": "numeric_field_3",
+                    # Contact & Financial
                     "41": "credit_limit",  # Credit Limit
                     "42": "contact_name",  # Contact Name
                     "43": "phone",         # Telephone Number
+                    "44": "fax",           # Fax Number
                     "45": "cell",          # Cell Number
                     "46": "email",         # Email Address
+                    "47": "website",       # Web Address
                     "48": "vat_number",    # VAT Reference
+                    "49": "active",        # Active
+                    # Sales settings
+                    "54": "cash_sale",     # Cash Sale Customer
                     "55": "sales_rep",     # Sales Rep
                     "56": "price_list",    # Default Price List
-                    "57": "discount_percentage"  # Default Discount Percentage
+                    "57": "discount_percentage",  # Default Discount Percentage
+                    "58": "vat_type"       # Default VAT Type
                 }
             }
         else:
@@ -32691,7 +32823,7 @@ def migrate_page():
         const xeroDiv = document.getElementById('xeroStatus');
         xeroDiv.style.display = 'block';
         const imported = urlParams.get('imported') || '0';
-        xeroDiv.innerHTML = `<strong>✅ Xero import complete!</strong> ${{imported}} records imported. <a href="/dashboard">Go to Dashboard →</a>`;
+        xeroDiv.innerHTML = `<strong>✅ Xero import complete!</strong> ${{imported}} records imported. <a href="/">Go to Dashboard →</a>`;
     }} else if (urlParams.get('xero_status') === 'error') {{
         const xeroDiv = document.getElementById('xeroStatus');
         xeroDiv.style.display = 'block';
@@ -32702,7 +32834,7 @@ def migrate_page():
         const qbDiv = document.getElementById('qbStatus');
         qbDiv.style.display = 'block';
         const imported = urlParams.get('imported') || '0';
-        qbDiv.innerHTML = `<strong>✅ QuickBooks import complete!</strong> ${{imported}} records imported. <a href="/dashboard">Go to Dashboard →</a>`;
+        qbDiv.innerHTML = `<strong>✅ QuickBooks import complete!</strong> ${{imported}} records imported. <a href="/">Go to Dashboard →</a>`;
     }} else if (urlParams.get('qb_status') === 'error') {{
         const qbDiv = document.getElementById('qbStatus');
         qbDiv.style.display = 'block';
