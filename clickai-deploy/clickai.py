@@ -16468,8 +16468,13 @@ def invoice_view(invoice_id):
     # Build customer details section  
     cust_name = safe_string(invoice.get("customer_name", "-"))
     cust_phone = customer.get("phone", "") if customer else ""
+    cust_cell = customer.get("cell", "") if customer else ""
     cust_email = customer.get("email", "") if customer else ""
     cust_address = safe_string(customer.get("address", "")).replace("\n", "<br>") if customer else ""
+    cust_vat = customer.get("vat_number", "") if customer else ""
+    
+    # Use cell if no phone
+    cust_tel = cust_phone or cust_cell
     
     # Email button - show customer email if available
     email_btn = f'<button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">📧 Email</button>'
@@ -16516,7 +16521,7 @@ def invoice_view(invoice_id):
                 {f'<p style="color:#555;margin:5px 0;font-size:14px;"><strong>VAT No:</strong> {biz_vat}</p>' if biz_vat else ''}
             </div>
             <div style="text-align:right;">
-                <h2 style="color:#10b981;margin:0;font-size:36px;font-weight:bold;">INVOICE</h2>
+                <h2 style="color:#10b981;margin:0;font-size:36px;font-weight:bold;">TAX INVOICE</h2>
                 <p style="color:#333;margin:10px 0;font-size:18px;font-weight:bold;">{invoice.get("invoice_number", "-")}</p>
                 {status_badge}
             </div>
@@ -16528,8 +16533,9 @@ def invoice_view(invoice_id):
                 <h4 style="color:#666;margin:0 0 10px 0;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Bill To</h4>
                 <p style="color:#333;margin:0;font-weight:bold;font-size:18px;">{cust_name}</p>
                 {f'<p style="color:#555;margin:5px 0;font-size:14px;">{cust_address}</p>' if cust_address else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {cust_phone}</p>' if cust_phone else ''}
+                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {cust_tel}</p>' if cust_tel else ''}
                 {f'<p style="color:#555;margin:5px 0;font-size:14px;">Email: {cust_email}</p>' if cust_email else ''}
+                {f'<p style="color:#555;margin:5px 0;font-size:14px;"><strong>VAT No:</strong> {cust_vat}</p>' if cust_vat else ''}
             </div>
             <div style="text-align:right;">
                 <p style="margin:5px 0;color:#333;font-size:16px;"><strong>Date:</strong> {invoice.get("date", "-")}</p>
@@ -18549,8 +18555,11 @@ def quote_view(quote_id):
     # Build customer details section  
     cust_name = safe_string(quote.get("customer_name", "-"))
     cust_phone = customer.get("phone", "") if customer else ""
+    cust_cell = customer.get("cell", "") if customer else ""
     cust_email = customer.get("email", "") if customer else ""
     cust_address = safe_string(customer.get("address", "")).replace("\n", "<br>") if customer else ""
+    cust_vat = customer.get("vat_number", "") if customer else ""
+    cust_tel = cust_phone or cust_cell
     
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -18603,8 +18612,9 @@ def quote_view(quote_id):
                 <h4 style="color:#666;margin:0 0 10px 0;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Quote To</h4>
                 <p style="color:#333;margin:0;font-weight:bold;font-size:18px;">{cust_name}</p>
                 {f'<p style="color:#555;margin:5px 0;font-size:14px;">{cust_address}</p>' if cust_address else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {cust_phone}</p>' if cust_phone else ''}
+                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {cust_tel}</p>' if cust_tel else ''}
                 {f'<p style="color:#555;margin:5px 0;font-size:14px;">Email: {cust_email}</p>' if cust_email else ''}
+                {f'<p style="color:#555;margin:5px 0;font-size:14px;"><strong>VAT No:</strong> {cust_vat}</p>' if cust_vat else ''}
             </div>
             <div style="text-align:right;">
                 <p style="margin:5px 0;color:#333;font-size:16px;"><strong>Date:</strong> {quote.get("date", "-")}</p>
@@ -50849,7 +50859,14 @@ def api_settings_business():
             "bank_branch": request.form.get("bank_branch", ""),
         }
         
-        db.save("businesses", updates)
+        success, result = db.save("businesses", updates)
+        
+        if success:
+            # CRITICAL: Clear cache so next page load gets fresh data!
+            Auth.clear_cache()
+            logger.info(f"[SETTINGS] Business '{updates.get('name')}' saved successfully")
+        else:
+            logger.error(f"[SETTINGS] Business save failed: {result}")
         
         return redirect("/settings")
     
