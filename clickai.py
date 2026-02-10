@@ -19224,7 +19224,7 @@ def stock_movements_page():
     movements.sort(key=lambda m: str(m.get("date") or m.get("created_at") or ""), reverse=True)
     
     # Get all stock items for lookup
-    all_stock = db.get_stock(biz_id) if biz_id else []
+    all_stock = db.get_all_stock(biz_id) if biz_id else []
     stock_lookup = {s.get("id"): s for s in all_stock}
     
     # Build table rows
