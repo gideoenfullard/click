@@ -19218,10 +19218,10 @@ def stock_movements_page():
         movements = [m for m in movements if m.get("stock_id") == stock_id]
     if move_type:
         movements = [m for m in movements if m.get("type") == move_type]
-    movements = [m for m in movements if (m.get("date") or m.get("created_at", ""))[:10] >= cutoff]
+    movements = [m for m in movements if str(m.get("date") or m.get("created_at") or "")[:10] >= cutoff]
     
     # Sort newest first
-    movements.sort(key=lambda m: m.get("date") or m.get("created_at", ""), reverse=True)
+    movements.sort(key=lambda m: str(m.get("date") or m.get("created_at") or ""), reverse=True)
     
     # Get all stock items for lookup
     all_stock = db.get_stock(biz_id) if biz_id else []
@@ -19231,12 +19231,12 @@ def stock_movements_page():
     rows_html = ""
     for m in movements[:500]:  # Limit to 500
         stock = stock_lookup.get(m.get("stock_id"), {})
-        stock_desc = stock.get("description") or stock.get("code") or m.get("stock_id", "-")[:8]
+        stock_desc = stock.get("description") or stock.get("code") or str(m.get("stock_id", "-"))[:8]
         stock_code = stock.get("code", "")
         m_type = m.get("type", "")
-        qty = float(m.get("quantity", 0))
-        m_date = (m.get("date") or m.get("created_at", ""))[:16].replace("T", " ")
-        ref = safe_string(m.get("reference", ""))
+        qty = float(m.get("quantity") or 0)
+        m_date = str(m.get("date") or m.get("created_at") or "")[:16].replace("T", " ")
+        ref = safe_string(str(m.get("reference") or ""))
         
         type_badge = f'<span style="background:#10b981;color:white;padding:2px 8px;border-radius:4px;font-size:12px;">IN +{qty}</span>' if m_type == "in" else f'<span style="background:#ef4444;color:white;padding:2px 8px;border-radius:4px;font-size:12px;">OUT -{qty}</span>'
         
@@ -19254,13 +19254,13 @@ def stock_movements_page():
     
     # Stock filter dropdown
     stock_options = '<option value="">All Items</option>'
-    for s in sorted(all_stock, key=lambda x: x.get("description", "")):
+    for s in sorted(all_stock, key=lambda x: x.get("description") or ""):
         selected = "selected" if s.get("id") == stock_id else ""
-        stock_options += f'<option value="{s.get("id")}" {selected}>{safe_string(s.get("code", ""))} - {safe_string(s.get("description", ""))}</option>'
+        stock_options += f'<option value="{s.get("id")}" {selected}>{safe_string(s.get("code") or "")} - {safe_string(s.get("description") or "")}</option>'
     
     # Summary counts
-    total_in = sum(float(m.get("quantity", 0)) for m in movements if m.get("type") == "in")
-    total_out = sum(float(m.get("quantity", 0)) for m in movements if m.get("type") == "out")
+    total_in = sum(float(m.get("quantity") or 0) for m in movements if m.get("type") == "in")
+    total_out = sum(float(m.get("quantity") or 0) for m in movements if m.get("type") == "out")
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
@@ -32385,11 +32385,12 @@ def api_po_receive(po_id):
         return jsonify({"success": False, "error": str(e)})
 
 
-@app.route("/api/purchase/<po_id>/create-invoice")
+@app.route("/api/purchase/<po_id>/create-invoice", methods=["GET", "POST"])
 @login_required
 def api_po_create_invoice(po_id):
-    """Create supplier invoice from PO"""
+    """Create supplier invoice from PO - with price entry form"""
     try:
+        user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
@@ -32398,16 +32399,6 @@ def api_po_create_invoice(po_id):
             flash("PO not found", "error")
             return redirect("/purchases")
         
-        # Check if invoice already created
-        existing = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": po.get("po_number", "").replace("PO", "SI")})
-        if existing:
-            flash("Supplier invoice already exists for this PO", "error")
-            return redirect(f"/purchase/{po_id}")
-        
-        # Create supplier invoice
-        inv_number = po.get("po_number", "").replace("PO", "SI")
-        
-        # Parse items
         po_items = po.get("items", [])
         if isinstance(po_items, str):
             try:
@@ -32415,54 +32406,171 @@ def api_po_create_invoice(po_id):
             except:
                 po_items = []
         
-        invoice = RecordFactory.supplier_invoice(
-            business_id=biz_id,
-            supplier_id=po.get("supplier_id", ""),
-            supplier_name=po.get("supplier_name", ""),
-            invoice_number=inv_number,
-            date=today(),
-            due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-            subtotal=po.get("subtotal", 0),
-            vat=po.get("vat", 0),
-            total=po.get("total", 0),
-            items=json.dumps(po_items) if po_items else "",
-            status="unpaid",
-            notes=f"From PO: {po.get('po_number', '')}"
-        )
-        inv_id = invoice["id"]
-        
-        success, _ = db.save("supplier_invoices", invoice)
-        
-        if success:
-            # Create GL entries: DR Purchases/Stock, DR VAT Input, CR Creditors
-            try:
-                create_journal_entry(biz_id, today(), f"Supplier Invoice {inv_number} - {po.get('supplier_name')}", inv_number, [
-                    {"account_code": "5000", "debit": float(po.get("subtotal", 0)), "credit": 0},  # Purchases/Cost of Sales
-                    {"account_code": "2110", "debit": float(po.get("vat", 0)), "credit": 0},  # VAT Input
-                    {"account_code": "2200", "debit": 0, "credit": float(po.get("total", 0))},  # Creditors
-                ])
-                
-                # Update supplier balance
-                if po.get("supplier_id"):
-                    supplier = db.get_one("suppliers", po.get("supplier_id"))
-                    if supplier:
-                        new_balance = float(supplier.get("balance", 0)) + float(po.get("total", 0))
-                        db.update("suppliers", po.get("supplier_id"), {"balance": new_balance})
-                        
-            except Exception as e:
-                logger.error(f"[PO] GL entry failed: {e}")
+        if request.method == "POST":
+            inv_number = request.form.get("invoice_number", "").strip()
+            inv_date = request.form.get("date", today())
             
-            flash(f"Supplier invoice {inv_number} created", "success")
-            return redirect("/supplier-invoices")
+            if not inv_number:
+                inv_number = po.get("po_number", "").replace("PO", "SI").replace("po", "si")
+            
+            existing = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_number})
+            if existing:
+                flash(f"Invoice {inv_number} already exists", "error")
+                return redirect(f"/purchase/{po_id}")
+            
+            invoice_items = []
+            subtotal = 0
+            descriptions = request.form.getlist("item_desc[]")
+            quantities = request.form.getlist("item_qty[]")
+            prices = request.form.getlist("item_price[]")
+            
+            for i, desc in enumerate(descriptions):
+                if desc.strip():
+                    qty = float(quantities[i] or 0)
+                    price = float(prices[i] or 0)
+                    line_total = qty * price
+                    subtotal += line_total
+                    invoice_items.append({
+                        "description": desc.strip(),
+                        "quantity": qty,
+                        "unit_price": price,
+                        "line_total": round(line_total, 2)
+                    })
+            
+            vat = round(subtotal * 0.15, 2)
+            total = round(subtotal + vat, 2)
+            
+            invoice = RecordFactory.supplier_invoice(
+                business_id=biz_id,
+                supplier_id=po.get("supplier_id", ""),
+                supplier_name=po.get("supplier_name", ""),
+                invoice_number=inv_number,
+                date=inv_date,
+                due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+                subtotal=subtotal,
+                vat=vat,
+                total=total,
+                items=json.dumps(invoice_items),
+                status="unpaid",
+                notes=f"From PO: {po.get('po_number', '')}"
+            )
+            
+            success, _ = db.save("supplier_invoices", invoice)
+            
+            if success:
+                try:
+                    create_journal_entry(biz_id, today(), f"Supplier Invoice {inv_number} - {po.get('supplier_name')}", inv_number, [
+                        {"account_code": "5000", "debit": float(subtotal), "credit": 0},
+                        {"account_code": "2110", "debit": float(vat), "credit": 0},
+                        {"account_code": "2200", "debit": 0, "credit": float(total)},
+                    ])
+                    
+                    if po.get("supplier_id"):
+                        supplier = db.get_one("suppliers", po.get("supplier_id"))
+                        if supplier:
+                            new_balance = float(supplier.get("balance") or 0) + float(total)
+                            db.update("suppliers", po.get("supplier_id"), {"balance": new_balance})
+                except Exception as e:
+                    logger.error(f"[PO] GL entry failed: {e}")
+                
+                flash(f"Supplier invoice {inv_number} created - {money(total)}", "success")
+                return redirect("/supplier-invoices")
+            
+            flash("Failed to create supplier invoice", "error")
+            return redirect(f"/purchase/{po_id}")
         
-        flash("Failed to create supplier invoice", "error")
-        return redirect(f"/purchase/{po_id}")
+        # GET - show form with items from PO
+        items_html = ""
+        for i, item in enumerate(po_items):
+            desc = item.get("description") or item.get("code") or "-"
+            qty = item.get("qty") or item.get("quantity") or 1
+            price = item.get("price") or item.get("unit_price") or ""
+            
+            items_html += f'''
+            <tr>
+                <td><input type="text" name="item_desc[]" class="form-input" value="{safe_string(desc)}" style="width:100%;"></td>
+                <td><input type="number" name="item_qty[]" class="form-input" value="{qty}" step="any" style="width:80px;text-align:center;" onchange="calcTotals()"></td>
+                <td><input type="number" name="item_price[]" class="form-input" value="{price}" step="0.01" placeholder="0.00" style="width:120px;text-align:right;" onchange="calcTotals()"></td>
+                <td style="text-align:right;" class="line-total">R 0.00</td>
+            </tr>
+            '''
+        
+        suggested_inv = po.get("po_number", "").replace("PO", "SI").replace("po", "si")
+        
+        content = f'''
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <a href="/purchase/{po_id}" style="color:var(--text-muted);">&#8592; Back to PO {po.get("po_number", "")}</a>
+        </div>
+        
+        <div class="card">
+            <h2 style="margin:0 0 5px 0;">&#128196; Create Supplier Invoice</h2>
+            <p style="color:var(--text-muted);margin:0 0 20px 0;">From PO: {po.get("po_number", "")} &mdash; {safe_string(po.get("supplier_name", ""))}</p>
+            
+            <form method="POST">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:20px;">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Invoice Number (from supplier)</label>
+                        <input type="text" name="invoice_number" class="form-input" value="{suggested_inv}" placeholder="Supplier invoice number" required>
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Date</label>
+                        <input type="date" name="date" class="form-input" value="{today()}">
+                    </div>
+                </div>
+                
+                <h3 style="margin:0 0 10px 0;">Line Items &mdash; Enter Prices</h3>
+                <table style="width:100%;" id="invoiceTable">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left;">Description</th>
+                            <th style="width:80px;text-align:center;">Qty</th>
+                            <th style="width:120px;text-align:right;">Unit Price</th>
+                            <th style="width:120px;text-align:right;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {items_html}
+                    </tbody>
+                    <tfoot>
+                        <tr><td colspan="3" style="text-align:right;font-weight:bold;">Subtotal:</td><td style="text-align:right;" id="subtotal">R 0.00</td></tr>
+                        <tr><td colspan="3" style="text-align:right;color:var(--text-muted);">VAT (15%):</td><td style="text-align:right;" id="vat">R 0.00</td></tr>
+                        <tr><td colspan="3" style="text-align:right;font-weight:bold;font-size:18px;">Total:</td><td style="text-align:right;font-weight:bold;font-size:18px;" id="total">R 0.00</td></tr>
+                    </tfoot>
+                </table>
+                
+                <div style="display:flex;gap:10px;margin-top:20px;">
+                    <button type="submit" class="btn btn-primary">&#10003; Create Supplier Invoice</button>
+                    <a href="/purchase/{po_id}" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+        
+        <script>
+        function calcTotals() {{{{
+            const rows = document.querySelectorAll('#invoiceTable tbody tr');
+            let subtotal = 0;
+            rows.forEach(row => {{{{
+                const qty = parseFloat(row.querySelector('input[name="item_qty[]"]').value) || 0;
+                const price = parseFloat(row.querySelector('input[name="item_price[]"]').value) || 0;
+                const lineTotal = qty * price;
+                subtotal += lineTotal;
+                row.querySelector('.line-total').textContent = 'R ' + lineTotal.toFixed(2);
+            }}}});
+            const vat = subtotal * 0.15;
+            document.getElementById('subtotal').textContent = 'R ' + subtotal.toFixed(2);
+            document.getElementById('vat').textContent = 'R ' + vat.toFixed(2);
+            document.getElementById('total').textContent = 'R ' + (subtotal + vat).toFixed(2);
+        }}}}
+        calcTotals();
+        </script>
+        '''
+        
+        return render_page(f"Create Invoice from {po.get('po_number', '')}", content, user, "purchases")
         
     except Exception as e:
         logger.error(f"[PO] Create invoice failed: {e}")
         flash(str(e), "error")
         return redirect(f"/purchase/{po_id}")
-
 
 # 
 # SUPPLIER INVOICES
