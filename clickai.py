@@ -31418,7 +31418,7 @@ def purchases_page():
     draft_orders = [o for o in orders if o.get("status") == "draft"]
     sent_orders = [o for o in orders if o.get("status") == "sent"]
     partial_orders = [o for o in orders if o.get("status") == "partial"]
-    total_outstanding = sum(float(o.get("total", 0)) for o in orders if o.get("status") in ("sent", "partial"))
+    total_outstanding = sum(float(o.get("total") or 0) for o in orders if o.get("status") in ("sent", "partial"))
     
     rows = ""
     for po in orders[:500]:
@@ -31437,7 +31437,7 @@ def purchases_page():
             <td><strong>{po.get("po_number", "-")}</strong></td>
             <td>{po.get("date", "-")}</td>
             <td>{safe_string(po.get("supplier_name", "-"))}</td>
-            <td style="text-align: right;">{money(po.get("total", 0))}</td>
+            <td style="text-align: right;">{money(po.get("total") or 0)}</td>
             <td style="color:{status_color};">{status.title()}</td>
             <td style="text-align: center;">
                 {"📧" if po.get("emailed") else ""}
