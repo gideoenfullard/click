@@ -2743,14 +2743,18 @@ class RecordFactory:
             "business_id": business_id,
             "date": kwargs.get("date") or now()[:10],
             "supplier": kwargs.get("supplier", ""),
+            "supplier_name": kwargs.get("supplier_name", kwargs.get("supplier", "")),
             "description": description,
             "category": kwargs.get("category", ""),
             "category_code": kwargs.get("category_code", ""),
             "amount": amt,
             "vat": vat,
             "net": net,
+            "total": kwargs.get("total", amt),
             "vat_type": kwargs.get("vat_type", "inclusive"),
             "reference": kwargs.get("reference", ""),
+            "payment_method": kwargs.get("payment_method", "cash"),
+            "status": kwargs.get("status", "paid"),
             "created_at": kwargs.get("created_at") or now(),
             "created_by": kwargs.get("created_by", "")
         }
@@ -3014,6 +3018,10 @@ class RecordFactory:
             "pension_employer": float(kwargs.get("pension_employer", 0)),
             "employer_provident": float(kwargs.get("employer_provident", 0)),
             "loan_deduction": float(kwargs.get("loan_deduction", 0)),
+            "loan_balance": float(kwargs.get("loan_balance", 0)),
+            "loan_total": float(kwargs.get("loan_total", 0)),
+            "loan_period_months": int(kwargs.get("loan_period_months", 0)),
+            "loan_start_date": kwargs.get("loan_start_date", ""),
             "other_allowance": float(kwargs.get("other_allowance", 0)),
             "other_deduction": float(kwargs.get("other_deduction", 0)),
             "other_deductions": float(kwargs.get("other_deductions", 0)),
@@ -25098,21 +25106,34 @@ def expenses_page():
     total_expenses = sum(float(e.get("amount", 0)) for e in expenses)
     total_vat = sum(float(e.get("vat", 0)) for e in expenses)
     
+    # Payment method counts
+    cash_count = sum(1 for e in expenses if (e.get("payment_method") or "").lower() == "cash")
+    card_count = sum(1 for e in expenses if (e.get("payment_method") or "").lower() == "card")
+    eft_count = sum(1 for e in expenses if (e.get("payment_method") or "").lower() == "eft")
+    
     rows = ""
     for e in expenses[:500]:
-        status = e.get("status", "").lower()
-        status_color = "var(--green)" if status == "paid" else "var(--yellow)" if status == "pending" else "var(--text-muted)"
+        # Expenses are ALWAYS paid - determine method
+        method = (e.get("payment_method") or "cash").lower()
+        method_icons = {"cash": "💵 Cash", "card": "💳 Card", "eft": "🏦 EFT"}
+        method_colors = {"cash": "#10b981", "card": "#8b5cf6", "eft": "#3b82f6"}
+        method_label = method_icons.get(method, "💵 Cash")
+        method_color = method_colors.get(method, "#10b981")
+        
+        # Show where receipt was allocated
+        cat = safe_string(e.get("category", "-"))
+        
         rows += f'''
         <tr>
             <td>{e.get("expense_number", "") or "-"}</td>
             <td>{e.get("date", "-")}</td>
             <td>{safe_string(e.get("supplier_name", "") or e.get("supplier", "") or "-")}</td>
             <td>{safe_string(e.get("description", "-"))}</td>
-            <td>{safe_string(e.get("category", "-"))}</td>
+            <td><span style="background:rgba(99,102,241,0.1);padding:2px 8px;border-radius:4px;font-size:12px;">{cat}</span></td>
             <td style="text-align:right;">{money(e.get("amount", 0))}</td>
             <td style="text-align:right;">{money(e.get("vat", 0))}</td>
             <td style="text-align:right;font-weight:600;">{money(e.get("total", 0) or (float(e.get("amount", 0)) + float(e.get("vat", 0))))}</td>
-            <td style="color:{status_color};text-transform:capitalize;">{status or "-"}</td>
+            <td style="color:{method_color};font-weight:600;font-size:13px;">{method_label}</td>
         </tr>
         '''
     
@@ -25122,9 +25143,24 @@ def expenses_page():
             <div class="stat-value">{len(expenses)}</div>
             <div class="stat-label">Total Expenses</div>
         </div>
+        <div class="stat-card" style="background:rgba(16,185,129,0.1);border-color:#10b981;">
+            <div class="stat-value" style="color:#10b981;">💵 {cash_count}</div>
+            <div class="stat-label">Cash (Petty Cash)</div>
+        </div>
+        <div class="stat-card" style="background:rgba(139,92,246,0.1);border-color:#8b5cf6;">
+            <div class="stat-value" style="color:#8b5cf6;">💳 {card_count}</div>
+            <div class="stat-label">Card (On Statement)</div>
+        </div>
+        <div class="stat-card" style="background:rgba(59,130,246,0.1);border-color:#3b82f6;">
+            <div class="stat-value" style="color:#3b82f6;">🏦 {eft_count}</div>
+            <div class="stat-label">EFT (Bank Transfer)</div>
+        </div>
+    </div>
+    
+    <div class="stats-grid" style="margin-bottom:20px;">
         <div class="stat-card" style="background:rgba(239,68,68,0.1);border-color:var(--red);">
             <div class="stat-value" style="color:var(--red);">{money(total_expenses)}</div>
-            <div class="stat-label">Excl VAT</div>
+            <div class="stat-label">Total Excl VAT</div>
         </div>
         <div class="stat-card">
             <div class="stat-value">{money(total_vat)}</div>
@@ -25149,11 +25185,11 @@ def expenses_page():
                     <th>Date</th>
                     <th>Supplier</th>
                     <th>Description</th>
-                    <th>Category</th>
+                    <th>Allocated To</th>
                     <th style="text-align:right;">Excl</th>
                     <th style="text-align:right;">VAT</th>
                     <th style="text-align:right;">Total</th>
-                    <th>Status</th>
+                    <th>Paid Via</th>
                 </tr>
             </thead>
             <tbody>
@@ -25289,6 +25325,7 @@ def payroll_page():
                 <a href="/employee/new" class="btn btn-secondary">+ Add Employee</a>
                 <a href="/timesheets/add" class="btn btn-secondary">+ Add Timesheet</a>
                 <a href="/payroll/run" class="btn btn-primary">▶️ Run Payroll</a>
+                <a href="/payroll/report" class="btn btn-secondary">📊 Monthly Report</a>
             </div>
         </div>
         <div style="overflow-x:auto;">
@@ -25748,6 +25785,15 @@ def payroll_run():
                 if response.status_code in (200, 201):
                     payslips_created += 1
                     
+                    # Update loan balance if employee has a loan
+                    if loan > 0 and emp.get("loan_balance"):
+                        new_balance = max(0, float(emp.get("loan_balance", 0)) - loan)
+                        try:
+                            db.update("employees", emp["id"], {"loan_balance": round(new_balance, 2)})
+                            logger.info(f"[PAYROLL] Loan balance for {emp.get('name')}: {money(new_balance)}")
+                        except:
+                            pass
+                    
                     # Create journal entries for GL
                     # Employee salary: Debit expense, Credit liabilities and bank
                     # Debits must equal Credits for double-entry
@@ -26067,6 +26113,10 @@ def employee_edit(emp_id):
             "pension": pension,
             "pension_employer": pension_employer,
             "loan_deduction": loan_deduction,
+            "loan_total": safe_float(request.form.get("loan_total", 0)),
+            "loan_balance": safe_float(request.form.get("loan_balance", 0)),
+            "loan_period_months": int(request.form.get("loan_period_months", 0) or 0),
+            "loan_start_date": request.form.get("loan_start_date", ""),
             "other_deduction": other_deduction,
             "bank_name": bank_name,
             "bank_account": bank_account,
@@ -26164,10 +26214,10 @@ def employee_edit(emp_id):
             <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:15px;">
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Industry Fund</label>
-                    <select name="provident_fund" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <select name="provident_fund" id="fundSelect" onchange="toggleFundFields()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                         <option value="off" {"selected" if employee.get("provident_fund") in (None, "", "off") else ""}>None</option>
-                        <option value="mibfa" {"selected" if employee.get("provident_fund") == "mibfa" else ""}>MIBFA - Metal (7.5%+7.5%)</option>
-                        <option value="ceta" {"selected" if employee.get("provident_fund") == "ceta" else ""}>CETA - Construction (5%+5%)</option>
+                        <option value="mibfa" {"selected" if employee.get("provident_fund") == "mibfa" else ""}>MIBFA - Metal Industry</option>
+                        <option value="ceta" {"selected" if employee.get("provident_fund") == "ceta" else ""}>CETA - Construction</option>
                         <option value="on" {"selected" if employee.get("provident_fund") == "on" else ""}>Custom amount</option>
                     </select>
                 </div>
@@ -26176,11 +26226,52 @@ def employee_edit(emp_id):
                     <input type="number" name="pension" step="0.01" value="{safe_float(employee.get('pension', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Loan Repayment (R)</label>
-                    <input type="number" name="loan_deduction" step="0.01" value="{safe_float(employee.get('loan_deduction', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            
+            <!-- MIBFA Breakdown Info -->
+            <div id="mibfaInfo" style="display:{"block" if employee.get("provident_fund") == "mibfa" else "none"};background:rgba(99,102,241,0.08);padding:15px;border-radius:8px;margin-bottom:15px;border:1px solid rgba(99,102,241,0.2);">
+                <div style="font-weight:600;color:var(--primary);margin-bottom:10px;font-size:13px;">🏭 MIBFA BREAKDOWN (7.5% Employee + 7.5% Employer)</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <div style="background:var(--card);padding:10px;border-radius:6px;">
+                        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Pension Fund (Employee)</div>
+                        <div style="font-size:18px;font-weight:700;">R{safe_float(employee.get('basic_salary', 0)) * 0.075:.2f}</div>
+                        <div style="font-size:11px;color:var(--text-muted);">7.5% of basic salary</div>
+                    </div>
+                    <div style="background:var(--card);padding:10px;border-radius:6px;">
+                        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Provident Fund (Employer)</div>
+                        <div style="font-size:18px;font-weight:700;">R{safe_float(employee.get('basic_salary', 0)) * 0.075:.2f}</div>
+                        <div style="font-size:11px;color:var(--text-muted);">7.5% of basic salary</div>
+                    </div>
                 </div>
+            </div>
+            
+            <!-- LOAN TRACKING -->
+            <div style="background:rgba(245,158,11,0.08);padding:15px;border-radius:8px;margin-bottom:15px;border:1px solid rgba(245,158,11,0.2);">
+                <div style="font-weight:600;color:#f59e0b;margin-bottom:10px;font-size:13px;">💰 LOAN / ADVANCE</div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Monthly Repayment (R)</label>
+                        <input type="number" name="loan_deduction" step="0.01" value="{safe_float(employee.get('loan_deduction', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Total Loan Amount (R)</label>
+                        <input type="number" name="loan_total" step="0.01" value="{safe_float(employee.get('loan_total', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Balance Owing (R)</label>
+                        <input type="number" name="loan_balance" step="0.01" value="{safe_float(employee.get('loan_balance', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Period (months)</label>
+                        <input type="number" name="loan_period_months" value="{employee.get('loan_period_months', 0) or 0}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;font-size:13px;">Start Date</label>
+                        <input type="date" name="loan_start_date" value="{employee.get('loan_start_date', '')}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-bottom:15px;">
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Other Deduction (R)</label>
                     <input type="number" name="other_deduction" step="0.01" value="{safe_float(employee.get('other_deduction', 0))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
@@ -26216,6 +26307,16 @@ def employee_edit(emp_id):
             </div>
         </form>
     </div>
+    
+    <script>
+    function toggleFundFields() {{
+        const fund = document.getElementById('fundSelect').value;
+        const mibfaInfo = document.getElementById('mibfaInfo');
+        if (mibfaInfo) {{
+            mibfaInfo.style.display = (fund === 'mibfa') ? 'block' : 'none';
+        }}
+    }}
+    </script>
     '''
     
     return render_page("Edit Employee", content, user, "payroll")
@@ -26278,9 +26379,18 @@ def payslip_view(payslip_id):
     if union_fees > 0:
         deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Union Fees</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(union_fees)}</td></tr>'
     if pension > 0:
-        deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Pension/Provident</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
+        # Show Pension Fund separately
+        deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Pension Fund (Employee)</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(pension)}</td></tr>'
     if loan > 0:
-        deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Loan Repayment</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(loan)}</td></tr>'
+        # Get employee loan balance if available
+        emp = db.get_one("employees", payslip.get("employee_id")) if payslip.get("employee_id") else None
+        loan_balance = float(emp.get("loan_balance", 0)) if emp else 0
+        loan_period = int(emp.get("loan_period_months", 0) or 0) if emp else 0
+        loan_info = ""
+        if loan_balance > 0:
+            months_remaining = int(loan_balance / loan) if loan > 0 else 0
+            loan_info = f'<div style="font-size:11px;color:#888;">Balance: {money(loan_balance)} ({months_remaining} months remaining)</div>'
+        deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Loan Repayment{loan_info}</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(loan)}</td></tr>'
     if other_ded > 0:
         deduction_rows += f'<tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Other Deductions</td><td style="padding:8px 0;text-align:right;color:#ef4444;">-{money(other_ded)}</td></tr>'
     
@@ -26345,7 +26455,7 @@ def payslip_view(payslip_id):
                 <div>UIF: {money(uif_employer)}</div>
                 <div>SDL: {money(sdl)}</div>
                 <div>COIDA: {money(coida)}</div>
-                {f"<div>Pension: {money(pension_employer)}</div>" if pension_employer > 0 else ""}
+                {f"<div>Provident Fund (Employer): {money(pension_employer)}</div>" if pension_employer > 0 else ""}
             </div>
             <p style="margin:10px 0 0 0;font-size:13px;color:#333;font-weight:bold;">Total Cost to Company: {money(total_cost)}</p>
         </div>
@@ -26524,6 +26634,335 @@ def payslip_delete(payslip_id):
             flash(f"Error: {e}", "error")
     
     return redirect("/payroll")
+
+
+@app.route("/payroll/report")
+@login_required
+def payroll_monthly_report():
+    """Monthly PAYE, SDL, UIF totals report"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    payslips = db.get("payslips", {"business_id": biz_id}) if biz_id else []
+    
+    # Group by month
+    from collections import defaultdict
+    monthly = defaultdict(lambda: {"paye": 0, "sdl": 0, "uif_employee": 0, "uif_employer": 0, "uif_total": 0, "pension_employee": 0, "pension_employer": 0, "gross": 0, "net": 0, "count": 0})
+    
+    for p in payslips:
+        date = str(p.get("date") or p.get("created_at") or "")[:7]  # YYYY-MM
+        if not date or len(date) < 7:
+            continue
+        m = monthly[date]
+        m["paye"] += float(p.get("paye") or 0)
+        m["sdl"] += float(p.get("sdl") or 0)
+        m["uif_employee"] += float(p.get("uif_employee") or p.get("uif") or 0)
+        m["uif_employer"] += float(p.get("uif_employer") or 0)
+        m["uif_total"] += float(p.get("uif_employee") or p.get("uif") or 0) + float(p.get("uif_employer") or 0)
+        m["pension_employee"] += float(p.get("pension_employee") or p.get("pension") or 0)
+        m["pension_employer"] += float(p.get("pension_employer") or 0)
+        m["gross"] += float(p.get("gross") or 0)
+        m["net"] += float(p.get("net") or 0)
+        m["count"] += 1
+    
+    # Sort months descending
+    sorted_months = sorted(monthly.keys(), reverse=True)
+    
+    # Grand totals
+    grand = {"paye": 0, "sdl": 0, "uif_total": 0, "pension_employee": 0, "pension_employer": 0, "gross": 0, "net": 0}
+    
+    rows_html = ""
+    for month in sorted_months:
+        m = monthly[month]
+        for k in grand:
+            grand[k] += m.get(k, 0)
+        
+        # Format month name
+        try:
+            from datetime import datetime as dt
+            month_name = dt.strptime(month, "%Y-%m").strftime("%B %Y")
+        except:
+            month_name = month
+        
+        rows_html += f'''
+        <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:12px;font-weight:600;">{month_name}</td>
+            <td style="padding:12px;text-align:center;">{m["count"]}</td>
+            <td style="padding:12px;text-align:right;">{money(m["gross"])}</td>
+            <td style="padding:12px;text-align:right;color:#ef4444;font-weight:600;">{money(m["paye"])}</td>
+            <td style="padding:12px;text-align:right;color:#f59e0b;">{money(m["sdl"])}</td>
+            <td style="padding:12px;text-align:right;color:#3b82f6;">{money(m["uif_total"])}</td>
+            <td style="padding:12px;text-align:right;color:#8b5cf6;">{money(m["pension_employee"] + m["pension_employer"])}</td>
+            <td style="padding:12px;text-align:right;font-weight:600;">{money(m["net"])}</td>
+        </tr>
+        '''
+    
+    # Grand total row
+    rows_html += f'''
+    <tr style="background:var(--bg);border-top:2px solid var(--text);font-weight:700;">
+        <td style="padding:14px;">TOTAL (Tax Year)</td>
+        <td style="padding:14px;text-align:center;"></td>
+        <td style="padding:14px;text-align:right;">{money(grand["gross"])}</td>
+        <td style="padding:14px;text-align:right;color:#ef4444;">{money(grand["paye"])}</td>
+        <td style="padding:14px;text-align:right;color:#f59e0b;">{money(grand["sdl"])}</td>
+        <td style="padding:14px;text-align:right;color:#3b82f6;">{money(grand["uif_total"])}</td>
+        <td style="padding:14px;text-align:right;color:#8b5cf6;">{money(grand["pension_employee"] + grand["pension_employer"])}</td>
+        <td style="padding:14px;text-align:right;">{money(grand["net"])}</td>
+    </tr>
+    '''
+    
+    content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+            <h2 style="margin:0;">📊 Payroll Monthly Report</h2>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">PAYE, SDL, UIF & Pension totals per month</p>
+        </div>
+        <div style="display:flex;gap:10px;">
+            <a href="/payroll" class="btn btn-secondary">← Back to Payroll</a>
+            <button onclick="window.print()" class="btn btn-secondary">🖨️ Print</button>
+        </div>
+    </div>
+    
+    <!-- Summary Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:15px;margin-bottom:20px;">
+        <div class="card" style="text-align:center;">
+            <div style="font-size:20px;font-weight:700;color:#ef4444;">{money(grand["paye"])}</div>
+            <div style="font-size:12px;color:var(--text-muted);">Total PAYE</div>
+        </div>
+        <div class="card" style="text-align:center;">
+            <div style="font-size:20px;font-weight:700;color:#f59e0b;">{money(grand["sdl"])}</div>
+            <div style="font-size:12px;color:var(--text-muted);">Total SDL</div>
+        </div>
+        <div class="card" style="text-align:center;">
+            <div style="font-size:20px;font-weight:700;color:#3b82f6;">{money(grand["uif_total"])}</div>
+            <div style="font-size:12px;color:var(--text-muted);">Total UIF</div>
+        </div>
+        <div class="card" style="text-align:center;">
+            <div style="font-size:20px;font-weight:700;color:#8b5cf6;">{money(grand["pension_employee"] + grand["pension_employer"])}</div>
+            <div style="font-size:12px;color:var(--text-muted);">Total Pension</div>
+        </div>
+    </div>
+    
+    <!-- UIF Links -->
+    <div class="card" style="margin-bottom:20px;background:rgba(59,130,246,0.05);border:1px solid rgba(59,130,246,0.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <div>
+                <strong>📋 SARS & UIF Online Submissions</strong>
+                <p style="color:var(--text-muted);margin:5px 0 0 0;font-size:13px;">Submit declarations and payments online</p>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <a href="https://www.ufiling.co.za" target="_blank" class="btn btn-primary" style="background:#3b82f6;">🔗 uFiling (UIF)</a>
+                <a href="https://www.sarsefiling.co.za" target="_blank" class="btn btn-secondary">🔗 SARS eFiling</a>
+                <a href="https://www.labour.gov.za/coida" target="_blank" class="btn btn-secondary">🔗 COID Online</a>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Monthly Table -->
+    <div class="card" style="overflow-x:auto;">
+        <table style="width:100%;">
+            <thead>
+                <tr style="background:var(--bg);">
+                    <th style="padding:12px;text-align:left;">Month</th>
+                    <th style="padding:12px;text-align:center;">Slips</th>
+                    <th style="padding:12px;text-align:right;">Gross</th>
+                    <th style="padding:12px;text-align:right;">PAYE</th>
+                    <th style="padding:12px;text-align:right;">SDL</th>
+                    <th style="padding:12px;text-align:right;">UIF (Total)</th>
+                    <th style="padding:12px;text-align:right;">Pension</th>
+                    <th style="padding:12px;text-align:right;">Net Pay</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+    </div>
+    '''
+    
+    return render_page("Payroll Monthly Report", content, user, "payroll")
+
+
+# ==================== GOODS RECEIVED VOUCHERS (GRV) ====================
+
+@app.route("/grv")
+@login_required
+def grv_list():
+    """List all Goods Received Vouchers"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
+    grvs = sorted(grvs, key=lambda x: x.get("created_at", ""), reverse=True)
+    
+    rows = ""
+    for g in grvs:
+        try:
+            items = json.loads(g.get("items", "[]"))
+        except:
+            items = []
+        total_items = sum(i.get("qty_received", 0) for i in items)
+        
+        rows += f'''
+        <tr onclick="location.href='/grv/{g["id"]}'" style="cursor:pointer;">
+            <td style="font-weight:600;">{g.get("grv_number", "-")}</td>
+            <td>{g.get("date", "-")}</td>
+            <td>{safe_string(g.get("supplier_name", "-"))}</td>
+            <td>{g.get("po_number", "-")}</td>
+            <td style="text-align:center;">{len(items)} items ({total_items} units)</td>
+            <td>{safe_string(g.get("received_by", "-"))}</td>
+        </tr>
+        '''
+    
+    content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+            <h2 style="margin:0;">📦 Goods Received Vouchers</h2>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">GRVs are created when you receive goods from a Purchase Order</p>
+        </div>
+        <a href="/purchases" class="btn btn-secondary">← Purchase Orders</a>
+    </div>
+    
+    <div class="card">
+        <div class="stat-card" style="margin-bottom:15px;text-align:center;">
+            <div class="stat-value">{len(grvs)}</div>
+            <div class="stat-label">Total GRVs</div>
+        </div>
+        <div style="overflow-x:auto;">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>GRV #</th>
+                    <th>Date</th>
+                    <th>Supplier</th>
+                    <th>PO #</th>
+                    <th style="text-align:center;">Items Received</th>
+                    <th>Received By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted);'>No GRVs yet — receive goods from a Purchase Order to create one</td></tr>"}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    '''
+    
+    return render_page("Goods Received Vouchers", content, user, "purchases")
+
+
+@app.route("/grv/<grv_id>")
+@login_required
+def grv_view(grv_id):
+    """View GRV document - printable"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_name = business.get("name", "Business") if business else "Business"
+    biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
+    
+    grv = db.get_one("goods_received", grv_id)
+    if not grv:
+        return redirect("/grv")
+    
+    try:
+        items = json.loads(grv.get("items", "[]"))
+    except:
+        items = []
+    
+    items_html = ""
+    for item in items:
+        items_html += f'''
+        <tr style="border-bottom:1px solid #e5e7eb;">
+            <td style="padding:10px;font-size:14px;color:#666;">{safe_string(item.get("code", ""))}</td>
+            <td style="padding:10px;font-size:15px;">{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;padding:10px;font-size:15px;">{item.get("qty_ordered", "-")}</td>
+            <td style="text-align:center;padding:10px;font-size:15px;font-weight:700;color:#10b981;">{item.get("qty_received", 0)}</td>
+        </tr>
+        '''
+    
+    content = f'''
+    <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <a href="/grv" style="color:var(--text-muted);">← Back to GRV List</a>
+        <div style="display:flex;gap:10px;">
+            <a href="/purchase/{grv.get("po_id", "")}" class="btn btn-secondary">📋 View PO</a>
+            <button onclick="window.print()" class="btn btn-secondary">🖨️ Print</button>
+        </div>
+    </div>
+    
+    <div class="card" style="background:white;color:#333;padding:0;overflow:hidden;">
+        <!-- TOP BAR -->
+        <div style="background:#065f46;color:white;padding:25px 40px;display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <h1 style="margin:0;font-size:28px;font-weight:700;">{biz_name}</h1>
+                {f'<p style="margin:4px 0 0 0;font-size:13px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
+            </div>
+            <div style="text-align:right;">
+                <h2 style="margin:0;font-size:28px;font-weight:700;letter-spacing:2px;">GOODS RECEIVED</h2>
+                <h2 style="margin:0;font-size:28px;font-weight:700;letter-spacing:2px;">VOUCHER</h2>
+            </div>
+        </div>
+        
+        <!-- DETAILS GRID -->
+        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+            <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
+                <table style="width:100%;font-size:14px;color:#333;">
+                    <tr><td style="padding:4px 0;color:#888;width:130px;">GRV Number:</td><td style="padding:4px 0;font-weight:600;">{grv.get("grv_number", "-")}</td></tr>
+                    <tr><td style="padding:4px 0;color:#888;">Date Received:</td><td style="padding:4px 0;">{grv.get("date", "-")}</td></tr>
+                    <tr><td style="padding:4px 0;color:#888;">PO Number:</td><td style="padding:4px 0;"><a href="/purchase/{grv.get("po_id", "")}" style="color:#065f46;font-weight:600;">{grv.get("po_number", "-")}</a></td></tr>
+                    <tr><td style="padding:4px 0;color:#888;">Received By:</td><td style="padding:4px 0;">{safe_string(grv.get("received_by", "-"))}</td></tr>
+                </table>
+            </div>
+            <div style="padding-left:25px;">
+                <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;">Supplier</div>
+                <div style="font-size:16px;font-weight:700;color:#065f46;margin-bottom:4px;">{safe_string(grv.get("supplier_name", "-"))}</div>
+            </div>
+        </div>
+        
+        <!-- ITEMS TABLE -->
+        <div style="padding:0 40px;">
+            <table style="width:100%;border-collapse:collapse;font-size:14px;">
+                <thead>
+                    <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
+                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Code</th>
+                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;">Description</th>
+                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Ordered</th>
+                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Received</th>
+                    </tr>
+                </thead>
+                <tbody style="color:#333;">
+                    {items_html}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- SIGNATURE AREA -->
+        <div style="padding:30px 40px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:30px;border-top:1px solid #e5e7eb;margin-top:20px;">
+            <div>
+                <div style="font-size:12px;color:#888;text-transform:uppercase;margin-bottom:8px;">Received By (Signature)</div>
+                <div style="border-bottom:1px solid #ccc;height:40px;"></div>
+                <div style="font-size:12px;color:#666;margin-top:4px;">{safe_string(grv.get("received_by", ""))}</div>
+            </div>
+            <div>
+                <div style="font-size:12px;color:#888;text-transform:uppercase;margin-bottom:8px;">Checked By</div>
+                <div style="border-bottom:1px solid #ccc;height:40px;"></div>
+            </div>
+            <div>
+                <div style="font-size:12px;color:#888;text-transform:uppercase;margin-bottom:8px;">Date</div>
+                <div style="border-bottom:1px solid #ccc;height:40px;"></div>
+                <div style="font-size:12px;color:#666;margin-top:4px;">{grv.get("date", "")}</div>
+            </div>
+        </div>
+        
+        {f'<div style="padding:0 40px 20px;"><div style="padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;"><strong>Notes:</strong> {safe_string(grv.get("notes", ""))}</div></div>' if grv.get("notes") else ""}
+    </div>
+    '''
+    
+    return render_page(f"GRV {grv.get('grv_number', '')}", content, user, "purchases")
 
 
 @app.route("/pulse")
@@ -31538,7 +31977,10 @@ def purchases_page():
                 <h2 style="margin:0;">Purchase Orders</h2>
                 <p style="color:var(--text-muted);margin:5px 0 0 0;">Order stock from suppliers</p>
             </div>
-            <a href="/purchase/new" class="btn btn-primary">+ New Purchase Order</a>
+            <div style="display:flex;gap:10px;">
+                <a href="/grv" class="btn btn-secondary">📦 GRV List</a>
+                <a href="/purchase/new" class="btn btn-primary">+ New Purchase Order</a>
+            </div>
         </div>
         
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px;">
@@ -32178,8 +32620,16 @@ def purchase_view(po_id):
         const data = await response.json();
         
         if (data.success) {{
-            alert('✓ ' + data.message);
-            location.reload();
+            if (data.grv_id) {{
+                if (confirm('✓ ' + data.message + '\\n\\nView the GRV document?')) {{
+                    window.location = '/grv/' + data.grv_id;
+                }} else {{
+                    location.reload();
+                }}
+            }} else {{
+                alert('✓ ' + data.message);
+                location.reload();
+            }}
         }} else {{
             alert('Error: ' + data.error);
         }}
@@ -32427,6 +32877,7 @@ def api_po_receive(po_id):
         quantities = data.get("quantities", {})
         update_stock = data.get("updateStock", True)
         
+        user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
         
@@ -32483,9 +32934,49 @@ def api_po_receive(po_id):
         
         db.save("purchase_orders", clean_po)
         
-        status_msg = "All items received! Stock updated." if all_received else f"{items_received} items received (partial delivery)"
+        # CREATE GRV (Goods Received Voucher) document
+        grv_id = generate_id()
+        existing_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
+        grv_num = f"GRV-{len(existing_grvs) + 1:04d}"
         
-        return jsonify({"success": True, "message": status_msg, "all_received": all_received})
+        # Build received items list
+        received_items = []
+        for idx_str, qty_received in quantities.items():
+            idx = int(idx_str)
+            if 0 <= idx < len(items) and qty_received > 0:
+                received_items.append({
+                    "description": items[idx].get("description", "-"),
+                    "code": items[idx].get("code", ""),
+                    "qty_ordered": items[idx].get("qty", 1),
+                    "qty_received": qty_received,
+                    "stock_id": items[idx].get("stock_id", "")
+                })
+        
+        grv = {
+            "id": grv_id,
+            "business_id": biz_id,
+            "grv_number": grv_num,
+            "po_id": po_id,
+            "po_number": po.get("po_number", ""),
+            "supplier_id": po.get("supplier_id", ""),
+            "supplier_name": po.get("supplier_name", ""),
+            "date": today(),
+            "items": json.dumps(received_items),
+            "received_by": user.get("name", "") if user else "",
+            "notes": data.get("notes", ""),
+            "status": "received",
+            "created_at": now()
+        }
+        
+        try:
+            db.save("goods_received", grv)
+            logger.info(f"[GRV] Created {grv_num} from {po.get('po_number')} - {len(received_items)} items")
+        except Exception as ge:
+            logger.error(f"[GRV] Save failed: {ge}")
+        
+        status_msg = f"GRV {grv_num} created! " + ("All items received. Stock updated." if all_received else f"{items_received} items received (partial delivery)")
+        
+        return jsonify({"success": True, "message": status_msg, "all_received": all_received, "grv_id": grv_id, "grv_number": grv_num})
         
     except Exception as e:
         logger.error(f"[PO] Receive failed: {e}")
@@ -56005,11 +56496,18 @@ def scan_inbox_page():
             `;
             
             saveHtml = `
+                <div style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:8px;font-weight:600;font-size:14px;">How was this paid?</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;" id="payMethodBtns">
+                        <button type="button" class="btn" onclick="selectPayMethod('cash')" id="pmCash" style="padding:12px;background:#10b981;color:white;border:3px solid #10b981;">💵 Cash<br><small>Petty Cash</small></button>
+                        <button type="button" class="btn" onclick="selectPayMethod('card')" id="pmCard" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">💳 Card<br><small>Company Card</small></button>
+                        <button type="button" class="btn" onclick="selectPayMethod('eft')" id="pmEft" style="padding:12px;background:var(--card);color:var(--text);border:3px solid var(--border);">🏦 EFT<br><small>Bank Transfer</small></button>
+                    </div>
+                    <input type="hidden" id="selectedPayMethod" value="cash">
+                </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                    <button class="btn" onclick="processAs('expense')" style="padding:14px;background:var(--orange);color:white;">Book as Expense</button>
-                    <button class="btn" onclick="processAs('expense_paid')" style="padding:14px;background:#059669;color:white;"> Expense (Paid)</button>
-                    <button class="btn" onclick="processAs('supplier')" style="padding:14px;background:var(--primary);color:white;">Stock Purchase (Credit)</button>
-                    <button class="btn" onclick="processAs('supplier_paid')" style="padding:14px;background:#0891b2;color:white;"> Stock Purchase (Paid)</button>
+                    <button class="btn" onclick="processAs('expense')" style="padding:14px;background:var(--orange);color:white;">📋 Book as Expense</button>
+                    <button class="btn" onclick="processAs('supplier')" style="padding:14px;background:var(--primary);color:white;">📦 Stock Purchase (Credit)</button>
                 </div>
             `;
         }} else if (type === 'payslip') {{
@@ -56319,6 +56817,27 @@ def scan_inbox_page():
         }}
     }}
     
+    function selectPayMethod(method) {{
+        document.getElementById('selectedPayMethod').value = method;
+        // Update button styles
+        ['pmCash','pmCard','pmEft'].forEach(id => {{
+            const btn = document.getElementById(id);
+            if (btn) {{
+                btn.style.background = 'var(--card)';
+                btn.style.color = 'var(--text)';
+                btn.style.borderColor = 'var(--border)';
+            }}
+        }});
+        const colors = {{cash: '#10b981', card: '#8b5cf6', eft: '#3b82f6'}};
+        const activeId = method === 'cash' ? 'pmCash' : method === 'card' ? 'pmCard' : 'pmEft';
+        const activeBtn = document.getElementById(activeId);
+        if (activeBtn) {{
+            activeBtn.style.background = colors[method];
+            activeBtn.style.color = 'white';
+            activeBtn.style.borderColor = colors[method];
+        }}
+    }}
+    
     async function processAs(saveType) {{
         let payload = {{}};
         let endpoint = '';
@@ -56344,6 +56863,9 @@ def scan_inbox_page():
                 }}
             }});
             
+            // Get payment method from selection (expenses are always paid)
+            const payMethod = document.getElementById('selectedPayMethod')?.value || 'cash';
+            
             payload = {{
                 supplier_name: document.getElementById('m_supplier')?.value || 'Unknown',
                 supplier_phone: document.getElementById('m_phone')?.value || '',
@@ -56353,8 +56875,9 @@ def scan_inbox_page():
                 subtotal: parseFloat(document.getElementById('m_subtotal')?.value || 0),
                 vat: parseFloat(document.getElementById('m_vat')?.value || 0),
                 total: parseFloat(document.getElementById('m_total')?.value || 0),
-                items: editedItems.length > 0 ? editedItems : (currentItemData.items || []),  // Use edited items if available
-                paid: saveType.includes('paid')
+                items: editedItems.length > 0 ? editedItems : (currentItemData.items || []),
+                paid: true,
+                payment_method: payMethod
             }};
             endpoint = saveType.includes('supplier') ? '/api/scan/save-supplier-invoice' : '/api/scan/save-expense';
             redirect = saveType.includes('supplier') ? '/supplier-invoices' : '/expenses';
@@ -57605,16 +58128,21 @@ def api_scan_save_expense():
             desc += " [PAID]"
         
         total_amount = float(data.get("total", 0))
+        payment_method = data.get("payment_method", "cash")
         expense = RecordFactory.expense(
             business_id=biz_id,
             description=desc,
             amount=total_amount,
             date=data.get("date", today()),
             category=category,
+            category_code=category_accounts.get(category, "7000") if 'category_accounts' in dir() else "",
             vat=vat_amount,
             net=total_amount - vat_amount,
             reference=data.get("invoice_number", ""),
-            supplier=data.get("supplier_name", "")
+            supplier=data.get("supplier_name", ""),
+            supplier_name=data.get("supplier_name", ""),
+            payment_method=payment_method,
+            status="paid"
         )
         exp_id = expense["id"]
         
