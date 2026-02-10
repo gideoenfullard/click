@@ -53871,6 +53871,9 @@ def scan_page():
                 <button class="btn scan-type-btn" onclick="selectType('timesheet')" style="padding:20px;background:#f59e0b;color:white;">
                     Timesheet
                 </button>
+                <button class="btn scan-type-btn" onclick="selectType('bank_statement')" style="padding:20px;background:#059669;color:white;">
+                    🏦 Bank Statement
+                </button>
                 <button class="btn scan-type-btn" onclick="selectType('other')" style="padding:20px;background:var(--card);border:1px solid var(--border);">
                     [DOC] Other Document
                 </button>
@@ -53986,6 +53989,7 @@ def scan_page():
         'invoice': 'Invoice/Receipt',
         'payslip': '[MONEY] Payslip',
         'timesheet': 'Timesheet',
+        'bank_statement': '🏦 Bank Statement',
         'other': '[DOC] Document'
     };
     
@@ -53993,6 +53997,7 @@ def scan_page():
         'invoice': 'var(--primary)',
         'payslip': '#ec4899',
         'timesheet': '#f59e0b',
+        'bank_statement': '#059669',
         'other': 'var(--text-muted)'
     };
     
@@ -54368,6 +54373,42 @@ Return ONLY JSON:
 }
 
 ONLY read times - DO NOT calculate hours. Extract ALL employees."""
+        elif scan_type == 'bank_statement':
+            prompt = """Read this bank statement carefully. Extract ALL transactions visible on the page.
+
+For each transaction, extract:
+- date: The transaction date (format as YYYY-MM-DD if possible)
+- description: The full transaction description/narrative exactly as printed
+- amount: The transaction amount (negative for debits/payments, positive for credits/deposits)
+- balance: The running balance after this transaction (if shown)
+
+Also extract:
+- bank_name: The bank name (FNB, ABSA, Standard Bank, Nedbank, Capitec, etc.)
+- account_number: The account number (mask middle digits for security)
+- account_holder: The account holder name
+- statement_period: The period covered
+- opening_balance: The opening balance
+- closing_balance: The closing balance
+
+Return ONLY JSON:
+{
+    "bank_name": "FNB",
+    "account_number": "62XXXX1234",
+    "account_holder": "Company Name",
+    "statement_period": "01 Jan 2026 - 31 Jan 2026",
+    "opening_balance": 0.00,
+    "closing_balance": 0.00,
+    "transactions": [
+        {"date": "2026-01-02", "description": "POS PURCHASE - WOOLWORTHS", "amount": -250.00, "balance": 9750.00},
+        {"date": "2026-01-03", "description": "CREDIT TRANSFER - CLIENT ABC", "amount": 5000.00, "balance": 14750.00}
+    ]
+}
+
+Rules:
+- Debits/payments/charges must be NEGATIVE amounts
+- Credits/deposits/income must be POSITIVE amounts
+- Read EVERY transaction row - do not skip any
+- Extract amounts EXACTLY as shown"""
         else:
             prompt = """Read this invoice/receipt carefully. Extract ALL line items AND supplier details.
 
@@ -55947,6 +55988,79 @@ def scan_inbox_page():
                     <button class="btn" onclick="processAs('timesheet')" style="width:100%;padding:16px;background:#f59e0b;color:white;font-size:16px;">Save Timesheet</button>
                 `;
             }}
+        }} else if (type === 'bank_statement') {{
+            const txns = data.transactions || (data.extracted && data.extracted.transactions) || [];
+            const bankName = data.bank_name || (data.extracted && data.extracted.bank_name) || 'Unknown Bank';
+            const accountHolder = data.account_holder || (data.extracted && data.extracted.account_holder) || '';
+            const period = data.statement_period || (data.extracted && data.extracted.statement_period) || '';
+            const openBal = data.opening_balance || (data.extracted && data.extracted.opening_balance) || 0;
+            const closeBal = data.closing_balance || (data.extracted && data.extracted.closing_balance) || 0;
+            
+            let txnRows = '';
+            let totalDebits = 0;
+            let totalCredits = 0;
+            txns.forEach((t, i) => {{
+                const amt = parseFloat(t.amount || 0);
+                if (amt < 0) totalDebits += Math.abs(amt);
+                else totalCredits += amt;
+                const color = amt < 0 ? '#ef4444' : '#10b981';
+                txnRows += `
+                    <tr style="font-size:13px;">
+                        <td style="white-space:nowrap;">${{t.date || ''}}</td>
+                        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">${{t.description || ''}}</td>
+                        <td style="text-align:right;color:${{color}};font-weight:600;">R${{Math.abs(amt).toFixed(2)}}</td>
+                        <td style="text-align:right;color:var(--text-muted);">${{t.balance ? 'R' + parseFloat(t.balance).toFixed(2) : ''}}</td>
+                    </tr>
+                `;
+            }});
+            
+            formHtml = `
+                <div style="background:rgba(5,150,105,0.1);border-radius:12px;padding:15px;margin-bottom:15px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div>
+                            <strong style="font-size:18px;">🏦 ${{bankName}}</strong>
+                            <div style="color:var(--text-muted);font-size:13px;">${{accountHolder}}</div>
+                            <div style="color:var(--text-muted);font-size:12px;">${{period}}</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:13px;color:var(--text-muted);">Opening: R${{parseFloat(openBal).toFixed(2)}}</div>
+                            <div style="font-size:16px;font-weight:bold;">Closing: R${{parseFloat(closeBal).toFixed(2)}}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:15px;">
+                    <div style="background:rgba(16,185,129,0.1);padding:10px;border-radius:8px;text-align:center;">
+                        <div style="font-size:18px;font-weight:bold;color:#10b981;">${{txns.length}}</div>
+                        <div style="font-size:11px;color:var(--text-muted);">Transactions</div>
+                    </div>
+                    <div style="background:rgba(16,185,129,0.1);padding:10px;border-radius:8px;text-align:center;">
+                        <div style="font-size:14px;font-weight:bold;color:#10b981;">R${{totalCredits.toFixed(2)}}</div>
+                        <div style="font-size:11px;color:var(--text-muted);">Credits IN</div>
+                    </div>
+                    <div style="background:rgba(239,68,68,0.1);padding:10px;border-radius:8px;text-align:center;">
+                        <div style="font-size:14px;font-weight:bold;color:#ef4444;">R${{totalDebits.toFixed(2)}}</div>
+                        <div style="font-size:11px;color:var(--text-muted);">Debits OUT</div>
+                    </div>
+                </div>
+                
+                <div style="max-height:300px;overflow-y:auto;border-radius:8px;border:1px solid var(--border);">
+                    <table style="width:100%;font-size:13px;">
+                        <thead>
+                            <tr style="background:var(--bg);position:sticky;top:0;">
+                                <th style="padding:8px;">Date</th>
+                                <th style="padding:8px;">Description</th>
+                                <th style="padding:8px;text-align:right;">Amount</th>
+                                <th style="padding:8px;text-align:right;">Balance</th>
+                            </tr>
+                        </thead>
+                        <tbody>${{txnRows}}</tbody>
+                    </table>
+                </div>
+            `;
+            saveHtml = `
+                <button class="btn" onclick="processAs('bank_statement')" style="width:100%;padding:16px;background:#059669;color:white;font-size:16px;">🏦 Import to Banking (${{txns.length}} transactions)</button>
+            `;
         }}
         
         document.getElementById('modalForm').innerHTML = formHtml;
@@ -56129,6 +56243,20 @@ def scan_inbox_page():
             }};
             endpoint = '/api/scan/save-timesheet-batch';
             redirect = '/payroll';
+        }} else if (saveType === 'bank_statement') {{
+            // Import bank statement transactions to banking
+            const txns = currentItemData.transactions || (currentItemData.extracted && currentItemData.extracted.transactions) || [];
+            payload = {{
+                bank_name: currentItemData.bank_name || (currentItemData.extracted && currentItemData.extracted.bank_name) || '',
+                account_number: currentItemData.account_number || (currentItemData.extracted && currentItemData.extracted.account_number) || '',
+                account_holder: currentItemData.account_holder || (currentItemData.extracted && currentItemData.extracted.account_holder) || '',
+                statement_period: currentItemData.statement_period || (currentItemData.extracted && currentItemData.extracted.statement_period) || '',
+                opening_balance: currentItemData.opening_balance || (currentItemData.extracted && currentItemData.extracted.opening_balance) || 0,
+                closing_balance: currentItemData.closing_balance || (currentItemData.extracted && currentItemData.extracted.closing_balance) || 0,
+                transactions: txns
+            }};
+            endpoint = '/api/scan/save-bank-statement';
+            redirect = '/banking';
         }}
         
         try {{
@@ -57520,6 +57648,90 @@ def api_scan_save_timesheet_batch():
         
     except Exception as e:
         logger.error(f"[SCAN TIMESHEET BATCH] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/scan/save-bank-statement", methods=["POST"])
+@login_required
+def api_scan_save_bank_statement():
+    """Import scanned bank statement transactions to banking"""
+    
+    try:
+        data = request.get_json()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        user = Auth.get_current_user()
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"})
+        
+        transactions = data.get("transactions", [])
+        bank_name = data.get("bank_name", "")
+        
+        if not transactions:
+            return jsonify({"success": False, "error": "No transactions to import"})
+        
+        # Get existing transactions to check for duplicates
+        existing = db.get("bank_transactions", {"business_id": biz_id}) if biz_id else []
+        existing_keys = set()
+        for t in existing:
+            key = f"{str(t.get('date', ''))[:10]}|{t.get('description', '')}|{t.get('debit', 0)}|{t.get('credit', 0)}"
+            existing_keys.add(key)
+        
+        imported = 0
+        skipped = 0
+        
+        for txn in transactions:
+            amount = float(txn.get("amount", 0))
+            description = txn.get("description", "").strip()
+            date = txn.get("date", "")
+            
+            if not description or amount == 0:
+                skipped += 1
+                continue
+            
+            # Debit (money out) vs Credit (money in)
+            debit = abs(amount) if amount < 0 else 0
+            credit = amount if amount > 0 else 0
+            
+            # Check for duplicate
+            dup_key = f"{str(date)[:10]}|{description}|{debit}|{credit}"
+            if dup_key in existing_keys:
+                skipped += 1
+                continue
+            
+            bank_txn = {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "date": date,
+                "description": description,
+                "debit": round(debit, 2),
+                "credit": round(credit, 2),
+                "balance": float(txn.get("balance", 0)) if txn.get("balance") else None,
+                "bank_name": bank_name,
+                "source": "scan",
+                "matched": False,
+                "created_at": now()
+            }
+            
+            success, _ = db.save("bank_transactions", bank_txn)
+            if success:
+                imported += 1
+                existing_keys.add(dup_key)
+            else:
+                skipped += 1
+        
+        logger.info(f"[BANK IMPORT] Scanned: {imported} imported, {skipped} skipped from {bank_name}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"🏦 Imported {imported} transactions from {bank_name}" + (f" ({skipped} duplicates skipped)" if skipped > 0 else ""),
+            "imported": imported,
+            "skipped": skipped
+        })
+        
+    except Exception as e:
+        logger.error(f"[BANK IMPORT] Error: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 
