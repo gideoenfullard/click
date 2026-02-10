@@ -31428,7 +31428,6 @@ def purchase_new():
             "expected_date": request.form.get("expected_date", ""),
             "supplier_id": supplier_id,
             "supplier_name": supplier_name,
-            "supplier_email": supplier_email,
             "items": json.dumps(items),
             "subtotal": round(subtotal, 2),
             "vat": round(vat, 2),
@@ -31649,6 +31648,9 @@ def purchase_view(po_id):
     if not po:
         return redirect("/purchases")
     
+    # Get supplier record for email etc
+    supplier_rec = db.get_one("suppliers", po.get("supplier_id")) if po.get("supplier_id") else None
+    
     try:
         items = json.loads(po.get("items", "[]"))
     except:
@@ -31755,7 +31757,7 @@ def purchase_view(po_id):
         <div style="margin-bottom:30px;padding:20px;background:#f8f9fa;border-radius:8px;">
             <h4 style="color:#888;margin:0 0 8px 0;font-size:12px;text-transform:uppercase;">ORDER TO</h4>
             <p style="color:#333;margin:0;font-weight:bold;font-size:16px;">{safe_string(po.get("supplier_name", "-"))}</p>
-            {f'<p style="color:#666;margin:5px 0 0 0;">{safe_string(po.get("supplier_email", ""))}</p>' if po.get("supplier_email") else ""}
+            {f'<p style="color:#666;margin:5px 0 0 0;">{safe_string(supplier_rec.get("email", ""))}</p>' if supplier_rec and supplier_rec.get("email") else ""}
         </div>
         
         <table style="width:100%;border-collapse:collapse;margin-bottom:30px;">
@@ -31842,7 +31844,7 @@ def purchase_view(po_id):
     }}
     
     async function emailPO() {{
-        const supplierEmail = '{safe_string(po.get("supplier_email", ""))}';
+        const supplierEmail = '{safe_string(supplier_rec.get("email", "") if supplier_rec else "")}';
         
         if (!supplierEmail) {{
             // Show email input modal
@@ -32012,19 +32014,23 @@ def api_po_email(po_id):
         if not po:
             return jsonify({"success": False, "error": "PO not found"})
         
-        # Get email - from request body (custom) or from PO/supplier
+        # Get email - from request body (custom) or from supplier record
         data = request.get_json() or {}
-        supplier_email = data.get("to_email", "").strip() or po.get("supplier_email", "")
+        supplier_email = data.get("to_email", "").strip()
+        
+        # If no email in request, look up from supplier record
+        if not supplier_email and po.get("supplier_id"):
+            supplier = db.get_one("suppliers", po.get("supplier_id"))
+            if supplier:
+                supplier_email = supplier.get("email", "")
         
         if not supplier_email:
-            return jsonify({"success": False, "error": "No email address provided"})
+            return jsonify({"success": False, "error": "No email address provided. Add email to supplier first."})
         
         # Optionally save email to supplier
         if data.get("save_email") and data.get("to_email") and po.get("supplier_id"):
             try:
                 db.update("suppliers", po.get("supplier_id"), {"email": supplier_email})
-                # Also update the PO record
-                db.update("purchase_orders", po_id, {"supplier_email": supplier_email})
                 logger.info(f"[PO] Saved email {supplier_email} to supplier {po.get('supplier_id')}")
             except Exception as e:
                 logger.warning(f"[PO] Failed to save supplier email: {e}")
@@ -38300,7 +38306,6 @@ def api_pos_purchase_order():
             "date": today(),
             "supplier_id": supplier_id,
             "supplier_name": supplier_name,
-            "supplier_email": supplier_email,
             "items": json.dumps(clean_items),
             "status": "draft",
             "created_at": now()
