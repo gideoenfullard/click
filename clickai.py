@@ -31688,7 +31688,8 @@ def purchase_view(po_id):
     if status == "draft":
         action_buttons = f'''
         <button class="btn btn-secondary" onclick="emailPO()">📧 Email to Supplier</button>
-        <button class="btn btn-primary" onclick="updatePOStatus('sent')">✓ Mark as Sent</button>
+        <button class="btn btn-secondary" onclick="updatePOStatus('sent')">✓ Mark as Sent</button>
+        <button class="btn btn-primary" onclick="showReceiveModal()">📦 Receive Goods</button>
         '''
     elif status == "sent":
         action_buttons = f'''
@@ -34977,7 +34978,7 @@ def pos_page():
                 } else if (choice === '2') {
                     // Email PO directly
                     try {
-                        const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST'});
+                        const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({})});
                         const emailData = await emailResp.json();
                         if (emailData.success) {
                             alert('✅ ' + emailData.message);
@@ -35954,7 +35955,7 @@ def pos_page():
                     window.location = '/purchase/' + data.po_id;
                 } else if (choice === '2') {
                     try {
-                        const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST'});
+                        const emailResp = await fetch('/api/purchase/' + data.po_id + '/email', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({})});
                         const emailData = await emailResp.json();
                         if (emailData.success) {
                             alert('✅ ' + emailData.message);
@@ -38254,10 +38255,12 @@ def api_pos_purchase_order():
             return jsonify({"success": False, "error": "Supplier name required"})
         
         # Use provided supplier_id or find/create supplier
+        supplier_email = ""
         if not supplier_id:
             suppliers = db.get("suppliers", {"business_id": biz_id, "name": supplier_name}) if biz_id else []
             if suppliers:
                 supplier_id = suppliers[0].get("id")
+                supplier_email = suppliers[0].get("email", "")
             else:
                 # Create new supplier
                 supplier_id = generate_id()
@@ -38268,6 +38271,11 @@ def api_pos_purchase_order():
                     "balance": 0,
                     "created_at": now()
                 })
+        else:
+            # Look up supplier email from existing record
+            sup = db.get_one("suppliers", supplier_id)
+            if sup:
+                supplier_email = sup.get("email", "")
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
@@ -38292,6 +38300,7 @@ def api_pos_purchase_order():
             "date": today(),
             "supplier_id": supplier_id,
             "supplier_name": supplier_name,
+            "supplier_email": supplier_email,
             "items": json.dumps(clean_items),
             "status": "draft",
             "created_at": now()
