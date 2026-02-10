@@ -32143,14 +32143,14 @@ def api_po_status(po_id):
         if not po:
             return jsonify({"success": False, "error": "PO not found"})
         
-        # Remove fields that don't exist in DB table
-        for field in ["supplier_email"]:
-            po.pop(field, None)
+        # Only keep fields that exist in purchase_orders table
+        VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by"}
+        clean_po = {k: v for k, v in po.items() if k in VALID_PO_FIELDS}
         
-        po["status"] = new_status
-        po["updated_at"] = now()
+        clean_po["status"] = new_status
+        clean_po["updated_at"] = now()
         
-        success, err = db.save("purchase_orders", po)
+        success, err = db.save("purchase_orders", clean_po)
         
         if success:
             return jsonify({"success": True})
@@ -32290,12 +32290,17 @@ Thank you,
         success = Email.send(supplier_email, subject, body_html, body_text, business=business)
         
         if success:
-            # Update PO
-            db.update("purchase_orders", po_id, {
-                "emailed": True,
-                "emailed_at": now(),
-                "status": "sent" if po.get("status") == "draft" else po.get("status")
-            })
+            # Update PO status
+            po_fresh = db.get_one("purchase_orders", po_id)
+            if po_fresh:
+                VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by"}
+                clean_po = {k: v for k, v in po_fresh.items() if k in VALID_PO_FIELDS}
+                clean_po["emailed"] = True
+                clean_po["emailed_at"] = now()
+                if clean_po.get("status") == "draft":
+                    clean_po["status"] = "sent"
+                clean_po["updated_at"] = now()
+                db.save("purchase_orders", clean_po)
             
             return jsonify({"success": True, "message": f"PO emailed to {supplier_email}"})
         else:
@@ -32359,17 +32364,17 @@ def api_po_receive(po_id):
                 break
         
         # Update PO - clean record and save
-        for field in ["supplier_email"]:
-            po.pop(field, None)
+        VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by"}
+        clean_po = {k: v for k, v in po.items() if k in VALID_PO_FIELDS}
         
-        po["items"] = json.dumps(items)
-        po["status"] = "received" if all_received else "partial"
-        po["updated_at"] = now()
+        clean_po["items"] = json.dumps(items)
+        clean_po["status"] = "received" if all_received else "partial"
+        clean_po["updated_at"] = now()
         
         if all_received:
-            po["received_date"] = today()
+            clean_po["received_date"] = today()
         
-        db.save("purchase_orders", po)
+        db.save("purchase_orders", clean_po)
         
         status_msg = "All items received! Stock updated." if all_received else f"{items_received} items received (partial delivery)"
         
