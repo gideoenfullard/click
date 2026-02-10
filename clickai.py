@@ -31909,11 +31909,11 @@ def purchase_view(po_id):
         
         # NO PRICES on PO - just description and qty
         items_html += f'''
-        <tr>
-            <td>{safe_string(item.get("code", ""))}</td>
-            <td>{safe_string(item.get("description", "-"))}</td>
-            <td style="text-align:center;">{qty_ordered}</td>
-            <td style="text-align:center;">{receive_status}</td>
+        <tr style="border-bottom:1px solid #e5e7eb;">
+            <td style="padding:10px;font-size:14px;color:#666;">{safe_string(item.get("code", ""))}</td>
+            <td style="padding:10px;font-size:15px;">{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;padding:10px;font-size:15px;font-weight:600;">{qty_ordered}</td>
+            <td style="text-align:center;padding:10px;font-size:15px;">{receive_status}</td>
         </tr>
         '''
     
@@ -31963,8 +31963,12 @@ def purchase_view(po_id):
             </tr>
             '''
     
+    biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
+    biz_phone = business.get("phone", "") if business else ""
+    biz_email_addr = business.get("email", "") if business else ""
+    
     content = f'''
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+    <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/purchases" style="color:var(--text-muted);">← Back to Purchase Orders</a>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
@@ -31972,44 +31976,61 @@ def purchase_view(po_id):
         </div>
     </div>
     
-    <div class="card" style="background:white;color:#333;margin-bottom:20px;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:30px;">
+    <div class="card" style="background:white;color:#333;padding:0;overflow:hidden;margin-bottom:20px;">
+        <!-- TOP BAR -->
+        <div style="background:#0f766e;color:white;padding:25px 40px;display:flex;justify-content:space-between;align-items:center;">
             <div>
-                <h1 style="color:#333;margin:0;font-size:28px;">PURCHASE ORDER</h1>
-                <p style="color:#666;margin:5px 0;font-size:18px;">{po.get("po_number", "-")}</p>
-                <p style="color:#888;margin:5px 0;font-size:14px;">Date: {po.get("date", "-")}</p>
-                {f'<p style="color:#888;margin:5px 0;font-size:14px;">Expected: {po.get("expected_date")}</p>' if po.get("expected_date") else ""}
+                <h1 style="margin:0;font-size:28px;font-weight:700;">{biz_name}</h1>
+                {f'<p style="margin:4px 0 0 0;font-size:13px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
             </div>
             <div style="text-align:right;">
-                <h2 style="color:#333;margin:0;">{biz_name}</h2>
-                <span style="background:{"#10b981" if status == "received" else "#3b82f6" if status == "partial" else "#f59e0b" if status == "sent" else "#6b7280"};color:white;padding:6px 16px;border-radius:20px;font-size:13px;display:inline-block;margin-top:10px;">
+                <h2 style="margin:0;font-size:32px;font-weight:700;letter-spacing:2px;">PURCHASE ORDER</h2>
+                <span style="background:rgba(255,255,255,0.2);color:white;padding:4px 12px;border-radius:20px;font-size:12px;">
                     {status.upper()}
                 </span>
-                {f'<p style="color:#888;margin-top:10px;font-size:12px;">📧 Emailed to supplier</p>' if po.get("emailed") else ""}
             </div>
         </div>
         
-        <div style="margin-bottom:30px;padding:20px;background:#f8f9fa;border-radius:8px;">
-            <h4 style="color:#888;margin:0 0 8px 0;font-size:12px;text-transform:uppercase;">ORDER TO</h4>
-            <p style="color:#333;margin:0;font-weight:bold;font-size:16px;">{safe_string(po.get("supplier_name", "-"))}</p>
-            {f'<p style="color:#666;margin:5px 0 0 0;">{safe_string(supplier_rec.get("email", ""))}</p>' if supplier_rec and supplier_rec.get("email") else ""}
+        <!-- DETAILS GRID -->
+        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+            <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
+                <table style="width:100%;font-size:14px;color:#333;">
+                    <tr><td style="padding:4px 0;color:#888;width:130px;">PO Number:</td><td style="padding:4px 0;font-weight:600;">{po.get("po_number", "-")}</td></tr>
+                    <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{po.get("date", "-")}</td></tr>
+                    {f'<tr><td style="padding:4px 0;color:#888;">Expected:</td><td style="padding:4px 0;">{po.get("expected_date")}</td></tr>' if po.get("expected_date") else ""}
+                    {f'<tr><td style="padding:4px 0;color:#888;">Received:</td><td style="padding:4px 0;">{po.get("received_date")}</td></tr>' if po.get("received_date") else ""}
+                </table>
+                {f'<div style="margin-top:8px;font-size:13px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
+                {f'<div style="font-size:13px;color:#666;">{biz_email_addr}</div>' if biz_email_addr else ''}
+            </div>
+            <div style="padding-left:25px;">
+                <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;">Order To (Supplier)</div>
+                <div style="font-size:16px;font-weight:700;color:#0f766e;margin-bottom:4px;">{safe_string(po.get("supplier_name", "-"))}</div>
+                {f'<div style="font-size:13px;color:#555;">{safe_string(supplier_rec.get("email", ""))}</div>' if supplier_rec and supplier_rec.get("email") else ""}
+                {f'<div style="font-size:13px;color:#555;">{safe_string(supplier_rec.get("phone", ""))}</div>' if supplier_rec and supplier_rec.get("phone") else ""}
+                {f'<div style="font-size:13px;color:#555;">{safe_string(supplier_rec.get("address", ""))}</div>' if supplier_rec and supplier_rec.get("address") else ""}
+                {f'<div style="font-size:12px;color:#888;margin-top:5px;">📧 Emailed to supplier</div>' if po.get("emailed") else ""}
+            </div>
         </div>
         
-        <table style="width:100%;border-collapse:collapse;margin-bottom:30px;">
-            <thead>
-                <tr style="background:#f5f5f5;">
-                    <th style="padding:12px;text-align:left;border-bottom:2px solid #ddd;color:#333;">Code</th>
-                    <th style="padding:12px;text-align:left;border-bottom:2px solid #ddd;color:#333;">Description</th>
-                    <th style="padding:12px;text-align:center;border-bottom:2px solid #ddd;color:#333;">Qty</th>
-                    <th style="padding:12px;text-align:center;border-bottom:2px solid #ddd;color:#333;">Received</th>
-                </tr>
-            </thead>
-            <tbody style="color:#333;">
-                {items_html}
-            </tbody>
-        </table>
+        <!-- ITEMS TABLE -->
+        <div style="padding:0 40px;">
+            <table style="width:100%;border-collapse:collapse;font-size:14px;">
+                <thead>
+                    <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
+                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Code</th>
+                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;">Description</th>
+                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:80px;">Qty</th>
+                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Received</th>
+                    </tr>
+                </thead>
+                <tbody style="color:#333;">
+                    {items_html}
+                </tbody>
+            </table>
+        </div>
         
-        {f'<div style="margin-top:20px;padding:15px;background:#f8f9fa;border-radius:8px;"><strong>Notes:</strong><br>{safe_string(po.get("notes", ""))}</div>' if po.get("notes") else ""}
+        {f'<div style="padding:15px 40px 20px;"><div style="padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;"><strong>Notes:</strong> {safe_string(po.get("notes", ""))}</div></div>' if po.get("notes") else ""}
     </div>
     
     <!-- Receive Goods Modal -->
