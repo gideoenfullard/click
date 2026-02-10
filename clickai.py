@@ -54308,28 +54308,39 @@ def api_scan_document():
         if media_type.startswith('image/'):
             file_data = preprocess_image_for_ocr(file_data, filename)
         
-        # Compress if still too large (>4MB) after preprocessing
-        MAX_SIZE = 4 * 1024 * 1024
+        # Compress if still too large (>3.5MB) after preprocessing - API limit is 5MB
+        MAX_SIZE = 3500000  # 3.5MB to leave room for base64 overhead
         if len(file_data) > MAX_SIZE and media_type.startswith('image/'):
             try:
-                img = Image.open(io.BytesIO(file_data))
+                from PIL import Image as PILImage
+                img = PILImage.open(io.BytesIO(file_data))
                 if img.mode in ('RGBA', 'P'):
                     img = img.convert('RGB')
-                max_dim = 2000
+                # Resize large images
+                max_dim = 1800
                 if img.width > max_dim or img.height > max_dim:
-                    img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                    img.thumbnail((max_dim, max_dim), PILImage.Resampling.LANCZOS)
                 output = io.BytesIO()
-                quality = 85
+                quality = 80
                 img.save(output, format='JPEG', quality=quality, optimize=True)
-                while output.tell() > MAX_SIZE and quality > 30:
+                while output.tell() > MAX_SIZE and quality > 20:
                     output = io.BytesIO()
                     quality -= 10
+                    if quality <= 40:
+                        max_dim -= 200
+                        img.thumbnail((max_dim, max_dim), PILImage.Resampling.LANCZOS)
                     img.save(output, format='JPEG', quality=quality, optimize=True)
                 file_data = output.getvalue()
                 media_type = "image/jpeg"
-                logger.info(f"[SCAN] Compressed to {len(file_data)} bytes")
+                logger.info(f"[SCAN] Compressed to {len(file_data)/1024:.0f}KB (quality={quality})")
             except Exception as e:
-                logger.warning(f"[SCAN] Compression failed: {e}")
+                logger.warning(f"[SCAN] Compression failed: {e} - trying basic resize")
+                # Fallback: just try to reduce without PIL
+                pass
+        
+        # Final check - if STILL too big, reject with helpful message
+        if len(file_data) > 4800000:
+            return jsonify({"success": False, "error": f"Image too large ({len(file_data)//1024//1024}MB). Please take a lower resolution photo or crop the image."})
         
         base64_data = base64.b64encode(file_data).decode('utf-8')
         
