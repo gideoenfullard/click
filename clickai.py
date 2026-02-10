@@ -19047,6 +19047,7 @@ def stock_page():
                     <option value="">All Categories</option>
                 </select>
                 <a href="/fulltech" class="btn" style="background:#8b5cf6;">🔩 Bolt Pricer</a>
+                <a href="/stock/movements" class="btn btn-secondary">📋 Movements</a>
                 <a href="/stock/new" class="btn btn-primary">+ Add Stock</a>
             </div>
         </div>
@@ -19192,6 +19193,147 @@ def stock_page():
     
     return render_page("Stock", content, user, "stock")
     
+
+@app.route("/stock/movements")
+@login_required
+def stock_movements_page():
+    """Stock movement history - full audit trail"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    # Get filter params
+    stock_id = request.args.get("stock_id", "")
+    move_type = request.args.get("type", "")  # in, out, or empty for all
+    days = int(request.args.get("days", 30))
+    
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    
+    # Fetch movements
+    movements = db.get("stock_movements", {"business_id": biz_id}) if biz_id else []
+    
+    # Filter
+    if stock_id:
+        movements = [m for m in movements if m.get("stock_id") == stock_id]
+    if move_type:
+        movements = [m for m in movements if m.get("type") == move_type]
+    movements = [m for m in movements if (m.get("date") or m.get("created_at", ""))[:10] >= cutoff]
+    
+    # Sort newest first
+    movements.sort(key=lambda m: m.get("date") or m.get("created_at", ""), reverse=True)
+    
+    # Get all stock items for lookup
+    all_stock = db.get_stock(biz_id) if biz_id else []
+    stock_lookup = {s.get("id"): s for s in all_stock}
+    
+    # Build table rows
+    rows_html = ""
+    for m in movements[:500]:  # Limit to 500
+        stock = stock_lookup.get(m.get("stock_id"), {})
+        stock_desc = stock.get("description") or stock.get("code") or m.get("stock_id", "-")[:8]
+        stock_code = stock.get("code", "")
+        m_type = m.get("type", "")
+        qty = float(m.get("quantity", 0))
+        m_date = (m.get("date") or m.get("created_at", ""))[:16].replace("T", " ")
+        ref = safe_string(m.get("reference", ""))
+        
+        type_badge = f'<span style="background:#10b981;color:white;padding:2px 8px;border-radius:4px;font-size:12px;">IN +{qty}</span>' if m_type == "in" else f'<span style="background:#ef4444;color:white;padding:2px 8px;border-radius:4px;font-size:12px;">OUT -{qty}</span>'
+        
+        rows_html += f'''
+        <tr>
+            <td style="white-space:nowrap;">{m_date}</td>
+            <td><span style="color:var(--text-muted);font-size:11px;">{safe_string(stock_code)}</span> {safe_string(stock_desc)}</td>
+            <td style="text-align:center;">{type_badge}</td>
+            <td>{ref}</td>
+        </tr>
+        '''
+    
+    if not rows_html:
+        rows_html = '<tr><td colspan="4" style="text-align:center;padding:40px;color:var(--text-muted);">No stock movements found for this period</td></tr>'
+    
+    # Stock filter dropdown
+    stock_options = '<option value="">All Items</option>'
+    for s in sorted(all_stock, key=lambda x: x.get("description", "")):
+        selected = "selected" if s.get("id") == stock_id else ""
+        stock_options += f'<option value="{s.get("id")}" {selected}>{safe_string(s.get("code", ""))} - {safe_string(s.get("description", ""))}</option>'
+    
+    # Summary counts
+    total_in = sum(float(m.get("quantity", 0)) for m in movements if m.get("type") == "in")
+    total_out = sum(float(m.get("quantity", 0)) for m in movements if m.get("type") == "out")
+    
+    content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+        <div>
+            <h2 style="margin:0;">📦 Stock Movements</h2>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">Full audit trail of stock in/out</p>
+        </div>
+        <a href="/stock" class="btn btn-secondary">← Back to Stock</a>
+    </div>
+    
+    <!-- Summary Cards -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin-bottom:20px;">
+        <div class="card" style="text-align:center;">
+            <div style="font-size:24px;font-weight:bold;color:#10b981;">+{total_in:.0f}</div>
+            <div style="color:var(--text-muted);font-size:13px;">Total IN</div>
+        </div>
+        <div class="card" style="text-align:center;">
+            <div style="font-size:24px;font-weight:bold;color:#ef4444;">-{total_out:.0f}</div>
+            <div style="color:var(--text-muted);font-size:13px;">Total OUT</div>
+        </div>
+        <div class="card" style="text-align:center;">
+            <div style="font-size:24px;font-weight:bold;">{len(movements)}</div>
+            <div style="color:var(--text-muted);font-size:13px;">Movements</div>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="card" style="margin-bottom:20px;">
+        <form method="GET" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;">
+            <div style="flex:1;min-width:200px;">
+                <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Stock Item</label>
+                <select name="stock_id" class="form-input" onchange="this.form.submit()">{stock_options}</select>
+            </div>
+            <div>
+                <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Type</label>
+                <select name="type" class="form-input" onchange="this.form.submit()">
+                    <option value="">All</option>
+                    <option value="in" {"selected" if move_type == "in" else ""}>IN only</option>
+                    <option value="out" {"selected" if move_type == "out" else ""}>OUT only</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Period</label>
+                <select name="days" class="form-input" onchange="this.form.submit()">
+                    <option value="7" {"selected" if days == 7 else ""}>Last 7 days</option>
+                    <option value="30" {"selected" if days == 30 else ""}>Last 30 days</option>
+                    <option value="90" {"selected" if days == 90 else ""}>Last 90 days</option>
+                    <option value="365" {"selected" if days == 365 else ""}>Last year</option>
+                </select>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Movements Table -->
+    <div class="card" style="overflow-x:auto;">
+        <table style="width:100%;">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Item</th>
+                    <th style="text-align:center;">Movement</th>
+                    <th>Reference</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+    </div>
+    '''
+    
+    return render_page("Stock Movements", content, user, "stock")
+
 
 @app.route("/stock/new", methods=["GET", "POST"])
 @login_required
@@ -24535,6 +24677,13 @@ def delivery_note_new():
                             # Allow negative stock - use update with biz_id
                             db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
                             logger.info(f"[DELIVERY] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
+                            # Log stock movement
+                            try:
+                                db.save("stock_movements", RecordFactory.stock_movement(
+                                    business_id=biz_id, stock_id=stock_id, movement_type="out",
+                                    quantity=sold_qty, reference=f"Delivery Note {dn.get('dn_number', '')}" if dn else "Delivery Note"
+                                ))
+                            except: pass
             
             return redirect(f"/delivery-note/{dn_id}")
         
@@ -31705,7 +31854,7 @@ def purchase_view(po_id):
         '''
     elif status == "received":
         action_buttons = f'''
-        <button class="btn btn-primary" onclick="createSupplierInvoice()">Create Supplier Invoice</button>
+        <button class="btn btn-primary" onclick="createSupplierInvoice()">📄 Create Supplier Invoice</button>
         '''
     
     # Build receive modal with items
@@ -31987,15 +32136,18 @@ def api_po_status(po_id):
         data = request.get_json()
         new_status = data.get("status", "")
         
-        po = db.get_one("purchase_orders", po_id)
-        if not po:
-            return jsonify({"success": False, "error": "PO not found"})
+        if not new_status:
+            return jsonify({"success": False, "error": "No status provided"})
         
-        po["status"] = new_status
-        po["updated_at"] = now()
-        db.save("purchase_orders", po)
+        success = db.update("purchase_orders", po_id, {
+            "status": new_status,
+            "updated_at": now()
+        })
         
-        return jsonify({"success": True})
+        if success:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"success": False, "error": "Failed to update status"})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
@@ -32184,6 +32336,13 @@ def api_po_receive(po_id):
                         new_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0) + qty_received
                         db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
                         logger.info(f"[PO] Updated stock {stock_item.get('code')}: +{qty_received} = {new_qty}")
+                        # Log stock movement
+                        try:
+                            db.save("stock_movements", RecordFactory.stock_movement(
+                                business_id=biz_id, stock_id=stock_id, movement_type="in",
+                                quantity=qty_received, reference=f"PO Receive {po.get('po_number', '')}"
+                            ))
+                        except: pass
         
         # Check if all items fully received
         for item in items:
@@ -32191,17 +32350,19 @@ def api_po_receive(po_id):
                 all_received = False
                 break
         
-        # Update PO
-        po["items"] = json.dumps(items)
-        po["status"] = "received" if all_received else "partial"
-        po["updated_at"] = now()
+        # Update PO - use db.update to only send changed fields
+        update_data = {
+            "items": json.dumps(items),
+            "status": "received" if all_received else "partial",
+            "updated_at": now()
+        }
         
         if all_received:
-            po["received_date"] = today()
+            update_data["received_date"] = today()
         
-        db.save("purchase_orders", po)
+        db.update("purchase_orders", po_id, update_data)
         
-        status_msg = "All items received!" if all_received else f"{items_received} items received (partial delivery)"
+        status_msg = "All items received! Stock updated." if all_received else f"{items_received} items received (partial delivery)"
         
         return jsonify({"success": True, "message": status_msg, "all_received": all_received})
         
@@ -37602,6 +37763,14 @@ def api_pos_sale():
                         logger.info(f"[POS DEBUG] Stock update result: {success}")
                         if not success:
                             logger.error(f"[POS] Failed to update stock {stock_id} - qty was {current_qty}, tried to set {new_qty}")
+                        else:
+                            # Log stock movement
+                            try:
+                                db.save("stock_movements", RecordFactory.stock_movement(
+                                    business_id=biz_id, stock_id=stock_id, movement_type="out",
+                                    quantity=qty_sold, reference=f"POS Sale {inv_number}" if inv_number else "POS Sale"
+                                ))
+                            except: pass
                     else:
                         logger.warning(f"[POS DEBUG] Skipping stock update - qty_sold is 0")
                     
@@ -38049,6 +38218,13 @@ def api_pos_invoice():
                     new_qty = current_qty - qty_sold
                     db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
                     logger.info(f"[POS INV] Stock {stock_id}: {current_qty} - {qty_sold} = {new_qty}")
+                    # Log stock movement
+                    try:
+                        db.save("stock_movements", RecordFactory.stock_movement(
+                            business_id=biz_id, stock_id=stock_id, movement_type="out",
+                            quantity=qty_sold, reference=f"Invoice {inv_num}"
+                        ))
+                    except: pass
         
         # Update customer balance
         customer = db.get_one("customers", customer_id)
@@ -38207,6 +38383,13 @@ def api_pos_credit_note():
                     new_qty = current_qty + qty_returned
                     db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
                     logger.info(f"[POS CN] Stock {stock_id}: {current_qty} + {qty_returned} = {new_qty}")
+                    # Log stock movement
+                    try:
+                        db.save("stock_movements", RecordFactory.stock_movement(
+                            business_id=biz_id, stock_id=stock_id, movement_type="in",
+                            quantity=qty_returned, reference=f"Credit Note {cn_num}"
+                        ))
+                    except: pass
         
         # Update customer balance (reduce it)
         customer = db.get_one("customers", customer_id)
@@ -38294,7 +38477,8 @@ def api_pos_purchase_order():
                 "stock_id": item.get("stock_id"),
                 "code": item.get("code", ""),
                 "description": item.get("description", ""),
-                "qty": item.get("qty") or item.get("quantity", 1)
+                "qty": item.get("qty") or item.get("quantity", 1),
+                "qty_received": 0
             })
         
         # Create purchase order - NO PRICES
