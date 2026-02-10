@@ -20747,12 +20747,14 @@ def invoice_view(invoice_id):
         # Handle both qty and quantity field names
         qty = item.get("qty") or item.get("quantity") or 1
         desc = item.get("description") or item.get("desc") or "-"
+        price = item.get("price") or item.get("unit_price") or 0
+        total = item.get("total") or item.get("line_total") or 0
         items_html += f'''
-        <tr>
-            <td style="font-size:16px;">{safe_string(desc)}</td>
-            <td style="text-align:center;font-size:16px;">{qty}</td>
-            <td style="text-align:right;font-size:16px;">{money(item.get("price", 0))}</td>
-            <td style="text-align:right;font-size:16px;">{money(item.get("total", 0))}</td>
+        <tr style="border-bottom:1px solid #f1f5f9;">
+            <td style="padding:10px;">{safe_string(desc)}</td>
+            <td style="text-align:center;padding:10px;">{qty}</td>
+            <td style="text-align:right;padding:10px;">{money(price)}</td>
+            <td style="text-align:right;padding:10px;font-weight:500;">{money(total)}</td>
         </tr>
         '''
     
@@ -20841,77 +20843,91 @@ def invoice_view(invoice_id):
         </div>
     </div>
     
-    <div class="card" id="invoicePrint" style="background:white;color:#333;padding:40px;">
-        <!-- HEADER: Business Details -->
-        <div style="display:flex;justify-content:space-between;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #333;">
+    <div class="card" id="invoicePrint" style="background:white;color:#333;padding:0;overflow:hidden;">
+        <!-- TOP BAR -->
+        <div style="background:#1a1a2e;color:white;padding:25px 40px;display:flex;justify-content:space-between;align-items:center;">
             <div>
-                <h1 style="color:#333;margin:0;font-size:32px;font-weight:bold;">{biz_name}</h1>
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">{biz_address}</p>' if biz_address else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {biz_phone}</p>' if biz_phone else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Email: {biz_email}</p>' if biz_email else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;"><strong>VAT No:</strong> {biz_vat}</p>' if biz_vat else ''}
+                <h1 style="margin:0;font-size:28px;font-weight:700;letter-spacing:0.5px;">{biz_name}</h1>
+                {f'<p style="margin:4px 0 0 0;font-size:13px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
             </div>
             <div style="text-align:right;">
-                <h2 style="color:#10b981;margin:0;font-size:36px;font-weight:bold;">TAX INVOICE</h2>
-                <p style="color:#333;margin:10px 0;font-size:18px;font-weight:bold;">{invoice.get("invoice_number", "-")}</p>
+                <h2 style="margin:0;font-size:32px;font-weight:700;letter-spacing:2px;">TAX INVOICE</h2>
                 {status_badge}
             </div>
         </div>
         
-        <!-- BILL TO and DATE -->
-        <div style="display:flex;justify-content:space-between;margin-bottom:30px;">
-            <div style="background:#f8f9fa;padding:20px;border-radius:8px;min-width:300px;">
-                <h4 style="color:#666;margin:0 0 10px 0;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Bill To</h4>
-                <p style="color:#333;margin:0;font-weight:bold;font-size:18px;">{cust_name}</p>
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">{cust_address}</p>' if cust_address else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Tel: {cust_tel}</p>' if cust_tel else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;">Email: {cust_email}</p>' if cust_email else ''}
-                {f'<p style="color:#555;margin:5px 0;font-size:14px;"><strong>VAT No:</strong> {cust_vat}</p>' if cust_vat else ''}
+        <!-- DETAILS GRID -->
+        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+            <!-- LEFT: Document details -->
+            <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
+                <table style="width:100%;font-size:14px;color:#333;">
+                    <tr><td style="padding:4px 0;color:#888;width:120px;">Number:</td><td style="padding:4px 0;font-weight:600;">{invoice.get("invoice_number", "-")}</td></tr>
+                    <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{invoice.get("date", "-")}</td></tr>
+                    <tr><td style="padding:4px 0;color:#888;">Due Date:</td><td style="padding:4px 0;">{invoice.get("due_date", "-")}</td></tr>
+                    {f'<tr><td style="padding:4px 0;color:#888;">Sales Rep:</td><td style="padding:4px 0;">{safe_string(invoice.get("sales_rep", ""))}</td></tr>' if invoice.get("sales_rep") else ''}
+                    {f'<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
+                </table>
+                {f'<div style="margin-top:8px;font-size:13px;color:#666;"><span>Tel: {biz_phone}</span></div>' if biz_phone else ''}
+                {f'<div style="font-size:13px;color:#666;">{biz_email}</div>' if biz_email else ''}
             </div>
-            <div style="text-align:right;">
-                <p style="margin:5px 0;color:#333;font-size:16px;"><strong>Date:</strong> {invoice.get("date", "-")}</p>
-                <p style="margin:5px 0;color:#333;font-size:16px;"><strong>Due:</strong> {invoice.get("due_date", "-")}</p>
+            <!-- RIGHT: Customer details -->
+            <div style="padding-left:25px;">
+                <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;">Bill To</div>
+                <div style="font-size:16px;font-weight:700;color:#1a1a2e;margin-bottom:4px;">{cust_name}</div>
+                {f'<div style="font-size:13px;color:#555;margin-bottom:2px;">{cust_address}</div>' if cust_address else ''}
+                {f'<div style="font-size:13px;color:#555;">Tel: {cust_tel}</div>' if cust_tel else ''}
+                {f'<div style="font-size:13px;color:#555;">{cust_email}</div>' if cust_email else ''}
+                {f'<div style="font-size:13px;color:#555;margin-top:4px;">VAT No: {cust_vat}</div>' if cust_vat else ''}
             </div>
         </div>
         
         <!-- ITEMS TABLE -->
-        <p style="color:#666;font-size:12px;margin-bottom:5px;">{items_count} line item(s)</p>
-        <table style="width:100%;border-collapse:collapse;margin-bottom:30px;font-size:16px;">
-            <thead>
-                <tr style="background:#10b981;color:white;">
-                    <th style="padding:15px;text-align:left;font-size:16px;">Description</th>
-                    <th style="padding:15px;text-align:center;font-size:16px;width:80px;">Qty</th>
-                    <th style="padding:15px;text-align:right;font-size:16px;width:120px;">Price</th>
-                    <th style="padding:15px;text-align:right;font-size:16px;width:120px;">Total</th>
-                </tr>
-            </thead>
-            <tbody style="color:#333;">
-                {items_html}
-            </tbody>
-        </table>
-        
-        <!-- TOTALS - using table for reliable printing -->
-        <div id="invoiceTotals" style="text-align:right;margin-top:20px;">
-            <table style="margin-left:auto;width:300px;border-collapse:collapse;background:#f8f9fa;">
-                <tr style="border-bottom:1px solid #ddd;">
-                    <td style="padding:12px;text-align:left;color:#666;font-size:16px;">Subtotal</td>
-                    <td style="padding:12px;text-align:right;color:#333;font-size:16px;">{money(invoice.get("subtotal", 0))}</td>
-                </tr>
-                <tr style="border-bottom:1px solid #ddd;">
-                    <td style="padding:12px;text-align:left;color:#666;font-size:16px;">VAT (15%)</td>
-                    <td style="padding:12px;text-align:right;color:#333;font-size:16px;">{money(invoice.get("vat", 0))}</td>
-                </tr>
-                <tr style="border-top:2px solid #333;">
-                    <td style="padding:15px;text-align:left;font-size:20px;font-weight:bold;color:#000;">TOTAL</td>
-                    <td style="padding:15px;text-align:right;font-size:20px;font-weight:bold;color:#000;">{money(invoice.get("total", 0))}</td>
-                </tr>
+        <div style="padding:0 40px;">
+            <table style="width:100%;border-collapse:collapse;font-size:14px;">
+                <thead>
+                    <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
+                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;">Description</th>
+                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:12px;text-transform:uppercase;width:70px;">Qty</th>
+                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:12px;text-transform:uppercase;width:110px;">Unit Price</th>
+                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:12px;text-transform:uppercase;width:110px;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody style="color:#333;">
+                    {items_html}
+                </tbody>
             </table>
         </div>
         
-        <!-- FOOTER -->
-        <div style="margin-top:40px;padding-top:20px;border-top:1px solid #ddd;text-align:center;color:#666;font-size:14px;">
-            <p style="margin:0;">Thank you for your business! | Generated by Click AI</p>
-            {f'<p style="margin:5px 0;">Banking: {business.get("bank_name", "")} | Acc: {business.get("bank_account", "")} | Branch: {business.get("bank_branch", "")}</p>' if business and business.get("bank_account") else ''}
+        <!-- TOTALS + BANKING -->
+        <div style="padding:20px 40px 30px;display:flex;justify-content:space-between;align-items:flex-end;">
+            <!-- Banking Details -->
+            <div style="font-size:12px;color:#666;max-width:55%;">
+                {f"""<div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;">
+                    <div style="font-weight:600;color:#333;margin-bottom:6px;font-size:13px;">Banking Details</div>
+                    <div>Bank: {business.get("bank_name", "")}</div>
+                    <div>Account: {business.get("bank_account", "")}</div>
+                    <div>Branch: {business.get("bank_branch", "")}</div>
+                </div>""" if business and business.get("bank_account") else ''}
+                <div style="margin-top:12px;font-size:11px;color:#999;">
+                    <p style="margin:2px 0;">Thank you for your business!</p>
+                    <p style="margin:2px 0;">Generated by Click AI</p>
+                </div>
+            </div>
+            <!-- Totals -->
+            <table style="width:250px;border-collapse:collapse;">
+                <tr style="border-bottom:1px solid #e5e7eb;">
+                    <td style="padding:8px 12px;color:#666;font-size:14px;">Subtotal</td>
+                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;">{money(invoice.get("subtotal", 0))}</td>
+                </tr>
+                <tr style="border-bottom:1px solid #e5e7eb;">
+                    <td style="padding:8px 12px;color:#666;font-size:14px;">VAT (15%)</td>
+                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;">{money(invoice.get("vat", 0))}</td>
+                </tr>
+                <tr style="background:#1a1a2e;">
+                    <td style="padding:12px;color:white;font-size:16px;font-weight:700;">TOTAL</td>
+                    <td style="padding:12px;text-align:right;color:white;font-size:18px;font-weight:700;">{money(invoice.get("total", 0))}</td>
+                </tr>
+            </table>
         </div>
     </div>
     
