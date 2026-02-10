@@ -32139,15 +32139,23 @@ def api_po_status(po_id):
         if not new_status:
             return jsonify({"success": False, "error": "No status provided"})
         
-        success = db.update("purchase_orders", po_id, {
-            "status": new_status,
-            "updated_at": now()
-        })
+        po = db.get_one("purchase_orders", po_id)
+        if not po:
+            return jsonify({"success": False, "error": "PO not found"})
+        
+        # Remove fields that don't exist in DB table
+        for field in ["supplier_email"]:
+            po.pop(field, None)
+        
+        po["status"] = new_status
+        po["updated_at"] = now()
+        
+        success, err = db.save("purchase_orders", po)
         
         if success:
             return jsonify({"success": True})
         else:
-            return jsonify({"success": False, "error": "Failed to update status"})
+            return jsonify({"success": False, "error": str(err)})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
@@ -32350,17 +32358,18 @@ def api_po_receive(po_id):
                 all_received = False
                 break
         
-        # Update PO - use db.update to only send changed fields
-        update_data = {
-            "items": json.dumps(items),
-            "status": "received" if all_received else "partial",
-            "updated_at": now()
-        }
+        # Update PO - clean record and save
+        for field in ["supplier_email"]:
+            po.pop(field, None)
+        
+        po["items"] = json.dumps(items)
+        po["status"] = "received" if all_received else "partial"
+        po["updated_at"] = now()
         
         if all_received:
-            update_data["received_date"] = today()
+            po["received_date"] = today()
         
-        db.update("purchase_orders", po_id, update_data)
+        db.save("purchase_orders", po)
         
         status_msg = "All items received! Stock updated." if all_received else f"{items_received} items received (partial delivery)"
         
