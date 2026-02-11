@@ -6582,7 +6582,9 @@ For actions:
 }}}}
 
 Valid actions: QUERY, CREATE_INVOICE, CREATE_QUOTE, CREATE_CUSTOMER, CREATE_SUPPLIER, 
-NAVIGATE, SEND_STATEMENT, SEND_INVOICE, RECORD_PAYMENT, ADD_EXPENSE
+NAVIGATE, SEND_STATEMENT, SEND_INVOICE, RECORD_PAYMENT, ADD_EXPENSE, 
+GENERATE_CODES, ADD_STOCK_ITEM, BOOK_STOCK_IN, CREATE_PO, RECORD_SUPPLIER_INVOICE,
+CREATE_JOB, RUN_PAYROLL, POS_SALE, CONVERT_QUOTE, DELETE_CUSTOMER, DELETE_SUPPLIER, DELETE_STOCK
 
 ## CRITICAL RULES
 - NEVER guess data. ALWAYS use tools for prices, quantities, balances, names
@@ -8397,6 +8399,11 @@ You are NOT just a bookkeeper - you are a FINANCIAL ANALYST who provides ACTIONA
     Required: employee_name, hours
     Optional: job_number, date, description
 
+23. **GENERATE_CODES** - "Generate stock codes" / "Make smart codes" / "Create stock codes" / "Regenerate codes"
+    No data required - generates smart unique codes for ALL stock items from their descriptions
+    Examples: BOLT M10X110 HT → BLT-10X110-HT, SAFETY BOOT CHELSEA BROWN 9 → SFT-BT-CHEL-BRN-9
+    This is a REAL action that updates the database immediately.
+
 ## Warning: DANGEROUS DELETE ACTIONS - REQUIRE CONFIRMATION!
 When user wants to delete, FIRST send without confirmed. System will warn them.
 When user confirms with "ja delete X" or "yes delete X", send with confirmed: true
@@ -9175,6 +9182,43 @@ Fokus op verkope en invorderings vir die res van die maand."
                 if result["success"]:
                     actions_taken.append(result["message"])
                     result_data = result.get("data", {})
+            
+            elif action in ("GENERATE_CODES", "STOCK_CODES", "SMART_CODES"):
+                # Generate smart stock codes for all items
+                biz_id = context.get("business_id")
+                all_stock = db.get_all_stock(biz_id) if biz_id else []
+                if not all_stock:
+                    actions_taken.append("No stock items found to generate codes for.")
+                else:
+                    existing_codes = set()
+                    for s in all_stock:
+                        c = str(s.get("code", "")).upper().strip()
+                        if c:
+                            existing_codes.add(c)
+                    
+                    updates = []
+                    for item in all_stock:
+                        desc = item.get("description", "").strip()
+                        if not desc:
+                            continue
+                        new_code = smart_stock_code(desc, existing_codes)
+                        old_code = str(item.get("code", "")).strip()
+                        if new_code and new_code.upper() != old_code.upper():
+                            updates.append({"id": item["id"], "data": {"code": new_code}})
+                            existing_codes.add(new_code.upper())
+                    
+                    if updates:
+                        s1, f1 = db.update_many("stock_items", updates, biz_id)
+                        s2, f2 = db.update_many("stock", updates, biz_id)
+                        updated = s1 + s2
+                        actions_taken.append(f"✅ Generated smart codes for {updated} of {len(all_stock)} stock items")
+                    else:
+                        actions_taken.append(f"All {len(all_stock)} items already have good codes")
+            
+            elif action in ("APPLY_MARKUP", "SET_MARKUP", "STOCK_MARKUP"):
+                # Apply markup pricing - pass to zane-edit endpoint logic
+                actions_taken.append("Use the ⚡ Stock Manager button on the Stock page to apply markup pricing. You can set rules like 'under R50 = 80% markup, rest 50%'.")
+                result_data = {"navigate": "/stock"}
             
             # Build response with optional navigation data
             # Add warnings to response text if any
@@ -19265,6 +19309,7 @@ def stock_page():
                 </select>
                 <a href="/fulltech" class="btn" style="background:#8b5cf6;">🔩 Bolt Pricer</a>
                 <a href="/stock/movements" class="btn btn-secondary">📋 Movements</a>
+                <button onclick="showStockManager()" class="btn" style="background:#f59e0b;">⚡ Stock Manager</button>
                 <a href="/stock/new" class="btn btn-primary">+ Add Stock</a>
             </div>
         </div>
@@ -19405,7 +19450,116 @@ def stock_page():
     
     // Init
     loadStock();
+    
+    // ═══════════════════════════════════════════
+    // STOCK MANAGER - Generate codes, markup, etc
+    // ═══════════════════════════════════════════
+    function showStockManager() {
+        document.getElementById('stockManagerModal').style.display = 'flex';
+    }
+    
+    function hideStockManager() {
+        document.getElementById('stockManagerModal').style.display = 'none';
+    }
+    
+    async function runStockCommand(command) {
+        const btn = event.target;
+        const origText = btn.textContent;
+        btn.textContent = '⏳ Working...';
+        btn.disabled = true;
+        
+        const resultDiv = document.getElementById('stockManagerResult');
+        resultDiv.innerHTML = '<div style="color:var(--text-muted);">Processing...</div>';
+        
+        let offset = 0;
+        let totalUpdated = 0;
+        let totalProcessed = 0;
+        let totalItems = 0;
+        
+        // Process in batches
+        while (true) {
+            try {
+                const response = await fetch('/api/stock/zane-edit', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: command, offset: offset, limit: 100})
+                });
+                const data = await response.json();
+                
+                if (!data.success) {
+                    resultDiv.innerHTML = '<div style="color:var(--red);">❌ ' + (data.error || 'Failed') + '</div>';
+                    break;
+                }
+                
+                totalUpdated += data.updated || 0;
+                totalProcessed += data.processed || 0;
+                totalItems = data.total || totalItems;
+                
+                resultDiv.innerHTML = '<div style="color:#22c55e;">✅ Updated ' + totalUpdated + ' of ' + totalItems + ' items (' + totalProcessed + ' processed)</div>';
+                
+                if (!data.hasMore) break;
+                offset += 100;
+            } catch (e) {
+                resultDiv.innerHTML = '<div style="color:var(--red);">❌ Error: ' + e.message + '</div>';
+                break;
+            }
+        }
+        
+        btn.textContent = origText;
+        btn.disabled = false;
+        
+        // Refresh stock list
+        if (totalUpdated > 0) {
+            sessionStorage.removeItem(CACHE_KEY);
+            loadStock();
+        }
+    }
+    
+    function runCustomCommand() {
+        const input = document.getElementById('customStockCommand');
+        if (input.value.trim()) {
+            runStockCommand(input.value.trim());
+        }
+    }
     </script>
+    
+    <!-- Stock Manager Modal -->
+    <div id="stockManagerModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
+        <div style="background:var(--card);border-radius:12px;padding:30px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h3 style="margin:0;">⚡ Stock Manager</h3>
+                <button onclick="hideStockManager()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">✕</button>
+            </div>
+            
+            <div style="display:flex;flex-direction:column;gap:12px;">
+                <button onclick="runStockCommand('generate smart codes')" class="btn" style="background:#8b5cf6;text-align:left;padding:12px 16px;">
+                    🏷️ Generate Smart Stock Codes
+                    <div style="font-size:11px;opacity:0.8;margin-top:2px;">Creates unique codes from descriptions (BLT-10X110-HT, SFT-BT-CHEL-9, etc)</div>
+                </button>
+                
+                <button onclick="runStockCommand('50% markup')" class="btn" style="background:#10b981;text-align:left;padding:12px 16px;">
+                    💰 Apply 50% Markup
+                    <div style="font-size:11px;opacity:0.8;margin-top:2px;">Set selling price = cost × 1.5 for all items</div>
+                </button>
+                
+                <button onclick="runStockCommand('assign categories')" class="btn" style="background:#3b82f6;text-align:left;padding:12px 16px;">
+                    📂 Auto-Assign Categories
+                    <div style="font-size:11px;opacity:0.8;margin-top:2px;">Bolts → Fasteners, Boots → PPE, Pipes → Pipes & Tubes, etc</div>
+                </button>
+                
+                <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Custom Command</label>
+                    <div style="display:flex;gap:8px;">
+                        <input type="text" id="customStockCommand" placeholder="e.g. 'under R50 = 80% markup, rest 50%'" 
+                            class="form-input" style="flex:1;" onkeydown="if(event.key==='Enter')runCustomCommand()">
+                        <button onclick="runCustomCommand()" class="btn btn-primary">Run</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="stockManagerResult" style="margin-top:15px;padding:10px;background:var(--bg);border-radius:6px;min-height:30px;"></div>
+        </div>
+    </div>
     '''
     
     return render_page("Stock", content, user, "stock")
@@ -20320,71 +20474,29 @@ def api_stock_zane_edit():
     updated = 0
     
     # 
-    # SMART CODES - Generate codes like BLT-16-50 from "HEX BOLT 16 X 50"
+    # SMART CODES - Generate codes like BLT-10X110-HT from "BOLT M10X110 HT"
     # 
     if "code" in command and ("smart" in command or "generate" in command or "create" in command or "make" in command):
         
-        import re
-        
-        # Product type mappings
-        product_types = {
-            "BOLT": "BLT", "BOLTS": "BLT", "NUT": "NT", "NUTS": "NT",
-            "WASHER": "WS", "WASHERS": "WS", "SCREW": "SCR", "SCREWS": "SCR",
-            "SET": "SET", "CAP": "CAP", "STUD": "STD", "RIVET": "RVT",
-            "BEARING": "BRG", "CIRCLIP": "CLP", "SEAL": "SL", "ORING": "OR",
-            "BOOT": "BT", "BOOTS": "BT", "GUMBOOT": "BT", "JACKET": "JK", 
-            "OVERALL": "OVL", "CONTI": "CNT", "GLOVE": "GL", "GLOVES": "GL", 
-            "SHIRT": "SHT", "JEAN": "JN", "TROUSER": "TR", "GOGGLE": "GGL",
-            "ELBOW": "EL", "TEE": "TE", "VALVE": "VL", "FLANGE": "FL",
-            "BAR": "BAR", "PIPE": "PP", "TUBE": "TB", "ANGLE": "AN",
-            "CLAMP": "CL", "HOSE": "HS", "CABLE": "CB", "CHAIN": "CH",
-            "SHEET": "SH", "PLATE": "PL", "SANDPAPER": "SND", "DISC": "DSC",
-        }
+        # Collect all existing codes for uniqueness
+        existing_codes = set()
+        for item in all_stock:
+            c = str(item.get("code", "")).upper().strip()
+            if c:
+                existing_codes.add(c)
         
         updates = []
         for item in stock_batch:
-            desc = item.get("description", "").upper()
+            desc = item.get("description", "").strip()
             if not desc:
                 continue
             
-            # Find product type
-            product_code = ""
-            for prod, code in product_types.items():
-                if prod in desc:
-                    product_code = code
-                    break
-            
-            # Find all numbers/sizes
-            sizes = re.findall(r'M?(\d+(?:\.\d+)?(?:/\d+)?)', desc)
-            
-            # Find modifiers
-            modifiers = []
-            if "S/S" in desc or " SS " in desc or desc.startswith("SS "):
-                modifiers.append("SS")
-            if " HT" in desc or desc.endswith("HT"):
-                modifiers.append("HT")
-            if "Z/P" in desc:
-                modifiers.append("ZP")
-            
-            # Build code
-            if product_code:
-                parts = [product_code]
-                for s in sizes[:2]:
-                    parts.append(s.replace("/", "-"))
-                parts.extend(modifiers)
-                new_code = "-".join(parts)
-            else:
-                words = desc.split()
-                sig_word = next((w for w in words if len(w) > 2 and w.isalpha()), "")
-                new_code = sig_word[:3] if sig_word else "ITM"
-                if sizes:
-                    new_code += "-" + "-".join(sizes[:2])
-            
-            new_code = new_code.strip("-").upper()[:15]
+            new_code = smart_stock_code(desc, existing_codes)
             old_code = item.get("code", "")
             
             if new_code and new_code != old_code:
                 updates.append({"id": item["id"], "data": {"code": new_code}})
+                existing_codes.add(new_code.upper())
         
         # Batch update
         if updates:
