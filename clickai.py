@@ -11159,10 +11159,16 @@ class Actions:
         if "duplicate" in criteria_lower:
             seen_keys = {}
             
-            # For stock, use 'code' as the unique key. For others, use 'name'
+            # For stock, use DESCRIPTION as the unique key (not code - codes can differ for same item)
+            # For others, use 'name'
             def get_dedup_key(r):
                 if table in ["stock", "stock_items"]:
-                    return (r.get("code") or r.get("description") or "").lower().strip()
+                    # Primary: description (the real identifier)
+                    # Fallback: code
+                    desc = (r.get("description") or "").lower().strip()
+                    if desc:
+                        return desc
+                    return (r.get("code") or "").lower().strip()
                 return (r.get("name") or "").lower().strip()
             
             # Sort by created_at (oldest first) - keep oldest, delete rest
@@ -11172,10 +11178,32 @@ class Actions:
                 key = get_dedup_key(r)
                 if key:
                     if key in seen_keys:
-                        # Duplicate found - mark for deletion (keep the first/oldest one)
+                        # Duplicate found - merge qty into the keeper, then mark for deletion
+                        keeper = seen_keys[key]
+                        if table in ["stock", "stock_items"]:
+                            dup_qty = float(r.get("quantity") or r.get("qty") or 0)
+                            if dup_qty > 0:
+                                keeper_qty = float(keeper.get("quantity") or keeper.get("qty") or 0)
+                                merged_qty = keeper_qty + dup_qty
+                                keeper["quantity"] = merged_qty
+                                keeper["qty"] = merged_qty
+                                keeper["_qty_merged"] = True
                         to_delete.append(r)
                     else:
                         seen_keys[key] = r  # Keep this one (the oldest)
+            
+            # Update keepers that had qty merged
+            if table in ["stock", "stock_items"]:
+                for key, keeper in seen_keys.items():
+                    if keeper.get("_qty_merged"):
+                        try:
+                            db.update_stock(keeper["id"], {
+                                "qty": keeper["qty"], 
+                                "quantity": keeper["quantity"]
+                            }, biz_id)
+                            logger.info(f"[BULK DELETE] Merged qty into {keeper.get('code')}: now {keeper['qty']}")
+                        except:
+                            pass
             
             logger.info(f"[BULK DELETE] Found {len(to_delete)} duplicates to delete, keeping {len(seen_keys)} unique records")
             
@@ -11184,25 +11212,45 @@ class Actions:
                 # Get stock_items too
                 stock_items_records = db.get("stock_items", {"business_id": biz_id}) or []
                 
-                # Merge for dedup - items from stock_items first (newer/preferred)
+                # Merge for dedup using DESCRIPTION as key
                 all_stock = stock_items_records + records
-                seen_codes = {}
+                seen_descs = {}
                 extra_delete_stock = []
                 extra_delete_stock_items = []
                 
                 sorted_all = sorted(all_stock, key=lambda x: x.get("created_at", "") or "")
                 for s in sorted_all:
-                    code = (s.get("code") or "").lower().strip()
-                    if not code:
+                    desc = (s.get("description") or s.get("code") or "").lower().strip()
+                    if not desc:
                         continue
-                    if code in seen_codes:
-                        # This is a dup - figure out which table it's from
+                    if desc in seen_descs:
+                        # Merge qty into keeper
+                        keeper = seen_descs[desc]
+                        dup_qty = float(s.get("quantity") or s.get("qty") or 0)
+                        if dup_qty > 0:
+                            keeper_qty = float(keeper.get("quantity") or keeper.get("qty") or 0)
+                            keeper["quantity"] = keeper_qty + dup_qty
+                            keeper["qty"] = keeper_qty + dup_qty
+                            keeper["_cross_merged"] = True
+                        
+                        # Mark for deletion from correct table
                         if s in stock_items_records:
                             extra_delete_stock_items.append(s)
                         else:
                             extra_delete_stock.append(s)
                     else:
-                        seen_codes[code] = s
+                        seen_descs[desc] = s
+                
+                # Update keepers with merged qty
+                for desc, keeper in seen_descs.items():
+                    if keeper.get("_cross_merged"):
+                        try:
+                            db.update_stock(keeper["id"], {
+                                "qty": keeper["qty"],
+                                "quantity": keeper["quantity"]
+                            }, biz_id)
+                        except:
+                            pass
                 
                 # Delete cross-table dups
                 for s in extra_delete_stock:
