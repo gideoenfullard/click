@@ -46406,11 +46406,12 @@ def api_banking_import():
                 
                 if not pdf_text:
                     try:
-                        import fitz
-                        doc = fitz.open(tmp_path)
-                        for page in doc:
-                            pdf_text += page.get_text() + "\n"
-                        doc.close()
+                        import pdfplumber
+                        with pdfplumber.open(tmp_path) as pdf_doc:
+                            for page in pdf_doc.pages:
+                                page_text = page.extract_text()
+                                if page_text:
+                                    pdf_text += page_text + "\n"
                     except:
                         pass
                 
@@ -46419,19 +46420,34 @@ def api_banking_import():
                     logger.info("[BANK IMPORT] Scanned PDF detected - using AI to read")
                     
                     try:
-                        import fitz, base64
-                        doc = fitz.open(tmp_path)
+                        import base64
+                        from PIL import Image as PILImage
+                        import io as _io
                         all_transactions = []
                         
-                        for page_num in range(len(doc)):
-                            page = doc[page_num]
-                            pix = page.get_pixmap(dpi=200)
-                            img_bytes = pix.tobytes("png")
+                        # Convert PDF pages to images using pdf2image (poppler) or pdfplumber fallback
+                        page_images = []
+                        try:
+                            from pdf2image import convert_from_path
+                            pil_images = convert_from_path(tmp_path, dpi=200)
+                            for img in pil_images:
+                                buf = _io.BytesIO()
+                                img.save(buf, format='JPEG', quality=85)
+                                page_images.append(buf.getvalue())
+                        except ImportError:
+                            # Fallback: use pdfplumber to render pages
+                            import pdfplumber
+                            with pdfplumber.open(tmp_path) as pdf_doc:
+                                for page in pdf_doc.pages:
+                                    page_img = page.to_image(resolution=200)
+                                    buf = _io.BytesIO()
+                                    page_img.save(buf, format='JPEG', quality=85)
+                                    page_images.append(buf.getvalue())
+                        
+                        for page_num, img_bytes in enumerate(page_images):
                             
                             # Compress if needed
                             if len(img_bytes) > 3500000:
-                                from PIL import Image as PILImage
-                                import io as _io
                                 img = PILImage.open(_io.BytesIO(img_bytes))
                                 quality = 70
                                 max_dim = 1600
@@ -46447,16 +46463,13 @@ def api_banking_import():
                                     quality -= 10
                                     max_dim -= 200
                                 img_bytes = buf.getvalue()
-                                media_type = "image/jpeg"
-                            else:
-                                media_type = "image/png"
                             
+                            media_type = "image/jpeg"
                             b64_img = base64.b64encode(img_bytes).decode('utf-8')
                             
                             # Send to Claude API
                             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
                             if not api_key:
-                                doc.close()
                                 os.unlink(tmp_path)
                                 return jsonify({"success": False, "error": "AI API key not configured"})
                             
@@ -46520,7 +46533,7 @@ RULES:
                                 except json.JSONDecodeError as je:
                                     logger.error(f"[BANK IMPORT] JSON parse error page {page_num + 1}: {je}")
                         
-                        doc.close()
+                        
                         os.unlink(tmp_path)
                         
                         if not all_transactions:
@@ -57372,12 +57385,17 @@ def scan_inbox_page():
             const data = await response.json();
             
             if (data.success) {{
-                // Remove from inbox
-                await fetch('/api/scan/remove-from-inbox', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{id: currentItemId}})
-                }});
+                // Only remove from inbox if transactions were actually imported
+                const shouldRemoveFromInbox = !(data.imported !== undefined && data.imported === 0);
+                
+                if (shouldRemoveFromInbox) {{
+                    // Remove from inbox
+                    await fetch('/api/scan/remove-from-inbox', {{
+                        method: 'POST',
+                        headers: {{'Content-Type': 'application/json'}},
+                        body: JSON.stringify({{id: currentItemId}})
+                    }});
+                }}
                 
                 // Build detailed success message
                 let msg = ' Saved successfully!';
@@ -58853,6 +58871,14 @@ def api_scan_save_bank_statement():
                 errors.append(str(result)[:100])
         
         logger.info(f"[BANK IMPORT] Scanned: {imported} imported, {skipped} skipped from {bank_name}" + (f" Errors: {errors[:3]}" if errors else ""))
+        
+        if imported == 0 and errors:
+            return jsonify({
+                "success": False,
+                "error": f"Failed to import transactions. {len(errors)} database errors: {errors[0] if errors else 'Unknown'}",
+                "imported": 0,
+                "skipped": skipped
+            })
         
         if imported == 0 and skipped > 0:
             return jsonify({
