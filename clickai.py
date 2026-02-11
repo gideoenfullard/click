@@ -26955,6 +26955,69 @@ def grv_view(grv_id):
         
         {f'<div style="padding:0 40px 20px;"><div style="padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;"><strong>Notes:</strong> {safe_string(grv.get("notes", ""))}</div></div>' if grv.get("notes") else ""}
     </div>
+    
+    <!-- STOCK BOOKING REPORT -->
+    <div class="card no-print" style="margin-top:20px;">
+        <h3 style="margin:0 0 15px 0;">📦 Stock Booking Report — {grv.get("grv_number", "")}</h3>
+        <p style="color:var(--text-muted);margin:0 0 15px 0;font-size:13px;">Shows what happened to stock when this GRV was received</p>
+        <div style="overflow-x:auto;">
+        <table class="table" style="font-size:14px;">
+            <thead>
+                <tr style="background:var(--bg);">
+                    <th style="padding:10px;">GRV #</th>
+                    <th style="padding:10px;">Stock Code</th>
+                    <th style="padding:10px;">Description</th>
+                    <th style="padding:10px;text-align:center;">Qty Received</th>
+                    <th style="padding:10px;text-align:center;">Before</th>
+                    <th style="padding:10px;text-align:center;">After</th>
+                    <th style="padding:10px;">Status</th>
+                </tr>
+            </thead>
+            <tbody>'''
+    
+    stock_booked = 0
+    not_linked = 0
+    for item in items:
+        booked = item.get("booked_to_stock", False) or item.get("stock_id")
+        code = item.get("stock_code", "") or item.get("code", "")
+        name = item.get("stock_name", "") or item.get("description", "")
+        qty_recv = item.get("qty_received", 0)
+        before = item.get("stock_qty_before", "-")
+        after = item.get("stock_qty_after", "-")
+        
+        if booked and code:
+            stock_booked += 1
+            status_html = '<span style="color:#10b981;font-weight:600;">✅ Booked</span>'
+            before_str = str(before) if before != "-" else "-"
+            after_str = str(after) if after != "-" else "-"
+        else:
+            not_linked += 1
+            status_html = '<span style="color:#f59e0b;">⚠️ Not linked</span>'
+            before_str = "-"
+            after_str = "-"
+        
+        content += f'''
+                <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:10px;color:var(--text-muted);font-size:13px;">{grv.get("grv_number", "")}</td>
+                    <td style="padding:10px;font-weight:600;">{safe_string(code) or "-"}</td>
+                    <td style="padding:10px;">{safe_string(name)}</td>
+                    <td style="padding:10px;text-align:center;font-weight:700;color:#10b981;">{qty_recv}</td>
+                    <td style="padding:10px;text-align:center;color:var(--text-muted);">{before_str}</td>
+                    <td style="padding:10px;text-align:center;font-weight:600;">{after_str}</td>
+                    <td style="padding:10px;">{status_html}</td>
+                </tr>'''
+    
+    content += f'''
+            </tbody>
+        </table>
+        </div>
+        <div style="display:flex;gap:15px;margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
+            <div style="background:rgba(16,185,129,0.1);padding:10px 20px;border-radius:8px;">
+                <span style="font-weight:700;color:#10b981;">{stock_booked}</span> <span style="color:var(--text-muted);font-size:13px;">items booked to stock</span>
+            </div>
+            {f'<div style="background:rgba(245,158,11,0.1);padding:10px 20px;border-radius:8px;"><span style="font-weight:700;color:#f59e0b;">{not_linked}</span> <span style="color:var(--text-muted);font-size:13px;">items not linked to stock</span></div>' if not_linked > 0 else ''}
+        </div>
+    </div>
     '''
     
     return render_page(f"GRV {grv.get('grv_number', '')}", content, user, "purchases")
@@ -32902,13 +32965,12 @@ def api_po_receive(po_id):
                         new_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0) + qty_received
                         db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
                         logger.info(f"[PO] Updated stock {stock_item.get('code')}: +{qty_received} = {new_qty}")
-                        # Log stock movement
-                        try:
-                            db.save("stock_movements", RecordFactory.stock_movement(
-                                business_id=biz_id, stock_id=stock_id, movement_type="in",
-                                quantity=qty_received, reference=f"PO Receive {po.get('po_number', '')}"
-                            ))
-                        except: pass
+                        
+                        # Store stock info in item for GRV tracking
+                        items[idx]["stock_code"] = stock_item.get("code", "")
+                        items[idx]["stock_name"] = stock_item.get("name", stock_item.get("description", ""))
+                        items[idx]["stock_qty_before"] = round(new_qty - qty_received, 2)
+                        items[idx]["stock_qty_after"] = round(new_qty, 2)
         
         # Check if all items fully received
         for item in items:
@@ -32944,7 +33006,12 @@ def api_po_receive(po_id):
                     "code": items[idx].get("code", ""),
                     "qty_ordered": items[idx].get("qty", 1),
                     "qty_received": qty_received,
-                    "stock_id": items[idx].get("stock_id", "")
+                    "stock_id": items[idx].get("stock_id", ""),
+                    "stock_code": items[idx].get("stock_code", ""),
+                    "stock_name": items[idx].get("stock_name", ""),
+                    "stock_qty_before": items[idx].get("stock_qty_before", 0),
+                    "stock_qty_after": items[idx].get("stock_qty_after", 0),
+                    "booked_to_stock": bool(items[idx].get("stock_id"))
                 })
         
         grv = {
@@ -32966,6 +33033,19 @@ def api_po_receive(po_id):
         try:
             db.save("goods_received", grv)
             logger.info(f"[GRV] Created {grv_num} from {po.get('po_number')} - {len(received_items)} items")
+            
+            # Log stock movements with GRV reference
+            for ri in received_items:
+                if ri.get("stock_id") and ri.get("booked_to_stock"):
+                    try:
+                        db.save("stock_movements", RecordFactory.stock_movement(
+                            business_id=biz_id, stock_id=ri["stock_id"], movement_type="in",
+                            quantity=ri["qty_received"], 
+                            reference=f"{grv_num} | {po.get('po_number', '')} | {safe_string(po.get('supplier_name', ''))}"
+                        ))
+                    except:
+                        pass
+                        
         except Exception as ge:
             logger.error(f"[GRV] Save failed: {ge}")
         
