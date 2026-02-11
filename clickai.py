@@ -28985,20 +28985,10 @@ def api_briefing_generate():
                     logger.info(f"[BRIEFING] Background generation complete")
                 else:
                     logger.error(f"[BRIEFING] Background generation failed: {result.get('error')}")
-                    # Cache the failure so frontend stops polling
-                    _briefing_cache[biz_id] = {
-                        "date": today_str,
-                        "result": {"success": True, "briefing": "No briefing data available yet. Start using ClickAI and Zane will summarise your activity here.\n\n- Zane", "cached": True},
-                        "ts": time.time()
-                    }
+                    # DON'T cache failure - let it retry on next refresh
             except Exception as e:
                 logger.error(f"[BRIEFING] Background thread error: {e}")
-                # Cache error as a friendly message so frontend stops polling
-                _briefing_cache[biz_id] = {
-                    "date": today_str,
-                    "result": {"success": True, "briefing": "Could not generate briefing right now. Click Refresh to try again.\n\n- Zane", "cached": True},
-                    "ts": time.time()
-                }
+                # DON'T cache errors - let it retry on next refresh
             finally:
                 _briefing_cache.pop(gen_key, None)
         
