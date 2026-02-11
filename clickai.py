@@ -12938,10 +12938,10 @@ class DailyBriefing:
     
     @classmethod
     def _gather_range_data(cls, business_id: str, start_date, end_date) -> dict:
-        """Gather all data for a date range - INCLUDING ALL ACTIVITY TYPES."""
+        """Gather all data for a date range."""
         
-        # Get all data IN PARALLEL - expanded to capture more activity
-        with ThreadPoolExecutor(max_workers=12) as pool:
+        # Get all data IN PARALLEL
+        with ThreadPoolExecutor(max_workers=8) as pool:
             f_sales = pool.submit(db.get, "sales", {"business_id": business_id})
             f_invoices = pool.submit(db.get, "invoices", {"business_id": business_id})
             f_quotes = pool.submit(db.get, "quotes", {"business_id": business_id})
@@ -12950,11 +12950,6 @@ class DailyBriefing:
             f_customers = pool.submit(db.get, "customers", {"business_id": business_id})
             f_stock = pool.submit(db.get_all_stock, business_id)
             f_users = pool.submit(db.get, "users", {"business_id": business_id})
-            # Additional activity tracking
-            f_stock_moves = pool.submit(db.get, "stock_movements", {"business_id": business_id})
-            f_expenses = pool.submit(db.get, "expenses", {"business_id": business_id})
-            f_credit_notes = pool.submit(db.get, "credit_notes", {"business_id": business_id})
-            f_grv = pool.submit(db.get, "goods_received", {"business_id": business_id})
         
         sales = f_sales.result(timeout=20) or []
         invoices = f_invoices.result(timeout=20) or []
@@ -12964,23 +12959,6 @@ class DailyBriefing:
         customers = f_customers.result(timeout=20) or []
         stock = f_stock.result(timeout=20) or []
         users = f_users.result(timeout=20) or []
-        # Additional data - with error handling for missing tables
-        try:
-            stock_movements = f_stock_moves.result(timeout=20) or []
-        except:
-            stock_movements = []
-        try:
-            expenses = f_expenses.result(timeout=20) or []
-        except:
-            expenses = []
-        try:
-            credit_notes = f_credit_notes.result(timeout=20) or []
-        except:
-            credit_notes = []
-        try:
-            grv = f_grv.result(timeout=20) or []
-        except:
-            grv = []
         
         user_names = {u.get("id"): u.get("name", u.get("email", "?")[:10]) for u in users}
         
@@ -13067,73 +13045,17 @@ class DailyBriefing:
                 "number": po.get("po_number", "")
             })
         
-        # Stock movement events (adjustments, transfers, etc)
-        range_stock_moves = [m for m in stock_movements if in_range(m.get("date") or m.get("created_at"))]
-        for m in range_stock_moves:
-            move_type = m.get("type", m.get("movement_type", "adjusted"))
-            events.append({
-                "date": str(m.get("date") or m.get("created_at", ""))[:10],
-                "type": "stock_move",
-                "who": user_names.get(m.get("created_by") or m.get("user_id"), "Someone"),
-                "item": m.get("item_code") or m.get("stock_code") or m.get("description", "item"),
-                "qty": m.get("qty") or m.get("quantity", 0),
-                "move_type": move_type
-            })
-        
-        # Expense events
-        range_expenses = [e for e in expenses if in_range(e.get("date") or e.get("created_at"))]
-        for exp in range_expenses:
-            events.append({
-                "date": str(exp.get("date") or exp.get("created_at", ""))[:10],
-                "type": "expense",
-                "who": user_names.get(exp.get("created_by"), "Someone"),
-                "description": exp.get("description", exp.get("supplier", "Expense")),
-                "amount": float(exp.get("amount") or exp.get("total", 0))
-            })
-        
-        # Credit note events
-        range_credit_notes = [c for c in credit_notes if in_range(c.get("date") or c.get("created_at"))]
-        for cn in range_credit_notes:
-            events.append({
-                "date": str(cn.get("date") or cn.get("created_at", ""))[:10],
-                "type": "credit_note",
-                "who": user_names.get(cn.get("created_by"), "Someone"),
-                "customer": cn.get("customer_name", "Unknown"),
-                "amount": float(cn.get("total") or cn.get("amount", 0))
-            })
-        
-        # GRV events (goods received)
-        range_grv = [g for g in grv if in_range(g.get("date") or g.get("created_at"))]
-        for g in range_grv:
-            events.append({
-                "date": str(g.get("date") or g.get("created_at", ""))[:10],
-                "type": "grv",
-                "who": user_names.get(g.get("created_by") or g.get("received_by"), "Someone"),
-                "supplier": g.get("supplier_name", "Unknown"),
-                "number": g.get("grv_number", "")
-            })
-        
-        # New customer events
-        range_customers = [c for c in customers if in_range(c.get("created_at"))]
-        for c in range_customers:
-            events.append({
-                "date": str(c.get("created_at", ""))[:10],
-                "type": "new_customer",
-                "who": user_names.get(c.get("created_by"), "Someone"),
-                "customer": c.get("name", "Unknown")
-            })
-        
         # Sort events by date
         events = sorted(events, key=lambda x: x.get("date", ""), reverse=True)
         
-        # Team activity summary - track ALL activity types
+        # Team activity summary
         team_stats = {}
         for e in events:
             who = e.get("who", "Unknown")
             if who == "Unknown" or who == "Someone":
                 continue
             if who not in team_stats:
-                team_stats[who] = {"sales": 0, "quotes": 0, "invoices": 0, "pos": 0, "other": 0}
+                team_stats[who] = {"sales": 0, "quotes": 0, "invoices": 0, "pos": 0}
             if e["type"] == "sale":
                 team_stats[who]["sales"] += e.get("amount", 0)
             elif e["type"] == "quote":
@@ -13142,8 +13064,6 @@ class DailyBriefing:
                 team_stats[who]["invoices"] += 1
             elif e["type"] == "po":
                 team_stats[who]["pos"] += 1
-            else:
-                team_stats[who]["other"] += 1
         
         # Danger customers (90+ days)
         today_date = datetime.now().date()
@@ -13256,57 +13176,31 @@ class DailyBriefing:
                 else:
                     return f"{greeting_full},\n\n**Zero activity** recorded for {start_date_str} to {end_date_str}. No invoices, quotes, sales or payments.\n\n- Zane"
         
-        # Build event list - ALL ACTIVITY TYPES grouped by TODAY vs previous
-        today_str_check = data.get("end_date", "")[:10] if data.get("end_date") else ""
-        today_events = []
-        other_events = []
-        
-        for e in data.get("events", [])[:40]:
-            event_date = str(e.get("date", ""))[:10]
-            event_text = ""
-            
+        # Build event list
+        events = []
+        for e in data.get("events", [])[:25]:
             if e["type"] == "sale":
-                event_text = f"{e['who']} sold R{e['amount']:,.0f} to {e['customer']} ({e['method']})"
+                events.append(f"{e['who']} sold R{e['amount']:,.0f} to {e['customer']} ({e['method']})")
             elif e["type"] == "quote":
-                event_text = f"{e['who']} quoted {e['customer']} R{e['amount']:,.0f}"
+                events.append(f"{e['who']} quoted {e['customer']} R{e['amount']:,.0f}")
             elif e["type"] == "invoice":
-                event_text = f"{e['who']} invoiced {e['customer']} R{e['amount']:,.0f}"
+                events.append(f"{e['who']} invoiced {e['customer']} R{e['amount']:,.0f}")
             elif e["type"] == "payment":
-                event_text = f"{e['customer']} PAID R{e['amount']:,.0f}"
+                events.append(f"{e['customer']} PAID R{e['amount']:,.0f}")
             elif e["type"] == "po":
-                event_text = f"{e['who']} created PO for {e.get('supplier', 'supplier')}"
-            elif e["type"] == "stock_move":
-                qty = e.get('qty', 0)
-                move_type = e.get('move_type', 'adjusted')
-                event_text = f"{e['who']} {move_type} stock: {e.get('item', 'item')} ({qty:+.0f})"
-            elif e["type"] == "expense":
-                event_text = f"{e['who']} logged expense: {e.get('description', 'expense')[:30]} R{e.get('amount', 0):,.0f}"
-            elif e["type"] == "credit_note":
-                event_text = f"{e['who']} issued credit note to {e.get('customer', 'customer')} R{e.get('amount', 0):,.0f}"
-            elif e["type"] == "grv":
-                event_text = f"{e['who']} received goods from {e.get('supplier', 'supplier')}"
-            elif e["type"] == "new_customer":
-                event_text = f"{e['who']} added new customer: {e.get('customer', 'customer')}"
-            
-            if event_text:
-                if event_date == today_str_check:
-                    today_events.append(event_text)
-                else:
-                    other_events.append(f"[{event_date}] {event_text}")
+                events.append(f"{e['who']} created PO for {e['supplier']}")
         
-        # Team summary - include IDLE staff
+        # Team summary - include IDLE staff so Zane can call them out
         team = []
         active_names = set()
         for name, stats in data.get("team_stats", {}).items():
             parts = []
-            if stats.get("sales", 0) > 0:
+            if stats["sales"] > 0:
                 parts.append(f"R{stats['sales']:,.0f} sales")
-            if stats.get("quotes", 0) > 0:
+            if stats["quotes"] > 0:
                 parts.append(f"{stats['quotes']} quotes")
-            if stats.get("invoices", 0) > 0:
+            if stats["invoices"] > 0:
                 parts.append(f"{stats['invoices']} invoices")
-            if stats.get("other", 0) > 0:
-                parts.append(f"{stats['other']} other actions")
             if parts:
                 team.append(f"{name}: {', '.join(parts)}")
                 active_names.add(name)
@@ -13333,12 +13227,12 @@ class DailyBriefing:
         if data.get('low_stock'):
             problems.append(f"Low stock: {', '.join([s['code'] for s in data['low_stock'][:3]])}")
         
-        # Build data summary - TODAY's activity separate
+        # Build simple data summary
         summary = f"""
 Business: {biz_name}
 Owner: {owner_name}
 Period: {days} day(s) ({start_date_str} to {end_date_str})
-CURRENT DATE: {end_date_str} (THIS IS TODAY)
+Working days: {working_days}, Weekends: {weekend_days}
 
 TOTALS:
 - POS Sales: R{data['total_sales']:,.0f}
@@ -13346,19 +13240,14 @@ TOTALS:
 - Quotes: R{data['total_quoted']:,.0f}
 - Payments received: R{data['total_received']:,.0f}
 
-=== TODAY ({end_date_str}) ===
-{chr(10).join(today_events) if today_events else 'No activity yet today'}
-
-=== PREVIOUS DAYS ===
-{chr(10).join(other_events[:15]) if other_events else 'None'}
+WHAT HAPPENED:
+{chr(10).join(events) if events else 'Nothing recorded'}
 
 TEAM:
 {chr(10).join(team) if team else 'No activity'}
 
 PROBLEMS:
 {chr(10).join(problems) if problems else 'None'}
-
-NOTE: Report ALL activity including testing. If it looks like testing, mention it.
 """
 
         # Determine greeting based on time of day - ALWAYS English (users can ask for Afrikaans via Zane chat)
@@ -13373,58 +13262,50 @@ NOTE: Report ALL activity including testing. If it looks like testing, mention i
         first_name = owner_name.split()[0] if owner_name else ""
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
-        # Professional prompt - ALL ACTIVITY TRACKING
-        prompt = f"""You are Zane, a business advisor for {biz_name}.
+        # Professional prompt with structure - ENGLISH - STAFF ACCOUNTABILITY FOCUSED
+        prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
 
-Write a REAL-TIME update for the owner. Focus on TODAY first.
+Write an insightful business summary for the owner about the last {days} day(s). The owner uses this to monitor staff performance in real-time.
 
-STYLE:
+YOUR STYLE:
 - Start with: "{greeting_full}"
-- Professional but warm
-- NO "Boss" or "Baas", NO emojis
-- English only
+- Write like a senior advisor who genuinely cares - not like a robot
+- Be warm but professional - like a respected colleague
+- DO NOT use "Boss" or "Baas"
+- No emojis or excessive exclamation marks
+- ALWAYS write in English unless the data clearly shows otherwise
 
-REPORT ALL ACTIVITY:
-1. **TODAY FIRST** - What happened TODAY ({end_date_str})? Lead with this.
-2. **ALL ACTIONS** - Sales, quotes, invoices, stock moves, expenses, credit notes, GRV, new customers - everything counts.
-3. **WHO did WHAT** - Name each person and their actions.
-4. **Testing activity** - If it looks like testing (small amounts, test names), still report it but note it appears to be testing.
-5. **Problems** - Overdue accounts, stock issues.
+CONTENT PRIORITY - THE BOSS WANTS TO KNOW:
+1. **WHO did WHAT today** - Name each person and exactly what they produced (invoices, quotes, sales). Be specific with customer names and amounts.
+2. **WHO did NOTHING** - If a team member has zero activity, call it out. The boss needs to know who's not producing.
+3. **Key numbers** - Sales, payments received, outstanding
+4. **Attention needed** - Overdue accounts, stock issues, anything off
 
-Sections: **Today's Activity**, **Staff Performance**, **Attention Needed**
-Report everything - no action too small. End with one observation.
+Use sections: **Staff Performance**, **Sales & Cash Flow**, **Attention Needed**
+Be specific with names, amounts, and customers. The boss wants detail, not vague summaries.
+End with ONE concrete action item if there is one.
 
 {summary}
 
-Sign off with "- Zane"."""
+Write with confidence - you KNOW what you're talking about. Sign off with "- Zane"."""
 
-        # Claude Haiku with retry for API overload
+        # Claude Haiku for Pulse - fast and smart
         if ANTHROPIC_API_KEY:
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    logger.info(f"[BRIEFING] Calling Claude Haiku (attempt {attempt + 1})")
-                    client = _anthropic_client
-                    message = client.messages.create(
-                        model="claude-haiku-4-5-20251001",
-                        max_tokens=800,
-                        messages=[{"role": "user", "content": prompt}]
-                    )
-                    if message.content:
-                        logger.info("[BRIEFING] Success")
-                        return message.content[0].text
-                except Exception as e:
-                    err = str(e)
-                    if "overloaded" in err.lower() or "529" in err:
-                        if attempt < max_retries - 1:
-                            wait = (attempt + 1) * 5
-                            logger.warning(f"[BRIEFING] API overloaded, waiting {wait}s...")
-                            time.sleep(wait)
-                            continue
-                    logger.error(f"[BRIEFING] Failed: {e}")
-                    break
+            try:
+                logger.info("[BRIEFING] Calling Claude Haiku 4.5")
+                client = _anthropic_client
+                message = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=600,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                if message.content:
+                    logger.info("[BRIEFING] Claude Haiku 4.5 success")
+                    return message.content[0].text
+            except Exception as e:
+                logger.error(f"[BRIEFING] Claude Haiku failed: {e}")
         
-        logger.error("[BRIEFING] Generation failed")
+        logger.error("[BRIEFING] Briefing generation failed")
         return None
     
     @classmethod
@@ -29104,10 +28985,20 @@ def api_briefing_generate():
                     logger.info(f"[BRIEFING] Background generation complete")
                 else:
                     logger.error(f"[BRIEFING] Background generation failed: {result.get('error')}")
-                    # DON'T cache failure - let it retry on next refresh
+                    # Cache the failure so frontend stops polling
+                    _briefing_cache[biz_id] = {
+                        "date": today_str,
+                        "result": {"success": True, "briefing": "No briefing data available yet. Start using ClickAI and Zane will summarise your activity here.\n\n- Zane", "cached": True},
+                        "ts": time.time()
+                    }
             except Exception as e:
                 logger.error(f"[BRIEFING] Background thread error: {e}")
-                # DON'T cache errors - let it retry on next refresh
+                # Cache error as a friendly message so frontend stops polling
+                _briefing_cache[biz_id] = {
+                    "date": today_str,
+                    "result": {"success": True, "briefing": "Could not generate briefing right now. Click Refresh to try again.\n\n- Zane", "cached": True},
+                    "ts": time.time()
+                }
             finally:
                 _briefing_cache.pop(gen_key, None)
         
