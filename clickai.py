@@ -1638,6 +1638,31 @@ def generate_id() -> str:
     """Generate unique ID - full UUID for database"""
     return str(uuid.uuid4())
 
+
+def next_doc_number(records: list, field: str, prefix: str, pad: int = 5) -> str:
+    """Generate next document number by finding max existing number.
+    
+    Args:
+        records: List of existing records
+        field: Field name containing the number (e.g. 'po_number', 'grv_number')
+        prefix: Prefix to strip (e.g. 'PO-', 'GRV-', 'INV')
+        pad: Zero-padding width (default 5)
+    
+    Returns: Next number string like 'PO-00042'
+    """
+    max_num = 0
+    for r in records:
+        val = str(r.get(field, ""))
+        try:
+            # Strip the prefix and any extra dashes
+            num_str = val.replace(prefix, "").lstrip("-").lstrip("0") or "0"
+            num = int(num_str)
+            if num > max_num:
+                max_num = num
+        except (ValueError, TypeError):
+            pass
+    return f"{prefix}{max_num + 1:0{pad}d}"
+
 def is_valid_uuid(value) -> bool:
     """Check if a value is a valid UUID format"""
     if not value:
@@ -10464,7 +10489,16 @@ class Actions:
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        po_num = f"PO-{len(existing) + 1:04d}"
+        max_po = 0
+        for ep in existing:
+            pn = ep.get("po_number", "")
+            try:
+                num_part = int(pn.replace("PO-", "").replace("PO", ""))
+                if num_part > max_po:
+                    max_po = num_part
+            except:
+                pass
+        po_num = f"PO-{max_po + 1:05d}"
         
         # Build items
         if not items and description:
@@ -19234,8 +19268,14 @@ def stock_movements_page():
     rows_html = ""
     for m in movements[:500]:  # Limit to 500
         stock = stock_lookup.get(m.get("stock_id"), {})
-        stock_desc = stock.get("description") or stock.get("code") or str(m.get("stock_id", "-"))[:8]
+        stock_desc = stock.get("description") or stock.get("name") or stock.get("code") or ""
         stock_code = stock.get("code", "")
+        # If stock item not found in lookup, try to extract name from reference
+        if not stock_desc:
+            ref_str = str(m.get("reference") or "")
+            # Reference format: "GRV-XXXX | PO-XXXXX | Supplier Name" - not helpful for item name
+            # Just show "Unknown item" rather than a raw ID
+            stock_desc = "Unknown item"
         m_type = m.get("type", "")
         qty = float(m.get("quantity") or 0)
         m_date = str(m.get("date") or m.get("created_at") or "")[:16].replace("T", " ")
@@ -32152,7 +32192,16 @@ def purchase_new():
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) or []
-        po_num = f"PO{len(existing) + 1:04d}"
+        max_po = 0
+        for ep in existing:
+            pn = ep.get("po_number", "")
+            try:
+                num_part = int(pn.replace("PO-", "").replace("PO", ""))
+                if num_part > max_po:
+                    max_po = num_part
+            except:
+                pass
+        po_num = f"PO-{max_po + 1:05d}"
         
         po_id = generate_id()
         po = {
@@ -32951,26 +33000,125 @@ def api_po_receive(po_id):
         items_received = 0
         all_received = True
         
+        # Get all existing stock for matching
+        all_stock = db.get_all_stock(biz_id) if biz_id else []
+        stock_by_code = {}
+        for s in all_stock:
+            code = str(s.get("code", "")).upper().strip()
+            if code:
+                stock_by_code[code] = s
+        
+        # Abbreviations for smart code generation
+        abbrevs = {"STAINLESS": "SS", "STEEL": "ST", "FLAT": "FL", "BAR": "BR", "ROUND": "RD", "SQUARE": "SQ", "PIPE": "PP", "TUBE": "TB", "SHEET": "SH", "PLATE": "PL", "ANGLE": "AN", "GALV": "GV", "HEX": "HX", "BOLT": "BLT", "NUT": "NT", "WASHER": "WS", "HOSE": "HS", "CLAMP": "CL", "VALVE": "VL", "FLANGE": "FL", "REDUCER": "RD", "COUPLING": "CP", "ELBOW": "EL", "TEE": "TE", "NIPPLE": "NP", "CAP": "CP", "PLUG": "PG", "BUSH": "BS", "FITTING": "FT", "SCREW": "SC"}
+        
         for idx_str, qty_received in quantities.items():
             idx = int(idx_str)
             if 0 <= idx < len(items):
                 items[idx]["qty_received"] = items[idx].get("qty_received", 0) + qty_received
                 items_received += qty_received
                 
-                # Update stock if requested and linked to stock item
-                if update_stock and items[idx].get("stock_id"):
-                    stock_id = items[idx]["stock_id"]
+                if not update_stock:
+                    continue
+                
+                stock_id = items[idx].get("stock_id", "")
+                stock_item = None
+                
+                if stock_id:
                     stock_item = db.get_one_stock(stock_id)
-                    if stock_item:
-                        new_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0) + qty_received
-                        db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                        logger.info(f"[PO] Updated stock {stock_item.get('code')}: +{qty_received} = {new_qty}")
+                
+                if not stock_item and stock_id:
+                    # stock_id exists but item not found - try by code
+                    stock_item = stock_by_code.get(str(items[idx].get("code", "")).upper().strip())
+                
+                if not stock_item:
+                    # No stock item linked or found - try to match by description/code
+                    item_code = str(items[idx].get("code", "")).upper().strip()
+                    item_desc = str(items[idx].get("description", "")).upper().strip()
+                    
+                    # Try exact code match
+                    if item_code and item_code in stock_by_code:
+                        stock_item = stock_by_code[item_code]
+                        items[idx]["stock_id"] = stock_item["id"]
+                        logger.info(f"[PO RECEIVE] Matched by code: {item_code}")
+                    
+                    # Try description match against existing stock
+                    if not stock_item and item_desc:
+                        for s in all_stock:
+                            s_desc = str(s.get("description", "")).upper().strip()
+                            if s_desc and s_desc == item_desc:
+                                stock_item = s
+                                items[idx]["stock_id"] = s["id"]
+                                logger.info(f"[PO RECEIVE] Matched by description: {item_desc}")
+                                break
+                    
+                    # AUTO-CREATE stock item if no match found
+                    if not stock_item and item_desc:
+                        # Generate smart stock code
+                        desc_upper = item_desc
+                        words = desc_upper.split()
                         
-                        # Store stock info in item for GRV tracking
-                        items[idx]["stock_code"] = stock_item.get("code", "")
-                        items[idx]["stock_name"] = stock_item.get("name", stock_item.get("description", ""))
-                        items[idx]["stock_qty_before"] = round(new_qty - qty_received, 2)
-                        items[idx]["stock_qty_after"] = round(new_qty, 2)
+                        # Extract sizes (numbers with optional MM/M etc)
+                        import re
+                        sizes = re.findall(r'\d+[Xx/]\d+(?:\.\d+)?(?:MM)?|\d+(?:\.\d+)?(?:MM|M|CM|KG)?', desc_upper)
+                        sizes = [s.replace("MM", "") for s in sizes]
+                        
+                        # Build code from abbreviations + sizes
+                        parts = []
+                        for w in words:
+                            w_clean = w.strip(".,;:-")
+                            if w_clean in abbrevs:
+                                parts.append(abbrevs[w_clean])
+                            elif len(w_clean) > 2 and w_clean.isalpha() and w_clean not in ("THE", "AND", "FOR", "WITH"):
+                                parts.append(w_clean[:2])
+                        
+                        if parts:
+                            smart_code = "-".join(parts[:3])
+                        else:
+                            smart_code = desc_upper[:6].replace(" ", "-")
+                        
+                        if sizes:
+                            smart_code += "-" + "-".join(sizes[:2])
+                        smart_code = smart_code[:15].upper()
+                        
+                        # Make code unique
+                        final_code = smart_code
+                        counter = 1
+                        while final_code in stock_by_code:
+                            final_code = f"{smart_code}-{counter}"
+                            counter += 1
+                        
+                        # Get price from PO item if available
+                        unit_price = float(items[idx].get("price", 0) or 0)
+                        
+                        # Create the stock item
+                        new_stock = RecordFactory.stock_item(
+                            business_id=biz_id,
+                            description=items[idx].get("description", item_desc),
+                            code=final_code,
+                            quantity=0,  # Will be updated below
+                            cost_price=unit_price,
+                            selling_price=round(unit_price * 1.3, 2) if unit_price else 0
+                        )
+                        db.save_stock(new_stock)
+                        
+                        stock_item = new_stock
+                        items[idx]["stock_id"] = new_stock["id"]
+                        stock_by_code[final_code] = new_stock
+                        logger.info(f"[PO RECEIVE] Auto-created stock: {final_code} = {item_desc}")
+                
+                # Now update the stock quantity
+                if stock_item:
+                    current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
+                    new_qty = current_qty + qty_received
+                    db.update_stock(stock_item["id"], {"qty": new_qty, "quantity": new_qty}, biz_id)
+                    logger.info(f"[PO RECEIVE] Updated stock {stock_item.get('code')}: {current_qty} + {qty_received} = {new_qty}")
+                    
+                    # Store stock info in item for GRV tracking
+                    items[idx]["stock_id"] = stock_item["id"]
+                    items[idx]["stock_code"] = stock_item.get("code", "")
+                    items[idx]["stock_name"] = stock_item.get("name", stock_item.get("description", ""))
+                    items[idx]["stock_qty_before"] = round(current_qty, 2)
+                    items[idx]["stock_qty_after"] = round(new_qty, 2)
         
         # Check if all items fully received
         for item in items:
@@ -32994,7 +33142,17 @@ def api_po_receive(po_id):
         # CREATE GRV (Goods Received Voucher) document
         grv_id = generate_id()
         existing_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
-        grv_num = f"GRV-{len(existing_grvs) + 1:04d}"
+        # Find highest existing GRV number to avoid duplicates
+        max_grv = 0
+        for eg in existing_grvs:
+            gn = eg.get("grv_number", "")
+            try:
+                num_part = int(gn.replace("GRV-", ""))
+                if num_part > max_grv:
+                    max_grv = num_part
+            except:
+                pass
+        grv_num = f"GRV-{max_grv + 1:04d}"
         
         # Build received items list
         received_items = []
@@ -33038,6 +33196,7 @@ def api_po_receive(po_id):
             for ri in received_items:
                 if ri.get("stock_id") and ri.get("booked_to_stock"):
                     try:
+                        item_desc = ri.get("stock_name") or ri.get("stock_code") or ri.get("description", "")
                         db.save("stock_movements", RecordFactory.stock_movement(
                             business_id=biz_id, stock_id=ri["stock_id"], movement_type="in",
                             quantity=ri["qty_received"], 
@@ -38903,7 +39062,16 @@ def api_pos_quick_po():
         
         # Generate PO number
         existing_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
-        po_num = f"PO-{len(existing_pos) + 1:05d}"
+        max_po = 0
+        for ep in existing_pos:
+            pn = ep.get("po_number", "")
+            try:
+                num_part = int(pn.replace("PO-", "").replace("PO", ""))
+                if num_part > max_po:
+                    max_po = num_part
+            except:
+                pass
+        po_num = f"PO-{max_po + 1:05d}"
         
         # Create PO
         po = {
@@ -39263,7 +39431,16 @@ def api_pos_purchase_order():
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        po_num = f"PO-{len(existing) + 1:05d}"
+        max_po = 0
+        for ep in existing:
+            pn = ep.get("po_number", "")
+            try:
+                num_part = int(pn.replace("PO-", "").replace("PO", ""))
+                if num_part > max_po:
+                    max_po = num_part
+            except:
+                pass
+        po_num = f"PO-{max_po + 1:05d}"
         
         # Clean items - remove any prices that might have snuck in
         clean_items = []
