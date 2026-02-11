@@ -12862,7 +12862,7 @@ class DailyBriefing:
             logger.error(f"[BRIEFING] Data gathered. Sales: R{data.get('total_sales', 0)}, Invoices: R{data.get('total_invoiced', 0)}")
             
             # Generate briefing
-            briefing_text = cls._write_catchup_briefing(biz_name, owner_name, data)
+            briefing_text = cls._write_catchup_briefing(biz_name, owner_name, data, business_id=business_id)
             
             # Record this view (don't fail if table missing)
             try:
@@ -13082,7 +13082,7 @@ class DailyBriefing:
         }
     
     @classmethod
-    def _write_catchup_briefing(cls, biz_name: str, owner_name: str, data: dict) -> Optional[str]:
+    def _write_catchup_briefing(cls, biz_name: str, owner_name: str, data: dict, business_id: str = None) -> Optional[str]:
         """Use Claude Haiku to write a natural catch-up briefing."""
         
         logger.info(f"[BRIEFING] === CALLED === ANTHROPIC_KEY={'SET' if ANTHROPIC_API_KEY else 'EMPTY'}")
@@ -13260,8 +13260,10 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
         if ANTHROPIC_API_KEY:
             try:
                 logger.info("[BRIEFING] Calling Claude Haiku 4.5")
-                client = _anthropic_client
-                message = client.messages.create(
+                # Use a shorter timeout for briefings - 30s is plenty for Haiku
+                import anthropic as _anth
+                briefing_client = _anth.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=30.0)
+                message = briefing_client.messages.create(
                     model="claude-haiku-4-5-20251001",
                     max_tokens=600,
                     messages=[{"role": "user", "content": prompt}]
