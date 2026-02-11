@@ -12713,12 +12713,35 @@ class Context:
         sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
         employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
         invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
+        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
         
         # Calculate summary numbers
-        total_debtors = sum(float(c.get("balance", 0) or 0) for c in customers if float(c.get("balance", 0) or 0) > 0)
-        total_creditors = sum(float(s.get("balance", 0) or 0) for s in suppliers if float(s.get("balance", 0) or 0) > 0)
+        debtors = [c for c in customers if float(c.get("balance", 0) or 0) > 0]
+        total_debtors = sum(float(c.get("balance", 0) or 0) for c in debtors)
+        
+        creditors = [s for s in suppliers if float(s.get("balance", 0) or 0) > 0]
+        total_creditors = sum(float(s.get("balance", 0) or 0) for s in creditors)
+        
         today_sales = sum(float(s.get("total", 0) or 0) for s in sales if s.get("date") == today())
+        total_sales = sum(float(s.get("total", 0) or 0) for s in sales)
+        total_expenses = sum(float(e.get("amount", 0) or 0) for e in expenses)
+        total_payroll = sum(float(e.get("salary", 0) or 0) for e in employees)
+        
         stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock)
+        stock_retail_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("price") or s.get("selling_price") or 0) for s in stock)
+        
+        low_stock = [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0)} 
+                     for s in stock if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5))]
+        
+        total_invoiced = sum(float(i.get("total", 0) or 0) for i in invoices)
+        total_outstanding = sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") == "outstanding")
+        total_paid = sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") == "paid")
+        
+        # Summaries for reports (compact, not full records)
+        customers_summary = [{"name": c.get("name"), "balance": c.get("balance", 0), "phone": c.get("phone", "")} 
+                            for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
+        suppliers_summary = [{"name": s.get("name"), "balance": s.get("balance", 0), "phone": s.get("phone", "")} 
+                            for s in sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
         
         return {
             "business_id": biz_id,
@@ -12728,24 +12751,34 @@ class Context:
             "user_role": user.get("role", "owner") if user else "owner",
             "business_type": business.get("industry_type", business.get("business_type", "General")) if business else "General",
             
-            # COUNTS ONLY - tools fetch the actual data
+            # COUNTS - for system prompt
             "customer_count": len(customers),
             "supplier_count": len(suppliers),
             "stock_count": len(stock),
             "employee_count": len(employees),
+            "invoice_count": len(invoices),
             
-            # KEY TOTALS for the system prompt dashboard
+            # TOTALS - for system prompt + ReportEngine
             "total_debtors": total_debtors,
             "total_creditors": total_creditors,
             "today_sales": today_sales,
+            "total_sales": total_sales,
+            "total_expenses": total_expenses,
+            "total_payroll": total_payroll,
             "stock_value": stock_value,
+            "stock_retail_value": stock_retail_value,
+            "total_invoiced": total_invoiced,
+            "total_outstanding": total_outstanding,
+            "total_paid": total_paid,
             
-            # Keep these for backward compat with other parts of the system
-            "invoice_count": len(invoices),
-            "total_invoiced": sum(float(i.get("total", 0) or 0) for i in invoices),
-            "total_outstanding": sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") == "outstanding"),
+            # COMPACT SUMMARIES - for ReportEngine (not full records)
+            "debtors": debtors,
+            "creditors": creditors,
+            "customers_summary": customers_summary,
+            "suppliers_summary": suppliers_summary,
+            "low_stock": low_stock[:20],
             
-            # TEAM ACTIVITY - still useful in the context (lightweight)
+            # TEAM ACTIVITY - lightweight
             "team_activity": Context._get_team_activity(biz_id, invoices, [], sales),
             
             # AUDIT LOG - Recent changes (last 50)
@@ -13260,10 +13293,8 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
         if ANTHROPIC_API_KEY:
             try:
                 logger.info("[BRIEFING] Calling Claude Haiku 4.5")
-                # Use a shorter timeout for briefings - 30s is plenty for Haiku
-                import anthropic as _anth
-                briefing_client = _anth.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=30.0)
-                message = briefing_client.messages.create(
+                client = _anthropic_client
+                message = client.messages.create(
                     model="claude-haiku-4-5-20251001",
                     max_tokens=600,
                     messages=[{"role": "user", "content": prompt}]
@@ -28954,8 +28985,20 @@ def api_briefing_generate():
                     logger.info(f"[BRIEFING] Background generation complete")
                 else:
                     logger.error(f"[BRIEFING] Background generation failed: {result.get('error')}")
+                    # Cache the failure so frontend stops polling
+                    _briefing_cache[biz_id] = {
+                        "date": today_str,
+                        "result": {"success": True, "briefing": "No briefing data available yet. Start using ClickAI and Zane will summarise your activity here.\n\n- Zane", "cached": True},
+                        "ts": time.time()
+                    }
             except Exception as e:
                 logger.error(f"[BRIEFING] Background thread error: {e}")
+                # Cache error as a friendly message so frontend stops polling
+                _briefing_cache[biz_id] = {
+                    "date": today_str,
+                    "result": {"success": True, "briefing": "Could not generate briefing right now. Click Refresh to try again.\n\n- Zane", "cached": True},
+                    "ts": time.time()
+                }
             finally:
                 _briefing_cache.pop(gen_key, None)
         
