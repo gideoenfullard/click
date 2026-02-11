@@ -26125,6 +26125,13 @@ def expenses_page():
         '''
     
     content = f'''
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+        <div></div>
+        <div style="display:flex;gap:10px;">
+            <a href="/subscriptions" class="btn btn-secondary">📦 Recurring Expenses</a>
+            <a href="/scan" class="btn btn-primary">📸 Scan Receipt</a>
+        </div>
+    </div>
     <div class="stats-grid" style="margin-bottom:20px;">
         <div class="stat-card">
             <div class="stat-value">{len(expenses)}</div>
@@ -47218,10 +47225,13 @@ def banking_page():
     <!-- HEADER -->
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
         <h2 style="margin:0;">🏦 Bank Reconciliation</h2>
-        <label class="btn btn-primary" style="cursor:pointer;">
-            📥 Import Statement
-            <input type="file" accept=".csv,.pdf" style="display:none;" onchange="uploadStatement(this.files[0])">
-        </label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <a href="/subscriptions" class="btn btn-secondary">📦 Recurring Expenses</a>
+            <label class="btn btn-primary" style="cursor:pointer;">
+                📥 Import Statement
+                <input type="file" accept=".csv,.pdf" style="display:none;" onchange="uploadStatement(this.files[0])">
+            </label>
+        </div>
     </div>
     
     <!-- SUMMARY CARDS -->
