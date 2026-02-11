@@ -12964,7 +12964,7 @@ class DailyBriefing:
         customers = f_customers.result(timeout=20) or []
         stock = f_stock.result(timeout=20) or []
         users = f_users.result(timeout=20) or []
-        # Additional data
+        # Additional data - with error handling for missing tables
         try:
             stock_movements = f_stock_moves.result(timeout=20) or []
         except:
@@ -13070,7 +13070,7 @@ class DailyBriefing:
         # Stock movement events (adjustments, transfers, etc)
         range_stock_moves = [m for m in stock_movements if in_range(m.get("date") or m.get("created_at"))]
         for m in range_stock_moves:
-            move_type = m.get("type", m.get("movement_type", "adjustment"))
+            move_type = m.get("type", m.get("movement_type", "adjusted"))
             events.append({
                 "date": str(m.get("date") or m.get("created_at", ""))[:10],
                 "type": "stock_move",
@@ -13143,7 +13143,6 @@ class DailyBriefing:
             elif e["type"] == "po":
                 team_stats[who]["pos"] += 1
             else:
-                # Count all other activity (stock moves, expenses, credit notes, GRV, new customers)
                 team_stats[who]["other"] += 1
         
         # Danger customers (90+ days)
@@ -13257,12 +13256,12 @@ class DailyBriefing:
                 else:
                     return f"{greeting_full},\n\n**Zero activity** recorded for {start_date_str} to {end_date_str}. No invoices, quotes, sales or payments.\n\n- Zane"
         
-        # Build event list - ALL ACTIVITY TYPES, grouped by TODAY vs previous
-        today_str_local = data.get("end_date", "")[:10] if data.get("end_date") else ""
+        # Build event list - ALL ACTIVITY TYPES grouped by TODAY vs previous
+        today_str_check = data.get("end_date", "")[:10] if data.get("end_date") else ""
         today_events = []
         other_events = []
         
-        for e in data.get("events", [])[:40]:  # Increased limit to capture more activity
+        for e in data.get("events", [])[:40]:
             event_date = str(e.get("date", ""))[:10]
             event_text = ""
             
@@ -13281,7 +13280,7 @@ class DailyBriefing:
                 move_type = e.get('move_type', 'adjusted')
                 event_text = f"{e['who']} {move_type} stock: {e.get('item', 'item')} ({qty:+.0f})"
             elif e["type"] == "expense":
-                event_text = f"{e['who']} logged expense: {e.get('description', 'expense')} R{e.get('amount', 0):,.0f}"
+                event_text = f"{e['who']} logged expense: {e.get('description', 'expense')[:30]} R{e.get('amount', 0):,.0f}"
             elif e["type"] == "credit_note":
                 event_text = f"{e['who']} issued credit note to {e.get('customer', 'customer')} R{e.get('amount', 0):,.0f}"
             elif e["type"] == "grv":
@@ -13290,12 +13289,12 @@ class DailyBriefing:
                 event_text = f"{e['who']} added new customer: {e.get('customer', 'customer')}"
             
             if event_text:
-                if event_date == today_str_local:
+                if event_date == today_str_check:
                     today_events.append(event_text)
                 else:
                     other_events.append(f"[{event_date}] {event_text}")
         
-        # Team summary - include IDLE staff so Zane can call them out
+        # Team summary - include IDLE staff
         team = []
         active_names = set()
         for name, stats in data.get("team_stats", {}).items():
@@ -13334,32 +13333,32 @@ class DailyBriefing:
         if data.get('low_stock'):
             problems.append(f"Low stock: {', '.join([s['code'] for s in data['low_stock'][:3]])}")
         
-        # Build data summary - PRIORITIZE TODAY'S ACTIVITY
+        # Build data summary - TODAY's activity separate
         summary = f"""
 Business: {biz_name}
 Owner: {owner_name}
 Period: {days} day(s) ({start_date_str} to {end_date_str})
-CURRENT DATE: {end_date_str} (THIS IS TODAY - focus on this!)
+CURRENT DATE: {end_date_str} (THIS IS TODAY)
 
-TOTALS (for period):
+TOTALS:
 - POS Sales: R{data['total_sales']:,.0f}
 - Invoices: R{data['total_invoiced']:,.0f}
 - Quotes: R{data['total_quoted']:,.0f}
 - Payments received: R{data['total_received']:,.0f}
 
-=== TODAY'S ACTIVITY ({end_date_str}) - MOST IMPORTANT ===
-{chr(10).join(today_events) if today_events else 'No activity recorded yet today'}
+=== TODAY ({end_date_str}) ===
+{chr(10).join(today_events) if today_events else 'No activity yet today'}
 
 === PREVIOUS DAYS ===
-{chr(10).join(other_events[:15]) if other_events else 'No prior activity'}
+{chr(10).join(other_events[:15]) if other_events else 'None'}
 
-TEAM PERFORMANCE:
-{chr(10).join(team) if team else 'No tracked activity'}
+TEAM:
+{chr(10).join(team) if team else 'No activity'}
 
 PROBLEMS:
 {chr(10).join(problems) if problems else 'None'}
 
-NOTE: If activity looks like testing (small random amounts, test customers), mention it but still report it - the boss wants to see ALL system usage.
+NOTE: Report ALL activity including testing. If it looks like testing, mention it.
 """
 
         # Determine greeting based on time of day - ALWAYS English (users can ask for Afrikaans via Zane chat)
@@ -13374,64 +13373,58 @@ NOTE: If activity looks like testing (small random amounts, test customers), men
         first_name = owner_name.split()[0] if owner_name else ""
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
-        # Professional prompt with structure - ALL ACTIVITY TRACKING
-        prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
+        # Professional prompt - ALL ACTIVITY TRACKING
+        prompt = f"""You are Zane, a business advisor for {biz_name}.
 
-Write a REAL-TIME business update for the owner. Focus on TODAY's activity first - the boss wants to know what's happening RIGHT NOW.
+Write a REAL-TIME update for the owner. Focus on TODAY first.
 
-YOUR STYLE:
+STYLE:
 - Start with: "{greeting_full}"
-- Write like a senior advisor who genuinely cares - not like a robot
-- Be warm but professional - like a respected colleague
-- DO NOT use "Boss" or "Baas"
-- No emojis or excessive exclamation marks
-- ALWAYS write in English
+- Professional but warm
+- NO "Boss" or "Baas", NO emojis
+- English only
 
-CONTENT PRIORITY - REPORT ALL ACTIVITY:
-1. **TODAY FIRST** - What has happened TODAY ({end_date_str})? Lead with this section.
-2. **ALL ACTIVITY COUNTS** - Report EVERYTHING: sales, quotes, invoices, stock adjustments, new customers, expenses, credit notes, goods received. Even small test transactions matter - the boss wants to see ALL system usage.
-3. **WHO did WHAT** - Name each person and exactly what they did. Be specific.
-4. **Testing activity** - If activity looks like testing (small amounts, test customer names, random entries), still report it but note "appears to be testing/training" - this is valuable information.
-5. **Attention needed** - Overdue accounts, stock issues, anything off
+REPORT ALL ACTIVITY:
+1. **TODAY FIRST** - What happened TODAY ({end_date_str})? Lead with this.
+2. **ALL ACTIONS** - Sales, quotes, invoices, stock moves, expenses, credit notes, GRV, new customers - everything counts.
+3. **WHO did WHAT** - Name each person and their actions.
+4. **Testing activity** - If it looks like testing (small amounts, test names), still report it but note it appears to be testing.
+5. **Problems** - Overdue accounts, stock issues.
 
-Use sections: **Today's Activity**, **Staff Performance**, **Attention Needed**
-Be specific with names, amounts, and actions. Report everything - no activity is too small to mention.
-End with ONE concrete observation or action item.
+Sections: **Today's Activity**, **Staff Performance**, **Attention Needed**
+Report everything - no action too small. End with one observation.
 
 {summary}
 
-Write with confidence - you KNOW what you're talking about. Sign off with "- Zane"."""
+Sign off with "- Zane"."""
 
-Write with confidence - you KNOW what you're talking about. Sign off with "- Zane"."""
-
-        # Claude Haiku for Pulse - with retry for API overload
+        # Claude Haiku with retry for API overload
         if ANTHROPIC_API_KEY:
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    logger.info(f"[BRIEFING] Calling Claude Haiku 4.5 (attempt {attempt + 1}/{max_retries})")
+                    logger.info(f"[BRIEFING] Calling Claude Haiku (attempt {attempt + 1})")
                     client = _anthropic_client
                     message = client.messages.create(
                         model="claude-haiku-4-5-20251001",
-                        max_tokens=800,  # Increased for more detailed reports
+                        max_tokens=800,
                         messages=[{"role": "user", "content": prompt}]
                     )
                     if message.content:
-                        logger.info("[BRIEFING] Claude Haiku 4.5 success")
+                        logger.info("[BRIEFING] Success")
                         return message.content[0].text
                 except Exception as e:
-                    error_str = str(e)
-                    # Check for overloaded error (529) - retry with backoff
-                    if "overloaded" in error_str.lower() or "529" in error_str:
+                    err = str(e)
+                    if "overloaded" in err.lower() or "529" in err:
                         if attempt < max_retries - 1:
-                            wait_time = (attempt + 1) * 5  # 5s, 10s, 15s
-                            logger.warning(f"[BRIEFING] API overloaded, waiting {wait_time}s before retry...")
-                            time.sleep(wait_time)
+                            wait = (attempt + 1) * 5
+                            logger.warning(f"[BRIEFING] API overloaded, waiting {wait}s...")
+                            time.sleep(wait)
                             continue
-                    logger.error(f"[BRIEFING] Claude Haiku failed: {e}")
+                    logger.error(f"[BRIEFING] Failed: {e}")
                     break
         
-        logger.error("[BRIEFING] Briefing generation failed")
+        logger.error("[BRIEFING] Generation failed")
         return None
     
     @classmethod
