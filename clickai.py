@@ -12938,10 +12938,10 @@ class DailyBriefing:
     
     @classmethod
     def _gather_range_data(cls, business_id: str, start_date, end_date) -> dict:
-        """Gather all data for a date range."""
+        """Gather all data for a date range - INCLUDING ALL ACTIVITY TYPES."""
         
-        # Get all data IN PARALLEL
-        with ThreadPoolExecutor(max_workers=8) as pool:
+        # Get all data IN PARALLEL - expanded to capture more activity
+        with ThreadPoolExecutor(max_workers=12) as pool:
             f_sales = pool.submit(db.get, "sales", {"business_id": business_id})
             f_invoices = pool.submit(db.get, "invoices", {"business_id": business_id})
             f_quotes = pool.submit(db.get, "quotes", {"business_id": business_id})
@@ -12950,6 +12950,11 @@ class DailyBriefing:
             f_customers = pool.submit(db.get, "customers", {"business_id": business_id})
             f_stock = pool.submit(db.get_all_stock, business_id)
             f_users = pool.submit(db.get, "users", {"business_id": business_id})
+            # Additional activity tracking
+            f_stock_moves = pool.submit(db.get, "stock_movements", {"business_id": business_id})
+            f_expenses = pool.submit(db.get, "expenses", {"business_id": business_id})
+            f_credit_notes = pool.submit(db.get, "credit_notes", {"business_id": business_id})
+            f_grv = pool.submit(db.get, "goods_received", {"business_id": business_id})
         
         sales = f_sales.result(timeout=20) or []
         invoices = f_invoices.result(timeout=20) or []
@@ -12959,6 +12964,23 @@ class DailyBriefing:
         customers = f_customers.result(timeout=20) or []
         stock = f_stock.result(timeout=20) or []
         users = f_users.result(timeout=20) or []
+        # Additional data
+        try:
+            stock_movements = f_stock_moves.result(timeout=20) or []
+        except:
+            stock_movements = []
+        try:
+            expenses = f_expenses.result(timeout=20) or []
+        except:
+            expenses = []
+        try:
+            credit_notes = f_credit_notes.result(timeout=20) or []
+        except:
+            credit_notes = []
+        try:
+            grv = f_grv.result(timeout=20) or []
+        except:
+            grv = []
         
         user_names = {u.get("id"): u.get("name", u.get("email", "?")[:10]) for u in users}
         
@@ -13045,17 +13067,73 @@ class DailyBriefing:
                 "number": po.get("po_number", "")
             })
         
+        # Stock movement events (adjustments, transfers, etc)
+        range_stock_moves = [m for m in stock_movements if in_range(m.get("date") or m.get("created_at"))]
+        for m in range_stock_moves:
+            move_type = m.get("type", m.get("movement_type", "adjustment"))
+            events.append({
+                "date": str(m.get("date") or m.get("created_at", ""))[:10],
+                "type": "stock_move",
+                "who": user_names.get(m.get("created_by") or m.get("user_id"), "Someone"),
+                "item": m.get("item_code") or m.get("stock_code") or m.get("description", "item"),
+                "qty": m.get("qty") or m.get("quantity", 0),
+                "move_type": move_type
+            })
+        
+        # Expense events
+        range_expenses = [e for e in expenses if in_range(e.get("date") or e.get("created_at"))]
+        for exp in range_expenses:
+            events.append({
+                "date": str(exp.get("date") or exp.get("created_at", ""))[:10],
+                "type": "expense",
+                "who": user_names.get(exp.get("created_by"), "Someone"),
+                "description": exp.get("description", exp.get("supplier", "Expense")),
+                "amount": float(exp.get("amount") or exp.get("total", 0))
+            })
+        
+        # Credit note events
+        range_credit_notes = [c for c in credit_notes if in_range(c.get("date") or c.get("created_at"))]
+        for cn in range_credit_notes:
+            events.append({
+                "date": str(cn.get("date") or cn.get("created_at", ""))[:10],
+                "type": "credit_note",
+                "who": user_names.get(cn.get("created_by"), "Someone"),
+                "customer": cn.get("customer_name", "Unknown"),
+                "amount": float(cn.get("total") or cn.get("amount", 0))
+            })
+        
+        # GRV events (goods received)
+        range_grv = [g for g in grv if in_range(g.get("date") or g.get("created_at"))]
+        for g in range_grv:
+            events.append({
+                "date": str(g.get("date") or g.get("created_at", ""))[:10],
+                "type": "grv",
+                "who": user_names.get(g.get("created_by") or g.get("received_by"), "Someone"),
+                "supplier": g.get("supplier_name", "Unknown"),
+                "number": g.get("grv_number", "")
+            })
+        
+        # New customer events
+        range_customers = [c for c in customers if in_range(c.get("created_at"))]
+        for c in range_customers:
+            events.append({
+                "date": str(c.get("created_at", ""))[:10],
+                "type": "new_customer",
+                "who": user_names.get(c.get("created_by"), "Someone"),
+                "customer": c.get("name", "Unknown")
+            })
+        
         # Sort events by date
         events = sorted(events, key=lambda x: x.get("date", ""), reverse=True)
         
-        # Team activity summary
+        # Team activity summary - track ALL activity types
         team_stats = {}
         for e in events:
             who = e.get("who", "Unknown")
             if who == "Unknown" or who == "Someone":
                 continue
             if who not in team_stats:
-                team_stats[who] = {"sales": 0, "quotes": 0, "invoices": 0, "pos": 0}
+                team_stats[who] = {"sales": 0, "quotes": 0, "invoices": 0, "pos": 0, "other": 0}
             if e["type"] == "sale":
                 team_stats[who]["sales"] += e.get("amount", 0)
             elif e["type"] == "quote":
@@ -13064,6 +13142,9 @@ class DailyBriefing:
                 team_stats[who]["invoices"] += 1
             elif e["type"] == "po":
                 team_stats[who]["pos"] += 1
+            else:
+                # Count all other activity (stock moves, expenses, credit notes, GRV, new customers)
+                team_stats[who]["other"] += 1
         
         # Danger customers (90+ days)
         today_date = datetime.now().date()
@@ -13176,13 +13257,15 @@ class DailyBriefing:
                 else:
                     return f"{greeting_full},\n\n**Zero activity** recorded for {start_date_str} to {end_date_str}. No invoices, quotes, sales or payments.\n\n- Zane"
         
-        # Build event list - GROUPED BY DATE so AI knows what's TODAY vs yesterday
-        today_str = data.get("end_date", "")
+        # Build event list - ALL ACTIVITY TYPES, grouped by TODAY vs previous
+        today_str_local = data.get("end_date", "")[:10] if data.get("end_date") else ""
         today_events = []
         other_events = []
         
-        for e in data.get("events", [])[:25]:
-            event_date = e.get("date", "")
+        for e in data.get("events", [])[:40]:  # Increased limit to capture more activity
+            event_date = str(e.get("date", ""))[:10]
+            event_text = ""
+            
             if e["type"] == "sale":
                 event_text = f"{e['who']} sold R{e['amount']:,.0f} to {e['customer']} ({e['method']})"
             elif e["type"] == "quote":
@@ -13192,26 +13275,39 @@ class DailyBriefing:
             elif e["type"] == "payment":
                 event_text = f"{e['customer']} PAID R{e['amount']:,.0f}"
             elif e["type"] == "po":
-                event_text = f"{e['who']} created PO for {e['supplier']}"
-            else:
-                continue
+                event_text = f"{e['who']} created PO for {e.get('supplier', 'supplier')}"
+            elif e["type"] == "stock_move":
+                qty = e.get('qty', 0)
+                move_type = e.get('move_type', 'adjusted')
+                event_text = f"{e['who']} {move_type} stock: {e.get('item', 'item')} ({qty:+.0f})"
+            elif e["type"] == "expense":
+                event_text = f"{e['who']} logged expense: {e.get('description', 'expense')} R{e.get('amount', 0):,.0f}"
+            elif e["type"] == "credit_note":
+                event_text = f"{e['who']} issued credit note to {e.get('customer', 'customer')} R{e.get('amount', 0):,.0f}"
+            elif e["type"] == "grv":
+                event_text = f"{e['who']} received goods from {e.get('supplier', 'supplier')}"
+            elif e["type"] == "new_customer":
+                event_text = f"{e['who']} added new customer: {e.get('customer', 'customer')}"
             
-            if event_date == today_str:
-                today_events.append(event_text)
-            else:
-                other_events.append(f"[{event_date}] {event_text}")
+            if event_text:
+                if event_date == today_str_local:
+                    today_events.append(event_text)
+                else:
+                    other_events.append(f"[{event_date}] {event_text}")
         
         # Team summary - include IDLE staff so Zane can call them out
         team = []
         active_names = set()
         for name, stats in data.get("team_stats", {}).items():
             parts = []
-            if stats["sales"] > 0:
+            if stats.get("sales", 0) > 0:
                 parts.append(f"R{stats['sales']:,.0f} sales")
-            if stats["quotes"] > 0:
+            if stats.get("quotes", 0) > 0:
                 parts.append(f"{stats['quotes']} quotes")
-            if stats["invoices"] > 0:
+            if stats.get("invoices", 0) > 0:
                 parts.append(f"{stats['invoices']} invoices")
+            if stats.get("other", 0) > 0:
+                parts.append(f"{stats['other']} other actions")
             if parts:
                 team.append(f"{name}: {', '.join(parts)}")
                 active_names.add(name)
@@ -13238,31 +13334,32 @@ class DailyBriefing:
         if data.get('low_stock'):
             problems.append(f"Low stock: {', '.join([s['code'] for s in data['low_stock'][:3]])}")
         
-        # Build simple data summary - PRIORITIZE TODAY
+        # Build data summary - PRIORITIZE TODAY'S ACTIVITY
         summary = f"""
 Business: {biz_name}
 Owner: {owner_name}
 Period: {days} day(s) ({start_date_str} to {end_date_str})
-Working days: {working_days}, Weekends: {weekend_days}
 CURRENT DATE: {end_date_str} (THIS IS TODAY - focus on this!)
 
-TOTALS (combined period):
+TOTALS (for period):
 - POS Sales: R{data['total_sales']:,.0f}
 - Invoices: R{data['total_invoiced']:,.0f}
 - Quotes: R{data['total_quoted']:,.0f}
 - Payments received: R{data['total_received']:,.0f}
 
-=== TODAY ({end_date_str}) - MOST IMPORTANT ===
-{chr(10).join(today_events) if today_events else 'Nothing recorded yet today'}
+=== TODAY'S ACTIVITY ({end_date_str}) - MOST IMPORTANT ===
+{chr(10).join(today_events) if today_events else 'No activity recorded yet today'}
 
 === PREVIOUS DAYS ===
-{chr(10).join(other_events) if other_events else 'No prior activity in this period'}
+{chr(10).join(other_events[:15]) if other_events else 'No prior activity'}
 
 TEAM PERFORMANCE:
-{chr(10).join(team) if team else 'No activity tracked'}
+{chr(10).join(team) if team else 'No tracked activity'}
 
-PROBLEMS NEEDING ATTENTION:
+PROBLEMS:
 {chr(10).join(problems) if problems else 'None'}
+
+NOTE: If activity looks like testing (small random amounts, test customers), mention it but still report it - the boss wants to see ALL system usage.
 """
 
         # Determine greeting based on time of day - ALWAYS English (users can ask for Afrikaans via Zane chat)
@@ -13277,10 +13374,10 @@ PROBLEMS NEEDING ATTENTION:
         first_name = owner_name.split()[0] if owner_name else ""
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
-        # Professional prompt with structure - ENGLISH - REAL-TIME FOCUS
+        # Professional prompt with structure - ALL ACTIVITY TRACKING
         prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
 
-Write a REAL-TIME business update for the owner. This is a live dashboard - focus on what's happening RIGHT NOW and TODAY.
+Write a REAL-TIME business update for the owner. Focus on TODAY's activity first - the boss wants to know what's happening RIGHT NOW.
 
 YOUR STYLE:
 - Start with: "{greeting_full}"
@@ -13288,24 +13385,26 @@ YOUR STYLE:
 - Be warm but professional - like a respected colleague
 - DO NOT use "Boss" or "Baas"
 - No emojis or excessive exclamation marks
-- ALWAYS write in English unless the data clearly shows otherwise
+- ALWAYS write in English
 
-CONTENT PRIORITY - REAL-TIME MONITORING:
-1. **TODAY FIRST** - What has happened TODAY ({end_date_str})? Lead with this. If nothing yet today, say so clearly.
-2. **WHO did WHAT** - Name each person and exactly what they produced (invoices, quotes, sales). Be specific with customer names and amounts.
-3. **WHO did NOTHING** - If a team member has zero activity TODAY, call it out.
-4. **Previous days** - Only briefly mention if relevant for context
+CONTENT PRIORITY - REPORT ALL ACTIVITY:
+1. **TODAY FIRST** - What has happened TODAY ({end_date_str})? Lead with this section.
+2. **ALL ACTIVITY COUNTS** - Report EVERYTHING: sales, quotes, invoices, stock adjustments, new customers, expenses, credit notes, goods received. Even small test transactions matter - the boss wants to see ALL system usage.
+3. **WHO did WHAT** - Name each person and exactly what they did. Be specific.
+4. **Testing activity** - If activity looks like testing (small amounts, test customer names, random entries), still report it but note "appears to be testing/training" - this is valuable information.
 5. **Attention needed** - Overdue accounts, stock issues, anything off
 
 Use sections: **Today's Activity**, **Staff Performance**, **Attention Needed**
-Be specific with names, amounts, and customers. The boss wants CURRENT data, not historical summaries.
-End with ONE concrete action item if there is one.
+Be specific with names, amounts, and actions. Report everything - no activity is too small to mention.
+End with ONE concrete observation or action item.
 
 {summary}
 
 Write with confidence - you KNOW what you're talking about. Sign off with "- Zane"."""
 
-        # Claude Haiku for Pulse - fast and smart (with retry for API overload)
+Write with confidence - you KNOW what you're talking about. Sign off with "- Zane"."""
+
+        # Claude Haiku for Pulse - with retry for API overload
         if ANTHROPIC_API_KEY:
             max_retries = 3
             for attempt in range(max_retries):
@@ -13314,7 +13413,7 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
                     client = _anthropic_client
                     message = client.messages.create(
                         model="claude-haiku-4-5-20251001",
-                        max_tokens=600,
+                        max_tokens=800,  # Increased for more detailed reports
                         messages=[{"role": "user", "content": prompt}]
                     )
                     if message.content:
