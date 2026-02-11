@@ -1018,11 +1018,6 @@ def preprocess_image_for_ocr(image_data: bytes, filename: str) -> bytes:
         # Open image
         img = Image.open(io.BytesIO(image_data))
         
-        # Skip if already large enough
-        if img.width >= 1500 and img.height >= 1500:
-            logger.info(f"[IMAGE] Skipping preprocessing - {filename} already good size ({img.width}x{img.height})")
-            return image_data
-        
         # Convert to RGB if needed
         if img.mode not in ('RGB', 'L'):
             img = img.convert('RGB')
@@ -1040,7 +1035,7 @@ def preprocess_image_for_ocr(image_data: bytes, filename: str) -> bytes:
         img = enhancer.enhance(1.2)
         
         # 4. Increase resolution if too small - Claude lees beter met groter images
-        # But don't go crazy - limit to 2000px max
+        # For bank statements with dense tables, we need HIGH resolution
         if img.width < 1500:
             scale = min(1500 / img.width, 2.0)  # Max 2x scaling
             new_size = (int(img.width * scale), int(img.height * scale))
@@ -46049,7 +46044,7 @@ def banking_page():
         <h2 style="margin:0;">🏦 Bank Reconciliation</h2>
         <label class="btn btn-primary" style="cursor:pointer;">
             📥 Import Statement
-            <input type="file" accept=".csv" style="display:none;" onchange="uploadStatement(this.files[0])">
+            <input type="file" accept=".csv,.pdf" style="display:none;" onchange="uploadStatement(this.files[0])">
         </label>
     </div>
     
@@ -46295,7 +46290,7 @@ def banking_page():
 @app.route("/api/banking/import", methods=["POST"])
 @login_required
 def api_banking_import():
-    """Import bank statement CSV with SMART AUTO-MATCHING"""
+    """Import bank statement CSV or PDF with SMART AUTO-MATCHING"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -46306,15 +46301,266 @@ def api_banking_import():
         if not file:
             return jsonify({"success": False, "error": "No file uploaded"})
         
-        content = file.read().decode('utf-8', errors='ignore')
-        reader = csv.reader(io.StringIO(content))
-        rows = list(reader)
+        filename = file.filename.lower()
         
-        if len(rows) < 2:
-            return jsonify({"success": False, "error": "File is empty"})
+        # ═══════════════════════════════════════════════════════════════
+        # PDF PARSING - Standard Bank, ABSA, FNB, Nedbank, Capitec
+        # ═══════════════════════════════════════════════════════════════
+        if filename.endswith('.pdf'):
+            try:
+                import subprocess, tempfile, os
+                
+                # Save PDF to temp file
+                pdf_bytes = file.read()
+                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+                    tmp.write(pdf_bytes)
+                    tmp_path = tmp.name
+                
+                # First try text extraction
+                pdf_text = ""
+                try:
+                    result = subprocess.run(['pdftotext', '-layout', tmp_path, '-'], capture_output=True, text=True, timeout=30)
+                    pdf_text = result.stdout.strip()
+                except:
+                    pass
+                
+                if not pdf_text:
+                    try:
+                        import fitz
+                        doc = fitz.open(tmp_path)
+                        for page in doc:
+                            pdf_text += page.get_text() + "\n"
+                        doc.close()
+                    except:
+                        pass
+                
+                # If text extraction failed (scanned PDF), use Claude AI via images
+                if not pdf_text or len(pdf_text) < 50:
+                    logger.info("[BANK IMPORT] Scanned PDF detected - using AI to read")
+                    
+                    try:
+                        import fitz, base64
+                        doc = fitz.open(tmp_path)
+                        all_transactions = []
+                        
+                        for page_num in range(len(doc)):
+                            page = doc[page_num]
+                            pix = page.get_pixmap(dpi=200)
+                            img_bytes = pix.tobytes("png")
+                            
+                            # Compress if needed
+                            if len(img_bytes) > 3500000:
+                                from PIL import Image as PILImage
+                                import io as _io
+                                img = PILImage.open(_io.BytesIO(img_bytes))
+                                quality = 70
+                                max_dim = 1600
+                                while True:
+                                    w, h = img.size
+                                    if max(w, h) > max_dim:
+                                        ratio = max_dim / max(w, h)
+                                        img = img.resize((int(w*ratio), int(h*ratio)), PILImage.LANCZOS)
+                                    buf = _io.BytesIO()
+                                    img.save(buf, format='JPEG', quality=quality)
+                                    if buf.tell() < 3500000 or quality <= 30:
+                                        break
+                                    quality -= 10
+                                    max_dim -= 200
+                                img_bytes = buf.getvalue()
+                                media_type = "image/jpeg"
+                            else:
+                                media_type = "image/png"
+                            
+                            b64_img = base64.b64encode(img_bytes).decode('utf-8')
+                            
+                            # Send to Claude API
+                            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                            if not api_key:
+                                doc.close()
+                                os.unlink(tmp_path)
+                                return jsonify({"success": False, "error": "AI API key not configured"})
+                            
+                            prompt = """Extract ALL bank transactions from this bank statement image.
+
+Return ONLY valid JSON array, no other text. Each transaction must have:
+- "date": "YYYY-MM-DD" format
+- "description": the transaction description/details
+- "debit": amount as number (money going OUT, positive number) or 0
+- "credit": amount as number (money coming IN, positive number) or 0
+- "balance": the running balance after this transaction
+
+RULES:
+- Payments OUT (debits, purchases, fees) go in "debit" field as POSITIVE numbers
+- Money IN (credits, deposits, settlements) go in "credit" field as POSITIVE numbers
+- Skip "BALANCE BROUGHT FORWARD" and "CLOSING BALANCE" rows
+- Read EVERY transaction row, do not skip any
+- Extract amounts exactly as shown on the statement
+- Include service fees, bank charges etc as debits"""
+
+                            import requests as req
+                            resp = req.post(
+                                "https://api.anthropic.com/v1/messages",
+                                headers={
+                                    "x-api-key": api_key,
+                                    "anthropic-version": "2023-06-01",
+                                    "content-type": "application/json"
+                                },
+                                json={
+                                    "model": "claude-sonnet-4-20250514",
+                                    "max_tokens": 8000,
+                                    "messages": [{
+                                        "role": "user",
+                                        "content": [
+                                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_img}},
+                                            {"type": "text", "text": prompt}
+                                        ]
+                                    }]
+                                },
+                                timeout=120
+                            )
+                            
+                            if resp.status_code != 200:
+                                logger.error(f"[BANK IMPORT] AI API error: {resp.status_code} {resp.text[:200]}")
+                                continue
+                            
+                            ai_result = resp.json()
+                            ai_text = ""
+                            for block in ai_result.get("content", []):
+                                if block.get("type") == "text":
+                                    ai_text += block["text"]
+                            
+                            # Parse JSON from AI response
+                            import re
+                            json_match = re.search(r'\[.*\]', ai_text, re.DOTALL)
+                            if json_match:
+                                try:
+                                    page_txns = json.loads(json_match.group(0))
+                                    all_transactions.extend(page_txns)
+                                    logger.info(f"[BANK IMPORT] Page {page_num + 1}: {len(page_txns)} transactions")
+                                except json.JSONDecodeError as je:
+                                    logger.error(f"[BANK IMPORT] JSON parse error page {page_num + 1}: {je}")
+                        
+                        doc.close()
+                        os.unlink(tmp_path)
+                        
+                        if not all_transactions:
+                            return jsonify({"success": False, "error": "AI could not read any transactions from the PDF"})
+                        
+                        # Convert to standard format
+                        data_rows = []
+                        for tx in all_transactions:
+                            data_rows.append([
+                                str(tx.get("date", "")),
+                                str(tx.get("description", "")),
+                                float(tx.get("debit", 0)),
+                                float(tx.get("credit", 0)),
+                                float(tx.get("balance", 0))
+                            ])
+                        
+                        date_col = 0
+                        desc_col = 1
+                        debit_col = 2
+                        credit_col = 3
+                        amount_col = None
+                        
+                        logger.info(f"[BANK IMPORT] AI extracted {len(data_rows)} total transactions from PDF")
+                        
+                    except Exception as ai_err:
+                        os.unlink(tmp_path)
+                        logger.error(f"[BANK IMPORT] AI PDF error: {ai_err}")
+                        return jsonify({"success": False, "error": f"Failed to read scanned PDF: {str(ai_err)}"})
+                
+                else:
+                    os.unlink(tmp_path)
+                    # Text-based PDF parsing
+                    import re
+                    
+                    transactions = []
+                    lines = pdf_text.split('\n')
+                    
+                    logger.info(f"[BANK IMPORT] Text PDF: {len(lines)} lines")
+                    
+                    date_pattern = re.compile(r'(20\d{6})')
+                    amount_pattern = re.compile(r'-?[\d,]+\.\d{2}')
+                    
+                    i = 0
+                    while i < len(lines):
+                        line = lines[i].strip()
+                        if not line:
+                            i += 1
+                            continue
+                        
+                        if any(skip in line.upper() for skip in ['PAGE', 'DETAILS', 'SERVICE FEE', 'CURRENT ACCOUNT', 'STATEMENT', 'STANDARD BANK', 'COMPUTER GENERATED', 'END OF REPORT', 'BRANCH', 'VAT REGISTRATION', 'CLOSING BALANCE', 'BALANCE BROUGHT']):
+                            i += 1
+                            continue
+                        
+                        date_match = date_pattern.search(line)
+                        if date_match:
+                            raw_date = date_match.group(1)
+                            tx_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+                            
+                            numbers = amount_pattern.findall(line)
+                            
+                            if len(numbers) >= 2:
+                                first_num_pos = line.find(numbers[0])
+                                description = line[:first_num_pos].strip()
+                                description = re.sub(r'^\d+\s+', '', description).strip()
+                                
+                                if not description:
+                                    i += 1
+                                    continue
+                                
+                                clean_nums = [float(n.replace(',', '')) for n in numbers]
+                                balance = clean_nums[-1]
+                                debit = 0.0
+                                credit = 0.0
+                                for n in clean_nums[:-1]:
+                                    if n < 0:
+                                        debit = abs(n)
+                                    elif n > 0:
+                                        credit = n
+                                
+                                if debit == 0 and credit == 0:
+                                    i += 1
+                                    continue
+                                
+                                transactions.append({
+                                    "date": tx_date,
+                                    "description": description,
+                                    "debit": round(debit, 2),
+                                    "credit": round(credit, 2),
+                                    "balance": round(balance, 2)
+                                })
+                        i += 1
+                    
+                    data_rows = []
+                    for tx in transactions:
+                        data_rows.append([tx["date"], tx["description"], tx["debit"], tx["credit"], tx["balance"]])
+                    
+                    date_col = 0
+                    desc_col = 1
+                    debit_col = 2
+                    credit_col = 3
+                    amount_col = None
+                    
+                    if not data_rows:
+                        return jsonify({"success": False, "error": "Could not parse transactions from PDF text"})
+                
+            except Exception as pdf_err:
+                logger.error(f"[BANK IMPORT] PDF parse error: {pdf_err}")
+                return jsonify({"success": False, "error": f"PDF parse error: {str(pdf_err)}"})
         
-        headers = [str(h).lower() if not isinstance(h, list) else str(h[0]).lower() for h in rows[0]]
-        data_rows = rows[1:]
+        else:
+            # CSV PARSING (existing logic)
+            content = file.read().decode('utf-8', errors='ignore')
+            reader = csv.reader(io.StringIO(content))
+            rows = list(reader)
+        
+            if len(rows) < 2:
+                return jsonify({"success": False, "error": "File is empty"})
+            
+            headers = [str(h).lower() if not isinstance(h, list) else str(h[0]).lower() for h in rows[0]]
+            data_rows = rows[1:]
         
         def cell_str(cell):
             if cell is None:
@@ -46325,22 +46571,24 @@ def api_banking_import():
                 return str(cell).strip() if cell is not None else ""
             return str(cell).strip()
         
-        data_rows = [[cell_str(cell) for cell in row] for row in data_rows]
-        
-        # Find columns
-        date_col = desc_col = amount_col = debit_col = credit_col = None
-        
-        for i, h in enumerate(headers):
-            if "date" in h:
-                date_col = i
-            elif "desc" in h or "narr" in h or "particular" in h:
-                desc_col = i
-            elif "amount" in h:
-                amount_col = i
-            elif "debit" in h:
-                debit_col = i
-            elif "credit" in h:
-                credit_col = i
+        # For CSV: clean data and find columns
+        if not filename.endswith('.pdf'):
+            data_rows = [[cell_str(cell) for cell in row] for row in data_rows]
+            
+            # Find columns
+            date_col = desc_col = amount_col = debit_col = credit_col = None
+            
+            for i, h in enumerate(headers):
+                if "date" in h:
+                    date_col = i
+                elif "desc" in h or "narr" in h or "particular" in h:
+                    desc_col = i
+                elif "amount" in h:
+                    amount_col = i
+                elif "debit" in h:
+                    debit_col = i
+                elif "credit" in h:
+                    credit_col = i
         
         # ═══════════════════════════════════════════════════════════════
         # GET DATA FOR SMART MATCHING
@@ -55008,41 +55256,54 @@ Return ONLY JSON:
 
 ONLY read times - DO NOT calculate hours. Extract ALL employees."""
         elif scan_type == 'bank_statement':
-            prompt = """Read this bank statement carefully. Extract ALL transactions visible on the page.
+            prompt = """You are reading a South African bank statement. Extract ALL transactions visible on this page.
 
-For each transaction, extract:
-- date: The transaction date (format as YYYY-MM-DD if possible)
-- description: The full transaction description/narrative exactly as printed
-- amount: The transaction amount (negative for debits/payments, positive for credits/deposits)
-- balance: The running balance after this transaction (if shown)
+THIS IS A STANDARD BANK STATEMENT FORMAT with columns:
+- Details (description - may span multiple lines)
+- Service Fee
+- Debit (money OUT - shown as negative numbers like -229.00)  
+- Credit (money IN - shown as positive numbers like 1,272.40)
+- Date (format YYYYMMDD like 20260130)
+- Balance (running balance - usually negative for overdraft)
 
-Also extract:
-- bank_name: The bank name (FNB, ABSA, Standard Bank, Nedbank, Capitec, etc.)
-- account_number: The account number (mask middle digits for security)
+CRITICAL RULES:
+1. Read EVERY SINGLE transaction row from top to bottom - DO NOT SKIP ANY
+2. Some descriptions span 2-3 lines (e.g. "DEBIT CARD PURCHASE FROM" on line 1, "LENMED RANDFONLENMED" on line 2, "RANDFONTE" on line 3) - combine these into ONE transaction
+3. The Debit column has NEGATIVE numbers (payments out) - extract as positive debit
+4. The Credit column has positive numbers (money in) - extract as positive credit
+5. IGNORE "BALANCE BROUGHT FORWARD" and "CLOSING BALANCE" rows
+6. IGNORE any handwritten marks, lines drawn through text, or annotations
+7. If text is partially obscured by a line, still try to read what you can see
+8. Service fees like "DEBIT CARD PURCHASE FEE", "OVERDRAFT SERVICE FEE", "MONTHLY MANAGEMENT FEE" are debits
+
+Also extract from the header:
+- bank_name: "Standard Bank" (or whatever bank it is)
+- account_number: The account number (mask middle digits)
 - account_holder: The account holder name
-- statement_period: The period covered
-- opening_balance: The opening balance
-- closing_balance: The closing balance
+- statement_period: The statement date/period
+- opening_balance: First balance shown
+- closing_balance: Last balance shown
 
-Return ONLY JSON:
+Return ONLY valid JSON:
 {
-    "bank_name": "FNB",
-    "account_number": "62XXXX1234",
-    "account_holder": "Company Name",
-    "statement_period": "01 Jan 2026 - 31 Jan 2026",
-    "opening_balance": 0.00,
-    "closing_balance": 0.00,
+    "bank_name": "Standard Bank",
+    "account_number": "02XXXX7398",
+    "account_holder": "FULLTECH STAINLESS T",
+    "statement_period": "2026-02-11",
+    "opening_balance": -442469.72,
+    "closing_balance": -367284.35,
     "transactions": [
-        {"date": "2026-01-02", "description": "POS PURCHASE - WOOLWORTHS", "amount": -250.00, "balance": 9750.00},
-        {"date": "2026-01-03", "description": "CREDIT TRANSFER - CLIENT ABC", "amount": 5000.00, "balance": 14750.00}
+        {"date": "2026-01-30", "description": "ACCOUNT PAYMENT COPYTYPE TOSHIBAFUL0003", "amount": -229.00, "balance": -442698.72},
+        {"date": "2026-01-30", "description": "CREDIT CARD EFTPOS SETTLEMENT CR EFTPOS 28B 0001283095827", "amount": 1272.40, "balance": -441426.32}
     ]
 }
 
 Rules:
-- Debits/payments/charges must be NEGATIVE amounts
-- Credits/deposits/income must be POSITIVE amounts
-- Read EVERY transaction row - do not skip any
-- Extract amounts EXACTLY as shown"""
+- Debits/payments/fees = NEGATIVE amount
+- Credits/deposits/settlements = POSITIVE amount  
+- Read EVERY row, even bank charges and small fees
+- Combine multi-line descriptions into one string
+- Date format: YYYY-MM-DD"""
         else:
             prompt = """Read this invoice/receipt carefully. Extract ALL line items AND supplier details.
 
@@ -55083,26 +55344,122 @@ NOTE: For line_total, qty, unit_price, subtotal, vat, total - read ONLY what is 
 If ANY number is not visible on the document, set it to 0. Python handles all math."""
         
         client = _anthropic_client
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=4000,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
-                    {"type": "text", "text": prompt}
-                ]
-            }]
-        )
         
-        response_text = message.content[0].text.strip()
-        extracted = extract_json_from_text(response_text)
+        # ══════════════════════════════════════════════════════════════════════
+        # BANK STATEMENT SPLIT: Dense pages get split into top/bottom halves
+        # This dramatically improves accuracy for pages with 30+ transactions
+        # ══════════════════════════════════════════════════════════════════════
+        if scan_type == 'bank_statement':
+            logger.info(f"[SCAN] Bank statement - splitting image for better accuracy")
+            try:
+                from PIL import Image as PILImage
+                img = PILImage.open(io.BytesIO(file_data))
+                w, h = img.size
+                
+                # Split into top half and bottom half with 10% overlap
+                overlap = int(h * 0.1)
+                top_half = img.crop((0, 0, w, h // 2 + overlap))
+                bottom_half = img.crop((0, h // 2 - overlap, w, h))
+                
+                all_transactions = []
+                header_info = {}
+                
+                for part_name, part_img in [("top", top_half), ("bottom", bottom_half)]:
+                    buf = io.BytesIO()
+                    if part_img.mode != 'RGB':
+                        part_img = part_img.convert('RGB')
+                    part_img.save(buf, format='JPEG', quality=90)
+                    part_data = buf.getvalue()
+                    part_b64 = base64.b64encode(part_data).decode('utf-8')
+                    
+                    logger.info(f"[SCAN] Sending bank statement {part_name} half ({len(part_data)/1024:.0f}KB)")
+                    
+                    part_message = client.messages.create(
+                        model="claude-sonnet-4-5-20250929",
+                        max_tokens=6000,
+                        messages=[{
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": part_b64}},
+                                {"type": "text", "text": prompt}
+                            ]
+                        }]
+                    )
+                    
+                    part_text = part_message.content[0].text.strip()
+                    part_data_json = extract_json_from_text(part_text)
+                    
+                    if part_data_json:
+                        # Collect transactions
+                        txns = part_data_json.get("transactions", [])
+                        all_transactions.extend(txns)
+                        logger.info(f"[SCAN] Bank {part_name}: {len(txns)} transactions found")
+                        
+                        # Keep header info from first part
+                        if part_name == "top":
+                            header_info = {k: v for k, v in part_data_json.items() if k != "transactions"}
+                    else:
+                        logger.warning(f"[SCAN] Bank {part_name}: no JSON extracted")
+                
+                # Deduplicate transactions by date+amount+balance combo
+                seen = set()
+                unique_txns = []
+                for tx in all_transactions:
+                    key = f"{tx.get('date','')}|{tx.get('amount',0)}|{tx.get('balance',0)}"
+                    if key not in seen:
+                        seen.add(key)
+                        unique_txns.append(tx)
+                
+                # Sort by balance (since balance is running, this gives chronological order)
+                # Or sort by date
+                unique_txns.sort(key=lambda x: (x.get("date", ""), str(x.get("balance", 0))))
+                
+                extracted = header_info
+                extracted["transactions"] = unique_txns
+                extracted["ai_source"] = "Claude Sonnet (split)"
+                
+                logger.info(f"[SCAN] Bank statement total: {len(unique_txns)} unique transactions (from {len(all_transactions)} raw)")
+                
+            except Exception as split_err:
+                logger.warning(f"[SCAN] Split failed ({split_err}), falling back to single image")
+                # Fallback to single image
+                message = client.messages.create(
+                    model="claude-sonnet-4-5-20250929",
+                    max_tokens=6000,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                            {"type": "text", "text": prompt}
+                        ]
+                    }]
+                )
+                response_text = message.content[0].text.strip()
+                extracted = extract_json_from_text(response_text)
+                if not extracted:
+                    return jsonify({"success": False, "error": "Could not read bank statement"})
+                extracted["ai_source"] = "Claude Sonnet"
+        else:
+            message = client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=4000,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }]
+            )
         
-        if not extracted:
-            logger.error(f"[SCAN] No JSON found in first attempt: {response_text[:200]}")
-            return jsonify({"success": False, "error": "Could not read document"})
-        
-        extracted["ai_source"] = "Claude Sonnet"
+            response_text = message.content[0].text.strip()
+            extracted = extract_json_from_text(response_text)
+            
+            if not extracted:
+                logger.error(f"[SCAN] No JSON found in first attempt: {response_text[:200]}")
+                return jsonify({"success": False, "error": "Could not read document"})
+            
+            extracted["ai_source"] = "Claude Sonnet"
         
         # ══════════════════════════════════════════════════════════════════════
         # STEP 3: CONFIDENCE CHECK + RETRY if critical fields missing
