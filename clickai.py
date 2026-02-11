@@ -3820,6 +3820,177 @@ ZANE_TOOLS = [
             },
             "required": ["action", "type"]
         }
+    },
+    # ── NEW MEGA BRAIN TOOLS ──────────────────────────────────────
+    {
+        "name": "get_purchase_orders",
+        "description": "Get purchase orders (POs) to suppliers. Use when user asks about orders placed, pending deliveries, what we ordered, or supplier orders.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "supplier_name": {"type": "string", "description": "Filter by supplier name (partial match)"},
+                "status": {"type": "string", "description": "Filter: draft, sent, partial, received, cancelled", "enum": ["draft", "sent", "partial", "received", "cancelled"]},
+                "days_back": {"type": "integer", "description": "Only POs from last N days (default 60)", "default": 60},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "get_goods_received",
+        "description": "Get GRVs (goods received vouchers/notes). Use when user asks about deliveries received, stock received, GRV, goods in, supplier deliveries.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "supplier_name": {"type": "string", "description": "Filter by supplier name"},
+                "po_number": {"type": "string", "description": "Filter by purchase order number"},
+                "days_back": {"type": "integer", "description": "Only GRVs from last N days (default 60)", "default": 60},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "get_delivery_notes",
+        "description": "Get delivery notes sent to customers. Use when user asks about deliveries made, items dispatched, what was delivered.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "customer_name": {"type": "string", "description": "Filter by customer name"},
+                "status": {"type": "string", "description": "Filter: draft, dispatched, delivered", "enum": ["draft", "dispatched", "delivered"]},
+                "days_back": {"type": "integer", "description": "Only DNs from last N days (default 30)", "default": 30},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "get_credit_notes",
+        "description": "Get credit notes issued to customers. Use when user asks about returns, credits given, refunds, credit notes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "customer_name": {"type": "string", "description": "Filter by customer name"},
+                "days_back": {"type": "integer", "description": "Only CNs from last N days (default 60)", "default": 60},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "get_payments",
+        "description": "Get payment records - money received from customers OR paid to suppliers. Use when user asks about payments, receipts, money in/out, who paid, payment history.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Filter by customer or supplier name"},
+                "direction": {"type": "string", "description": "Filter: received (from customers) or made (to suppliers)", "enum": ["received", "made"]},
+                "days_back": {"type": "integer", "description": "Only payments from last N days (default 30)", "default": 30},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "get_stock_movements",
+        "description": "Get stock movement history - items booked in, sold, adjusted, transferred. Use when user asks about stock history, what moved, book-ins, adjustments, stock audit trail.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "stock_code": {"type": "string", "description": "Filter by stock code or description"},
+                "movement_type": {"type": "string", "description": "Filter: sale, purchase, adjustment, transfer, grv, return", "enum": ["sale", "purchase", "adjustment", "transfer", "grv", "return"]},
+                "days_back": {"type": "integer", "description": "Only movements from last N days (default 30)", "default": 30},
+                "limit": {"type": "integer", "description": "Max results (default 30)", "default": 30}
+            }
+        }
+    },
+    {
+        "name": "get_journal_entries",
+        "description": "Get journal entries / GL entries. Use when user asks about journals, general ledger, accounting entries, GL, double-entry records.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "Search in journal description/reference"},
+                "account": {"type": "string", "description": "Filter by account name"},
+                "days_back": {"type": "integer", "description": "Only entries from last N days (default 30)", "default": 30},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "get_scan_queue",
+        "description": "Get scanned documents in the inbox - invoices, receipts, statements waiting to be processed. Use when user asks about scanned items, scan inbox, pending scans, documents to process.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "Filter: pending, processed, error", "enum": ["pending", "processed", "error"]},
+                "scan_type": {"type": "string", "description": "Filter: supplier_invoice, receipt, expense, bank_statement, payslip"},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "get_recurring_invoices",
+        "description": "Get recurring/subscription invoices. Use when user asks about recurring billing, monthly invoices, subscription invoices, auto-invoices.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "customer_name": {"type": "string", "description": "Filter by customer name"},
+                "status": {"type": "string", "description": "Filter: active, paused", "enum": ["active", "paused"]}
+            }
+        }
+    },
+    {
+        "name": "get_rentals",
+        "description": "Get rental/property/tenant information. Use when user asks about rentals, tenants, properties, lease agreements, municipal charges, rent.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tenant_name": {"type": "string", "description": "Filter by tenant name"},
+                "status": {"type": "string", "description": "Filter: active, ended", "enum": ["active", "ended"]}
+            }
+        }
+    },
+    {
+        "name": "get_timesheets",
+        "description": "Get timesheet/clock entries for employees. Use when user asks about hours worked, time tracking, attendance, clock in/out, who worked when.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "employee_name": {"type": "string", "description": "Filter by employee name"},
+                "days_back": {"type": "integer", "description": "Only entries from last N days (default 7)", "default": 7},
+                "limit": {"type": "integer", "description": "Max results (default 50)", "default": 50}
+            }
+        }
+    },
+    {
+        "name": "get_payslips",
+        "description": "Get payslip records. Use when user asks about payslips, salary payments, pay runs, wage history, what was paid to employees.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "employee_name": {"type": "string", "description": "Filter by employee name"},
+                "month": {"type": "string", "description": "Filter by month (YYYY-MM format, e.g. '2025-01')"},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "get_receipts",
+        "description": "Get receipt records (payments received from customers). Use when user asks about receipts, money received, customer payments, receipt book.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "customer_name": {"type": "string", "description": "Filter by customer name"},
+                "days_back": {"type": "integer", "description": "Only receipts from last N days (default 30)", "default": 30},
+                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
+            }
+        }
+    },
+    {
+        "name": "get_subscriptions",
+        "description": "Get business subscriptions/recurring expenses. Use when user asks about subscriptions, monthly costs, recurring expenses.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "Filter: active, cancelled", "enum": ["active", "cancelled"]}
+            }
+        }
     }
 ]
 
@@ -6447,6 +6618,351 @@ class ZaneToolHandler:
 
         return {"error": f"Unknown action: {action}"}
 
+    # ── NEW MEGA BRAIN TOOL HANDLERS ──────────────────────────────
+
+    def _tool_get_purchase_orders(self, params: dict) -> dict:
+        supplier_name = params.get("supplier_name", "").lower()
+        status = params.get("status", "")
+        days_back = params.get("days_back", 60)
+        limit = params.get("limit", 20)
+        orders = db.get("purchase_orders", {"business_id": self.biz_id}) or []
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+        total_value = 0
+        for po in orders:
+            po_date = po.get("date", "")
+            if po_date and po_date < cutoff:
+                continue
+            if supplier_name and supplier_name not in str(po.get("supplier_name", "")).lower():
+                continue
+            if status and po.get("status", "").lower() != status:
+                continue
+            total = float(po.get("total", 0) or 0)
+            total_value += total
+            results.append({"po_number": po.get("po_number", ""), "supplier_name": po.get("supplier_name", ""),
+                            "total": total, "status": po.get("status", ""), "date": po_date,
+                            "items": po.get("items", [])[:10], "id": po.get("id")})
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        return {"total_matches": len(results), "total_value": total_value, "purchase_orders": results[:limit]}
+
+    def _tool_get_goods_received(self, params: dict) -> dict:
+        supplier_name = params.get("supplier_name", "").lower()
+        po_number = params.get("po_number", "").lower()
+        days_back = params.get("days_back", 60)
+        limit = params.get("limit", 20)
+        grvs = db.get("goods_received", {"business_id": self.biz_id}) or []
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+        for g in grvs:
+            g_date = g.get("date", g.get("received_date", ""))
+            if g_date and g_date < cutoff:
+                continue
+            if supplier_name and supplier_name not in str(g.get("supplier_name", "")).lower():
+                continue
+            if po_number and po_number not in str(g.get("po_number", "")).lower():
+                continue
+            results.append({"grv_number": g.get("grv_number", ""), "supplier_name": g.get("supplier_name", ""),
+                            "po_number": g.get("po_number", ""), "date": g_date,
+                            "items": g.get("items", [])[:10], "total": float(g.get("total", 0) or 0),
+                            "id": g.get("id")})
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        return {"total_matches": len(results), "goods_received": results[:limit]}
+
+    def _tool_get_delivery_notes(self, params: dict) -> dict:
+        customer_name = params.get("customer_name", "").lower()
+        status = params.get("status", "")
+        days_back = params.get("days_back", 30)
+        limit = params.get("limit", 20)
+        notes = db.get("delivery_notes", {"business_id": self.biz_id}) or []
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+        for dn in notes:
+            dn_date = dn.get("date", "")
+            if dn_date and dn_date < cutoff:
+                continue
+            if customer_name and customer_name not in str(dn.get("customer_name", "")).lower():
+                continue
+            if status and dn.get("status", "").lower() != status:
+                continue
+            results.append({"dn_number": dn.get("dn_number", dn.get("delivery_note_number", "")),
+                            "customer_name": dn.get("customer_name", ""), "status": dn.get("status", ""),
+                            "date": dn_date, "items": dn.get("items", [])[:10],
+                            "invoice_number": dn.get("invoice_number", ""), "id": dn.get("id")})
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        return {"total_matches": len(results), "delivery_notes": results[:limit]}
+
+    def _tool_get_credit_notes(self, params: dict) -> dict:
+        customer_name = params.get("customer_name", "").lower()
+        days_back = params.get("days_back", 60)
+        limit = params.get("limit", 20)
+        cns = db.get("credit_notes", {"business_id": self.biz_id}) or []
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+        total_value = 0
+        for cn in cns:
+            cn_date = cn.get("date", "")
+            if cn_date and cn_date < cutoff:
+                continue
+            if customer_name and customer_name not in str(cn.get("customer_name", "")).lower():
+                continue
+            total = float(cn.get("total", 0) or 0)
+            total_value += total
+            results.append({"cn_number": cn.get("credit_note_number", cn.get("cn_number", "")),
+                            "customer_name": cn.get("customer_name", ""), "total": total,
+                            "date": cn_date, "invoice_number": cn.get("invoice_number", ""),
+                            "reason": cn.get("reason", ""), "id": cn.get("id")})
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        return {"total_matches": len(results), "total_value": total_value, "credit_notes": results[:limit]}
+
+    def _tool_get_payments(self, params: dict) -> dict:
+        name_filter = params.get("name", "").lower()
+        direction = params.get("direction", "")
+        days_back = params.get("days_back", 30)
+        limit = params.get("limit", 20)
+        payments = db.get("payments", {"business_id": self.biz_id}) or []
+        receipts = db.get("receipts", {"business_id": self.biz_id}) or []
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+
+        if direction != "made":
+            for r in receipts:
+                r_date = r.get("date", "")
+                if r_date and r_date < cutoff:
+                    continue
+                cust = str(r.get("customer_name", "")).lower()
+                if name_filter and name_filter not in cust:
+                    continue
+                results.append({"type": "received", "name": r.get("customer_name", ""),
+                                "amount": float(r.get("amount", 0) or 0), "date": r_date,
+                                "method": r.get("payment_method", ""), "reference": r.get("reference", ""),
+                                "invoice_number": r.get("invoice_number", "")})
+
+        if direction != "received":
+            for p in payments:
+                p_date = p.get("date", "")
+                if p_date and p_date < cutoff:
+                    continue
+                supplier = str(p.get("supplier_name", p.get("name", ""))).lower()
+                if name_filter and name_filter not in supplier:
+                    continue
+                results.append({"type": "made", "name": p.get("supplier_name", p.get("name", "")),
+                                "amount": float(p.get("amount", 0) or 0), "date": p_date,
+                                "method": p.get("payment_method", ""), "reference": p.get("reference", "")})
+
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        total_in = sum(r["amount"] for r in results if r["type"] == "received")
+        total_out = sum(r["amount"] for r in results if r["type"] == "made")
+        return {"total_matches": len(results), "total_received": total_in, "total_paid": total_out,
+                "payments": results[:limit]}
+
+    def _tool_get_stock_movements(self, params: dict) -> dict:
+        stock_code = params.get("stock_code", "").lower()
+        movement_type = params.get("movement_type", "")
+        days_back = params.get("days_back", 30)
+        limit = params.get("limit", 30)
+        movements = db.get("stock_movements", {"business_id": self.biz_id}) or []
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+        for m in movements:
+            m_date = m.get("date", m.get("created_at", ""))[:10] if m.get("date", m.get("created_at")) else ""
+            if m_date and m_date < cutoff:
+                continue
+            if stock_code:
+                searchable = f"{m.get('stock_code', '')} {m.get('description', '')}".lower()
+                if stock_code not in searchable:
+                    continue
+            if movement_type and movement_type not in str(m.get("type", m.get("movement_type", ""))).lower():
+                continue
+            results.append({"date": m_date, "stock_code": m.get("stock_code", ""),
+                            "description": m.get("description", ""), "type": m.get("type", m.get("movement_type", "")),
+                            "quantity": float(m.get("quantity", 0) or 0),
+                            "reference": m.get("reference", ""), "user": m.get("user_name", "")})
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        return {"total_matches": len(results), "movements": results[:limit]}
+
+    def _tool_get_journal_entries(self, params: dict) -> dict:
+        desc_search = params.get("description", "").lower()
+        account_filter = params.get("account", "").lower()
+        days_back = params.get("days_back", 30)
+        limit = params.get("limit", 20)
+        entries = db.get("journal_entries", {"business_id": self.biz_id}) or []
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+        for je in entries:
+            je_date = je.get("date", "")
+            if je_date and je_date < cutoff:
+                continue
+            if desc_search:
+                searchable = f"{je.get('description', '')} {je.get('reference', '')}".lower()
+                if desc_search not in searchable:
+                    continue
+            if account_filter:
+                line_accounts = " ".join(l.get("account", "") for l in je.get("entries", je.get("lines", []))).lower()
+                if account_filter not in line_accounts:
+                    continue
+            results.append({"date": je_date, "description": je.get("description", ""),
+                            "reference": je.get("reference", ""),
+                            "entries": je.get("entries", je.get("lines", []))[:10],
+                            "id": je.get("id")})
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        return {"total_matches": len(results), "journal_entries": results[:limit]}
+
+    def _tool_get_scan_queue(self, params: dict) -> dict:
+        status_filter = params.get("status", "")
+        scan_type = params.get("scan_type", "")
+        limit = params.get("limit", 20)
+        # Try scan_inbox first, then scanned_documents
+        items = db.get("scan_inbox", {"business_id": self.biz_id}) or []
+        if not items:
+            items = db.get("scanned_documents", {"business_id": self.biz_id}) or []
+        results = []
+        for item in items:
+            if status_filter and item.get("status", "pending").lower() != status_filter:
+                continue
+            if scan_type and item.get("scan_type", item.get("type", "")).lower() != scan_type:
+                continue
+            results.append({"id": item.get("id"), "type": item.get("scan_type", item.get("type", "")),
+                            "status": item.get("status", "pending"),
+                            "supplier_name": item.get("supplier_name", ""),
+                            "amount": float(item.get("amount", item.get("total", 0)) or 0),
+                            "date": item.get("date", item.get("created_at", ""))[:10] if item.get("date", item.get("created_at")) else "",
+                            "description": item.get("description", item.get("filename", ""))})
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        pending = sum(1 for r in results if r["status"] == "pending")
+        return {"total_matches": len(results), "pending_count": pending, "items": results[:limit]}
+
+    def _tool_get_recurring_invoices(self, params: dict) -> dict:
+        customer_name = params.get("customer_name", "").lower()
+        status = params.get("status", "")
+        recurring = db.get("recurring_invoices", {"business_id": self.biz_id}) or []
+        results = []
+        for r in recurring:
+            if customer_name and customer_name not in str(r.get("customer_name", "")).lower():
+                continue
+            if status and r.get("status", "active").lower() != status:
+                continue
+            results.append({"id": r.get("id"), "customer_name": r.get("customer_name", ""),
+                            "total": float(r.get("total", 0) or 0),
+                            "frequency": r.get("frequency", "monthly"),
+                            "next_date": r.get("next_date", r.get("next_invoice_date", "")),
+                            "status": r.get("status", "active"),
+                            "description": r.get("description", "")})
+        total_monthly = sum(r["total"] for r in results if r.get("frequency") == "monthly" and r.get("status") == "active")
+        return {"total_matches": len(results), "estimated_monthly_income": total_monthly, "recurring_invoices": results}
+
+    def _tool_get_rentals(self, params: dict) -> dict:
+        tenant_name = params.get("tenant_name", "").lower()
+        status = params.get("status", "")
+        rentals = db.get("rentals", {"business_id": self.biz_id}) or []
+        results = []
+        total_monthly_rent = 0
+        for r in rentals:
+            if tenant_name and tenant_name not in str(r.get("tenant_name", r.get("customer_name", ""))).lower():
+                continue
+            if status and r.get("status", "active").lower() != status:
+                continue
+            rent = float(r.get("rent_amount", r.get("monthly_rent", 0)) or 0)
+            total_monthly_rent += rent
+            results.append({"id": r.get("id"),
+                            "tenant_name": r.get("tenant_name", r.get("customer_name", "")),
+                            "property": r.get("property_name", r.get("unit", r.get("description", ""))),
+                            "rent_amount": rent, "status": r.get("status", "active"),
+                            "lease_start": r.get("lease_start", r.get("start_date", "")),
+                            "lease_end": r.get("lease_end", r.get("end_date", "")),
+                            "deposit": float(r.get("deposit", 0) or 0)})
+        return {"total_matches": len(results), "total_monthly_rent": total_monthly_rent, "rentals": results}
+
+    def _tool_get_timesheets(self, params: dict) -> dict:
+        employee_name = params.get("employee_name", "").lower()
+        days_back = params.get("days_back", 7)
+        limit = params.get("limit", 50)
+        entries = db.get("timesheet_entries", {"business_id": self.biz_id}) or []
+        if not entries:
+            entries = db.get("timesheets", {"business_id": self.biz_id}) or []
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+        for e in entries:
+            e_date = e.get("date", "")
+            if e_date and e_date < cutoff:
+                continue
+            if employee_name and employee_name not in str(e.get("employee_name", e.get("name", ""))).lower():
+                continue
+            hours = float(e.get("hours", 0) or 0)
+            results.append({"date": e_date, "employee_name": e.get("employee_name", e.get("name", "")),
+                            "hours": hours, "start_time": e.get("start_time", ""),
+                            "end_time": e.get("end_time", ""),
+                            "job": e.get("job_number", e.get("job", "")),
+                            "notes": e.get("notes", "")})
+        results.sort(key=lambda x: (x["date"] or "", x["employee_name"]), reverse=True)
+        total_hours = sum(r["hours"] for r in results)
+        return {"total_matches": len(results), "total_hours": total_hours, "entries": results[:limit]}
+
+    def _tool_get_payslips(self, params: dict) -> dict:
+        employee_name = params.get("employee_name", "").lower()
+        month = params.get("month", "")
+        limit = params.get("limit", 20)
+        payslips = db.get("payslips", {"business_id": self.biz_id}) or []
+        results = []
+        total_paid = 0
+        for ps in payslips:
+            if employee_name and employee_name not in str(ps.get("employee_name", ps.get("name", ""))).lower():
+                continue
+            ps_date = ps.get("date", ps.get("pay_date", ""))
+            if month and not ps_date.startswith(month):
+                continue
+            net = float(ps.get("net_pay", ps.get("net", ps.get("total", 0))) or 0)
+            total_paid += net
+            results.append({"date": ps_date,
+                            "employee_name": ps.get("employee_name", ps.get("name", "")),
+                            "gross": float(ps.get("gross_pay", ps.get("gross", 0)) or 0),
+                            "net": net, "paye": float(ps.get("paye", 0) or 0),
+                            "uif": float(ps.get("uif", 0) or 0),
+                            "id": ps.get("id")})
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        return {"total_matches": len(results), "total_net_paid": total_paid, "payslips": results[:limit]}
+
+    def _tool_get_receipts(self, params: dict) -> dict:
+        customer_name = params.get("customer_name", "").lower()
+        days_back = params.get("days_back", 30)
+        limit = params.get("limit", 20)
+        receipts = db.get("receipts", {"business_id": self.biz_id}) or []
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        results = []
+        total_received = 0
+        for r in receipts:
+            r_date = r.get("date", "")
+            if r_date and r_date < cutoff:
+                continue
+            if customer_name and customer_name not in str(r.get("customer_name", "")).lower():
+                continue
+            amt = float(r.get("amount", 0) or 0)
+            total_received += amt
+            results.append({"date": r_date, "customer_name": r.get("customer_name", ""),
+                            "amount": amt, "method": r.get("payment_method", r.get("method", "")),
+                            "reference": r.get("reference", ""),
+                            "invoice_number": r.get("invoice_number", "")})
+        results.sort(key=lambda x: x["date"] or "", reverse=True)
+        return {"total_matches": len(results), "total_received": total_received, "receipts": results[:limit]}
+
+    def _tool_get_subscriptions(self, params: dict) -> dict:
+        status = params.get("status", "")
+        subs = db.get("subscriptions", {"business_id": self.biz_id}) or []
+        results = []
+        total_monthly = 0
+        for s in subs:
+            if status and s.get("status", "active").lower() != status:
+                continue
+            amount = float(s.get("amount", s.get("monthly_cost", 0)) or 0)
+            if s.get("status", "active") == "active":
+                total_monthly += amount
+            results.append({"name": s.get("name", s.get("description", "")),
+                            "amount": amount,
+                            "frequency": s.get("frequency", "monthly"),
+                            "next_date": s.get("next_date", s.get("next_billing_date", "")),
+                            "category": s.get("category", ""),
+                            "status": s.get("status", "active")})
+        return {"total_matches": len(results), "total_monthly_cost": total_monthly, "subscriptions": results}
+
 
 def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     """Build lean system prompt for tool-use Zane. ~2000 tokens, no data dumps."""
@@ -6522,10 +7038,29 @@ You have TOOLS to look up data and knowledge. ALWAYS use them for DATA:
 - Customer info/balance → search_customers
 - Supplier info → search_suppliers
 - Who owes money → get_debtors
+- Who we owe → get_creditors
 - Business health → get_financial_overview
 - Sales figures → get_sales_summary
 - Expenses → get_expenses
 - Invoices → get_invoices
+- Quotes → get_quotes
+- Purchase orders → get_purchase_orders (what we ordered from suppliers)
+- Goods received (GRV) → get_goods_received (deliveries from suppliers)
+- Delivery notes → get_delivery_notes (deliveries TO customers)
+- Credit notes → get_credit_notes (returns/credits to customers)
+- Payments in/out → get_payments (money received or paid)
+- Receipts → get_receipts (customer payment records)
+- Stock movements → get_stock_movements (stock audit trail: ins, outs, adjustments)
+- Journal entries / GL → get_journal_entries (accounting double-entry records)
+- Scan inbox → get_scan_queue (scanned docs waiting to be processed)
+- Recurring invoices → get_recurring_invoices (auto-billing setups)
+- Rentals/tenants → get_rentals (property management, leases, municipal)
+- Timesheets → get_timesheets (employee hours, attendance, clock records)
+- Payslips → get_payslips (salary payment history per employee)
+- Subscriptions → get_subscriptions (recurring business expenses)
+- Employee/payroll info → get_employees
+- Job cards → get_jobs
+- Stock valuation → get_stock_valuation
 - Bookkeeping/accounting HOW-TO → get_accounting_help
 - ClickAI program HOW-TO (how to use features) → get_accounting_help
 - Create reminder → create_reminder ("remind me Friday to call John")
@@ -7203,7 +7738,7 @@ Once you have a customer, you can invoice! 📝"""
         
         # WHO OWES US / DEBTORS - Use ALL customers, not just summary
         if any(kw in msg_lower for kw in ["who owes", "owes us", "owes me", "debtors", "outstanding customers", "customers owe"]):
-            all_customers = context.get("all_customers", [])
+            all_customers = context.get("all_customers") or db.get("customers", {"business_id": context.get("business_id")}) or []
             # Filter to only those with balance > 0
             debtors = [c for c in all_customers if float(c.get("balance", 0)) > 0]
             # Sort by balance desc
@@ -7225,7 +7760,7 @@ Once you have a customer, you can invoice! 📝"""
         
         # WHAT DO WE OWE / CREDITORS - Use ALL suppliers
         if any(kw in msg_lower for kw in ["we owe", "i owe", "creditors", "outstanding suppliers", "owe suppliers"]):
-            all_suppliers = context.get("all_suppliers", [])
+            all_suppliers = context.get("all_suppliers") or db.get("suppliers", {"business_id": context.get("business_id")}) or []
             creditors = [s for s in all_suppliers if float(s.get("balance", 0)) > 0]
             creditors = sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)
             total = sum(float(c.get("balance", 0)) for c in creditors)
@@ -12148,127 +12683,61 @@ class Context:
     
     @staticmethod
     def get_full_context(user: dict, business: dict) -> dict:
-        """Get FULL business context for AI - Zane sees EVERYTHING"""
+        """Get lean business context for AI - stats only, tools fetch detail data.
+        
+        MEGA BRAIN ARCHITECTURE:
+        - This function loads ONLY counts and summary totals (~fast, ~small)
+        - Zane's 30+ tools fetch actual data on demand when needed
+        - Result: "what time is it?" doesn't load 5000 stock items
+        - Result: "show me POs" triggers get_purchase_orders tool, not pre-loading
+        """
         
         biz_id = business.get("id") if business else None
         
-        # Get ALL data
+        # ── LIGHTWEIGHT STATS ONLY ────────────────────────────────
+        # Load counts and totals for the system prompt dashboard
+        # Tools will fetch actual records when Zane needs them
+        
         customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
         suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
         stock = db.get_all_stock(biz_id)
-        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
         sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
         employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
-        jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
+        invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
         
-        # Calculate summaries
-        debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
-        total_debtors = sum(float(c.get("balance", 0)) for c in debtors)
-        
-        creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
-        total_creditors = sum(float(s.get("balance", 0)) for s in creditors)
-        
-        low_stock = [s for s in stock if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5))]
-        
-        # Sort by date - NO LIMITS
-        recent_invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
-        recent_quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
-        recent_sales = sorted(sales, key=lambda x: x.get("date", ""), reverse=True)
-        recent_expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)
-        
-        # Financial summaries
-        total_invoiced = sum(float(i.get("total", 0)) for i in invoices)
-        total_outstanding = sum(float(i.get("total", 0)) for i in invoices if i.get("status") == "outstanding")
-        total_paid = sum(float(i.get("total", 0)) for i in invoices if i.get("status") == "paid")
-        
-        total_quoted = sum(float(q.get("total", 0)) for q in quotes)
-        pending_quotes = [q for q in quotes if q.get("status") == "pending"]
-        
-        total_sales = sum(float(s.get("total", 0)) for s in sales)
-        today_sales = sum(float(s.get("total", 0)) for s in sales if s.get("date") == today())
-        
-        total_expenses = sum(float(e.get("amount", 0)) for e in expenses)
-        
-        # Stock value
+        # Calculate summary numbers
+        total_debtors = sum(float(c.get("balance", 0) or 0) for c in customers if float(c.get("balance", 0) or 0) > 0)
+        total_creditors = sum(float(s.get("balance", 0) or 0) for s in suppliers if float(s.get("balance", 0) or 0) > 0)
+        today_sales = sum(float(s.get("total", 0) or 0) for s in sales if s.get("date") == today())
         stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock)
-        stock_retail_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("price") or s.get("selling_price") or 0) for s in stock)
-        
-        # Employee/payroll info
-        total_payroll = sum(float(e.get("salary", 0)) for e in employees)
         
         return {
             "business_id": biz_id,
             "business_name": business.get("name", "Business") if business else "Business",
             "user_name": user.get("name", "there") if user else "there",
             "user_id": user.get("id") if user else None,
-            "user_role": user.get("role", "owner") if user else "owner",  # For role-based access control
+            "user_role": user.get("role", "owner") if user else "owner",
             "business_type": business.get("industry_type", business.get("business_type", "General")) if business else "General",
             
-            # CUSTOMERS - Include ALL for searching, plus summary of debtors
+            # COUNTS ONLY - tools fetch the actual data
             "customer_count": len(customers),
-            "all_customers": [{"id": c.get("id"), "name": c.get("name", ""), "phone": c.get("phone", ""), "email": c.get("email", ""), "balance": float(c.get("balance", 0))} for c in customers],
-            "customers_summary": [{"name": c.get("name"), "balance": c.get("balance", 0), "phone": c.get("phone", "")} for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)],
-            "debtors": debtors,
-            "total_debtors": total_debtors,
-            
-            # SUPPLIERS - Include ALL for searching
             "supplier_count": len(suppliers),
-            "all_suppliers": [{"id": s.get("id"), "name": s.get("name", ""), "phone": s.get("phone", ""), "email": s.get("email", ""), "balance": float(s.get("balance", 0))} for s in suppliers],
-            "suppliers_summary": [{"name": s.get("name"), "balance": s.get("balance", 0), "phone": s.get("phone", "")} for s in sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)],
-            "creditors": creditors,
-            "total_creditors": total_creditors,
-            
-            # STOCK - Include ALL for searching
             "stock_count": len(stock),
-            "all_stock": [{"id": s.get("id"), "code": s.get("code", ""), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0), "price": s.get("price") or s.get("selling_price", 0), "cost": s.get("cost") or s.get("cost_price", 0), "category": s.get("category", "")} for s in stock],
-            "stock_summary": [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0), "price": s.get("price") or s.get("selling_price", 0), "category": s.get("category", "")} for s in stock],
-            "low_stock": [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0)} for s in low_stock],
-            "stock_value": stock_value,
-            "stock_retail_value": stock_retail_value,
-            
-            # INVOICES - ALL
-            "invoice_count": len(invoices),
-            "all_invoices": invoices,
-            "recent_invoices": [{"number": i.get("invoice_number"), "customer": i.get("customer_name"), "total": i.get("total"), "status": i.get("status"), "date": i.get("date")} for i in recent_invoices],
-            "total_invoiced": total_invoiced,
-            "total_outstanding": total_outstanding,
-            "total_paid": total_paid,
-            
-            # QUOTES - ALL
-            "quote_count": len(quotes),
-            "all_quotes": quotes,
-            "recent_quotes": [{"number": q.get("quote_number"), "customer": q.get("customer_name"), "total": q.get("total"), "status": q.get("status"), "date": q.get("date")} for q in recent_quotes],
-            "total_quoted": total_quoted,
-            "pending_quotes_count": len(pending_quotes),
-            
-            # SALES (POS) - ALL
-            "sales_count": len(sales),
-            "all_sales": sales,
-            "recent_sales": [{"date": s.get("date"), "customer": s.get("customer_name", "Cash"), "total": s.get("total"), "method": s.get("payment_method")} for s in recent_sales],
-            "total_sales": total_sales,
-            "today_sales": today_sales,
-            
-            # EXPENSES - ALL
-            "expense_count": len(expenses),
-            "all_expenses": expenses,
-            "recent_expenses": [{"date": e.get("date"), "description": e.get("description", ""), "amount": e.get("amount"), "category": e.get("category")} for e in recent_expenses],
-            "total_expenses": total_expenses,
-            
-            # EMPLOYEES/PAYROLL - ALL
             "employee_count": len(employees),
-            "all_employees": employees,
-            "employees_summary": [{"name": e.get("name"), "position": e.get("position", ""), "salary": e.get("salary", 0)} for e in employees],
-            "total_payroll": total_payroll,
             
-            # JOBS - ALL
-            "job_count": len(jobs),
-            "all_jobs": jobs,
-            "jobs_summary": [{"number": j.get("job_number"), "customer": j.get("customer_name"), "status": j.get("status"), "total": j.get("total")} for j in jobs],
+            # KEY TOTALS for the system prompt dashboard
+            "total_debtors": total_debtors,
+            "total_creditors": total_creditors,
+            "today_sales": today_sales,
+            "stock_value": stock_value,
             
-            # TEAM ACTIVITY - Who did what today (for managers monitoring staff like Sue)
-            "team_activity": Context._get_team_activity(biz_id, invoices, quotes, sales),
+            # Keep these for backward compat with other parts of the system
+            "invoice_count": len(invoices),
+            "total_invoiced": sum(float(i.get("total", 0) or 0) for i in invoices),
+            "total_outstanding": sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") == "outstanding"),
+            
+            # TEAM ACTIVITY - still useful in the context (lightweight)
+            "team_activity": Context._get_team_activity(biz_id, invoices, [], sales),
             
             # AUDIT LOG - Recent changes (last 50)
             "recent_audit": Context._get_recent_audit(biz_id),
