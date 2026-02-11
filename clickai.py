@@ -866,6 +866,8 @@ TABLES = {
     "receipts": "receipts",
     "pos_sales": "pos_sales",
     "stock_movements": "stock_movements",
+    "goods_received": "goods_received",
+    "purchase_orders": "purchase_orders",
 }
 
 # Stock column mapping - maps display names to actual DB columns
@@ -33188,27 +33190,44 @@ def api_po_receive(po_id):
             "created_at": now()
         }
         
+        grv_saved = False
+        grv_error = ""
         try:
-            db.save("goods_received", grv)
-            logger.info(f"[GRV] Created {grv_num} from {po.get('po_number')} - {len(received_items)} items")
-            
-            # Log stock movements with GRV reference
-            for ri in received_items:
-                if ri.get("stock_id") and ri.get("booked_to_stock"):
-                    try:
-                        item_desc = ri.get("stock_name") or ri.get("stock_code") or ri.get("description", "")
-                        db.save("stock_movements", RecordFactory.stock_movement(
-                            business_id=biz_id, stock_id=ri["stock_id"], movement_type="in",
-                            quantity=ri["qty_received"], 
-                            reference=f"{grv_num} | {po.get('po_number', '')} | {safe_string(po.get('supplier_name', ''))}"
-                        ))
-                    except:
-                        pass
-                        
+            success, result = db.save("goods_received", grv)
+            if success:
+                grv_saved = True
+                logger.info(f"[GRV] Created {grv_num} from {po.get('po_number')} - {len(received_items)} items")
+            else:
+                grv_error = str(result)
+                logger.error(f"[GRV] Save failed: {result}")
         except Exception as ge:
-            logger.error(f"[GRV] Save failed: {ge}")
+            grv_error = str(ge)
+            logger.error(f"[GRV] Save exception: {ge}")
         
-        status_msg = f"GRV {grv_num} created! " + ("All items received. Stock updated." if all_received else f"{items_received} items received (partial delivery)")
+        # Log stock movements SEPARATELY - don't let GRV failure block this
+        movements_logged = 0
+        for ri in received_items:
+            if ri.get("stock_id") and ri.get("booked_to_stock"):
+                try:
+                    db.save("stock_movements", RecordFactory.stock_movement(
+                        business_id=biz_id, stock_id=ri["stock_id"], movement_type="in",
+                        quantity=ri["qty_received"], 
+                        reference=f"{grv_num} | {po.get('po_number', '')} | {safe_string(po.get('supplier_name', ''))}"
+                    ))
+                    movements_logged += 1
+                except Exception as me:
+                    logger.error(f"[GRV] Movement save failed for {ri.get('stock_code')}: {me}")
+        
+        logger.info(f"[GRV] {grv_num}: GRV saved={grv_saved}, movements={movements_logged}/{len(received_items)}")
+        
+        # Build status message - be honest about what happened
+        if grv_saved:
+            status_msg = f"GRV {grv_num} created! " + ("All items received. Stock updated." if all_received else f"{items_received} items received (partial delivery)")
+        else:
+            # GRV table might not exist - stock was still updated
+            status_msg = f"Stock updated ({items_received} items received). GRV document could not be saved - please check database table 'goods_received' exists."
+            if "Could not find" in grv_error:
+                status_msg += " Table needs to be created in Supabase."
         
         return jsonify({"success": True, "message": status_msg, "all_received": all_received, "grv_id": grv_id, "grv_number": grv_num})
         
