@@ -6953,15 +6953,24 @@ class ZaneToolHandler:
             if status and s.get("status", "active").lower() != status:
                 continue
             amount = float(s.get("amount", s.get("monthly_cost", 0)) or 0)
+            freq = s.get("frequency", "monthly")
+            monthly_equiv = amount if freq == "monthly" else amount / 12 if freq == "yearly" else amount / 3 if freq == "quarterly" else amount * 4.33
             if s.get("status", "active") == "active":
-                total_monthly += amount
+                total_monthly += monthly_equiv
             results.append({"name": s.get("name", s.get("description", "")),
                             "amount": amount,
-                            "frequency": s.get("frequency", "monthly"),
-                            "next_date": s.get("next_date", s.get("next_billing_date", "")),
+                            "frequency": freq,
                             "category": s.get("category", ""),
-                            "status": s.get("status", "active")})
-        return {"total_matches": len(results), "total_monthly_cost": total_monthly, "subscriptions": results}
+                            "supplier_name": s.get("supplier_name", ""),
+                            "next_date": s.get("next_due", s.get("next_date", s.get("next_billing_date", ""))),
+                            "status": s.get("status", "active"),
+                            # Allocation details
+                            "allocated_to": s.get("allocated_to", ""),
+                            "gl_account": s.get("gl_account", ""),
+                            "department": s.get("department", ""),
+                            "reference_number": s.get("reference_number", ""),
+                            "notes": s.get("notes", "")})
+        return {"total_matches": len(results), "total_monthly_cost": round(total_monthly, 2), "subscriptions": results}
 
 
 def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
@@ -23528,7 +23537,7 @@ Return valid JSON only, no other text."""
 @app.route("/subscriptions")
 @login_required
 def subscriptions_page():
-    """Subscription and recurring expense management"""
+    """Subscription and recurring expense management with sub-allocations"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -23545,6 +23554,18 @@ def subscriptions_page():
     active = [s for s in subscriptions if s.get("status") == "active"]
     total_monthly = sum(float(s.get("amount", 0)) for s in active if s.get("frequency") == "monthly")
     total_yearly = sum(float(s.get("amount", 0)) for s in active if s.get("frequency") == "yearly")
+    total_quarterly = sum(float(s.get("amount", 0)) for s in active if s.get("frequency") == "quarterly")
+    # Normalize to monthly for total burn rate
+    monthly_burn = total_monthly + (total_yearly / 12) + (total_quarterly / 3)
+    
+    # Group by category for summary
+    cat_totals = {}
+    for s in active:
+        cat = s.get("category", "Other")
+        amt = float(s.get("amount", 0))
+        freq = s.get("frequency", "monthly")
+        monthly_equiv = amt if freq == "monthly" else amt / 12 if freq == "yearly" else amt / 3
+        cat_totals[cat] = cat_totals.get(cat, 0) + monthly_equiv
     
     # Build rows
     rows_html = ""
@@ -23553,11 +23574,30 @@ def subscriptions_page():
         status_color = "var(--green)" if status == "active" else "var(--text-muted)"
         freq = s.get("frequency", "monthly")
         
+        # Sub-allocation details line
+        details_parts = []
+        if s.get("allocated_to"):
+            details_parts.append(f"🏷️ {safe_string(s.get('allocated_to', ''))}")
+        if s.get("gl_account"):
+            details_parts.append(f"📒 {safe_string(s.get('gl_account', ''))}")
+        if s.get("department"):
+            details_parts.append(f"🏢 {safe_string(s.get('department', ''))}")
+        if s.get("reference_number"):
+            details_parts.append(f"# {safe_string(s.get('reference_number', ''))}")
+        details_line = " · ".join(details_parts)
+        
+        # Notes line
+        notes_line = ""
+        if s.get("notes"):
+            notes_line = f'<div style="color:var(--text-muted);font-size:11px;margin-top:2px;">📝 {safe_string(s.get("notes", ""))}</div>'
+        
         rows_html += f'''
         <tr>
             <td>
                 <strong>{safe_string(s.get("name", "-"))}</strong>
                 <div style="color:var(--text-muted);font-size:12px;">{safe_string(s.get("supplier_name", ""))}</div>
+                {f'<div style="font-size:11px;margin-top:2px;">{details_line}</div>' if details_line else ''}
+                {notes_line}
             </td>
             <td>{safe_string(s.get("category", "-"))}</td>
             <td style="text-align:right;font-weight:bold;">{money(s.get("amount", 0))}</td>
@@ -23570,11 +23610,22 @@ def subscriptions_page():
         </tr>
         '''
     
+    # Category breakdown mini-table
+    cat_breakdown = ""
+    if cat_totals:
+        cat_rows = "".join([f'<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);"><span>{cat}</span><span style="font-weight:bold;">{money(amt)}/m</span></div>' for cat, amt in sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)])
+        cat_breakdown = f'''
+        <div class="stat-card" style="grid-column:span 2;">
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">BREAKDOWN BY CATEGORY (monthly equiv.)</div>
+            {cat_rows}
+        </div>
+        '''
+    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
             <h2 style="margin:0;">📦 Subscriptions & Recurring Expenses</h2>
-            <p style="color:var(--text-muted);margin:5px 0 0 0;">Track monthly/yearly subscriptions - manual or AI scanned</p>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">Track monthly/yearly costs with full allocation — know exactly what each Rand is for</p>
         </div>
         <div style="display:flex;gap:10px;">
             <button onclick="showAddModal()" class="btn btn-primary">+ Add Subscription</button>
@@ -23592,21 +23643,22 @@ def subscriptions_page():
             <div class="stat-value" style="color:var(--green);">{len(active)}</div>
             <div class="stat-label">Active</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-value">{money(total_monthly)}</div>
-            <div class="stat-label">Monthly</div>
+        <div class="stat-card" style="border-left:3px solid var(--primary);">
+            <div class="stat-value">{money(monthly_burn)}</div>
+            <div class="stat-label">Monthly Burn Rate</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">{money(total_yearly)}</div>
-            <div class="stat-label">Yearly</div>
+            <div class="stat-value">{money(monthly_burn * 12)}</div>
+            <div class="stat-label">Annual Cost</div>
         </div>
+        {cat_breakdown}
     </div>
     
     <div class="card">
         <table class="data-table">
             <thead>
                 <tr>
-                    <th>Subscription</th>
+                    <th>Subscription / Allocation</th>
                     <th>Category</th>
                     <th style="text-align:right;">Amount</th>
                     <th>Frequency</th>
@@ -23620,9 +23672,9 @@ def subscriptions_page():
         </table>
     </div>
     
-    <!-- Add/Edit Modal -->
+    <!-- Add/Edit Modal - UPGRADED with sub-allocations -->
     <div id="addModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
-        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:550px;max-height:90vh;overflow-y:auto;">
             <h3 style="margin-top:0;" id="modalTitle">➕ Add Subscription</h3>
             
             <form action="/api/subscription/save" method="POST" id="subscriptionForm">
@@ -23630,13 +23682,13 @@ def subscriptions_page():
                 
                 <div class="form-group">
                     <label class="form-label">Name *</label>
-                    <input type="text" name="name" id="subName" class="form-input" required placeholder="e.g. Microsoft 365">
+                    <input type="text" name="name" id="subName" class="form-input" required placeholder="e.g. Netstar Vehicle Tracking">
                 </div>
                 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                     <div class="form-group">
                         <label class="form-label">Amount *</label>
-                        <input type="number" name="amount" id="subAmount" class="form-input" required step="0.01" placeholder="199.00">
+                        <input type="number" name="amount" id="subAmount" class="form-input" required step="0.01" placeholder="450.00">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Frequency</label>
@@ -23644,6 +23696,7 @@ def subscriptions_page():
                             <option value="monthly">Monthly</option>
                             <option value="yearly">Yearly</option>
                             <option value="quarterly">Quarterly</option>
+                            <option value="weekly">Weekly</option>
                         </select>
                     </div>
                 </div>
@@ -23652,17 +23705,97 @@ def subscriptions_page():
                     <div class="form-group">
                         <label class="form-label">Category</label>
                         <select name="category" id="subCategory" class="form-input">
-                            <option value="Software">Software</option>
-                            <option value="Insurance">Insurance</option>
-                            <option value="Utilities">Utilities</option>
-                            <option value="Services">Services</option>
-                            <option value="Marketing">Marketing</option>
+                            <optgroup label="Vehicle">
+                                <option value="Vehicle Tracking">Vehicle Tracking</option>
+                                <option value="Vehicle Insurance">Vehicle Insurance</option>
+                                <option value="Vehicle Finance">Vehicle Finance</option>
+                                <option value="Vehicle Service Plan">Vehicle Service Plan</option>
+                            </optgroup>
+                            <optgroup label="Property">
+                                <option value="Rates & Taxes">Rates & Taxes</option>
+                                <option value="Building Insurance">Building Insurance</option>
+                                <option value="Building Maintenance">Building Service/Maintenance</option>
+                                <option value="Rent">Rent</option>
+                                <option value="Security">Security / Armed Response</option>
+                            </optgroup>
+                            <optgroup label="Utilities">
+                                <option value="Electricity">Electricity</option>
+                                <option value="Water">Water</option>
+                                <option value="Internet">Internet / Fibre</option>
+                                <option value="Telephone">Telephone / Airtime</option>
+                            </optgroup>
+                            <optgroup label="Business">
+                                <option value="Software">Software / SaaS</option>
+                                <option value="Insurance">Business Insurance</option>
+                                <option value="Accounting">Accounting / Bookkeeping</option>
+                                <option value="Banking">Bank Fees</option>
+                                <option value="Marketing">Marketing / Advertising</option>
+                                <option value="Membership">Membership / Association</option>
+                                <option value="Services">Professional Services</option>
+                            </optgroup>
+                            <optgroup label="Staff">
+                                <option value="Medical Aid">Medical Aid</option>
+                                <option value="Provident Fund">Provident / Pension Fund</option>
+                                <option value="Staff Welfare">Staff Welfare</option>
+                            </optgroup>
                             <option value="Other">Other</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Supplier</label>
-                        <input type="text" name="supplier_name" id="subSupplier" class="form-input" placeholder="e.g. Microsoft">
+                        <label class="form-label">Supplier / Provider</label>
+                        <input type="text" name="supplier_name" id="subSupplier" class="form-input" placeholder="e.g. Netstar, City of Joburg">
+                    </div>
+                </div>
+                
+                <!-- SUB-ALLOCATION SECTION -->
+                <div style="background:var(--bg);border-radius:8px;padding:15px;margin:15px 0;border:1px solid var(--border);">
+                    <div style="font-size:12px;font-weight:bold;color:var(--primary);margin-bottom:10px;">📋 ALLOCATION DETAILS — What is this expense for?</div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Allocated To (Asset / Item)</label>
+                        <input type="text" name="allocated_to" id="subAllocatedTo" class="form-input" placeholder="e.g. Toyota Hilux BA 23 GP, 12 Main Rd Warehouse, Office Aircon">
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Which vehicle, property, machine, or item is this expense for?</div>
+                    </div>
+                    
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                        <div class="form-group">
+                            <label class="form-label">GL Account (Expense Account)</label>
+                            <select name="gl_account" id="subGlAccount" class="form-input">
+                                <option value="">— Auto from Category —</option>
+                                <option value="Motor Vehicle Expenses">Motor Vehicle Expenses</option>
+                                <option value="Vehicle Tracking">Vehicle Tracking</option>
+                                <option value="Vehicle Insurance">Vehicle Insurance</option>
+                                <option value="Vehicle Finance Costs">Vehicle Finance Costs</option>
+                                <option value="Municipal Rates & Taxes">Municipal Rates & Taxes</option>
+                                <option value="Building Maintenance">Building Maintenance</option>
+                                <option value="Repairs & Maintenance">Repairs & Maintenance</option>
+                                <option value="Security Costs">Security Costs</option>
+                                <option value="Rent Paid">Rent Paid</option>
+                                <option value="Insurance">Insurance</option>
+                                <option value="Electricity">Electricity</option>
+                                <option value="Water & Sewage">Water & Sewage</option>
+                                <option value="Telephone & Internet">Telephone & Internet</option>
+                                <option value="Computer Expenses">Computer Expenses</option>
+                                <option value="Software & Subscriptions">Software & Subscriptions</option>
+                                <option value="Bank Charges">Bank Charges</option>
+                                <option value="Marketing & Advertising">Marketing & Advertising</option>
+                                <option value="Professional Fees">Professional Fees</option>
+                                <option value="Membership & Subscriptions">Membership & Subscriptions</option>
+                                <option value="Medical Aid Contributions">Medical Aid Contributions</option>
+                                <option value="Pension/Provident Fund">Pension/Provident Fund</option>
+                                <option value="Staff Welfare">Staff Welfare</option>
+                                <option value="Sundry Expenses">Sundry Expenses</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Department / Branch</label>
+                            <input type="text" name="department" id="subDepartment" class="form-input" placeholder="e.g. Workshop, Office, Pub, B&B">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Reference / Account Number</label>
+                        <input type="text" name="reference_number" id="subRefNumber" class="form-input" placeholder="e.g. Policy #VH-12345, Account 9087654">
                     </div>
                 </div>
                 
@@ -23673,7 +23806,7 @@ def subscriptions_page():
                 
                 <div class="form-group">
                     <label class="form-label">Notes</label>
-                    <input type="text" name="notes" id="subNotes" class="form-input" placeholder="Account details, etc.">
+                    <input type="text" name="notes" id="subNotes" class="form-input" placeholder="Any additional details">
                 </div>
                 
                 <div style="display:flex;gap:10px;margin-top:20px;">
@@ -23738,6 +23871,10 @@ def subscriptions_page():
                     document.getElementById('subSupplier').value = s.supplier_name || '';
                     document.getElementById('subNextDue').value = s.next_due || '';
                     document.getElementById('subNotes').value = s.notes || '';
+                    document.getElementById('subAllocatedTo').value = s.allocated_to || '';
+                    document.getElementById('subGlAccount').value = s.gl_account || '';
+                    document.getElementById('subDepartment').value = s.department || '';
+                    document.getElementById('subRefNumber').value = s.reference_number || '';
                     document.getElementById('addModal').style.display = 'flex';
                 }}
             }});
@@ -23779,6 +23916,7 @@ def subscriptions_page():
                 document.getElementById('subAmount').value = result.amount || '';
                 document.getElementById('subSupplier').value = result.supplier || '';
                 document.getElementById('subCategory').value = result.category || 'Software';
+                if (result.reference) document.getElementById('subRefNumber').value = result.reference;
                 showAddModal();
                 document.getElementById('modalTitle').textContent = '✓ Scanned - Review & Save';
             }} else {{
@@ -23816,6 +23954,11 @@ def api_subscription_save():
             "supplier_name": request.form.get("supplier_name", "").strip(),
             "next_due": request.form.get("next_due", ""),
             "notes": request.form.get("notes", "").strip(),
+            # Sub-allocation fields
+            "allocated_to": request.form.get("allocated_to", "").strip(),
+            "gl_account": request.form.get("gl_account", "").strip(),
+            "department": request.form.get("department", "").strip(),
+            "reference_number": request.form.get("reference_number", "").strip(),
             "status": "active",
             "created_at": now() if not sub_id else None
         }
