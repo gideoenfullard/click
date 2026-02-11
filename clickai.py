@@ -13176,19 +13176,30 @@ class DailyBriefing:
                 else:
                     return f"{greeting_full},\n\n**Zero activity** recorded for {start_date_str} to {end_date_str}. No invoices, quotes, sales or payments.\n\n- Zane"
         
-        # Build event list
-        events = []
+        # Build event list - GROUPED BY DATE so AI knows what's TODAY vs yesterday
+        today_str = data.get("end_date", "")
+        today_events = []
+        other_events = []
+        
         for e in data.get("events", [])[:25]:
+            event_date = e.get("date", "")
             if e["type"] == "sale":
-                events.append(f"{e['who']} sold R{e['amount']:,.0f} to {e['customer']} ({e['method']})")
+                event_text = f"{e['who']} sold R{e['amount']:,.0f} to {e['customer']} ({e['method']})"
             elif e["type"] == "quote":
-                events.append(f"{e['who']} quoted {e['customer']} R{e['amount']:,.0f}")
+                event_text = f"{e['who']} quoted {e['customer']} R{e['amount']:,.0f}"
             elif e["type"] == "invoice":
-                events.append(f"{e['who']} invoiced {e['customer']} R{e['amount']:,.0f}")
+                event_text = f"{e['who']} invoiced {e['customer']} R{e['amount']:,.0f}"
             elif e["type"] == "payment":
-                events.append(f"{e['customer']} PAID R{e['amount']:,.0f}")
+                event_text = f"{e['customer']} PAID R{e['amount']:,.0f}"
             elif e["type"] == "po":
-                events.append(f"{e['who']} created PO for {e['supplier']}")
+                event_text = f"{e['who']} created PO for {e['supplier']}"
+            else:
+                continue
+            
+            if event_date == today_str:
+                today_events.append(event_text)
+            else:
+                other_events.append(f"[{event_date}] {event_text}")
         
         # Team summary - include IDLE staff so Zane can call them out
         team = []
@@ -13227,26 +13238,30 @@ class DailyBriefing:
         if data.get('low_stock'):
             problems.append(f"Low stock: {', '.join([s['code'] for s in data['low_stock'][:3]])}")
         
-        # Build simple data summary
+        # Build simple data summary - PRIORITIZE TODAY
         summary = f"""
 Business: {biz_name}
 Owner: {owner_name}
 Period: {days} day(s) ({start_date_str} to {end_date_str})
 Working days: {working_days}, Weekends: {weekend_days}
+CURRENT DATE: {end_date_str} (THIS IS TODAY - focus on this!)
 
-TOTALS:
+TOTALS (combined period):
 - POS Sales: R{data['total_sales']:,.0f}
 - Invoices: R{data['total_invoiced']:,.0f}
 - Quotes: R{data['total_quoted']:,.0f}
 - Payments received: R{data['total_received']:,.0f}
 
-WHAT HAPPENED:
-{chr(10).join(events) if events else 'Nothing recorded'}
+=== TODAY ({end_date_str}) - MOST IMPORTANT ===
+{chr(10).join(today_events) if today_events else 'Nothing recorded yet today'}
 
-TEAM:
-{chr(10).join(team) if team else 'No activity'}
+=== PREVIOUS DAYS ===
+{chr(10).join(other_events) if other_events else 'No prior activity in this period'}
 
-PROBLEMS:
+TEAM PERFORMANCE:
+{chr(10).join(team) if team else 'No activity tracked'}
+
+PROBLEMS NEEDING ATTENTION:
 {chr(10).join(problems) if problems else 'None'}
 """
 
@@ -13262,10 +13277,10 @@ PROBLEMS:
         first_name = owner_name.split()[0] if owner_name else ""
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
-        # Professional prompt with structure - ENGLISH - STAFF ACCOUNTABILITY FOCUSED
+        # Professional prompt with structure - ENGLISH - REAL-TIME FOCUS
         prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
 
-Write an insightful business summary for the owner about the last {days} day(s). The owner uses this to monitor staff performance in real-time.
+Write a REAL-TIME business update for the owner. This is a live dashboard - focus on what's happening RIGHT NOW and TODAY.
 
 YOUR STYLE:
 - Start with: "{greeting_full}"
@@ -13275,21 +13290,22 @@ YOUR STYLE:
 - No emojis or excessive exclamation marks
 - ALWAYS write in English unless the data clearly shows otherwise
 
-CONTENT PRIORITY - THE BOSS WANTS TO KNOW:
-1. **WHO did WHAT today** - Name each person and exactly what they produced (invoices, quotes, sales). Be specific with customer names and amounts.
-2. **WHO did NOTHING** - If a team member has zero activity, call it out. The boss needs to know who's not producing.
-3. **Key numbers** - Sales, payments received, outstanding
-4. **Attention needed** - Overdue accounts, stock issues, anything off
+CONTENT PRIORITY - REAL-TIME MONITORING:
+1. **TODAY FIRST** - What has happened TODAY ({end_date_str})? Lead with this. If nothing yet today, say so clearly.
+2. **WHO did WHAT** - Name each person and exactly what they produced (invoices, quotes, sales). Be specific with customer names and amounts.
+3. **WHO did NOTHING** - If a team member has zero activity TODAY, call it out.
+4. **Previous days** - Only briefly mention if relevant for context
+5. **Attention needed** - Overdue accounts, stock issues, anything off
 
-Use sections: **Staff Performance**, **Sales & Cash Flow**, **Attention Needed**
-Be specific with names, amounts, and customers. The boss wants detail, not vague summaries.
+Use sections: **Today's Activity**, **Staff Performance**, **Attention Needed**
+Be specific with names, amounts, and customers. The boss wants CURRENT data, not historical summaries.
 End with ONE concrete action item if there is one.
 
 {summary}
 
 Write with confidence - you KNOW what you're talking about. Sign off with "- Zane"."""
 
-        # Claude Haiku for Pulse - fast and smart (with retry for overload)
+        # Claude Haiku for Pulse - fast and smart (with retry for API overload)
         if ANTHROPIC_API_KEY:
             max_retries = 3
             for attempt in range(max_retries):
@@ -13306,7 +13322,7 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
                         return message.content[0].text
                 except Exception as e:
                     error_str = str(e)
-                    # Check for overloaded error (529)
+                    # Check for overloaded error (529) - retry with backoff
                     if "overloaded" in error_str.lower() or "529" in error_str:
                         if attempt < max_retries - 1:
                             wait_time = (attempt + 1) * 5  # 5s, 10s, 15s
@@ -28437,11 +28453,11 @@ def business_pulse():
                 // Generating in background — show spinner and poll
                 content.innerHTML = '<div style="text-align:center;padding:20px;"><div class="spinner" style="border:3px solid rgba(139,92,246,0.3);border-top:3px solid #8b5cf6;border-radius:50%;width:25px;height:25px;animation:spin 1s linear infinite;margin:0 auto 10px;"></div><p style="color:var(--text-muted);margin:0;font-size:13px;">Zane is catching up on what happened...</p></div>';
                 dateEl.textContent = 'Generating...';
-                // Poll every 3 seconds (max 45 tries = 135s - accounts for API retries)
+                // Poll every 3 seconds (max 20 tries = 60s)
                 let tries = 0;
                 const poll = setInterval(async () => {{
                     tries++;
-                    if (tries > 45) {{
+                    if (tries > 20) {{
                         clearInterval(poll);
                         content.innerHTML = '<div style="color:var(--text-muted);padding:10px;">Briefing is taking long — refresh the page to try again.</div>';
                         refreshBtn.innerHTML = '&#8635; Refresh';
@@ -28463,12 +28479,6 @@ def business_pulse():
                                 .replace(/\\*\\*([^*]+)\\*\\*/g, '<b style="color:#8b5cf6;">$1</b>');
                             content.innerHTML = html;
                             dateEl.textContent = 'Fresh &bull; just generated';
-                            refreshBtn.innerHTML = '&#8635; Refresh';
-                            refreshBtn.disabled = false;
-                        }} else if (!d2.success && !d2.generating && d2.error) {{
-                            // Backend returned error - stop polling and show message
-                            clearInterval(poll);
-                            content.innerHTML = '<div style="color:var(--text-muted);padding:10px;">⚠️ AI service busy. Try again in a minute.</div>';
                             refreshBtn.innerHTML = '&#8635; Refresh';
                             refreshBtn.disabled = false;
                         }}
@@ -29002,20 +29012,10 @@ def api_briefing_generate():
                     logger.info(f"[BRIEFING] Background generation complete")
                 else:
                     logger.error(f"[BRIEFING] Background generation failed: {result.get('error')}")
-                    # Cache error so frontend stops polling immediately
-                    _briefing_cache[biz_id] = {
-                        "date": today_str,
-                        "result": {"success": False, "error": result.get("error", "AI service temporarily unavailable"), "generating": False},
-                        "ts": time.time()
-                    }
+                    # DON'T cache failure - let it retry on next refresh
             except Exception as e:
                 logger.error(f"[BRIEFING] Background thread error: {e}")
-                # Cache error so frontend stops polling
-                _briefing_cache[biz_id] = {
-                    "date": today_str,
-                    "result": {"success": False, "error": "AI service busy - try again", "generating": False},
-                    "ts": time.time()
-                }
+                # DON'T cache errors - let it retry on next refresh
             finally:
                 _briefing_cache.pop(gen_key, None)
         
