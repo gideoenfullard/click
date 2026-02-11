@@ -13289,21 +13289,32 @@ End with ONE concrete action item if there is one.
 
 Write with confidence - you KNOW what you're talking about. Sign off with "- Zane"."""
 
-        # Claude Haiku for Pulse - fast and smart
+        # Claude Haiku for Pulse - fast and smart (with retry for overload)
         if ANTHROPIC_API_KEY:
-            try:
-                logger.info("[BRIEFING] Calling Claude Haiku 4.5")
-                client = _anthropic_client
-                message = client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=600,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                if message.content:
-                    logger.info("[BRIEFING] Claude Haiku 4.5 success")
-                    return message.content[0].text
-            except Exception as e:
-                logger.error(f"[BRIEFING] Claude Haiku failed: {e}")
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"[BRIEFING] Calling Claude Haiku 4.5 (attempt {attempt + 1}/{max_retries})")
+                    client = _anthropic_client
+                    message = client.messages.create(
+                        model="claude-haiku-4-5-20251001",
+                        max_tokens=600,
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    if message.content:
+                        logger.info("[BRIEFING] Claude Haiku 4.5 success")
+                        return message.content[0].text
+                except Exception as e:
+                    error_str = str(e)
+                    # Check for overloaded error (529)
+                    if "overloaded" in error_str.lower() or "529" in error_str:
+                        if attempt < max_retries - 1:
+                            wait_time = (attempt + 1) * 5  # 5s, 10s, 15s
+                            logger.warning(f"[BRIEFING] API overloaded, waiting {wait_time}s before retry...")
+                            time.sleep(wait_time)
+                            continue
+                    logger.error(f"[BRIEFING] Claude Haiku failed: {e}")
+                    break
         
         logger.error("[BRIEFING] Briefing generation failed")
         return None
@@ -28426,11 +28437,11 @@ def business_pulse():
                 // Generating in background — show spinner and poll
                 content.innerHTML = '<div style="text-align:center;padding:20px;"><div class="spinner" style="border:3px solid rgba(139,92,246,0.3);border-top:3px solid #8b5cf6;border-radius:50%;width:25px;height:25px;animation:spin 1s linear infinite;margin:0 auto 10px;"></div><p style="color:var(--text-muted);margin:0;font-size:13px;">Zane is catching up on what happened...</p></div>';
                 dateEl.textContent = 'Generating...';
-                // Poll every 3 seconds (max 20 tries = 60s)
+                // Poll every 3 seconds (max 45 tries = 135s - accounts for API retries)
                 let tries = 0;
                 const poll = setInterval(async () => {{
                     tries++;
-                    if (tries > 20) {{
+                    if (tries > 45) {{
                         clearInterval(poll);
                         content.innerHTML = '<div style="color:var(--text-muted);padding:10px;">Briefing is taking long — refresh the page to try again.</div>';
                         refreshBtn.innerHTML = '&#8635; Refresh';
@@ -28452,6 +28463,12 @@ def business_pulse():
                                 .replace(/\\*\\*([^*]+)\\*\\*/g, '<b style="color:#8b5cf6;">$1</b>');
                             content.innerHTML = html;
                             dateEl.textContent = 'Fresh &bull; just generated';
+                            refreshBtn.innerHTML = '&#8635; Refresh';
+                            refreshBtn.disabled = false;
+                        }} else if (!d2.success && !d2.generating && d2.error) {{
+                            // Backend returned error - stop polling and show message
+                            clearInterval(poll);
+                            content.innerHTML = '<div style="color:var(--text-muted);padding:10px;">⚠️ AI service busy. Try again in a minute.</div>';
                             refreshBtn.innerHTML = '&#8635; Refresh';
                             refreshBtn.disabled = false;
                         }}
@@ -28985,10 +29002,20 @@ def api_briefing_generate():
                     logger.info(f"[BRIEFING] Background generation complete")
                 else:
                     logger.error(f"[BRIEFING] Background generation failed: {result.get('error')}")
-                    # DON'T cache failure - let it retry on next refresh
+                    # Cache error so frontend stops polling immediately
+                    _briefing_cache[biz_id] = {
+                        "date": today_str,
+                        "result": {"success": False, "error": result.get("error", "AI service temporarily unavailable"), "generating": False},
+                        "ts": time.time()
+                    }
             except Exception as e:
                 logger.error(f"[BRIEFING] Background thread error: {e}")
-                # DON'T cache errors - let it retry on next refresh
+                # Cache error so frontend stops polling
+                _briefing_cache[biz_id] = {
+                    "date": today_str,
+                    "result": {"success": False, "error": "AI service busy - try again", "generating": False},
+                    "ts": time.time()
+                }
             finally:
                 _briefing_cache.pop(gen_key, None)
         
