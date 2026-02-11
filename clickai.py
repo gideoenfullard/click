@@ -57312,9 +57312,17 @@ def scan_inbox_page():
                 if (data.supplier_created) {{
                     msg += '\\nNew supplier created';
                 }}
+                if (data.imported !== undefined) {{
+                    msg = '🏦 ' + (data.message || 'Imported ' + data.imported + ' transactions');
+                }}
                 
                 alert(msg);
-                window.location.reload();
+                
+                if (redirect === '/banking' && data.imported > 0) {{
+                    window.location = '/banking';
+                }} else {{
+                    window.location.reload();
+                }}
             }} else {{
                 alert(' ' + (data.error || 'Failed to save'));
             }}
@@ -58708,19 +58716,33 @@ def api_scan_save_bank_statement():
         
         imported = 0
         skipped = 0
+        errors = []
         
         for txn in transactions:
-            amount = float(txn.get("amount", 0))
-            description = txn.get("description", "").strip()
-            date = txn.get("date", "")
+            description = str(txn.get("description", "")).strip()
+            date = str(txn.get("date", "")).strip()
             
-            if not description or amount == 0:
+            if not description:
                 skipped += 1
                 continue
             
-            # Debit (money out) vs Credit (money in)
-            debit = abs(amount) if amount < 0 else 0
-            credit = amount if amount > 0 else 0
+            # Handle both formats:
+            # Format 1: "amount" field (negative=debit, positive=credit)
+            # Format 2: separate "debit" and "credit" fields
+            amount = float(txn.get("amount", 0) or 0)
+            
+            if amount != 0:
+                debit = round(abs(amount), 2) if amount < 0 else 0.0
+                credit = round(amount, 2) if amount > 0 else 0.0
+            else:
+                # Try separate debit/credit fields
+                debit = round(abs(float(txn.get("debit", 0) or 0)), 2)
+                credit = round(abs(float(txn.get("credit", 0) or 0)), 2)
+            
+            # Skip if truly no amount at all
+            if debit == 0 and credit == 0:
+                skipped += 1
+                continue
             
             # Check for duplicate
             dup_key = f"{str(date)[:10]}|{description}|{debit}|{credit}"
@@ -58733,8 +58755,8 @@ def api_scan_save_bank_statement():
                 "business_id": biz_id,
                 "date": date,
                 "description": description,
-                "debit": round(debit, 2),
-                "credit": round(credit, 2),
+                "debit": debit,
+                "credit": credit,
                 "balance": float(txn.get("balance", 0)) if txn.get("balance") else None,
                 "bank_name": bank_name,
                 "source": "scan",
@@ -58742,14 +58764,23 @@ def api_scan_save_bank_statement():
                 "created_at": now()
             }
             
-            success, _ = db.save("bank_transactions", bank_txn)
+            success, result = db.save("bank_transactions", bank_txn)
             if success:
                 imported += 1
                 existing_keys.add(dup_key)
             else:
                 skipped += 1
+                errors.append(str(result)[:100])
         
-        logger.info(f"[BANK IMPORT] Scanned: {imported} imported, {skipped} skipped from {bank_name}")
+        logger.info(f"[BANK IMPORT] Scanned: {imported} imported, {skipped} skipped from {bank_name}" + (f" Errors: {errors[:3]}" if errors else ""))
+        
+        if imported == 0 and skipped > 0:
+            return jsonify({
+                "success": True,
+                "message": f"All {skipped} transactions were duplicates (already imported)",
+                "imported": 0,
+                "skipped": skipped
+            })
         
         return jsonify({
             "success": True,
