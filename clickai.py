@@ -21011,137 +21011,280 @@ def stock_detail(stock_id):
     potential_profit = potential_revenue - stock_value
     margin_pct = ((price - cost) / price * 100) if price > 0 else 0
     
-    # === GATHER ALL HISTORY ===
+    # === HELPER: safe match item code in line items ===
+    def _match_code(line, code_val, sid):
+        """Check if a line item matches this stock item"""
+        if not isinstance(line, dict):
+            return False
+        for field in ["code", "item_code", "stock_code"]:
+            if str(line.get(field, "")).strip().upper() == code_val.upper():
+                return True
+        if str(line.get("stock_id", "")) == sid:
+            return True
+        # Also check description match as fallback
+        return False
     
-    # 1. Stock Movements
+    def _parse_items(raw):
+        """Parse items field - could be list or JSON string"""
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                return parsed if isinstance(parsed, list) else []
+            except:
+                return []
+        return []
+    
+    # === GATHER COMPLETE LIFECYCLE HISTORY ===
+    # Build one unified timeline: PO → GRN → Supplier Invoice → Stock Movement → Quote → Invoice → Delivery Note → POS Sale → Payment → Credit Note
+    
+    timeline = []  # unified timeline of ALL events
+    purchases = []
+    sales = []
+    movements = []
+    job_usage = []
+    
+    # ---------- 1. Purchase Orders (bestelling geplaas) ----------
+    try:
+        all_po = db.get("purchase_orders", {"business_id": biz_id}) or []
+        for po in all_po:
+            for line in _parse_items(po.get("items", [])):
+                if _match_code(line, code, stock_id):
+                    po_qty = float(line.get("qty", line.get("quantity", 0)) or 0)
+                    po_cost = float(line.get("cost", line.get("unit_cost", line.get("unit_price", 0))) or 0)
+                    po_total = float(line.get("total", line.get("line_total", po_qty * po_cost)) or 0)
+                    entry = {
+                        "date": po.get("date", po.get("created_at", ""))[:10],
+                        "type": "📋 Purchase Order",
+                        "detail": f"PO to {po.get('supplier_name', 'Unknown')}",
+                        "ref": po.get("po_number", po.get("number", "")),
+                        "who": po.get("supplier_name", ""),
+                        "qty": po_qty,
+                        "amount": po_total,
+                        "status": po.get("status", ""),
+                        "color": "#6366f1"
+                    }
+                    timeline.append(entry)
+                    break
+    except Exception as e:
+        logger.error(f"[StockDetail] PO error: {e}")
+    
+    # ---------- 2. Goods Received (goedere ontvang) ----------
+    try:
+        all_grn = db.get("goods_received", {"business_id": biz_id}) or []
+        for grn in all_grn:
+            for line in _parse_items(grn.get("items", [])):
+                if _match_code(line, code, stock_id):
+                    grn_qty = float(line.get("qty", line.get("quantity", 0)) or 0)
+                    grn_cost = float(line.get("cost", line.get("unit_cost", line.get("cost_price", 0))) or 0)
+                    grn_total = float(line.get("total", line.get("line_total", grn_qty * grn_cost)) or 0)
+                    entry = {
+                        "date": grn.get("date", grn.get("created_at", ""))[:10],
+                        "type": "📦 Goods Received",
+                        "detail": f"Received from {grn.get('supplier_name', 'Unknown')}",
+                        "ref": grn.get("grn_number", grn.get("reference", "")),
+                        "who": grn.get("supplier_name", ""),
+                        "qty": grn_qty,
+                        "amount": grn_total,
+                        "status": "received",
+                        "color": "#10b981"
+                    }
+                    timeline.append(entry)
+                    purchases.append({
+                        "date": entry["date"], "supplier": entry["who"],
+                        "qty": grn_qty, "cost": grn_cost, "total": grn_total,
+                        "ref": entry["ref"], "type": "GRN"
+                    })
+                    break
+    except Exception as e:
+        logger.error(f"[StockDetail] GRN error: {e}")
+    
+    # ---------- 3. Supplier Invoices (supplier faktuur) ----------
+    try:
+        all_bills = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        for bill in all_bills:
+            for line in _parse_items(bill.get("items", [])):
+                if _match_code(line, code, stock_id):
+                    b_qty = float(line.get("qty", line.get("quantity", 0)) or 0)
+                    b_cost = float(line.get("unit_price", line.get("cost", 0)) or 0)
+                    b_total = float(line.get("total", line.get("line_total", b_qty * b_cost)) or 0)
+                    entry = {
+                        "date": bill.get("date", bill.get("created_at", ""))[:10],
+                        "type": "🧾 Supplier Invoice",
+                        "detail": f"Invoice from {bill.get('supplier_name', 'Unknown')}",
+                        "ref": bill.get("invoice_number", bill.get("number", "")),
+                        "who": bill.get("supplier_name", ""),
+                        "qty": b_qty,
+                        "amount": b_total,
+                        "status": bill.get("status", ""),
+                        "color": "#f59e0b"
+                    }
+                    timeline.append(entry)
+                    purchases.append({
+                        "date": entry["date"], "supplier": entry["who"],
+                        "qty": b_qty, "cost": b_cost, "total": b_total,
+                        "ref": entry["ref"], "type": "Invoice"
+                    })
+                    break
+    except Exception as e:
+        logger.error(f"[StockDetail] Supplier invoice error: {e}")
+    
+    # ---------- 4. Stock Movements ----------
     try:
         all_movements = db.get("stock_movements", {"business_id": biz_id}) or []
-        movements = [m for m in all_movements if m.get("stock_id") == stock_id or str(m.get("item_code", "")).upper() == code.upper()]
+        for m in all_movements:
+            if m.get("stock_id") == stock_id or str(m.get("item_code", "")).upper() == code.upper():
+                m_qty = float(m.get("quantity", 0) or 0)
+                movements.append(m)
+                timeline.append({
+                    "date": str(m.get("created_at", m.get("date", "")))[:10],
+                    "type": "📦 Stock Movement" if m_qty > 0 else "📤 Stock Out",
+                    "detail": f"{m.get('movement_type', m.get('type', 'Adjustment'))}: {m.get('reference', m.get('note', ''))}",
+                    "ref": m.get("reference", m.get("note", "")),
+                    "who": m.get("reference", ""),
+                    "qty": m_qty,
+                    "amount": 0,
+                    "status": "",
+                    "color": "#10b981" if m_qty > 0 else "#ef4444"
+                })
         movements.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     except Exception as e:
         logger.error(f"[StockDetail] Movements error: {e}")
-        movements = []
     
-    # 2. Purchase History (from goods_received and supplier_invoices)
-    purchases = []
-    
+    # ---------- 5. Quotes (kwotasies) ----------
     try:
-        # From goods_received
-        all_grn = db.get("goods_received", {"business_id": biz_id}) or []
-        for grn in all_grn:
-            items = grn.get("items", [])
-            if isinstance(items, str):
-                try:
-                    items = json.loads(items)
-                except:
-                    continue
-            if not isinstance(items, list):
-                continue
-            for line in items:
-                if not isinstance(line, dict):
-                    continue
-                if str(line.get("code", "")).upper() == code.upper() or str(line.get("stock_id", "")) == stock_id:
-                    purchases.append({
-                        "date": grn.get("date", ""),
-                        "supplier": grn.get("supplier_name", "Unknown"),
-                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                        "cost": float(line.get("cost", line.get("unit_cost", line.get("cost_price", 0))) or 0),
-                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                        "ref": grn.get("grn_number", grn.get("reference", "")),
-                        "type": "GRN"
+        all_quotes = db.get("quotes", {"business_id": biz_id}) or []
+        for q in all_quotes:
+            for line in _parse_items(q.get("items", [])):
+                if _match_code(line, code, stock_id):
+                    q_qty = float(line.get("qty", line.get("quantity", 0)) or 0)
+                    q_price = float(line.get("price", line.get("unit_price", 0)) or 0)
+                    q_total = float(line.get("total", line.get("line_total", q_qty * q_price)) or 0)
+                    timeline.append({
+                        "date": q.get("date", q.get("created_at", ""))[:10],
+                        "type": "📝 Quote",
+                        "detail": f"Quoted to {q.get('customer_name', 'Unknown')}",
+                        "ref": q.get("quote_number", q.get("number", "")),
+                        "who": q.get("customer_name", ""),
+                        "qty": q_qty,
+                        "amount": q_total,
+                        "status": q.get("status", ""),
+                        "color": "#8b5cf6"
                     })
-        
-        # From supplier_invoices
-        all_bills = db.get("supplier_invoices", {"business_id": biz_id}) or []
-        for bill in all_bills:
-            items = bill.get("items", [])
-            if isinstance(items, str):
-                try:
-                    items = json.loads(items)
-                except:
-                    continue
-            if not isinstance(items, list):
-                continue
-            for line in items:
-                if not isinstance(line, dict):
-                    continue
-                if str(line.get("code", "")).upper() == code.upper():
-                    purchases.append({
-                        "date": bill.get("date", ""),
-                        "supplier": bill.get("supplier_name", "Unknown"),
-                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                        "cost": float(line.get("unit_price", line.get("cost", 0)) or 0),
-                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                        "ref": bill.get("invoice_number", bill.get("number", "")),
-                        "type": "Invoice"
-                    })
-        
-        purchases.sort(key=lambda x: x.get("date", ""), reverse=True)
+                    break
     except Exception as e:
-        logger.error(f"[StockDetail] Purchases error: {e}")
-        purchases = []
+        logger.error(f"[StockDetail] Quotes error: {e}")
     
-    # 3. Sales History (from invoices and pos_sales)
-    sales = []
-    
+    # ---------- 6. Invoices (fakture aan kliente) ----------
     try:
-        # From invoices
         all_invoices = db.get("invoices", {"business_id": biz_id}) or []
         for inv in all_invoices:
-            items = inv.get("items", [])
-            if isinstance(items, str):
-                try:
-                    items = json.loads(items)
-                except:
-                    continue
-            if not isinstance(items, list):
-                continue
-            for line in items:
-                if not isinstance(line, dict):
-                    continue
-                if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
-                    sales.append({
-                        "date": inv.get("date", ""),
-                        "customer": inv.get("customer_name", "Walk-in"),
-                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                        "price": float(line.get("price", line.get("unit_price", 0)) or 0),
-                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
+            for line in _parse_items(inv.get("items", [])):
+                if _match_code(line, code, stock_id):
+                    i_qty = float(line.get("qty", line.get("quantity", 0)) or 0)
+                    i_price = float(line.get("price", line.get("unit_price", 0)) or 0)
+                    i_total = float(line.get("total", line.get("line_total", i_qty * i_price)) or 0)
+                    entry = {
+                        "date": inv.get("date", inv.get("created_at", ""))[:10],
+                        "type": "💰 Invoice",
+                        "detail": f"Sold to {inv.get('customer_name', 'Walk-in')}",
                         "ref": inv.get("invoice_number", ""),
-                        "type": "Invoice"
+                        "who": inv.get("customer_name", "Walk-in"),
+                        "qty": i_qty,
+                        "amount": i_total,
+                        "status": inv.get("status", ""),
+                        "color": "#10b981"
+                    }
+                    timeline.append(entry)
+                    sales.append({
+                        "date": entry["date"], "customer": entry["who"],
+                        "qty": i_qty, "price": i_price, "total": i_total,
+                        "ref": entry["ref"], "type": "Invoice",
+                        "inv_number": inv.get("invoice_number", ""),
+                        "status": inv.get("status", "")
                     })
-        
-        # From POS sales
+                    break
+    except Exception as e:
+        logger.error(f"[StockDetail] Invoices error: {e}")
+    
+    # ---------- 7. Delivery Notes (aflewering) ----------
+    try:
+        all_dn = db.get("delivery_notes", {"business_id": biz_id}) or []
+        for dn in all_dn:
+            for line in _parse_items(dn.get("items", [])):
+                if _match_code(line, code, stock_id):
+                    d_qty = float(line.get("qty", line.get("quantity", 0)) or 0)
+                    timeline.append({
+                        "date": dn.get("date", dn.get("created_at", ""))[:10],
+                        "type": "🚚 Delivery",
+                        "detail": f"Delivered to {dn.get('customer_name', 'Unknown')}",
+                        "ref": dn.get("dn_number", dn.get("delivery_number", dn.get("number", ""))),
+                        "who": dn.get("customer_name", ""),
+                        "qty": d_qty,
+                        "amount": 0,
+                        "status": dn.get("status", "delivered"),
+                        "color": "#06b6d4"
+                    })
+                    break
+    except Exception as e:
+        logger.error(f"[StockDetail] Delivery notes error: {e}")
+    
+    # ---------- 8. POS Sales ----------
+    try:
         all_pos = db.get("pos_sales", {"business_id": biz_id}) or []
         for sale in all_pos:
-            items = sale.get("items", [])
-            if isinstance(items, str):
-                try:
-                    items = json.loads(items)
-                except:
-                    continue
-            if not isinstance(items, list):
-                continue
-            for line in items:
-                if not isinstance(line, dict):
-                    continue
-                if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
-                    sales.append({
-                        "date": sale.get("date", ""),
-                        "customer": sale.get("customer_name", "Walk-in"),
-                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                        "price": float(line.get("price", line.get("unit_price", 0)) or 0),
-                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
+            for line in _parse_items(sale.get("items", [])):
+                if _match_code(line, code, stock_id):
+                    p_qty = float(line.get("qty", line.get("quantity", 0)) or 0)
+                    p_price = float(line.get("price", line.get("unit_price", 0)) or 0)
+                    p_total = float(line.get("total", line.get("line_total", p_qty * p_price)) or 0)
+                    entry = {
+                        "date": sale.get("date", sale.get("created_at", ""))[:10],
+                        "type": "🛒 POS Sale",
+                        "detail": f"POS sale to {sale.get('customer_name', 'Walk-in')}",
                         "ref": sale.get("receipt_number", sale.get("sale_number", "")),
-                        "type": "POS"
+                        "who": sale.get("customer_name", "Walk-in"),
+                        "qty": p_qty,
+                        "amount": p_total,
+                        "status": "paid",
+                        "color": "#10b981"
+                    }
+                    timeline.append(entry)
+                    sales.append({
+                        "date": entry["date"], "customer": entry["who"],
+                        "qty": p_qty, "price": p_price, "total": p_total,
+                        "ref": entry["ref"], "type": "POS",
+                        "inv_number": entry["ref"], "status": "paid"
                     })
-        
-        sales.sort(key=lambda x: x.get("date", ""), reverse=True)
+                    break
     except Exception as e:
-        logger.error(f"[StockDetail] Sales error: {e}")
-        sales = []
+        logger.error(f"[StockDetail] POS error: {e}")
     
-    # 4. Job Usage (from job_materials)
-    job_usage = []
+    # ---------- 9. Credit Notes ----------
+    try:
+        all_cn = db.get("credit_notes", {"business_id": biz_id}) or []
+        for cn in all_cn:
+            for line in _parse_items(cn.get("items", [])):
+                if _match_code(line, code, stock_id):
+                    c_qty = float(line.get("qty", line.get("quantity", 0)) or 0)
+                    c_total = float(line.get("total", line.get("line_total", 0)) or 0)
+                    timeline.append({
+                        "date": cn.get("date", cn.get("created_at", ""))[:10],
+                        "type": "↩️ Credit Note",
+                        "detail": f"Credit to {cn.get('customer_name', 'Unknown')}",
+                        "ref": cn.get("credit_note_number", cn.get("number", "")),
+                        "who": cn.get("customer_name", ""),
+                        "qty": c_qty,
+                        "amount": c_total,
+                        "status": "",
+                        "color": "#ef4444"
+                    })
+                    break
+    except Exception as e:
+        logger.error(f"[StockDetail] Credit notes error: {e}")
+    
+    # ---------- 10. Job Card Usage ----------
     try:
         all_job_materials = db.get("job_materials", {"business_id": biz_id}) or []
         all_jobs = db.get("jobs", {"business_id": biz_id}) or []
@@ -21150,19 +21293,34 @@ def stock_detail(stock_id):
         for jm in all_job_materials:
             if str(jm.get("item_code", jm.get("code", ""))).upper() == code.upper() or str(jm.get("stock_id", "")) == stock_id:
                 job = job_lookup.get(jm.get("job_card_id", jm.get("job_id", "")), {})
+                j_qty = float(jm.get("qty", jm.get("quantity", 0)) or 0)
+                j_cost = float(jm.get("unit_cost", jm.get("cost", 0)) or 0)
                 job_usage.append({
                     "date": jm.get("date", jm.get("created_at", ""))[:10],
                     "job_number": job.get("job_number", jm.get("job_card_id", "")[:8]),
                     "job_title": job.get("title", job.get("description", ""))[:40],
                     "customer": job.get("customer_name", ""),
-                    "qty": float(jm.get("qty", jm.get("quantity", 0)) or 0),
-                    "cost": float(jm.get("unit_cost", jm.get("cost", 0)) or 0)
+                    "qty": j_qty, "cost": j_cost
                 })
-        
+                timeline.append({
+                    "date": jm.get("date", jm.get("created_at", ""))[:10],
+                    "type": "🔧 Job Card",
+                    "detail": f"Used in {job.get('job_number', '')} - {job.get('title', job.get('description', ''))[:30]}",
+                    "ref": job.get("job_number", ""),
+                    "who": job.get("customer_name", ""),
+                    "qty": j_qty,
+                    "amount": j_qty * j_cost,
+                    "status": job.get("status", ""),
+                    "color": "#f97316"
+                })
         job_usage.sort(key=lambda x: x.get("date", ""), reverse=True)
     except Exception as e:
         logger.error(f"[StockDetail] Job usage error: {e}")
-        job_usage = []
+    
+    # Sort timeline by date (newest first)
+    timeline.sort(key=lambda x: x.get("date", ""), reverse=True)
+    purchases.sort(key=lambda x: x.get("date", ""), reverse=True)
+    sales.sort(key=lambda x: x.get("date", ""), reverse=True)
     
     # === CALCULATE STATS ===
     try:
@@ -21175,11 +21333,7 @@ def stock_detail(stock_id):
         avg_sale_price = total_sales_value / total_sold if total_sold > 0 else 0
         
         total_job_usage = sum(float(j.get("qty", 0) or 0) for j in job_usage)
-        
-        # Unique suppliers
         unique_suppliers = list(set(p.get("supplier", "") for p in purchases if p.get("supplier")))
-        
-        # Last purchase info
         last_purchase = purchases[0] if purchases else None
         last_sale = sales[0] if sales else None
     except Exception as e:
@@ -21192,22 +21346,42 @@ def stock_detail(stock_id):
     
     # === BUILD HTML ===
     
-    # Movement rows
-    movement_rows = ""
-    for m in movements[:20]:
-        m_type = m.get("movement_type", m.get("type", ""))
-        m_qty = float(m.get("quantity", 0) or 0)
-        m_date = str(m.get("created_at", m.get("date", "")))[:10]
-        m_ref = m.get("reference", m.get("note", ""))[:30]
-        color = "#10b981" if m_qty > 0 else "#ef4444"
-        movement_rows += f'<tr><td>{m_date}</td><td>{m_type}</td><td style="color:{color};font-weight:bold;">{m_qty:+.0f}</td><td>{m_ref}</td></tr>'
+    # --- Timeline rows (the main feature!) ---
+    timeline_rows = ""
+    for t in timeline[:50]:
+        t_date = t.get("date", "-")
+        t_color = t.get("color", "#64748b")
+        t_type = safe_string(t.get("type", ""))
+        t_detail = safe_string(t.get("detail", ""))
+        t_ref = safe_string(t.get("ref", ""))
+        t_who = safe_string(t.get("who", ""))
+        t_qty = t.get("qty", 0)
+        t_amt = t.get("amount", 0)
+        t_status = t.get("status", "")
+        
+        status_badge = ""
+        if t_status:
+            s_colors = {"paid": "#10b981", "received": "#10b981", "sent": "#3b82f6", "draft": "#64748b", "overdue": "#ef4444", "accepted": "#10b981", "pending": "#f59e0b"}
+            s_color = s_colors.get(str(t_status).lower(), "#64748b")
+            status_badge = f'<span style="background:{s_color};color:white;padding:2px 8px;border-radius:10px;font-size:11px;">{safe_string(str(t_status).title())}</span>'
+        
+        timeline_rows += f'''<tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:12px 10px;white-space:nowrap;">{t_date}</td>
+            <td style="padding:12px 10px;"><span style="color:{t_color};font-weight:600;">{t_type}</span></td>
+            <td style="padding:12px 10px;">{t_detail}</td>
+            <td style="padding:12px 10px;font-weight:500;">{t_who}</td>
+            <td style="padding:12px 10px;font-family:monospace;">{t_ref}</td>
+            <td style="padding:12px 10px;text-align:right;">{t_qty:,.0f}</td>
+            <td style="padding:12px 10px;text-align:right;font-weight:bold;">{currency}{t_amt:,.2f}</td>
+            <td style="padding:12px 10px;">{status_badge}</td>
+        </tr>'''
     
-    if not movement_rows:
-        movement_rows = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">No movements recorded</td></tr>'
+    if not timeline_rows:
+        timeline_rows = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px;">No history recorded yet. History will appear as you create purchase orders, invoices, POS sales, and deliveries.</td></tr>'
     
-    # Purchase rows
+    # --- Purchase rows ---
     purchase_rows = ""
-    for p in purchases[:15]:
+    for p in purchases[:20]:
         purchase_rows += f'''<tr>
             <td>{p.get("date", "-")}</td>
             <td><strong>{safe_string(p.get("supplier", ""))}</strong></td>
@@ -21216,26 +21390,37 @@ def stock_detail(stock_id):
             <td style="text-align:right;font-weight:bold;">{currency}{p.get("total", 0):,.2f}</td>
             <td style="color:var(--text-muted);font-size:12px;">{p.get("ref", "")}</td>
         </tr>'''
-    
     if not purchase_rows:
         purchase_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No purchase history</td></tr>'
     
-    # Sales rows
+    # --- Sales rows ---
     sales_rows = ""
-    for s in sales[:15]:
+    for s in sales[:20]:
         sales_rows += f'''<tr>
             <td>{s.get("date", "-")}</td>
             <td><strong>{safe_string(s.get("customer", ""))}</strong></td>
             <td style="text-align:right;">{s.get("qty", 0):.0f}</td>
             <td style="text-align:right;">{currency}{s.get("price", 0):,.2f}</td>
             <td style="text-align:right;font-weight:bold;color:#10b981;">{currency}{s.get("total", 0):,.2f}</td>
-            <td style="color:var(--text-muted);font-size:12px;">{s.get("ref", "")}</td>
+            <td style="font-family:monospace;">{s.get("ref", "")}</td>
+            <td style="font-size:12px;">{s.get("inv_number", "")}</td>
         </tr>'''
-    
     if not sales_rows:
-        sales_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No sales history</td></tr>'
+        sales_rows = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px;">No sales history</td></tr>'
     
-    # Job usage rows
+    # --- Movement rows ---
+    movement_rows = ""
+    for m in movements[:20]:
+        m_type = m.get("movement_type", m.get("type", ""))
+        m_qty = float(m.get("quantity", 0) or 0)
+        m_date = str(m.get("created_at", m.get("date", "")))[:10]
+        m_ref = str(m.get("reference", m.get("note", "")))[:30]
+        color = "#10b981" if m_qty > 0 else "#ef4444"
+        movement_rows += f'<tr><td>{m_date}</td><td>{m_type}</td><td style="color:{color};font-weight:bold;">{m_qty:+.0f}</td><td>{m_ref}</td></tr>'
+    if not movement_rows:
+        movement_rows = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">No movements recorded</td></tr>'
+    
+    # --- Job rows ---
     job_rows = ""
     for j in job_usage[:10]:
         job_rows += f'''<tr>
@@ -21245,7 +21430,6 @@ def stock_detail(stock_id):
             <td>{safe_string(j.get("customer", ""))}</td>
             <td style="text-align:right;">{j.get("qty", 0):.0f}</td>
         </tr>'''
-    
     if not job_rows:
         job_rows = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">Not used in any jobs</td></tr>'
     
@@ -21253,11 +21437,10 @@ def stock_detail(stock_id):
     supplier_chips = ""
     for sup in unique_suppliers[:5]:
         supplier_chips += f'<span style="background:var(--primary);color:white;padding:4px 10px;border-radius:12px;font-size:12px;margin:2px;">{safe_string(sup)}</span> '
-    
     if not supplier_chips:
         supplier_chips = '<span style="color:var(--text-muted);">No suppliers on record</span>'
     
-    # Stock status
+    # Stock status badge
     if qty <= 0:
         stock_status = '<span style="background:#ef4444;color:white;padding:4px 12px;border-radius:12px;">OUT OF STOCK</span>'
     elif qty <= reorder:
@@ -21352,12 +21535,32 @@ def stock_detail(stock_id):
         <div style="display:flex;flex-wrap:wrap;gap:5px;">
             {supplier_chips}
         </div>
-        {f'<div style="margin-top:10px;padding:10px;background:rgba(16,185,129,0.1);border-radius:8px;"><strong>Last purchased:</strong> {last_purchase.get("date", "")} from {last_purchase.get("supplier", "")} - {last_purchase.get("qty", 0):.0f} x {currency}{last_purchase.get("cost", 0):,.2f}</div>' if last_purchase else ''}
+        {f'<div style="margin-top:10px;padding:10px;background:rgba(16,185,129,0.1);border-radius:8px;"><strong>Last purchased:</strong> {last_purchase.get("date", "")} from {safe_string(last_purchase.get("supplier", ""))} - {last_purchase.get("qty", 0):.0f} x {currency}{last_purchase.get("cost", 0):,.2f}</div>' if last_purchase else ''}
     </div>
     
-    <!-- Tabs for History -->
+    <!-- ===== FULL ITEM TIMELINE ===== -->
+    <div class="card" style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;">📜 Complete Item History</h3>
+            <span style="color:var(--text-muted);font-size:13px;">{len(timeline)} events</span>
+        </div>
+        <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
+            Full lifecycle: Purchase Orders → Goods Received → Supplier Invoices → Stock Movements → Quotes → Invoices → Deliveries → POS Sales → Credit Notes → Job Cards
+        </p>
+        <div style="overflow-x:auto;">
+            <table class="table">
+                <thead><tr>
+                    <th>Date</th><th>Event</th><th>Detail</th><th>Who</th><th>Ref #</th>
+                    <th style="text-align:right;">Qty</th><th style="text-align:right;">Amount</th><th>Status</th>
+                </tr></thead>
+                <tbody>{timeline_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Detail Tabs -->
     <div class="card">
-        <div style="display:flex;gap:10px;border-bottom:1px solid var(--border);margin-bottom:15px;padding-bottom:10px;">
+        <div style="display:flex;gap:10px;border-bottom:1px solid var(--border);margin-bottom:15px;padding-bottom:10px;flex-wrap:wrap;">
             <button onclick="showTab('purchases')" class="tab-btn active" id="tab-purchases">🛒 Purchases ({len(purchases)})</button>
             <button onclick="showTab('sales')" class="tab-btn" id="tab-sales">💰 Sales ({len(sales)})</button>
             <button onclick="showTab('movements')" class="tab-btn" id="tab-movements">📦 Movements ({len(movements)})</button>
@@ -21375,7 +21578,7 @@ def stock_detail(stock_id):
         <!-- Sales Tab -->
         <div id="panel-sales" class="tab-panel" style="display:none;">
             <table class="table">
-                <thead><tr><th>Date</th><th>Customer</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th><th>Ref</th></tr></thead>
+                <thead><tr><th>Date</th><th>Customer</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th><th>Ref</th><th>Invoice #</th></tr></thead>
                 <tbody>{sales_rows}</tbody>
             </table>
         </div>
