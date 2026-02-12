@@ -742,7 +742,7 @@ class fulltech_addon:
 FULLTECH_ENABLED = True
 logging.info("[FULLTECH] Smart Quote calculator EMBEDDED and ready")
 
-from flask import Flask, request, redirect, session, jsonify, Response, send_file, flash, g
+from flask import Flask, request, redirect, session, jsonify, Response, send_file, flash, g, render_template_string
 
 # 
 # CONFIGURATION
@@ -20980,19 +20980,30 @@ def stock_detail(stock_id):
         return redirect("/stock")
     
     # Get the stock item
-    item = db.get_one_stock(stock_id)
+    try:
+        item = db.get_one_stock(stock_id)
+    except Exception as e:
+        logger.error(f"[StockDetail] Error loading stock item {stock_id}: {e}")
+        flash("Error loading stock item", "error")
+        return redirect("/stock")
+    
     if not item or item.get("business_id") != biz_id:
         flash("Stock item not found", "error")
         return redirect("/stock")
     
-    code = item.get("code", "")
-    desc = item.get("description", "Unknown")
-    qty = float(item.get("quantity", 0) or 0)
-    cost = float(item.get("cost_price", 0) or 0)
-    price = float(item.get("selling_price", 0) or 0)
-    category = item.get("category", "General")
-    unit = item.get("unit", "each")
-    reorder = int(item.get("reorder_level", 0) or 0)
+    try:
+        code = str(item.get("code", "") or "")
+        desc = str(item.get("description", "Unknown") or "Unknown")
+        qty = float(item.get("quantity", 0) or 0)
+        cost = float(item.get("cost_price", 0) or 0)
+        price = float(item.get("selling_price", 0) or 0)
+        category = str(item.get("category", "General") or "General")
+        unit = str(item.get("unit", "each") or "each")
+        reorder = int(float(item.get("reorder_level", 0) or 0))
+    except Exception as e:
+        logger.error(f"[StockDetail] Error parsing item fields: {e}")
+        code, desc, qty, cost, price = "", "Unknown", 0, 0, 0
+        category, unit, reorder = "General", "each", 0
     
     # Calculate stock value
     stock_value = qty * cost
@@ -21154,22 +21165,30 @@ def stock_detail(stock_id):
         job_usage = []
     
     # === CALCULATE STATS ===
-    total_purchased = sum(p.get("qty", 0) for p in purchases)
-    total_purchase_value = sum(p.get("total", 0) for p in purchases)
-    avg_purchase_cost = total_purchase_value / total_purchased if total_purchased > 0 else 0
-    
-    total_sold = sum(s.get("qty", 0) for s in sales)
-    total_sales_value = sum(s.get("total", 0) for s in sales)
-    avg_sale_price = total_sales_value / total_sold if total_sold > 0 else 0
-    
-    total_job_usage = sum(j.get("qty", 0) for j in job_usage)
-    
-    # Unique suppliers
-    unique_suppliers = list(set(p.get("supplier", "") for p in purchases if p.get("supplier")))
-    
-    # Last purchase info
-    last_purchase = purchases[0] if purchases else None
-    last_sale = sales[0] if sales else None
+    try:
+        total_purchased = sum(float(p.get("qty", 0) or 0) for p in purchases)
+        total_purchase_value = sum(float(p.get("total", 0) or 0) for p in purchases)
+        avg_purchase_cost = total_purchase_value / total_purchased if total_purchased > 0 else 0
+        
+        total_sold = sum(float(s.get("qty", 0) or 0) for s in sales)
+        total_sales_value = sum(float(s.get("total", 0) or 0) for s in sales)
+        avg_sale_price = total_sales_value / total_sold if total_sold > 0 else 0
+        
+        total_job_usage = sum(float(j.get("qty", 0) or 0) for j in job_usage)
+        
+        # Unique suppliers
+        unique_suppliers = list(set(p.get("supplier", "") for p in purchases if p.get("supplier")))
+        
+        # Last purchase info
+        last_purchase = purchases[0] if purchases else None
+        last_sale = sales[0] if sales else None
+    except Exception as e:
+        logger.error(f"[StockDetail] Stats calc error: {e}")
+        total_purchased = total_purchase_value = avg_purchase_cost = 0
+        total_sold = total_sales_value = avg_sale_price = 0
+        total_job_usage = 0
+        unique_suppliers = []
+        last_purchase = last_sale = None
     
     # === BUILD HTML ===
     
@@ -21432,7 +21451,7 @@ def stock_detail(stock_id):
     </script>
     '''
     
-    return render_template_string(BASE_TEMPLATE, content=content, title=f"Stock: {desc}", user=user, business=business)
+    return render_page(f"Stock: {desc}", content, user, "stock")
 
 
 @app.route("/stock/new", methods=["GET", "POST"])
