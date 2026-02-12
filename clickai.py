@@ -22687,7 +22687,10 @@ def invoices_page():
                 <a href="/invoice/new" class="btn btn-primary">+ New Invoice</a>
             </div>
         </div>
-        <table class="table">
+        <div style="margin-bottom:15px;">
+            <input type="text" id="searchInvoices" placeholder="🔍 Search by customer, invoice number, amount..." oninput="filterTable('searchInvoices','invoiceTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+        </div>
+        <table class="table" id="invoiceTable">
             <thead>
                 <tr><th>Number</th><th>Date</th><th>Customer</th><th>Amount</th><th>Status</th></tr>
             </thead>
@@ -22696,6 +22699,15 @@ def invoices_page():
             </tbody>
         </table>
     </div>
+    <script>
+    function filterTable(inputId, tableId) {{
+        const q = document.getElementById(inputId).value.toLowerCase();
+        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
+        rows.forEach(r => {{
+            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+        }});
+    }}
+    </script>
     '''
     
     return render_page("Invoices", content, user, "invoices")
@@ -26175,7 +26187,10 @@ def quotes_page():
             <h3 class="card-title" style="margin:0;">Quotes ({len(quotes)})</h3>
             <a href="/quote/new" class="btn btn-primary">+ New Quote</a>
         </div>
-        <table class="table">
+        <div style="margin-bottom:15px;">
+            <input type="text" id="searchQuotes" placeholder="🔍 Search by customer, quote number, amount..." oninput="filterTable('searchQuotes','quoteTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+        </div>
+        <table class="table" id="quoteTable">
             <thead>
                 <tr><th>Number</th><th>Date</th><th>Customer</th><th>Amount</th><th>Status</th></tr>
             </thead>
@@ -26184,6 +26199,15 @@ def quotes_page():
             </tbody>
         </table>
     </div>
+    <script>
+    function filterTable(inputId, tableId) {{
+        const q = document.getElementById(inputId).value.toLowerCase();
+        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
+        rows.forEach(r => {{
+            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+        }});
+    }}
+    </script>
     '''
     
     return render_page("Quotes", content, user, "quotes")
@@ -27065,7 +27089,10 @@ def delivery_notes_list():
     </div>
     
     <div class="card" style="padding:0;overflow:hidden;">
-        <table class="data-table">
+        <div style="padding:15px 15px 0 15px;">
+            <input type="text" id="searchDN" placeholder="🔍 Search by customer, DN number, invoice..." oninput="filterTable('searchDN','dnTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+        </div>
+        <table class="data-table" id="dnTable">
             <thead>
                 <tr>
                     <th>Number</th>
@@ -27080,6 +27107,15 @@ def delivery_notes_list():
             </tbody>
         </table>
     </div>
+    <script>
+    function filterTable(inputId, tableId) {{
+        const q = document.getElementById(inputId).value.toLowerCase();
+        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
+        rows.forEach(r => {{
+            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+        }});
+    }}
+    </script>
     '''
     
     return render_page("Delivery Notes", content, user, "delivery-notes")
@@ -27608,8 +27644,11 @@ def expenses_page():
             <h3 class="card-title" style="margin:0;">Expenses</h3>
             <a href="/scan" class="btn btn-primary">📸 Scan Receipt</a>
         </div>
+        <div style="margin-bottom:15px;">
+            <input type="text" id="searchExpenses" placeholder="🔍 Search by supplier, description, category, amount..." oninput="filterTable('searchExpenses','expenseTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+        </div>
         <div style="overflow-x:auto;">
-        <table class="table">
+        <table class="table" id="expenseTable">
             <thead>
                 <tr>
                     <th>Exp #</th>
@@ -27629,6 +27668,15 @@ def expenses_page():
         </table>
         </div>
     </div>
+    <script>
+    function filterTable(inputId, tableId) {{
+        const q = document.getElementById(inputId).value.toLowerCase();
+        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
+        rows.forEach(r => {{
+            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+        }});
+    }}
+    </script>
     '''
     
     return render_page("Expenses", content, user, "expenses")
@@ -34498,7 +34546,11 @@ def purchases_page():
             </div>
         </div>
         
-        <table class="table">
+        <div style="margin-bottom:15px;">
+            <input type="text" id="searchPO" placeholder="🔍 Search by supplier, PO number, amount..." oninput="filterTable('searchPO','poTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+        </div>
+        
+        <table class="table" id="poTable">
             <thead>
                 <tr>
                     <th>PO Number</th>
@@ -34536,6 +34588,15 @@ def purchases_page():
             </div>
         </div>
     </div>
+    <script>
+    function filterTable(inputId, tableId) {{
+        const q = document.getElementById(inputId).value.toLowerCase();
+        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
+        rows.forEach(r => {{
+            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+        }});
+    }}
+    </script>
     '''
     
     return render_page("Purchase Orders", content, user, "purchases")
@@ -35835,7 +35896,11 @@ def supplier_invoices_page():
             <div class="stat-label">Total Unpaid</div>
         </div>
         
-        <table class="table">
+        <div style="margin-bottom:15px;">
+            <input type="text" id="searchSI" placeholder="🔍 Search by supplier, invoice number, amount..." oninput="filterTable('searchSI','siTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
+        </div>
+        
+        <table class="table" id="siTable">
             <thead>
                 <tr><th>Invoice #</th><th>Date</th><th>Supplier</th><th>Amount</th><th>Status</th><th>Action</th></tr>
             </thead>
@@ -35846,6 +35911,13 @@ def supplier_invoices_page():
     </div>
     
     <script>
+    function filterTable(inputId, tableId) {{
+        const q = document.getElementById(inputId).value.toLowerCase();
+        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
+        rows.forEach(r => {{
+            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+        }});
+    }}
     function paySupplier(invNum) {{
         document.getElementById('aiInput').value = 'Pay supplier invoice ' + invNum;
         document.getElementById('sendBtn').click();
