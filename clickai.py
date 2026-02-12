@@ -21003,119 +21003,155 @@ def stock_detail(stock_id):
     # === GATHER ALL HISTORY ===
     
     # 1. Stock Movements
-    all_movements = db.get("stock_movements", {"business_id": biz_id}) or []
-    movements = [m for m in all_movements if m.get("stock_id") == stock_id or str(m.get("item_code", "")).upper() == code.upper()]
-    movements.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    try:
+        all_movements = db.get("stock_movements", {"business_id": biz_id}) or []
+        movements = [m for m in all_movements if m.get("stock_id") == stock_id or str(m.get("item_code", "")).upper() == code.upper()]
+        movements.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    except Exception as e:
+        logger.error(f"[StockDetail] Movements error: {e}")
+        movements = []
     
     # 2. Purchase History (from goods_received and supplier_invoices)
     purchases = []
     
-    # From goods_received
-    all_grn = db.get("goods_received", {"business_id": biz_id}) or []
-    for grn in all_grn:
-        items = grn.get("items", [])
-        if not isinstance(items, list):
-            continue
-        for line in items:
-            if not isinstance(line, dict):
+    try:
+        # From goods_received
+        all_grn = db.get("goods_received", {"business_id": biz_id}) or []
+        for grn in all_grn:
+            items = grn.get("items", [])
+            if isinstance(items, str):
+                try:
+                    items = json.loads(items)
+                except:
+                    continue
+            if not isinstance(items, list):
                 continue
-            if str(line.get("code", "")).upper() == code.upper() or str(line.get("stock_id", "")) == stock_id:
-                purchases.append({
-                    "date": grn.get("date", ""),
-                    "supplier": grn.get("supplier_name", "Unknown"),
-                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                    "cost": float(line.get("cost", line.get("unit_cost", line.get("cost_price", 0))) or 0),
-                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                    "ref": grn.get("grn_number", grn.get("reference", "")),
-                    "type": "GRN"
-                })
-    
-    # From supplier_invoices
-    all_bills = db.get("supplier_invoices", {"business_id": biz_id}) or []
-    for bill in all_bills:
-        items = bill.get("items", [])
-        if not isinstance(items, list):
-            continue
-        for line in items:
-            if not isinstance(line, dict):
+            for line in items:
+                if not isinstance(line, dict):
+                    continue
+                if str(line.get("code", "")).upper() == code.upper() or str(line.get("stock_id", "")) == stock_id:
+                    purchases.append({
+                        "date": grn.get("date", ""),
+                        "supplier": grn.get("supplier_name", "Unknown"),
+                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                        "cost": float(line.get("cost", line.get("unit_cost", line.get("cost_price", 0))) or 0),
+                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
+                        "ref": grn.get("grn_number", grn.get("reference", "")),
+                        "type": "GRN"
+                    })
+        
+        # From supplier_invoices
+        all_bills = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        for bill in all_bills:
+            items = bill.get("items", [])
+            if isinstance(items, str):
+                try:
+                    items = json.loads(items)
+                except:
+                    continue
+            if not isinstance(items, list):
                 continue
-            if str(line.get("code", "")).upper() == code.upper():
-                purchases.append({
-                    "date": bill.get("date", ""),
-                    "supplier": bill.get("supplier_name", "Unknown"),
-                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                    "cost": float(line.get("unit_price", line.get("cost", 0)) or 0),
-                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                    "ref": bill.get("invoice_number", bill.get("number", "")),
-                    "type": "Invoice"
-                })
-    
-    purchases.sort(key=lambda x: x.get("date", ""), reverse=True)
+            for line in items:
+                if not isinstance(line, dict):
+                    continue
+                if str(line.get("code", "")).upper() == code.upper():
+                    purchases.append({
+                        "date": bill.get("date", ""),
+                        "supplier": bill.get("supplier_name", "Unknown"),
+                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                        "cost": float(line.get("unit_price", line.get("cost", 0)) or 0),
+                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
+                        "ref": bill.get("invoice_number", bill.get("number", "")),
+                        "type": "Invoice"
+                    })
+        
+        purchases.sort(key=lambda x: x.get("date", ""), reverse=True)
+    except Exception as e:
+        logger.error(f"[StockDetail] Purchases error: {e}")
+        purchases = []
     
     # 3. Sales History (from invoices and pos_sales)
     sales = []
     
-    # From invoices
-    all_invoices = db.get("invoices", {"business_id": biz_id}) or []
-    for inv in all_invoices:
-        items = inv.get("items", [])
-        if not isinstance(items, list):
-            continue
-        for line in items:
-            if not isinstance(line, dict):
+    try:
+        # From invoices
+        all_invoices = db.get("invoices", {"business_id": biz_id}) or []
+        for inv in all_invoices:
+            items = inv.get("items", [])
+            if isinstance(items, str):
+                try:
+                    items = json.loads(items)
+                except:
+                    continue
+            if not isinstance(items, list):
                 continue
-            if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
-                sales.append({
-                    "date": inv.get("date", ""),
-                    "customer": inv.get("customer_name", "Walk-in"),
-                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                    "price": float(line.get("price", line.get("unit_price", 0)) or 0),
-                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                    "ref": inv.get("invoice_number", ""),
-                    "type": "Invoice"
-                })
-    
-    # From POS sales
-    all_pos = db.get("pos_sales", {"business_id": biz_id}) or []
-    for sale in all_pos:
-        items = sale.get("items", [])
-        if not isinstance(items, list):
-            continue
-        for line in items:
-            if not isinstance(line, dict):
+            for line in items:
+                if not isinstance(line, dict):
+                    continue
+                if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
+                    sales.append({
+                        "date": inv.get("date", ""),
+                        "customer": inv.get("customer_name", "Walk-in"),
+                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                        "price": float(line.get("price", line.get("unit_price", 0)) or 0),
+                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
+                        "ref": inv.get("invoice_number", ""),
+                        "type": "Invoice"
+                    })
+        
+        # From POS sales
+        all_pos = db.get("pos_sales", {"business_id": biz_id}) or []
+        for sale in all_pos:
+            items = sale.get("items", [])
+            if isinstance(items, str):
+                try:
+                    items = json.loads(items)
+                except:
+                    continue
+            if not isinstance(items, list):
                 continue
-            if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
-                sales.append({
-                    "date": sale.get("date", ""),
-                    "customer": sale.get("customer_name", "Walk-in"),
-                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                    "price": float(line.get("price", line.get("unit_price", 0)) or 0),
-                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                    "ref": sale.get("receipt_number", sale.get("sale_number", "")),
-                    "type": "POS"
-                })
-    
-    sales.sort(key=lambda x: x.get("date", ""), reverse=True)
+            for line in items:
+                if not isinstance(line, dict):
+                    continue
+                if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
+                    sales.append({
+                        "date": sale.get("date", ""),
+                        "customer": sale.get("customer_name", "Walk-in"),
+                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                        "price": float(line.get("price", line.get("unit_price", 0)) or 0),
+                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
+                        "ref": sale.get("receipt_number", sale.get("sale_number", "")),
+                        "type": "POS"
+                    })
+        
+        sales.sort(key=lambda x: x.get("date", ""), reverse=True)
+    except Exception as e:
+        logger.error(f"[StockDetail] Sales error: {e}")
+        sales = []
     
     # 4. Job Usage (from job_materials)
     job_usage = []
-    all_job_materials = db.get("job_materials", {"business_id": biz_id}) or []
-    all_jobs = db.get("jobs", {"business_id": biz_id}) or []
-    job_lookup = {j.get("id"): j for j in all_jobs}
-    
-    for jm in all_job_materials:
-        if str(jm.get("item_code", jm.get("code", ""))).upper() == code.upper() or str(jm.get("stock_id", "")) == stock_id:
-            job = job_lookup.get(jm.get("job_card_id", jm.get("job_id", "")), {})
-            job_usage.append({
-                "date": jm.get("date", jm.get("created_at", ""))[:10],
-                "job_number": job.get("job_number", jm.get("job_card_id", "")[:8]),
-                "job_title": job.get("title", job.get("description", ""))[:40],
-                "customer": job.get("customer_name", ""),
-                "qty": float(jm.get("qty", jm.get("quantity", 0)) or 0),
-                "cost": float(jm.get("unit_cost", jm.get("cost", 0)) or 0)
-            })
-    
-    job_usage.sort(key=lambda x: x.get("date", ""), reverse=True)
+    try:
+        all_job_materials = db.get("job_materials", {"business_id": biz_id}) or []
+        all_jobs = db.get("jobs", {"business_id": biz_id}) or []
+        job_lookup = {j.get("id"): j for j in all_jobs}
+        
+        for jm in all_job_materials:
+            if str(jm.get("item_code", jm.get("code", ""))).upper() == code.upper() or str(jm.get("stock_id", "")) == stock_id:
+                job = job_lookup.get(jm.get("job_card_id", jm.get("job_id", "")), {})
+                job_usage.append({
+                    "date": jm.get("date", jm.get("created_at", ""))[:10],
+                    "job_number": job.get("job_number", jm.get("job_card_id", "")[:8]),
+                    "job_title": job.get("title", job.get("description", ""))[:40],
+                    "customer": job.get("customer_name", ""),
+                    "qty": float(jm.get("qty", jm.get("quantity", 0)) or 0),
+                    "cost": float(jm.get("unit_cost", jm.get("cost", 0)) or 0)
+                })
+        
+        job_usage.sort(key=lambda x: x.get("date", ""), reverse=True)
+    except Exception as e:
+        logger.error(f"[StockDetail] Job usage error: {e}")
+        job_usage = []
     
     # === CALCULATE STATS ===
     total_purchased = sum(p.get("qty", 0) for p in purchases)
