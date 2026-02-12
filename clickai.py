@@ -4009,6 +4009,14 @@ ZANE_TOOLS = [
                 "status": {"type": "string", "description": "Filter: active, cancelled", "enum": ["active", "cancelled"]}
             }
         }
+    },
+    {
+        "name": "get_business_health_check",
+        "description": "Get a COMPLETE business health check with score, insights, and actions. Use when user asks 'how is my business doing?', 'business health', 'give me an overview', 'hoe gaan dit met my besigheid?', or any general question about business performance. This tool does ALL the calculations and gives you pre-written insights - just read them to the user.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
     }
 ]
 
@@ -6382,25 +6390,90 @@ class ZaneToolHandler:
         }
     
     def _tool_get_expenses(self, params: dict) -> dict:
+        """Get expenses with trend analysis and insights"""
         category = params.get("category", "").lower()
         days_back = params.get("days_back", 30)
         limit = params.get("limit", 20)
+        
         expenses = self.db.get("expenses", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        now = datetime.now()
+        cutoff = (now - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        prev_cutoff = (now - timedelta(days=days_back*2)).strftime("%Y-%m-%d")
+        
+        # Current period
         results = []; total = 0; cat_totals = {}
+        # Previous period (for comparison)
+        prev_total = 0; prev_cat_totals = {}
+        
         for e in expenses:
             ed = e.get("date", "")
-            if ed and ed < cutoff:
+            if not ed:
                 continue
-            if category and category not in str(e.get("category", "")).lower():
-                continue
-            amt = float(e.get("amount", 0) or 0); total += amt
-            c = e.get("category", "Other"); cat_totals[c] = cat_totals.get(c, 0) + amt
-            results.append({"description": e.get("description", ""), "amount": amt, "category": c,
-                            "date": ed, "supplier": e.get("supplier_name", "")})
+            amt = float(e.get("amount", 0) or 0)
+            c = e.get("category", "Other")
+            
+            if ed >= cutoff:
+                # Current period
+                if category and category not in c.lower():
+                    continue
+                total += amt
+                cat_totals[c] = cat_totals.get(c, 0) + amt
+                results.append({"description": e.get("description", ""), "amount": amt, "category": c,
+                                "date": ed, "supplier": e.get("supplier_name", "")})
+            elif ed >= prev_cutoff:
+                # Previous period
+                prev_total += amt
+                prev_cat_totals[c] = prev_cat_totals.get(c, 0) + amt
+        
         results.sort(key=lambda x: x["date"] or "", reverse=True)
-        return {"total_expenses": total, "count": len(results),
-                "by_category": dict(sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)), "expenses": results[:limit]}
+        
+        # Calculate change
+        if prev_total > 0:
+            change_pct = ((total - prev_total) / prev_total) * 100
+        else:
+            change_pct = 0
+        
+        # Find biggest category
+        sorted_cats = sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)
+        biggest_cat = sorted_cats[0] if sorted_cats else ("None", 0)
+        
+        # Find unusual increases
+        unusual = []
+        for cat, amt in cat_totals.items():
+            prev_amt = prev_cat_totals.get(cat, 0)
+            if prev_amt > 0 and amt > prev_amt * 1.5:  # 50%+ increase
+                unusual.append(f"{cat} up {((amt-prev_amt)/prev_amt)*100:.0f}%")
+        
+        # Generate insight
+        if change_pct > 30:
+            status = "HIGH"
+            insight = f"Expenses up {change_pct:.0f}% vs previous period. Biggest: {biggest_cat[0]} (R{biggest_cat[1]:,.0f})."
+        elif change_pct > 10:
+            status = "RISING"
+            insight = f"Expenses up {change_pct:.0f}%. Monitor {biggest_cat[0]} which is your biggest expense."
+        elif change_pct < -20:
+            status = "DECREASING"
+            insight = f"Expenses down {abs(change_pct):.0f}% - good cost control!"
+        else:
+            status = "STABLE"
+            insight = f"Expenses stable. Biggest category: {biggest_cat[0]} (R{biggest_cat[1]:,.0f})."
+        
+        if unusual:
+            insight += f" Unusual: {', '.join(unusual[:2])}."
+        
+        return {
+            "total_expenses": total,
+            "count": len(results),
+            "previous_period_total": prev_total,
+            "change_pct": round(change_pct, 1),
+            "status": status,
+            "insight": insight,
+            "biggest_category": biggest_cat[0],
+            "biggest_category_amount": biggest_cat[1],
+            "unusual_increases": unusual[:3],
+            "by_category": dict(sorted_cats[:10]),
+            "expenses": results[:limit]
+        }
     
     def _tool_get_financial_overview(self, params: dict) -> dict:
         """Get financial overview with PRE-CALCULATED insights - Zane doesn't need to do math"""
@@ -7454,6 +7527,144 @@ class ZaneToolHandler:
                             "reference_number": s.get("reference_number", ""),
                             "notes": s.get("notes", "")})
         return {"total_matches": len(results), "total_monthly_cost": round(total_monthly, 2), "subscriptions": results}
+    
+    def _tool_get_business_health_check(self, params: dict) -> dict:
+        """
+        SMART business health check - Python does ALL the math.
+        Returns ONLY insights and recommendations, not raw data.
+        Zane just needs to read and explain.
+        """
+        # Gather data (internal - not returned to Zane)
+        sales = self._tool_get_sales_summary({"period": "this_month"})
+        prev_sales = self._tool_get_sales_summary({"period": "last_month"})
+        expenses = self._tool_get_expenses({"days_back": 30})
+        debtors = self._tool_get_debtors({"limit": 5})
+        creditors = self._tool_get_creditors({"limit": 5})
+        
+        # === CALCULATE EVERYTHING ===
+        income = sales.get("total_sales", 0) + sales.get("total_invoiced", 0)
+        prev_income = prev_sales.get("total_sales", 0) + prev_sales.get("total_invoiced", 0)
+        exp_total = expenses.get("total_expenses", 0)
+        profit = income - exp_total
+        margin = (profit / income * 100) if income > 0 else 0
+        
+        total_debtors = debtors.get("total_owed", 0)
+        total_creditors = creditors.get("total_owed", 0)
+        debtors_90_plus = debtors.get("aging_summary", {}).get("days_91_120", 0) + debtors.get("aging_summary", {}).get("days_120_plus", 0)
+        
+        # Revenue trend
+        if prev_income > 0:
+            revenue_change = ((income - prev_income) / prev_income) * 100
+        else:
+            revenue_change = 0
+        
+        # === BUILD INSIGHTS (this is what Zane sees) ===
+        insights = []
+        warnings = []
+        actions = []
+        
+        # 1. Profitability
+        if margin >= 25:
+            insights.append(f"✓ Healthy profit margin of {margin:.1f}%")
+        elif margin >= 10:
+            insights.append(f"○ Acceptable margin of {margin:.1f}% - room for improvement")
+        elif margin > 0:
+            warnings.append(f"⚠ Low margin of {margin:.1f}% - review pricing or cut costs")
+            actions.append("Review your pricing - you might be selling too cheap")
+        else:
+            warnings.append(f"⛔ Making a LOSS of R{abs(profit):,.0f}")
+            actions.append("URGENT: Identify why you're losing money")
+        
+        # 2. Revenue trend
+        if revenue_change > 20:
+            insights.append(f"✓ Revenue UP {revenue_change:.0f}% vs last month - great momentum!")
+        elif revenue_change > 0:
+            insights.append(f"○ Revenue up {revenue_change:.0f}% vs last month")
+        elif revenue_change > -10:
+            insights.append(f"○ Revenue flat vs last month")
+        else:
+            warnings.append(f"⚠ Revenue DOWN {abs(revenue_change):.0f}% vs last month")
+            actions.append("Investigate why sales are dropping")
+        
+        # 3. Debtors health
+        if debtors_90_plus > 0:
+            warnings.append(f"⚠ R{debtors_90_plus:,.0f} is 90+ days overdue - high bad debt risk")
+            # Get problem customer names
+            problem_names = [d["name"] for d in debtors.get("problem_debtors", [])[:3]]
+            if problem_names:
+                actions.append(f"Call these debtors TODAY: {', '.join(problem_names)}")
+        elif total_debtors > income * 2:
+            warnings.append(f"⚠ Debtors (R{total_debtors:,.0f}) are high vs monthly sales")
+            actions.append("Tighten credit terms or improve collections")
+        else:
+            insights.append(f"✓ Debtors under control (R{total_debtors:,.0f})")
+        
+        # 4. Creditors
+        creditors_90_plus = creditors.get("aging_summary", {}).get("days_90_plus", 0)
+        if creditors_90_plus > 0:
+            warnings.append(f"⚠ R{creditors_90_plus:,.0f} owed to suppliers is 90+ days - risk of COD or legal")
+            actions.append("Contact overdue suppliers to arrange payment plans")
+        
+        # 5. Cash flow indicator
+        if total_debtors > total_creditors * 1.5:
+            insights.append("○ You're owed more than you owe - but make sure debtors pay!")
+        elif total_creditors > total_debtors * 1.5:
+            warnings.append("⚠ You owe more than you're owed - watch cash flow")
+        
+        # 6. Expense trend
+        exp_change = expenses.get("change_pct", 0)
+        if exp_change > 30:
+            warnings.append(f"⚠ Expenses up {exp_change:.0f}% - {expenses.get('biggest_category', 'Unknown')} is biggest")
+            actions.append(f"Review {expenses.get('biggest_category', 'expenses')} - why the increase?")
+        
+        # === HEALTH SCORE (0-100) ===
+        score = 50
+        score += 20 if margin >= 20 else (10 if margin >= 10 else (-20 if margin < 0 else 0))
+        score += 10 if revenue_change > 10 else (-10 if revenue_change < -10 else 0)
+        score += 15 if debtors_90_plus == 0 else -15
+        score += 10 if creditors_90_plus == 0 else -10
+        score = max(0, min(100, score))
+        
+        # Overall status
+        if score >= 70:
+            status = "HEALTHY"
+            summary = "Business is doing well overall."
+        elif score >= 50:
+            status = "OK"
+            summary = "Business is stable with some areas to watch."
+        elif score >= 30:
+            status = "CONCERNING"
+            summary = "Several issues need attention."
+        else:
+            status = "CRITICAL"
+            summary = "Serious problems require immediate action."
+        
+        # === RETURN COMPACT RESULT ===
+        return {
+            "health_score": score,
+            "status": status,
+            "summary": summary,
+            
+            # Key numbers (pre-calculated, formatted)
+            "this_month_revenue": f"R{income:,.0f}",
+            "this_month_expenses": f"R{exp_total:,.0f}",
+            "this_month_profit": f"R{profit:,.0f}",
+            "profit_margin": f"{margin:.1f}%",
+            "revenue_vs_last_month": f"{revenue_change:+.0f}%",
+            
+            "total_debtors": f"R{total_debtors:,.0f}",
+            "total_creditors": f"R{total_creditors:,.0f}",
+            "debtors_90_plus": f"R{debtors_90_plus:,.0f}" if debtors_90_plus > 0 else "None",
+            
+            # Pre-written insights (Zane just reads these)
+            "good_news": insights,
+            "warnings": warnings,
+            "recommended_actions": actions,
+            
+            # Top 3 only
+            "top_debtors": [f"{d['name']}: R{d['total']:,.0f}" for d in debtors.get("debtors", [])[:3]],
+            "biggest_expense_category": expenses.get("biggest_category", "Unknown")
+        }
 
 
 def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
@@ -43502,6 +43713,7 @@ def import_page():
                         <option value="customers">Customers (with balances)</option>
                         <option value="suppliers">Suppliers (with balances)</option>
                         <option value="stock">Stock / Inventory Items</option>
+                        <option value="stock_update">↳ Update Stock (Qty/Cost only - matches on Code)</option>
                         <option value="chart_of_accounts">Chart of Accounts</option>
                         <option value="opening_balances">Opening Trial Balance</option>
                     </optgroup>
@@ -44191,6 +44403,7 @@ def api_import_analyze():
             "customers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
             "suppliers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
             "stock": {"required": ["description"], "optional": ["code", "cost_price", "selling_price", "price_wholesale", "price_trade", "price_vip", "quantity", "category", "unit"]},
+            "stock_update": {"required": ["code"], "optional": ["quantity", "cost_price", "selling_price", "value"]},  # Update existing stock by code
             "employees": {"required": ["name"], "optional": ["code", "id_number", "position", "role", "department", "salary", "rate", "start_date", "bank", "account", "branch", "phone", "email", "status"]},
             "opening_balances": {"required": ["account"], "optional": ["code", "amount", "debit", "credit", "type"]},
             "chart_of_accounts": {"required": ["name"], "optional": ["code", "type", "parent"]},
@@ -46402,6 +46615,66 @@ def api_import_execute():
                         record["unit"] = unit
                     records.append(record)
                 
+                elif import_type == "stock_update":
+                    # UPDATE existing stock items by matching on code
+                    # Does NOT create new items - only updates qty/cost/price
+                    code_idx = mapping.get("code")
+                    if code_idx is None or code_idx >= len(row):
+                        skipped += 1
+                        continue
+                    
+                    code = str(row[code_idx]).strip()
+                    if not code:
+                        skipped += 1
+                        continue
+                    
+                    # Build updates dict with only fields that have values
+                    updates = {}
+                    
+                    # Quantity
+                    if mapping.get("quantity") is not None and mapping.get("quantity") < len(row):
+                        try:
+                            val = str(row[mapping.get("quantity")]).replace(",", "").strip()
+                            if val:
+                                updates["quantity"] = int(float(val))
+                        except:
+                            pass
+                    
+                    # Cost price
+                    if mapping.get("cost_price") is not None and mapping.get("cost_price") < len(row):
+                        try:
+                            val = str(row[mapping.get("cost_price")]).replace("R", "").replace(",", "").strip()
+                            if val:
+                                updates["cost_price"] = float(val)
+                        except:
+                            pass
+                    
+                    # If we have "value" but no cost_price, calculate cost from value/qty
+                    if "cost_price" not in updates and mapping.get("value") is not None and mapping.get("value") < len(row):
+                        try:
+                            val = str(row[mapping.get("value")]).replace("R", "").replace(",", "").strip()
+                            if val and updates.get("quantity", 0) > 0:
+                                total_value = float(val)
+                                updates["cost_price"] = total_value / updates["quantity"]
+                        except:
+                            pass
+                    
+                    # Selling price (if provided)
+                    if mapping.get("selling_price") is not None and mapping.get("selling_price") < len(row):
+                        try:
+                            val = str(row[mapping.get("selling_price")]).replace("R", "").replace(",", "").strip()
+                            if val:
+                                updates["selling_price"] = float(val)
+                        except:
+                            pass
+                    
+                    if not updates:
+                        skipped += 1
+                        continue
+                    
+                    # Store for batch processing (we'll handle this specially below)
+                    records.append({"code": code, "updates": updates})
+                
                 elif import_type == "employees":
                     # Handle both formats:
                     # 1. Simple: id, code, name, role, rate
@@ -47430,6 +47703,57 @@ def api_import_execute():
         first_error = None
         print(f"[IMPORT-EXECUTE] Records built: {len(records)}, skipped: {skipped}", flush=True)
         logger.info(f"[IMPORT] Records to save: {len(records)}, skipped so far: {skipped}")
+        
+        # === SPECIAL HANDLER: stock_update - UPDATE existing items, don't create new ===
+        if import_type == "stock_update" and records:
+            print(f"[STOCK-UPDATE] Updating {len(records)} existing stock items by code...", flush=True)
+            
+            # Load all existing stock to match by code
+            existing_stock = db.get_all_stock(biz_id)
+            code_to_item = {}
+            for item in existing_stock:
+                item_code = str(item.get("code", "")).strip().upper()
+                if item_code:
+                    code_to_item[item_code] = item
+            
+            print(f"[STOCK-UPDATE] Found {len(code_to_item)} existing items to match against", flush=True)
+            
+            updated = 0
+            not_found = 0
+            
+            for rec in records:
+                code = str(rec.get("code", "")).strip().upper()
+                updates = rec.get("updates", {})
+                
+                if code in code_to_item:
+                    existing = code_to_item[code]
+                    stock_id = existing.get("id")
+                    
+                    if stock_id and updates:
+                        # Update the item
+                        result = db.update_stock(stock_id, updates, biz_id)
+                        if result:
+                            updated += 1
+                            if updated <= 3:
+                                print(f"[STOCK-UPDATE] ✓ Updated {code}: {updates}", flush=True)
+                        else:
+                            skipped += 1
+                    else:
+                        skipped += 1
+                else:
+                    not_found += 1
+                    if not_found <= 5:
+                        print(f"[STOCK-UPDATE] ✗ Code not found: {code}", flush=True)
+            
+            print(f"[STOCK-UPDATE] Done: {updated} updated, {not_found} not found, {skipped} skipped", flush=True)
+            
+            return jsonify({
+                "success": True,
+                "imported": updated,
+                "errors": not_found,
+                "skipped": skipped,
+                "message": f"Updated {updated} items. {not_found} codes not found in existing stock."
+            })
         
         if records:
             # Map import_type to actual table name - uses TABLES config + import-specific aliases
