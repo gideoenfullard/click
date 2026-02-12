@@ -21135,6 +21135,166 @@ def stock_detail(stock_id):
     last_purchase = purchases[0] if purchases else None
     last_sale = sales[0] if sales else None
     
+    # === GATHER DELIVERY NOTES & QUOTES ===
+    
+    # 5. Delivery Notes (item leaving the building)
+    deliveries = []
+    try:
+        all_dn = db.get("delivery_notes", {"business_id": biz_id}) or []
+        for dn in all_dn:
+            dn_items = dn.get("items", [])
+            if not isinstance(dn_items, list):
+                continue
+            for line in dn_items:
+                if not isinstance(line, dict):
+                    continue
+                if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
+                    deliveries.append({
+                        "date": dn.get("date", dn.get("delivery_date", "")),
+                        "customer": dn.get("customer_name", ""),
+                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                        "ref": dn.get("delivery_note_number", dn.get("dn_number", dn.get("reference", ""))),
+                        "invoice_ref": dn.get("invoice_number", ""),
+                        "status": dn.get("status", "delivered")
+                    })
+        deliveries.sort(key=lambda x: x.get("date", ""), reverse=True)
+    except:
+        deliveries = []
+    
+    # 6. Quotes that include this item
+    quotes = []
+    try:
+        all_quotes = db.get("quotes", {"business_id": biz_id}) or []
+        for q in all_quotes:
+            q_items = q.get("items", [])
+            if not isinstance(q_items, list):
+                continue
+            for line in q_items:
+                if not isinstance(line, dict):
+                    continue
+                if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
+                    quotes.append({
+                        "date": q.get("date", ""),
+                        "customer": q.get("customer_name", ""),
+                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                        "price": float(line.get("price", line.get("unit_price", 0)) or 0),
+                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
+                        "ref": q.get("quote_number", ""),
+                        "status": q.get("status", "draft")
+                    })
+        quotes.sort(key=lambda x: x.get("date", ""), reverse=True)
+    except:
+        quotes = []
+    
+    # === BUILD TIMELINE (Full lifecycle of the item) ===
+    timeline_events = []
+    
+    # Add purchases to timeline
+    for p in purchases:
+        timeline_events.append({
+            "date": p.get("date", ""),
+            "icon": "🛒",
+            "color": "#3b82f6",
+            "title": f"Purchased from {safe_string(p.get('supplier', 'Unknown'))}",
+            "detail": f"{p.get('qty', 0):.0f} x {currency}{p.get('cost', 0):,.2f} = {currency}{p.get('total', 0):,.2f}",
+            "ref": p.get("ref", ""),
+            "ref_type": p.get("type", ""),
+            "sort": 1
+        })
+    
+    # Add sales to timeline
+    for s in sales:
+        timeline_events.append({
+            "date": s.get("date", ""),
+            "icon": "💰",
+            "color": "#10b981",
+            "title": f"Sold to {safe_string(s.get('customer', 'Walk-in'))}",
+            "detail": f"{s.get('qty', 0):.0f} x {currency}{s.get('price', 0):,.2f} = {currency}{s.get('total', 0):,.2f}",
+            "ref": s.get("ref", ""),
+            "ref_type": s.get("type", ""),
+            "sort": 3
+        })
+    
+    # Add deliveries to timeline
+    for d in deliveries:
+        timeline_events.append({
+            "date": d.get("date", ""),
+            "icon": "🚚",
+            "color": "#8b5cf6",
+            "title": f"Delivered to {safe_string(d.get('customer', ''))}",
+            "detail": f"{d.get('qty', 0):.0f} units delivered",
+            "ref": d.get("ref", ""),
+            "ref_type": "Delivery Note",
+            "sort": 4
+        })
+    
+    # Add job usage to timeline
+    for j in job_usage:
+        timeline_events.append({
+            "date": j.get("date", ""),
+            "icon": "🔧",
+            "color": "#f59e0b",
+            "title": f"Used in Job {j.get('job_number', '')} - {safe_string(j.get('customer', ''))}",
+            "detail": f"{j.get('qty', 0):.0f} units used | {safe_string(j.get('job_title', ''))}",
+            "ref": j.get("job_number", ""),
+            "ref_type": "Job Card",
+            "sort": 3
+        })
+    
+    # Add stock movements to timeline
+    for m in movements:
+        m_qty = float(m.get("quantity", 0) or 0)
+        m_type = m.get("movement_type", m.get("type", "adjustment"))
+        timeline_events.append({
+            "date": str(m.get("created_at", m.get("date", "")))[:10],
+            "icon": "📦" if m_qty > 0 else "📤",
+            "color": "#10b981" if m_qty > 0 else "#ef4444",
+            "title": f"Stock {m_type}: {m_qty:+.0f} units",
+            "detail": m.get("reference", m.get("note", ""))[:50],
+            "ref": "",
+            "ref_type": "Movement",
+            "sort": 2
+        })
+    
+    # Add quotes to timeline
+    for q in quotes:
+        status_emoji = "✅" if q.get("status") == "accepted" else "⏳" if q.get("status") == "sent" else "📝"
+        timeline_events.append({
+            "date": q.get("date", ""),
+            "icon": status_emoji,
+            "color": "#6366f1",
+            "title": f"Quoted to {safe_string(q.get('customer', ''))}",
+            "detail": f"{q.get('qty', 0):.0f} x {currency}{q.get('price', 0):,.2f} = {currency}{q.get('total', 0):,.2f} ({q.get('status', 'draft')})",
+            "ref": q.get("ref", ""),
+            "ref_type": "Quote",
+            "sort": 0
+        })
+    
+    # Sort timeline by date (newest first), then by sort order
+    timeline_events.sort(key=lambda x: (x.get("date", ""), x.get("sort", 0)), reverse=True)
+    
+    # Build timeline HTML
+    timeline_html = ""
+    for evt in timeline_events[:50]:
+        ref_badge = f'<span style="background:rgba(255,255,255,0.1);padding:2px 8px;border-radius:4px;font-size:11px;margin-left:8px;">{evt["ref_type"]}: {evt["ref"]}</span>' if evt.get("ref") else ""
+        timeline_html += f'''
+        <div style="display:flex;gap:15px;padding:12px 0;border-bottom:1px solid var(--border);">
+            <div style="width:40px;height:40px;border-radius:50%;background:{evt["color"]}22;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">
+                {evt["icon"]}
+            </div>
+            <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px;">
+                    <strong style="color:{evt['color']};">{evt["title"]}</strong>
+                    {ref_badge}
+                </div>
+                <div style="color:var(--text-muted);font-size:13px;margin-top:2px;">{evt["detail"]}</div>
+            </div>
+            <div style="color:var(--text-muted);font-size:12px;white-space:nowrap;">{evt["date"]}</div>
+        </div>'''
+    
+    if not timeline_html:
+        timeline_html = '<div style="text-align:center;color:var(--text-muted);padding:40px;">No history yet - this item has no recorded activity</div>'
+    
     # === BUILD HTML ===
     
     # Movement rows
@@ -21159,22 +21319,23 @@ def stock_detail(stock_id):
             <td style="text-align:right;">{p.get("qty", 0):.0f}</td>
             <td style="text-align:right;">{currency}{p.get("cost", 0):,.2f}</td>
             <td style="text-align:right;font-weight:bold;">{currency}{p.get("total", 0):,.2f}</td>
-            <td style="color:var(--text-muted);font-size:12px;">{p.get("ref", "")}</td>
+            <td><span style="background:rgba(59,130,246,0.15);color:#3b82f6;padding:2px 8px;border-radius:4px;font-size:12px;">{p.get("type", "")}</span> {p.get("ref", "")}</td>
         </tr>'''
     
     if not purchase_rows:
         purchase_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No purchase history</td></tr>'
     
-    # Sales rows
+    # Sales rows - enhanced with customer name prominent and invoice number
     sales_rows = ""
     for s in sales[:15]:
+        type_color = "#10b981" if s.get("type") == "Invoice" else "#f59e0b"
         sales_rows += f'''<tr>
             <td>{s.get("date", "-")}</td>
-            <td><strong>{safe_string(s.get("customer", ""))}</strong></td>
+            <td><strong style="font-size:14px;">{safe_string(s.get("customer", "Walk-in"))}</strong></td>
+            <td><span style="background:rgba({("16,185,129" if s.get("type") == "Invoice" else "245,158,11")},0.15);color:{type_color};padding:2px 8px;border-radius:4px;font-size:12px;">{s.get("type", "")}</span> <strong>{s.get("ref", "")}</strong></td>
             <td style="text-align:right;">{s.get("qty", 0):.0f}</td>
             <td style="text-align:right;">{currency}{s.get("price", 0):,.2f}</td>
             <td style="text-align:right;font-weight:bold;color:#10b981;">{currency}{s.get("total", 0):,.2f}</td>
-            <td style="color:var(--text-muted);font-size:12px;">{s.get("ref", "")}</td>
         </tr>'''
     
     if not sales_rows:
@@ -21189,10 +21350,27 @@ def stock_detail(stock_id):
             <td>{safe_string(j.get("job_title", ""))}</td>
             <td>{safe_string(j.get("customer", ""))}</td>
             <td style="text-align:right;">{j.get("qty", 0):.0f}</td>
+            <td style="text-align:right;">{currency}{j.get("cost", 0):,.2f}</td>
         </tr>'''
     
     if not job_rows:
-        job_rows = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">Not used in any jobs</td></tr>'
+        job_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">Not used in any jobs</td></tr>'
+    
+    # Delivery rows
+    delivery_rows = ""
+    for d in deliveries[:10]:
+        status_badge = '<span style="background:#10b981;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">Delivered</span>' if d.get("status") == "delivered" else '<span style="background:#f59e0b;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">Pending</span>'
+        delivery_rows += f'''<tr>
+            <td>{d.get("date", "-")}</td>
+            <td><strong>{safe_string(d.get("customer", ""))}</strong></td>
+            <td style="text-align:right;">{d.get("qty", 0):.0f}</td>
+            <td>{d.get("ref", "")}</td>
+            <td>{d.get("invoice_ref", "")}</td>
+            <td>{status_badge}</td>
+        </tr>'''
+    
+    if not delivery_rows:
+        delivery_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No deliveries recorded</td></tr>'
     
     # Supplier chips
     supplier_chips = ""
@@ -21209,6 +21387,9 @@ def stock_detail(stock_id):
         stock_status = '<span style="background:#f59e0b;color:white;padding:4px 12px;border-radius:12px;">LOW STOCK</span>'
     else:
         stock_status = '<span style="background:#10b981;color:white;padding:4px 12px;border-radius:12px;">IN STOCK</span>'
+    
+    # Total events for timeline badge
+    total_events = len(timeline_events)
     
     content = f'''
     <div style="margin-bottom:20px;">
@@ -21302,17 +21483,26 @@ def stock_detail(stock_id):
     
     <!-- Tabs for History -->
     <div class="card">
-        <div style="display:flex;gap:10px;border-bottom:1px solid var(--border);margin-bottom:15px;padding-bottom:10px;">
-            <button onclick="showTab('purchases')" class="tab-btn active" id="tab-purchases">🛒 Purchases ({len(purchases)})</button>
+        <div style="display:flex;gap:5px;border-bottom:1px solid var(--border);margin-bottom:15px;padding-bottom:10px;flex-wrap:wrap;">
+            <button onclick="showTab('timeline')" class="tab-btn active" id="tab-timeline">📜 Timeline ({total_events})</button>
+            <button onclick="showTab('purchases')" class="tab-btn" id="tab-purchases">🛒 Purchases ({len(purchases)})</button>
             <button onclick="showTab('sales')" class="tab-btn" id="tab-sales">💰 Sales ({len(sales)})</button>
+            <button onclick="showTab('deliveries')" class="tab-btn" id="tab-deliveries">🚚 Deliveries ({len(deliveries)})</button>
             <button onclick="showTab('movements')" class="tab-btn" id="tab-movements">📦 Movements ({len(movements)})</button>
             <button onclick="showTab('jobs')" class="tab-btn" id="tab-jobs">🔧 Jobs ({len(job_usage)})</button>
         </div>
         
+        <!-- Timeline Tab (DEFAULT - full lifecycle) -->
+        <div id="panel-timeline" class="tab-panel">
+            <div style="padding:0 5px;">
+                {timeline_html}
+            </div>
+        </div>
+        
         <!-- Purchases Tab -->
-        <div id="panel-purchases" class="tab-panel">
+        <div id="panel-purchases" class="tab-panel" style="display:none;">
             <table class="table">
-                <thead><tr><th>Date</th><th>Supplier</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Total</th><th>Ref</th></tr></thead>
+                <thead><tr><th>Date</th><th>Supplier</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Total</th><th>Type / Ref</th></tr></thead>
                 <tbody>{purchase_rows}</tbody>
             </table>
         </div>
@@ -21320,8 +21510,16 @@ def stock_detail(stock_id):
         <!-- Sales Tab -->
         <div id="panel-sales" class="tab-panel" style="display:none;">
             <table class="table">
-                <thead><tr><th>Date</th><th>Customer</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th><th>Ref</th></tr></thead>
+                <thead><tr><th>Date</th><th>Customer</th><th>Invoice / Receipt</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th></tr></thead>
                 <tbody>{sales_rows}</tbody>
+            </table>
+        </div>
+        
+        <!-- Deliveries Tab -->
+        <div id="panel-deliveries" class="tab-panel" style="display:none;">
+            <table class="table">
+                <thead><tr><th>Date</th><th>Customer</th><th style="text-align:right;">Qty</th><th>DN #</th><th>Invoice Ref</th><th>Status</th></tr></thead>
+                <tbody>{delivery_rows}</tbody>
             </table>
         </div>
         
@@ -21336,7 +21534,7 @@ def stock_detail(stock_id):
         <!-- Jobs Tab -->
         <div id="panel-jobs" class="tab-panel" style="display:none;">
             <table class="table">
-                <thead><tr><th>Date</th><th>Job #</th><th>Description</th><th>Customer</th><th style="text-align:right;">Qty Used</th></tr></thead>
+                <thead><tr><th>Date</th><th>Job #</th><th>Description</th><th>Customer</th><th style="text-align:right;">Qty Used</th><th style="text-align:right;">Cost</th></tr></thead>
                 <tbody>{job_rows}</tbody>
             </table>
         </div>
@@ -21373,7 +21571,7 @@ def stock_detail(stock_id):
     </div>
     
     <style>
-        .tab-btn {{ padding:8px 16px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:6px;font-size:14px; }}
+        .tab-btn {{ padding:8px 16px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:6px;font-size:13px; }}
         .tab-btn:hover {{ background:var(--bg); }}
         .tab-btn.active {{ background:var(--primary);color:white; }}
     </style>
