@@ -482,7 +482,7 @@ class fulltech_addon:
         }
     
     @classmethod
-    def calc_sheet_piece(cls, length_mm, width_mm, thickness_mm, finish="N4 + PVC"):
+    def calc_sheet_piece(cls, length_mm, width_mm, thickness_mm, finish="N4 + PVC", custom_prices=None):
         """
         Calculate sheet/plate piece price
         - Large plates: 6000 x 1500mm (special pricing)
@@ -490,10 +490,24 @@ class fulltech_addon:
         - Full sheet or larger: base price
         - Piece >= 1 sqm: +40%
         - Piece < 1 sqm: +60%
+        
+        custom_prices: dict with optional keys: sheet_cold, sheet_hot, large_plates, min_charge
         """
         length_mm = float(length_mm)
         width_mm = float(width_mm)
         thickness = float(thickness_mm)
+        
+        # Use custom prices if provided, otherwise defaults
+        if custom_prices:
+            sheet_cold = {**cls.SHEET_COLD, **(custom_prices.get("sheet_cold", {}) or {})}
+            sheet_hot = {**cls.SHEET_HOT, **(custom_prices.get("sheet_hot", {}) or {})}
+            large_plates = {**cls.LARGE_PLATES, **(custom_prices.get("large_plates", {}) or {})}
+            min_charge = custom_prices.get("min_charge", cls.MIN_CHARGE_PIECE) or cls.MIN_CHARGE_PIECE
+        else:
+            sheet_cold = cls.SHEET_COLD
+            sheet_hot = cls.SHEET_HOT
+            large_plates = cls.LARGE_PLATES
+            min_charge = cls.MIN_CHARGE_PIECE
         
         # Calculate sqm
         sqm = (length_mm / 1000) * (width_mm / 1000)
@@ -501,11 +515,11 @@ class fulltech_addon:
         # Check for LARGE PLATE first (6000x1500)
         large_plate_key = f"6000x1500x{thickness}"
         # Also try without decimal for whole numbers
-        if large_plate_key not in cls.LARGE_PLATES:
+        if large_plate_key not in large_plates:
             large_plate_key = f"6000x1500x{int(thickness)}.0"
         
         is_large_plate = False
-        if large_plate_key in cls.LARGE_PLATES:
+        if large_plate_key in large_plates:
             # Check if dimensions fit a large plate
             fits_large = (length_mm <= 6000 and width_mm <= 1500) or \
                         (length_mm <= 1500 and width_mm <= 6000)
@@ -514,13 +528,13 @@ class fulltech_addon:
             
             if fits_large and sqm >= large_sqm * 0.90:  # Within 10% of full large plate
                 is_large_plate = True
-                base_price = cls.LARGE_PLATES[large_plate_key]
+                base_price = large_plates[large_plate_key]
                 markup = 0
                 markup_text = "Full large plate (6000x1500)"
             elif fits_large and length_mm > 2500 or width_mm > 2500:
                 # Needs large plate but is a cut piece
                 is_large_plate = True
-                base_price = cls.LARGE_PLATES[large_plate_key]
+                base_price = large_plates[large_plate_key]
                 if sqm >= 1.0:
                     markup = 0.40
                     markup_text = "+40% (large plate piece ≥ 1m²)"
@@ -549,19 +563,19 @@ class fulltech_addon:
             if thickness > 3:
                 # Hot rolled
                 t_key = str(thickness).replace(".0", "")
-                if t_key in cls.SHEET_HOT:
-                    prices = cls.SHEET_HOT[t_key]
+                if t_key in sheet_hot:
+                    prices = sheet_hot[t_key]
                     base_price = prices.get(finish_upper, prices.get("N4 ONLY", 325.40))
                 else:
                     base_price = 325.40  # Default hot rolled
             else:
                 # Cold rolled
-                base_price = cls.SHEET_COLD.get(finish_upper, 34.08)
+                base_price = sheet_cold.get(finish_upper, 34.08)
         
         # Calculate final price
         final_price_sqm = base_price * (1 + markup)
         subtotal = sqm * final_price_sqm
-        total = max(subtotal, cls.MIN_CHARGE_PIECE)
+        total = max(subtotal, min_charge)
         
         return {
             "length_mm": length_mm,
@@ -576,7 +590,7 @@ class fulltech_addon:
             "final_price_sqm": round(final_price_sqm, 2),
             "subtotal": round(subtotal, 2),
             "total": round(total, 2),
-            "min_applied": subtotal < cls.MIN_CHARGE_PIECE,
+            "min_applied": subtotal < min_charge,
         }
     
     @classmethod
@@ -53860,11 +53874,19 @@ def sheet_pieces():
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
     if "fulltech" not in biz_name:
         return redirect("/tools")
+    
+    # Load custom prices from business settings
+    custom_prices = None
+    if biz_id:
+        biz_data = db.get_one("businesses", biz_id) or {}
+        all_custom = biz_data.get("custom_prices", {}) or {}
+        custom_prices = all_custom.get("sheet_pieces", None)
     
     result_html = ""
     
@@ -53876,13 +53898,14 @@ def sheet_pieces():
             finish = request.form.get("finish", "N4 + PVC")
             qty = int(request.form.get("qty", 1) or 1)
             
-            result = fulltech_addon.calc_sheet_piece(length, width, thickness, finish)
+            # Pass custom prices to calculator
+            result = fulltech_addon.calc_sheet_piece(length, width, thickness, finish, custom_prices)
             
             total_with_qty = result["total"] * qty
             
             result_html = f'''
             <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.05));margin-top:20px;">
-                <h3 style="margin:0 0 20px 0;color:var(--green);">[CHART] Results</h3>
+                <h3 style="margin:0 0 20px 0;color:var(--green);">📊 Results</h3>
                 
                 <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:15px;margin-bottom:20px;">
                     <div style="background:var(--card);padding:15px;border-radius:8px;text-align:center;">
@@ -54789,11 +54812,30 @@ def price_editor():
         try:
             data = request.get_json() if request.is_json else {}
             price_type = data.get("type", "")
-            prices = data.get("prices", {})
+            new_prices = data.get("prices", {})
             
             existing = db.get_one("businesses", biz_id) or {}
             custom_prices = existing.get("custom_prices", {}) or {}
-            custom_prices[price_type] = prices
+            
+            # Get existing prices for this type, or use defaults
+            existing_type_prices = custom_prices.get(price_type, {})
+            
+            # MERGE: Only update values that are not 0 or empty
+            # This preserves existing prices if user leaves fields empty
+            def merge_prices(existing, new):
+                """Recursively merge, only updating non-zero values"""
+                if isinstance(new, dict):
+                    result = dict(existing) if isinstance(existing, dict) else {}
+                    for k, v in new.items():
+                        if isinstance(v, dict):
+                            result[k] = merge_prices(result.get(k, {}), v)
+                        elif v and v != 0:  # Only update if not empty/zero
+                            result[k] = v
+                    return result
+                return new if new and new != 0 else existing
+            
+            merged = merge_prices(existing_type_prices, new_prices)
+            custom_prices[price_type] = merged
             
             db.save("businesses", {"id": biz_id, "custom_prices": custom_prices})
             
@@ -54801,11 +54843,23 @@ def price_editor():
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
     
-    # Get current prices
-    sheet_cold = fulltech_addon.SHEET_COLD
-    sheet_hot = fulltech_addon.SHEET_HOT
-    large_plates = fulltech_addon.LARGE_PLATES
-    min_charge = fulltech_addon.MIN_CHARGE_PIECE
+    # Get current prices - check for custom overrides first
+    biz_data = db.get_one("businesses", biz_id) or {}
+    custom = biz_data.get("custom_prices", {}) or {}
+    sheet_pieces_custom = custom.get("sheet_pieces", {})
+    
+    # Use custom prices if available, otherwise defaults
+    sheet_cold = sheet_pieces_custom.get("sheet_cold", {}) or fulltech_addon.SHEET_COLD
+    # Merge with defaults to ensure all finishes exist
+    sheet_cold = {**fulltech_addon.SHEET_COLD, **sheet_cold}
+    
+    sheet_hot = sheet_pieces_custom.get("sheet_hot", {}) or fulltech_addon.SHEET_HOT
+    sheet_hot = {**fulltech_addon.SHEET_HOT, **sheet_hot}
+    
+    large_plates = sheet_pieces_custom.get("large_plates", {}) or fulltech_addon.LARGE_PLATES
+    large_plates = {**fulltech_addon.LARGE_PLATES, **large_plates}
+    
+    min_charge = sheet_pieces_custom.get("min_charge", fulltech_addon.MIN_CHARGE_PIECE)
     
     # Build cold rolled rows
     cold_rows = ""
