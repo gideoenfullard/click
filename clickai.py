@@ -20059,10 +20059,11 @@ def customer_view(customer_id):
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/customers" style="color:var(--text-muted);">← Back to Customers</a>
-        <div style="display:flex;gap:10px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <a href="/customer/{customer_id}/edit" class="btn btn-secondary">✏️ Edit</a>
             <a href="/statement/{customer_id}" class="btn btn-secondary">📄 Statement</a>
             <a href="/statement/{customer_id}?email=1" class="btn btn-secondary">📧 Email Statement</a>
+            <button onclick="showEmailModal()" class="btn btn-secondary">📨 Email Group</button>
             <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
         </div>
     </div>
@@ -20101,6 +20102,10 @@ def customer_view(customer_id):
             <div>
                 <span style="color:var(--text-muted);font-size:11px;display:block;">EMAIL</span>
                 <span style="font-size:14px;">{safe_string(customer.get("email", "-"))}</span>
+            </div>
+            <div>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CC EMAILS</span>
+                <span style="font-size:14px;">{safe_string(customer.get("email_cc", "-")) or "-"}</span>
             </div>
             <div>
                 <span style="color:var(--text-muted);font-size:11px;display:block;">FAX</span>
@@ -20223,6 +20228,88 @@ def customer_view(customer_id):
             </tbody>
         </table>
     </div>
+    
+    <!-- Email Group Modal -->
+    <div id="emailGroupModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:25px;border-radius:12px;max-width:550px;width:95%;">
+            <h3 style="margin-bottom:15px;">📨 Send Email to {safe_string(customer.get("name", ""))}</h3>
+            <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">Email will be sent to all addresses for this customer</p>
+            
+            <div style="background:var(--bg);padding:10px;border-radius:8px;margin-bottom:15px;">
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:5px;">RECIPIENTS:</div>
+                <div id="recipientList" style="font-size:13px;">
+                    {f'<span style="background:var(--primary);color:white;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px;display:inline-block;">{safe_string(customer.get("email", ""))}</span>' if customer.get("email") else '<span style="color:var(--red);">No primary email set</span>'}
+                    {''.join(f'<span style="background:#6366f1;color:white;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px;display:inline-block;">{e.strip()}</span>' for e in (customer.get("email_cc", "") or "").split(",") if e.strip())}
+                </div>
+            </div>
+            
+            <form id="emailGroupForm">
+                <input type="hidden" name="customer_id" value="{customer_id}">
+                <div style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;">Subject</label>
+                    <input type="text" id="egSubject" placeholder="e.g. Monthly Statement - {safe_string(customer.get('name', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+                </div>
+                <div style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;">Message</label>
+                    <textarea id="egMessage" rows="5" placeholder="Type your message here..." style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);"></textarea>
+                </div>
+                <div style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;">Attach</label>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="egAttachStatement"> 📄 Latest Statement</label>
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="egAttachInvoice"> 📋 Latest Invoice</label>
+                    </div>
+                </div>
+                <div style="display:flex;gap:10px;">
+                    <button type="button" onclick="sendGroupEmail()" class="btn btn-primary" style="flex:1;">📧 Send to All</button>
+                    <button type="button" onclick="hideEmailModal()" class="btn btn-secondary">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+    function showEmailModal() {{
+        document.getElementById('emailGroupModal').style.display = 'flex';
+    }}
+    function hideEmailModal() {{
+        document.getElementById('emailGroupModal').style.display = 'none';
+    }}
+    async function sendGroupEmail() {{
+        const subject = document.getElementById('egSubject').value;
+        const message = document.getElementById('egMessage').value;
+        const attachStatement = document.getElementById('egAttachStatement').checked;
+        const attachInvoice = document.getElementById('egAttachInvoice').checked;
+        
+        if (!subject || !message) {{
+            alert('Please fill in subject and message');
+            return;
+        }}
+        
+        try {{
+            const resp = await fetch('/api/customer/email-group', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{
+                    customer_id: '{customer_id}',
+                    subject: subject,
+                    message: message,
+                    attach_statement: attachStatement,
+                    attach_invoice: attachInvoice
+                }})
+            }});
+            const data = await resp.json();
+            if (data.success) {{
+                alert('✅ Email sent to ' + data.sent_to + ' recipients!');
+                hideEmailModal();
+            }} else {{
+                alert('❌ Error: ' + (data.error || 'Failed to send'));
+            }}
+        }} catch(e) {{
+            alert('Error sending email: ' + e.message);
+        }}
+    }}
+    </script>
     
     '''
     
@@ -20386,6 +20473,7 @@ def customer_edit(customer_id):
         phone = request.form.get("phone", "").strip()
         cell = request.form.get("cell", "").strip()
         email = request.form.get("email", "").strip()
+        email_cc = request.form.get("email_cc", "").strip()
         address = request.form.get("address", "").strip()
         code = request.form.get("code", "").strip()
         contact_name = request.form.get("contact_name", "").strip()
@@ -20411,6 +20499,7 @@ def customer_edit(customer_id):
                 "phone": phone,
                 "cell": cell,
                 "email": email,
+                "email_cc": email_cc,
                 "address": address,
                 "contact_name": contact_name,
                 "category": category,
@@ -20473,6 +20562,10 @@ def customer_edit(customer_id):
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
                     <input type="email" name="email" value="{safe_string(c.get('email', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
+            </div>
+            <div style="margin-bottom:15px;">
+                <label style="display:block;margin-bottom:5px;font-weight:500;">📧 CC / Additional Emails <span style="color:var(--text-muted);font-weight:normal;font-size:12px;">(comma separated - invoices & statements will go to all)</span></label>
+                <input type="text" name="email_cc" value="{safe_string(c.get('email_cc', ''))}" placeholder="e.g. accounts@company.co.za, manager@company.co.za, boss@company.co.za" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
                 <div>
@@ -20642,15 +20735,15 @@ def stock_page():
             const cost = parseFloat(s.cost_price||s.cost||0);
             const price = parseFloat(s.selling_price||s.price||0);
             const qtyStyle = qty < 5 ? 'color:var(--red);' : '';
-            html += `<tr class="stock-row" data-search="${(s.code||'').toLowerCase()} ${(s.description||'').toLowerCase()}" data-cat="${(cat||'').toLowerCase()}">
-                <td><a href="/stock/${s.id}"><strong>${s.code||'-'}</strong></a></td>
+            html += `<tr class="stock-row" data-search="${(s.code||'').toLowerCase()} ${(s.description||'').toLowerCase()}" data-cat="${(cat||'').toLowerCase()}" onclick="window.location='/stock/${s.id}'" style="cursor:pointer;">
+                <td><strong style="color:var(--primary);">${s.code||'-'}</strong></td>
                 <td>${s.description||'-'}</td>
                 <td style="color:var(--text-muted);font-size:11px;">${cat}</td>
                 <td style="text-align:right;${qtyStyle}">${qty.toFixed(0)}</td>
                 <td style="color:var(--text-muted);">${s.unit||''}</td>
                 <td style="text-align:right;">R${cost.toFixed(2)}</td>
                 <td style="text-align:right;">R${price.toFixed(2)}</td>
-                <td><a href="/stock/${s.id}" style="color:var(--primary);font-size:11px;">Edit</a></td>
+                <td style="font-size:11px;color:var(--text-muted);">📜</td>
             </tr>`;
         });
         
@@ -42046,6 +42139,85 @@ def api_customer_update(customer_id):
             
     except Exception as e:
         logger.error(f"[API] Customer update error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/customer/email-group", methods=["POST"])
+@login_required
+def api_customer_email_group():
+    """Send email to customer and all CC addresses"""
+    
+    try:
+        data = request.get_json()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"})
+        
+        customer_id = data.get("customer_id")
+        subject = data.get("subject", "").strip()
+        message = data.get("message", "").strip()
+        
+        if not subject or not message:
+            return jsonify({"success": False, "error": "Subject and message required"})
+        
+        customer = db.get_one("customers", customer_id)
+        if not customer:
+            return jsonify({"success": False, "error": "Customer not found"})
+        
+        # Collect all email addresses
+        recipients = []
+        primary_email = (customer.get("email") or "").strip()
+        if primary_email:
+            recipients.append(primary_email)
+        
+        cc_emails = (customer.get("email_cc") or "").strip()
+        if cc_emails:
+            for email in cc_emails.split(","):
+                email = email.strip()
+                if email and "@" in email and email not in recipients:
+                    recipients.append(email)
+        
+        if not recipients:
+            return jsonify({"success": False, "error": "No email addresses found for this customer. Add emails in customer edit."})
+        
+        # Build email body
+        biz_name = business.get("name", "")
+        html_body = f"""
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+            <div style="background:#1e293b;color:white;padding:20px;text-align:center;border-radius:8px 8px 0 0;">
+                <h2 style="margin:0;">{safe_string(biz_name)}</h2>
+            </div>
+            <div style="padding:20px;background:#f8fafc;border:1px solid #e2e8f0;">
+                <p>Dear {safe_string(customer.get("name", "Customer"))},</p>
+                <div style="white-space:pre-wrap;">{safe_string(message)}</div>
+            </div>
+            <div style="padding:15px;text-align:center;color:#64748b;font-size:12px;">
+                Sent via ClickAI - {safe_string(biz_name)}
+            </div>
+        </div>
+        """
+        
+        # Send to all recipients
+        sent_count = 0
+        errors = []
+        for recipient in recipients:
+            try:
+                send_email(recipient, subject, html_body)
+                sent_count += 1
+                logger.info(f"[EMAIL GROUP] Sent to {recipient} for customer {customer.get('name')}")
+            except Exception as e:
+                errors.append(f"{recipient}: {str(e)}")
+                logger.error(f"[EMAIL GROUP] Failed to send to {recipient}: {e}")
+        
+        if sent_count > 0:
+            return jsonify({"success": True, "sent_to": sent_count, "total": len(recipients), "errors": errors})
+        else:
+            return jsonify({"success": False, "error": f"Failed to send to all recipients: {'; '.join(errors)}"})
+    
+    except Exception as e:
+        logger.error(f"[EMAIL GROUP] Error: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 
