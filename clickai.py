@@ -54773,7 +54773,7 @@ def api_category_delete(cat_id):
 @app.route("/tools/price-editor", methods=["GET", "POST"])
 @login_required
 def price_editor():
-    """Edit Fulltech steel prices"""
+    """Edit Fulltech steel prices - especially for Sheet Pieces calculator"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -54784,14 +54784,13 @@ def price_editor():
     if "fulltech" not in biz_name:
         return redirect("/tools")
     
-    # Handle price updates
+    # Handle price updates via AJAX
     if request.method == "POST":
         try:
             data = request.get_json() if request.is_json else {}
             price_type = data.get("type", "")
             prices = data.get("prices", {})
             
-            # Save to business settings or a prices table
             existing = db.get_one("businesses", biz_id) or {}
             custom_prices = existing.get("custom_prices", {}) or {}
             custom_prices[price_type] = prices
@@ -54802,19 +54801,41 @@ def price_editor():
         except Exception as e:
             return jsonify({"success": False, "error": str(e)})
     
-    # Get current prices (from fulltech_addon defaults)
-    round_180 = fulltech_addon.ROUND_180
-    round_400 = fulltech_addon.ROUND_400
-    round_mirror = fulltech_addon.ROUND_MIRROR
-    square = fulltech_addon.SQUARE
+    # Get current prices
     sheet_cold = fulltech_addon.SHEET_COLD
     sheet_hot = fulltech_addon.SHEET_HOT
-    flat_cr = fulltech_addon.FLAT_CR
-    flat_hr = fulltech_addon.FLAT_HR
+    large_plates = fulltech_addon.LARGE_PLATES
+    min_charge = fulltech_addon.MIN_CHARGE_PIECE
     
-    # Check for custom overrides
-    biz_data = db.get_one("businesses", biz_id) or {}
-    custom = biz_data.get("custom_prices", {}) or {}
+    # Build cold rolled rows
+    cold_rows = ""
+    for finish, price in sheet_cold.items():
+        cold_rows += f'''
+        <tr>
+            <td style="padding:10px;">{finish}</td>
+            <td style="padding:10px;"><input type="number" step="0.01" value="{price:.2f}" id="cold_{finish.replace(' ', '_').replace('+', '_')}" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;"></td>
+        </tr>'''
+    
+    # Build hot rolled rows
+    hot_rows = ""
+    for thick, prices in sheet_hot.items():
+        n4_only = prices.get("N4 ONLY", 0)
+        n4_pvc = prices.get("N4 + PVC", 0)
+        hot_rows += f'''
+        <tr>
+            <td style="padding:10px;">{thick}mm</td>
+            <td style="padding:10px;"><input type="number" step="0.01" value="{n4_only:.2f}" id="hot_{thick}_n4" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;"></td>
+            <td style="padding:10px;"><input type="number" step="0.01" value="{n4_pvc:.2f}" id="hot_{thick}_pvc" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;"></td>
+        </tr>'''
+    
+    # Build large plate rows
+    large_rows = ""
+    for plate, price in large_plates.items():
+        large_rows += f'''
+        <tr>
+            <td style="padding:10px;">{plate}</td>
+            <td style="padding:10px;"><input type="number" step="0.01" value="{price:.2f}" id="large_{plate.replace('x', '_')}" style="width:120px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;"></td>
+        </tr>'''
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -54822,328 +54843,126 @@ def price_editor():
         <a href="/tools" class="btn" style="background:var(--bg-card);border:1px solid var(--border);">← Back to Tools</a>
     </div>
     
-    <p style="color:var(--text-muted);margin-bottom:20px;">Edit prices used in Smart Quote and calculators. Changes are saved per business.</p>
+    <p style="color:var(--text-muted);margin-bottom:25px;">Edit prices used in <strong>Sheet Pieces Calculator</strong> and Smart Quote. These are R/m² rates.</p>
     
-    <!-- Tabs -->
-    <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;">
-        <button onclick="showTab('round')" id="tab-round" class="btn" style="background:var(--primary);">Round Tube</button>
-        <button onclick="showTab('square')" id="tab-square" class="btn" style="background:var(--bg-card);">Square Tube</button>
-        <button onclick="showTab('sheet')" id="tab-sheet" class="btn" style="background:var(--bg-card);">Sheet/Plate</button>
-        <button onclick="showTab('flat')" id="tab-flat" class="btn" style="background:var(--bg-card);">Flat Bar</button>
-    </div>
-    
-    <!-- Round Tube Prices -->
-    <div id="panel-round" class="card">
-        <h3 style="margin-bottom:15px;">Round Tube Brushing Prices (R/m)</h3>
-        <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">Prices per meter for different finishes</p>
+    <!-- SHEET PIECES PRICES - THE IMPORTANT ONES -->
+    <div class="card" style="margin-bottom:20px;border:2px solid var(--primary);">
+        <h3 style="color:var(--primary);margin-bottom:5px;">📐 Sheet Pieces Prices</h3>
+        <p style="color:var(--text-muted);font-size:13px;margin-bottom:20px;">These prices are used in the Sheet Pieces calculator</p>
         
-        <div style="overflow-x:auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                <thead>
-                    <tr style="background:var(--bg-card);border-bottom:1px solid var(--border);">
-                        <th style="padding:10px;text-align:left;">Size (OD)</th>
-                        <th style="padding:10px;text-align:right;">180# Brush</th>
-                        <th style="padding:10px;text-align:right;">400# Brush</th>
-                        <th style="padding:10px;text-align:right;">Mirror</th>
-                    </tr>
-                </thead>
-                <tbody id="round-prices">
-'''
-    
-    # Build round tube price rows
-    all_sizes = sorted(set(list(round_180.keys()) + list(round_400.keys()) + list(round_mirror.keys())))
-    for size in all_sizes:
-        p180 = round_180.get(size, 0)
-        p400 = round_400.get(size, 0)
-        pmirror = round_mirror.get(size, 0)
-        content += f'''
-                    <tr style="border-bottom:1px solid var(--border);">
-                        <td style="padding:8px;">{size}mm</td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{p180:.2f}" data-size="{size}" data-finish="180" 
-                                   style="width:80px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{p400:.2f}" data-size="{size}" data-finish="400"
-                                   style="width:80px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{pmirror:.2f}" data-size="{size}" data-finish="mirror"
-                                   style="width:80px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                    </tr>
-'''
-    
-    content += '''
-                </tbody>
-            </table>
-        </div>
-        <button onclick="saveRoundPrices()" class="btn" style="margin-top:15px;background:var(--green);">💾 Save Round Tube Prices</button>
-    </div>
-    
-    <!-- Square Tube Prices -->
-    <div id="panel-square" class="card" style="display:none;">
-        <h3 style="margin-bottom:15px;">Square Tube Brushing Prices (R/m)</h3>
-        <div style="overflow-x:auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                <thead>
-                    <tr style="background:var(--bg-card);border-bottom:1px solid var(--border);">
-                        <th style="padding:10px;text-align:left;">Size</th>
-                        <th style="padding:10px;text-align:right;">180# Brush</th>
-                        <th style="padding:10px;text-align:right;">400# Brush</th>
-                        <th style="padding:10px;text-align:right;">180-400#</th>
-                    </tr>
-                </thead>
-                <tbody id="square-prices">
-'''
-    
-    for size, prices in square.items():
-        p180, p400, p180_400 = prices if len(prices) == 3 else (prices[0], prices[1], 0)
-        content += f'''
-                    <tr style="border-bottom:1px solid var(--border);">
-                        <td style="padding:8px;">{size}</td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{p180:.2f}" data-size="{size}" data-idx="0"
-                                   style="width:80px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{p400:.2f}" data-size="{size}" data-idx="1"
-                                   style="width:80px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{p180_400:.2f}" data-size="{size}" data-idx="2"
-                                   style="width:80px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                    </tr>
-'''
-    
-    content += '''
-                </tbody>
-            </table>
-        </div>
-        <button onclick="saveSquarePrices()" class="btn" style="margin-top:15px;background:var(--green);">💾 Save Square Tube Prices</button>
-    </div>
-    
-    <!-- Sheet Prices -->
-    <div id="panel-sheet" class="card" style="display:none;">
-        <h3 style="margin-bottom:15px;">Sheet Prices - Cold Rolled (&lt;3mm) (R/m²)</h3>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:15px;margin-bottom:20px;">
-'''
-    
-    for finish, price in sheet_cold.items():
-        content += f'''
-            <div>
-                <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:5px;">{finish}</label>
-                <input type="number" step="0.01" value="{price:.2f}" data-finish="{finish}" data-type="cold"
-                       style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;">
+        <!-- Minimum Charge -->
+        <div style="background:var(--bg);padding:15px;border-radius:8px;margin-bottom:20px;">
+            <label style="display:block;margin-bottom:8px;font-weight:bold;">Minimum Charge per Piece</label>
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span>R</span>
+                <input type="number" step="0.01" value="{min_charge:.2f}" id="min_charge" style="width:120px;padding:10px;font-size:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;">
             </div>
-'''
-    
-    content += '''
+            <p style="color:var(--text-muted);font-size:12px;margin-top:5px;">Applied when calculated price is below this amount</p>
         </div>
         
-        <h3 style="margin:25px 0 15px 0;">Plate Prices - Hot Rolled (≥3mm) (R/m²)</h3>
-        <div style="overflow-x:auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                <thead>
-                    <tr style="background:var(--bg-card);border-bottom:1px solid var(--border);">
-                        <th style="padding:10px;text-align:left;">Thickness</th>
-                        <th style="padding:10px;text-align:right;">N4 ONLY</th>
-                        <th style="padding:10px;text-align:right;">N4 + PVC</th>
-                    </tr>
-                </thead>
-                <tbody>
-'''
-    
-    for thickness, prices in sheet_hot.items():
-        n4_only = prices.get("N4 ONLY", 0)
-        n4_pvc = prices.get("N4 + PVC", 0)
-        content += f'''
-                    <tr style="border-bottom:1px solid var(--border);">
-                        <td style="padding:8px;">{thickness}mm</td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{n4_only:.2f}" data-thick="{thickness}" data-hfinish="N4 ONLY"
-                                   style="width:100px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{n4_pvc:.2f}" data-thick="{thickness}" data-hfinish="N4 + PVC"
-                                   style="width:100px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                    </tr>
-'''
-    
-    content += '''
-                </tbody>
-            </table>
-        </div>
+        <!-- Cold Rolled -->
+        <h4 style="margin:20px 0 10px 0;">Cold Rolled Sheet (≤3mm) - R/m²</h4>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr style="background:var(--bg);"><th style="padding:10px;text-align:left;">Finish</th><th style="padding:10px;text-align:left;">Price/m²</th></tr>
+            </thead>
+            <tbody>{cold_rows}</tbody>
+        </table>
         
-        <h3 style="margin:25px 0 15px 0;">Large Plates (6000x1500) (R/m²)</h3>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:15px;margin-bottom:20px;">
-'''
-    
-    large_plates = fulltech_addon.LARGE_PLATES
-    for plate, price in large_plates.items():
-        content += f'''
-            <div>
-                <label style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:5px;">{plate}</label>
-                <input type="number" step="0.01" value="{price:.2f}" data-plate="{plate}"
-                       style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;">
-            </div>
-'''
-    
-    content += '''
-        </div>
-        <button onclick="saveSheetPrices()" class="btn" style="background:var(--green);">💾 Save All Sheet/Plate Prices</button>
+        <!-- Hot Rolled -->
+        <h4 style="margin:25px 0 10px 0;">Hot Rolled Plate (>3mm) - R/m²</h4>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr style="background:var(--bg);"><th style="padding:10px;text-align:left;">Thickness</th><th style="padding:10px;text-align:left;">N4 Only</th><th style="padding:10px;text-align:left;">N4 + PVC</th></tr>
+            </thead>
+            <tbody>{hot_rows}</tbody>
+        </table>
+        
+        <!-- Large Plates -->
+        <h4 style="margin:25px 0 10px 0;">Large Plates (6000x1500) - R/m²</h4>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr style="background:var(--bg);"><th style="padding:10px;text-align:left;">Size</th><th style="padding:10px;text-align:left;">Price/m²</th></tr>
+            </thead>
+            <tbody>{large_rows}</tbody>
+        </table>
+        
+        <button onclick="saveSheetPrices()" class="btn" style="margin-top:20px;background:var(--green);width:100%;padding:15px;font-size:16px;">💾 Save Sheet Prices</button>
     </div>
     
-    <!-- Flat Bar Prices -->
-    <div id="panel-flat" class="card" style="display:none;">
-        <h3 style="margin-bottom:15px;">Flat Bar Prices - Cold Rolled (R/m)</h3>
-        <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">One side, Both sides, All sides</p>
-        <div style="overflow-x:auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                <thead>
-                    <tr style="background:var(--bg-card);border-bottom:1px solid var(--border);">
-                        <th style="padding:10px;text-align:left;">Width</th>
-                        <th style="padding:10px;text-align:right;">One Side</th>
-                        <th style="padding:10px;text-align:right;">Both Sides</th>
-                        <th style="padding:10px;text-align:right;">All Sides</th>
-                    </tr>
-                </thead>
-                <tbody id="flat-prices">
-'''
-    
-    for width, prices in flat_cr.items():
-        p1, p2, p3 = prices
-        content += f'''
-                    <tr style="border-bottom:1px solid var(--border);">
-                        <td style="padding:8px;">{width}mm</td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{p1:.2f}" data-width="{width}" data-idx="0"
-                                   style="width:80px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{p2:.2f}" data-width="{width}" data-idx="1"
-                                   style="width:80px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                        <td style="padding:8px;text-align:right;">
-                            <input type="number" step="0.01" value="{p3:.2f}" data-width="{width}" data-idx="2"
-                                   style="width:80px;padding:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;text-align:right;">
-                        </td>
-                    </tr>
-'''
-    
-    content += '''
-                </tbody>
-            </table>
-        </div>
-        <button onclick="saveFlatPrices()" class="btn" style="margin-top:15px;background:var(--green);">💾 Save Flat Bar Prices</button>
-    </div>
+    <div id="save-status" style="display:none;padding:15px;border-radius:8px;margin-top:15px;"></div>
     
     <script>
-    function showTab(tab) {
-        // Hide all panels
-        document.querySelectorAll('[id^="panel-"]').forEach(p => p.style.display = 'none');
-        // Reset all tab buttons
-        document.querySelectorAll('[id^="tab-"]').forEach(t => t.style.background = 'var(--bg-card)');
-        // Show selected panel
-        document.getElementById('panel-' + tab).style.display = 'block';
-        document.getElementById('tab-' + tab).style.background = 'var(--primary)';
-    }
-    
-    async function saveRoundPrices() {
-        const prices = {round_180: {}, round_400: {}, round_mirror: {}};
-        document.querySelectorAll('#panel-round input[data-size]').forEach(inp => {
-            const size = inp.dataset.size;
-            const finish = inp.dataset.finish;
-            const val = parseFloat(inp.value) || 0;
-            if (finish === '180') prices.round_180[size] = val;
-            else if (finish === '400') prices.round_400[size] = val;
-            else if (finish === 'mirror') prices.round_mirror[size] = val;
-        });
+    async function saveSheetPrices() {{
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
         
-        const res = await fetch('/tools/price-editor', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({type: 'round_tube', prices: prices})
-        });
-        const data = await res.json();
-        alert(data.success ? '✓ Round tube prices saved!' : 'Error: ' + data.error);
-    }
-    
-    async function saveSquarePrices() {
-        const prices = {};
-        document.querySelectorAll('#panel-square input[data-size]').forEach(inp => {
-            const size = inp.dataset.size;
-            const idx = parseInt(inp.dataset.idx);
-            if (!prices[size]) prices[size] = [0, 0, 0];
-            prices[size][idx] = parseFloat(inp.value) || 0;
-        });
+        // Collect cold rolled prices
+        const sheet_cold = {{}};
+        document.querySelectorAll('[id^="cold_"]').forEach(inp => {{
+            const finish = inp.id.replace('cold_', '').replace(/_/g, ' ').replace('  ', ' + ');
+            sheet_cold[finish] = parseFloat(inp.value) || 0;
+        }});
         
-        const res = await fetch('/tools/price-editor', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({type: 'square_tube', prices: prices})
-        });
-        const data = await res.json();
-        alert(data.success ? '✓ Square tube prices saved!' : 'Error: ' + data.error);
-    }
-    
-    async function saveSheetPrices() {
-        // Cold rolled sheets
-        const sheet_cold = {};
-        document.querySelectorAll('#panel-sheet input[data-type="cold"]').forEach(inp => {
-            sheet_cold[inp.dataset.finish] = parseFloat(inp.value) || 0;
-        });
+        // Collect hot rolled prices
+        const sheet_hot = {{}};
+        ['4.5', '6', '8', '10'].forEach(t => {{
+            const n4 = document.getElementById('hot_' + t + '_n4');
+            const pvc = document.getElementById('hot_' + t + '_pvc');
+            if (n4 && pvc) {{
+                sheet_hot[t] = {{
+                    'N4 ONLY': parseFloat(n4.value) || 0,
+                    'N4 + PVC': parseFloat(pvc.value) || 0
+                }};
+            }}
+        }});
         
-        // Hot rolled plates
-        const sheet_hot = {};
-        document.querySelectorAll('#panel-sheet input[data-thick]').forEach(inp => {
-            const thick = inp.dataset.thick;
-            const finish = inp.dataset.hfinish;
-            if (!sheet_hot[thick]) sheet_hot[thick] = {};
-            sheet_hot[thick][finish] = parseFloat(inp.value) || 0;
-        });
+        // Collect large plate prices
+        const large_plates = {{}};
+        document.querySelectorAll('[id^="large_"]').forEach(inp => {{
+            const plate = inp.id.replace('large_', '').replace(/_/g, 'x');
+            large_plates[plate] = parseFloat(inp.value) || 0;
+        }});
         
-        // Large plates
-        const large_plates = {};
-        document.querySelectorAll('#panel-sheet input[data-plate]').forEach(inp => {
-            large_plates[inp.dataset.plate] = parseFloat(inp.value) || 0;
-        });
+        // Get min charge
+        const min_charge = parseFloat(document.getElementById('min_charge').value) || 222.52;
         
-        const res = await fetch('/tools/price-editor', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                type: 'sheets', 
-                prices: {
-                    sheet_cold: sheet_cold,
-                    sheet_hot: sheet_hot,
-                    large_plates: large_plates
-                }
-            })
-        });
-        const data = await res.json();
-        alert(data.success ? '✓ All sheet/plate prices saved!' : 'Error: ' + data.error);
-    }
-    
-    async function saveFlatPrices() {
-        const prices = {};
-        document.querySelectorAll('#panel-flat input[data-width]').forEach(inp => {
-            const width = inp.dataset.width;
-            const idx = parseInt(inp.dataset.idx);
-            if (!prices[width]) prices[width] = [0, 0, 0];
-            prices[width][idx] = parseFloat(inp.value) || 0;
-        });
+        try {{
+            const res = await fetch('/tools/price-editor', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{
+                    type: 'sheet_pieces',
+                    prices: {{
+                        sheet_cold: sheet_cold,
+                        sheet_hot: sheet_hot,
+                        large_plates: large_plates,
+                        min_charge: min_charge
+                    }}
+                }})
+            }});
+            const data = await res.json();
+            
+            const status = document.getElementById('save-status');
+            if (data.success) {{
+                status.style.display = 'block';
+                status.style.background = 'rgba(16,185,129,0.2)';
+                status.style.color = 'var(--green)';
+                status.innerHTML = '✓ Prices saved! The Sheet Pieces calculator will now use these prices.';
+            }} else {{
+                status.style.display = 'block';
+                status.style.background = 'rgba(239,68,68,0.2)';
+                status.style.color = 'var(--red)';
+                status.innerHTML = '✗ Error: ' + data.error;
+            }}
+        }} catch(e) {{
+            alert('Error saving: ' + e);
+        }}
         
-        const res = await fetch('/tools/price-editor', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({type: 'flat_cr', prices: prices})
-        });
-        const data = await res.json();
-        alert(data.success ? '✓ Flat bar prices saved!' : 'Error: ' + data.error);
-    }
+        btn.disabled = false;
+        btn.textContent = '💾 Save Sheet Prices';
+    }}
     </script>
     '''
     
