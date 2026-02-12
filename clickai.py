@@ -5996,32 +5996,216 @@ class ZaneToolHandler:
         return {"total_matches": len(results), "suppliers": results[:30]}
     
     def _tool_get_debtors(self, params: dict) -> dict:
+        """Get debtors with AGING analysis pre-calculated"""
         min_amount = params.get("min_amount", 0)
         limit = params.get("limit", 20)
+        
         customers = self.db.get("customers", {"business_id": self.biz_id}) or []
-        debtors = []
-        total_owed = 0
+        invoices = self.db.get("invoices", {"business_id": self.biz_id}) or []
+        
+        # Build outstanding invoices per customer with aging
+        today = datetime.now().date()
+        customer_aging = {}
+        
+        for inv in invoices:
+            if inv.get("status") not in ("outstanding", "sent", "overdue"):
+                continue
+            
+            cust_id = inv.get("customer_id", "")
+            cust_name = inv.get("customer_name", "Unknown")
+            amount = float(inv.get("total", 0) or 0)
+            
+            # Calculate days old
+            inv_date = inv.get("date", "")
+            if inv_date:
+                try:
+                    inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d").date()
+                    days_old = (today - inv_dt).days
+                except:
+                    days_old = 0
+            else:
+                days_old = 0
+            
+            if cust_name not in customer_aging:
+                customer_aging[cust_name] = {
+                    "name": cust_name, "phone": "", "email": "",
+                    "total": 0, "current": 0, "days_30": 0, "days_60": 0, "days_90": 0, "days_120_plus": 0,
+                    "oldest_invoice_days": 0, "invoice_count": 0
+                }
+            
+            ca = customer_aging[cust_name]
+            ca["total"] += amount
+            ca["invoice_count"] += 1
+            if days_old > ca["oldest_invoice_days"]:
+                ca["oldest_invoice_days"] = days_old
+            
+            # Aging buckets
+            if days_old <= 30:
+                ca["current"] += amount
+            elif days_old <= 60:
+                ca["days_30"] += amount
+            elif days_old <= 90:
+                ca["days_60"] += amount
+            elif days_old <= 120:
+                ca["days_90"] += amount
+            else:
+                ca["days_120_plus"] += amount
+        
+        # Add phone/email from customer records
         for c in customers:
+            name = c.get("name", "")
+            if name in customer_aging:
+                customer_aging[name]["phone"] = c.get("phone", "")
+                customer_aging[name]["email"] = c.get("email", "")
+        
+        # Also add customers with balance but no outstanding invoices
+        for c in customers:
+            name = c.get("name", "")
             balance = float(c.get("balance", 0) or 0)
-            if balance > min_amount:
-                total_owed += balance
-                debtors.append({"name": c.get("name", ""), "phone": c.get("phone", ""),
-                                "balance": balance, "email": c.get("email", "")})
-        debtors.sort(key=lambda x: x["balance"], reverse=True)
-        return {"total_debtors": len(debtors), "total_owed": total_owed, "debtors": debtors[:limit]}
+            if balance > 0 and name not in customer_aging:
+                customer_aging[name] = {
+                    "name": name, "phone": c.get("phone", ""), "email": c.get("email", ""),
+                    "total": balance, "current": balance, "days_30": 0, "days_60": 0, 
+                    "days_90": 0, "days_120_plus": 0, "oldest_invoice_days": 0, "invoice_count": 0
+                }
+        
+        # Filter and sort
+        debtors = [d for d in customer_aging.values() if d["total"] > min_amount]
+        debtors.sort(key=lambda x: x["total"], reverse=True)
+        
+        # Calculate totals
+        total_owed = sum(d["total"] for d in debtors)
+        total_current = sum(d["current"] for d in debtors)
+        total_30 = sum(d["days_30"] for d in debtors)
+        total_60 = sum(d["days_60"] for d in debtors)
+        total_90 = sum(d["days_90"] for d in debtors)
+        total_120_plus = sum(d["days_120_plus"] for d in debtors)
+        
+        # Problem debtors (90+ days)
+        problem_debtors = [d for d in debtors if d["days_90"] > 0 or d["days_120_plus"] > 0]
+        
+        # Pre-calculated insight
+        if total_120_plus > 0:
+            health = "CRITICAL"
+            insight = f"R{total_120_plus:,.0f} is 120+ days old - HIGH RISK of bad debt. Immediate action needed."
+        elif total_90 > 0:
+            health = "WARNING"
+            insight = f"R{total_90:,.0f} is 90+ days old. Follow up urgently before it becomes bad debt."
+        elif total_60 > 0:
+            health = "MONITOR"
+            insight = f"R{total_60:,.0f} is 60+ days old. Send reminders soon."
+        else:
+            health = "GOOD"
+            insight = "All debtors are within 60 days. Keep up the good collection efforts."
+        
+        return {
+            "total_debtors": len(debtors),
+            "total_owed": total_owed,
+            "aging_summary": {
+                "current_0_30": total_current,
+                "days_31_60": total_30,
+                "days_61_90": total_60,
+                "days_91_120": total_90,
+                "days_120_plus": total_120_plus
+            },
+            "health_status": health,
+            "insight": insight,
+            "problem_debtors_count": len(problem_debtors),
+            "problem_debtors": problem_debtors[:5],  # Top 5 problem debtors
+            "debtors": debtors[:limit]
+        }
     
     def _tool_get_creditors(self, params: dict) -> dict:
+        """Get creditors with aging analysis"""
         limit = params.get("limit", 20)
         suppliers = self.db.get("suppliers", {"business_id": self.biz_id}) or []
-        creditors = []
-        total_owed = 0
+        supplier_invoices = self.db.get("supplier_invoices", {"business_id": self.biz_id}) or []
+        
+        today = datetime.now().date()
+        supplier_aging = {}
+        
+        # Build aging from supplier invoices
+        for inv in supplier_invoices:
+            if inv.get("status") == "paid":
+                continue
+            
+            supp_name = inv.get("supplier_name", "Unknown")
+            amount = float(inv.get("total", 0) or inv.get("amount", 0) or 0)
+            
+            inv_date = inv.get("date", "")
+            if inv_date:
+                try:
+                    inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d").date()
+                    days_old = (today - inv_dt).days
+                except:
+                    days_old = 0
+            else:
+                days_old = 0
+            
+            if supp_name not in supplier_aging:
+                supplier_aging[supp_name] = {
+                    "name": supp_name, "phone": "", 
+                    "total": 0, "current": 0, "days_30": 0, "days_60": 0, "days_90_plus": 0
+                }
+            
+            sa = supplier_aging[supp_name]
+            sa["total"] += amount
+            
+            if days_old <= 30:
+                sa["current"] += amount
+            elif days_old <= 60:
+                sa["days_30"] += amount
+            elif days_old <= 90:
+                sa["days_60"] += amount
+            else:
+                sa["days_90_plus"] += amount
+        
+        # Add suppliers with balance but no invoices
         for s in suppliers:
+            name = s.get("name", "")
             balance = float(s.get("balance", 0) or 0)
             if balance > 0:
-                total_owed += balance
-                creditors.append({"name": s.get("name", ""), "balance": balance, "phone": s.get("phone", "")})
-        creditors.sort(key=lambda x: x["balance"], reverse=True)
-        return {"total_creditors": len(creditors), "total_owed": total_owed, "creditors": creditors[:limit]}
+                if name in supplier_aging:
+                    supplier_aging[name]["phone"] = s.get("phone", "")
+                else:
+                    supplier_aging[name] = {
+                        "name": name, "phone": s.get("phone", ""),
+                        "total": balance, "current": balance, "days_30": 0, "days_60": 0, "days_90_plus": 0
+                    }
+        
+        creditors = list(supplier_aging.values())
+        creditors.sort(key=lambda x: x["total"], reverse=True)
+        
+        total_owed = sum(c["total"] for c in creditors)
+        total_current = sum(c["current"] for c in creditors)
+        total_30 = sum(c["days_30"] for c in creditors)
+        total_60 = sum(c["days_60"] for c in creditors)
+        total_90_plus = sum(c["days_90_plus"] for c in creditors)
+        
+        # Insight
+        if total_90_plus > total_owed * 0.3:
+            status = "OVERDUE"
+            insight = f"R{total_90_plus:,.0f} is 90+ days overdue. Risk of supplier problems or legal action."
+        elif total_60 > total_owed * 0.3:
+            status = "WATCH"
+            insight = f"R{total_60:,.0f} is 60-90 days. Pay soon to maintain good supplier relationships."
+        else:
+            status = "OK"
+            insight = "Most payables are current. Good supplier management."
+        
+        return {
+            "total_creditors": len(creditors),
+            "total_owed": total_owed,
+            "aging_summary": {
+                "current_0_30": total_current,
+                "days_31_60": total_30,
+                "days_61_90": total_60,
+                "days_90_plus": total_90_plus
+            },
+            "status": status,
+            "insight": insight,
+            "creditors": creditors[:limit]
+        }
     
     def _tool_get_invoices(self, params: dict) -> dict:
         customer_name = params.get("customer_name", "").lower()
@@ -6066,42 +6250,136 @@ class ZaneToolHandler:
         return {"total_matches": len(results), "quotes": results[:limit]}
     
     def _tool_get_sales_summary(self, params: dict) -> dict:
+        """Get sales summary with period comparison"""
         period = params.get("period", "this_month")
         customer_filter = params.get("customer_name", "").lower()
         now = datetime.now()
+        
+        # Determine date ranges
         if period == "today":
             start = end = now.strftime("%Y-%m-%d")
+            prev_start = prev_end = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         elif period == "yesterday":
-            yd = now - timedelta(days=1); start = end = yd.strftime("%Y-%m-%d")
+            yd = now - timedelta(days=1)
+            start = end = yd.strftime("%Y-%m-%d")
+            prev_start = prev_end = (yd - timedelta(days=1)).strftime("%Y-%m-%d")
         elif period == "this_week":
-            start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d"); end = now.strftime("%Y-%m-%d")
+            start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+            end = now.strftime("%Y-%m-%d")
+            prev_start = (now - timedelta(days=now.weekday() + 7)).strftime("%Y-%m-%d")
+            prev_end = (now - timedelta(days=now.weekday() + 1)).strftime("%Y-%m-%d")
         elif period == "last_week":
-            lm = now - timedelta(days=now.weekday() + 7); start = lm.strftime("%Y-%m-%d"); end = (lm + timedelta(days=6)).strftime("%Y-%m-%d")
+            lm = now - timedelta(days=now.weekday() + 7)
+            start = lm.strftime("%Y-%m-%d")
+            end = (lm + timedelta(days=6)).strftime("%Y-%m-%d")
+            prev_start = (lm - timedelta(days=7)).strftime("%Y-%m-%d")
+            prev_end = (lm - timedelta(days=1)).strftime("%Y-%m-%d")
         elif period == "this_month":
-            start = now.strftime("%Y-%m-01"); end = now.strftime("%Y-%m-%d")
+            start = now.strftime("%Y-%m-01")
+            end = now.strftime("%Y-%m-%d")
+            ft = now.replace(day=1)
+            lp = ft - timedelta(days=1)
+            prev_start = lp.strftime("%Y-%m-01")
+            prev_end = lp.strftime("%Y-%m-%d")
         elif period == "last_month":
-            ft = now.replace(day=1); lp = ft - timedelta(days=1); start = lp.strftime("%Y-%m-01"); end = lp.strftime("%Y-%m-%d")
+            ft = now.replace(day=1)
+            lp = ft - timedelta(days=1)
+            start = lp.strftime("%Y-%m-01")
+            end = lp.strftime("%Y-%m-%d")
+            pp = lp.replace(day=1) - timedelta(days=1)
+            prev_start = pp.strftime("%Y-%m-01")
+            prev_end = pp.strftime("%Y-%m-%d")
         elif period == "this_year":
-            start = now.strftime("%Y-01-01"); end = now.strftime("%Y-%m-%d")
+            start = now.strftime("%Y-01-01")
+            end = now.strftime("%Y-%m-%d")
+            prev_start = f"{now.year - 1}-01-01"
+            prev_end = f"{now.year - 1}-{now.strftime('%m-%d')}"
         else:
-            start = now.strftime("%Y-%m-01"); end = now.strftime("%Y-%m-%d")
+            start = now.strftime("%Y-%m-01")
+            end = now.strftime("%Y-%m-%d")
+            prev_start = prev_end = ""
         
         sales = self.db.get("sales", {"business_id": self.biz_id}) or []
-        total_sales = 0; count = 0; customer_totals = {}; payment_methods = {}
+        invoices = self.db.get("invoices", {"business_id": self.biz_id}) or []
+        
+        # Current period
+        total_sales = 0
+        total_invoiced = 0
+        count = 0
+        customer_totals = {}
+        payment_methods = {}
+        
         for s in sales:
             sd = s.get("date", "")
             if not sd or sd < start or sd > end:
                 continue
             if customer_filter and customer_filter not in str(s.get("customer_name", "")).lower():
                 continue
-            amt = float(s.get("total", 0) or 0); total_sales += amt; count += 1
-            cn = s.get("customer_name", "Walk-in"); customer_totals[cn] = customer_totals.get(cn, 0) + amt
-            pm = s.get("payment_method", "unknown"); payment_methods[pm] = payment_methods.get(pm, 0) + amt
+            amt = float(s.get("total", 0) or 0)
+            total_sales += amt
+            count += 1
+            cn = s.get("customer_name", "Walk-in")
+            customer_totals[cn] = customer_totals.get(cn, 0) + amt
+            pm = s.get("payment_method", "unknown")
+            payment_methods[pm] = payment_methods.get(pm, 0) + amt
         
-        top_cust = sorted(customer_totals.items(), key=lambda x: x[1], reverse=True)[:10]
-        return {"period": period, "date_range": f"{start} to {end}", "total_sales": total_sales,
-                "transaction_count": count, "average_sale": total_sales / count if count else 0,
-                "top_customers": [{"name": n, "total": t} for n, t in top_cust], "payment_methods": payment_methods}
+        # Add invoices to total
+        for inv in invoices:
+            inv_date = inv.get("date", "")
+            if not inv_date or inv_date < start or inv_date > end:
+                continue
+            total_invoiced += float(inv.get("total", 0) or 0)
+        
+        # Previous period (for comparison)
+        prev_sales = 0
+        prev_count = 0
+        if prev_start:
+            for s in sales:
+                sd = s.get("date", "")
+                if sd and sd >= prev_start and sd <= prev_end:
+                    prev_sales += float(s.get("total", 0) or 0)
+                    prev_count += 1
+        
+        # Calculate change
+        if prev_sales > 0:
+            change_pct = ((total_sales - prev_sales) / prev_sales) * 100
+        else:
+            change_pct = 0
+        
+        # Insight
+        if change_pct > 20:
+            trend = "UP"
+            insight = f"Sales up {change_pct:.0f}% vs previous period! Great momentum."
+        elif change_pct > 0:
+            trend = "STEADY_UP"
+            insight = f"Sales up {change_pct:.0f}% vs previous period."
+        elif change_pct > -10:
+            trend = "FLAT"
+            insight = "Sales roughly flat vs previous period."
+        elif change_pct > -30:
+            trend = "DOWN"
+            insight = f"Sales down {abs(change_pct):.0f}% vs previous period. Monitor closely."
+        else:
+            trend = "DECLINING"
+            insight = f"Sales down {abs(change_pct):.0f}%! Investigate causes urgently."
+        
+        top_cust = sorted(customer_totals.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        return {
+            "period": period,
+            "date_range": f"{start} to {end}",
+            "total_sales": total_sales,
+            "total_invoiced": total_invoiced,
+            "combined_revenue": total_sales + total_invoiced,
+            "transaction_count": count,
+            "average_sale": total_sales / count if count else 0,
+            "previous_period_sales": prev_sales,
+            "change_pct": round(change_pct, 1),
+            "trend": trend,
+            "insight": insight,
+            "top_customers": [{"name": n, "total": t} for n, t in top_cust],
+            "payment_methods": payment_methods
+        }
     
     def _tool_get_expenses(self, params: dict) -> dict:
         category = params.get("category", "").lower()
@@ -6125,20 +6403,134 @@ class ZaneToolHandler:
                 "by_category": dict(sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)), "expenses": results[:limit]}
     
     def _tool_get_financial_overview(self, params: dict) -> dict:
+        """Get financial overview with PRE-CALCULATED insights - Zane doesn't need to do math"""
         period = params.get("period", "this_month")
+        
+        # Get raw data
         sales = self._tool_get_sales_summary({"period": period})
         expenses = self._tool_get_expenses({"days_back": 30 if "month" in period else 365})
         debtors = self._tool_get_debtors({"limit": 5})
         creditors = self._tool_get_creditors({"limit": 5})
         stock_val = self._tool_get_stock_valuation({})
-        income = sales["total_sales"]; exp_total = expenses["total_expenses"]
-        return {"period": period, "income": income, "expenses": exp_total,
-                "profit_loss": income - exp_total,
-                "margin_pct": ((income - exp_total) / income * 100) if income > 0 else 0,
-                "total_debtors": debtors["total_owed"], "total_creditors": creditors["total_owed"],
-                "stock_cost_value": stock_val["total_cost_value"], "stock_retail_value": stock_val["total_retail_value"],
-                "top_debtors": debtors["debtors"][:5], "top_creditors": creditors["creditors"][:5],
-                "expense_breakdown": expenses["by_category"]}
+        
+        # Key numbers
+        income = sales["total_sales"]
+        exp_total = expenses["total_expenses"]
+        profit = income - exp_total
+        margin = ((profit) / income * 100) if income > 0 else 0
+        total_debtors = debtors["total_owed"]
+        total_creditors = creditors["total_owed"]
+        stock_cost = stock_val["total_cost_value"]
+        
+        # === PRE-CALCULATED INSIGHTS ===
+        
+        # 1. Profitability assessment
+        if margin >= 20:
+            profit_status = "HEALTHY"
+            profit_insight = f"Gross margin of {margin:.1f}% is good for most industries."
+        elif margin >= 10:
+            profit_status = "OK"
+            profit_insight = f"Margin of {margin:.1f}% is acceptable but could be improved."
+        elif margin > 0:
+            profit_status = "LOW"
+            profit_insight = f"Margin of {margin:.1f}% is thin. Review pricing or costs."
+        else:
+            profit_status = "LOSS"
+            profit_insight = f"Making a LOSS of R{abs(profit):,.0f}. Urgent action needed."
+        
+        # 2. Cash flow risk (debtors vs creditors)
+        if total_creditors > 0:
+            debtor_creditor_ratio = total_debtors / total_creditors
+        else:
+            debtor_creditor_ratio = 0
+        
+        if total_debtors > total_creditors * 1.5:
+            cash_status = "TIGHT"
+            cash_insight = f"Debtors (R{total_debtors:,.0f}) much higher than creditors (R{total_creditors:,.0f}). Cash may be tight - focus on collections."
+        elif total_creditors > total_debtors * 1.5:
+            cash_status = "WARNING"
+            cash_insight = f"You owe more (R{total_creditors:,.0f}) than you're owed (R{total_debtors:,.0f}). Watch cash flow."
+        else:
+            cash_status = "BALANCED"
+            cash_insight = "Debtors and creditors are reasonably balanced."
+        
+        # 3. Stock assessment
+        if income > 0:
+            stock_to_sales_ratio = stock_cost / (income * 12 / 30) if income > 0 else 0  # Approximate monthly
+        else:
+            stock_to_sales_ratio = 0
+        
+        if stock_cost > income * 2:
+            stock_status = "OVERSTOCKED"
+            stock_insight = f"Stock value (R{stock_cost:,.0f}) is very high vs sales. May have dead stock."
+        elif stock_cost < income * 0.3:
+            stock_status = "LOW"
+            stock_insight = f"Stock levels seem low. Watch for stockouts."
+        else:
+            stock_status = "OK"
+            stock_insight = "Stock levels appear appropriate for sales volume."
+        
+        # 4. Overall health score (0-100)
+        score = 50  # Start at neutral
+        if margin >= 20: score += 20
+        elif margin >= 10: score += 10
+        elif margin < 0: score -= 20
+        
+        if cash_status == "BALANCED": score += 15
+        elif cash_status == "TIGHT": score -= 10
+        elif cash_status == "WARNING": score -= 15
+        
+        if debtors.get("health_status") == "GOOD": score += 15
+        elif debtors.get("health_status") == "CRITICAL": score -= 20
+        elif debtors.get("health_status") == "WARNING": score -= 10
+        
+        score = max(0, min(100, score))  # Clamp 0-100
+        
+        if score >= 70:
+            overall_status = "HEALTHY"
+            overall_insight = "Business is in good shape overall."
+        elif score >= 50:
+            overall_status = "OK"
+            overall_insight = "Business is stable but has areas to improve."
+        elif score >= 30:
+            overall_status = "CONCERNING"
+            overall_insight = "Several warning signs - needs attention."
+        else:
+            overall_status = "CRITICAL"
+            overall_insight = "Business has serious issues that need urgent action."
+        
+        return {
+            "period": period,
+            "health_score": score,
+            "overall_status": overall_status,
+            "overall_insight": overall_insight,
+            
+            # Financials (pre-calculated)
+            "income": income,
+            "expenses": exp_total,
+            "profit_loss": profit,
+            "margin_pct": round(margin, 1),
+            "profit_status": profit_status,
+            "profit_insight": profit_insight,
+            
+            # Cash position
+            "total_debtors": total_debtors,
+            "total_creditors": total_creditors,
+            "cash_status": cash_status,
+            "cash_insight": cash_insight,
+            "debtors_health": debtors.get("health_status", "UNKNOWN"),
+            "debtors_insight": debtors.get("insight", ""),
+            
+            # Stock
+            "stock_cost_value": stock_cost,
+            "stock_status": stock_status,
+            "stock_insight": stock_insight,
+            
+            # Top items (limited for context)
+            "top_debtors": [{"name": d["name"], "total": d["total"]} for d in debtors["debtors"][:3]],
+            "top_creditors": creditors["creditors"][:3],
+            "top_expenses": list(expenses["by_category"].items())[:3]
+        }
     
     def _tool_get_employees(self, params: dict) -> dict:
         name_filter = params.get("name", "").lower()
@@ -6171,25 +6563,98 @@ class ZaneToolHandler:
         return {"total_jobs": len(results), "jobs": results[:limit]}
     
     def _tool_get_stock_valuation(self, params: dict) -> dict:
+        """Stock valuation with PRE-CALCULATED insights"""
         category_filter = params.get("category", "").lower()
         all_stock = self.db.get_all_stock(self.biz_id)
-        total_cost = 0; total_retail = 0; item_count = 0; cat_vals = {}; top_items = []
+        
+        total_cost = 0
+        total_retail = 0
+        item_count = 0
+        cat_vals = {}
+        top_items = []
+        out_of_stock = []
+        low_stock = []
+        negative_margin = []
+        dead_stock = []  # High value, no movement
+        
         for s in all_stock:
             cat = s.get("category", "Uncategorised")
             if category_filter and category_filter not in cat.lower():
                 continue
+            
             qty = float(s.get("qty") or s.get("quantity") or 0)
             cost = float(s.get("cost") or s.get("cost_price") or 0)
             price = float(s.get("price") or s.get("selling_price") or 0)
-            cv = qty * cost; rv = qty * price; total_cost += cv; total_retail += rv; item_count += 1
+            code = s.get("code", "")
+            desc = s.get("description", "")[:30]
+            
+            cv = qty * cost
+            rv = qty * price
+            total_cost += cv
+            total_retail += rv
+            item_count += 1
             cat_vals[cat] = cat_vals.get(cat, 0) + cv
-            top_items.append({"code": s.get("code", ""), "description": s.get("description", ""),
-                              "qty": qty, "cost_value": cv, "retail_value": rv})
+            
+            top_items.append({"code": code, "description": desc, "qty": qty, "cost_value": cv, "retail_value": rv})
+            
+            # Problem detection
+            if qty <= 0:
+                out_of_stock.append({"code": code, "description": desc})
+            elif qty < 5:
+                low_stock.append({"code": code, "description": desc, "qty": qty})
+            
+            # Margin issues
+            if cost > 0 and price > 0:
+                margin = (price - cost) / cost * 100
+                if margin < 0:
+                    negative_margin.append({"code": code, "description": desc, "cost": cost, "price": price, "margin": margin})
+            
+            # Dead stock (high value items - would need sales data for real analysis)
+            if cv > 5000 and qty > 20:
+                dead_stock.append({"code": code, "description": desc, "qty": qty, "value": cv})
+        
         top_items.sort(key=lambda x: x["cost_value"], reverse=True)
-        return {"total_items": item_count, "total_cost_value": total_cost, "total_retail_value": total_retail,
-                "potential_profit": total_retail - total_cost,
-                "categories": dict(sorted(cat_vals.items(), key=lambda x: x[1], reverse=True)[:10]),
-                "top_items_by_value": top_items[:10]}
+        
+        # Calculate insights
+        potential_profit = total_retail - total_cost
+        margin_pct = (potential_profit / total_cost * 100) if total_cost > 0 else 0
+        
+        # Stock health assessment
+        problems = []
+        if len(out_of_stock) > 5:
+            problems.append(f"{len(out_of_stock)} items out of stock")
+        if len(low_stock) > 10:
+            problems.append(f"{len(low_stock)} items running low")
+        if len(negative_margin) > 0:
+            problems.append(f"{len(negative_margin)} items selling below cost!")
+        
+        if not problems:
+            health_status = "GOOD"
+            insight = f"Stock is healthy. {item_count} items worth R{total_cost:,.0f} (cost) with {margin_pct:.0f}% potential margin."
+        elif len(problems) == 1:
+            health_status = "MONITOR"
+            insight = f"Minor issue: {problems[0]}. Total stock value R{total_cost:,.0f}."
+        else:
+            health_status = "ATTENTION"
+            insight = f"Stock issues: {', '.join(problems)}. Review needed."
+        
+        return {
+            "total_items": item_count,
+            "total_cost_value": total_cost,
+            "total_retail_value": total_retail,
+            "potential_profit": potential_profit,
+            "potential_margin_pct": round(margin_pct, 1),
+            "health_status": health_status,
+            "insight": insight,
+            "out_of_stock_count": len(out_of_stock),
+            "low_stock_count": len(low_stock),
+            "negative_margin_count": len(negative_margin),
+            "out_of_stock": out_of_stock[:5],
+            "low_stock": low_stock[:5],
+            "negative_margin_items": negative_margin[:5],
+            "categories": dict(sorted(cat_vals.items(), key=lambda x: x[1], reverse=True)[:5]),
+            "top_items_by_value": top_items[:5]
+        }
     
     def _tool_get_accounting_help(self, params: dict) -> dict:
         topic = params.get("topic", "").lower().strip()
