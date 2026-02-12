@@ -21013,7 +21013,12 @@ def stock_detail(stock_id):
     # From goods_received
     all_grn = db.get("goods_received", {"business_id": biz_id}) or []
     for grn in all_grn:
-        for line in grn.get("items", []):
+        items = grn.get("items", [])
+        if not isinstance(items, list):
+            continue
+        for line in items:
+            if not isinstance(line, dict):
+                continue
             if str(line.get("code", "")).upper() == code.upper() or str(line.get("stock_id", "")) == stock_id:
                 purchases.append({
                     "date": grn.get("date", ""),
@@ -21028,7 +21033,12 @@ def stock_detail(stock_id):
     # From supplier_invoices
     all_bills = db.get("supplier_invoices", {"business_id": biz_id}) or []
     for bill in all_bills:
-        for line in bill.get("items", []):
+        items = bill.get("items", [])
+        if not isinstance(items, list):
+            continue
+        for line in items:
+            if not isinstance(line, dict):
+                continue
             if str(line.get("code", "")).upper() == code.upper():
                 purchases.append({
                     "date": bill.get("date", ""),
@@ -21048,7 +21058,12 @@ def stock_detail(stock_id):
     # From invoices
     all_invoices = db.get("invoices", {"business_id": biz_id}) or []
     for inv in all_invoices:
-        for line in inv.get("items", []):
+        items = inv.get("items", [])
+        if not isinstance(items, list):
+            continue
+        for line in items:
+            if not isinstance(line, dict):
+                continue
             if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
                 sales.append({
                     "date": inv.get("date", ""),
@@ -21063,7 +21078,12 @@ def stock_detail(stock_id):
     # From POS sales
     all_pos = db.get("pos_sales", {"business_id": biz_id}) or []
     for sale in all_pos:
-        for line in sale.get("items", []):
+        items = sale.get("items", [])
+        if not isinstance(items, list):
+            continue
+        for line in items:
+            if not isinstance(line, dict):
+                continue
             if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
                 sales.append({
                     "date": sale.get("date", ""),
