@@ -60762,6 +60762,7 @@ def api_scan_save_supplier_invoice():
     try:
         data = request.get_json()
         business = Auth.get_current_business()
+        user = Auth.get_current_user()
         biz_id = business.get("id") if business else None
         
         if not biz_id:
