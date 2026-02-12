@@ -54859,39 +54859,62 @@ def price_editor():
     large_plates = sheet_pieces_custom.get("large_plates", {}) or fulltech_addon.LARGE_PLATES
     large_plates = {**fulltech_addon.LARGE_PLATES, **large_plates}
     
-    min_charge = sheet_pieces_custom.get("min_charge", fulltech_addon.MIN_CHARGE_PIECE)
+    min_charge = float(sheet_pieces_custom.get("min_charge", 0) or 0) or fulltech_addon.MIN_CHARGE_PIECE
     
     # Build cold rolled rows
     cold_rows = ""
     for finish, price in sheet_cold.items():
+        try:
+            price_val = float(price) if price else 0
+        except:
+            price_val = 0
         cold_rows += f'''
         <tr>
             <td style="padding:10px;">{finish}</td>
-            <td style="padding:10px;"><input type="number" step="0.01" value="{price:.2f}" id="cold_{finish.replace(' ', '_').replace('+', '_')}" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;"></td>
+            <td style="padding:10px;"><input type="number" step="0.01" value="{price_val:.2f}" id="cold_{finish.replace(' ', '_').replace('+', '_')}" class="price-input" style="width:100px;padding:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);"></td>
         </tr>'''
     
     # Build hot rolled rows
     hot_rows = ""
     for thick, prices in sheet_hot.items():
-        n4_only = prices.get("N4 ONLY", 0)
-        n4_pvc = prices.get("N4 + PVC", 0)
+        if isinstance(prices, dict):
+            n4_only = float(prices.get("N4 ONLY", 0) or 0)
+            n4_pvc = float(prices.get("N4 + PVC", 0) or 0)
+        else:
+            n4_only = 0
+            n4_pvc = 0
         hot_rows += f'''
         <tr>
             <td style="padding:10px;">{thick}mm</td>
-            <td style="padding:10px;"><input type="number" step="0.01" value="{n4_only:.2f}" id="hot_{thick}_n4" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;"></td>
-            <td style="padding:10px;"><input type="number" step="0.01" value="{n4_pvc:.2f}" id="hot_{thick}_pvc" style="width:100px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;"></td>
+            <td style="padding:10px;"><input type="number" step="0.01" value="{n4_only:.2f}" id="hot_{thick}_n4" class="price-input" style="width:100px;padding:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);"></td>
+            <td style="padding:10px;"><input type="number" step="0.01" value="{n4_pvc:.2f}" id="hot_{thick}_pvc" class="price-input" style="width:100px;padding:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);"></td>
         </tr>'''
     
     # Build large plate rows
     large_rows = ""
     for plate, price in large_plates.items():
+        try:
+            price_val = float(price) if price else 0
+        except:
+            price_val = 0
         large_rows += f'''
         <tr>
             <td style="padding:10px;">{plate}</td>
-            <td style="padding:10px;"><input type="number" step="0.01" value="{price:.2f}" id="large_{plate.replace('x', '_')}" style="width:120px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;"></td>
+            <td style="padding:10px;"><input type="number" step="0.01" value="{price_val:.2f}" id="large_{plate.replace('x', '_')}" class="price-input" style="width:120px;padding:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);"></td>
         </tr>'''
     
     content = f'''
+    <style>
+    .price-input {{
+        -webkit-appearance: none;
+        -moz-appearance: textfield;
+    }}
+    .price-input:focus {{
+        outline: 2px solid var(--primary);
+        outline-offset: -2px;
+    }}
+    </style>
+    
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <h2>💰 Price Editor</h2>
         <a href="/tools" class="btn" style="background:var(--bg-card);border:1px solid var(--border);">← Back to Tools</a>
@@ -54909,7 +54932,7 @@ def price_editor():
             <label style="display:block;margin-bottom:8px;font-weight:bold;">Minimum Charge per Piece</label>
             <div style="display:flex;align-items:center;gap:10px;">
                 <span>R</span>
-                <input type="number" step="0.01" value="{min_charge:.2f}" id="min_charge" style="width:120px;padding:10px;font-size:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;">
+                <input type="number" step="0.01" value="{min_charge:.2f}" id="min_charge" class="price-input" style="width:120px;padding:10px;font-size:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);">
             </div>
             <p style="color:var(--text-muted);font-size:12px;margin-top:5px;">Applied when calculated price is below this amount</p>
         </div>
