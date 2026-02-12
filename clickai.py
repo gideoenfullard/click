@@ -20966,6 +20966,419 @@ def stock_movements_page():
     return render_page("Stock Movements", content, user, "stock")
 
 
+@app.route("/stock/<stock_id>")
+@login_required
+def stock_detail(stock_id):
+    """Stock Item Detail - EVERYTHING about one item in one place"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    currency = business.get("currency", "R") if business else "R"
+    
+    if not biz_id:
+        return redirect("/stock")
+    
+    # Get the stock item
+    item = db.get_one_stock(stock_id)
+    if not item or item.get("business_id") != biz_id:
+        flash("Stock item not found", "error")
+        return redirect("/stock")
+    
+    code = item.get("code", "")
+    desc = item.get("description", "Unknown")
+    qty = float(item.get("quantity", 0) or 0)
+    cost = float(item.get("cost_price", 0) or 0)
+    price = float(item.get("selling_price", 0) or 0)
+    category = item.get("category", "General")
+    unit = item.get("unit", "each")
+    reorder = int(item.get("reorder_level", 0) or 0)
+    
+    # Calculate stock value
+    stock_value = qty * cost
+    potential_revenue = qty * price
+    potential_profit = potential_revenue - stock_value
+    margin_pct = ((price - cost) / price * 100) if price > 0 else 0
+    
+    # === GATHER ALL HISTORY ===
+    
+    # 1. Stock Movements
+    all_movements = db.get("stock_movements", {"business_id": biz_id}) or []
+    movements = [m for m in all_movements if m.get("stock_id") == stock_id or str(m.get("item_code", "")).upper() == code.upper()]
+    movements.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    
+    # 2. Purchase History (from goods_received and supplier_invoices)
+    purchases = []
+    
+    # From goods_received
+    all_grn = db.get("goods_received", {"business_id": biz_id}) or []
+    for grn in all_grn:
+        for line in grn.get("items", []):
+            if str(line.get("code", "")).upper() == code.upper() or str(line.get("stock_id", "")) == stock_id:
+                purchases.append({
+                    "date": grn.get("date", ""),
+                    "supplier": grn.get("supplier_name", "Unknown"),
+                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                    "cost": float(line.get("cost", line.get("unit_cost", line.get("cost_price", 0))) or 0),
+                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
+                    "ref": grn.get("grn_number", grn.get("reference", "")),
+                    "type": "GRN"
+                })
+    
+    # From supplier_invoices
+    all_bills = db.get("supplier_invoices", {"business_id": biz_id}) or []
+    for bill in all_bills:
+        for line in bill.get("items", []):
+            if str(line.get("code", "")).upper() == code.upper():
+                purchases.append({
+                    "date": bill.get("date", ""),
+                    "supplier": bill.get("supplier_name", "Unknown"),
+                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                    "cost": float(line.get("unit_price", line.get("cost", 0)) or 0),
+                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
+                    "ref": bill.get("invoice_number", bill.get("number", "")),
+                    "type": "Invoice"
+                })
+    
+    purchases.sort(key=lambda x: x.get("date", ""), reverse=True)
+    
+    # 3. Sales History (from invoices and pos_sales)
+    sales = []
+    
+    # From invoices
+    all_invoices = db.get("invoices", {"business_id": biz_id}) or []
+    for inv in all_invoices:
+        for line in inv.get("items", []):
+            if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
+                sales.append({
+                    "date": inv.get("date", ""),
+                    "customer": inv.get("customer_name", "Walk-in"),
+                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                    "price": float(line.get("price", line.get("unit_price", 0)) or 0),
+                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
+                    "ref": inv.get("invoice_number", ""),
+                    "type": "Invoice"
+                })
+    
+    # From POS sales
+    all_pos = db.get("pos_sales", {"business_id": biz_id}) or []
+    for sale in all_pos:
+        for line in sale.get("items", []):
+            if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
+                sales.append({
+                    "date": sale.get("date", ""),
+                    "customer": sale.get("customer_name", "Walk-in"),
+                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
+                    "price": float(line.get("price", line.get("unit_price", 0)) or 0),
+                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
+                    "ref": sale.get("receipt_number", sale.get("sale_number", "")),
+                    "type": "POS"
+                })
+    
+    sales.sort(key=lambda x: x.get("date", ""), reverse=True)
+    
+    # 4. Job Usage (from job_materials)
+    job_usage = []
+    all_job_materials = db.get("job_materials", {"business_id": biz_id}) or []
+    all_jobs = db.get("jobs", {"business_id": biz_id}) or []
+    job_lookup = {j.get("id"): j for j in all_jobs}
+    
+    for jm in all_job_materials:
+        if str(jm.get("item_code", jm.get("code", ""))).upper() == code.upper() or str(jm.get("stock_id", "")) == stock_id:
+            job = job_lookup.get(jm.get("job_card_id", jm.get("job_id", "")), {})
+            job_usage.append({
+                "date": jm.get("date", jm.get("created_at", ""))[:10],
+                "job_number": job.get("job_number", jm.get("job_card_id", "")[:8]),
+                "job_title": job.get("title", job.get("description", ""))[:40],
+                "customer": job.get("customer_name", ""),
+                "qty": float(jm.get("qty", jm.get("quantity", 0)) or 0),
+                "cost": float(jm.get("unit_cost", jm.get("cost", 0)) or 0)
+            })
+    
+    job_usage.sort(key=lambda x: x.get("date", ""), reverse=True)
+    
+    # === CALCULATE STATS ===
+    total_purchased = sum(p.get("qty", 0) for p in purchases)
+    total_purchase_value = sum(p.get("total", 0) for p in purchases)
+    avg_purchase_cost = total_purchase_value / total_purchased if total_purchased > 0 else 0
+    
+    total_sold = sum(s.get("qty", 0) for s in sales)
+    total_sales_value = sum(s.get("total", 0) for s in sales)
+    avg_sale_price = total_sales_value / total_sold if total_sold > 0 else 0
+    
+    total_job_usage = sum(j.get("qty", 0) for j in job_usage)
+    
+    # Unique suppliers
+    unique_suppliers = list(set(p.get("supplier", "") for p in purchases if p.get("supplier")))
+    
+    # Last purchase info
+    last_purchase = purchases[0] if purchases else None
+    last_sale = sales[0] if sales else None
+    
+    # === BUILD HTML ===
+    
+    # Movement rows
+    movement_rows = ""
+    for m in movements[:20]:
+        m_type = m.get("movement_type", m.get("type", ""))
+        m_qty = float(m.get("quantity", 0) or 0)
+        m_date = str(m.get("created_at", m.get("date", "")))[:10]
+        m_ref = m.get("reference", m.get("note", ""))[:30]
+        color = "#10b981" if m_qty > 0 else "#ef4444"
+        movement_rows += f'<tr><td>{m_date}</td><td>{m_type}</td><td style="color:{color};font-weight:bold;">{m_qty:+.0f}</td><td>{m_ref}</td></tr>'
+    
+    if not movement_rows:
+        movement_rows = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">No movements recorded</td></tr>'
+    
+    # Purchase rows
+    purchase_rows = ""
+    for p in purchases[:15]:
+        purchase_rows += f'''<tr>
+            <td>{p.get("date", "-")}</td>
+            <td><strong>{safe_string(p.get("supplier", ""))}</strong></td>
+            <td style="text-align:right;">{p.get("qty", 0):.0f}</td>
+            <td style="text-align:right;">{currency}{p.get("cost", 0):,.2f}</td>
+            <td style="text-align:right;font-weight:bold;">{currency}{p.get("total", 0):,.2f}</td>
+            <td style="color:var(--text-muted);font-size:12px;">{p.get("ref", "")}</td>
+        </tr>'''
+    
+    if not purchase_rows:
+        purchase_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No purchase history</td></tr>'
+    
+    # Sales rows
+    sales_rows = ""
+    for s in sales[:15]:
+        sales_rows += f'''<tr>
+            <td>{s.get("date", "-")}</td>
+            <td><strong>{safe_string(s.get("customer", ""))}</strong></td>
+            <td style="text-align:right;">{s.get("qty", 0):.0f}</td>
+            <td style="text-align:right;">{currency}{s.get("price", 0):,.2f}</td>
+            <td style="text-align:right;font-weight:bold;color:#10b981;">{currency}{s.get("total", 0):,.2f}</td>
+            <td style="color:var(--text-muted);font-size:12px;">{s.get("ref", "")}</td>
+        </tr>'''
+    
+    if not sales_rows:
+        sales_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No sales history</td></tr>'
+    
+    # Job usage rows
+    job_rows = ""
+    for j in job_usage[:10]:
+        job_rows += f'''<tr>
+            <td>{j.get("date", "-")}</td>
+            <td><strong>{j.get("job_number", "")}</strong></td>
+            <td>{safe_string(j.get("job_title", ""))}</td>
+            <td>{safe_string(j.get("customer", ""))}</td>
+            <td style="text-align:right;">{j.get("qty", 0):.0f}</td>
+        </tr>'''
+    
+    if not job_rows:
+        job_rows = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">Not used in any jobs</td></tr>'
+    
+    # Supplier chips
+    supplier_chips = ""
+    for sup in unique_suppliers[:5]:
+        supplier_chips += f'<span style="background:var(--primary);color:white;padding:4px 10px;border-radius:12px;font-size:12px;margin:2px;">{safe_string(sup)}</span> '
+    
+    if not supplier_chips:
+        supplier_chips = '<span style="color:var(--text-muted);">No suppliers on record</span>'
+    
+    # Stock status
+    if qty <= 0:
+        stock_status = '<span style="background:#ef4444;color:white;padding:4px 12px;border-radius:12px;">OUT OF STOCK</span>'
+    elif qty <= reorder:
+        stock_status = '<span style="background:#f59e0b;color:white;padding:4px 12px;border-radius:12px;">LOW STOCK</span>'
+    else:
+        stock_status = '<span style="background:#10b981;color:white;padding:4px 12px;border-radius:12px;">IN STOCK</span>'
+    
+    content = f'''
+    <div style="margin-bottom:20px;">
+        <a href="/stock" style="color:var(--primary);text-decoration:none;">← Back to Stock</a>
+    </div>
+    
+    <!-- Item Header -->
+    <div class="card" style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:15px;">
+            <div>
+                <div style="display:flex;align-items:center;gap:15px;margin-bottom:10px;">
+                    <h1 style="margin:0;font-size:28px;">{safe_string(desc)}</h1>
+                    {stock_status}
+                </div>
+                <div style="color:var(--text-muted);font-size:14px;">
+                    <strong>Code:</strong> {code or '-'} &nbsp;|&nbsp; 
+                    <strong>Category:</strong> {category} &nbsp;|&nbsp;
+                    <strong>Unit:</strong> {unit}
+                </div>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <a href="/stock/edit/{stock_id}" class="btn btn-primary">✏️ Edit Item</a>
+                <button onclick="showAdjustModal()" class="btn btn-secondary">📦 Adjust Stock</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Key Numbers -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px;margin-bottom:20px;">
+        <div class="card" style="text-align:center;padding:20px;">
+            <div style="font-size:32px;font-weight:bold;color:var(--primary);">{qty:,.0f}</div>
+            <div style="color:var(--text-muted);font-size:13px;">Quantity on Hand</div>
+        </div>
+        <div class="card" style="text-align:center;padding:20px;">
+            <div style="font-size:32px;font-weight:bold;">{currency}{cost:,.2f}</div>
+            <div style="color:var(--text-muted);font-size:13px;">Cost Price</div>
+        </div>
+        <div class="card" style="text-align:center;padding:20px;">
+            <div style="font-size:32px;font-weight:bold;color:#10b981;">{currency}{price:,.2f}</div>
+            <div style="color:var(--text-muted);font-size:13px;">Selling Price</div>
+        </div>
+        <div class="card" style="text-align:center;padding:20px;">
+            <div style="font-size:32px;font-weight:bold;">{margin_pct:.1f}%</div>
+            <div style="color:var(--text-muted);font-size:13px;">Margin</div>
+        </div>
+        <div class="card" style="text-align:center;padding:20px;">
+            <div style="font-size:32px;font-weight:bold;">{currency}{stock_value:,.0f}</div>
+            <div style="color:var(--text-muted);font-size:13px;">Stock Value</div>
+        </div>
+    </div>
+    
+    <!-- Quick Stats -->
+    <div class="card" style="margin-bottom:20px;">
+        <h3 style="margin-bottom:15px;">📊 Quick Stats</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;">
+            <div>
+                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Total Purchased</div>
+                <div style="font-size:18px;font-weight:bold;">{total_purchased:,.0f} units ({currency}{total_purchase_value:,.0f})</div>
+            </div>
+            <div>
+                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Total Sold</div>
+                <div style="font-size:18px;font-weight:bold;color:#10b981;">{total_sold:,.0f} units ({currency}{total_sales_value:,.0f})</div>
+            </div>
+            <div>
+                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Used in Jobs</div>
+                <div style="font-size:18px;font-weight:bold;">{total_job_usage:,.0f} units</div>
+            </div>
+            <div>
+                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Avg Purchase Cost</div>
+                <div style="font-size:18px;font-weight:bold;">{currency}{avg_purchase_cost:,.2f}</div>
+            </div>
+            <div>
+                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Avg Sale Price</div>
+                <div style="font-size:18px;font-weight:bold;">{currency}{avg_sale_price:,.2f}</div>
+            </div>
+            <div>
+                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Reorder Level</div>
+                <div style="font-size:18px;font-weight:bold;">{reorder}</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Suppliers -->
+    <div class="card" style="margin-bottom:20px;">
+        <h3 style="margin-bottom:10px;">🏭 Suppliers</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;">
+            {supplier_chips}
+        </div>
+        {f'<div style="margin-top:10px;padding:10px;background:rgba(16,185,129,0.1);border-radius:8px;"><strong>Last purchased:</strong> {last_purchase.get("date", "")} from {last_purchase.get("supplier", "")} - {last_purchase.get("qty", 0):.0f} x {currency}{last_purchase.get("cost", 0):,.2f}</div>' if last_purchase else ''}
+    </div>
+    
+    <!-- Tabs for History -->
+    <div class="card">
+        <div style="display:flex;gap:10px;border-bottom:1px solid var(--border);margin-bottom:15px;padding-bottom:10px;">
+            <button onclick="showTab('purchases')" class="tab-btn active" id="tab-purchases">🛒 Purchases ({len(purchases)})</button>
+            <button onclick="showTab('sales')" class="tab-btn" id="tab-sales">💰 Sales ({len(sales)})</button>
+            <button onclick="showTab('movements')" class="tab-btn" id="tab-movements">📦 Movements ({len(movements)})</button>
+            <button onclick="showTab('jobs')" class="tab-btn" id="tab-jobs">🔧 Jobs ({len(job_usage)})</button>
+        </div>
+        
+        <!-- Purchases Tab -->
+        <div id="panel-purchases" class="tab-panel">
+            <table class="table">
+                <thead><tr><th>Date</th><th>Supplier</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Total</th><th>Ref</th></tr></thead>
+                <tbody>{purchase_rows}</tbody>
+            </table>
+        </div>
+        
+        <!-- Sales Tab -->
+        <div id="panel-sales" class="tab-panel" style="display:none;">
+            <table class="table">
+                <thead><tr><th>Date</th><th>Customer</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th><th>Ref</th></tr></thead>
+                <tbody>{sales_rows}</tbody>
+            </table>
+        </div>
+        
+        <!-- Movements Tab -->
+        <div id="panel-movements" class="tab-panel" style="display:none;">
+            <table class="table">
+                <thead><tr><th>Date</th><th>Type</th><th>Qty</th><th>Reference</th></tr></thead>
+                <tbody>{movement_rows}</tbody>
+            </table>
+        </div>
+        
+        <!-- Jobs Tab -->
+        <div id="panel-jobs" class="tab-panel" style="display:none;">
+            <table class="table">
+                <thead><tr><th>Date</th><th>Job #</th><th>Description</th><th>Customer</th><th style="text-align:right;">Qty Used</th></tr></thead>
+                <tbody>{job_rows}</tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Adjust Stock Modal -->
+    <div id="adjustModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:25px;border-radius:12px;max-width:400px;width:90%;">
+            <h3 style="margin-bottom:15px;">📦 Adjust Stock</h3>
+            <form method="POST" action="/api/stock/adjust">
+                <input type="hidden" name="stock_id" value="{stock_id}">
+                <div style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;">Adjustment Type</label>
+                    <select name="type" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+                        <option value="add">➕ Add Stock (received, found, correction)</option>
+                        <option value="remove">➖ Remove Stock (damaged, lost, used)</option>
+                        <option value="set">🔄 Set Exact Quantity (stocktake)</option>
+                    </select>
+                </div>
+                <div style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;">Quantity</label>
+                    <input type="number" name="quantity" step="0.01" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+                </div>
+                <div style="margin-bottom:15px;">
+                    <label style="display:block;margin-bottom:5px;">Reason/Note</label>
+                    <input type="text" name="note" placeholder="e.g., Stocktake adjustment" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
+                </div>
+                <div style="display:flex;gap:10px;">
+                    <button type="submit" class="btn btn-primary" style="flex:1;">Save Adjustment</button>
+                    <button type="button" onclick="hideAdjustModal()" class="btn btn-secondary">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <style>
+        .tab-btn {{ padding:8px 16px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:6px;font-size:14px; }}
+        .tab-btn:hover {{ background:var(--bg); }}
+        .tab-btn.active {{ background:var(--primary);color:white; }}
+    </style>
+    
+    <script>
+        function showTab(name) {{
+            document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('panel-' + name).style.display = 'block';
+            document.getElementById('tab-' + name).classList.add('active');
+        }}
+        
+        function showAdjustModal() {{
+            document.getElementById('adjustModal').style.display = 'flex';
+        }}
+        
+        function hideAdjustModal() {{
+            document.getElementById('adjustModal').style.display = 'none';
+        }}
+    </script>
+    '''
+    
+    return render_template_string(BASE_TEMPLATE, content=content, title=f"Stock: {desc}", user=user, business=business)
+
+
 @app.route("/stock/new", methods=["GET", "POST"])
 @login_required
 def stock_new():
@@ -21505,6 +21918,84 @@ def api_suppliers_all():
     
     items = db.get("suppliers", {"business_id": biz_id}) or []
     return jsonify({"success": True, "items": items})
+
+
+@app.route("/api/stock/adjust", methods=["POST"])
+@login_required
+def api_stock_adjust():
+    """Adjust stock quantity - add, remove, or set exact"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        flash("No business selected", "error")
+        return redirect("/stock")
+    
+    stock_id = request.form.get("stock_id", "")
+    adj_type = request.form.get("type", "add")
+    quantity = request.form.get("quantity", "0")
+    note = request.form.get("note", "Manual adjustment")
+    
+    try:
+        qty = float(quantity)
+    except:
+        flash("Invalid quantity", "error")
+        return redirect(f"/stock/{stock_id}")
+    
+    # Get current stock item
+    item = db.get_one_stock(stock_id)
+    if not item or item.get("business_id") != biz_id:
+        flash("Stock item not found", "error")
+        return redirect("/stock")
+    
+    current_qty = float(item.get("quantity", 0) or 0)
+    
+    # Calculate new quantity
+    if adj_type == "add":
+        new_qty = current_qty + qty
+        movement_qty = qty
+        movement_type = "adjustment_in"
+    elif adj_type == "remove":
+        new_qty = current_qty - qty
+        movement_qty = -qty
+        movement_type = "adjustment_out"
+    else:  # set
+        new_qty = qty
+        movement_qty = qty - current_qty
+        movement_type = "stocktake"
+    
+    # Update stock
+    result = db.update_stock(stock_id, {"quantity": new_qty}, biz_id)
+    
+    if result:
+        # Record movement
+        movement = RecordFactory.stock_movement(
+            business_id=biz_id,
+            stock_id=stock_id,
+            movement_type=movement_type,
+            quantity=movement_qty,
+            reference=note,
+            note=f"Previous: {current_qty}, New: {new_qty}",
+            created_by=user.get("id", "") if user else ""
+        )
+        db.save("stock_movements", movement)
+        
+        flash(f"Stock adjusted: {current_qty} → {new_qty}", "success")
+    else:
+        flash("Failed to adjust stock", "error")
+    
+    return redirect(f"/stock/{stock_id}")
+
+
+@app.route("/stock/edit/<stock_id>", methods=["GET", "POST"])
+@login_required
+def stock_edit(stock_id):
+    """Edit stock item - redirect to detail page with edit capability"""
+    # For now, redirect to detail page
+    # The detail page has all the info, edit can be done inline or via modal
+    return redirect(f"/stock/{stock_id}")
 
 
 @app.route("/api/stock/search")
