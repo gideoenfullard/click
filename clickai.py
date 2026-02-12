@@ -2892,6 +2892,7 @@ class RecordFactory:
             "type": movement_type,  # 'in' or 'out'
             "quantity": float(quantity),
             "reference": kwargs.get("reference", ""),
+            "created_by": kwargs.get("created_by", ""),
             "created_at": kwargs.get("created_at") or now()
         }
     
@@ -3114,6 +3115,7 @@ class RecordFactory:
             "vat": vat,
             "total": total,
             "payment_method": kwargs.get("payment_method", "cash"),
+            "created_by": kwargs.get("created_by", ""),
             "created_at": kwargs.get("created_at") or now()
         }
     
@@ -3147,6 +3149,7 @@ class RecordFactory:
             "total": float(kwargs.get("total", 0)),
             "status": kwargs.get("status", "draft"),
             "received_date": kwargs.get("received_date"),
+            "created_by": kwargs.get("created_by", ""),
             "created_at": kwargs.get("created_at") or now()
         }
     
@@ -3298,7 +3301,8 @@ class RecordFactory:
             "total_additional_cost": float(kwargs.get("total_additional_cost", 0)),
             "total_actual_cost": float(kwargs.get("total_actual_cost", 0)),
             "profit_loss": float(kwargs.get("profit_loss", 0)),
-            "is_active": kwargs.get("is_active", True)
+            "is_active": kwargs.get("is_active", True),
+            "created_by": kwargs.get("created_by", "")
         }
     
     @staticmethod
@@ -10746,6 +10750,7 @@ class Actions:
             "customer_name": customer["name"],
             "amount": float(amount),
             "date": today(),
+            "created_by": context.get("user_id", ""),
             "created_at": now()
         })
         
@@ -39652,6 +39657,7 @@ def api_pos_sale():
             "subtotal": float(subtotal),
             "vat": float(vat),
             "total": float(total),
+            "created_by": user.get("id") if user else None,  # Track who made the sale
             "created_at": now()
         }
         
@@ -48204,7 +48210,8 @@ def job_new():
                 customer_name=customer_name,
                 customer_id=safe_uuid(customer_id),
                 description=description,
-                status="open"
+                status="open",
+                created_by=user.get("id") if user else None
             )
             job_id = job["id"]
             
@@ -53083,6 +53090,7 @@ def api_staging_approve(item_id):
                 "description": item.get("description", ""),
                 "category": item.get("category", "General"),
                 "amount": float(item.get("amount", 0)),
+                "created_by": user.get("id") if user else None,
                 "created_at": now()
             })
         elif item_type == "supplier_invoice":
@@ -53094,6 +53102,7 @@ def api_staging_approve(item_id):
                 "invoice_number": item.get("invoice_number", ""),
                 "total": float(item.get("amount", 0)),
                 "status": "unpaid",
+                "created_by": user.get("id") if user else None,
                 "created_at": now()
             })
         
@@ -55149,6 +55158,7 @@ def create_credit_note(invoice_id):
             "subtotal": invoice.get("subtotal"),
             "vat": invoice.get("vat"),
             "total": invoice.get("total"),
+            "created_by": user.get("id") if user else None,
             "created_at": now()
         }
         
@@ -59978,6 +59988,7 @@ def api_scan_save_expense():
         
         total_amount = float(data.get("total", 0))
         payment_method = data.get("payment_method", "cash")
+        user = Auth.get_current_user()
         expense = RecordFactory.expense(
             business_id=biz_id,
             description=desc,
@@ -59991,7 +60002,8 @@ def api_scan_save_expense():
             supplier=data.get("supplier_name", ""),
             supplier_name=data.get("supplier_name", ""),
             payment_method=payment_method,
-            status="paid"
+            status="paid",
+            created_by=user.get("id") if user else None
         )
         exp_id = expense["id"]
         
