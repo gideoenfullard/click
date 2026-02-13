@@ -33475,7 +33475,7 @@ def api_tb_analyze():
         accounts_text += f"{L['acc_code']:<10} {L['acc_name']:<40} {L['debit']:>15} {L['credit']:>15}\n"
         accounts_text += "-" * 80 + "\n"
         
-        # Group accounts by category for better analysis
+        # Group accounts by CATEGORY (not by code - codes differ per accounting system!)
         asset_accounts = []
         liability_accounts = []
         equity_accounts = []
@@ -33486,24 +33486,42 @@ def api_tb_analyze():
         for acc in accounts:
             code = str(acc.get("code", "")).strip()
             name = str(acc.get("name", "")).strip()
+            cat = str(acc.get("category", "")).lower()
             dr = float(acc.get("debit", 0) or 0)
             cr = float(acc.get("credit", 0) or 0)
             
             line = f"{code:<10} {name[:40]:<40} R{dr:>13,.2f} R{cr:>13,.2f}"
             
-            # Classify by code
-            if code.startswith(("1", "2")):
-                asset_accounts.append(line)
-            elif code.startswith("3"):
-                liability_accounts.append(line)
-            elif code.startswith("4"):
-                equity_accounts.append(line)
-            elif code.startswith("5"):
-                income_accounts.append(line)
-            elif code.startswith(("6", "7", "8", "9")):
-                expense_accounts.append(line)
+            # Classify by CATEGORY first, fallback to code
+            if cat:
+                if any(kw in cat for kw in ["sales", "revenue", "other income", "income", "omset", "inkomste"]):
+                    income_accounts.append(line)
+                elif any(kw in cat for kw in ["cost of sale", "cogs", "koste van verkope"]):
+                    expense_accounts.append(line)  # COS goes with expenses for display
+                elif any(kw in cat for kw in ["expense", "uitgawe", "operating"]):
+                    expense_accounts.append(line)
+                elif any(kw in cat for kw in ["current asset", "non-current asset", "fixed asset", "bate"]):
+                    asset_accounts.append(line)
+                elif any(kw in cat for kw in ["current liabilit", "non-current liabilit", "long term", "laste"]):
+                    liability_accounts.append(line)
+                elif any(kw in cat for kw in ["equity", "owner", "ekwiteit", "eienaar"]):
+                    equity_accounts.append(line)
+                else:
+                    unclassified.append(line)
             else:
-                unclassified.append(line)
+                # Fallback to code-based (standard chart only)
+                if code.startswith(("1", "2")):
+                    asset_accounts.append(line)
+                elif code.startswith("3"):
+                    liability_accounts.append(line)
+                elif code.startswith("4"):
+                    equity_accounts.append(line)
+                elif code.startswith("5"):
+                    income_accounts.append(line)
+                elif code.startswith(("6", "7", "8", "9")):
+                    expense_accounts.append(line)
+                else:
+                    unclassified.append(line)
         
         accounts_text += f"\n📊 {L['assets_codes']}\n"
         accounts_text += "\n".join(asset_accounts) if asset_accounts else f"  {L['no_asset_acc']}\n"
@@ -33575,18 +33593,31 @@ SARS:
 
 JOU OPDRAG - SKRYF 'N VOLLEDIGE CA(SA) ANALISE VERSLAG IN AFRIKAANS
 
+KRITIEKE INSTRUKSIES:
+- Die rekeninge is REEDS KORREK geklassifiseer in die regte kategorieë (Bates, Laste, Ekwiteit, Inkomste, Uitgawes) deur die bronsstelsel se eie kategorisering
+- MOENIE rekeningkodes bevraagteken of herklassifiseer nie. Verskillende stelsels gebruik verskillende nommering (Sage Pastel gebruik 1xxx vir Verkope, standaard gebruik 5xxx). Die kategorieë hier bo is KORREK.
+- MOENIE sê rekeninge is "verkeerd geklassifiseer" of in die "verkeerde afdeling" gebaseer op hulle kodenommers nie
+- MOENIE bedrog-aantygings maak sonder duidelike bewyse nie
+- Gebruik die PYTHON-BEREKENDE syfers as bron van waarheid - moenie herbereken of weerspreek nie
+- As Python sê Netto Wins is positief, IS die besigheid winsgewend. Moenie anders sê nie.
+
 **1. UITVOERENDE OPSOMMING**
-[2-3 sinne: Algehele gesondheid van die besigheid. Is dit 'n "pass" of "fail"?]
+[2-3 sinne: Algehele gesondheid gebaseer op PYTHON-BEREKENDE verhoudings en winssyfers]
 
 **2. REKENING-VIR-REKENING ANALISE**
 Gaan deur ELKE rekening kategorie en noem:
-- Watter rekeninge lyk normaal
-- Watter rekeninge lyk VREEMD of BEKOMMEREND
+- Watter rekeninge lyk normaal vir die industrie
+- Watter BEDRAE lyk ongewoon of kommerwekkend
 - Watter rekeninge ONTBREEK wat daar behoort te wees
-- Enige klassifikasie probleme
+- MOENIE rekeningKODES kritiseer nie - fokus op BEDRAE en SALDO'S
 
 **3. ROOI VLAE EN RISIKOS**
-Lys ELKE probleem wat jy sien, met spesifieke rekening verwysings.
+Lys werklike bekommernisse gebaseer op die SYFERS:
+- Likwiditeitsprobleme?
+- Winsgewendheidskwessies?
+- Ongewone saldo's?
+- Ontbrekende voorsiening of toevallings?
+- MOENIE die rekeningnommeringstelsel as probleem vlag nie
 
 **4. SARS NAKOMING**
 - BTW posisie en betaaldatums
@@ -33600,8 +33631,10 @@ Lys 3-5 vrae wat jy sou vra.
 
 REËLS:
 - Verwys na SPESIFIEKE rekeninge by naam en kode
-- Wees SPESIFIEK, nie generies nie
-- Skryf soos 'n regte CA(SA) wat omgee"""
+- Wees SPESIFIEK oor bedrae en persentasies
+- Skryf soos 'n regte CA(SA) wat omgee
+- Gebruik die PRESIESE syfers wat Python bereken het
+- MOET NOOIT sê die rekeningplan is "fout" of "verkeerd geklassifiseer" nie"""
         else:
             # English prompt (default)
             insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
@@ -33649,23 +33682,31 @@ SARS (South African Revenue Service):
 
 YOUR TASK - WRITE A COMPLETE CA(SA) ANALYSIS REPORT IN ENGLISH
 
+CRITICAL INSTRUCTIONS:
+- The accounts have been PRE-CLASSIFIED into the correct categories (Assets, Liabilities, Equity, Income, Expenses) using the source system's own categorization
+- DO NOT question or reclassify account codes. Different accounting systems use different numbering (Sage Pastel uses 1xxx for Sales, standard uses 5xxx). The categories shown above are CORRECT.
+- DO NOT suggest accounts are "misclassified" or in the "wrong section" based on their code numbers
+- DO NOT make fraud allegations without clear evidence of actual fraud
+- Use the PYTHON-CALCULATED numbers as the source of truth - do not recalculate or contradict them
+- If Python says Net Profit is positive, the business IS profitable. Do not say otherwise.
+
 **1. EXECUTIVE SUMMARY**
-[2-3 sentences: Overall health of the business. Is this a "pass" or "fail"?]
+[2-3 sentences: Overall health based on the PYTHON-CALCULATED ratios and profit figures]
 
 **2. ACCOUNT-BY-ACCOUNT ANALYSIS**
 Go through EACH account category and note:
-- Which accounts look normal
-- Which accounts look UNUSUAL or CONCERNING (e.g., negative balances, unusual amounts)
-- Which accounts are MISSING that should be there
-- Any classification issues (wrong codes)
+- Which accounts look normal for the industry
+- Which AMOUNTS look unusual or concerning (e.g., very high expenses, credit balances on expense accounts)
+- Which accounts are MISSING that should be there (depreciation, bad debts, etc)
+- DO NOT criticize account CODES - focus on AMOUNTS and BALANCES
 
 **3. RED FLAGS AND RISKS**
-List EVERY problem you see, with specific account references:
-- TB not balancing? Where could the error be?
-- Liquidity problems?
-- Profitability issues?
-- Unusual transactions?
-- Possible errors or fraud risks?
+List genuine concerns based on the NUMBERS:
+- Liquidity problems (current ratio, quick ratio)?
+- Profitability issues (margins)?
+- Unusual balances (credit balances on expenses, large intercompany loans)?
+- Missing provisions or accruals?
+- DO NOT flag the account numbering system as a problem
 
 **4. SARS COMPLIANCE**
 - VAT: Is the position correct? When must it be paid?
@@ -33673,21 +33714,17 @@ List EVERY problem you see, with specific account references:
 - Any missing tax accounts?
 
 **5. SPECIFIC RECOMMENDATIONS**
-Give AT LEAST 5 concrete actions, each with:
-- The specific account or area
-- What needs to be done
-- Why it's important
-- Priority (URGENT / IMPORTANT / MONITOR)
+Give AT LEAST 5 concrete actions with priority (URGENT / IMPORTANT / MONITOR)
 
 **6. QUESTIONS FOR THE CLIENT**
-List 3-5 questions you would ask the business owner to better understand.
+List 3-5 questions you would ask the business owner.
 
 RULES:
 - Refer to SPECIFIC accounts by name and code
-- Do NOT be generic - be SPECIFIC
-- If something looks wrong, say it directly
-- Write like a real CA(SA) who cares, not like a robot
-- Use the EXACT figures that Python calculated - do not make up new numbers"""
+- Do NOT be generic - be SPECIFIC about amounts and percentages
+- Write like a real CA(SA) who cares
+- Use the EXACT figures that Python calculated - do not make up new numbers
+- NEVER say the chart of accounts is "wrong" or "misclassified" - different systems use different codes"""
 
         insights_html = ""
         try:
