@@ -32415,7 +32415,9 @@ def report_tb():
                     total_debit: uploadData.total_debit,
                     total_credit: uploadData.total_credit,
                     is_balanced: uploadData.is_balanced,
-                    lang: lang
+                    lang: lang,
+                    source_file: file.name,
+                    company_name: uploadData.company_name || ''
                 }})
             }});
             
@@ -32565,7 +32567,19 @@ def api_tb_analyze():
     try:
         data = request.get_json()
         accounts = data.get("accounts", [])
-        lang = data.get("lang", "en")  # Default to English
+        lang = data.get("lang", "en")
+        
+        # If a source file was uploaded (external TB), note it in the report
+        source_file = data.get("source_file", "")
+        company_name = data.get("company_name", "")
+        
+        # If uploaded file, show source info in report title
+        if source_file and not company_name:
+            report_company = f"{biz_name} (from: {source_file})"
+        elif company_name:
+            report_company = company_name
+        else:
+            report_company = biz_name
         
         logger.info(f"[TB ANALYZE] Language selected: {lang}")
         
@@ -32998,7 +33012,7 @@ def api_tb_analyze():
         # Using language labels (L) for bilingual support
         report_html = f"""
 <h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:10px;">📊 {L["report_title"]}</h2>
-<p><strong>{L["company"]}:</strong> {safe_string(biz_name)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
+<p><strong>{L["company"]}:</strong> {safe_string(report_company)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
 
 <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
 
@@ -33262,7 +33276,7 @@ def api_tb_analyze():
             # Afrikaans prompt
             insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
 
-BESIGHEID: {safe_string(biz_name)}
+BESIGHEID: {safe_string(report_company)}
 INDUSTRIE: {industry}
 DATUM: {today()}
 
@@ -33336,7 +33350,7 @@ REËLS:
             # English prompt (default)
             insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
 
-BUSINESS: {safe_string(biz_name)}
+BUSINESS: {safe_string(report_company)}
 INDUSTRY: {industry}
 DATE: {today()}
 
@@ -33881,6 +33895,7 @@ Rules:
             "total_credit": total_credit,
             "is_balanced": is_balanced,
             "message": f"Parsed {len(accounts)} accounts from {file.filename}",
+            "source_file": file.filename,
             "redirect_analyze": True
         })
         
