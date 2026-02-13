@@ -32505,6 +32505,10 @@ def report_tb():
             alert('❌ Error: ' + err.message);
         }}
     }}
+    // Auto-analyze if redirected from import page
+    if (window.location.search.includes('auto_analyze=1')) {{
+        setTimeout(() => analyzeWithZane(), 500);
+    }}
     </script>
     '''
     
@@ -42325,8 +42329,16 @@ def smart_import_page():
         <div class="success-title">Import Complete!</div>
         <p style="color:var(--text-muted);font-size:16px;">Your data is now in ClickAI. Welcome aboard.</p>
         <div class="success-stats" id="successStats"></div>
-        <div style="margin-top:20px;">
+        <div id="successActions" style="margin-top:25px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
             <a href="/" class="import-btn" style="text-decoration:none;">Go to Dashboard →</a>
+        </div>
+        <div id="reportPrompt" style="display:none;margin-top:20px;padding:20px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);border-radius:12px;">
+            <p style="font-size:15px;margin-bottom:12px;">📊 <strong>Generate a professional AI report from your imported data?</strong></p>
+            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+                <button onclick="goToReport()" class="btn btn-primary" style="padding:12px 24px;font-size:15px;">
+                    📊 Generate Report
+                </button>
+            </div>
         </div>
     </div>
     
@@ -42585,6 +42597,32 @@ def smart_import_page():
             }
         }
         document.getElementById('successStats').innerHTML = statsHtml;
+        
+        // Show report prompt based on what was imported
+        const dataType = importData ? importData.data_type : '';
+        if (dataType === 'opening_balances' || dataType === 'accounts' || dataType === 'trial_balance') {
+            document.getElementById('reportPrompt').style.display = 'block';
+            window._reportUrl = '/reports/tb';
+        } else if (dataType === 'customers') {
+            document.getElementById('reportPrompt').style.display = 'block';
+            window._reportUrl = '/reports/debtors';
+        } else if (dataType === 'suppliers') {
+            document.getElementById('reportPrompt').style.display = 'block';
+            window._reportUrl = '/reports/aging';
+        } else if (dataType === 'stock') {
+            document.getElementById('reportPrompt').style.display = 'block';
+            window._reportUrl = '/stock';
+        }
+    }
+    
+    function goToReport() {
+        const url = window._reportUrl || '/reports';
+        // For TB, auto-trigger the analysis
+        if (url === '/reports/tb') {
+            window.location.href = url + '?auto_analyze=1';
+        } else {
+            window.location.href = url;
+        }
     }
     
     function resetImport() {
