@@ -16624,208 +16624,208 @@ PAGE_HELP = {
     "dashboard": {
         "title": "Dashboard",
         "tips": [
-            ("Wat sien ek hier?", "Die dashboard wys jou besigheid se hartklop - vandag se sales, wie skuld jou geld, en wat aandag nodig het."),
-            ("Rooi nommers?", "Rooi beteken aandag nodig: ooragstallige invoices, lae stock, of negatiewe cash flow."),
-            ("Hoe refresh ek?", "Data laai automaties. Trek af (pull down) op jou foon om te refresh."),
+            ("What am I looking at?", "The dashboard shows your business heartbeat - today's sales, who owes you money, and what needs attention."),
+            ("Red numbers?", "Red means attention needed: overdue invoices, low stock, or negative cash flow."),
+            ("How do I refresh?", "Data loads automatically. Pull down on mobile to refresh."),
         ]
     },
     "pos": {
         "title": "Point of Sale (POS)",
         "tips": [
-            ("Hoe maak ek 'n sale?", "Soek item bo → klik om by te voeg → kies betaalmetode → klaar!"),
-            ("Cash vs Account?", "Cash/Card = betaal nou (geen invoice). Account = op rekening (maak automaties 'n invoice)."),
-            ("Discount gee?", "Verander die prys of qty in die cart voor jy finalize."),
-            ("Hoe doen ek 'n refund?", "Maak 'n Credit Note onder Sales → Credit Notes."),
-            ("Kassaregister / Z-read?", "Klik 'Daily Sales' bo regs om vandag se opsomming te sien."),
+            ("How do I make a sale?", "Search item above → click to add → choose payment method → done!"),
+            ("Cash vs Account?", "Cash/Card = paid now (no invoice). Account = on credit (auto-creates an invoice)."),
+            ("How to give a discount?", "Change the price or qty in the cart before you finalize."),
+            ("How do I do a refund?", "Create a Credit Note under Sales → Credit Notes."),
+            ("Cash register / Z-read?", "Click 'Daily Sales' top right to see today's summary."),
         ]
     },
     "invoices": {
-        "title": "Invoices / Fakture",
+        "title": "Invoices",
         "tips": [
-            ("Nuwe invoice?", "Klik '+ New Invoice' bo regs, of maak 'n sale in POS met 'Account' betaling."),
-            ("Email invoice?", "Open die invoice → klik 'Email'. Kliënt kry 'n PDF met jou logo."),
-            ("Betaling ontvang?", "Open invoice → 'Record Payment' → vul bedrag en metode in."),
-            ("Status kleure?", "Groen = betaal. Oranje = outstanding. Rooi = ooragstallig of gecredit."),
-            ("Soek invoice?", "Gebruik die soek bar bo - soek op kliënt naam, invoice nommer, of bedrag."),
+            ("New invoice?", "Click '+ New Invoice' top right, or make a sale in POS with 'Account' payment."),
+            ("Email invoice?", "Open the invoice → click 'Email'. Customer gets a PDF with your logo."),
+            ("Record payment?", "Open invoice → 'Record Payment' → enter amount and method."),
+            ("Status colours?", "Green = paid. Orange = outstanding. Red = overdue or credited."),
+            ("Search?", "Use the search bar above - search by customer name, invoice number, or amount."),
         ]
     },
     "quotes": {
-        "title": "Quotes / Kwotasies",
+        "title": "Quotes",
         "tips": [
-            ("Nuwe quote?", "Klik '+ New Quote', voeg items by, save. Email dit aan die kliënt."),
-            ("Quote na invoice?", "Open die quote → klik 'Convert to Invoice'. Al die items kopieer oor."),
-            ("Geldigheid?", "Quotes het 'n geldigheids periode (default 30 dae). Stel dit in die quote."),
+            ("New quote?", "Click '+ New Quote', add items, save. Email it to the customer."),
+            ("Convert to invoice?", "Open the quote → click 'Convert to Invoice'. All items copy across."),
+            ("Validity?", "Quotes have a validity period (default 30 days). Set it in the quote."),
         ]
     },
     "customers": {
-        "title": "Customers / Kliënte",
+        "title": "Customers",
         "tips": [
-            ("Nuwe kliënt?", "Klik '+ New Customer' of net tik die naam in POS - hy word automaties bygevoeg."),
-            ("Statement stuur?", "Open kliënt → 'Email Statement'. Of bulk: Klik 'Email All Statements'."),
-            ("Wie skuld my?", "Kyk na die Balance kolom. Of gaan na Reports → Debtors Age Analysis."),
-            ("CC emails?", "Edit kliënt → vul CC emails in (komma geskei). Alle emails gaan na al die adresse."),
-            ("Kliënt geskiedenis?", "Klik op 'n kliënt om al sy invoices, quotes, betalings en sales te sien."),
+            ("New customer?", "Click '+ New Customer' or just type the name in POS - auto-added."),
+            ("Send statement?", "Open customer → 'Email Statement'. Or bulk: Click 'Email All Statements'."),
+            ("Who owes me?", "Check the Balance column. Or go to Reports → Debtors Age Analysis."),
+            ("CC emails?", "Edit customer → fill in CC emails (comma separated). All emails go to all addresses."),
+            ("Customer history?", "Click a customer to see all their invoices, quotes, payments and sales."),
         ]
     },
     "suppliers": {
-        "title": "Suppliers / Verskaffers",
+        "title": "Suppliers",
         "tips": [
-            ("Nuwe supplier?", "Klik '+ New Supplier' en vul die besonderhede in."),
-            ("Wat skuld ek?", "Kyk na die Balance kolom - dit wys wat jy elke supplier skuld."),
-            ("Supplier invoice boek?", "Scan die invoice of sê vir Zane: 'Record supplier invoice from [naam] for R[bedrag]'."),
+            ("New supplier?", "Click '+ New Supplier' and fill in the details."),
+            ("What do I owe?", "Check the Balance column - it shows what you owe each supplier."),
+            ("Record supplier invoice?", "Scan the invoice or tell Zane: 'Record supplier invoice from [name] for R[amount]'."),
         ]
     },
     "stock": {
-        "title": "Stock / Voorraad",
+        "title": "Stock / Inventory",
         "tips": [
-            ("Soek item?", "Gebruik die soek bar bo of filter op kategorie."),
-            ("Item geskiedenis?", "Klik enige plek in die ry → sien volle Timeline: aankope, verkope, deliveries, alles."),
-            ("Stock adjust?", "Open item → 'Adjust Stock' → add/remove/set quantity met 'n rede."),
-            ("Lae stock?", "Rooi qty = laer as 5 eenhede. Stel reorder levels in die item edit."),
-            ("Nuwe item?", "Klik '+ Add Stock' bo regs. Of import via /import vir baie items."),
-            ("Pryse verander?", "Klik op item → Edit → verander cost/selling price."),
+            ("Search item?", "Use the search bar above or filter by category."),
+            ("Item history?", "Click anywhere in the row → see full Timeline: purchases, sales, deliveries, everything."),
+            ("Adjust stock?", "Open item → 'Adjust Stock' → add/remove/set quantity with a reason."),
+            ("Low stock?", "Red qty = below 5 units. Set reorder levels in the item edit."),
+            ("New item?", "Click '+ Add Stock' top right. Or import via /import for bulk items."),
+            ("Change prices?", "Click on item → Edit → change cost/selling price."),
         ]
     },
     "expenses": {
-        "title": "Expenses / Uitgawes",
+        "title": "Expenses",
         "tips": [
-            ("Nuwe expense?", "Scan 'n slip met '📸 Scan Receipt' of sê vir Zane: 'Expense R500 for diesel'."),
-            ("Cash vs Card vs EFT?", "Kies die betaalmetode - dit bepaal watter bank/cash rekening gedebit word."),
-            ("Expense vs Supplier Invoice?", "Expense = eenmalige betaling (petrol, ete). Supplier Invoice = op rekening (betaal later)."),
-            ("Kategorieë?", "Elke expense word in 'n kategorie gesit vir jou belastingopgawe."),
+            ("New expense?", "Scan a receipt with '📸 Scan Receipt' or tell Zane: 'Expense R500 for diesel'."),
+            ("Cash vs Card vs EFT?", "Choose the payment method - it determines which bank/cash account is debited."),
+            ("Expense vs Supplier Invoice?", "Expense = once-off payment (petrol, meals). Supplier Invoice = on account (pay later)."),
+            ("Categories?", "Each expense is categorised for your tax return."),
         ]
     },
     "delivery-notes": {
-        "title": "Delivery Notes / Afleweringsnotas",
+        "title": "Delivery Notes",
         "tips": [
-            ("Nuwe delivery note?", "Klik '+ New Delivery Note' of maak een vanuit 'n invoice."),
-            ("Van invoice af?", "Open 'n invoice → 'Create Delivery Note'. Items kopieer automaties."),
-            ("Status?", "Draft = nog nie gestuur. Delivered = afgelewer en bevestig."),
+            ("New delivery note?", "Click '+ New Delivery Note' or create one from an invoice."),
+            ("From invoice?", "Open an invoice → 'Create Delivery Note'. Items copy automatically."),
+            ("Status?", "Draft = not yet sent. Delivered = delivered and confirmed."),
         ]
     },
     "payroll": {
-        "title": "Payroll / Salarisse",
+        "title": "Payroll",
         "tips": [
-            ("Nuwe werknemer?", "Klik '+ Add Employee' → vul besonderhede, salaris, belasting info in."),
-            ("Payroll run?", "Klik 'Run Payroll' → kies maand → review → approve. PAYE, UIF, SDL bereken automaties."),
-            ("Payslip sien?", "Open werknemer → klik op die payslip. Kan ook email aan werknemer."),
-            ("SARS submissions?", "Gaan na SARS → EMP201 (maandeliks) en EMP501 (jaarliks)."),
+            ("New employee?", "Click '+ Add Employee' → fill in details, salary, tax info."),
+            ("Run payroll?", "Click 'Run Payroll' → select month → review → approve. PAYE, UIF, SDL calculated automatically."),
+            ("View payslip?", "Open employee → click on the payslip. Can also email to employee."),
+            ("SARS submissions?", "Go to SARS → EMP201 (monthly) and EMP501 (annual)."),
         ]
     },
     "jobs": {
-        "title": "Job Cards / Werkkaarte",
+        "title": "Job Cards",
         "tips": [
-            ("Nuwe job?", "Klik '+ New Job' → kliënt, beskrywing, items/materials."),
-            ("Materials issue?", "Open job → 'Issue Materials' → stock word automaties afgetrek."),
-            ("Job na invoice?", "Open voltooide job → 'Invoice Job' → invoice word gemaak met al die items."),
+            ("New job?", "Click '+ New Job' → customer, description, items/materials."),
+            ("Issue materials?", "Open job → 'Issue Materials' → stock is automatically deducted."),
+            ("Job to invoice?", "Open completed job → 'Invoice Job' → invoice created with all items."),
         ]
     },
     "reports": {
-        "title": "Reports / Verslae",
+        "title": "Reports",
         "tips": [
-            ("Profit & Loss?", "Wys jou inkomste minus uitgawes = wins of verlies vir die periode."),
-            ("Debtors Age?", "Wie skuld jou geld en hoe lank al (30/60/90+ dae)."),
-            ("VAT report?", "Gaan na SARS → VAT201 vir jou VAT aangifte."),
-            ("Trial Balance?", "Wys al jou rekeninge se balanse - moet in balans wees (debits = credits)."),
+            ("Profit & Loss?", "Shows your income minus expenses = profit or loss for the period."),
+            ("Debtors Age?", "Who owes you money and for how long (30/60/90+ days)."),
+            ("VAT report?", "Go to SARS → VAT201 for your VAT return."),
+            ("Trial Balance?", "Shows all your account balances - must balance (debits = credits)."),
         ]
     },
     "recurring-invoices": {
-        "title": "Recurring Invoices / Herhalende Fakture",
+        "title": "Recurring Invoices",
         "tips": [
-            ("Wat is dit?", "Fakture wat automaties elke maand/week gemaak word - perfek vir huur, dienste, retainers."),
-            ("Hoe stel ek op?", "Klik '+ New Recurring' → kies kliënt, items, frequency (maandeliks/weekliks), begin datum."),
-            ("Stop recurring?", "Open die recurring invoice → 'Deactivate'. Geen nuwe invoices word meer gemaak."),
+            ("What is this?", "Invoices that are automatically created every month/week - perfect for rent, services, retainers."),
+            ("How to set up?", "Click '+ New Recurring' → choose customer, items, frequency (monthly/weekly), start date."),
+            ("Stop recurring?", "Open the recurring invoice → 'Deactivate'. No new invoices will be created."),
         ]
     },
     "subscriptions": {
-        "title": "Subscriptions / Herhalende Uitgawes",
+        "title": "Subscriptions / Recurring Expenses",
         "tips": [
-            ("Wat is dit?", "Jou besigheid se vaste maandelikse uitgawes: versekering, software, huur, telefoon, internet, ens."),
-            ("Hoe laai ek op?", "Klik '+ Add Subscription' → naam, bedrag, kategorie, frequency."),
-            ("Kategorieë?", "Versekering, Software, Telekommunikasie, Huur, Onderhoud, Lisensies, ens. Help met belasting."),
-            ("Auto expense?", "Subscriptions kan automaties elke maand as expense geboek word."),
+            ("What is this?", "Your business's fixed monthly expenses: insurance, software, rent, phone, internet, trackers, etc."),
+            ("How to add?", "Click '+ Add Subscription' → name, amount, category, frequency."),
+            ("Categories?", "Insurance, Software, Telecom, Rent, Maintenance, Licenses, Security, etc. Helps with tax."),
+            ("Auto expense?", "Subscriptions can automatically be booked as an expense each month."),
         ]
     },
     "rentals": {
-        "title": "Rentals / Huur & Eiendomme",
+        "title": "Rentals / Property Management",
         "tips": [
-            ("Wat is dit?", "Bestuur huurders, eiendomme, en munisipale rekeninge. Automatiese huur fakture."),
-            ("Nuwe huurder?", "Klik '+ New Rental' → eiendom, huurder, bedrag, deposito."),
-            ("Munisipal?", "Voeg munisipale kostes by → dit word aan die huurder deur gefaktureer."),
+            ("What is this?", "Manage tenants, properties, and municipal accounts. Automatic rent invoicing."),
+            ("New tenant?", "Click '+ New Rental' → property, tenant, amount, deposit."),
+            ("Municipal?", "Add municipal costs → they get invoiced through to the tenant."),
         ]
     },
     "banking": {
-        "title": "Banking / Bank",
+        "title": "Banking",
         "tips": [
-            ("Bank import?", "Laai jou bankstaat CSV op → ClickAI match transaksies automaties."),
-            ("Reconcile?", "Match bank transaksies met invoices/expenses. Groen ✓ = gematched."),
-            ("Ongematch?", "Items sonder match → maak 'n expense of payment aan."),
+            ("Bank import?", "Upload your bank statement CSV → ClickAI matches transactions automatically."),
+            ("Reconcile?", "Match bank transactions with invoices/expenses. Green ✓ = matched."),
+            ("Unmatched?", "Items without a match → create an expense or payment."),
         ]
     },
     "scan": {
         "title": "Document Scanner",
         "tips": [
-            ("Hoe scan ek?", "Klik die kamera knoppie → neem foto van slip/invoice → Jacqo (AI) lees dit automaties."),
-            ("Wat kan ek scan?", "Supplier invoices, kassabonne, expenses, bankstate, payslips."),
-            ("Scan-to-email?", "Stel jou printer op om na jou scan inbox te email. Gaan na Settings → Scan Inbox."),
-            ("Nie akkuraat?", "Review altyd die AI se resultaat. Verander foute voor jy save."),
+            ("How to scan?", "Click the camera button → take photo of receipt/invoice → AI reads it automatically."),
+            ("What can I scan?", "Supplier invoices, receipts, expenses, bank statements, payslips."),
+            ("Scan-to-email?", "Set up your printer to email to your scan inbox. Go to Settings → Scan Inbox."),
+            ("Not accurate?", "Always review the AI result. Fix errors before you save."),
         ]
     },
     "settings": {
-        "title": "Settings / Instellings",
+        "title": "Settings",
         "tips": [
-            ("Logo?", "Upload jou logo hier - dit verskyn op invoices, quotes, en statements."),
-            ("Email setup?", "SMTP instellings vir Gmail: smtp.gmail.com, port 587, gebruik 'n App Password (nie jou gewone password)."),
-            ("Users?", "Voeg span lede by met verskillende roles: Owner, Admin, Manager, Cashier, Viewer."),
-            ("VAT?", "Stel jou VAT nommer en registrasie status in."),
+            ("Logo?", "Upload your logo here - it appears on invoices, quotes, and statements."),
+            ("Email setup?", "SMTP settings for Gmail: smtp.gmail.com, port 587, use an App Password (not your normal password)."),
+            ("Users?", "Add team members with different roles: Owner, Admin, Manager, Cashier, Viewer."),
+            ("VAT?", "Set your VAT number and registration status here."),
         ]
     },
     "collections": {
-        "title": "Collections / Invorderings",
+        "title": "Collections",
         "tips": [
-            ("Wat is dit?", "Bestuur ooragstallige invoices - sien wie skuld, hoe lank, en stuur herinnerings."),
-            ("Stuur herinnering?", "Klik 'Send Reminder' langs die kliënt se naam."),
-            ("Prioriteit?", "Rooi = 90+ dae, dit moet ASAP aandag kry."),
+            ("What is this?", "Manage overdue invoices - see who owes, how long, and send reminders."),
+            ("Send reminder?", "Click 'Send Reminder' next to the customer's name."),
+            ("Priority?", "Red = 90+ days, this needs attention ASAP."),
         ]
     },
     "sars": {
         "title": "SARS Submissions",
         "tips": [
-            ("VAT201?", "Maandelikse/twee-maandelikse VAT aangifte. Klik 'Generate' → review → submit op eFiling."),
-            ("EMP201?", "Maandelikse werkgewer aangifte: PAYE + UIF + SDL. Generate → submit."),
-            ("EMP501?", "Jaarlikse recon van werknemers belasting. Generate → submit met IRP5's."),
+            ("VAT201?", "Monthly/bi-monthly VAT return. Click 'Generate' → review → submit on eFiling."),
+            ("EMP201?", "Monthly employer declaration: PAYE + UIF + SDL. Generate → submit."),
+            ("EMP501?", "Annual employee tax reconciliation. Generate → submit with IRP5s."),
         ]
     },
     "pulse": {
-        "title": "Pulse / Hartklop",
+        "title": "Pulse",
         "tips": [
-            ("Wat is Pulse?", "Jou besigheid se gesondheid op een plek - reminders, tasks, alerts, forecasts."),
-            ("Reminders?", "Sê vir Zane: 'Remind me Friday to call Botha' - dit verskyn hier."),
-            ("Notes?", "Sê vir Zane: 'Note: Johan wil 500 bolts volgende maand' - gestoor hier."),
+            ("What is Pulse?", "Your business health at a glance - reminders, tasks, alerts, forecasts."),
+            ("Reminders?", "Tell Zane: 'Remind me Friday to call Botha' - it shows up here."),
+            ("Notes?", "Tell Zane: 'Note: Johan wants 500 bolts next month' - stored here."),
         ]
     },
     "grv": {
-        "title": "GRV / Goedere Ontvang",
+        "title": "Goods Received (GRV)",
         "tips": [
-            ("Wat is GRV?", "Goods Received Voucher - bewys dat jy goedere van 'n supplier ontvang het."),
-            ("Van PO af?", "Open 'n Purchase Order → 'Receive Goods' → stock word automaties bygetel."),
-            ("Sonder PO?", "Klik '+ New GRV' → kies supplier, voeg items by."),
+            ("What is GRV?", "Goods Received Voucher - proof that you received goods from a supplier."),
+            ("From PO?", "Open a Purchase Order → 'Receive Goods' → stock is automatically added."),
+            ("Without PO?", "Click '+ New GRV' → choose supplier, add items."),
         ]
     },
     "purchases": {
         "title": "Purchase Orders",
         "tips": [
-            ("Nuwe PO?", "Klik '+ New Purchase Order' → kies supplier → voeg items by → save of email."),
-            ("Email aan supplier?", "Open PO → 'Email to Supplier'. Hulle kry 'n professionele PDF."),
-            ("Ontvang goedere?", "Open PO → 'Receive Goods' om 'n GRV te maak en stock in te boek."),
+            ("New PO?", "Click '+ New Purchase Order' → choose supplier → add items → save or email."),
+            ("Email to supplier?", "Open PO → 'Email to Supplier'. They get a professional PDF."),
+            ("Receive goods?", "Open PO → 'Receive Goods' to create a GRV and book stock in."),
         ]
     },
     "supplier-invoices": {
-        "title": "Supplier Invoices / Verskaffer Fakture",
+        "title": "Supplier Invoices",
         "tips": [
-            ("Wat is dit?", "Fakture van jou suppliers - wat JY skuld. Verskil van expenses: hierdie is op rekening."),
-            ("Nuwe supplier invoice?", "Scan dit met 📸 of sê vir Zane: 'Record supplier invoice from ABC for R5000'."),
-            ("Betaal?", "Klik 'Pay' langs die invoice → kies betaalmetode."),
+            ("What is this?", "Invoices from your suppliers - what YOU owe. Different from expenses: these are on account."),
+            ("New supplier invoice?", "Scan it with 📸 or tell Zane: 'Record supplier invoice from ABC for R5000'."),
+            ("Pay?", "Click 'Pay' next to the invoice → choose payment method."),
         ]
     },
 }
@@ -32227,6 +32227,7 @@ def report_tb():
                 <option value="af">Afrikaans</option>
             </select>
             <button class="btn btn-primary" onclick="analyzeWithZane()" id="analyzeBtn">Analyze with Zane</button>
+            <button class="btn btn-secondary" onclick="downloadTBcsv()">📥 Download CSV</button>
             <button class="btn btn-secondary" onclick="window.print();">Print</button>
             <a href="/import" class="btn btn-secondary">Import TB</a>
             <label class="btn btn-secondary" style="cursor:pointer;margin:0;">
@@ -32237,7 +32238,7 @@ def report_tb():
         </div>
     </div>
     
-    {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Waarskuwing:</strong> Daar is <strong>{len(opening_entries)}</strong> opening balance entries vir <strong>{len(tb_accounts)}</strong> accounts. As jy meerdere kere geïmporteer het, klik "Clear OB" en import weer.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
+    {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Warning:</strong> There are <strong>{len(opening_entries)}</strong> opening balance entries for <strong>{len(tb_accounts)}</strong> accounts. If you imported multiple times, click "Clear OB" and import again.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
     
     <div class="card" style="padding:30px;">
         <!-- HEADER -->
@@ -32299,6 +32300,38 @@ def report_tb():
     const totalDebit = {total_debit};
     const totalCredit = {total_credit};
     const isBalanced = {"true" if is_balanced else "false"};
+    
+    function downloadTBcsv() {{
+        const tbData = {tb_data_json};
+        if (!tbData || tbData.length === 0) {{ alert('No trial balance data to download'); return; }}
+        
+        // Standard TB CSV format that any accounting software can read
+        let csv = 'Account Code,Account Name,Account Type,Debit,Credit\\n';
+        let totDr = 0, totCr = 0;
+        
+        tbData.forEach(row => {{
+            const code = (row.code || '').replace(/"/g, '""');
+            const name = (row.name || '').replace(/"/g, '""');
+            const type = '';
+            const dr = row.debit > 0 ? row.debit.toFixed(2) : '';
+            const cr = row.credit > 0 ? row.credit.toFixed(2) : '';
+            csv += `"${{code}}","${{name}}","${{type}}",${{dr}},${{cr}}\\n`;
+            totDr += row.debit || 0;
+            totCr += row.credit || 0;
+        }});
+        
+        csv += `,,TOTAL,${{totDr.toFixed(2)}},${{totCr.toFixed(2)}}\\n`;
+        
+        const blob = new Blob([csv], {{ type: 'text/csv;charset=utf-8;' }});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const bizName = document.title.split(' - ')[1] || 'Business';
+        const date = new Date().toISOString().split('T')[0];
+        a.download = `Trial_Balance_${{bizName.replace(/[^a-zA-Z0-9]/g, '_')}}_${{date}}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }}
     
     async function analyzeWithZane() {{
         const btn = document.getElementById('analyzeBtn');
@@ -33495,86 +33528,217 @@ def api_tb_upload_analyze():
         
         logger.info(f"[TB UPLOAD] Read {len(df)} rows, columns: {list(df.columns)}")
         
-        # Try to identify columns (code, name/account, debit, credit)
+        # ═══════════════════════════════════════════════════════════
+        # SMART COLUMN DETECTION - tries hardcoded first, then AI
+        # Every accountant's TB looks different!
+        # ═══════════════════════════════════════════════════════════
         cols_lower = {c.lower().strip(): c for c in df.columns}
         
         # Find account code column
         code_col = None
-        for candidate in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'rekening kode', 'gl code', 'account_code']:
+        for candidate in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'rekening kode', 
+                          'gl code', 'account_code', 'acc no', 'account no', 'account number',
+                          'rekeningnommer', 'gl no', 'no', 'number', 'acc', 'account #']:
             if candidate in cols_lower:
                 code_col = cols_lower[candidate]
                 break
         
         # Find account name column
         name_col = None
-        for candidate in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 'rekening naam', 'acc name', 'account_name']:
+        for candidate in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 
+                          'rekening naam', 'acc name', 'account_name', 'rekeningnaam', 'omskrywing',
+                          'account description', 'ledger', 'ledger name', 'gl name', 'label',
+                          'type', 'account type']:
             if candidate in cols_lower:
                 name_col = cols_lower[candidate]
                 break
         
         # Find debit column
         debit_col = None
-        for candidate in ['debit', 'dr', 'debits', 'debit amount', 'debiet']:
+        for candidate in ['debit', 'dr', 'debits', 'debit amount', 'debiet', 'debit balance',
+                          'debiet saldo', 'debit total', 'dr amount', 'dr balance']:
             if candidate in cols_lower:
                 debit_col = cols_lower[candidate]
                 break
         
         # Find credit column
         credit_col = None
-        for candidate in ['credit', 'cr', 'credits', 'credit amount', 'krediet']:
+        for candidate in ['credit', 'cr', 'credits', 'credit amount', 'krediet', 'credit balance',
+                          'krediet saldo', 'credit total', 'cr amount', 'cr balance']:
             if candidate in cols_lower:
                 credit_col = cols_lower[candidate]
                 break
         
+        # Find single balance column (some TBs use one column with +/-)
+        balance_col = None
+        if not debit_col and not credit_col:
+            for candidate in ['balance', 'saldo', 'amount', 'bedrag', 'net balance', 'netto',
+                              'value', 'waarde', 'total', 'totaal', 'closing balance', 'closing',
+                              'sluitsaldo', 'net', 'movement', 'beweging']:
+                if candidate in cols_lower:
+                    balance_col = cols_lower[candidate]
+                    break
+        
+        # Find category/type column
+        category_col = None
+        for candidate in ['category', 'kategorie', 'type', 'account type', 'tipe', 'class',
+                          'group', 'groep', 'section', 'heading', 'opskrif']:
+            if candidate in cols_lower:
+                if cols_lower[candidate] != name_col:  # Don't use same col as name
+                    category_col = cols_lower[candidate]
+                    break
+        
+        # ═══════════════════════════════════════════════════════════
+        # AI FALLBACK - if we can't find columns, ask Claude
+        # ═══════════════════════════════════════════════════════════
+        ai_mapped = False
+        if not name_col or (not debit_col and not credit_col and not balance_col):
+            logger.info(f"[TB UPLOAD] Hardcoded mapping failed. Trying AI detection...")
+            try:
+                # Send sample to Claude for column detection
+                sample_rows = df.head(8).to_string()
+                col_list = list(df.columns)
+                
+                ai_prompt = f"""Analyze this trial balance / opening balance file and identify which columns map to what.
+
+COLUMNS: {col_list}
+
+SAMPLE DATA (first 8 rows):
+{sample_rows}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{{"account_code": "exact column name or null", "account_name": "exact column name", "debit": "exact column name or null", "credit": "exact column name or null", "balance": "exact column name or null", "category": "exact column name or null"}}
+
+Rules:
+- account_name: The column with account descriptions (e.g. "Sales", "Bank", "Rent")
+- account_code: The column with account numbers/codes (e.g. "1000", "4000/000")
+- debit/credit: Separate columns for debit and credit amounts
+- balance: Single column with positive/negative amounts (use ONLY if no separate debit/credit)
+- category: Column showing account type/category (Asset, Liability, Income, Expense)
+- Use exact column names from the COLUMNS list above
+- Use null if column doesn't exist"""
+
+                client = _anthropic_client
+                ai_response = client.messages.create(
+                    model="claude-sonnet-4-5-20250929",
+                    max_tokens=500,
+                    messages=[{"role": "user", "content": ai_prompt}]
+                )
+                
+                ai_text = ai_response.content[0].text.strip()
+                # Clean markdown if present
+                if '```' in ai_text:
+                    ai_text = ai_text.split('```')[1].replace('json', '').strip()
+                
+                ai_map = json.loads(ai_text)
+                logger.info(f"[TB UPLOAD] AI column mapping: {ai_map}")
+                
+                # Apply AI mapping
+                if ai_map.get("account_name") and ai_map["account_name"] in df.columns:
+                    name_col = ai_map["account_name"]
+                if ai_map.get("account_code") and ai_map["account_code"] in df.columns:
+                    code_col = ai_map["account_code"]
+                if ai_map.get("debit") and ai_map["debit"] in df.columns:
+                    debit_col = ai_map["debit"]
+                if ai_map.get("credit") and ai_map["credit"] in df.columns:
+                    credit_col = ai_map["credit"]
+                if ai_map.get("balance") and ai_map["balance"] in df.columns:
+                    balance_col = ai_map["balance"]
+                if ai_map.get("category") and ai_map["category"] in df.columns:
+                    category_col = ai_map["category"]
+                
+                ai_mapped = True
+                
+            except Exception as ai_err:
+                logger.error(f"[TB UPLOAD] AI detection failed: {ai_err}")
+        
         # Validate we found required columns
         if not name_col:
-            # Try first text column as name
+            # Last resort: try first text column as name
             for c in df.columns:
                 if df[c].dtype == 'object':
                     name_col = c
                     break
         
         if not name_col:
-            return jsonify({"success": False, "error": f"Could not identify account name column. Found: {list(df.columns)}"})
+            return jsonify({"success": False, "error": f"Kon nie rekening naam kolom vind nie. Kolomme in jou file: {list(df.columns)}"})
         
-        if not debit_col and not credit_col:
-            return jsonify({"success": False, "error": f"Could not identify debit/credit columns. Found: {list(df.columns)}"})
+        if not debit_col and not credit_col and not balance_col:
+            return jsonify({"success": False, "error": f"Kon nie debit/credit/balance kolomme vind nie. Kolomme in jou file: {list(df.columns)}"})
         
-        logger.info(f"[TB UPLOAD] Mapped columns - Code: {code_col}, Name: {name_col}, Debit: {debit_col}, Credit: {credit_col}")
+        mapped_info = f"Code: {code_col}, Name: {name_col}, Debit: {debit_col}, Credit: {credit_col}, Balance: {balance_col}, Category: {category_col}"
+        logger.info(f"[TB UPLOAD] Mapped columns {'(AI)' if ai_mapped else '(hardcoded)'} - {mapped_info}")
         
         # Build accounts list
         accounts = []
         for idx, row in df.iterrows():
             name = str(row.get(name_col, '')).strip() if name_col else ''
-            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal']:
+            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net']:
                 continue
             
             code = str(row.get(code_col, '')).strip() if code_col else f"A{idx:04d}"
             if code.lower() in ['nan', 'none']:
                 code = f"A{idx:04d}"
             
-            # Parse debit/credit values
+            # Parse debit/credit values - handles R1,000.00, R 1 000.00, (1000), -1000
             def parse_amount(val):
                 if pd.isna(val):
                     return 0.0
-                val = str(val).replace('R', '').replace(',', '').replace(' ', '').strip()
-                if val in ['', '-', 'nan', 'none']:
+                val = str(val).replace('R', '').replace('r', '').replace(',', '').replace(' ', '').strip()
+                # Handle bracket notation for negatives: (1000) = -1000
+                is_negative = False
+                if val.startswith('(') and val.endswith(')'):
+                    val = val[1:-1]
+                    is_negative = True
+                if val in ['', '-', 'nan', 'none', '0', '0.0', '0.00']:
                     return 0.0
                 try:
-                    return abs(float(val))
+                    result = float(val)
+                    return -result if is_negative else result
                 except:
                     return 0.0
             
-            debit = parse_amount(row.get(debit_col)) if debit_col else 0
-            credit = parse_amount(row.get(credit_col)) if credit_col else 0
+            debit = 0.0
+            credit = 0.0
+            
+            if debit_col and credit_col:
+                # Separate debit/credit columns
+                debit = abs(parse_amount(row.get(debit_col)))
+                credit = abs(parse_amount(row.get(credit_col)))
+            elif balance_col:
+                # Single balance column: positive = debit, negative = credit
+                bal = parse_amount(row.get(balance_col))
+                if bal > 0:
+                    debit = bal
+                elif bal < 0:
+                    credit = abs(bal)
+            elif debit_col:
+                # Only debit column
+                val = parse_amount(row.get(debit_col))
+                if val > 0:
+                    debit = val
+                else:
+                    credit = abs(val)
+            elif credit_col:
+                # Only credit column
+                val = parse_amount(row.get(credit_col))
+                if val > 0:
+                    credit = val
+                else:
+                    debit = abs(val)
             
             if debit > 0 or credit > 0:
-                accounts.append({
+                acc = {
                     "code": code,
                     "name": name,
                     "debit": debit,
                     "credit": credit
-                })
+                }
+                if category_col:
+                    cat = str(row.get(category_col, '')).strip()
+                    if cat and cat.lower() not in ['nan', 'none']:
+                        acc["category"] = cat
+                accounts.append(acc)
         
         if not accounts:
             return jsonify({"success": False, "error": "No valid account data found in file"})
