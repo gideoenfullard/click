@@ -33512,16 +33512,78 @@ def api_tb_upload_analyze():
         
         try:
             if filename.endswith('.csv'):
-                # Try different encodings
                 content = file.read()
-                for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                df = None
+                
+                # Strip BOM if present
+                if content[:3] == b'\xef\xbb\xbf':
+                    content = content[3:]
+                
+                # Decode content to text first
+                text = None
+                for enc in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
                     try:
-                        df = pd.read_csv(io.BytesIO(content), encoding=encoding)
+                        text = content.decode(enc)
                         break
                     except:
                         continue
+                
+                if not text:
+                    return jsonify({"success": False, "error": "Kon nie die CSV lees nie - encoding probleem."})
+                
+                # Clean up: remove Excel hints and find real header row
+                lines = [l.strip() for l in text.split('\n') if l.strip()]
+                
+                # Skip non-data rows at top (sep=, title rows)
+                header_row = 0
+                for i, line in enumerate(lines[:10]):
+                    stripped = line.strip().strip('"').strip()
+                    stripped_lower = stripped.lower()
+                    # Skip: sep=X lines
+                    if stripped_lower.startswith('sep='):
+                        header_row = i + 1
+                        continue
+                    # Skip: single-value title rows (no commas between values, just a title)
+                    # But NOT rows like "Name","Category","Debit","Credit" which are headers
+                    raw_no_quoted = line
+                    # Count commas outside quotes to check if it's a real CSV row
+                    in_quote = False
+                    comma_count = 0
+                    for ch in line:
+                        if ch == '"':
+                            in_quote = not in_quote
+                        elif ch == ',' and not in_quote:
+                            comma_count += 1
+                    if comma_count == 0:
+                        # Single value row = title, skip it
+                        header_row = i + 1
+                        continue
+                    # This has commas = real header or data row, stop
+                    break
+                
+                logger.info(f"[TB UPLOAD] Detected header at row {header_row}, skipping {header_row} rows")
+                
+                # Detect delimiter from header line
+                header_line = lines[header_row] if header_row < len(lines) else lines[0]
+                if ';' in header_line and header_line.count(';') > header_line.count(','):
+                    sep = ';'
+                elif '\t' in header_line:
+                    sep = '\t'
                 else:
-                    return jsonify({"success": False, "error": "Could not read CSV file - encoding issue"})
+                    sep = ','
+                
+                # Rebuild clean text without skipped rows
+                clean_text = '\n'.join(lines[header_row:])
+                
+                try:
+                    df = pd.read_csv(io.StringIO(clean_text), sep=sep, on_bad_lines='skip', engine='python')
+                    logger.info(f"[TB UPLOAD] Read {len(df)} rows, {len(df.columns)} cols: {list(df.columns)}")
+                except Exception as e:
+                    logger.error(f"[TB UPLOAD] pandas read failed: {e}")
+                
+                if df is None or len(df.columns) <= 1:
+                    return jsonify({"success": False, "error": "Kon nie die CSV lees nie. Probeer om dit as Excel (.xlsx) te save en weer te upload."})
+                    
             elif filename.endswith(('.xlsx', '.xls')):
                 df = pd.read_excel(file)
             else:
@@ -33677,12 +33739,34 @@ Rules:
         accounts = []
         for idx, row in df.iterrows():
             name = str(row.get(name_col, '')).strip() if name_col else ''
-            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net']:
+            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net',
+                                              'net profit/loss', 'net profit/loss after tax', 'net profit', 'netto wins']:
                 continue
             
-            code = str(row.get(code_col, '')).strip() if code_col else f"A{idx:04d}"
-            if code.lower() in ['nan', 'none']:
+            code = str(row.get(code_col, '')).strip() if code_col else ''
+            if code.lower() in ['nan', 'none', '']:
+                code = ''
+            
+            # Smart split: "1000/000 : Sales" → code="1000/000", name="Sales"
+            # Also handles: "1000 - Sales", "1000: Sales", "ACC001 Sales"
+            if not code and ' : ' in name:
+                parts = name.split(' : ', 1)
+                code = parts[0].strip()
+                name = parts[1].strip()
+            elif not code and ' - ' in name and name[0].isdigit():
+                parts = name.split(' - ', 1)
+                code = parts[0].strip()
+                name = parts[1].strip()
+            elif not code and ': ' in name and name[0].isdigit():
+                parts = name.split(': ', 1)
+                code = parts[0].strip()
+                name = parts[1].strip()
+            
+            if not code:
                 code = f"A{idx:04d}"
+            
+            # Clean up _AND_ → & (Sage Pastel export quirk)
+            name = name.replace('_AND_', '&').replace(' _and_ ', ' & ')
             
             # Parse debit/credit values - handles R1,000.00, R 1 000.00, (1000), -1000
             def parse_amount(val):
