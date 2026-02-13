@@ -32417,7 +32417,8 @@ def report_tb():
                     is_balanced: uploadData.is_balanced,
                     lang: lang,
                     source_file: file.name,
-                    company_name: uploadData.company_name || ''
+                    company_name: uploadData.company_name || '',
+                    tb_control_profit: uploadData.tb_control_profit || null
                 }})
             }});
             
@@ -32867,78 +32868,277 @@ def api_tb_analyze():
         
         logger.info(f"[TB ANALYZE] Python calculated: Dr={total_debit:.2f} Cr={total_credit:.2f} Diff={difference:.2f}")
         
-        # Step 2: Categorize accounts by code and name patterns
-        def match_account(acc, codes=None, keywords=None, column="debit"):
-            """Match account by code prefix or name keywords"""
-            code = str(acc.get("code", "")).strip()
-            name = str(acc.get("name", "")).lower()
-            val = float(acc.get(column, 0) or 0)
+        # Step 2: Categorize accounts - USE CATEGORY COLUMN IF AVAILABLE
+        # This is critical: different accounting packages use different code schemes
+        # Sage Pastel: 1000=Sales, 2000=COS, 3000-4000=Expenses, 5000=Equity, 6000+=Assets
+        # Standard:    1000=Assets, 2000=Assets, 3000=Liabilities, 4000=Equity, 5000=Income, 6000+=Expenses
+        # So we CANNOT rely on codes - we must use the Category column
+        
+        has_categories = any(a.get("category") for a in accounts)
+        logger.info(f"[TB ANALYZE] Category column available: {has_categories}")
+        
+        if has_categories:
+            # ═══════════════════════════════════════════════════════════════
+            # CATEGORY-BASED CLASSIFICATION (reliable, works for ALL systems)
+            # ═══════════════════════════════════════════════════════════════
+            logger.info("[TB ANALYZE] Using CATEGORY column for classification")
             
-            if codes:
-                for c in codes:
-                    if code.startswith(c):
-                        return val
-            if keywords:
+            def cat_sum(acc_list, categories, column="debit"):
+                """Sum accounts matching category list"""
+                total = 0
+                for a in acc_list:
+                    cat = str(a.get("category", "")).lower().strip()
+                    for c in categories:
+                        if c in cat:
+                            total += float(a.get(column, 0) or 0)
+                            break
+                return total
+            
+            def cat_net(acc_list, categories):
+                """Net value (debit - credit) for matching categories"""
+                total = 0
+                for a in acc_list:
+                    cat = str(a.get("category", "")).lower().strip()
+                    for c in categories:
+                        if c in cat:
+                            dr = float(a.get("debit", 0) or 0)
+                            cr = float(a.get("credit", 0) or 0)
+                            total += dr - cr
+                            break
+                return total
+            
+            def name_match(acc, keywords, column="debit"):
+                """Match account by name keywords"""
+                name = str(acc.get("name", "")).lower()
+                val = float(acc.get(column, 0) or 0)
                 for kw in keywords:
                     if kw in name:
                         return val
-            return 0
-        
-        # ASSETS (Debit balances)
-        bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
-        cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
-        debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
-        stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
-        prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
-        vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
-        other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
-        
-        fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
-        accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
-        
-        # LIABILITIES (Credit balances)
-        creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
-        vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
-        paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
-        uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
-        loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
-        other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
-        
-        # EQUITY (Credit balances)
-        capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
-        retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
-        drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)  # Debit
-        reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
-        
-        # REVENUE (Credit balances)
-        sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
-        # Exclude returns from sales
-        for a in accounts:
-            if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
-                sales -= float(a.get("credit", 0) or 0)
-        
-        sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)  # Debit
-        cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
-        other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
-        
-        # EXPENSES (Debit balances)
-        salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
-        rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
-        electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
-        water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
-        telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
-        insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
-        bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
-        fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
-        repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
-        office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
-        advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
-        professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
-        depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
-        bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
-        interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
-        sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
-        
+                return 0
+            
+            # INCOME (Credit balances - sales, other income)
+            sales = cat_sum(accounts, ["sales", "revenue", "turnover", "omset"], "credit")
+            sales_returns = cat_sum(accounts, ["sales return", "return"], "debit")
+            cos = cat_sum(accounts, ["cost of sale", "cost of goods", "koste van verkope", "cogs"], "debit")
+            other_income = cat_sum(accounts, ["other income", "ander inkomste", "interest received"], "credit")
+            
+            # EXPENSES (Debit balances)
+            # Get all expense accounts individually for the breakdown
+            expense_accounts = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
+            
+            salaries = sum(name_match(a, ["salary", "salaries", "wage", "payroll", "salar"]) for a in expense_accounts)
+            rent = sum(name_match(a, ["rent"]) for a in expense_accounts)
+            electricity = sum(name_match(a, ["electric", "water", "eskom", "power", "elektris"]) for a in expense_accounts)
+            water = 0  # Often combined with electricity
+            telephone = sum(name_match(a, ["telephone", "internet", "cell", "mobile", "telkom", "telef"]) for a in expense_accounts)
+            insurance = sum(name_match(a, ["insurance", "verseker"]) for a in expense_accounts)
+            bank_charges = sum(name_match(a, ["bank charge", "bank fee", "bankkoste"]) for a in expense_accounts)
+            fuel = sum(name_match(a, ["fuel", "petrol", "diesel", "transport", "brandstof"]) for a in expense_accounts)
+            repairs = sum(name_match(a, ["repair", "maintenance", "onderhoud"]) for a in expense_accounts)
+            office = sum(name_match(a, ["office", "stationery", "supplies", "kantoor"]) for a in expense_accounts)
+            advertising = sum(name_match(a, ["advertising", "marketing", "promotion", "advertens"]) for a in expense_accounts)
+            professional = sum(name_match(a, ["professional", "accounting", "legal", "audit", "rekenmeest"]) for a in expense_accounts)
+            depreciation = sum(name_match(a, ["depreciation", "waardevermindering"]) for a in expense_accounts)
+            bad_debts = sum(name_match(a, ["bad debt", "doubtful", "slegte skuld"]) for a in expense_accounts)
+            interest_paid = sum(name_match(a, ["interest paid", "interest expense", "finance charge", "rente betaal"]) for a in expense_accounts)
+            
+            # Total expenses from category (more accurate than summing named items)
+            total_expenses_from_cat = cat_net(accounts, ["expense", "uitgawe", "operating"])
+            # Handle credit balance expenses (recoveries) - net them out
+            if total_expenses_from_cat < 0:
+                total_expenses_from_cat = 0
+            
+            # Sundry = total expenses minus named ones
+            named_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid
+            sundry_exp = max(0, total_expenses_from_cat - named_expenses)
+            
+            # BALANCE SHEET from categories
+            # Current Assets
+            bank = 0
+            cash = 0
+            debtors = 0
+            stock = 0
+            prepaid = 0
+            vat_input = 0
+            other_current = 0
+            
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                name = str(a.get("name", "")).lower()
+                dr = float(a.get("debit", 0) or 0)
+                cr = float(a.get("credit", 0) or 0)
+                net = dr - cr
+                
+                if "current asset" in cat and "non-current" not in cat or "bedryfsbate" in cat and "nie-bedryfs" not in cat:
+                    if any(kw in name for kw in ["bank", "fnb", "standard", "absa", "nedbank", "capitec", "investec"]):
+                        bank += net
+                    elif any(kw in name for kw in ["cash", "petty", "kontant"]):
+                        cash += net
+                    elif any(kw in name for kw in ["debtor", "receivable", "debiteur"]):
+                        debtors += net
+                    elif any(kw in name for kw in ["stock", "inventory", "voorraad", "goods", "finished"]):
+                        stock += net
+                    elif any(kw in name for kw in ["prepaid", "prepayment", "vooruitbetaal"]):
+                        prepaid += net
+                    elif any(kw in name for kw in ["vat input", "input vat", "btw inset"]):
+                        vat_input += net
+                    else:
+                        other_current += net
+                
+                elif "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
+                    pass  # Handled below
+                
+                elif "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
+                    pass  # Handled below
+                
+            # Fixed Assets
+            fixed_assets_cost = 0
+            accum_depr = 0
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                name = str(a.get("name", "")).lower()
+                dr = float(a.get("debit", 0) or 0)
+                cr = float(a.get("credit", 0) or 0)
+                
+                if "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
+                    if any(kw in name for kw in ["accumulated", "acc dep", "accum", "opgehoopte"]):
+                        accum_depr += cr
+                    else:
+                        fixed_assets_cost += dr
+            
+            # Liabilities
+            creditors = 0
+            vat_output = 0
+            paye = 0
+            uif = 0
+            other_liabilities = 0
+            loans = 0
+            
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                name = str(a.get("name", "")).lower()
+                dr = float(a.get("debit", 0) or 0)
+                cr = float(a.get("credit", 0) or 0)
+                net_cr = cr - dr  # Liabilities are credit balances
+                
+                if "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
+                    if any(kw in name for kw in ["creditor", "payable", "trade payable", "krediteur"]):
+                        creditors += net_cr
+                    elif any(kw in name for kw in ["vat output", "output vat", "vat payable", "btw uitset", "vat control", "vat / tax"]):
+                        vat_output += net_cr
+                    elif "paye" in name or "pay as you earn" in name:
+                        paye += net_cr
+                    elif "uif" in name or "unemployment" in name:
+                        uif += net_cr
+                    else:
+                        other_liabilities += net_cr
+                
+                elif "long term" in cat or "non-current liabilit" in cat or "langtermyn" in cat or "nie-bedryfs" in cat:
+                    loans += net_cr
+            
+            # Equity
+            capital = 0
+            retained = 0
+            drawings = 0
+            reserves = 0
+            
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                name = str(a.get("name", "")).lower()
+                dr = float(a.get("debit", 0) or 0)
+                cr = float(a.get("credit", 0) or 0)
+                
+                if "equity" in cat or "ekwiteit" in cat or "owner" in cat or "eienaar" in cat:
+                    if any(kw in name for kw in ["retained", "opgehoopte", "accumulated profit"]):
+                        retained += cr - dr
+                    elif any(kw in name for kw in ["drawing", "onttrekking"]):
+                        drawings += dr
+                    elif any(kw in name for kw in ["reserve"]):
+                        reserves += cr - dr
+                    else:
+                        capital += cr - dr
+            
+            # Use category-based total for expenses (more accurate)
+            total_expenses = total_expenses_from_cat if total_expenses_from_cat > 0 else named_expenses
+            
+        else:
+            # ═══════════════════════════════════════════════════════════════
+            # CODE-BASED CLASSIFICATION (fallback for files without Category)
+            # Assumes STANDARD chart: 1=Assets, 2=Assets, 3=Liab, 4=Equity, 5=Income, 6+=Expenses
+            # ═══════════════════════════════════════════════════════════════
+            logger.info("[TB ANALYZE] No category column - using CODE-BASED classification (standard chart)")
+            
+            def match_account(acc, codes=None, keywords=None, column="debit"):
+                """Match account by code prefix or name keywords"""
+                code = str(acc.get("code", "")).strip()
+                name = str(acc.get("name", "")).lower()
+                val = float(acc.get(column, 0) or 0)
+                
+                if codes:
+                    for c in codes:
+                        if code.startswith(c):
+                            return val
+                if keywords:
+                    for kw in keywords:
+                        if kw in name:
+                            return val
+                return 0
+            
+            # ASSETS (Debit balances)
+            bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
+            cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
+            debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
+            stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
+            prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
+            vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
+            other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
+            
+            fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
+            accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
+            
+            # LIABILITIES (Credit balances)
+            creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
+            vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
+            paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
+            uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
+            loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
+            other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
+            
+            # EQUITY (Credit balances)
+            capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
+            retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
+            drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)
+            reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
+            
+            # REVENUE (Credit balances)
+            sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
+            for a in accounts:
+                if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
+                    sales -= float(a.get("credit", 0) or 0)
+            
+            sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)
+            cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
+            other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
+            
+            # EXPENSES (Debit balances)
+            salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
+            rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
+            electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
+            water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
+            telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
+            insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
+            bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
+            fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
+            repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
+            office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
+            advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
+            professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
+            depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
+            bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
+            interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
+            sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
+            
+            total_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid + sundry_exp
         # Step 3: Calculate totals
         current_assets = bank + cash + debtors + stock + prepaid + vat_input + other_current
         fixed_assets_net = fixed_assets_cost - accum_depr
@@ -32981,6 +33181,59 @@ def api_tb_analyze():
         logger.info(f"[TB ANALYZE] P&L: Sales={net_sales:.2f}, COS={cos:.2f}, GP={gross_profit:.2f}, Exp={total_expenses:.2f}, NP={net_profit:.2f}")
         
         # ═══════════════════════════════════════════════════════════════════════
+        # VALIDATION: Compare our calculation to TB's own control figure
+        # ═══════════════════════════════════════════════════════════════════════
+        tb_control_profit = data.get("tb_control_profit")
+        validation_ok = True
+        validation_warning = ""
+        
+        if tb_control_profit is not None:
+            try:
+                control = float(tb_control_profit)
+                diff = abs(net_profit - control)
+                pct_diff = (diff / abs(control) * 100) if control != 0 else 0
+                
+                logger.info(f"[TB VALIDATE] Our net profit: R{net_profit:,.2f} | TB control: R{control:,.2f} | Diff: R{diff:,.2f} ({pct_diff:.1f}%)")
+                
+                if diff < 1.0:
+                    # Perfect match
+                    logger.info("[TB VALIDATE] ✅ PERFECT MATCH - our calculation matches TB control figure")
+                    validation_warning = ""
+                elif pct_diff < 5:
+                    # Close enough - rounding differences
+                    logger.info(f"[TB VALIDATE] ✅ Close match - {pct_diff:.1f}% difference (likely rounding)")
+                    validation_warning = ""
+                else:
+                    # Significant difference - WARN
+                    validation_ok = False
+                    logger.warning(f"[TB VALIDATE] ⚠️ MISMATCH - {pct_diff:.1f}% difference!")
+                    if lang == "af":
+                        validation_warning = f'''
+                        <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
+                            <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WAARSKUWING: Syfers Klop Nie</h3>
+                            <p style="margin:5px 0;">Ons berekening van netto wins (<strong>R {net_profit:,.2f}</strong>) verskil van die proefbalans se eie syfer (<strong>R {control:,.2f}</strong>) met <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
+                            <p style="margin:5px 0;color:var(--text-muted);">Dit kan beteken dat sommige rekeninge verkeerd geklassifiseer is. Kontroleer die data voor u op hierdie report staatmaak.</p>
+                        </div>'''
+                    else:
+                        validation_warning = f'''
+                        <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
+                            <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WARNING: Numbers Don't Match</h3>
+                            <p style="margin:5px 0;">Our calculated net profit (<strong>R {net_profit:,.2f}</strong>) differs from the trial balance's own figure (<strong>R {control:,.2f}</strong>) by <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
+                            <p style="margin:5px 0;color:var(--text-muted);">This may indicate some accounts were incorrectly classified. Please verify the data before relying on this report.</p>
+                        </div>'''
+            except (ValueError, TypeError) as e:
+                logger.warning(f"[TB VALIDATE] Could not parse control figure: {e}")
+        
+        # Build confidence indicator
+        if has_categories:
+            if validation_ok:
+                confidence_html = '<div style="background:rgba(16,185,129,0.15);border:1px solid #10b981;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">✅ <strong>High Confidence</strong> - Category column detected, control figure matches. Data classification verified.</div>'
+            else:
+                confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Review Required</strong> - Category column detected but control figure mismatch. Some accounts may be misclassified.</div>'
+        else:
+            confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Medium Confidence</strong> - No category column found. Accounts classified by code patterns. Please verify the numbers.</div>'
+        
+        # ═══════════════════════════════════════════════════════════════════════
         # BUILD REPORT - PYTHON GENERATES ALL NUMBERS IN HTML
         # ═══════════════════════════════════════════════════════════════════════
         
@@ -33013,6 +33266,9 @@ def api_tb_analyze():
         report_html = f"""
 <h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:10px;">📊 {L["report_title"]}</h2>
 <p><strong>{L["company"]}:</strong> {safe_string(report_company)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
+
+{validation_warning}
+{confidence_html}
 
 <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
 
@@ -33751,11 +34007,31 @@ Rules:
         
         # Build accounts list
         accounts = []
+        tb_control_profit = None  # Capture the TB's own net profit figure for validation
+        
         for idx, row in df.iterrows():
             name = str(row.get(name_col, '')).strip() if name_col else ''
-            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net',
-                                              'net profit/loss', 'net profit/loss after tax', 'net profit', 'netto wins']:
+            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net']:
                 continue
+            
+            # Capture the TB's own Net Profit/Loss figure as a control check
+            if name.lower() in ['net profit/loss', 'net profit/loss after tax', 'net profit', 'netto wins',
+                                 'net profit/loss before tax', 'netto wins/verlies', 'netto wins na belasting']:
+                # This row has the TB's calculated profit - grab it for validation
+                dr = float(str(row.get(debit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if debit_col else 0
+                cr = float(str(row.get(credit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if credit_col else 0
+                if cr > 0:
+                    tb_control_profit = cr  # Credit = profit
+                elif dr > 0:
+                    tb_control_profit = -dr  # Debit = loss
+                elif balance_col:
+                    bal = str(row.get(balance_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip()
+                    try:
+                        tb_control_profit = float(bal)
+                    except:
+                        pass
+                logger.info(f"[TB UPLOAD] Found control profit figure: R {tb_control_profit:,.2f}" if tb_control_profit else "[TB UPLOAD] Could not parse control profit")
+                continue  # Don't include in accounts list
             
             code = str(row.get(code_col, '')).strip() if code_col else ''
             if code.lower() in ['nan', 'none', '']:
@@ -33896,6 +34172,7 @@ Rules:
             "is_balanced": is_balanced,
             "message": f"Parsed {len(accounts)} accounts from {file.filename}",
             "source_file": file.filename,
+            "tb_control_profit": tb_control_profit,
             "redirect_analyze": True
         })
         
