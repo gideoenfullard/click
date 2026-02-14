@@ -34451,6 +34451,192 @@ Rules:
         return jsonify({"success": False, "error": str(e)})
 
 
+@app.route("/api/reports/tb/smart-report", methods=["POST"])
+@login_required
+def api_tb_smart_report():
+    """Generate different report types from uploaded TB data (management statement, KPI, etc.)"""
+    
+    try:
+        data = request.get_json()
+        accounts = data.get("accounts", [])
+        report_type = data.get("report_type", "management")
+        custom_request = data.get("custom_request", "")
+        lang = data.get("lang", "en")
+        source_file = data.get("source_file", "Uploaded TB")
+        tb_control_profit = data.get("tb_control_profit")
+        
+        if not accounts:
+            return jsonify({"success": False, "error": "No account data provided"})
+        
+        # ═══ PYTHON CALCULATES EVERYTHING FROM THE TB DATA ═══
+        has_categories = any(a.get("category") for a in accounts)
+        
+        def cat_sum(cats, column="debit"):
+            total = 0
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                for c in cats:
+                    if c in cat:
+                        total += float(a.get(column, 0) or 0)
+                        break
+            return total
+        
+        def name_sum(accs, keywords, column="debit"):
+            return sum(float(a.get(column, 0) or 0) for a in accs 
+                      if any(kw in str(a.get("name", "")).lower() for kw in keywords))
+        
+        if has_categories:
+            sales = cat_sum(["sales", "revenue", "turnover", "omset"], "credit")
+            cos = cat_sum(["cost of sale", "cost of goods", "koste van verkope"], "debit")
+            other_income = cat_sum(["other income", "ander inkomste"], "credit")
+            
+            expense_accs = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
+            total_expenses = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) for a in expense_accs)
+            if total_expenses < 0:
+                total_expenses = 0
+            
+            current_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
+                               for a in accounts if "current asset" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
+            fixed_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
+                             for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["fixed asset", "non-current asset"]))
+            current_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
+                             for a in accounts if "current liabilit" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
+            long_term_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
+                               for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["long term", "non-current liabilit"]))
+            equity = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
+                        for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["equity", "owner", "ekwiteit"]))
+            
+            salaries = name_sum(expense_accs, ["salary", "salaries", "wage", "payroll", "salar"])
+            rent = name_sum(expense_accs, ["rent", "huur"])
+            electricity = name_sum(expense_accs, ["electric", "water", "eskom", "elektris"])
+            advertising = name_sum(expense_accs, ["advertising", "marketing", "advertens"])
+            insurance = name_sum(expense_accs, ["insurance", "verseker"])
+            bank_charges = name_sum(expense_accs, ["bank charge", "bank fee", "bankkoste"])
+            depreciation = name_sum(expense_accs, ["depreciation", "waardevermindering"])
+            professional = name_sum(expense_accs, ["professional", "accounting", "legal", "audit", "rekenmeest"])
+        else:
+            sales = sum(float(a.get("credit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("5"))
+            cos = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("51"))
+            total_expenses = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", ""))[:1] in "6789")
+            other_income = 0
+            current_assets = current_liab = fixed_assets = long_term_liab = equity = 0
+            salaries = rent = electricity = advertising = insurance = bank_charges = depreciation = professional = 0
+        
+        gross_profit = sales - cos
+        net_profit = sales + other_income - cos - total_expenses
+        total_assets = current_assets + fixed_assets
+        total_liabilities = current_liab + long_term_liab
+        
+        gp_margin = round((gross_profit / sales * 100), 1) if sales > 0 else 0
+        np_margin = round((net_profit / (sales + other_income) * 100), 1) if (sales + other_income) > 0 else 0
+        current_ratio = round(current_assets / current_liab, 2) if current_liab > 0 else 0
+        debt_equity = round(total_liabilities / equity, 2) if equity > 0 else 0
+        sal_pct = round(salaries / sales * 100, 1) if sales > 0 else 0
+        rent_pct = round(rent / sales * 100, 1) if sales > 0 else 0
+        
+        validation_note = ""
+        if tb_control_profit is not None:
+            try:
+                control = float(tb_control_profit)
+                diff = abs(net_profit - control)
+                pct = (diff / abs(control) * 100) if control != 0 else 0
+                if pct > 5:
+                    validation_note = f"⚠️ Note: Calculated net profit (R{net_profit:,.2f}) differs from TB control figure (R{control:,.2f}) by {pct:.1f}%."
+            except:
+                pass
+        
+        clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
+        
+        data_for_ai = f"""
+CLIENT: {clean_name}
+DATA SOURCE: Uploaded Trial Balance ({len(accounts)} accounts)
+{validation_note}
+
+=== INCOME STATEMENT (Python-calculated, 100% accurate - DO NOT recalculate) ===
+Revenue/Sales: R{sales:,.2f}
+Cost of Sales: R{cos:,.2f}
+Gross Profit: R{gross_profit:,.2f} ({gp_margin}%)
+Other Income: R{other_income:,.2f}
+Total Expenses: R{total_expenses:,.2f}
+  - Salaries: R{salaries:,.2f} ({sal_pct}% of sales)
+  - Rent: R{rent:,.2f}
+  - Electricity/Water: R{electricity:,.2f}
+  - Advertising: R{advertising:,.2f}
+  - Insurance: R{insurance:,.2f}
+  - Bank Charges: R{bank_charges:,.2f}
+  - Depreciation: R{depreciation:,.2f}
+  - Professional Fees: R{professional:,.2f}
+Net Profit: R{net_profit:,.2f} ({np_margin}%)
+
+=== BALANCE SHEET ===
+Current Assets: R{current_assets:,.2f}
+Fixed Assets: R{fixed_assets:,.2f}
+Total Assets: R{total_assets:,.2f}
+Current Liabilities: R{current_liab:,.2f}
+Long-term Liabilities: R{long_term_liab:,.2f}
+Total Liabilities: R{total_liabilities:,.2f}
+Equity: R{equity:,.2f}
+
+=== RATIOS ===
+Current Ratio: {current_ratio}:1 (norm >1.5)
+Gross Margin: {gp_margin}%
+Net Margin: {np_margin}%
+Debt/Equity: {debt_equity}:1
+"""
+        
+        report_prompts = {
+            "management": """Write a professional MANAGEMENT STATEMENT (Year-to-Date). Structure:
+1. Executive Summary (2-3 sentences)
+2. Income Statement Analysis (revenue, margins, expense breakdown)
+3. Balance Sheet Summary
+4. Key Ratios & What They Mean
+5. Concerns & Red Flags
+6. Recommendations (5+ specific actions)""",
+            
+            "kpi": f"""Write a KPI DASHBOARD REPORT with traffic light status (Green/Amber/Red):
+1. Gross Profit Margin ({gp_margin}%)
+2. Net Profit Margin ({np_margin}%)
+3. Current Ratio ({current_ratio}:1)
+4. Salaries % of Sales ({sal_pct}%)
+5. Rent % of Sales ({rent_pct}%)
+6. Debt to Equity ({debt_equity}:1)
+For each: meaning, benchmark, and action.""",
+            
+            "sales": """Write a SALES ANALYSIS covering: revenue performance, cost structure, gross margin quality, expense impact, and improvement recommendations.""",
+            
+            "debtor": f"""Write a WORKING CAPITAL report: Current Ratio ({current_ratio}), cash position, liquidity risk, and recommendations.""",
+            
+            "forecast": """Write a FORWARD-LOOKING ANALYSIS: sustainability, cash flow outlook, scenario analysis (sales drop 10/20/30%), and strategic recommendations.""",
+            
+            "custom": f"""Answer this request: {custom_request or 'General financial overview'}"""
+        }
+        
+        prompt = report_prompts.get(report_type, report_prompts["management"])
+        
+        system_prompt = f"""You are Zane, a senior CA(SA). You are writing a report for a CLIENT's uploaded trial balance.
+RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
+{"Write in Afrikaans." if lang == "af" else "Write in English."} Format with clear headings. Use R (Rand)."""
+
+        if not ANTHROPIC_API_KEY:
+            return jsonify({"success": False, "error": "AI not configured"})
+        
+        message = _anthropic_client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=3000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
+        )
+        
+        report = message.content[0].text if message.content else ""
+        return jsonify({"success": True, "report": report})
+        
+    except Exception as e:
+        logger.error(f"[TB SMART REPORT] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)})
+
+
 # 
 # PROFIT & LOSS
 # 
@@ -36756,15 +36942,32 @@ def smart_reports_page():
     content = '''
     <div class="card">
         <h2 style="margin-bottom:15px;">Smart Reports</h2>
-        <p style="color:var(--text-muted);margin-bottom:20px;">
-            Ask Zane to write any report you need. Zane will analyze your data and generate a professional management report.
-        </p>
         
-        <h3 style="margin:20px 0 10px 0;">Quick Reports</h3>
+        <!-- DATA SOURCE SELECTOR -->
+        <div class="card" style="margin-bottom:20px;padding:15px;">
+            <h3 style="margin:0 0 10px 0;">📂 Data Source</h3>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                <button id="srcOwnBtn" class="btn btn-primary" onclick="setDataSource('own')" style="flex:none;">
+                    🏢 My Business Data
+                </button>
+                <label id="srcClientBtn" class="btn btn-secondary" style="cursor:pointer;flex:none;margin:0;">
+                    📁 Upload Client TB
+                    <input type="file" id="smartReportTBUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleSmartReportTB(this)">
+                </label>
+                <span id="dataSourceStatus" style="color:var(--text-muted);font-size:13px;">Using your own business data</span>
+            </div>
+        </div>
+        
+        <!-- REPORT TYPE SELECTION -->
+        <h3 style="margin:20px 0 10px 0;">Choose Report Type</h3>
         <div class="stats-grid">
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('management')">
                 <h4>Management Statement</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Year-to-date P&L, Balance Sheet & KPIs</p>
+            </div>
+            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('tb_analysis')">
+                <h4>TB Analysis</h4>
+                <p style="color:var(--text-muted);font-size:13px;">Full account-by-account CA(SA) review</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('kpi')">
                 <h4>KPI Dashboard</h4>
@@ -36778,24 +36981,10 @@ def smart_reports_page():
                 <h4>Debtor Risk Report</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Problem customers & recommendations</p>
             </div>
-            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('stock')">
-                <h4>Stock Report</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Slow movers, reorder suggestions</p>
-            </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('forecast')">
                 <h4>Cash Flow Forecast</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Next 30 days projection</p>
             </div>
-        </div>
-        
-        <h3 style="margin:30px 0 10px 0;">Analyze Client TB</h3>
-        <p style="color:var(--text-muted);margin-bottom:10px;">Upload a client's Trial Balance (CSV/Excel) for professional AI analysis:</p>
-        <div style="display:flex;gap:10px;align-items:center;">
-            <label class="btn btn-secondary" style="cursor:pointer;margin:0;">
-                📁 Upload Client TB
-                <input type="file" id="smartReportTBUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleSmartReportTB(this)">
-            </label>
-            <span id="smartReportTBStatus" style="color:var(--text-muted);font-size:13px;"></span>
         </div>
         
         <h3 style="margin:30px 0 10px 0;">Custom Report</h3>
@@ -36808,7 +36997,7 @@ def smart_reports_page():
     
     <div id="reportLoading" style="display:none;text-align:center;padding:40px;">
         <div style="font-size:24px;margin-bottom:10px;">Generating Report...</div>
-        <p style="color:var(--text-muted);">Analyzing your business data. This may take up to 30 seconds.</p>
+        <p style="color:var(--text-muted);">Analyzing data. This may take up to 30 seconds.</p>
     </div>
     
     <div id="reportOutput" style="margin-top:20px;display:none;">
@@ -36817,101 +37006,113 @@ def smart_reports_page():
                 <h3 id="reportTitle" style="margin:0;">Report</h3>
                 <button class="btn btn-secondary" onclick="window.print();">Print</button>
             </div>
-            <div id="reportContent" style="white-space:pre-wrap;line-height:1.6;"></div>
+            <div id="reportContent" style="line-height:1.6;"></div>
         </div>
     </div>
     
     <style>
     .report-btn { transition: all 0.2s; border: 1px solid var(--border); }
     .report-btn:hover { border-color: var(--primary); transform: translateY(-2px); }
+    .report-btn.disabled { opacity: 0.5; pointer-events: none; }
     </style>
     
     <script>
+    // ═══ DATA SOURCE STATE ═══
+    let dataSource = 'own';  // 'own' or 'client'
+    let clientTBData = null;  // Parsed client TB data
+    let clientFileName = '';
+    
     const reportTitles = {
         'management': 'Management Statement',
+        'tb_analysis': 'TB Analysis',
         'kpi': 'Key Performance Indicators',
         'sales': 'Sales Analysis',
         'debtor': 'Debtor Risk Report',
-        'stock': 'Stock Analysis',
         'forecast': 'Cash Flow Forecast'
     };
     
-    async function generateReport(type) {
-        const title = reportTitles[type] || 'Report';
-        await runReport(type, null, title);
-    }
-    
-    async function generateCustomReport() {
-        const input = document.getElementById('customReportInput').value;
-        if (input) {
-            await runReport('custom', input, 'Custom Report');
+    function setDataSource(src) {
+        dataSource = src;
+        const ownBtn = document.getElementById('srcOwnBtn');
+        const clientBtn = document.getElementById('srcClientBtn');
+        const status = document.getElementById('dataSourceStatus');
+        
+        if (src === 'own') {
+            ownBtn.className = 'btn btn-primary';
+            clientBtn.className = 'btn btn-secondary';
+            clientTBData = null;
+            clientFileName = '';
+            status.textContent = 'Using your own business data';
+            status.style.color = 'var(--text-muted)';
         }
     }
     
     function handleSmartReportTB(input) {
         const file = input.files[0];
         if (!file) return;
-        const status = document.getElementById('smartReportTBStatus');
-        status.textContent = '⏳ Uploading and parsing ' + file.name + '...';
+        const status = document.getElementById('dataSourceStatus');
+        status.textContent = '⏳ Parsing ' + file.name + '...';
         
         const formData = new FormData();
         formData.append('file', file);
         formData.append('lang', document.documentElement.lang || 'en');
         
-        // Step 1: Upload and parse the CSV
         fetch('/api/reports/tb/upload-analyze', {
             method: 'POST',
             body: formData
         })
         .then(r => r.json())
-        .then(uploadData => {
-            if (!uploadData.success) {
-                status.textContent = '❌ ' + (uploadData.error || 'Upload failed');
-                return;
-            }
-            
-            status.textContent = '⏳ Parsed ' + uploadData.accounts.length + ' accounts. Generating report...';
-            
-            // Step 2: Analyze the parsed data
-            return fetch('/api/reports/tb/analyze', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    accounts: uploadData.accounts,
-                    total_debit: uploadData.total_debit,
-                    total_credit: uploadData.total_credit,
-                    is_balanced: uploadData.is_balanced,
-                    lang: document.documentElement.lang || 'en',
-                    source_file: file.name,
-                    company_name: '',
-                    tb_control_profit: uploadData.tb_control_profit || null
-                })
-            });
-        })
-        .then(r => { if (r) return r.json(); })
-        .then(reportData => {
-            if (!reportData) return;
-            
-            if (reportData.success) {
-                status.textContent = '✅ Report generated!';
-                // Show the report in the report output area
-                document.getElementById('reportLoading').style.display = 'none';
-                document.getElementById('reportOutput').style.display = 'block';
-                document.getElementById('reportTitle').textContent = 'Client TB Analysis: ' + file.name;
-                document.getElementById('reportContent').innerHTML = reportData.analysis || reportData.report_html || reportData.report || 'Report generated';
-                document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
+        .then(data => {
+            if (data.success) {
+                clientTBData = data;
+                clientFileName = file.name;
+                dataSource = 'client';
+                
+                // Update UI
+                document.getElementById('srcOwnBtn').className = 'btn btn-secondary';
+                document.getElementById('srcClientBtn').className = 'btn btn-primary';
+                status.innerHTML = '✅ <strong>' + file.name + '</strong> loaded (' + data.accounts.length + ' accounts) — Now choose a report type below';
+                status.style.color = '#10b981';
             } else {
-                status.textContent = '❌ ' + (reportData.error || 'Analysis failed');
+                status.textContent = '❌ ' + (data.error || 'Upload failed');
+                status.style.color = '#ef4444';
             }
         })
         .catch(e => {
             status.textContent = '❌ Error: ' + e.message;
+            status.style.color = '#ef4444';
         });
         
         input.value = '';
     }
     
-    async function runReport(type, customRequest, title) {
+    async function generateReport(type) {
+        const title = reportTitles[type] || 'Report';
+        
+        if (dataSource === 'client' && clientTBData) {
+            // Generate from uploaded client TB
+            await runClientTBReport(type, title);
+        } else if (dataSource === 'client' && !clientTBData) {
+            alert('Upload a client TB first, then choose a report type.');
+        } else {
+            // Generate from own business data
+            await runOwnReport(type, null, title);
+        }
+    }
+    
+    async function generateCustomReport() {
+        const input = document.getElementById('customReportInput').value;
+        if (!input) return;
+        
+        if (dataSource === 'client' && clientTBData) {
+            await runClientTBReport('custom', 'Custom Report', input);
+        } else {
+            await runOwnReport('custom', input, 'Custom Report');
+        }
+    }
+    
+    // ═══ OWN DATA REPORTS ═══
+    async function runOwnReport(type, customRequest, title) {
         document.getElementById('reportLoading').style.display = 'block';
         document.getElementById('reportOutput').style.display = 'none';
         
@@ -36919,29 +37120,78 @@ def smart_reports_page():
             const response = await fetch('/api/report', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    type: type,
-                    custom: customRequest
-                })
+                body: JSON.stringify({ type: type, custom: customRequest })
             });
-            
             const data = await response.json();
             
             document.getElementById('reportLoading').style.display = 'none';
             document.getElementById('reportOutput').style.display = 'block';
             document.getElementById('reportTitle').textContent = title;
-            
-            if (data.success) {
-                document.getElementById('reportContent').textContent = data.report;
-            } else {
-                document.getElementById('reportContent').textContent = 'Error: ' + (data.error || 'Failed to generate report');
-            }
-            
-            // Scroll to report
+            document.getElementById('reportContent').innerHTML = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
             document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
         } catch (e) {
             document.getElementById('reportLoading').style.display = 'none';
-            alert('Error generating report. Please try again.');
+            alert('Error generating report.');
+        }
+    }
+    
+    // ═══ CLIENT TB REPORTS ═══
+    async function runClientTBReport(type, title, customRequest) {
+        document.getElementById('reportLoading').style.display = 'block';
+        document.getElementById('reportOutput').style.display = 'none';
+        
+        try {
+            const lang = document.documentElement.lang || 'en';
+            let reportHtml = '';
+            
+            if (type === 'tb_analysis') {
+                // Full TB analysis (existing endpoint)
+                const response = await fetch('/api/reports/tb/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        accounts: clientTBData.accounts,
+                        total_debit: clientTBData.total_debit,
+                        total_credit: clientTBData.total_credit,
+                        is_balanced: clientTBData.is_balanced,
+                        lang: lang,
+                        source_file: clientFileName,
+                        company_name: '',
+                        tb_control_profit: clientTBData.tb_control_profit || null
+                    })
+                });
+                const data = await response.json();
+                reportHtml = data.success ? (data.analysis || '') : ('Error: ' + (data.error || 'Failed'));
+                
+            } else {
+                // Other report types from TB data (management, kpi, etc.)
+                const response = await fetch('/api/reports/tb/smart-report', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        accounts: clientTBData.accounts,
+                        total_debit: clientTBData.total_debit,
+                        total_credit: clientTBData.total_credit,
+                        is_balanced: clientTBData.is_balanced,
+                        tb_control_profit: clientTBData.tb_control_profit || null,
+                        report_type: type,
+                        custom_request: customRequest || null,
+                        lang: lang,
+                        source_file: clientFileName
+                    })
+                });
+                const data = await response.json();
+                reportHtml = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
+            }
+            
+            document.getElementById('reportLoading').style.display = 'none';
+            document.getElementById('reportOutput').style.display = 'block';
+            document.getElementById('reportTitle').textContent = title + ' — ' + clientFileName;
+            document.getElementById('reportContent').innerHTML = reportHtml;
+            document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
+        } catch (e) {
+            document.getElementById('reportLoading').style.display = 'none';
+            alert('Error generating report: ' + e.message);
         }
     }
     </script>
