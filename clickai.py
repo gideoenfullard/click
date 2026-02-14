@@ -43253,6 +43253,323 @@ def smart_import_page():
         .error-box { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 12px; padding: 20px; text-align: center; color: #dc2626; }
     </style>
     
+    <!-- SWITCH FROM SAGE BANNER -->
+    <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(6,95,70,0.08));margin-bottom:20px;border:1px solid rgba(16,185,129,0.25);">
+        <div style="display:flex;align-items:center;gap:15px;cursor:pointer;" onclick="document.getElementById('sageGuide').style.display=document.getElementById('sageGuide').style.display==='none'?'block':'none';this.querySelector('.arrow').textContent=document.getElementById('sageGuide').style.display==='none'?'▶':'▼'">
+            <div style="font-size:36px;">🟢</div>
+            <div style="flex:1;">
+                <h2 style="margin:0 0 4px 0;font-size:20px;">Switching from Sage / Pastel?</h2>
+                <p style="color:var(--text-muted);margin:0;font-size:14px;">Follow these 4 steps - takes about 10 minutes. We handle the messy stuff.</p>
+            </div>
+            <span class="arrow" style="font-size:20px;color:var(--text-muted);">▶</span>
+        </div>
+        
+        <div id="sageGuide" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid rgba(16,185,129,0.2);">
+            
+            <!-- SAGE CLOUD vs DESKTOP -->
+            <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+                <button onclick="showSageGuide('cloud')" id="sgCloud" class="btn btn-primary" style="font-size:13px;">☁️ Sage Business Cloud</button>
+                <button onclick="showSageGuide('desktop')" id="sgDesktop" class="btn btn-secondary" style="font-size:13px;">🖥️ Sage 50cloud Pastel (Desktop)</button>
+            </div>
+            
+            <!-- SAGE CLOUD GUIDE -->
+            <div id="sageCloudGuide">
+                <div style="display:grid;gap:15px;">
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Contacts</strong> → Select all customers → <strong>Export</strong> (CSV icon top right)<br>
+                            <em>This gives you: Names, phones, emails, addresses, balances</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Customers CSV
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
+                            </label>
+                            <span class="sage-status" id="status-customers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Suppliers</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Contacts</strong> → Switch to <strong>Suppliers</strong> tab → Select all → <strong>Export</strong> (CSV)<br>
+                            <em>Same format as customers - names, contacts, balances</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Suppliers CSV
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
+                            </label>
+                            <span class="sage-status" id="status-suppliers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Stock / Products</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Products & Services</strong> → Select all → <strong>Export</strong> (CSV)<br>
+                            <em>Gives you: Codes, descriptions, prices, quantities</em><br>
+                            <span style="color:#f59e0b;">⚠️ Sage splits this into 2 files sometimes (prices + quantities). Upload both - we combine them.</span>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Stock CSV (one or both files)
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" multiple onchange="quickUploadMulti(this, 'stock')">
+                            </label>
+                            <span class="sage-status" id="status-stock" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance (Opening Balances)</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Reporting</strong> → <strong>Trial Balance</strong> → Export to CSV<br>
+                            <em>This sets your opening balances so your books are correct from day 1</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Trial Balance
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
+                            </label>
+                            <span class="sage-status" id="status-trial_balance" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                </div>
+                
+                <!-- IMPORT ALL BUTTON -->
+                <div id="sageImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(16,185,129,0.08);border-radius:12px;">
+                    <p style="margin-bottom:12px;font-size:15px;">✅ <strong id="sageFilesReady">0</strong> files ready to import</p>
+                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;background:linear-gradient(135deg,#10b981,#059669);">
+                        🚀 Import Everything into ClickAI
+                    </button>
+                    <p style="color:var(--text-muted);font-size:12px;margin-top:8px;">Takes about 30 seconds. Your Sage data stays untouched.</p>
+                </div>
+            </div>
+            
+            <!-- SAGE DESKTOP GUIDE -->
+            <div id="sageDesktopGuide" style="display:none;">
+                <div style="display:grid;gap:15px;">
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers & Suppliers</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Customer List</strong> or <strong>Supplier List</strong><br>
+                            Save as CSV. Repeat for the other.
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Customers
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
+                            </label>
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Suppliers
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Inventory</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Inventory</strong><br>
+                            Save as CSV. This includes codes, descriptions, prices, quantities.
+                        </div>
+                        <div style="margin-top:10px;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Inventory
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'stock')">
+                            </label>
+                            <span class="sage-status" id="status-stock-desktop" style="font-size:12px;display:flex;align-items:center;gap:4px;margin-top:5px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Pastel: <strong>Reports</strong> → <strong>Trial Balance</strong> → Print to Excel/CSV<br>
+                            Choose the last day of your current period.
+                        </div>
+                        <div style="margin-top:10px;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Trial Balance
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Employees (Optional)</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            If you use Sage Payroll: Export employee list to CSV<br>
+                            <em>Names, ID numbers, tax numbers, bank details, salaries</em>
+                        </div>
+                        <div style="margin-top:10px;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Employees
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'employees')">
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Same import all for desktop -->
+                <div id="sageDesktopImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(139,92,246,0.08);border-radius:12px;">
+                    <p style="margin-bottom:12px;font-size:15px;">✅ Files ready to import</p>
+                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;">
+                        🚀 Import Everything into ClickAI
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    // ═══ SAGE SWITCH WIZARD ═══
+    let sageFiles = {};  // {customers: File, suppliers: File, stock: [File], trial_balance: File}
+    
+    function showSageGuide(type) {
+        document.getElementById('sageCloudGuide').style.display = type === 'cloud' ? 'block' : 'none';
+        document.getElementById('sageDesktopGuide').style.display = type === 'desktop' ? 'block' : 'none';
+        document.getElementById('sgCloud').className = type === 'cloud' ? 'btn btn-primary' : 'btn btn-secondary';
+        document.getElementById('sgDesktop').className = type === 'desktop' ? 'btn btn-primary' : 'btn btn-secondary';
+        document.getElementById('sgCloud').style.fontSize = '13px';
+        document.getElementById('sgDesktop').style.fontSize = '13px';
+    }
+    
+    function quickUpload(input, dataType) {
+        const file = input.files[0];
+        if (!file) return;
+        sageFiles[dataType] = file;
+        
+        const status = document.getElementById('status-' + dataType);
+        if (status) status.innerHTML = '✅ <strong>' + file.name + '</strong>';
+        
+        updateSageImportButton();
+        input.value = '';
+    }
+    
+    function quickUploadMulti(input, dataType) {
+        const files = Array.from(input.files);
+        if (!files.length) return;
+        sageFiles[dataType] = files.length === 1 ? files[0] : files;
+        
+        const status = document.getElementById('status-' + dataType);
+        if (status) {
+            if (files.length === 1) {
+                status.innerHTML = '✅ <strong>' + files[0].name + '</strong>';
+            } else {
+                status.innerHTML = '✅ <strong>' + files.length + ' files</strong> (' + files.map(f => f.name).join(', ') + ')';
+            }
+        }
+        
+        updateSageImportButton();
+        input.value = '';
+    }
+    
+    function updateSageImportButton() {
+        const count = Object.keys(sageFiles).length;
+        const allBtn = document.getElementById('sageImportAll');
+        const desktopBtn = document.getElementById('sageDesktopImportAll');
+        
+        if (count > 0) {
+            if (allBtn) { allBtn.style.display = 'block'; }
+            if (desktopBtn) { desktopBtn.style.display = 'block'; }
+            const readyEl = document.getElementById('sageFilesReady');
+            if (readyEl) readyEl.textContent = count;
+        }
+    }
+    
+    async function executeSageImportAll() {
+        const types = Object.keys(sageFiles);
+        if (!types.length) return;
+        
+        // Use the existing smart-import flow for each file
+        const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance'];
+        const sorted = importOrder.filter(t => types.includes(t));
+        
+        // Hide sage guide, show processing
+        document.getElementById('sageGuide').style.display = 'none';
+        document.getElementById('dropState').style.display = 'none';
+        document.getElementById('processingState').classList.add('active');
+        
+        let totalImported = 0;
+        let results = [];
+        
+        for (const dataType of sorted) {
+            const fileOrFiles = sageFiles[dataType];
+            const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+            
+            for (const file of files) {
+                document.getElementById('processingText').textContent = 'Importing ' + dataType + '...';
+                document.getElementById('processingSub').textContent = file.name;
+                
+                try {
+                    // Step 1: Analyse
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    
+                    const analyseResp = await fetch('/api/smart-import/analyse', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const analysis = await analyseResp.json();
+                    
+                    if (!analysis.success) {
+                        results.push({type: dataType, file: file.name, success: false, error: analysis.error || 'Analysis failed'});
+                        continue;
+                    }
+                    
+                    // Step 2: Import
+                    document.getElementById('processingSub').textContent = 'Saving ' + (analysis.total_rows || '?') + ' ' + dataType + '...';
+                    
+                    const importResp = await fetch('/api/smart-import/batch', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(analysis)
+                    });
+                    const importResult = await importResp.json();
+                    
+                    const count = importResult.imported || importResult.total_imported || 0;
+                    totalImported += count;
+                    results.push({type: dataType, file: file.name, success: importResult.success, count: count});
+                    
+                } catch (err) {
+                    results.push({type: dataType, file: file.name, success: false, error: err.message});
+                }
+            }
+        }
+        
+        // Show success
+        document.getElementById('processingState').classList.remove('active');
+        document.getElementById('successState').style.display = 'block';
+        
+        let statsHtml = '';
+        for (const r of results) {
+            if (r.success) {
+                statsHtml += '<div class="stat-box"><div class="stat-number">' + r.count + '</div><div class="stat-label">' + r.type + '</div></div>';
+            } else {
+                statsHtml += '<div class="stat-box"><div class="stat-number" style="color:#ef4444;">✗</div><div class="stat-label">' + r.type + ': ' + (r.error || 'Failed') + '</div></div>';
+            }
+        }
+        document.getElementById('successStats').innerHTML = statsHtml;
+        
+        if (results.some(r => r.type === 'trial_balance' && r.success)) {
+            document.getElementById('reportPrompt').style.display = 'block';
+        }
+    }
+    </script>
+    
     <!-- STATE 1: Drop Zone -->
     <div id="dropState" class="card">
         <div class="drop-zone" id="dropZone">
