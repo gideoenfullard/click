@@ -33770,6 +33770,7 @@ Dit is NIE {biz_name} se eie data nie. MOENIE na {biz_name} verwys in jou analis
 Analiseer dit as 'n onafhanklike kliënt se finansiële data.
 """
             insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
+Jou naam is net "Zane" - MOENIE 'n van gebruik nie. Teken reports as "Zane, CA(SA)" alleen.
 
 BESIGHEID: {safe_string(report_company)}
 INDUSTRIE: {industry}
@@ -33868,6 +33869,7 @@ Analyze this as an independent client's financial data. If you see references to
 (e.g., loans from/to other entities), these are the CLIENT's intercompany relationships, not related to {biz_name}.
 """
             insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
+Your name is simply "Zane" - do NOT use any surname. Sign reports as "Zane, CA(SA)" only.
 
 BUSINESS: {safe_string(report_company)}
 INDUSTRY: {industry}
@@ -34614,8 +34616,21 @@ For each: meaning, benchmark, and action.""",
         prompt = report_prompts.get(report_type, report_prompts["management"])
         
         system_prompt = f"""You are Zane, a senior CA(SA). You are writing a report for a CLIENT's uploaded trial balance.
+Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, CA(SA)" only.
 RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
-{"Write in Afrikaans." if lang == "af" else "Write in English."} Format with clear headings. Use R (Rand)."""
+{"Write in Afrikaans." if lang == "af" else "Write in English."} Use R (Rand) for all amounts.
+
+FORMAT RULES - OUTPUT CLEAN HTML:
+- Use <h2> for main sections, <h3> for subsections
+- Use <p> for paragraphs
+- Use <strong> for emphasis
+- Use <table> with inline styles for any data tables
+- Use <div style="background:rgba(239,68,68,0.1);border-left:3px solid #ef4444;padding:10px;margin:10px 0;"> for warnings/red flags
+- Use <div style="background:rgba(16,185,129,0.1);border-left:3px solid #10b981;padding:10px;margin:10px 0;"> for positive items
+- Use <div style="background:rgba(245,158,11,0.1);border-left:3px solid #f59e0b;padding:10px;margin:10px 0;"> for caution items
+- DO NOT use markdown (no ##, no **, no ---, no bullet points with -)
+- Use <ul><li> for lists
+- Make it visually professional and easy to scan"""
 
         if not ANTHROPIC_API_KEY:
             return jsonify({"success": False, "error": "AI not configured"})
@@ -34628,6 +34643,18 @@ RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make f
         )
         
         report = message.content[0].text if message.content else ""
+        
+        # Convert any remaining markdown to HTML (fallback if Sonnet mixed formats)
+        import re
+        report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
+        report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
+        report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
+        report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
+        report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
+        report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
+        report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
+        # Wrap plain text paragraphs
+        report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
         return jsonify({"success": True, "report": report})
         
     except Exception as e:
