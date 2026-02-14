@@ -3980,6 +3980,52 @@ ZANE_TOOLS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "save_memory",
+        "description": "Save an important fact, decision, preference, or context about the user or business for future reference. Use this whenever you learn something NEW and IMPORTANT that is NOT already stored in the database. Examples: user preferences ('Deon prefers Afrikaans reports'), business decisions ('decided to increase markup to 20%'), key people ('rekenmeester is Johan at ABC Accounting'), future plans ('wants to open a 4th store in March'), personal context ('wife birthday 15 March'). DO NOT save data that's already in the system (sales figures, customer balances, etc). Save the FACT, not the conversation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Category of memory", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation"]},
+                "fact": {"type": "string", "description": "The fact to remember. Be concise but complete. Include dates where relevant. Max 200 chars."},
+                "importance": {"type": "string", "description": "How important is this?", "enum": ["high", "medium", "low"], "default": "medium"}
+            },
+            "required": ["category", "fact"]
+        }
+    },
+    {
+        "name": "recall_memories",
+        "description": "Search your memories for relevant context. Use this when you need background info about the user, their preferences, past decisions, or previous conversations. Also use when the user asks 'do you remember...', 'what did I say about...', 'het ek gesê...', or references something from a past conversation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to search for in memories. Use keywords."},
+                "category": {"type": "string", "description": "Optional: filter by category", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation", "all"], "default": "all"}
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "list_memories",
+        "description": "List all saved memories, optionally filtered by category. Use when user asks 'what do you know about me?', 'wat onthou jy?', 'show me my memories', or wants to see/manage what Zane remembers.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Filter by category or 'all'", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation", "all"], "default": "all"}
+            }
+        }
+    },
+    {
+        "name": "forget_memory",
+        "description": "Delete a specific memory by its ID. Use when user asks to remove or forget something specific.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "The ID of the memory to delete"}
+            },
+            "required": ["memory_id"]
+        }
     }
 ]
 
@@ -5355,9 +5401,11 @@ System tracks remaining balance automatically
 class ZaneToolHandler:
     """Executes tool calls from Zane and returns results."""
     
-    def __init__(self, db_instance, business_id: str):
+    def __init__(self, db_instance, business_id: str, user_id: str = ""):
         self.db = db_instance
         self.biz_id = business_id
+        self.business_id = business_id  # For memory tools
+        self.user_id = user_id  # For memory tools
     
     def execute(self, tool_name: str, tool_input: dict) -> str:
         """Route tool call to handler, return JSON string result."""
@@ -7001,6 +7049,131 @@ class ZaneToolHandler:
             "biggest_expense_category": expenses.get("biggest_category", "Unknown")
         }
 
+    # ═══════════════════════════════════════════════════════════════
+    # MEMORY TOOLS - Zane remembers across conversations
+    # ═══════════════════════════════════════════════════════════════
+    
+    def _tool_save_memory(self, params: dict) -> dict:
+        """Save a memory to the database"""
+        category = params.get("category", "conversation")
+        fact = params.get("fact", "")
+        importance = params.get("importance", "medium")
+        
+        if not fact:
+            return {"success": False, "error": "No fact to save"}
+        
+        if len(fact) > 500:
+            fact = fact[:500]
+        
+        memory_id = str(uuid.uuid4())[:8]
+        record = {
+            "id": f"mem_{memory_id}",
+            "business_id": self.business_id,
+            "user_id": self.user_id,
+            "category": category,
+            "fact": fact,
+            "importance": importance,
+            "created_at": now(),
+            "active": True
+        }
+        
+        ok, result = db.save("zane_memories", record)
+        if ok:
+            logger.info(f"[ZANE MEMORY] Saved: [{category}] {fact[:80]}...")
+            return {"success": True, "message": f"Saved to memory: {fact[:100]}...", "id": record["id"]}
+        else:
+            logger.error(f"[ZANE MEMORY] Save failed: {result}")
+            return {"success": False, "error": "Could not save memory"}
+    
+    def _tool_recall_memories(self, params: dict) -> dict:
+        """Search memories by keyword"""
+        query = params.get("query", "").lower()
+        category = params.get("category", "all")
+        
+        # Get all memories for this business
+        memories = db.get("zane_memories", {"business_id": self.business_id})
+        if not memories:
+            return {"memories": [], "message": "No memories saved yet."}
+        
+        # Filter active only
+        memories = [m for m in memories if m.get("active", True)]
+        
+        # Filter by category
+        if category and category != "all":
+            memories = [m for m in memories if m.get("category") == category]
+        
+        # Search by keyword
+        if query:
+            results = []
+            for m in memories:
+                fact = m.get("fact", "").lower()
+                cat = m.get("category", "").lower()
+                # Simple keyword matching
+                if any(word in fact for word in query.split()):
+                    # Score by relevance
+                    score = sum(1 for word in query.split() if word in fact)
+                    results.append((score, m))
+            
+            results.sort(key=lambda x: x[0], reverse=True)
+            memories = [m for _, m in results[:10]]
+        
+        # Format output
+        formatted = []
+        for m in memories[:15]:
+            formatted.append({
+                "id": m.get("id"),
+                "category": m.get("category"),
+                "fact": m.get("fact"),
+                "importance": m.get("importance", "medium"),
+                "saved_on": m.get("created_at", "")[:10]
+            })
+        
+        return {"memories": formatted, "total": len(formatted)}
+    
+    def _tool_list_memories(self, params: dict) -> dict:
+        """List all memories"""
+        category = params.get("category", "all")
+        
+        memories = db.get("zane_memories", {"business_id": self.business_id})
+        if not memories:
+            return {"memories": [], "message": "No memories saved yet. I'll start remembering important things as we talk!"}
+        
+        memories = [m for m in memories if m.get("active", True)]
+        
+        if category and category != "all":
+            memories = [m for m in memories if m.get("category") == category]
+        
+        # Sort by date (newest first)
+        memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+        
+        # Group by category
+        grouped = {}
+        for m in memories:
+            cat = m.get("category", "other")
+            if cat not in grouped:
+                grouped[cat] = []
+            grouped[cat].append({
+                "id": m.get("id"),
+                "fact": m.get("fact"),
+                "importance": m.get("importance", "medium"),
+                "saved_on": m.get("created_at", "")[:10]
+            })
+        
+        return {"memories_by_category": grouped, "total": len(memories)}
+    
+    def _tool_forget_memory(self, params: dict) -> dict:
+        """Delete a memory"""
+        memory_id = params.get("memory_id", "")
+        if not memory_id:
+            return {"success": False, "error": "No memory ID provided"}
+        
+        ok = db.delete("zane_memories", memory_id, self.business_id)
+        if ok:
+            logger.info(f"[ZANE MEMORY] Deleted: {memory_id}")
+            return {"success": True, "message": f"Memory {memory_id} forgotten."}
+        else:
+            return {"success": False, "error": "Could not delete memory"}
+
 
 def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     """Build lean system prompt for tool-use Zane. ~2000 tokens, no data dumps."""
@@ -7009,6 +7182,32 @@ def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     user_name = context.get("user_name", "there")
     currency = context.get("currency", "ZAR")
     vat_rate = context.get("vat_rate", 15)
+    
+    # Load memories for this business
+    biz_id = context.get("business_id", "")
+    memories_text = ""
+    if biz_id:
+        try:
+            memories = db.get("zane_memories", {"business_id": biz_id})
+            if memories:
+                active = [m for m in memories if m.get("active", True)]
+                # Sort: high importance first, then by date
+                active.sort(key=lambda m: (0 if m.get("importance") == "high" else 1 if m.get("importance") == "medium" else 2, m.get("created_at", "")), reverse=False)
+                active.sort(key=lambda m: m.get("importance", "medium") == "high", reverse=True)
+                
+                # Take top 30 memories (keep prompt lean)
+                top = active[:30]
+                if top:
+                    memory_lines = []
+                    for m in top:
+                        cat_emoji = {"business_info": "🏢", "preference": "⭐", "decision": "✅", 
+                                     "person": "👤", "plan": "📋", "policy": "📏", 
+                                     "personal": "💭", "conversation": "💬"}.get(m.get("category", ""), "📝")
+                        date = m.get("created_at", "")[:10]
+                        memories_text += f"  {cat_emoji} [{date}] {m.get('fact', '')}\n"
+                    memories_text = f"\n## YOUR MEMORIES (things you've learned about this user/business)\n{memories_text}"
+        except Exception as e:
+            logger.error(f"[ZANE] Failed to load memories: {e}")
     
     stats = {
         "stock_count": context.get("stock_count", 0),
@@ -7102,6 +7301,14 @@ When in doubt about what the user wants:
 - Stock items: {stats['stock_count']} | Customers: {stats['customer_count']} | Suppliers: {stats['supplier_count']}
 - Total debtors: R{stats['total_debtors']:,.0f} | Total creditors: R{stats['total_creditors']:,.0f}
 - Today's sales: R{stats['today_sales']:,.0f} | Stock value (cost): R{stats['stock_value']:,.0f}
+{memories_text}
+## MEMORY INSTRUCTIONS
+- When you learn something NEW and IMPORTANT about the user or business, use save_memory to remember it
+- Save facts like: preferences, decisions, key people, plans, policies, personal context
+- DO NOT save data already in the database (sales figures, customer info, stock prices)
+- When the user references past conversations, use recall_memories to find context
+- Be proactive: if you notice the user mentions something important, save it without being asked
+- You can also save conversation context: "User asked about VAT registration on 14 Feb 2026"
 
 ## HOW YOU WORK
 You have TOOLS to look up data and knowledge. ALWAYS use them for DATA:
@@ -8227,7 +8434,7 @@ Once you have a customer, you can invoice! 📝"""
         system_prompt = build_zane_core_prompt(context, user_message)
         
         # Create tool handler connected to this business's data
-        tool_handler = ZaneToolHandler(db_instance=db, business_id=context.get("business_id"))
+        tool_handler = ZaneToolHandler(db_instance=db, business_id=context.get("business_id"), user_id=context.get("user_id", ""))
         
         logger.info(f"[BRAIN] Using TOOL-BASED mode for query")
         
