@@ -13699,7 +13699,7 @@ class ReportEngine:
         
         # Report-specific analysis prompts - AI NEVER calculates, only explains pre-calculated numbers
         analysis_prompts = {
-            "management": "Review the PRE-CALCULATED metrics below. Explain what they mean for the business: overall health, cash position, risks, opportunities, and what needs immediate attention. USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers.",
+            "management": "Review the PRE-CALCULATED metrics below. This is a YEAR-TO-DATE management statement showing cumulative performance from financial year start to current date. Cover: YTD revenue vs expenses, profitability trend, balance sheet health, cash position, debtors/creditors status, and key risks. USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers.",
             "kpi": "Review the PRE-CALCULATED KPIs below. Explain what each metric means: are debtor days healthy? Is stock turn good? How does gross margin look? USE ONLY THE NUMBERS PROVIDED - do not calculate anything yourself.",
             "sales": "Review the sales data below. Identify: top customers by value, any concerning patterns, and opportunities. USE ONLY THE NUMBERS PROVIDED - do not calculate totals or percentages yourself.",
             "debtor": "Review the debtor data below. Identify: which customers owe the most, who might be risky, and who to follow up with first. USE ONLY THE NUMBERS PROVIDED - do not calculate aging or totals yourself.",
@@ -32781,13 +32781,20 @@ def api_tb_analyze():
         source_file = data.get("source_file", "")
         company_name = data.get("company_name", "")
         
-        # If uploaded file, show source info in report title
-        if source_file and not company_name:
-            report_company = f"{biz_name} (from: {source_file})"
-        elif company_name:
-            report_company = company_name
+        # IMPORTANT: If a CSV was uploaded, it's ALWAYS a third-party client's data
+        # The user wouldn't upload their own TB - ClickAI generates that internally
+        # So NEVER use the logged-in business name for uploaded TBs
+        if source_file:
+            if company_name:
+                report_company = company_name
+            else:
+                # Use filename without extension as company hint
+                clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
+                report_company = f"Client TB ({clean_name})"
+            is_third_party = True
         else:
             report_company = biz_name
+            is_third_party = False
         
         logger.info(f"[TB ANALYZE] Language selected: {lang}")
         
@@ -33755,11 +33762,19 @@ def api_tb_analyze():
         # Build comprehensive prompt with ALL data - language based on user selection
         if lang == "af":
             # Afrikaans prompt
+            af_third_party = ""
+            if is_third_party:
+                af_third_party = f"""
+BELANGRIKE KONTEKS: Hierdie is 'n DERDE PARTY kliënt se proefbalans wat opgelaai is vir analise.
+Dit is NIE {biz_name} se eie data nie. MOENIE na {biz_name} verwys in jou analise nie.
+Analiseer dit as 'n onafhanklike kliënt se finansiële data.
+"""
             insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
 
 BESIGHEID: {safe_string(report_company)}
 INDUSTRIE: {industry}
 DATUM: {today()}
+{af_third_party}
 
 {accounts_text}
 
@@ -33844,11 +33859,20 @@ REËLS:
 - MOET NOOIT sê die rekeningplan is "fout" of "verkeerd geklassifiseer" nie"""
         else:
             # English prompt (default)
+            third_party_note = ""
+            if is_third_party:
+                third_party_note = f"""
+IMPORTANT CONTEXT: This is a THIRD-PARTY client's trial balance that was uploaded for analysis.
+This is NOT {biz_name}'s own data. Do NOT reference {biz_name} anywhere in your analysis.
+Analyze this as an independent client's financial data. If you see references to other companies
+(e.g., loans from/to other entities), these are the CLIENT's intercompany relationships, not related to {biz_name}.
+"""
             insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
 
 BUSINESS: {safe_string(report_company)}
 INDUSTRY: {industry}
 DATE: {today()}
+{third_party_note}
 
 {accounts_text}
 
@@ -36740,7 +36764,7 @@ def smart_reports_page():
         <div class="stats-grid">
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('management')">
                 <h4>Management Statement</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Full monthly overview with insights</p>
+                <p style="color:var(--text-muted);font-size:13px;">Year-to-date P&L, Balance Sheet & KPIs</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('kpi')">
                 <h4>KPI Dashboard</h4>
@@ -36762,6 +36786,16 @@ def smart_reports_page():
                 <h4>Cash Flow Forecast</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Next 30 days projection</p>
             </div>
+        </div>
+        
+        <h3 style="margin:30px 0 10px 0;">Analyze Client TB</h3>
+        <p style="color:var(--text-muted);margin-bottom:10px;">Upload a client's Trial Balance (CSV/Excel) for professional AI analysis:</p>
+        <div style="display:flex;gap:10px;align-items:center;">
+            <label class="btn btn-secondary" style="cursor:pointer;margin:0;">
+                📁 Upload Client TB
+                <input type="file" id="smartReportTBUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleSmartReportTB(this)">
+            </label>
+            <span id="smartReportTBStatus" style="color:var(--text-muted);font-size:13px;"></span>
         </div>
         
         <h3 style="margin:30px 0 10px 0;">Custom Report</h3>
@@ -36812,6 +36846,40 @@ def smart_reports_page():
         if (input) {
             await runReport('custom', input, 'Custom Report');
         }
+    }
+    
+    function handleSmartReportTB(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const status = document.getElementById('smartReportTBStatus');
+        status.textContent = 'Uploading ' + file.name + '...';
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        fetch('/api/reports/tb/upload', {
+            method: 'POST',
+            body: formData
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                status.textContent = '✅ ' + data.message;
+                // Store upload data and redirect to TB report page
+                sessionStorage.setItem('tb_upload_data', JSON.stringify(data));
+                setTimeout(() => {
+                    window.location.href = '/reports/tb?auto_analyze=1';
+                }, 500);
+            } else {
+                status.textContent = '❌ ' + (data.error || 'Upload failed');
+            }
+        })
+        .catch(e => {
+            status.textContent = '❌ Error uploading file';
+        });
+        
+        // Reset input so same file can be re-uploaded
+        input.value = '';
     }
     
     async function runReport(type, customRequest, title) {
