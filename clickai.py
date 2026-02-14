@@ -36852,33 +36852,62 @@ def smart_reports_page():
         const file = input.files[0];
         if (!file) return;
         const status = document.getElementById('smartReportTBStatus');
-        status.textContent = 'Uploading ' + file.name + '...';
+        status.textContent = '⏳ Uploading and parsing ' + file.name + '...';
         
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('lang', document.documentElement.lang || 'en');
         
-        fetch('/api/reports/tb/upload', {
+        // Step 1: Upload and parse the CSV
+        fetch('/api/reports/tb/upload-analyze', {
             method: 'POST',
             body: formData
         })
         .then(r => r.json())
-        .then(data => {
-            if (data.success) {
-                status.textContent = '✅ ' + data.message;
-                // Store upload data and redirect to TB report page
-                sessionStorage.setItem('tb_upload_data', JSON.stringify(data));
-                setTimeout(() => {
-                    window.location.href = '/reports/tb?auto_analyze=1';
-                }, 500);
+        .then(uploadData => {
+            if (!uploadData.success) {
+                status.textContent = '❌ ' + (uploadData.error || 'Upload failed');
+                return;
+            }
+            
+            status.textContent = '⏳ Parsed ' + uploadData.accounts.length + ' accounts. Generating report...';
+            
+            // Step 2: Analyze the parsed data
+            return fetch('/api/reports/tb/analyze', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    accounts: uploadData.accounts,
+                    total_debit: uploadData.total_debit,
+                    total_credit: uploadData.total_credit,
+                    is_balanced: uploadData.is_balanced,
+                    lang: document.documentElement.lang || 'en',
+                    source_file: file.name,
+                    company_name: '',
+                    tb_control_profit: uploadData.tb_control_profit || null
+                })
+            });
+        })
+        .then(r => { if (r) return r.json(); })
+        .then(reportData => {
+            if (!reportData) return;
+            
+            if (reportData.success) {
+                status.textContent = '✅ Report generated!';
+                // Show the report in the report output area
+                document.getElementById('reportLoading').style.display = 'none';
+                document.getElementById('reportOutput').style.display = 'block';
+                document.getElementById('reportTitle').textContent = 'Client TB Analysis: ' + file.name;
+                document.getElementById('reportContent').innerHTML = reportData.analysis || reportData.report_html || reportData.report || 'Report generated';
+                document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
             } else {
-                status.textContent = '❌ ' + (data.error || 'Upload failed');
+                status.textContent = '❌ ' + (reportData.error || 'Analysis failed');
             }
         })
         .catch(e => {
-            status.textContent = '❌ Error uploading file';
+            status.textContent = '❌ Error: ' + e.message;
         });
         
-        // Reset input so same file can be re-uploaded
         input.value = '';
     }
     
