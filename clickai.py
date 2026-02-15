@@ -30140,7 +30140,7 @@ def business_pulse():
     }}
     
     async function completeReminder(id) {{
-        await fetch('/api/assistant/complete', {{
+        await fetch('/api/assistant/toggle', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: id, type: 'reminder'}})
@@ -30149,7 +30149,7 @@ def business_pulse():
     }}
     
     async function completeTodo(id) {{
-        await fetch('/api/assistant/complete', {{
+        await fetch('/api/assistant/toggle', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: id, type: 'todo'}})
