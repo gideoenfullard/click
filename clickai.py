@@ -43341,6 +43341,38 @@ def smart_import_page():
                         </div>
                     </div>
                     
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">5</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Supplier Invoices (wat jy skuld)</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Reporting</strong> → <strong>Supplier Invoices</strong> → Set period → Export CSV<br>
+                            <em>Outstanding bills so you know what you still owe</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Supplier Invoices
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'supplier_invoices')">
+                            </label>
+                            <span class="sage-status" id="status-supplier_invoices" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">6</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Sales Invoices (wie skuld jou)</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Sales</strong> → <strong>Sales Invoices</strong> → Show 100 per page → Select all → Export CSV<br>
+                            <em>Outstanding invoices so you can chase payments</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Sales Invoices
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customer_invoices')">
+                            </label>
+                            <span class="sage-status" id="status-customer_invoices" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
                 </div>
                 
                 <!-- IMPORT ALL BUTTON -->
@@ -43495,7 +43527,7 @@ def smart_import_page():
         if (!types.length) return;
         
         // Use the existing smart-import flow for each file
-        const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance'];
+        const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance', 'supplier_invoices', 'customer_invoices'];
         const sorted = importOrder.filter(t => types.includes(t));
         
         // Hide sage guide, show processing
@@ -44018,14 +44050,167 @@ def api_smart_import_analyse():
         total_lines = len([l for l in lines if l.strip()])
         
         # ═══════════════════════════════════════════════════════════════════════
-        # SAGE PASTEL AUTO-DETECTION - Skip AI if we recognize the format
+        # SAGE AUTO-DETECTION - Skip AI if we recognize the format
+        # Handles: sep= prefix, title rows, all Sage export types
         # ═══════════════════════════════════════════════════════════════════════
         
-        header_line = lines[0] if lines else ""
+        # Step 1: Find the REAL header line (skip sep=, title rows like "Trial Balance Report")
+        header_line = ""
+        header_line_idx = 0
+        sage_preamble_rows = 0
+        for idx, line in enumerate(lines[:10]):
+            stripped = line.strip().strip('\r')
+            # Skip sep= lines
+            if stripped.lower().startswith('sep='):
+                sage_preamble_rows = idx + 1
+                continue
+            # Skip title-only rows (single cell, no commas with actual data)
+            if ',' not in stripped and stripped.startswith('"') and stripped.endswith('"'):
+                sage_preamble_rows = idx + 1
+                continue
+            # Skip empty lines
+            if not stripped:
+                sage_preamble_rows = idx + 1
+                continue
+            # This looks like a real header or data row
+            header_line = stripped
+            header_line_idx = idx
+            break
+        
+        if not header_line and lines:
+            header_line = lines[0].strip()
+        
+        logger.info(f"[SMART-IMPORT] Header detection: preamble_rows={sage_preamble_rows}, header='{header_line[:80]}...'")
+        
+        # Step 2: Detect specific Sage formats
         is_sage_customers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line
         is_sage_suppliers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line and 'supplier' in filename.lower()
         
-        if is_sage_customers or is_sage_suppliers:
+        # Sage Business Cloud ItemExport: Code,Description,Category,Price Excl.,Price Incl.,Avg Cost,Last Cost,Qty On Hand,Active
+        is_sage_stock = ('Code' in header_line and 'Description' in header_line and 'Price Excl' in header_line and 'Qty On Hand' in header_line)
+        # Also detect quoted variant
+        if not is_sage_stock:
+            is_sage_stock = ('"Code"' in header_line and '"Description"' in header_line and 'Price' in header_line)
+        
+        # Sage Trial Balance Report: "Name","Category","Source","Debit","Credit"
+        is_sage_tb = ('"Name"' in header_line and '"Category"' in header_line and '"Source"' in header_line and '"Debit"' in header_line and '"Credit"' in header_line)
+        
+        # Sage Supplier Invoices Report: "Date","Document No.","Supplier Inv. No.","Supplier","Due Date"
+        is_sage_supplier_invoices = ('"Document No."' in header_line and '"Supplier Inv. No."' in header_line and '"Supplier"' in header_line and '"Total Outstanding"' in header_line)
+        
+        # Sage Customer Invoices / Sales Invoices: "Date","Document No.","Customer","Due Date"
+        is_sage_customer_invoices = ('"Document No."' in header_line and ('"Customer"' in header_line or '"Customer Inv. No."' in header_line) and '"Total Outstanding"' in header_line)
+        
+        if is_sage_stock:
+            # ═══ SAGE STOCK / ITEM EXPORT ═══
+            logger.info(f"[SMART-IMPORT] Detected Sage ItemExport format")
+            
+            # Parse headers to find exact column indices
+            import csv as csv_mod
+            parsed_headers = list(csv_mod.reader([header_line]))[0]
+            col_map = {}
+            for i, h in enumerate(parsed_headers):
+                h_clean = h.strip().lower()
+                if h_clean == 'code': col_map[str(i)] = 'code'
+                elif h_clean == 'description': col_map[str(i)] = 'description'
+                elif h_clean == 'category': col_map[str(i)] = 'category'
+                elif 'price excl' in h_clean: col_map[str(i)] = 'selling_price'
+                elif 'price incl' in h_clean: col_map[str(i)] = 'selling_price_incl'
+                elif 'avg cost' in h_clean or 'average cost' in h_clean: col_map[str(i)] = 'cost_price'
+                elif 'last cost' in h_clean: col_map[str(i)] = 'last_cost'
+                elif 'qty on hand' in h_clean or 'quantity' in h_clean: col_map[str(i)] = 'qty'
+                elif h_clean == 'active': col_map[str(i)] = 'active'
+            
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "stock",
+                "data_type_label": "Stock / Inventory Items",
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": next((int(k) for k, v in col_map.items() if v == 'description'), 1),
+                "column_mapping": col_map,
+                "sage_preamble_rows": sage_preamble_rows
+            }
+        
+        elif is_sage_tb:
+            # ═══ SAGE TRIAL BALANCE ═══
+            logger.info(f"[SMART-IMPORT] Detected Sage Trial Balance Report format")
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "chart_of_accounts",
+                "data_type_label": "Trial Balance / Chart of Accounts",
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": 0,
+                "column_mapping": {
+                    "0": "account_name",   # "Name" - e.g. "3200/000 : Bank Charges"
+                    "1": "category",       # "Category" - e.g. "Expenses", "Sales", "Current Assets"
+                    "2": "source",         # "Source" - "System Account" or "Account Balance"
+                    "3": "debit",          # "Debit"
+                    "4": "credit"          # "Credit"
+                },
+                "sage_preamble_rows": sage_preamble_rows
+            }
+        
+        elif is_sage_supplier_invoices:
+            # ═══ SAGE SUPPLIER INVOICES REPORT ═══
+            logger.info(f"[SMART-IMPORT] Detected Sage Supplier Invoices Report format")
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "supplier_invoices",
+                "data_type_label": "Supplier Invoices (Purchases)",
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": 3,
+                "column_mapping": {
+                    "0": "date",               # "Date"
+                    "1": "document_no",        # "Document No."
+                    "2": "supplier_inv_no",    # "Supplier Inv. No."
+                    "3": "supplier",           # "Supplier" - e.g. "EPR001 : ELECT PROTECT..."
+                    "4": "due_date",           # "Due Date"
+                    "5": "anticipated_payment", # "Ant. Pmt."
+                    "6": "exclusive",          # "Exclusive" (excl VAT amount)
+                    "7": "vat",                # "VAT"
+                    "8": "total",              # "Total Purchases"
+                    "9": "outstanding"         # "Total Outstanding"
+                },
+                "sage_preamble_rows": sage_preamble_rows
+            }
+        
+        elif is_sage_customer_invoices:
+            # ═══ SAGE CUSTOMER INVOICES / SALES INVOICES ═══
+            logger.info(f"[SMART-IMPORT] Detected Sage Customer/Sales Invoices Report format")
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "customer_invoices",
+                "data_type_label": "Customer Invoices (Sales)",
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": 3,
+                "column_mapping": {
+                    "0": "date",
+                    "1": "document_no",
+                    "2": "customer_inv_no",
+                    "3": "customer",
+                    "4": "due_date",
+                    "5": "anticipated_payment",
+                    "6": "exclusive",
+                    "7": "vat",
+                    "8": "total",
+                    "9": "outstanding"
+                },
+                "sage_preamble_rows": sage_preamble_rows
+            }
+        
+        elif is_sage_customers or is_sage_suppliers:
             # HARDCODED SAGE PASTEL MAPPING - 100% reliable
             logger.info(f"[SMART-IMPORT] Detected Sage Pastel {'Suppliers' if is_sage_suppliers else 'Customers'} format")
             result = {
@@ -44224,7 +44409,8 @@ Return ONLY the JSON, nothing else."""
             # Fallback: check standard key fields
             if not key_value:
                 key_fields = {'customers': 'name', 'suppliers': 'name', 'stock': 'description',
-                              'chart_of_accounts': 'account_name', 'transactions': 'account_code'}
+                              'chart_of_accounts': 'account_name', 'transactions': 'account_code',
+                              'supplier_invoices': 'supplier', 'customer_invoices': 'customer'}
                 key = key_fields.get(data_type, 'name')
                 key_value = row_data.get(key) or row_data.get('name') or row_data.get('description') or row_data.get('code')
             
@@ -44264,6 +44450,35 @@ Return ONLY the JSON, nothing else."""
                         row_data['name'] = key_value or f"Record {i}"
                     elif data_type == 'stock':
                         row_data['description'] = key_value or row_data.get('code', f"Item {i}")
+                
+                # 5. Sage TB: Split "3200/000 : Bank Charges" into code + name, map category to account_type
+                if data_type == 'chart_of_accounts':
+                    acct_name = str(row_data.get('account_name', '')).strip()
+                    # Split "3200/000 : Bank Charges" format
+                    if ' : ' in acct_name:
+                        parts = acct_name.split(' : ', 1)
+                        row_data['account_code'] = parts[0].strip()
+                        row_data['account_name'] = parts[1].strip()
+                    
+                    # Map Sage categories to account types
+                    cat = str(row_data.get('category', '')).strip().lower()
+                    cat_map = {
+                        'sales': 'income', 'other income': 'income', 'discount received': 'income',
+                        'cost of sales': 'cost_of_sales', 'expenses': 'expense',
+                        'current assets': 'asset', 'non-current assets': 'asset',
+                        'current liabilities': 'liability', 'non-current liabilities': 'liability',
+                        'owners equity': 'equity', "owner's equity": 'equity'
+                    }
+                    row_data['account_type'] = cat_map.get(cat, 'expense')
+                    
+                    # Skip "System Account" summary rows (keep only "Account Balance" detail rows)
+                    source = str(row_data.get('source', '')).strip()
+                    if source == 'System Account':
+                        continue  # Skip totals, only import individual accounts
+                    
+                    # Skip empty/total rows (last row has no name, just totals)
+                    if not row_data.get('account_name'):
+                        continue
                 
                 all_data.append(row_data)
                 if len(preview_data) < 5:
@@ -44313,7 +44528,7 @@ def api_smart_import_batch():
     try:
         data = request.get_json()
         data_type = data.get("data_type")
-        records = data.get("records", [])
+        records = data.get("records", []) or data.get("all_data", [])
         
         if not records:
             return jsonify({"success": False, "error": "No records to import"})
@@ -44405,16 +44620,139 @@ def api_smart_import_batch():
                     if not name:
                         status = "skipped"
                     else:
+                        # Sage TB: account_name already split from "3200/000 : Bank Charges"
+                        acct_code = str(row.get("account_code", "")).strip()
+                        acct_type = str(row.get("account_type", "expense")).strip().lower()
+                        
+                        # Calculate opening balance from debit/credit
+                        debit = float(row.get("debit", 0) or 0)
+                        credit = float(row.get("credit", 0) or 0)
+                        opening_balance = debit - credit  # Positive = debit balance, Negative = credit balance
+                        
+                        # Check if account already exists (by code or name)
+                        existing = None
+                        if acct_code:
+                            existing = db.get("chart_of_accounts", {"business_id": biz_id, "account_code": acct_code})
+                        if not existing:
+                            existing = db.get("chart_of_accounts", {"business_id": biz_id, "account_name": name})
+                        
+                        if existing:
+                            status = "skipped"
+                            error_msg = "Already exists"
+                        else:
+                            record = {
+                                "id": generate_id(),
+                                "business_id": biz_id,
+                                "account_name": name,
+                                "account_code": acct_code,
+                                "account_type": acct_type,
+                                "category": str(row.get("category", "")).strip(),
+                                "opening_balance": opening_balance,
+                                "debit": debit,
+                                "credit": credit,
+                                "is_active": True,
+                                "created_at": now()
+                            }
+                            success, resp = db.save("chart_of_accounts", record)
+                            if success:
+                                status = "imported"
+                            else:
+                                status = "error"
+                                error_msg = str(resp)[:50]
+                
+                elif data_type == "supplier_invoices":
+                    # Sage Supplier Invoices - import as bills/purchases
+                    supplier_raw = str(row.get("supplier", "")).strip()
+                    supplier_code = ""
+                    supplier_name = supplier_raw
+                    # Sage format: "EPR001 : ELECT PROTECT RESPONSE (PTY) LTD"
+                    if " : " in supplier_raw:
+                        parts = supplier_raw.split(" : ", 1)
+                        supplier_code = parts[0].strip()
+                        supplier_name = parts[1].strip()
+                    
+                    name = supplier_name
+                    doc_no = str(row.get("document_no", "")).strip()
+                    supplier_inv = str(row.get("supplier_inv_no", "")).strip()
+                    outstanding = float(row.get("outstanding", 0) or 0)
+                    
+                    if not supplier_name or supplier_name.lower().startswith("grand total"):
+                        status = "skipped"
+                        error_msg = "Skip row"
+                    elif outstanding == 0:
+                        status = "skipped"
+                        error_msg = "Already paid"
+                    else:
                         record = {
                             "id": generate_id(),
                             "business_id": biz_id,
-                            "account_name": name,
-                            "account_code": str(row.get("account_code", "")).strip(),
-                            "account_type": str(row.get("account_type", "expense")).strip().lower(),
-                            "is_active": True,
+                            "supplier_name": supplier_name,
+                            "supplier_code": supplier_code,
+                            "invoice_number": supplier_inv or doc_no,
+                            "sage_doc_no": doc_no,
+                            "date": str(row.get("date", "")).strip(),
+                            "due_date": str(row.get("due_date", "")).strip(),
+                            "amount_excl": float(row.get("exclusive", 0) or 0),
+                            "vat_amount": float(row.get("vat", 0) or 0),
+                            "amount_incl": float(row.get("total", 0) or 0),
+                            "amount_outstanding": outstanding,
+                            "status": "outstanding",
+                            "source": "sage_import",
                             "created_at": now()
                         }
-                        success, resp = db.save("chart_of_accounts", record)
+                        existing_supplier = db.get("suppliers", {"business_id": biz_id, "name": supplier_name})
+                        if existing_supplier:
+                            record["supplier_id"] = existing_supplier.get("id")
+                        
+                        success, resp = db.save("bills", record)
+                        if success:
+                            status = "imported"
+                        else:
+                            status = "error"
+                            error_msg = str(resp)[:50]
+                
+                elif data_type == "customer_invoices":
+                    # Sage Customer Invoices - import as sales invoices
+                    customer_raw = str(row.get("customer", "")).strip()
+                    customer_code = ""
+                    customer_name = customer_raw
+                    if " : " in customer_raw:
+                        parts = customer_raw.split(" : ", 1)
+                        customer_code = parts[0].strip()
+                        customer_name = parts[1].strip()
+                    
+                    name = customer_name
+                    doc_no = str(row.get("document_no", "")).strip()
+                    outstanding = float(row.get("outstanding", 0) or 0)
+                    
+                    if not customer_name or customer_name.lower().startswith("grand total"):
+                        status = "skipped"
+                        error_msg = "Skip row"
+                    elif outstanding == 0:
+                        status = "skipped"
+                        error_msg = "Already paid"
+                    else:
+                        record = {
+                            "id": generate_id(),
+                            "business_id": biz_id,
+                            "customer_name": customer_name,
+                            "customer_code": customer_code,
+                            "invoice_number": doc_no,
+                            "date": str(row.get("date", "")).strip(),
+                            "due_date": str(row.get("due_date", "")).strip(),
+                            "amount_excl": float(row.get("exclusive", 0) or 0),
+                            "vat_amount": float(row.get("vat", 0) or 0),
+                            "amount_incl": float(row.get("total", 0) or 0),
+                            "amount_outstanding": outstanding,
+                            "status": "outstanding",
+                            "source": "sage_import",
+                            "created_at": now()
+                        }
+                        existing_customer = db.get("customers", {"business_id": biz_id, "name": customer_name})
+                        if existing_customer:
+                            record["customer_id"] = existing_customer.get("id")
+                        
+                        success, resp = db.save("invoices", record)
                         if success:
                             status = "imported"
                         else:
@@ -44457,7 +44795,8 @@ def api_smart_import_batch():
                 "error": error_msg
             })
         
-        return jsonify({"success": True, "results": results})
+        imported_count = sum(1 for r in results if r.get("status") == "imported")
+        return jsonify({"success": True, "results": results, "imported": imported_count, "total_imported": imported_count})
         
     except Exception as e:
         import traceback
