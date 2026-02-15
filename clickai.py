@@ -30785,15 +30785,30 @@ def api_assistant_items():
         reminder_items = []
         for r in pending_reminders[:25]:
             due = r.get("due_date", "")
+            due_time = r.get("due_time", "")
             is_overdue = due < today_str if due else False
             is_today = due == today_str
+            
+            # Build display string for due date
+            if is_overdue:
+                due_display = f"Due {due}" + (f" {due_time}" if due_time else "")
+            elif is_today:
+                due_display = f"Today" + (f" {due_time}" if due_time else "")
+            elif due:
+                due_display = f"Due {due}" + (f" {due_time}" if due_time else "")
+            else:
+                due_display = "No due date"
+            
             reminder_items.append({
                 "id": r.get("id", ""),
+                "title": r.get("message", r.get("title", "Reminder")),
                 "message": r.get("message", ""),
                 "due_date": due,
-                "due_time": r.get("due_time", ""),
+                "due_time": due_time,
+                "due_display": due_display,
                 "priority": r.get("priority", "normal"),
                 "linked_to": r.get("linked_to", ""),
+                "is_overdue": is_overdue,
                 "overdue": is_overdue,
                 "today": is_today
             })
@@ -30808,6 +30823,7 @@ def api_assistant_items():
         for t in pending_todos[:25]:
             todo_items.append({
                 "id": t.get("id", ""),
+                "title": t.get("task", t.get("title", "To-do")),
                 "task": t.get("task", ""),
                 "priority": t.get("priority", "normal"),
                 "category": t.get("category", "general")
