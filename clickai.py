@@ -7349,7 +7349,7 @@ When a user asks about stock, prices, products, items, inventory, or what's in s
 → Tell them to click on Stock in the menu, or click any item to see its full history
 → Use NAVIGATE action with url "/stock" 
 → Example: "Kyk gerus op die Stock bladsy - klik op enige item om sy volle geskiedenis, pryse en bewegings te sien!"
-→ For a specific item: "Gaan na Stock en soek '{item_name}' - klik op die ry om alles te sien."
+→ For a specific item: "Gaan na Stock en soek 'the item' - klik op die ry om alles te sien."
 This is FASTER and more accurate than me searching through thousands of items.
 
 For REMINDERS, NOTES & TO-DOS:
@@ -13573,7 +13573,23 @@ PROBLEMS:
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
         # Professional prompt with structure - ENGLISH - STAFF ACCOUNTABILITY FOCUSED
+        
+        # Load Zane memories for business context
+        memories_context = ""
+        if business_id:
+            try:
+                memories = db.get("zane_memories", {"business_id": business_id})
+                if memories:
+                    mem_list = memories if isinstance(memories, list) else [memories]
+                    important = [m for m in mem_list if m.get("importance") == "high" and m.get("active", True)]
+                    if important:
+                        mem_lines = [m.get("fact", "") for m in important[:10]]
+                        memories_context = "\n\nBUSINESS CONTEXT (from previous conversations):\n" + "\n".join(f"- {l}" for l in mem_lines if l)
+            except:
+                pass
+        
         prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
+{memories_context}
 
 Write an insightful business summary for the owner about the last {days} day(s). The owner uses this to monitor staff performance in real-time.
 
@@ -13606,7 +13622,7 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-haiku-4-5-20251001",
-                    max_tokens=600,
+                    max_tokens=900,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 if message.content:
@@ -17085,6 +17101,10 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     """Render a full page - FAST: uses session cache, minimal DB calls"""
     _t("render_start")
     
+    # Check for ?onboard=1 force flag on any page
+    if request.args.get("onboard") == "1":
+        session["force_onboard"] = True
+    
     # Get current business - FROM SESSION (no DB call!)
     business = None
     businesses = []
@@ -19295,6 +19315,12 @@ def api_zane_onboard_status():
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
+    
+    # Allow force onboarding via session flag (set by ?onboard=1 on any page)
+    force = session.get("force_onboard", False)
+    if force:
+        session.pop("force_onboard", None)
+        return jsonify({"needs_onboarding": True, "forced": True})
     
     if not biz_id:
         return jsonify({"needs_onboarding": False})
