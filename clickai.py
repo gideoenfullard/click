@@ -33852,6 +33852,13 @@ Gee TEN MINSTE 5 konkrete aksies met prioriteite (DRINGEND / BELANGRIK / MONITOR
 **6. VRAE VIR DIE KLIËNT**
 Lys 3-5 vrae wat jy sou vra.
 
+FORMAAT INSTRUKSIES:
+- Skryf SKOON HTML (geen markdown nie). Gebruik <h2>, <h3> vir opskrifte.
+- Vir tabelle: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Kolom</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Waarde</td></tr></table>
+- Vir kleur indicators: <span style="color:#ef4444;">✗ Sleg</span> of <span style="color:#10b981;">✓ Goed</span> of <span style="color:#f59e0b;">⚠ Waarskuwing</span>
+- ELKE tabel sel MOET inhoud hê - moet NOOIT leë selle los nie
+- Voltooi ALLE afdelings volledig - moenie halfpad stop nie
+
 REËLS:
 - Verwys na SPESIFIEKE rekeninge by naam en kode
 - Wees SPESIFIEK oor bedrae en persentasies
@@ -33952,6 +33959,14 @@ Give AT LEAST 5 concrete actions with priority (URGENT / IMPORTANT / MONITOR)
 **6. QUESTIONS FOR THE CLIENT**
 List 3-5 questions you would ask the business owner.
 
+FORMAT INSTRUCTIONS:
+- Output CLEAN HTML only (no markdown). Use <h2>, <h3> for headings.
+- For tables use: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Column</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Value</td></tr></table>
+- For colored indicators use: <span style="color:#ef4444;">✗ Bad</span> or <span style="color:#10b981;">✓ Good</span> or <span style="color:#f59e0b;">⚠ Warning</span>
+- For section boxes use: <div style="padding:15px;background:rgba(99,102,241,0.1);border-radius:8px;margin:10px 0;">content</div>
+- EVERY table cell MUST have content - never leave cells empty
+- Complete ALL sections fully - do not stop halfway through a section
+
 RULES:
 - Refer to SPECIFIC accounts by name and code
 - Do NOT be generic - be SPECIFIC about amounts and percentages
@@ -33965,11 +33980,17 @@ RULES:
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-sonnet-4-5-20250929",
-                    max_tokens=3000,
+                    max_tokens=8000,
                     messages=[{"role": "user", "content": insights_prompt}]
                 )
                 if message.content and message.content[0].text:
                     insights_html = message.content[0].text
+                    
+                    # Check if report was truncated
+                    if hasattr(message, 'stop_reason') and message.stop_reason == 'max_tokens':
+                        logger.warning(f"[TB ANALYZE] Report was TRUNCATED (hit max_tokens limit)")
+                        insights_html += '<div style="margin-top:20px;padding:12px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:8px;color:#f59e0b;font-size:13px;">⚠️ Report was truncated due to length. The analysis above covers the main findings.</div>'
+                    
                     # Basic markdown to HTML
                     insights_html = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
                     insights_html = re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=re.MULTILINE)
@@ -34637,7 +34658,7 @@ FORMAT RULES - OUTPUT CLEAN HTML:
         
         message = _anthropic_client.messages.create(
             model="claude-sonnet-4-5-20250929",
-            max_tokens=3000,
+            max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
         )
