@@ -17824,21 +17824,16 @@ def get_zane_chat() -> str:
             <button class="zane-chat-close" onclick="toggleZaneChat()">×</button>
         </div>
         <div class="zane-chat-body" id="zaneChatBody">
-            <div class="zane-msg zane">Welcome. I'm Zane, your business assistant. I can help with:
-
-• <b>Stock:</b> "Do we have M16 bolts?"
-• <b>Invoices:</b> "Invoice ABC Traders for R5000"
-• <b>Reports:</b> "Show me today's sales"
-• <b>Reminders:</b> "Remind me Friday to follow up"
-• <b>System help:</b> "How do I create a quote?"
-• <b>🎤 Voice:</b> Tap mic to talk, hold mic for hands-free mode
-
-How can I assist you?</div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
+            <div class="zane-msg zane" id="zaneWelcome">Loading...</div>
+            <div id="zaneQuickBtns" style="display:none;flex-wrap:wrap;gap:8px;margin-top:10px;">
                 <button onclick="quickZane('Who owes us the most?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Top debtors</button>
                 <button onclick="quickZane('Show me low stock')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Low stock</button>
                 <button onclick="quickZane('What did we sell today?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Today's sales</button>
                 <button onclick="quickZane('Show my reminders and to-do list')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">📋 My list</button>
+            </div>
+            <!-- Onboarding Questions (hidden by default) -->
+            <div id="zaneOnboarding" style="display:none;margin-top:10px;">
+                <div id="onboardStep" style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);border-radius:10px;padding:12px;"></div>
             </div>
         </div>
         <div class="voice-mode-banner" id="voiceModeBanner">
@@ -18280,8 +18275,206 @@ How can I assist you?</div>
         
         if (isOpen) {
             document.getElementById('zaneInput').focus();
+            // Check onboarding on first open
+            if (!window._zaneOnboardChecked) {
+                window._zaneOnboardChecked = true;
+                checkZaneOnboarding();
+            }
         }
     }
+    
+    // ═══ ZANE ONBOARDING / SETUP WIZARD ═══
+    const onboardQuestions = [
+        {
+            id: 'industry',
+            q: 'What type of business do you run?',
+            type: 'buttons',
+            options: ['Retail / Shop', 'Hardware / Building', 'Manufacturing', 'Services / Professional', 'Restaurant / Food', 'Wholesale / Distribution', 'Construction', 'Transport / Logistics', 'Other'],
+            memory: 'Business type/industry: {val}'
+        },
+        {
+            id: 'products',
+            q: 'In a few words - what do you sell or do?',
+            type: 'text',
+            placeholder: 'e.g. stainless steel, workwear, plumbing supplies...',
+            memory: 'Main products/services: {val}'
+        },
+        {
+            id: 'size',
+            q: 'How many people work in the business?',
+            type: 'buttons',
+            options: ['Just me', '2-5', '6-15', '16-50', '50+'],
+            memory: 'Business size: {val} employees'
+        },
+        {
+            id: 'turnover',
+            q: 'Roughly what is your monthly turnover?',
+            type: 'buttons',
+            options: ['Under R50k', 'R50k-200k', 'R200k-500k', 'R500k-1M', 'R1M+'],
+            memory: 'Monthly turnover approximately: {val}'
+        },
+        {
+            id: 'vat',
+            q: 'Are you VAT registered?',
+            type: 'buttons',
+            options: ['Yes', 'No', 'Not sure'],
+            memory: 'VAT registered: {val}'
+        },
+        {
+            id: 'pain',
+            q: 'What is your BIGGEST frustration with your current bookkeeping?',
+            type: 'text',
+            placeholder: 'e.g. invoicing takes too long, cant track stock...',
+            memory: 'Main business pain point: {val}'
+        },
+        {
+            id: 'goals',
+            q: 'What do you most want ClickAI to help with?',
+            type: 'buttons',
+            options: ['Invoicing & Quotes', 'Stock Control', 'Financials & Reports', 'Payroll', 'Everything!'],
+            memory: 'Primary goal with ClickAI: {val}'
+        }
+    ];
+    
+    let onboardStep = 0;
+    let onboardAnswers = {};
+    
+    async function checkZaneOnboarding() {
+        try {
+            const resp = await fetch('/api/zane/onboard-status');
+            const data = await resp.json();
+            
+            const welcome = document.getElementById('zaneWelcome');
+            const quickBtns = document.getElementById('zaneQuickBtns');
+            const onboarding = document.getElementById('zaneOnboarding');
+            
+            if (data.needs_onboarding) {
+                // Show onboarding
+                welcome.innerHTML = "Hey! 👋 I'm <b>Zane</b>, your AI bookkeeper and business advisor.<br><br>Before we start, let me get to know your business — takes 2 minutes and makes me 10x smarter for you.";
+                onboarding.style.display = 'block';
+                quickBtns.style.display = 'none';
+                showOnboardStep(0);
+            } else {
+                // Normal welcome
+                welcome.innerHTML = "Welcome back. I'm Zane, your business advisor. Ask me anything — finances, invoices, stock, tax, or just how the business is doing.";
+                quickBtns.style.display = 'flex';
+                onboarding.style.display = 'none';
+            }
+        } catch(e) {
+            // Fallback to normal welcome
+            document.getElementById('zaneWelcome').innerHTML = "Welcome. I'm Zane, your business assistant. How can I help?";
+            document.getElementById('zaneQuickBtns').style.display = 'flex';
+        }
+    }
+    
+    function showOnboardStep(step) {
+        if (step >= onboardQuestions.length) {
+            finishOnboarding();
+            return;
+        }
+        
+        onboardStep = step;
+        const q = onboardQuestions[step];
+        const container = document.getElementById('onboardStep');
+        const progress = Math.round(((step) / onboardQuestions.length) * 100);
+        
+        let html = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:11px;color:var(--text-muted);">Step ${step+1} of ${onboardQuestions.length}</span>
+            <span style="font-size:11px;color:var(--primary);">${progress}%</span>
+        </div>
+        <div style="background:var(--border);border-radius:4px;height:4px;margin-bottom:12px;overflow:hidden;">
+            <div style="background:var(--primary);height:100%;width:${progress}%;transition:width 0.3s;"></div>
+        </div>
+        <div style="font-size:14px;font-weight:500;margin-bottom:10px;">${q.q}</div>`;
+        
+        if (q.type === 'buttons') {
+            html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+            for (const opt of q.options) {
+                html += `<button onclick="answerOnboard('${q.id}','${opt.replace(/'/g,"\\'")}')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;transition:all 0.15s;"
+                onmouseover="this.style.background='var(--primary)';this.style.color='white'" 
+                onmouseout="this.style.background='transparent';this.style.color='var(--primary)'">${opt}</button>`;
+            }
+            html += '</div>';
+        } else {
+            html += `<div style="display:flex;gap:6px;">
+                <input type="text" id="onboardInput" placeholder="${q.placeholder || ''}" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;" onkeypress="if(event.key==='Enter'){answerOnboard('${q.id}',this.value)}">
+                <button onclick="answerOnboard('${q.id}',document.getElementById('onboardInput').value)" style="padding:8px 14px;border-radius:6px;border:none;background:var(--primary);color:white;cursor:pointer;font-size:13px;">→</button>
+            </div>`;
+        }
+        
+        // Skip button
+        html += `<div style="text-align:right;margin-top:8px;">
+            <button onclick="answerOnboard('${q.id}','skip')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;">Skip →</button>
+        </div>`;
+        
+        container.innerHTML = html;
+        
+        // Focus text input
+        if (q.type === 'text') {
+            setTimeout(() => { const inp = document.getElementById('onboardInput'); if(inp) inp.focus(); }, 100);
+        }
+    }
+    
+    async function answerOnboard(id, value) {
+        if (!value || value === 'skip') {
+            showOnboardStep(onboardStep + 1);
+            return;
+        }
+        
+        onboardAnswers[id] = value;
+        
+        // Save this answer as a memory immediately
+        const q = onboardQuestions.find(q => q.id === id);
+        if (q && q.memory) {
+            const memoryText = q.memory.replace('{val}', value);
+            try {
+                fetch('/api/zane/onboard-save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({fact: memoryText, category: 'business_info', importance: 'high'})
+                });
+            } catch(e) {}
+        }
+        
+        // Show brief acknowledgment
+        const body = document.getElementById('zaneChatBody');
+        const ack = document.createElement('div');
+        ack.className = 'zane-msg user';
+        ack.textContent = value;
+        body.insertBefore(ack, document.getElementById('zaneOnboarding'));
+        
+        showOnboardStep(onboardStep + 1);
+        body.scrollTop = body.scrollHeight;
+    }
+    
+    async function finishOnboarding() {
+        const container = document.getElementById('onboardStep');
+        container.innerHTML = `<div style="text-align:center;padding:10px;">
+            <div style="font-size:28px;margin-bottom:8px;">🚀</div>
+            <div style="font-weight:600;margin-bottom:4px;">Setup Complete!</div>
+            <div style="font-size:12px;color:var(--text-muted);">I now know your business. Ask me anything.</div>
+        </div>`;
+        
+        // Mark onboarding done
+        try {
+            await fetch('/api/zane/onboard-complete', {method: 'POST'});
+        } catch(e) {}
+        
+        // After 2 seconds, switch to normal mode
+        setTimeout(() => {
+            document.getElementById('zaneOnboarding').style.display = 'none';
+            document.getElementById('zaneQuickBtns').style.display = 'flex';
+            document.getElementById('zaneWelcome').innerHTML = "I know your business now. Let's get to work — ask me anything about your finances, customers, stock, or tax.";
+        }, 2000);
+    }
+    
+    // Auto-check onboarding when chat is already open on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        if (localStorage.getItem('zane_chat_open') === 'true') {
+            window._zaneOnboardChecked = true;
+            setTimeout(checkZaneOnboarding, 500);
+        }
+    });
     
     async function sendZaneMsg() {
         const input = document.getElementById('zaneInput');
@@ -19089,6 +19282,123 @@ def api_ai():
     except Exception as e:
         logger.error(f"[AI] Error: {e}")
         return jsonify({"error": str(e), "response": f"Sorry, something went wrong: {str(e)}"})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZANE ONBOARDING - First-time setup to make Zane smart from day 1
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/zane/onboard-status")
+@login_required
+def api_zane_onboard_status():
+    """Check if this business needs onboarding"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"needs_onboarding": False})
+    
+    try:
+        # Check if onboarding was completed (stored as a zane_memory)
+        memories = db.get("zane_memories", {"business_id": biz_id, "category": "business_info"})
+        if memories:
+            # If we have 3+ business_info memories, onboarding is done
+            if isinstance(memories, list) and len(memories) >= 3:
+                return jsonify({"needs_onboarding": False})
+            elif isinstance(memories, dict):
+                return jsonify({"needs_onboarding": False})
+        
+        # Also check if we have enough data already (stock, customers)
+        stock_count = 0
+        customer_count = 0
+        try:
+            stocks = db.get("stock_items", {"business_id": biz_id})
+            stock_count = len(stocks) if isinstance(stocks, list) else (1 if stocks else 0)
+            customers = db.get("customers", {"business_id": biz_id})
+            customer_count = len(customers) if isinstance(customers, list) else (1 if customers else 0)
+        except:
+            pass
+        
+        # If business has lots of data already, probably doesn't need onboarding
+        if stock_count > 50 and customer_count > 20:
+            return jsonify({"needs_onboarding": False, "reason": "has_data"})
+        
+        return jsonify({"needs_onboarding": True})
+    except Exception as e:
+        logger.error(f"[ZANE ONBOARD] Status check error: {e}")
+        return jsonify({"needs_onboarding": False})
+
+
+@app.route("/api/zane/onboard-save", methods=["POST"])
+@login_required
+def api_zane_onboard_save():
+    """Save an onboarding answer as a Zane memory"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False})
+    
+    try:
+        data = request.get_json()
+        fact = data.get("fact", "").strip()
+        category = data.get("category", "business_info")
+        importance = data.get("importance", "high")
+        
+        if not fact:
+            return jsonify({"success": False})
+        
+        record = {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "user_id": user.get("id", ""),
+            "fact": fact,
+            "category": category,
+            "importance": importance,
+            "source": "onboarding",
+            "active": True,
+            "created_at": now()
+        }
+        
+        success, resp = db.save("zane_memories", record)
+        logger.info(f"[ZANE ONBOARD] Saved memory: {fact[:60]}... success={success}")
+        return jsonify({"success": success})
+    except Exception as e:
+        logger.error(f"[ZANE ONBOARD] Save error: {e}")
+        return jsonify({"success": False})
+
+
+@app.route("/api/zane/onboard-complete", methods=["POST"])
+@login_required
+def api_zane_onboard_complete():
+    """Mark onboarding as complete"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False})
+    
+    try:
+        record = {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "user_id": user.get("id", ""),
+            "fact": f"Onboarding completed on {today()}. Zane is fully configured for this business.",
+            "category": "business_info",
+            "importance": "high",
+            "source": "onboarding",
+            "active": True,
+            "created_at": now()
+        }
+        db.save("zane_memories", record)
+        logger.info(f"[ZANE ONBOARD] Onboarding completed for business {biz_id}")
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"[ZANE ONBOARD] Complete error: {e}")
+        return jsonify({"success": False})
 
 
 @app.route("/api/report", methods=["POST"])
