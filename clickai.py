@@ -2301,29 +2301,63 @@ class DB:
     def update_stock(self, stock_id: str, updates: dict, biz_id: str = None):
         """Update stock item - handles column name differences between tables.
         stock_items uses 'quantity', stock table may use 'qty'.
-        Supabase rejects entire PATCH if ANY column doesn't exist (PGRST204)."""
+        Supabase rejects entire PATCH if ANY column doesn't exist (PGRST204).
         
-        new_qty = updates.get("quantity") or updates.get("qty")
+        IMPORTANT: Only sends qty fields if they were explicitly in updates.
+        This prevents wiping quantity when updating price/description/etc.
+        """
         
-        # Try stock_items with 'quantity' only
-        result = self.update("stock_items", stock_id, {"quantity": new_qty}, biz_id)
+        # Determine if this update includes a quantity change
+        has_qty = "quantity" in updates or "qty" in updates
+        
+        if has_qty:
+            # Extract qty value - use 'quantity' first, fall back to 'qty', handle 0 correctly
+            new_qty = updates.get("quantity") if updates.get("quantity") is not None else updates.get("qty")
+            if new_qty is None:
+                new_qty = 0
+        
+        # Build field dict for stock_items table (uses 'quantity' column)
+        stock_items_fields = {}
+        stock_legacy_fields = {}
+        
+        if has_qty:
+            stock_items_fields["quantity"] = new_qty
+            stock_legacy_fields["qty"] = new_qty
+        
+        # Pass through non-qty fields (selling_price, cost_price, description, etc.)
+        skip_fields = {"qty", "quantity"}
+        for k, v in updates.items():
+            if k not in skip_fields:
+                stock_items_fields[k] = v
+                stock_legacy_fields[k] = v
+        
+        if not stock_items_fields:
+            logger.warning(f"[STOCK UPDATE] No fields to update for {stock_id}")
+            return False
+        
+        # Try stock_items first (newer table)
+        result = self.update("stock_items", stock_id, stock_items_fields, biz_id)
         if result:
-            logger.info(f"[STOCK UPDATE] stock_items {stock_id}: quantity={new_qty} OK")
+            logger.info(f"[STOCK UPDATE] stock_items {stock_id}: {stock_items_fields} OK")
             return True
         
-        # Try stock table with 'qty' only
-        result = self.update("stock", stock_id, {"qty": new_qty}, biz_id)
-        if result:
-            logger.info(f"[STOCK UPDATE] stock {stock_id}: qty={new_qty} OK")
-            return True
+        # Try stock table with 'qty' column name
+        if stock_legacy_fields:
+            result = self.update("stock", stock_id, stock_legacy_fields, biz_id)
+            if result:
+                logger.info(f"[STOCK UPDATE] stock {stock_id}: {stock_legacy_fields} OK")
+                return True
+            
+            # Try stock table with 'quantity' column name  
+            if has_qty:
+                stock_legacy_fields.pop("qty", None)
+                stock_legacy_fields["quantity"] = new_qty
+                result = self.update("stock", stock_id, stock_legacy_fields, biz_id)
+                if result:
+                    logger.info(f"[STOCK UPDATE] stock {stock_id}: {stock_legacy_fields} OK")
+                    return True
         
-        # Try stock table with 'quantity'
-        result = self.update("stock", stock_id, {"quantity": new_qty}, biz_id)
-        if result:
-            logger.info(f"[STOCK UPDATE] stock {stock_id}: quantity={new_qty} OK")
-            return True
-        
-        logger.error(f"[STOCK UPDATE] FAILED for {stock_id} - tried all tables/columns")
+        logger.error(f"[STOCK UPDATE] FAILED for {stock_id} - tried all tables/columns. Updates: {updates}")
         return False
     
     def save_stock(self, record: dict):
@@ -11262,6 +11296,15 @@ class Actions:
             new_qty = current_qty - quantity
             db.update_stock(item["id"], {"qty": new_qty, "quantity": new_qty}, biz_id)
             logger.info(f"[ZANE SALE] Stock {item.get('code')}: {current_qty} - {quantity} = {new_qty}")
+            
+            # Log stock movement
+            try:
+                db.save("stock_movements", RecordFactory.stock_movement(
+                    business_id=biz_id, stock_id=item["id"], movement_type="out",
+                    quantity=quantity, reference=f"Zane Sale {sale_id[:8]}"
+                ))
+            except Exception as sm_err:
+                logger.error(f"[ZANE SALE] Stock movement save failed: {sm_err}")
             
             # Update customer balance if account sale
             if customer and payment_method == "account":
@@ -27611,7 +27654,8 @@ def delivery_note_new():
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
                                     quantity=sold_qty, reference=f"GRN {dn_num}"
                                 ))
-                            except: pass
+                            except Exception as sm_err:
+                                logger.error(f"[GRN] Stock movement save FAILED: {sm_err}")
             
             return redirect(f"/delivery-note/{dn_id}")
         
@@ -42697,7 +42741,8 @@ def api_pos_sale():
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
                                     quantity=qty_sold, reference=f"POS Sale {sale_num}"
                                 ))
-                            except: pass
+                            except Exception as sm_err:
+                                logger.error(f"[POS] Stock movement save FAILED for {stock_id}: {sm_err} - check stock_movements table exists in Supabase")
                     else:
                         logger.warning(f"[POS DEBUG] Skipping stock update - qty_sold is 0")
                     
@@ -43160,7 +43205,8 @@ def api_pos_invoice():
                             business_id=biz_id, stock_id=stock_id, movement_type="out",
                             quantity=qty_sold, reference=f"Invoice {inv_num}"
                         ))
-                    except: pass
+                    except Exception as sm_err:
+                        logger.error(f"[POS INV] Stock movement save FAILED for {stock_id}: {sm_err} - check stock_movements table exists")
         
         # Update customer balance
         customer = db.get_one("customers", customer_id)
@@ -43325,7 +43371,8 @@ def api_pos_credit_note():
                             business_id=biz_id, stock_id=stock_id, movement_type="in",
                             quantity=qty_returned, reference=f"Credit Note {cn_num}"
                         ))
-                    except: pass
+                    except Exception as sm_err:
+                        logger.error(f"[POS CN] Stock movement save FAILED: {sm_err}")
         
         # Update customer balance (reduce it)
         customer = db.get_one("customers", customer_id)
