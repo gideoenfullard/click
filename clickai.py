@@ -3980,52 +3980,6 @@ ZANE_TOOLS = [
             "type": "object",
             "properties": {}
         }
-    },
-    {
-        "name": "save_memory",
-        "description": "Save an important fact, decision, preference, or context about the user or business for future reference. Use this whenever you learn something NEW and IMPORTANT that is NOT already stored in the database. Examples: user preferences ('Deon prefers Afrikaans reports'), business decisions ('decided to increase markup to 20%'), key people ('rekenmeester is Johan at ABC Accounting'), future plans ('wants to open a 4th store in March'), personal context ('wife birthday 15 March'). DO NOT save data that's already in the system (sales figures, customer balances, etc). Save the FACT, not the conversation.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "category": {"type": "string", "description": "Category of memory", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation"]},
-                "fact": {"type": "string", "description": "The fact to remember. Be concise but complete. Include dates where relevant. Max 200 chars."},
-                "importance": {"type": "string", "description": "How important is this?", "enum": ["high", "medium", "low"], "default": "medium"}
-            },
-            "required": ["category", "fact"]
-        }
-    },
-    {
-        "name": "recall_memories",
-        "description": "Search your memories for relevant context. Use this when you need background info about the user, their preferences, past decisions, or previous conversations. Also use when the user asks 'do you remember...', 'what did I say about...', 'het ek gesê...', or references something from a past conversation.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "What to search for in memories. Use keywords."},
-                "category": {"type": "string", "description": "Optional: filter by category", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation", "all"], "default": "all"}
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "list_memories",
-        "description": "List all saved memories, optionally filtered by category. Use when user asks 'what do you know about me?', 'wat onthou jy?', 'show me my memories', or wants to see/manage what Zane remembers.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "category": {"type": "string", "description": "Filter by category or 'all'", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation", "all"], "default": "all"}
-            }
-        }
-    },
-    {
-        "name": "forget_memory",
-        "description": "Delete a specific memory by its ID. Use when user asks to remove or forget something specific.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "memory_id": {"type": "string", "description": "The ID of the memory to delete"}
-            },
-            "required": ["memory_id"]
-        }
     }
 ]
 
@@ -5401,11 +5355,9 @@ System tracks remaining balance automatically
 class ZaneToolHandler:
     """Executes tool calls from Zane and returns results."""
     
-    def __init__(self, db_instance, business_id: str, user_id: str = ""):
+    def __init__(self, db_instance, business_id: str):
         self.db = db_instance
         self.biz_id = business_id
-        self.business_id = business_id  # For memory tools
-        self.user_id = user_id  # For memory tools
     
     def execute(self, tool_name: str, tool_input: dict) -> str:
         """Route tool call to handler, return JSON string result."""
@@ -7049,131 +7001,6 @@ class ZaneToolHandler:
             "biggest_expense_category": expenses.get("biggest_category", "Unknown")
         }
 
-    # ═══════════════════════════════════════════════════════════════
-    # MEMORY TOOLS - Zane remembers across conversations
-    # ═══════════════════════════════════════════════════════════════
-    
-    def _tool_save_memory(self, params: dict) -> dict:
-        """Save a memory to the database"""
-        category = params.get("category", "conversation")
-        fact = params.get("fact", "")
-        importance = params.get("importance", "medium")
-        
-        if not fact:
-            return {"success": False, "error": "No fact to save"}
-        
-        if len(fact) > 500:
-            fact = fact[:500]
-        
-        memory_id = str(uuid.uuid4())[:8]
-        record = {
-            "id": f"mem_{memory_id}",
-            "business_id": self.business_id,
-            "user_id": self.user_id,
-            "category": category,
-            "fact": fact,
-            "importance": importance,
-            "created_at": now(),
-            "active": True
-        }
-        
-        ok, result = db.save("zane_memories", record)
-        if ok:
-            logger.info(f"[ZANE MEMORY] Saved: [{category}] {fact[:80]}...")
-            return {"success": True, "message": f"Saved to memory: {fact[:100]}...", "id": record["id"]}
-        else:
-            logger.error(f"[ZANE MEMORY] Save failed: {result}")
-            return {"success": False, "error": "Could not save memory"}
-    
-    def _tool_recall_memories(self, params: dict) -> dict:
-        """Search memories by keyword"""
-        query = params.get("query", "").lower()
-        category = params.get("category", "all")
-        
-        # Get all memories for this business
-        memories = db.get("zane_memories", {"business_id": self.business_id})
-        if not memories:
-            return {"memories": [], "message": "No memories saved yet."}
-        
-        # Filter active only
-        memories = [m for m in memories if m.get("active", True)]
-        
-        # Filter by category
-        if category and category != "all":
-            memories = [m for m in memories if m.get("category") == category]
-        
-        # Search by keyword
-        if query:
-            results = []
-            for m in memories:
-                fact = m.get("fact", "").lower()
-                cat = m.get("category", "").lower()
-                # Simple keyword matching
-                if any(word in fact for word in query.split()):
-                    # Score by relevance
-                    score = sum(1 for word in query.split() if word in fact)
-                    results.append((score, m))
-            
-            results.sort(key=lambda x: x[0], reverse=True)
-            memories = [m for _, m in results[:10]]
-        
-        # Format output
-        formatted = []
-        for m in memories[:15]:
-            formatted.append({
-                "id": m.get("id"),
-                "category": m.get("category"),
-                "fact": m.get("fact"),
-                "importance": m.get("importance", "medium"),
-                "saved_on": m.get("created_at", "")[:10]
-            })
-        
-        return {"memories": formatted, "total": len(formatted)}
-    
-    def _tool_list_memories(self, params: dict) -> dict:
-        """List all memories"""
-        category = params.get("category", "all")
-        
-        memories = db.get("zane_memories", {"business_id": self.business_id})
-        if not memories:
-            return {"memories": [], "message": "No memories saved yet. I'll start remembering important things as we talk!"}
-        
-        memories = [m for m in memories if m.get("active", True)]
-        
-        if category and category != "all":
-            memories = [m for m in memories if m.get("category") == category]
-        
-        # Sort by date (newest first)
-        memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
-        
-        # Group by category
-        grouped = {}
-        for m in memories:
-            cat = m.get("category", "other")
-            if cat not in grouped:
-                grouped[cat] = []
-            grouped[cat].append({
-                "id": m.get("id"),
-                "fact": m.get("fact"),
-                "importance": m.get("importance", "medium"),
-                "saved_on": m.get("created_at", "")[:10]
-            })
-        
-        return {"memories_by_category": grouped, "total": len(memories)}
-    
-    def _tool_forget_memory(self, params: dict) -> dict:
-        """Delete a memory"""
-        memory_id = params.get("memory_id", "")
-        if not memory_id:
-            return {"success": False, "error": "No memory ID provided"}
-        
-        ok = db.delete("zane_memories", memory_id, self.business_id)
-        if ok:
-            logger.info(f"[ZANE MEMORY] Deleted: {memory_id}")
-            return {"success": True, "message": f"Memory {memory_id} forgotten."}
-        else:
-            return {"success": False, "error": "Could not delete memory"}
-
 
 def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     """Build lean system prompt for tool-use Zane. ~2000 tokens, no data dumps."""
@@ -7182,32 +7009,6 @@ def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     user_name = context.get("user_name", "there")
     currency = context.get("currency", "ZAR")
     vat_rate = context.get("vat_rate", 15)
-    
-    # Load memories for this business
-    biz_id = context.get("business_id", "")
-    memories_text = ""
-    if biz_id:
-        try:
-            memories = db.get("zane_memories", {"business_id": biz_id})
-            if memories:
-                active = [m for m in memories if m.get("active", True)]
-                # Sort: high importance first, then by date
-                active.sort(key=lambda m: (0 if m.get("importance") == "high" else 1 if m.get("importance") == "medium" else 2, m.get("created_at", "")), reverse=False)
-                active.sort(key=lambda m: m.get("importance", "medium") == "high", reverse=True)
-                
-                # Take top 30 memories (keep prompt lean)
-                top = active[:30]
-                if top:
-                    memory_lines = []
-                    for m in top:
-                        cat_emoji = {"business_info": "🏢", "preference": "⭐", "decision": "✅", 
-                                     "person": "👤", "plan": "📋", "policy": "📏", 
-                                     "personal": "💭", "conversation": "💬"}.get(m.get("category", ""), "📝")
-                        date = m.get("created_at", "")[:10]
-                        memories_text += f"  {cat_emoji} [{date}] {m.get('fact', '')}\n"
-                    memories_text = f"\n## YOUR MEMORIES (things you've learned about this user/business)\n{memories_text}"
-        except Exception as e:
-            logger.error(f"[ZANE] Failed to load memories: {e}")
     
     stats = {
         "stock_count": context.get("stock_count", 0),
@@ -7301,14 +7102,6 @@ When in doubt about what the user wants:
 - Stock items: {stats['stock_count']} | Customers: {stats['customer_count']} | Suppliers: {stats['supplier_count']}
 - Total debtors: R{stats['total_debtors']:,.0f} | Total creditors: R{stats['total_creditors']:,.0f}
 - Today's sales: R{stats['today_sales']:,.0f} | Stock value (cost): R{stats['stock_value']:,.0f}
-{memories_text}
-## MEMORY INSTRUCTIONS
-- When you learn something NEW and IMPORTANT about the user or business, use save_memory to remember it
-- Save facts like: preferences, decisions, key people, plans, policies, personal context
-- DO NOT save data already in the database (sales figures, customer info, stock prices)
-- When the user references past conversations, use recall_memories to find context
-- Be proactive: if you notice the user mentions something important, save it without being asked
-- You can also save conversation context: "User asked about VAT registration on 14 Feb 2026"
 
 ## HOW YOU WORK
 You have TOOLS to look up data and knowledge. ALWAYS use them for DATA:
@@ -8434,7 +8227,7 @@ Once you have a customer, you can invoice! 📝"""
         system_prompt = build_zane_core_prompt(context, user_message)
         
         # Create tool handler connected to this business's data
-        tool_handler = ZaneToolHandler(db_instance=db, business_id=context.get("business_id"), user_id=context.get("user_id", ""))
+        tool_handler = ZaneToolHandler(db_instance=db, business_id=context.get("business_id"))
         
         logger.info(f"[BRAIN] Using TOOL-BASED mode for query")
         
@@ -13699,7 +13492,7 @@ class ReportEngine:
         
         # Report-specific analysis prompts - AI NEVER calculates, only explains pre-calculated numbers
         analysis_prompts = {
-            "management": "Review the PRE-CALCULATED metrics below. This is a YEAR-TO-DATE management statement showing cumulative performance from financial year start to current date. Cover: YTD revenue vs expenses, profitability trend, balance sheet health, cash position, debtors/creditors status, and key risks. USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers.",
+            "management": "Review the PRE-CALCULATED metrics below. Explain what they mean for the business: overall health, cash position, risks, opportunities, and what needs immediate attention. USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers.",
             "kpi": "Review the PRE-CALCULATED KPIs below. Explain what each metric means: are debtor days healthy? Is stock turn good? How does gross margin look? USE ONLY THE NUMBERS PROVIDED - do not calculate anything yourself.",
             "sales": "Review the sales data below. Identify: top customers by value, any concerning patterns, and opportunities. USE ONLY THE NUMBERS PROVIDED - do not calculate totals or percentages yourself.",
             "debtor": "Review the debtor data below. Identify: which customers owe the most, who might be risky, and who to follow up with first. USE ONLY THE NUMBERS PROVIDED - do not calculate aging or totals yourself.",
@@ -32781,20 +32574,13 @@ def api_tb_analyze():
         source_file = data.get("source_file", "")
         company_name = data.get("company_name", "")
         
-        # IMPORTANT: If a CSV was uploaded, it's ALWAYS a third-party client's data
-        # The user wouldn't upload their own TB - ClickAI generates that internally
-        # So NEVER use the logged-in business name for uploaded TBs
-        if source_file:
-            if company_name:
-                report_company = company_name
-            else:
-                # Use filename without extension as company hint
-                clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
-                report_company = f"Client TB ({clean_name})"
-            is_third_party = True
+        # If uploaded file, show source info in report title
+        if source_file and not company_name:
+            report_company = f"{biz_name} (from: {source_file})"
+        elif company_name:
+            report_company = company_name
         else:
             report_company = biz_name
-            is_third_party = False
         
         logger.info(f"[TB ANALYZE] Language selected: {lang}")
         
@@ -33762,20 +33548,11 @@ def api_tb_analyze():
         # Build comprehensive prompt with ALL data - language based on user selection
         if lang == "af":
             # Afrikaans prompt
-            af_third_party = ""
-            if is_third_party:
-                af_third_party = f"""
-BELANGRIKE KONTEKS: Hierdie is 'n DERDE PARTY kliënt se proefbalans wat opgelaai is vir analise.
-Dit is NIE {biz_name} se eie data nie. MOENIE na {biz_name} verwys in jou analise nie.
-Analiseer dit as 'n onafhanklike kliënt se finansiële data.
-"""
             insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
-Jou naam is net "Zane" - MOENIE 'n van gebruik nie. Teken reports as "Zane, CA(SA)" alleen.
 
 BESIGHEID: {safe_string(report_company)}
 INDUSTRIE: {industry}
 DATUM: {today()}
-{af_third_party}
 
 {accounts_text}
 
@@ -33860,21 +33637,11 @@ REËLS:
 - MOET NOOIT sê die rekeningplan is "fout" of "verkeerd geklassifiseer" nie"""
         else:
             # English prompt (default)
-            third_party_note = ""
-            if is_third_party:
-                third_party_note = f"""
-IMPORTANT CONTEXT: This is a THIRD-PARTY client's trial balance that was uploaded for analysis.
-This is NOT {biz_name}'s own data. Do NOT reference {biz_name} anywhere in your analysis.
-Analyze this as an independent client's financial data. If you see references to other companies
-(e.g., loans from/to other entities), these are the CLIENT's intercompany relationships, not related to {biz_name}.
-"""
             insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
-Your name is simply "Zane" - do NOT use any surname. Sign reports as "Zane, CA(SA)" only.
 
 BUSINESS: {safe_string(report_company)}
 INDUSTRY: {industry}
 DATE: {today()}
-{third_party_note}
 
 {accounts_text}
 
@@ -34448,217 +34215,6 @@ Rules:
         
     except Exception as e:
         logger.error(f"[TB UPLOAD] Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/reports/tb/smart-report", methods=["POST"])
-@login_required
-def api_tb_smart_report():
-    """Generate different report types from uploaded TB data (management statement, KPI, etc.)"""
-    
-    try:
-        data = request.get_json()
-        accounts = data.get("accounts", [])
-        report_type = data.get("report_type", "management")
-        custom_request = data.get("custom_request", "")
-        lang = data.get("lang", "en")
-        source_file = data.get("source_file", "Uploaded TB")
-        tb_control_profit = data.get("tb_control_profit")
-        
-        if not accounts:
-            return jsonify({"success": False, "error": "No account data provided"})
-        
-        # ═══ PYTHON CALCULATES EVERYTHING FROM THE TB DATA ═══
-        has_categories = any(a.get("category") for a in accounts)
-        
-        def cat_sum(cats, column="debit"):
-            total = 0
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                for c in cats:
-                    if c in cat:
-                        total += float(a.get(column, 0) or 0)
-                        break
-            return total
-        
-        def name_sum(accs, keywords, column="debit"):
-            return sum(float(a.get(column, 0) or 0) for a in accs 
-                      if any(kw in str(a.get("name", "")).lower() for kw in keywords))
-        
-        if has_categories:
-            sales = cat_sum(["sales", "revenue", "turnover", "omset"], "credit")
-            cos = cat_sum(["cost of sale", "cost of goods", "koste van verkope"], "debit")
-            other_income = cat_sum(["other income", "ander inkomste"], "credit")
-            
-            expense_accs = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
-            total_expenses = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) for a in expense_accs)
-            if total_expenses < 0:
-                total_expenses = 0
-            
-            current_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
-                               for a in accounts if "current asset" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
-            fixed_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
-                             for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["fixed asset", "non-current asset"]))
-            current_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                             for a in accounts if "current liabilit" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
-            long_term_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                               for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["long term", "non-current liabilit"]))
-            equity = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                        for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["equity", "owner", "ekwiteit"]))
-            
-            salaries = name_sum(expense_accs, ["salary", "salaries", "wage", "payroll", "salar"])
-            rent = name_sum(expense_accs, ["rent", "huur"])
-            electricity = name_sum(expense_accs, ["electric", "water", "eskom", "elektris"])
-            advertising = name_sum(expense_accs, ["advertising", "marketing", "advertens"])
-            insurance = name_sum(expense_accs, ["insurance", "verseker"])
-            bank_charges = name_sum(expense_accs, ["bank charge", "bank fee", "bankkoste"])
-            depreciation = name_sum(expense_accs, ["depreciation", "waardevermindering"])
-            professional = name_sum(expense_accs, ["professional", "accounting", "legal", "audit", "rekenmeest"])
-        else:
-            sales = sum(float(a.get("credit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("5"))
-            cos = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("51"))
-            total_expenses = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", ""))[:1] in "6789")
-            other_income = 0
-            current_assets = current_liab = fixed_assets = long_term_liab = equity = 0
-            salaries = rent = electricity = advertising = insurance = bank_charges = depreciation = professional = 0
-        
-        gross_profit = sales - cos
-        net_profit = sales + other_income - cos - total_expenses
-        total_assets = current_assets + fixed_assets
-        total_liabilities = current_liab + long_term_liab
-        
-        gp_margin = round((gross_profit / sales * 100), 1) if sales > 0 else 0
-        np_margin = round((net_profit / (sales + other_income) * 100), 1) if (sales + other_income) > 0 else 0
-        current_ratio = round(current_assets / current_liab, 2) if current_liab > 0 else 0
-        debt_equity = round(total_liabilities / equity, 2) if equity > 0 else 0
-        sal_pct = round(salaries / sales * 100, 1) if sales > 0 else 0
-        rent_pct = round(rent / sales * 100, 1) if sales > 0 else 0
-        
-        validation_note = ""
-        if tb_control_profit is not None:
-            try:
-                control = float(tb_control_profit)
-                diff = abs(net_profit - control)
-                pct = (diff / abs(control) * 100) if control != 0 else 0
-                if pct > 5:
-                    validation_note = f"⚠️ Note: Calculated net profit (R{net_profit:,.2f}) differs from TB control figure (R{control:,.2f}) by {pct:.1f}%."
-            except:
-                pass
-        
-        clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
-        
-        data_for_ai = f"""
-CLIENT: {clean_name}
-DATA SOURCE: Uploaded Trial Balance ({len(accounts)} accounts)
-{validation_note}
-
-=== INCOME STATEMENT (Python-calculated, 100% accurate - DO NOT recalculate) ===
-Revenue/Sales: R{sales:,.2f}
-Cost of Sales: R{cos:,.2f}
-Gross Profit: R{gross_profit:,.2f} ({gp_margin}%)
-Other Income: R{other_income:,.2f}
-Total Expenses: R{total_expenses:,.2f}
-  - Salaries: R{salaries:,.2f} ({sal_pct}% of sales)
-  - Rent: R{rent:,.2f}
-  - Electricity/Water: R{electricity:,.2f}
-  - Advertising: R{advertising:,.2f}
-  - Insurance: R{insurance:,.2f}
-  - Bank Charges: R{bank_charges:,.2f}
-  - Depreciation: R{depreciation:,.2f}
-  - Professional Fees: R{professional:,.2f}
-Net Profit: R{net_profit:,.2f} ({np_margin}%)
-
-=== BALANCE SHEET ===
-Current Assets: R{current_assets:,.2f}
-Fixed Assets: R{fixed_assets:,.2f}
-Total Assets: R{total_assets:,.2f}
-Current Liabilities: R{current_liab:,.2f}
-Long-term Liabilities: R{long_term_liab:,.2f}
-Total Liabilities: R{total_liabilities:,.2f}
-Equity: R{equity:,.2f}
-
-=== RATIOS ===
-Current Ratio: {current_ratio}:1 (norm >1.5)
-Gross Margin: {gp_margin}%
-Net Margin: {np_margin}%
-Debt/Equity: {debt_equity}:1
-"""
-        
-        report_prompts = {
-            "management": """Write a professional MANAGEMENT STATEMENT (Year-to-Date). Structure:
-1. Executive Summary (2-3 sentences)
-2. Income Statement Analysis (revenue, margins, expense breakdown)
-3. Balance Sheet Summary
-4. Key Ratios & What They Mean
-5. Concerns & Red Flags
-6. Recommendations (5+ specific actions)""",
-            
-            "kpi": f"""Write a KPI DASHBOARD REPORT with traffic light status (Green/Amber/Red):
-1. Gross Profit Margin ({gp_margin}%)
-2. Net Profit Margin ({np_margin}%)
-3. Current Ratio ({current_ratio}:1)
-4. Salaries % of Sales ({sal_pct}%)
-5. Rent % of Sales ({rent_pct}%)
-6. Debt to Equity ({debt_equity}:1)
-For each: meaning, benchmark, and action.""",
-            
-            "sales": """Write a SALES ANALYSIS covering: revenue performance, cost structure, gross margin quality, expense impact, and improvement recommendations.""",
-            
-            "debtor": f"""Write a WORKING CAPITAL report: Current Ratio ({current_ratio}), cash position, liquidity risk, and recommendations.""",
-            
-            "forecast": """Write a FORWARD-LOOKING ANALYSIS: sustainability, cash flow outlook, scenario analysis (sales drop 10/20/30%), and strategic recommendations.""",
-            
-            "custom": f"""Answer this request: {custom_request or 'General financial overview'}"""
-        }
-        
-        prompt = report_prompts.get(report_type, report_prompts["management"])
-        
-        system_prompt = f"""You are Zane, a senior CA(SA). You are writing a report for a CLIENT's uploaded trial balance.
-Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, CA(SA)" only.
-RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
-{"Write in Afrikaans." if lang == "af" else "Write in English."} Use R (Rand) for all amounts.
-
-FORMAT RULES - OUTPUT CLEAN HTML:
-- Use <h2> for main sections, <h3> for subsections
-- Use <p> for paragraphs
-- Use <strong> for emphasis
-- Use <table> with inline styles for any data tables
-- Use <div style="background:rgba(239,68,68,0.1);border-left:3px solid #ef4444;padding:10px;margin:10px 0;"> for warnings/red flags
-- Use <div style="background:rgba(16,185,129,0.1);border-left:3px solid #10b981;padding:10px;margin:10px 0;"> for positive items
-- Use <div style="background:rgba(245,158,11,0.1);border-left:3px solid #f59e0b;padding:10px;margin:10px 0;"> for caution items
-- DO NOT use markdown (no ##, no **, no ---, no bullet points with -)
-- Use <ul><li> for lists
-- Make it visually professional and easy to scan"""
-
-        if not ANTHROPIC_API_KEY:
-            return jsonify({"success": False, "error": "AI not configured"})
-        
-        message = _anthropic_client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=3000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
-        )
-        
-        report = message.content[0].text if message.content else ""
-        
-        # Convert any remaining markdown to HTML (fallback if Sonnet mixed formats)
-        import re
-        report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
-        report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
-        report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
-        report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
-        report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
-        report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
-        report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
-        # Wrap plain text paragraphs
-        report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
-        return jsonify({"success": True, "report": report})
-        
-    except Exception as e:
-        logger.error(f"[TB SMART REPORT] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)})
@@ -36969,32 +36525,15 @@ def smart_reports_page():
     content = '''
     <div class="card">
         <h2 style="margin-bottom:15px;">Smart Reports</h2>
+        <p style="color:var(--text-muted);margin-bottom:20px;">
+            Ask Zane to write any report you need. Zane will analyze your data and generate a professional management report.
+        </p>
         
-        <!-- DATA SOURCE SELECTOR -->
-        <div class="card" style="margin-bottom:20px;padding:15px;">
-            <h3 style="margin:0 0 10px 0;">📂 Data Source</h3>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                <button id="srcOwnBtn" class="btn btn-primary" onclick="setDataSource('own')" style="flex:none;">
-                    🏢 My Business Data
-                </button>
-                <label id="srcClientBtn" class="btn btn-secondary" style="cursor:pointer;flex:none;margin:0;">
-                    📁 Upload Client TB
-                    <input type="file" id="smartReportTBUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleSmartReportTB(this)">
-                </label>
-                <span id="dataSourceStatus" style="color:var(--text-muted);font-size:13px;">Using your own business data</span>
-            </div>
-        </div>
-        
-        <!-- REPORT TYPE SELECTION -->
-        <h3 style="margin:20px 0 10px 0;">Choose Report Type</h3>
+        <h3 style="margin:20px 0 10px 0;">Quick Reports</h3>
         <div class="stats-grid">
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('management')">
                 <h4>Management Statement</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Year-to-date P&L, Balance Sheet & KPIs</p>
-            </div>
-            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('tb_analysis')">
-                <h4>TB Analysis</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Full account-by-account CA(SA) review</p>
+                <p style="color:var(--text-muted);font-size:13px;">Full monthly overview with insights</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('kpi')">
                 <h4>KPI Dashboard</h4>
@@ -37007,6 +36546,10 @@ def smart_reports_page():
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('debtor')">
                 <h4>Debtor Risk Report</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Problem customers & recommendations</p>
+            </div>
+            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('stock')">
+                <h4>Stock Report</h4>
+                <p style="color:var(--text-muted);font-size:13px;">Slow movers, reorder suggestions</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('forecast')">
                 <h4>Cash Flow Forecast</h4>
@@ -37024,7 +36567,7 @@ def smart_reports_page():
     
     <div id="reportLoading" style="display:none;text-align:center;padding:40px;">
         <div style="font-size:24px;margin-bottom:10px;">Generating Report...</div>
-        <p style="color:var(--text-muted);">Analyzing data. This may take up to 30 seconds.</p>
+        <p style="color:var(--text-muted);">Analyzing your business data. This may take up to 30 seconds.</p>
     </div>
     
     <div id="reportOutput" style="margin-top:20px;display:none;">
@@ -37033,113 +36576,38 @@ def smart_reports_page():
                 <h3 id="reportTitle" style="margin:0;">Report</h3>
                 <button class="btn btn-secondary" onclick="window.print();">Print</button>
             </div>
-            <div id="reportContent" style="line-height:1.6;"></div>
+            <div id="reportContent" style="white-space:pre-wrap;line-height:1.6;"></div>
         </div>
     </div>
     
     <style>
     .report-btn { transition: all 0.2s; border: 1px solid var(--border); }
     .report-btn:hover { border-color: var(--primary); transform: translateY(-2px); }
-    .report-btn.disabled { opacity: 0.5; pointer-events: none; }
     </style>
     
     <script>
-    // ═══ DATA SOURCE STATE ═══
-    let dataSource = 'own';  // 'own' or 'client'
-    let clientTBData = null;  // Parsed client TB data
-    let clientFileName = '';
-    
     const reportTitles = {
         'management': 'Management Statement',
-        'tb_analysis': 'TB Analysis',
         'kpi': 'Key Performance Indicators',
         'sales': 'Sales Analysis',
         'debtor': 'Debtor Risk Report',
+        'stock': 'Stock Analysis',
         'forecast': 'Cash Flow Forecast'
     };
     
-    function setDataSource(src) {
-        dataSource = src;
-        const ownBtn = document.getElementById('srcOwnBtn');
-        const clientBtn = document.getElementById('srcClientBtn');
-        const status = document.getElementById('dataSourceStatus');
-        
-        if (src === 'own') {
-            ownBtn.className = 'btn btn-primary';
-            clientBtn.className = 'btn btn-secondary';
-            clientTBData = null;
-            clientFileName = '';
-            status.textContent = 'Using your own business data';
-            status.style.color = 'var(--text-muted)';
-        }
-    }
-    
-    function handleSmartReportTB(input) {
-        const file = input.files[0];
-        if (!file) return;
-        const status = document.getElementById('dataSourceStatus');
-        status.textContent = '⏳ Parsing ' + file.name + '...';
-        
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('lang', document.documentElement.lang || 'en');
-        
-        fetch('/api/reports/tb/upload-analyze', {
-            method: 'POST',
-            body: formData
-        })
-        .then(r => r.json())
-        .then(data => {
-            if (data.success) {
-                clientTBData = data;
-                clientFileName = file.name;
-                dataSource = 'client';
-                
-                // Update UI
-                document.getElementById('srcOwnBtn').className = 'btn btn-secondary';
-                document.getElementById('srcClientBtn').className = 'btn btn-primary';
-                status.innerHTML = '✅ <strong>' + file.name + '</strong> loaded (' + data.accounts.length + ' accounts) — Now choose a report type below';
-                status.style.color = '#10b981';
-            } else {
-                status.textContent = '❌ ' + (data.error || 'Upload failed');
-                status.style.color = '#ef4444';
-            }
-        })
-        .catch(e => {
-            status.textContent = '❌ Error: ' + e.message;
-            status.style.color = '#ef4444';
-        });
-        
-        input.value = '';
-    }
-    
     async function generateReport(type) {
         const title = reportTitles[type] || 'Report';
-        
-        if (dataSource === 'client' && clientTBData) {
-            // Generate from uploaded client TB
-            await runClientTBReport(type, title);
-        } else if (dataSource === 'client' && !clientTBData) {
-            alert('Upload a client TB first, then choose a report type.');
-        } else {
-            // Generate from own business data
-            await runOwnReport(type, null, title);
-        }
+        await runReport(type, null, title);
     }
     
     async function generateCustomReport() {
         const input = document.getElementById('customReportInput').value;
-        if (!input) return;
-        
-        if (dataSource === 'client' && clientTBData) {
-            await runClientTBReport('custom', 'Custom Report', input);
-        } else {
-            await runOwnReport('custom', input, 'Custom Report');
+        if (input) {
+            await runReport('custom', input, 'Custom Report');
         }
     }
     
-    // ═══ OWN DATA REPORTS ═══
-    async function runOwnReport(type, customRequest, title) {
+    async function runReport(type, customRequest, title) {
         document.getElementById('reportLoading').style.display = 'block';
         document.getElementById('reportOutput').style.display = 'none';
         
@@ -37147,78 +36615,29 @@ def smart_reports_page():
             const response = await fetch('/api/report', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ type: type, custom: customRequest })
+                body: JSON.stringify({
+                    type: type,
+                    custom: customRequest
+                })
             });
+            
             const data = await response.json();
             
             document.getElementById('reportLoading').style.display = 'none';
             document.getElementById('reportOutput').style.display = 'block';
             document.getElementById('reportTitle').textContent = title;
-            document.getElementById('reportContent').innerHTML = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
-            document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
-        } catch (e) {
-            document.getElementById('reportLoading').style.display = 'none';
-            alert('Error generating report.');
-        }
-    }
-    
-    // ═══ CLIENT TB REPORTS ═══
-    async function runClientTBReport(type, title, customRequest) {
-        document.getElementById('reportLoading').style.display = 'block';
-        document.getElementById('reportOutput').style.display = 'none';
-        
-        try {
-            const lang = document.documentElement.lang || 'en';
-            let reportHtml = '';
             
-            if (type === 'tb_analysis') {
-                // Full TB analysis (existing endpoint)
-                const response = await fetch('/api/reports/tb/analyze', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        accounts: clientTBData.accounts,
-                        total_debit: clientTBData.total_debit,
-                        total_credit: clientTBData.total_credit,
-                        is_balanced: clientTBData.is_balanced,
-                        lang: lang,
-                        source_file: clientFileName,
-                        company_name: '',
-                        tb_control_profit: clientTBData.tb_control_profit || null
-                    })
-                });
-                const data = await response.json();
-                reportHtml = data.success ? (data.analysis || '') : ('Error: ' + (data.error || 'Failed'));
-                
+            if (data.success) {
+                document.getElementById('reportContent').textContent = data.report;
             } else {
-                // Other report types from TB data (management, kpi, etc.)
-                const response = await fetch('/api/reports/tb/smart-report', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        accounts: clientTBData.accounts,
-                        total_debit: clientTBData.total_debit,
-                        total_credit: clientTBData.total_credit,
-                        is_balanced: clientTBData.is_balanced,
-                        tb_control_profit: clientTBData.tb_control_profit || null,
-                        report_type: type,
-                        custom_request: customRequest || null,
-                        lang: lang,
-                        source_file: clientFileName
-                    })
-                });
-                const data = await response.json();
-                reportHtml = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
+                document.getElementById('reportContent').textContent = 'Error: ' + (data.error || 'Failed to generate report');
             }
             
-            document.getElementById('reportLoading').style.display = 'none';
-            document.getElementById('reportOutput').style.display = 'block';
-            document.getElementById('reportTitle').textContent = title + ' — ' + clientFileName;
-            document.getElementById('reportContent').innerHTML = reportHtml;
+            // Scroll to report
             document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
         } catch (e) {
             document.getElementById('reportLoading').style.display = 'none';
-            alert('Error generating report: ' + e.message);
+            alert('Error generating report. Please try again.');
         }
     }
     </script>
@@ -43252,323 +42671,6 @@ def smart_import_page():
         .warning-box { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); border-radius: 8px; padding: 12px 16px; margin-top: 15px; font-size: 13px; color: #b45309; }
         .error-box { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 12px; padding: 20px; text-align: center; color: #dc2626; }
     </style>
-    
-    <!-- SWITCH FROM SAGE BANNER -->
-    <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(6,95,70,0.08));margin-bottom:20px;border:1px solid rgba(16,185,129,0.25);">
-        <div style="display:flex;align-items:center;gap:15px;cursor:pointer;" onclick="document.getElementById('sageGuide').style.display=document.getElementById('sageGuide').style.display==='none'?'block':'none';this.querySelector('.arrow').textContent=document.getElementById('sageGuide').style.display==='none'?'▶':'▼'">
-            <div style="font-size:36px;">🟢</div>
-            <div style="flex:1;">
-                <h2 style="margin:0 0 4px 0;font-size:20px;">Switching from Sage / Pastel?</h2>
-                <p style="color:var(--text-muted);margin:0;font-size:14px;">Follow these 4 steps - takes about 10 minutes. We handle the messy stuff.</p>
-            </div>
-            <span class="arrow" style="font-size:20px;color:var(--text-muted);">▶</span>
-        </div>
-        
-        <div id="sageGuide" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid rgba(16,185,129,0.2);">
-            
-            <!-- SAGE CLOUD vs DESKTOP -->
-            <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
-                <button onclick="showSageGuide('cloud')" id="sgCloud" class="btn btn-primary" style="font-size:13px;">☁️ Sage Business Cloud</button>
-                <button onclick="showSageGuide('desktop')" id="sgDesktop" class="btn btn-secondary" style="font-size:13px;">🖥️ Sage 50cloud Pastel (Desktop)</button>
-            </div>
-            
-            <!-- SAGE CLOUD GUIDE -->
-            <div id="sageCloudGuide">
-                <div style="display:grid;gap:15px;">
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Contacts</strong> → Select all customers → <strong>Export</strong> (CSV icon top right)<br>
-                            <em>This gives you: Names, phones, emails, addresses, balances</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Customers CSV
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
-                            </label>
-                            <span class="sage-status" id="status-customers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Suppliers</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Contacts</strong> → Switch to <strong>Suppliers</strong> tab → Select all → <strong>Export</strong> (CSV)<br>
-                            <em>Same format as customers - names, contacts, balances</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Suppliers CSV
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
-                            </label>
-                            <span class="sage-status" id="status-suppliers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Stock / Products</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Products & Services</strong> → Select all → <strong>Export</strong> (CSV)<br>
-                            <em>Gives you: Codes, descriptions, prices, quantities</em><br>
-                            <span style="color:#f59e0b;">⚠️ Sage splits this into 2 files sometimes (prices + quantities). Upload both - we combine them.</span>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Stock CSV (one or both files)
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" multiple onchange="quickUploadMulti(this, 'stock')">
-                            </label>
-                            <span class="sage-status" id="status-stock" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance (Opening Balances)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Reporting</strong> → <strong>Trial Balance</strong> → Export to CSV<br>
-                            <em>This sets your opening balances so your books are correct from day 1</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Trial Balance
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
-                            </label>
-                            <span class="sage-status" id="status-trial_balance" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                </div>
-                
-                <!-- IMPORT ALL BUTTON -->
-                <div id="sageImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(16,185,129,0.08);border-radius:12px;">
-                    <p style="margin-bottom:12px;font-size:15px;">✅ <strong id="sageFilesReady">0</strong> files ready to import</p>
-                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;background:linear-gradient(135deg,#10b981,#059669);">
-                        🚀 Import Everything into ClickAI
-                    </button>
-                    <p style="color:var(--text-muted);font-size:12px;margin-top:8px;">Takes about 30 seconds. Your Sage data stays untouched.</p>
-                </div>
-            </div>
-            
-            <!-- SAGE DESKTOP GUIDE -->
-            <div id="sageDesktopGuide" style="display:none;">
-                <div style="display:grid;gap:15px;">
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers & Suppliers</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Customer List</strong> or <strong>Supplier List</strong><br>
-                            Save as CSV. Repeat for the other.
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Customers
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
-                            </label>
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Suppliers
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Inventory</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Inventory</strong><br>
-                            Save as CSV. This includes codes, descriptions, prices, quantities.
-                        </div>
-                        <div style="margin-top:10px;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Inventory
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'stock')">
-                            </label>
-                            <span class="sage-status" id="status-stock-desktop" style="font-size:12px;display:flex;align-items:center;gap:4px;margin-top:5px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Pastel: <strong>Reports</strong> → <strong>Trial Balance</strong> → Print to Excel/CSV<br>
-                            Choose the last day of your current period.
-                        </div>
-                        <div style="margin-top:10px;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Trial Balance
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Employees (Optional)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            If you use Sage Payroll: Export employee list to CSV<br>
-                            <em>Names, ID numbers, tax numbers, bank details, salaries</em>
-                        </div>
-                        <div style="margin-top:10px;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Employees
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'employees')">
-                            </label>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Same import all for desktop -->
-                <div id="sageDesktopImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(139,92,246,0.08);border-radius:12px;">
-                    <p style="margin-bottom:12px;font-size:15px;">✅ Files ready to import</p>
-                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;">
-                        🚀 Import Everything into ClickAI
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-    // ═══ SAGE SWITCH WIZARD ═══
-    let sageFiles = {};  // {customers: File, suppliers: File, stock: [File], trial_balance: File}
-    
-    function showSageGuide(type) {
-        document.getElementById('sageCloudGuide').style.display = type === 'cloud' ? 'block' : 'none';
-        document.getElementById('sageDesktopGuide').style.display = type === 'desktop' ? 'block' : 'none';
-        document.getElementById('sgCloud').className = type === 'cloud' ? 'btn btn-primary' : 'btn btn-secondary';
-        document.getElementById('sgDesktop').className = type === 'desktop' ? 'btn btn-primary' : 'btn btn-secondary';
-        document.getElementById('sgCloud').style.fontSize = '13px';
-        document.getElementById('sgDesktop').style.fontSize = '13px';
-    }
-    
-    function quickUpload(input, dataType) {
-        const file = input.files[0];
-        if (!file) return;
-        sageFiles[dataType] = file;
-        
-        const status = document.getElementById('status-' + dataType);
-        if (status) status.innerHTML = '✅ <strong>' + file.name + '</strong>';
-        
-        updateSageImportButton();
-        input.value = '';
-    }
-    
-    function quickUploadMulti(input, dataType) {
-        const files = Array.from(input.files);
-        if (!files.length) return;
-        sageFiles[dataType] = files.length === 1 ? files[0] : files;
-        
-        const status = document.getElementById('status-' + dataType);
-        if (status) {
-            if (files.length === 1) {
-                status.innerHTML = '✅ <strong>' + files[0].name + '</strong>';
-            } else {
-                status.innerHTML = '✅ <strong>' + files.length + ' files</strong> (' + files.map(f => f.name).join(', ') + ')';
-            }
-        }
-        
-        updateSageImportButton();
-        input.value = '';
-    }
-    
-    function updateSageImportButton() {
-        const count = Object.keys(sageFiles).length;
-        const allBtn = document.getElementById('sageImportAll');
-        const desktopBtn = document.getElementById('sageDesktopImportAll');
-        
-        if (count > 0) {
-            if (allBtn) { allBtn.style.display = 'block'; }
-            if (desktopBtn) { desktopBtn.style.display = 'block'; }
-            const readyEl = document.getElementById('sageFilesReady');
-            if (readyEl) readyEl.textContent = count;
-        }
-    }
-    
-    async function executeSageImportAll() {
-        const types = Object.keys(sageFiles);
-        if (!types.length) return;
-        
-        // Use the existing smart-import flow for each file
-        const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance'];
-        const sorted = importOrder.filter(t => types.includes(t));
-        
-        // Hide sage guide, show processing
-        document.getElementById('sageGuide').style.display = 'none';
-        document.getElementById('dropState').style.display = 'none';
-        document.getElementById('processingState').classList.add('active');
-        
-        let totalImported = 0;
-        let results = [];
-        
-        for (const dataType of sorted) {
-            const fileOrFiles = sageFiles[dataType];
-            const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
-            
-            for (const file of files) {
-                document.getElementById('processingText').textContent = 'Importing ' + dataType + '...';
-                document.getElementById('processingSub').textContent = file.name;
-                
-                try {
-                    // Step 1: Analyse
-                    const formData = new FormData();
-                    formData.append('file', file);
-                    
-                    const analyseResp = await fetch('/api/smart-import/analyse', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    const analysis = await analyseResp.json();
-                    
-                    if (!analysis.success) {
-                        results.push({type: dataType, file: file.name, success: false, error: analysis.error || 'Analysis failed'});
-                        continue;
-                    }
-                    
-                    // Step 2: Import
-                    document.getElementById('processingSub').textContent = 'Saving ' + (analysis.total_rows || '?') + ' ' + dataType + '...';
-                    
-                    const importResp = await fetch('/api/smart-import/batch', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(analysis)
-                    });
-                    const importResult = await importResp.json();
-                    
-                    const count = importResult.imported || importResult.total_imported || 0;
-                    totalImported += count;
-                    results.push({type: dataType, file: file.name, success: importResult.success, count: count});
-                    
-                } catch (err) {
-                    results.push({type: dataType, file: file.name, success: false, error: err.message});
-                }
-            }
-        }
-        
-        // Show success
-        document.getElementById('processingState').classList.remove('active');
-        document.getElementById('successState').style.display = 'block';
-        
-        let statsHtml = '';
-        for (const r of results) {
-            if (r.success) {
-                statsHtml += '<div class="stat-box"><div class="stat-number">' + r.count + '</div><div class="stat-label">' + r.type + '</div></div>';
-            } else {
-                statsHtml += '<div class="stat-box"><div class="stat-number" style="color:#ef4444;">✗</div><div class="stat-label">' + r.type + ': ' + (r.error || 'Failed') + '</div></div>';
-            }
-        }
-        document.getElementById('successStats').innerHTML = statsHtml;
-        
-        if (results.some(r => r.type === 'trial_balance' && r.success)) {
-            document.getElementById('reportPrompt').style.display = 'block';
-        }
-    }
-    </script>
     
     <!-- STATE 1: Drop Zone -->
     <div id="dropState" class="card">
