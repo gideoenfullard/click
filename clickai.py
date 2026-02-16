@@ -1885,13 +1885,12 @@ def safe_uuid(value):
     return value if is_valid_uuid(value) else None
 
 def now() -> str:
-    """Current timestamp in ISO 8601 format for Supabase - always UTC"""
+    """Current timestamp in ISO 8601 format for Supabase"""
     return datetime.utcnow().isoformat() + 'Z'
 
 def today() -> str:
-    """Current date in SA timezone (UTC+2)"""
-    sa_time = datetime.utcnow() + timedelta(hours=2)
-    return sa_time.strftime("%Y-%m-%d")
+    """Current date"""
+    return datetime.now().strftime("%Y-%m-%d")
 
 def money(amount) -> str:
     """Format as currency"""
@@ -1899,25 +1898,6 @@ def money(amount) -> str:
         return f"R{float(amount):,.2f}"
     except:
         return "R0.00"
-
-def extract_time(timestamp_str) -> str:
-    """Extract HH:MM from any timestamp format, converted to SA time (UTC+2)
-    Handles: 2026-02-16T18:57:32+00:00, 2026-02-16T18:57:32.123456+00:00, 
-             2026-02-16T18:57:32Z, 2026-02-16T18:57:32.388Z
-    """
-    try:
-        ts = str(timestamp_str or "")
-        if 'T' in ts:
-            time_part = ts.split('T')[1]
-            hh = int(time_part[:2])
-            mm = time_part[3:5]
-            # If timestamp is UTC (ends with Z or +00:00), add 2 hours for SA
-            if 'Z' in ts or '+00:00' in ts:
-                hh = (hh + 2) % 24
-            return f"{hh:02d}:{mm}"
-        return "-"
-    except:
-        return "-"
 
 def safe_string(s: Any, max_len: int = 1000) -> str:
     """Safe string conversion - escapes HTML and JS special chars"""
@@ -7369,7 +7349,7 @@ When a user asks about stock, prices, products, items, inventory, or what's in s
 → Tell them to click on Stock in the menu, or click any item to see its full history
 → Use NAVIGATE action with url "/stock" 
 → Example: "Kyk gerus op die Stock bladsy - klik op enige item om sy volle geskiedenis, pryse en bewegings te sien!"
-→ For a specific item: "Gaan na Stock en soek 'the item' - klik op die ry om alles te sien."
+→ For a specific item: "Gaan na Stock en soek '{item_name}' - klik op die ry om alles te sien."
 This is FASTER and more accurate than me searching through thousands of items.
 
 For REMINDERS, NOTES & TO-DOS:
@@ -12948,7 +12928,7 @@ class Context:
                     user_id = inv.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": extract_time(inv.get("created_at", "")) or "??:??",
+                        "time": str(inv.get("created_at", ""))[-8:-3] or "??:??",
                         "user": user_name,
                         "action": "Created invoice",
                         "detail": f"{inv.get('invoice_number', '')} for {inv.get('customer_name', '')} - R{float(inv.get('total', 0)):,.2f}",
@@ -12961,7 +12941,7 @@ class Context:
                     user_id = q.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": extract_time(q.get("created_at", "")) or "??:??",
+                        "time": str(q.get("created_at", ""))[-8:-3] or "??:??",
                         "user": user_name,
                         "action": "Created quote",
                         "detail": f"{q.get('quote_number', '')} for {q.get('customer_name', '')} - R{float(q.get('total', 0)):,.2f}",
@@ -12974,7 +12954,7 @@ class Context:
                     user_id = s.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": extract_time(s.get("created_at", "")) or "??:??",
+                        "time": str(s.get("created_at", ""))[-8:-3] or "??:??",
                         "user": user_name,
                         "action": "POS sale",
                         "detail": f"{s.get('payment_method', 'Cash')} - R{float(s.get('total', 0)):,.2f}",
@@ -13593,23 +13573,7 @@ PROBLEMS:
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
         # Professional prompt with structure - ENGLISH - STAFF ACCOUNTABILITY FOCUSED
-        
-        # Load Zane memories for business context
-        memories_context = ""
-        if business_id:
-            try:
-                memories = db.get("zane_memories", {"business_id": business_id})
-                if memories:
-                    mem_list = memories if isinstance(memories, list) else [memories]
-                    important = [m for m in mem_list if m.get("importance") == "high" and m.get("active", True)]
-                    if important:
-                        mem_lines = [m.get("fact", "") for m in important[:10]]
-                        memories_context = "\n\nBUSINESS CONTEXT (from previous conversations):\n" + "\n".join(f"- {l}" for l in mem_lines if l)
-            except:
-                pass
-        
         prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
-{memories_context}
 
 Write an insightful business summary for the owner about the last {days} day(s). The owner uses this to monitor staff performance in real-time.
 
@@ -13642,7 +13606,7 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-haiku-4-5-20251001",
-                    max_tokens=900,
+                    max_tokens=600,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 if message.content:
@@ -17121,10 +17085,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     """Render a full page - FAST: uses session cache, minimal DB calls"""
     _t("render_start")
     
-    # Check for ?onboard=1 force flag on any page
-    if request.args.get("onboard") == "1":
-        session["force_onboard"] = True
-    
     # Get current business - FROM SESSION (no DB call!)
     business = None
     businesses = []
@@ -17864,16 +17824,21 @@ def get_zane_chat() -> str:
             <button class="zane-chat-close" onclick="toggleZaneChat()">×</button>
         </div>
         <div class="zane-chat-body" id="zaneChatBody">
-            <div class="zane-msg zane" id="zaneWelcome">Loading...</div>
-            <div id="zaneQuickBtns" style="display:none;flex-wrap:wrap;gap:8px;margin-top:10px;">
+            <div class="zane-msg zane">Welcome. I'm Zane, your business assistant. I can help with:
+
+• <b>Stock:</b> "Do we have M16 bolts?"
+• <b>Invoices:</b> "Invoice ABC Traders for R5000"
+• <b>Reports:</b> "Show me today's sales"
+• <b>Reminders:</b> "Remind me Friday to follow up"
+• <b>System help:</b> "How do I create a quote?"
+• <b>🎤 Voice:</b> Tap mic to talk, hold mic for hands-free mode
+
+How can I assist you?</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
                 <button onclick="quickZane('Who owes us the most?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Top debtors</button>
                 <button onclick="quickZane('Show me low stock')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Low stock</button>
                 <button onclick="quickZane('What did we sell today?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Today's sales</button>
                 <button onclick="quickZane('Show my reminders and to-do list')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">📋 My list</button>
-            </div>
-            <!-- Onboarding Questions (hidden by default) -->
-            <div id="zaneOnboarding" style="display:none;margin-top:10px;">
-                <div id="onboardStep" style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);border-radius:10px;padding:12px;"></div>
             </div>
         </div>
         <div class="voice-mode-banner" id="voiceModeBanner">
@@ -18315,206 +18280,8 @@ def get_zane_chat() -> str:
         
         if (isOpen) {
             document.getElementById('zaneInput').focus();
-            // Check onboarding on first open
-            if (!window._zaneOnboardChecked) {
-                window._zaneOnboardChecked = true;
-                checkZaneOnboarding();
-            }
         }
     }
-    
-    // ═══ ZANE ONBOARDING / SETUP WIZARD ═══
-    const onboardQuestions = [
-        {
-            id: 'industry',
-            q: 'What type of business do you run?',
-            type: 'buttons',
-            options: ['Retail / Shop', 'Hardware / Building', 'Manufacturing', 'Services / Professional', 'Restaurant / Food', 'Wholesale / Distribution', 'Construction', 'Transport / Logistics', 'Other'],
-            memory: 'Business type/industry: {val}'
-        },
-        {
-            id: 'products',
-            q: 'In a few words - what do you sell or do?',
-            type: 'text',
-            placeholder: 'e.g. stainless steel, workwear, plumbing supplies...',
-            memory: 'Main products/services: {val}'
-        },
-        {
-            id: 'size',
-            q: 'How many people work in the business?',
-            type: 'buttons',
-            options: ['Just me', '2-5', '6-15', '16-50', '50+'],
-            memory: 'Business size: {val} employees'
-        },
-        {
-            id: 'turnover',
-            q: 'Roughly what is your monthly turnover?',
-            type: 'buttons',
-            options: ['Under R50k', 'R50k-200k', 'R200k-500k', 'R500k-1M', 'R1M+'],
-            memory: 'Monthly turnover approximately: {val}'
-        },
-        {
-            id: 'vat',
-            q: 'Are you VAT registered?',
-            type: 'buttons',
-            options: ['Yes', 'No', 'Not sure'],
-            memory: 'VAT registered: {val}'
-        },
-        {
-            id: 'pain',
-            q: 'What is your BIGGEST frustration with your current bookkeeping?',
-            type: 'text',
-            placeholder: 'e.g. invoicing takes too long, cant track stock...',
-            memory: 'Main business pain point: {val}'
-        },
-        {
-            id: 'goals',
-            q: 'What do you most want ClickAI to help with?',
-            type: 'buttons',
-            options: ['Invoicing & Quotes', 'Stock Control', 'Financials & Reports', 'Payroll', 'Everything!'],
-            memory: 'Primary goal with ClickAI: {val}'
-        }
-    ];
-    
-    let onboardStep = 0;
-    let onboardAnswers = {};
-    
-    async function checkZaneOnboarding() {
-        try {
-            const resp = await fetch('/api/zane/onboard-status');
-            const data = await resp.json();
-            
-            const welcome = document.getElementById('zaneWelcome');
-            const quickBtns = document.getElementById('zaneQuickBtns');
-            const onboarding = document.getElementById('zaneOnboarding');
-            
-            if (data.needs_onboarding) {
-                // Show onboarding
-                welcome.innerHTML = "Hey! 👋 I'm <b>Zane</b>, your AI bookkeeper and business advisor.<br><br>Before we start, let me get to know your business — takes 2 minutes and makes me 10x smarter for you.";
-                onboarding.style.display = 'block';
-                quickBtns.style.display = 'none';
-                showOnboardStep(0);
-            } else {
-                // Normal welcome
-                welcome.innerHTML = "Welcome back. I'm Zane, your business advisor. Ask me anything — finances, invoices, stock, tax, or just how the business is doing.";
-                quickBtns.style.display = 'flex';
-                onboarding.style.display = 'none';
-            }
-        } catch(e) {
-            // Fallback to normal welcome
-            document.getElementById('zaneWelcome').innerHTML = "Welcome. I'm Zane, your business assistant. How can I help?";
-            document.getElementById('zaneQuickBtns').style.display = 'flex';
-        }
-    }
-    
-    function showOnboardStep(step) {
-        if (step >= onboardQuestions.length) {
-            finishOnboarding();
-            return;
-        }
-        
-        onboardStep = step;
-        const q = onboardQuestions[step];
-        const container = document.getElementById('onboardStep');
-        const progress = Math.round(((step) / onboardQuestions.length) * 100);
-        
-        let html = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-size:11px;color:var(--text-muted);">Step ${step+1} of ${onboardQuestions.length}</span>
-            <span style="font-size:11px;color:var(--primary);">${progress}%</span>
-        </div>
-        <div style="background:var(--border);border-radius:4px;height:4px;margin-bottom:12px;overflow:hidden;">
-            <div style="background:var(--primary);height:100%;width:${progress}%;transition:width 0.3s;"></div>
-        </div>
-        <div style="font-size:14px;font-weight:500;margin-bottom:10px;">${q.q}</div>`;
-        
-        if (q.type === 'buttons') {
-            html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
-            for (const opt of q.options) {
-                html += `<button onclick="answerOnboard('${q.id}','${opt.replace(/'/g,"\\'")}')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;transition:all 0.15s;"
-                onmouseover="this.style.background='var(--primary)';this.style.color='white'" 
-                onmouseout="this.style.background='transparent';this.style.color='var(--primary)'">${opt}</button>`;
-            }
-            html += '</div>';
-        } else {
-            html += `<div style="display:flex;gap:6px;">
-                <input type="text" id="onboardInput" placeholder="${q.placeholder || ''}" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;" onkeypress="if(event.key==='Enter'){answerOnboard('${q.id}',this.value)}">
-                <button onclick="answerOnboard('${q.id}',document.getElementById('onboardInput').value)" style="padding:8px 14px;border-radius:6px;border:none;background:var(--primary);color:white;cursor:pointer;font-size:13px;">→</button>
-            </div>`;
-        }
-        
-        // Skip button
-        html += `<div style="text-align:right;margin-top:8px;">
-            <button onclick="answerOnboard('${q.id}','skip')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;">Skip →</button>
-        </div>`;
-        
-        container.innerHTML = html;
-        
-        // Focus text input
-        if (q.type === 'text') {
-            setTimeout(() => { const inp = document.getElementById('onboardInput'); if(inp) inp.focus(); }, 100);
-        }
-    }
-    
-    async function answerOnboard(id, value) {
-        if (!value || value === 'skip') {
-            showOnboardStep(onboardStep + 1);
-            return;
-        }
-        
-        onboardAnswers[id] = value;
-        
-        // Save this answer as a memory immediately
-        const q = onboardQuestions.find(q => q.id === id);
-        if (q && q.memory) {
-            const memoryText = q.memory.replace('{val}', value);
-            try {
-                fetch('/api/zane/onboard-save', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({fact: memoryText, category: 'business_info', importance: 'high'})
-                });
-            } catch(e) {}
-        }
-        
-        // Show brief acknowledgment
-        const body = document.getElementById('zaneChatBody');
-        const ack = document.createElement('div');
-        ack.className = 'zane-msg user';
-        ack.textContent = value;
-        body.insertBefore(ack, document.getElementById('zaneOnboarding'));
-        
-        showOnboardStep(onboardStep + 1);
-        body.scrollTop = body.scrollHeight;
-    }
-    
-    async function finishOnboarding() {
-        const container = document.getElementById('onboardStep');
-        container.innerHTML = `<div style="text-align:center;padding:10px;">
-            <div style="font-size:28px;margin-bottom:8px;">🚀</div>
-            <div style="font-weight:600;margin-bottom:4px;">Setup Complete!</div>
-            <div style="font-size:12px;color:var(--text-muted);">I now know your business. Ask me anything.</div>
-        </div>`;
-        
-        // Mark onboarding done
-        try {
-            await fetch('/api/zane/onboard-complete', {method: 'POST'});
-        } catch(e) {}
-        
-        // After 2 seconds, switch to normal mode
-        setTimeout(() => {
-            document.getElementById('zaneOnboarding').style.display = 'none';
-            document.getElementById('zaneQuickBtns').style.display = 'flex';
-            document.getElementById('zaneWelcome').innerHTML = "I know your business now. Let's get to work — ask me anything about your finances, customers, stock, or tax.";
-        }, 2000);
-    }
-    
-    // Auto-check onboarding when chat is already open on page load
-    document.addEventListener('DOMContentLoaded', function() {
-        if (localStorage.getItem('zane_chat_open') === 'true') {
-            window._zaneOnboardChecked = true;
-            setTimeout(checkZaneOnboarding, 500);
-        }
-    });
     
     async function sendZaneMsg() {
         const input = document.getElementById('zaneInput');
@@ -19322,129 +19089,6 @@ def api_ai():
     except Exception as e:
         logger.error(f"[AI] Error: {e}")
         return jsonify({"error": str(e), "response": f"Sorry, something went wrong: {str(e)}"})
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ZANE ONBOARDING - First-time setup to make Zane smart from day 1
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.route("/api/zane/onboard-status")
-@login_required
-def api_zane_onboard_status():
-    """Check if this business needs onboarding"""
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    # Allow force onboarding via session flag (set by ?onboard=1 on any page)
-    force = session.get("force_onboard", False)
-    if force:
-        session.pop("force_onboard", None)
-        return jsonify({"needs_onboarding": True, "forced": True})
-    
-    if not biz_id:
-        return jsonify({"needs_onboarding": False})
-    
-    try:
-        # Check if onboarding was completed (stored as a zane_memory)
-        memories = db.get("zane_memories", {"business_id": biz_id, "category": "business_info"})
-        if memories:
-            # If we have 3+ business_info memories, onboarding is done
-            if isinstance(memories, list) and len(memories) >= 3:
-                return jsonify({"needs_onboarding": False})
-            elif isinstance(memories, dict):
-                return jsonify({"needs_onboarding": False})
-        
-        # Also check if we have enough data already (stock, customers)
-        stock_count = 0
-        customer_count = 0
-        try:
-            stocks = db.get("stock_items", {"business_id": biz_id})
-            stock_count = len(stocks) if isinstance(stocks, list) else (1 if stocks else 0)
-            customers = db.get("customers", {"business_id": biz_id})
-            customer_count = len(customers) if isinstance(customers, list) else (1 if customers else 0)
-        except:
-            pass
-        
-        # If business has lots of data already, probably doesn't need onboarding
-        if stock_count > 50 and customer_count > 20:
-            return jsonify({"needs_onboarding": False, "reason": "has_data"})
-        
-        return jsonify({"needs_onboarding": True})
-    except Exception as e:
-        logger.error(f"[ZANE ONBOARD] Status check error: {e}")
-        return jsonify({"needs_onboarding": False})
-
-
-@app.route("/api/zane/onboard-save", methods=["POST"])
-@login_required
-def api_zane_onboard_save():
-    """Save an onboarding answer as a Zane memory"""
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    if not biz_id:
-        return jsonify({"success": False})
-    
-    try:
-        data = request.get_json()
-        fact = data.get("fact", "").strip()
-        category = data.get("category", "business_info")
-        importance = data.get("importance", "high")
-        
-        if not fact:
-            return jsonify({"success": False})
-        
-        record = {
-            "id": generate_id(),
-            "business_id": biz_id,
-            "user_id": user.get("id", ""),
-            "fact": fact,
-            "category": category,
-            "importance": importance,
-            "source": "onboarding",
-            "active": True,
-            "created_at": now()
-        }
-        
-        success, resp = db.save("zane_memories", record)
-        logger.info(f"[ZANE ONBOARD] Saved memory: {fact[:60]}... success={success}")
-        return jsonify({"success": success})
-    except Exception as e:
-        logger.error(f"[ZANE ONBOARD] Save error: {e}")
-        return jsonify({"success": False})
-
-
-@app.route("/api/zane/onboard-complete", methods=["POST"])
-@login_required
-def api_zane_onboard_complete():
-    """Mark onboarding as complete"""
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    if not biz_id:
-        return jsonify({"success": False})
-    
-    try:
-        record = {
-            "id": generate_id(),
-            "business_id": biz_id,
-            "user_id": user.get("id", ""),
-            "fact": f"Onboarding completed on {today()}. Zane is fully configured for this business.",
-            "category": "business_info",
-            "importance": "high",
-            "source": "onboarding",
-            "active": True,
-            "created_at": now()
-        }
-        db.save("zane_memories", record)
-        logger.info(f"[ZANE ONBOARD] Onboarding completed for business {biz_id}")
-        return jsonify({"success": True})
-    except Exception as e:
-        logger.error(f"[ZANE ONBOARD] Complete error: {e}")
-        return jsonify({"success": False})
 
 
 @app.route("/api/report", methods=["POST"])
@@ -23164,15 +22808,11 @@ def invoice_new():
         customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}" {selected}>{safe_string(c.get("name", ""))}</option>'
     
     # Stock datalist for autocomplete
-    stock_options = '<option value="NEW" data-price="0" data-stockid="">+ Add New Stock Item</option>'
+    stock_options = '<option value="NEW" data-price="0">+ Add New Stock Item</option>'
     for s in stock:
         desc = safe_string(s.get("description", ""))
-        code = safe_string(s.get("code", ""))
         price = float(s.get("price") or s.get("selling_price") or 0)
-        stock_id = s.get("id", "")
-        qty_avail = float(s.get("qty") or s.get("quantity") or 0)
-        label = f"{code} - {desc}" if code else desc
-        stock_options += f'<option value="{label}" data-price="{price}" data-stockid="{stock_id}" data-desc="{desc}" data-qty="{qty_avail}">'
+        stock_options += f'<option value="{desc}" data-price="{price}">'
     
     error_msg = request.args.get("error", "")
     error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
@@ -23214,17 +22854,14 @@ def invoice_new():
                     <tr>
                         <th style="width:45%">Description</th>
                         <th style="width:12%">Qty</th>
-                        <th style="width:18%">Price (excl)</th>
+                        <th style="width:18%">Price</th>
                         <th style="width:15%">Total</th>
                         <th style="width:10%"></th>
                     </tr>
                 </thead>
                 <tbody id="itemRows">
                     <tr>
-                        <td>
-                            <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
-                            <input type="hidden" name="item_stock_id[]" value="">
-                        </td>
+                        <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td class="row-total">R0.00</td>
@@ -23267,13 +22904,11 @@ def invoice_new():
         }}
         const datalist = document.getElementById('stockList');
         const options = datalist.querySelectorAll('option');
-        const row = input.closest('tr');
-        const stockIdInput = row.querySelector('input[name="item_stock_id[]"]');
         for (let opt of options) {{
             if (opt.value === input.value) {{
+                const row = input.closest('tr');
                 const priceInput = row.querySelector('input[name="item_price[]"]');
                 priceInput.value = opt.dataset.price || '';
-                if (stockIdInput) stockIdInput.value = opt.dataset.stockid || '';
                 calcRow(priceInput);
                 break;
             }}
@@ -23284,14 +22919,11 @@ def invoice_new():
         const tbody = document.getElementById('itemRows');
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>
-                <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
-                <input type="hidden" name="item_stock_id[]" value="">
-            </td>
+            <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td class="row-total">R0.00</td>
-            <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">\u2715</button></td>
+            <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
         `;
         tbody.appendChild(row);
     }}
@@ -27422,8 +27054,8 @@ def delivery_notes_list():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2>Goods Received Notes (GRN)</h2>
-        <a href="/delivery-note/new" class="btn btn-primary">+ New GRN</a>
+        <h2>Delivery Notes</h2>
+        <a href="/delivery-note/new" class="btn btn-primary">+ New Delivery Note</a>
     </div>
     
     <div class="card" style="padding:0;overflow:hidden;">
@@ -27456,13 +27088,13 @@ def delivery_notes_list():
     </script>
     '''
     
-    return render_page("Goods Received Notes", content, user, "delivery-notes")
+    return render_page("Delivery Notes", content, user, "delivery-notes")
 
 
 @app.route("/delivery-note/new", methods=["GET", "POST"])
 @login_required
 def delivery_note_new():
-    """Create new GRN (goods received note)"""
+    """Create new delivery note"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -27544,12 +27176,12 @@ def delivery_note_new():
                             new_qty = current_qty - sold_qty
                             # Allow negative stock - use update with biz_id
                             db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                            logger.info(f"[GRN] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
+                            logger.info(f"[DELIVERY] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
                             # Log stock movement
                             try:
                                 db.save("stock_movements", RecordFactory.stock_movement(
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
-                                    quantity=sold_qty, reference=f"GRN {dn_num}"
+                                    quantity=sold_qty, reference=f"Delivery Note {dn.get('dn_number', '')}" if dn else "Delivery Note"
                                 ))
                             except: pass
             
@@ -30172,7 +29804,7 @@ def business_pulse():
     }}
     
     async function completeReminder(id) {{
-        await fetch('/api/assistant/toggle', {{
+        await fetch('/api/assistant/complete', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: id, type: 'reminder'}})
@@ -30181,7 +29813,7 @@ def business_pulse():
     }}
     
     async function completeTodo(id) {{
-        await fetch('/api/assistant/toggle', {{
+        await fetch('/api/assistant/complete', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: id, type: 'todo'}})
@@ -30578,14 +30210,14 @@ def api_pulse_data():
             if p_date >= seven_days_ago:
                 who = user_names.get(p.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
-                activity_feed.append({"date": p_date, "time": extract_time(p.get("created_at", "")), "text": f'{p.get("customer_name", "Customer")} paid{who_tag}', "amount": float(p.get("amount", 0)), "icon": "&#10003;", "color": "#10b981"})
+                activity_feed.append({"date": p_date, "time": str(p.get("created_at", ""))[-8:-3], "text": f'{p.get("customer_name", "Customer")} paid{who_tag}', "amount": float(p.get("amount", 0)), "icon": "&#10003;", "color": "#10b981"})
         
         for inv in invoices:
             inv_date = str(inv.get("date", ""))[:10]
             if inv_date >= seven_days_ago and inv.get("status") != "paid":
                 who = user_names.get(inv.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
-                activity_feed.append({"date": inv_date, "time": extract_time(inv.get("created_at", "")), "text": f'Invoice {inv.get("invoice_number", "")} → {inv.get("customer_name", "")[:20]}{who_tag}', "amount": float(inv.get("total", 0)), "icon": "&#128196;", "color": "#f59e0b"})
+                activity_feed.append({"date": inv_date, "time": str(inv.get("created_at", ""))[-8:-3], "text": f'Invoice {inv.get("invoice_number", "")} → {inv.get("customer_name", "")[:20]}{who_tag}', "amount": float(inv.get("total", 0)), "icon": "&#128196;", "color": "#f59e0b"})
         
         for s in sales:
             s_date = str(s.get("date", ""))[:10]
@@ -30593,7 +30225,7 @@ def api_pulse_data():
                 who = user_names.get(s.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
                 method = s.get("payment_method", "cash")
-                activity_feed.append({"date": s_date, "time": extract_time(s.get("created_at", "")), "text": f'POS Sale #{str(s.get("id", ""))[:6]} ({method}){who_tag}', "amount": float(s.get("total", 0)), "icon": "&#128176;", "color": "#10b981"})
+                activity_feed.append({"date": s_date, "time": str(s.get("created_at", ""))[-8:-3], "text": f'POS Sale #{str(s.get("id", ""))[:6]} ({method}){who_tag}', "amount": float(s.get("total", 0)), "icon": "&#128176;", "color": "#10b981"})
         
         activity_feed.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
         
@@ -30817,30 +30449,15 @@ def api_assistant_items():
         reminder_items = []
         for r in pending_reminders[:25]:
             due = r.get("due_date", "")
-            due_time = r.get("due_time", "")
             is_overdue = due < today_str if due else False
             is_today = due == today_str
-            
-            # Build display string for due date
-            if is_overdue:
-                due_display = f"Due {due}" + (f" {due_time}" if due_time else "")
-            elif is_today:
-                due_display = f"Today" + (f" {due_time}" if due_time else "")
-            elif due:
-                due_display = f"Due {due}" + (f" {due_time}" if due_time else "")
-            else:
-                due_display = "No due date"
-            
             reminder_items.append({
                 "id": r.get("id", ""),
-                "title": r.get("message", r.get("title", "Reminder")),
                 "message": r.get("message", ""),
                 "due_date": due,
-                "due_time": due_time,
-                "due_display": due_display,
+                "due_time": r.get("due_time", ""),
                 "priority": r.get("priority", "normal"),
                 "linked_to": r.get("linked_to", ""),
-                "is_overdue": is_overdue,
                 "overdue": is_overdue,
                 "today": is_today
             })
@@ -30855,7 +30472,6 @@ def api_assistant_items():
         for t in pending_todos[:25]:
             todo_items.append({
                 "id": t.get("id", ""),
-                "title": t.get("task", t.get("title", "To-do")),
                 "task": t.get("task", ""),
                 "priority": t.get("priority", "normal"),
                 "category": t.get("category", "general")
@@ -34154,7 +33770,6 @@ Dit is NIE {biz_name} se eie data nie. MOENIE na {biz_name} verwys in jou analis
 Analiseer dit as 'n onafhanklike kliënt se finansiële data.
 """
             insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
-Jou naam is net "Zane" - MOENIE 'n van gebruik nie. Teken reports as "Zane, CA(SA)" alleen.
 
 BESIGHEID: {safe_string(report_company)}
 INDUSTRIE: {industry}
@@ -34236,13 +33851,6 @@ Gee TEN MINSTE 5 konkrete aksies met prioriteite (DRINGEND / BELANGRIK / MONITOR
 **6. VRAE VIR DIE KLIËNT**
 Lys 3-5 vrae wat jy sou vra.
 
-FORMAAT INSTRUKSIES:
-- Skryf SKOON HTML (geen markdown nie). Gebruik <h2>, <h3> vir opskrifte.
-- Vir tabelle: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Kolom</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Waarde</td></tr></table>
-- Vir kleur indicators: <span style="color:#ef4444;">✗ Sleg</span> of <span style="color:#10b981;">✓ Goed</span> of <span style="color:#f59e0b;">⚠ Waarskuwing</span>
-- ELKE tabel sel MOET inhoud hê - moet NOOIT leë selle los nie
-- Voltooi ALLE afdelings volledig - moenie halfpad stop nie
-
 REËLS:
 - Verwys na SPESIFIEKE rekeninge by naam en kode
 - Wees SPESIFIEK oor bedrae en persentasies
@@ -34260,7 +33868,6 @@ Analyze this as an independent client's financial data. If you see references to
 (e.g., loans from/to other entities), these are the CLIENT's intercompany relationships, not related to {biz_name}.
 """
             insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
-Your name is simply "Zane" - do NOT use any surname. Sign reports as "Zane, CA(SA)" only.
 
 BUSINESS: {safe_string(report_company)}
 INDUSTRY: {industry}
@@ -34343,14 +33950,6 @@ Give AT LEAST 5 concrete actions with priority (URGENT / IMPORTANT / MONITOR)
 **6. QUESTIONS FOR THE CLIENT**
 List 3-5 questions you would ask the business owner.
 
-FORMAT INSTRUCTIONS:
-- Output CLEAN HTML only (no markdown). Use <h2>, <h3> for headings.
-- For tables use: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Column</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Value</td></tr></table>
-- For colored indicators use: <span style="color:#ef4444;">✗ Bad</span> or <span style="color:#10b981;">✓ Good</span> or <span style="color:#f59e0b;">⚠ Warning</span>
-- For section boxes use: <div style="padding:15px;background:rgba(99,102,241,0.1);border-radius:8px;margin:10px 0;">content</div>
-- EVERY table cell MUST have content - never leave cells empty
-- Complete ALL sections fully - do not stop halfway through a section
-
 RULES:
 - Refer to SPECIFIC accounts by name and code
 - Do NOT be generic - be SPECIFIC about amounts and percentages
@@ -34364,17 +33963,11 @@ RULES:
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-sonnet-4-5-20250929",
-                    max_tokens=8000,
+                    max_tokens=3000,
                     messages=[{"role": "user", "content": insights_prompt}]
                 )
                 if message.content and message.content[0].text:
                     insights_html = message.content[0].text
-                    
-                    # Check if report was truncated
-                    if hasattr(message, 'stop_reason') and message.stop_reason == 'max_tokens':
-                        logger.warning(f"[TB ANALYZE] Report was TRUNCATED (hit max_tokens limit)")
-                        insights_html += '<div style="margin-top:20px;padding:12px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:8px;color:#f59e0b;font-size:13px;">⚠️ Report was truncated due to length. The analysis above covers the main findings.</div>'
-                    
                     # Basic markdown to HTML
                     insights_html = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
                     insights_html = re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=re.MULTILINE)
@@ -34853,217 +34446,6 @@ Rules:
         
     except Exception as e:
         logger.error(f"[TB UPLOAD] Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/reports/tb/smart-report", methods=["POST"])
-@login_required
-def api_tb_smart_report():
-    """Generate different report types from uploaded TB data (management statement, KPI, etc.)"""
-    
-    try:
-        data = request.get_json()
-        accounts = data.get("accounts", [])
-        report_type = data.get("report_type", "management")
-        custom_request = data.get("custom_request", "")
-        lang = data.get("lang", "en")
-        source_file = data.get("source_file", "Uploaded TB")
-        tb_control_profit = data.get("tb_control_profit")
-        
-        if not accounts:
-            return jsonify({"success": False, "error": "No account data provided"})
-        
-        # ═══ PYTHON CALCULATES EVERYTHING FROM THE TB DATA ═══
-        has_categories = any(a.get("category") for a in accounts)
-        
-        def cat_sum(cats, column="debit"):
-            total = 0
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                for c in cats:
-                    if c in cat:
-                        total += float(a.get(column, 0) or 0)
-                        break
-            return total
-        
-        def name_sum(accs, keywords, column="debit"):
-            return sum(float(a.get(column, 0) or 0) for a in accs 
-                      if any(kw in str(a.get("name", "")).lower() for kw in keywords))
-        
-        if has_categories:
-            sales = cat_sum(["sales", "revenue", "turnover", "omset"], "credit")
-            cos = cat_sum(["cost of sale", "cost of goods", "koste van verkope"], "debit")
-            other_income = cat_sum(["other income", "ander inkomste"], "credit")
-            
-            expense_accs = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
-            total_expenses = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) for a in expense_accs)
-            if total_expenses < 0:
-                total_expenses = 0
-            
-            current_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
-                               for a in accounts if "current asset" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
-            fixed_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
-                             for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["fixed asset", "non-current asset"]))
-            current_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                             for a in accounts if "current liabilit" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
-            long_term_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                               for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["long term", "non-current liabilit"]))
-            equity = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                        for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["equity", "owner", "ekwiteit"]))
-            
-            salaries = name_sum(expense_accs, ["salary", "salaries", "wage", "payroll", "salar"])
-            rent = name_sum(expense_accs, ["rent", "huur"])
-            electricity = name_sum(expense_accs, ["electric", "water", "eskom", "elektris"])
-            advertising = name_sum(expense_accs, ["advertising", "marketing", "advertens"])
-            insurance = name_sum(expense_accs, ["insurance", "verseker"])
-            bank_charges = name_sum(expense_accs, ["bank charge", "bank fee", "bankkoste"])
-            depreciation = name_sum(expense_accs, ["depreciation", "waardevermindering"])
-            professional = name_sum(expense_accs, ["professional", "accounting", "legal", "audit", "rekenmeest"])
-        else:
-            sales = sum(float(a.get("credit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("5"))
-            cos = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("51"))
-            total_expenses = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", ""))[:1] in "6789")
-            other_income = 0
-            current_assets = current_liab = fixed_assets = long_term_liab = equity = 0
-            salaries = rent = electricity = advertising = insurance = bank_charges = depreciation = professional = 0
-        
-        gross_profit = sales - cos
-        net_profit = sales + other_income - cos - total_expenses
-        total_assets = current_assets + fixed_assets
-        total_liabilities = current_liab + long_term_liab
-        
-        gp_margin = round((gross_profit / sales * 100), 1) if sales > 0 else 0
-        np_margin = round((net_profit / (sales + other_income) * 100), 1) if (sales + other_income) > 0 else 0
-        current_ratio = round(current_assets / current_liab, 2) if current_liab > 0 else 0
-        debt_equity = round(total_liabilities / equity, 2) if equity > 0 else 0
-        sal_pct = round(salaries / sales * 100, 1) if sales > 0 else 0
-        rent_pct = round(rent / sales * 100, 1) if sales > 0 else 0
-        
-        validation_note = ""
-        if tb_control_profit is not None:
-            try:
-                control = float(tb_control_profit)
-                diff = abs(net_profit - control)
-                pct = (diff / abs(control) * 100) if control != 0 else 0
-                if pct > 5:
-                    validation_note = f"⚠️ Note: Calculated net profit (R{net_profit:,.2f}) differs from TB control figure (R{control:,.2f}) by {pct:.1f}%."
-            except:
-                pass
-        
-        clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
-        
-        data_for_ai = f"""
-CLIENT: {clean_name}
-DATA SOURCE: Uploaded Trial Balance ({len(accounts)} accounts)
-{validation_note}
-
-=== INCOME STATEMENT (Python-calculated, 100% accurate - DO NOT recalculate) ===
-Revenue/Sales: R{sales:,.2f}
-Cost of Sales: R{cos:,.2f}
-Gross Profit: R{gross_profit:,.2f} ({gp_margin}%)
-Other Income: R{other_income:,.2f}
-Total Expenses: R{total_expenses:,.2f}
-  - Salaries: R{salaries:,.2f} ({sal_pct}% of sales)
-  - Rent: R{rent:,.2f}
-  - Electricity/Water: R{electricity:,.2f}
-  - Advertising: R{advertising:,.2f}
-  - Insurance: R{insurance:,.2f}
-  - Bank Charges: R{bank_charges:,.2f}
-  - Depreciation: R{depreciation:,.2f}
-  - Professional Fees: R{professional:,.2f}
-Net Profit: R{net_profit:,.2f} ({np_margin}%)
-
-=== BALANCE SHEET ===
-Current Assets: R{current_assets:,.2f}
-Fixed Assets: R{fixed_assets:,.2f}
-Total Assets: R{total_assets:,.2f}
-Current Liabilities: R{current_liab:,.2f}
-Long-term Liabilities: R{long_term_liab:,.2f}
-Total Liabilities: R{total_liabilities:,.2f}
-Equity: R{equity:,.2f}
-
-=== RATIOS ===
-Current Ratio: {current_ratio}:1 (norm >1.5)
-Gross Margin: {gp_margin}%
-Net Margin: {np_margin}%
-Debt/Equity: {debt_equity}:1
-"""
-        
-        report_prompts = {
-            "management": """Write a professional MANAGEMENT STATEMENT (Year-to-Date). Structure:
-1. Executive Summary (2-3 sentences)
-2. Income Statement Analysis (revenue, margins, expense breakdown)
-3. Balance Sheet Summary
-4. Key Ratios & What They Mean
-5. Concerns & Red Flags
-6. Recommendations (5+ specific actions)""",
-            
-            "kpi": f"""Write a KPI DASHBOARD REPORT with traffic light status (Green/Amber/Red):
-1. Gross Profit Margin ({gp_margin}%)
-2. Net Profit Margin ({np_margin}%)
-3. Current Ratio ({current_ratio}:1)
-4. Salaries % of Sales ({sal_pct}%)
-5. Rent % of Sales ({rent_pct}%)
-6. Debt to Equity ({debt_equity}:1)
-For each: meaning, benchmark, and action.""",
-            
-            "sales": """Write a SALES ANALYSIS covering: revenue performance, cost structure, gross margin quality, expense impact, and improvement recommendations.""",
-            
-            "debtor": f"""Write a WORKING CAPITAL report: Current Ratio ({current_ratio}), cash position, liquidity risk, and recommendations.""",
-            
-            "forecast": """Write a FORWARD-LOOKING ANALYSIS: sustainability, cash flow outlook, scenario analysis (sales drop 10/20/30%), and strategic recommendations.""",
-            
-            "custom": f"""Answer this request: {custom_request or 'General financial overview'}"""
-        }
-        
-        prompt = report_prompts.get(report_type, report_prompts["management"])
-        
-        system_prompt = f"""You are Zane, a senior CA(SA). You are writing a report for a CLIENT's uploaded trial balance.
-Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, CA(SA)" only.
-RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
-{"Write in Afrikaans." if lang == "af" else "Write in English."} Use R (Rand) for all amounts.
-
-FORMAT RULES - OUTPUT CLEAN HTML:
-- Use <h2> for main sections, <h3> for subsections
-- Use <p> for paragraphs
-- Use <strong> for emphasis
-- Use <table> with inline styles for any data tables
-- Use <div style="background:rgba(239,68,68,0.1);border-left:3px solid #ef4444;padding:10px;margin:10px 0;"> for warnings/red flags
-- Use <div style="background:rgba(16,185,129,0.1);border-left:3px solid #10b981;padding:10px;margin:10px 0;"> for positive items
-- Use <div style="background:rgba(245,158,11,0.1);border-left:3px solid #f59e0b;padding:10px;margin:10px 0;"> for caution items
-- DO NOT use markdown (no ##, no **, no ---, no bullet points with -)
-- Use <ul><li> for lists
-- Make it visually professional and easy to scan"""
-
-        if not ANTHROPIC_API_KEY:
-            return jsonify({"success": False, "error": "AI not configured"})
-        
-        message = _anthropic_client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=8000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
-        )
-        
-        report = message.content[0].text if message.content else ""
-        
-        # Convert any remaining markdown to HTML (fallback if Sonnet mixed formats)
-        import re
-        report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
-        report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
-        report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
-        report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
-        report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
-        report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
-        report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
-        # Wrap plain text paragraphs
-        report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
-        return jsonify({"success": True, "report": report})
-        
-    except Exception as e:
-        logger.error(f"[TB SMART REPORT] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)})
@@ -37374,32 +36756,15 @@ def smart_reports_page():
     content = '''
     <div class="card">
         <h2 style="margin-bottom:15px;">Smart Reports</h2>
+        <p style="color:var(--text-muted);margin-bottom:20px;">
+            Ask Zane to write any report you need. Zane will analyze your data and generate a professional management report.
+        </p>
         
-        <!-- DATA SOURCE SELECTOR -->
-        <div class="card" style="margin-bottom:20px;padding:15px;">
-            <h3 style="margin:0 0 10px 0;">📂 Data Source</h3>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                <button id="srcOwnBtn" class="btn btn-primary" onclick="setDataSource('own')" style="flex:none;">
-                    🏢 My Business Data
-                </button>
-                <label id="srcClientBtn" class="btn btn-secondary" style="cursor:pointer;flex:none;margin:0;">
-                    📁 Upload Client TB
-                    <input type="file" id="smartReportTBUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleSmartReportTB(this)">
-                </label>
-                <span id="dataSourceStatus" style="color:var(--text-muted);font-size:13px;">Using your own business data</span>
-            </div>
-        </div>
-        
-        <!-- REPORT TYPE SELECTION -->
-        <h3 style="margin:20px 0 10px 0;">Choose Report Type</h3>
+        <h3 style="margin:20px 0 10px 0;">Quick Reports</h3>
         <div class="stats-grid">
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('management')">
                 <h4>Management Statement</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Year-to-date P&L, Balance Sheet & KPIs</p>
-            </div>
-            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('tb_analysis')">
-                <h4>TB Analysis</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Full account-by-account CA(SA) review</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('kpi')">
                 <h4>KPI Dashboard</h4>
@@ -37413,10 +36778,24 @@ def smart_reports_page():
                 <h4>Debtor Risk Report</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Problem customers & recommendations</p>
             </div>
+            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('stock')">
+                <h4>Stock Report</h4>
+                <p style="color:var(--text-muted);font-size:13px;">Slow movers, reorder suggestions</p>
+            </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('forecast')">
                 <h4>Cash Flow Forecast</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Next 30 days projection</p>
             </div>
+        </div>
+        
+        <h3 style="margin:30px 0 10px 0;">Analyze Client TB</h3>
+        <p style="color:var(--text-muted);margin-bottom:10px;">Upload a client's Trial Balance (CSV/Excel) for professional AI analysis:</p>
+        <div style="display:flex;gap:10px;align-items:center;">
+            <label class="btn btn-secondary" style="cursor:pointer;margin:0;">
+                📁 Upload Client TB
+                <input type="file" id="smartReportTBUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleSmartReportTB(this)">
+            </label>
+            <span id="smartReportTBStatus" style="color:var(--text-muted);font-size:13px;"></span>
         </div>
         
         <h3 style="margin:30px 0 10px 0;">Custom Report</h3>
@@ -37429,7 +36808,7 @@ def smart_reports_page():
     
     <div id="reportLoading" style="display:none;text-align:center;padding:40px;">
         <div style="font-size:24px;margin-bottom:10px;">Generating Report...</div>
-        <p style="color:var(--text-muted);">Analyzing data. This may take up to 30 seconds.</p>
+        <p style="color:var(--text-muted);">Analyzing your business data. This may take up to 30 seconds.</p>
     </div>
     
     <div id="reportOutput" style="margin-top:20px;display:none;">
@@ -37438,113 +36817,101 @@ def smart_reports_page():
                 <h3 id="reportTitle" style="margin:0;">Report</h3>
                 <button class="btn btn-secondary" onclick="window.print();">Print</button>
             </div>
-            <div id="reportContent" style="line-height:1.6;"></div>
+            <div id="reportContent" style="white-space:pre-wrap;line-height:1.6;"></div>
         </div>
     </div>
     
     <style>
     .report-btn { transition: all 0.2s; border: 1px solid var(--border); }
     .report-btn:hover { border-color: var(--primary); transform: translateY(-2px); }
-    .report-btn.disabled { opacity: 0.5; pointer-events: none; }
     </style>
     
     <script>
-    // ═══ DATA SOURCE STATE ═══
-    let dataSource = 'own';  // 'own' or 'client'
-    let clientTBData = null;  // Parsed client TB data
-    let clientFileName = '';
-    
     const reportTitles = {
         'management': 'Management Statement',
-        'tb_analysis': 'TB Analysis',
         'kpi': 'Key Performance Indicators',
         'sales': 'Sales Analysis',
         'debtor': 'Debtor Risk Report',
+        'stock': 'Stock Analysis',
         'forecast': 'Cash Flow Forecast'
     };
     
-    function setDataSource(src) {
-        dataSource = src;
-        const ownBtn = document.getElementById('srcOwnBtn');
-        const clientBtn = document.getElementById('srcClientBtn');
-        const status = document.getElementById('dataSourceStatus');
-        
-        if (src === 'own') {
-            ownBtn.className = 'btn btn-primary';
-            clientBtn.className = 'btn btn-secondary';
-            clientTBData = null;
-            clientFileName = '';
-            status.textContent = 'Using your own business data';
-            status.style.color = 'var(--text-muted)';
+    async function generateReport(type) {
+        const title = reportTitles[type] || 'Report';
+        await runReport(type, null, title);
+    }
+    
+    async function generateCustomReport() {
+        const input = document.getElementById('customReportInput').value;
+        if (input) {
+            await runReport('custom', input, 'Custom Report');
         }
     }
     
     function handleSmartReportTB(input) {
         const file = input.files[0];
         if (!file) return;
-        const status = document.getElementById('dataSourceStatus');
-        status.textContent = '⏳ Parsing ' + file.name + '...';
+        const status = document.getElementById('smartReportTBStatus');
+        status.textContent = '⏳ Uploading and parsing ' + file.name + '...';
         
         const formData = new FormData();
         formData.append('file', file);
         formData.append('lang', document.documentElement.lang || 'en');
         
+        // Step 1: Upload and parse the CSV
         fetch('/api/reports/tb/upload-analyze', {
             method: 'POST',
             body: formData
         })
         .then(r => r.json())
-        .then(data => {
-            if (data.success) {
-                clientTBData = data;
-                clientFileName = file.name;
-                dataSource = 'client';
-                
-                // Update UI
-                document.getElementById('srcOwnBtn').className = 'btn btn-secondary';
-                document.getElementById('srcClientBtn').className = 'btn btn-primary';
-                status.innerHTML = '✅ <strong>' + file.name + '</strong> loaded (' + data.accounts.length + ' accounts) — Now choose a report type below';
-                status.style.color = '#10b981';
+        .then(uploadData => {
+            if (!uploadData.success) {
+                status.textContent = '❌ ' + (uploadData.error || 'Upload failed');
+                return;
+            }
+            
+            status.textContent = '⏳ Parsed ' + uploadData.accounts.length + ' accounts. Generating report...';
+            
+            // Step 2: Analyze the parsed data
+            return fetch('/api/reports/tb/analyze', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    accounts: uploadData.accounts,
+                    total_debit: uploadData.total_debit,
+                    total_credit: uploadData.total_credit,
+                    is_balanced: uploadData.is_balanced,
+                    lang: document.documentElement.lang || 'en',
+                    source_file: file.name,
+                    company_name: '',
+                    tb_control_profit: uploadData.tb_control_profit || null
+                })
+            });
+        })
+        .then(r => { if (r) return r.json(); })
+        .then(reportData => {
+            if (!reportData) return;
+            
+            if (reportData.success) {
+                status.textContent = '✅ Report generated!';
+                // Show the report in the report output area
+                document.getElementById('reportLoading').style.display = 'none';
+                document.getElementById('reportOutput').style.display = 'block';
+                document.getElementById('reportTitle').textContent = 'Client TB Analysis: ' + file.name;
+                document.getElementById('reportContent').innerHTML = reportData.analysis || reportData.report_html || reportData.report || 'Report generated';
+                document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
             } else {
-                status.textContent = '❌ ' + (data.error || 'Upload failed');
-                status.style.color = '#ef4444';
+                status.textContent = '❌ ' + (reportData.error || 'Analysis failed');
             }
         })
         .catch(e => {
             status.textContent = '❌ Error: ' + e.message;
-            status.style.color = '#ef4444';
         });
         
         input.value = '';
     }
     
-    async function generateReport(type) {
-        const title = reportTitles[type] || 'Report';
-        
-        if (dataSource === 'client' && clientTBData) {
-            // Generate from uploaded client TB
-            await runClientTBReport(type, title);
-        } else if (dataSource === 'client' && !clientTBData) {
-            alert('Upload a client TB first, then choose a report type.');
-        } else {
-            // Generate from own business data
-            await runOwnReport(type, null, title);
-        }
-    }
-    
-    async function generateCustomReport() {
-        const input = document.getElementById('customReportInput').value;
-        if (!input) return;
-        
-        if (dataSource === 'client' && clientTBData) {
-            await runClientTBReport('custom', 'Custom Report', input);
-        } else {
-            await runOwnReport('custom', input, 'Custom Report');
-        }
-    }
-    
-    // ═══ OWN DATA REPORTS ═══
-    async function runOwnReport(type, customRequest, title) {
+    async function runReport(type, customRequest, title) {
         document.getElementById('reportLoading').style.display = 'block';
         document.getElementById('reportOutput').style.display = 'none';
         
@@ -37552,78 +36919,29 @@ def smart_reports_page():
             const response = await fetch('/api/report', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ type: type, custom: customRequest })
+                body: JSON.stringify({
+                    type: type,
+                    custom: customRequest
+                })
             });
+            
             const data = await response.json();
             
             document.getElementById('reportLoading').style.display = 'none';
             document.getElementById('reportOutput').style.display = 'block';
             document.getElementById('reportTitle').textContent = title;
-            document.getElementById('reportContent').innerHTML = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
-            document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
-        } catch (e) {
-            document.getElementById('reportLoading').style.display = 'none';
-            alert('Error generating report.');
-        }
-    }
-    
-    // ═══ CLIENT TB REPORTS ═══
-    async function runClientTBReport(type, title, customRequest) {
-        document.getElementById('reportLoading').style.display = 'block';
-        document.getElementById('reportOutput').style.display = 'none';
-        
-        try {
-            const lang = document.documentElement.lang || 'en';
-            let reportHtml = '';
             
-            if (type === 'tb_analysis') {
-                // Full TB analysis (existing endpoint)
-                const response = await fetch('/api/reports/tb/analyze', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        accounts: clientTBData.accounts,
-                        total_debit: clientTBData.total_debit,
-                        total_credit: clientTBData.total_credit,
-                        is_balanced: clientTBData.is_balanced,
-                        lang: lang,
-                        source_file: clientFileName,
-                        company_name: '',
-                        tb_control_profit: clientTBData.tb_control_profit || null
-                    })
-                });
-                const data = await response.json();
-                reportHtml = data.success ? (data.analysis || '') : ('Error: ' + (data.error || 'Failed'));
-                
+            if (data.success) {
+                document.getElementById('reportContent').textContent = data.report;
             } else {
-                // Other report types from TB data (management, kpi, etc.)
-                const response = await fetch('/api/reports/tb/smart-report', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        accounts: clientTBData.accounts,
-                        total_debit: clientTBData.total_debit,
-                        total_credit: clientTBData.total_credit,
-                        is_balanced: clientTBData.is_balanced,
-                        tb_control_profit: clientTBData.tb_control_profit || null,
-                        report_type: type,
-                        custom_request: customRequest || null,
-                        lang: lang,
-                        source_file: clientFileName
-                    })
-                });
-                const data = await response.json();
-                reportHtml = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
+                document.getElementById('reportContent').textContent = 'Error: ' + (data.error || 'Failed to generate report');
             }
             
-            document.getElementById('reportLoading').style.display = 'none';
-            document.getElementById('reportOutput').style.display = 'block';
-            document.getElementById('reportTitle').textContent = title + ' — ' + clientFileName;
-            document.getElementById('reportContent').innerHTML = reportHtml;
+            // Scroll to report
             document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
         } catch (e) {
             document.getElementById('reportLoading').style.display = 'none';
-            alert('Error generating report: ' + e.message);
+            alert('Error generating report. Please try again.');
         }
     }
     </script>
@@ -41755,15 +41073,6 @@ def pos_history():
     grand_total = cash_total + card_total + account_total + invoice_total
     transaction_count = len(sales) + len(invoices) + len(quotes)
     
-    # === EXPECTED CASH FOR Z-READ (always TODAY regardless of date filter) ===
-    # Cash in drawer = POS cash sales + cash-paid invoices (for today only)
-    today_str = today()
-    today_cash_sales = sum(float(s.get("total", 0)) for s in all_sales 
-                          if s.get("payment_method") == "cash" and (s.get("date") or "") == today_str)
-    today_cash_invoices = sum(float(i.get("total", 0)) for i in all_invoices 
-                             if i.get("payment_method") in ("cash",) and (i.get("date") or "") == today_str)
-    expected_cash_drawer = today_cash_sales + today_cash_invoices
-    
     # Build transaction rows
     rows = ""
     
@@ -41785,7 +41094,7 @@ def pos_history():
             "id": s.get("id"),
             "number": s.get("sale_number", "-"),
             "date": s.get("date", ""),
-            "time": extract_time(s.get("created_at", "")),
+            "time": s.get("created_at", "")[-8:-3] if s.get("created_at") else "-",
             "type": s.get("payment_method", "cash").upper(),
             "customer": s.get("customer_name", "Cash Sale"),
             "total": float(s.get("total", 0)),
@@ -41810,7 +41119,7 @@ def pos_history():
             "id": i.get("id"),
             "number": i.get("invoice_number", "-"),
             "date": i.get("date", ""),
-            "time": extract_time(i.get("created_at", "")),
+            "time": i.get("created_at", "")[-8:-3] if i.get("created_at") else "-",
             "type": "INVOICE",
             "customer": i.get("customer_name", "-"),
             "total": float(i.get("total", 0)),
@@ -41835,7 +41144,7 @@ def pos_history():
             "id": q.get("id"),
             "number": q.get("quote_number", "-"),
             "date": q.get("date", ""),
-            "time": extract_time(q.get("created_at", "")),
+            "time": q.get("created_at", "")[-8:-3] if q.get("created_at") else "-",
             "type": "QUOTE",
             "customer": q.get("customer_name", "-"),
             "total": float(q.get("total", 0)),
@@ -42001,52 +41310,10 @@ def pos_history():
         </div>
     </div>
     
-    <!-- Z-Read Modal with Cash Denomination Count -->
+    <!-- Z-Read Modal -->
     <div id="zreadModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:white;padding:0;border-radius:8px;max-width:500px;width:95%;max-height:95vh;overflow-y:auto;">
+        <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
             <div id="zreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
-            <!-- Cash Count Section -->
-            <div id="cashCountSection" style="padding:0 30px 15px 30px;font-family:monospace;color:#000;">
-                <div style="border-top:2px dashed #000;margin:10px 0 15px 0;"></div>
-                <strong style="font-size:15px;">CASH COUNT</strong>
-                <p style="color:#666;font-size:11px;margin:4px 0 12px 0;">Enter quantity of each denomination:</p>
-                <table style="width:100%;border-collapse:collapse;" id="denomTable">
-                    <tr style="background:#f5f5f5;font-weight:bold;">
-                        <td style="padding:4px 8px;">Denomination</td>
-                        <td style="padding:4px 8px;text-align:center;width:70px;">Qty</td>
-                        <td style="padding:4px 8px;text-align:right;width:100px;">Total</td>
-                    </tr>
-                    <tr><td style="padding:4px 8px;">R200 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="200" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R100 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="100" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">R50 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="50" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R20 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="20" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">R10 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="10" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R5 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">R2 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R1 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">50c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">20c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">10c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                </table>
-                <div style="border-top:2px dashed #000;margin:12px 0;"></div>
-                <table style="width:100%;border-collapse:collapse;">
-                    <tr style="font-size:16px;font-weight:bold;">
-                        <td style="padding:4px 8px;">COUNTED:</td>
-                        <td style="text-align:right;padding:4px 8px;" id="cashCounted">R0.00</td>
-                    </tr>
-                    <tr style="font-size:14px;">
-                        <td style="padding:4px 8px;">Expected Cash:</td>
-                        <td style="text-align:right;padding:4px 8px;" id="cashExpected">{money(expected_cash_drawer)}</td>
-                    </tr>
-                    <tr id="diffRow" style="font-size:16px;font-weight:bold;">
-                        <td style="padding:4px 8px;">DIFFERENCE:</td>
-                        <td style="text-align:right;padding:4px 8px;" id="cashDiff">R0.00</td>
-                    </tr>
-                </table>
-                <div id="cashStatus" style="text-align:center;padding:10px;margin-top:10px;border-radius:6px;font-weight:bold;font-size:13px;background:#fef3c7;color:#92400e;">
-                    Tel die geld en vul die hoeveelhede in
-                </div>
-            </div>
             <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
                 <button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">✓ Close Day & Print</button>
                 <button onclick="closeModal('zreadModal')" class="btn btn-secondary" style="flex:1;">Cancel</button>
@@ -42139,60 +41406,7 @@ def pos_history():
         document.getElementById('xreadModal').style.display = 'flex';
     }}
     
-    const expectedCash = {float(expected_cash_drawer)};
-    
-    function calcCashUp() {{
-        let counted = 0;
-        document.querySelectorAll('.denom-input').forEach((input, idx) => {{
-            const val = parseFloat(input.dataset.val);
-            const qty = parseInt(input.value) || 0;
-            const lineTotal = val * qty;
-            counted += lineTotal;
-            const totalCells = document.querySelectorAll('.denom-total');
-            if (totalCells[idx]) totalCells[idx].textContent = 'R' + lineTotal.toFixed(2);
-        }});
-        
-        document.getElementById('cashCounted').textContent = 'R' + counted.toFixed(2);
-        const diff = counted - expectedCash;
-        const diffEl = document.getElementById('cashDiff');
-        const diffRow = document.getElementById('diffRow');
-        const statusEl = document.getElementById('cashStatus');
-        
-        diffEl.textContent = (diff >= 0 ? 'R' : '-R') + Math.abs(diff).toFixed(2);
-        
-        if (Math.abs(diff) < 0.01) {{
-            diffEl.style.color = '#059669';
-            diffRow.style.color = '#059669';
-            statusEl.style.background = '#d1fae5';
-            statusEl.style.color = '#065f46';
-            statusEl.textContent = 'Cash balanseer perfek!';
-        }} else if (diff > 0) {{
-            diffEl.style.color = '#2563eb';
-            diffRow.style.color = '#2563eb';
-            statusEl.style.background = '#dbeafe';
-            statusEl.style.color = '#1e40af';
-            statusEl.textContent = 'R' + diff.toFixed(2) + ' OOR (surplus)';
-        }} else {{
-            diffEl.style.color = '#dc2626';
-            diffRow.style.color = '#dc2626';
-            statusEl.style.background = '#fee2e2';
-            statusEl.style.color = '#991b1b';
-            statusEl.textContent = 'R' + Math.abs(diff).toFixed(2) + ' KORT (tekort)';
-        }}
-    }}
-    
     function printZRead() {{
-        // Reset denomination inputs
-        document.querySelectorAll('.denom-input').forEach(input => {{ input.value = 0; }});
-        document.querySelectorAll('.denom-total').forEach(cell => {{ cell.textContent = 'R0.00'; }});
-        document.getElementById('cashCounted').textContent = 'R0.00';
-        document.getElementById('cashDiff').textContent = 'R0.00';
-        document.getElementById('cashDiff').style.color = '#000';
-        document.getElementById('diffRow').style.color = '#000';
-        document.getElementById('cashStatus').textContent = 'Tel die geld en vul die hoeveelhede in';
-        document.getElementById('cashStatus').style.background = '#fef3c7';
-        document.getElementById('cashStatus').style.color = '#92400e';
-        
         const content = `
 <div style="text-align:center;margin-bottom:20px;">
 <strong style="font-size:18px;">Z-READ</strong><br>
@@ -42219,55 +41433,32 @@ def pos_history():
 </tr>
 <tr><td>Total Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
 </table>
+<hr style="border:1px dashed #000;margin:15px 0;">
+<div style="margin-bottom:15px;">
+<strong>CASH DRAWER</strong>
+</div>
+<table style="width:100%;border-collapse:collapse;">
+<tr><td>Expected Cash:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
+<tr><td>Counted:</td><td style="text-align:right;border-bottom:1px solid #000;width:100px;">________</td></tr>
+<tr><td>Difference:</td><td style="text-align:right;">________</td></tr>
+</table>
+<hr style="border:1px dashed #000;margin:15px 0;">
+<div style="text-align:center;">
+<div style="margin-top:30px;border-top:1px solid #000;width:200px;margin-left:auto;margin-right:auto;padding-top:5px;">
+Cashier Signature
+</div>
+</div>
+<div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">
+*** Z-READ - DAY CLOSED ***
+</div>
         `;
         document.getElementById('zreadContent').innerHTML = content;
         document.getElementById('zreadModal').style.display = 'flex';
     }}
     
-    function buildCashCountPrintHtml() {{
-        let html = '<hr style="border:1px dashed #000;margin:15px 0;"><strong>CASH DENOMINATION COUNT</strong><br><br>';
-        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-        html += '<tr style="font-weight:bold;"><td>Denom</td><td style="text-align:center;">Qty</td><td style="text-align:right;">Total</td></tr>';
-        const denomLabels = ['R200','R100','R50','R20','R10','R5','R2','R1','50c','20c','10c'];
-        document.querySelectorAll('.denom-input').forEach((input, idx) => {{
-            const qty = parseInt(input.value) || 0;
-            if (qty > 0) {{
-                const val = parseFloat(input.dataset.val);
-                const lineTotal = val * qty;
-                html += '<tr><td>' + denomLabels[idx] + '</td><td style="text-align:center;">' + qty + '</td><td style="text-align:right;">R' + lineTotal.toFixed(2) + '</td></tr>';
-            }}
-        }});
-        html += '</table>';
-        
-        const counted = document.getElementById('cashCounted').textContent;
-        const diff = document.getElementById('cashDiff').textContent;
-        const status = document.getElementById('cashStatus').textContent;
-        
-        html += '<hr style="border:1px dashed #000;margin:10px 0;">';
-        html += '<table style="width:100%;border-collapse:collapse;">';
-        html += '<tr style="font-weight:bold;"><td>Counted:</td><td style="text-align:right;">' + counted + '</td></tr>';
-        html += '<tr><td>Expected:</td><td style="text-align:right;">{money(expected_cash_drawer)}</td></tr>';
-        html += '<tr style="font-weight:bold;font-size:16px;"><td>Difference:</td><td style="text-align:right;">' + diff + '</td></tr>';
-        html += '</table>';
-        html += '<div style="text-align:center;margin:10px 0;font-weight:bold;">' + status + '</div>';
-        
-        return html;
-    }}
-    
     function confirmZRead() {{
-        const counted = document.getElementById('cashCounted').textContent;
-        const diff = document.getElementById('cashDiff').textContent;
-        const status = document.getElementById('cashStatus').textContent;
-        
-        if (confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + counted + '\\nDifference: ' + diff + '\\n\\nThis will mark the day as closed.')) {{
-            // Build print content with cash count
-            const zContent = document.getElementById('zreadContent').innerHTML;
-            const cashHtml = buildCashCountPrintHtml();
-            
-            const printWindow = window.open('', '_blank', 'width=400,height=700');
-            printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + cashHtml + '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div></body></html>');
-            printWindow.document.close();
-            setTimeout(function() {{ printWindow.print(); }}, 300);
+        if (confirm('Close day for {date_desc}?\\n\\nThis will mark the day as closed.')) {{
+            window.print();
             closeModal('zreadModal');
         }}
     }}
@@ -42344,7 +41535,7 @@ def view_sale(sale_id):
                 <h2 style="margin:0;color:#000;">{biz_name}</h2>
                 <p style="color:#666;margin:5px 0;">TAX INVOICE / SLIP</p>
                 <p style="margin:5px 0;"><strong>{sale.get("sale_number", "-")}</strong></p>
-                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {extract_time(sale.get("created_at", ""))}</p>
+                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {sale.get("created_at", "")[-8:-3] if sale.get("created_at") else ""}</p>
             </div>
             
             <div style="margin-bottom:15px;">
@@ -42564,13 +41755,14 @@ def api_pos_sale():
             "business_id": biz_id,
             "sale_number": sale_num,
             "date": today(),
-            "customer_id": safe_uuid(customer_id),
+            "customer_id": customer_id or None,
             "customer_name": customer_name,
             "payment_method": payment_method,
             "items": json.dumps(items),
             "subtotal": float(subtotal),
             "vat": float(vat),
             "total": float(total),
+            "created_by": user.get("id") if user else None,  # Track who made the sale
             "created_at": now()
         }
         
@@ -42578,7 +41770,7 @@ def api_pos_sale():
         
         if not success:
             logger.error(f"[POS] Sale save failed: {err}")
-            return jsonify({"success": False, "error": f"Failed to save sale: {str(err)[:200]}"})
+            return jsonify({"success": False, "error": "Failed to save sale"})
         
         # === GL ENTRIES ===
         
@@ -42635,7 +41827,7 @@ def api_pos_sale():
                             try:
                                 db.save("stock_movements", RecordFactory.stock_movement(
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
-                                    quantity=qty_sold, reference=f"POS Sale {sale_num}"
+                                    quantity=qty_sold, reference=f"POS Sale {inv_number}" if inv_number else "POS Sale"
                                 ))
                             except: pass
                     else:
@@ -43784,355 +42976,6 @@ def smart_import_page():
         .error-box { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 12px; padding: 20px; text-align: center; color: #dc2626; }
     </style>
     
-    <!-- SWITCH FROM SAGE BANNER -->
-    <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(6,95,70,0.08));margin-bottom:20px;border:1px solid rgba(16,185,129,0.25);">
-        <div style="display:flex;align-items:center;gap:15px;cursor:pointer;" onclick="document.getElementById('sageGuide').style.display=document.getElementById('sageGuide').style.display==='none'?'block':'none';this.querySelector('.arrow').textContent=document.getElementById('sageGuide').style.display==='none'?'▶':'▼'">
-            <div style="font-size:36px;">🟢</div>
-            <div style="flex:1;">
-                <h2 style="margin:0 0 4px 0;font-size:20px;">Switching from Sage / Pastel?</h2>
-                <p style="color:var(--text-muted);margin:0;font-size:14px;">Follow these 4 steps - takes about 10 minutes. We handle the messy stuff.</p>
-            </div>
-            <span class="arrow" style="font-size:20px;color:var(--text-muted);">▶</span>
-        </div>
-        
-        <div id="sageGuide" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid rgba(16,185,129,0.2);">
-            
-            <!-- SAGE CLOUD vs DESKTOP -->
-            <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
-                <button onclick="showSageGuide('cloud')" id="sgCloud" class="btn btn-primary" style="font-size:13px;">☁️ Sage Business Cloud</button>
-                <button onclick="showSageGuide('desktop')" id="sgDesktop" class="btn btn-secondary" style="font-size:13px;">🖥️ Sage 50cloud Pastel (Desktop)</button>
-            </div>
-            
-            <!-- SAGE CLOUD GUIDE -->
-            <div id="sageCloudGuide">
-                <div style="display:grid;gap:15px;">
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Contacts</strong> → Select all customers → <strong>Export</strong> (CSV icon top right)<br>
-                            <em>This gives you: Names, phones, emails, addresses, balances</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Customers CSV
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
-                            </label>
-                            <span class="sage-status" id="status-customers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Suppliers</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Contacts</strong> → Switch to <strong>Suppliers</strong> tab → Select all → <strong>Export</strong> (CSV)<br>
-                            <em>Same format as customers - names, contacts, balances</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Suppliers CSV
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
-                            </label>
-                            <span class="sage-status" id="status-suppliers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Stock / Products</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Products & Services</strong> → Select all → <strong>Export</strong> (CSV)<br>
-                            <em>Gives you: Codes, descriptions, prices, quantities</em><br>
-                            <span style="color:#f59e0b;">⚠️ Sage splits this into 2 files sometimes (prices + quantities). Upload both - we combine them.</span>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Stock CSV (one or both files)
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" multiple onchange="quickUploadMulti(this, 'stock')">
-                            </label>
-                            <span class="sage-status" id="status-stock" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance (Opening Balances)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Reporting</strong> → <strong>Trial Balance</strong> → Export to CSV<br>
-                            <em>This sets your opening balances so your books are correct from day 1</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Trial Balance
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
-                            </label>
-                            <span class="sage-status" id="status-trial_balance" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">5</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Supplier Invoices (wat jy skuld)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Reporting</strong> → <strong>Supplier Invoices</strong> → Set period → Export CSV<br>
-                            <em>Outstanding bills so you know what you still owe</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Supplier Invoices
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'supplier_invoices')">
-                            </label>
-                            <span class="sage-status" id="status-supplier_invoices" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">6</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Sales Invoices (wie skuld jou)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Sales</strong> → <strong>Sales Invoices</strong> → Show 100 per page → Select all → Export CSV<br>
-                            <em>Outstanding invoices so you can chase payments</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Sales Invoices
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customer_invoices')">
-                            </label>
-                            <span class="sage-status" id="status-customer_invoices" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                </div>
-                
-                <!-- IMPORT ALL BUTTON -->
-                <div id="sageImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(16,185,129,0.08);border-radius:12px;">
-                    <p style="margin-bottom:12px;font-size:15px;">✅ <strong id="sageFilesReady">0</strong> files ready to import</p>
-                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;background:linear-gradient(135deg,#10b981,#059669);">
-                        🚀 Import Everything into ClickAI
-                    </button>
-                    <p style="color:var(--text-muted);font-size:12px;margin-top:8px;">Takes about 30 seconds. Your Sage data stays untouched.</p>
-                </div>
-            </div>
-            
-            <!-- SAGE DESKTOP GUIDE -->
-            <div id="sageDesktopGuide" style="display:none;">
-                <div style="display:grid;gap:15px;">
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers & Suppliers</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Customer List</strong> or <strong>Supplier List</strong><br>
-                            Save as CSV. Repeat for the other.
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Customers
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
-                            </label>
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Suppliers
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Inventory</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Inventory</strong><br>
-                            Save as CSV. This includes codes, descriptions, prices, quantities.
-                        </div>
-                        <div style="margin-top:10px;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Inventory
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'stock')">
-                            </label>
-                            <span class="sage-status" id="status-stock-desktop" style="font-size:12px;display:flex;align-items:center;gap:4px;margin-top:5px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Pastel: <strong>Reports</strong> → <strong>Trial Balance</strong> → Print to Excel/CSV<br>
-                            Choose the last day of your current period.
-                        </div>
-                        <div style="margin-top:10px;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Trial Balance
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Employees (Optional)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            If you use Sage Payroll: Export employee list to CSV<br>
-                            <em>Names, ID numbers, tax numbers, bank details, salaries</em>
-                        </div>
-                        <div style="margin-top:10px;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Employees
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'employees')">
-                            </label>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Same import all for desktop -->
-                <div id="sageDesktopImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(139,92,246,0.08);border-radius:12px;">
-                    <p style="margin-bottom:12px;font-size:15px;">✅ Files ready to import</p>
-                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;">
-                        🚀 Import Everything into ClickAI
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-    // ═══ SAGE SWITCH WIZARD ═══
-    let sageFiles = {};  // {customers: File, suppliers: File, stock: [File], trial_balance: File}
-    
-    function showSageGuide(type) {
-        document.getElementById('sageCloudGuide').style.display = type === 'cloud' ? 'block' : 'none';
-        document.getElementById('sageDesktopGuide').style.display = type === 'desktop' ? 'block' : 'none';
-        document.getElementById('sgCloud').className = type === 'cloud' ? 'btn btn-primary' : 'btn btn-secondary';
-        document.getElementById('sgDesktop').className = type === 'desktop' ? 'btn btn-primary' : 'btn btn-secondary';
-        document.getElementById('sgCloud').style.fontSize = '13px';
-        document.getElementById('sgDesktop').style.fontSize = '13px';
-    }
-    
-    function quickUpload(input, dataType) {
-        const file = input.files[0];
-        if (!file) return;
-        sageFiles[dataType] = file;
-        
-        const status = document.getElementById('status-' + dataType);
-        if (status) status.innerHTML = '✅ <strong>' + file.name + '</strong>';
-        
-        updateSageImportButton();
-        input.value = '';
-    }
-    
-    function quickUploadMulti(input, dataType) {
-        const files = Array.from(input.files);
-        if (!files.length) return;
-        sageFiles[dataType] = files.length === 1 ? files[0] : files;
-        
-        const status = document.getElementById('status-' + dataType);
-        if (status) {
-            if (files.length === 1) {
-                status.innerHTML = '✅ <strong>' + files[0].name + '</strong>';
-            } else {
-                status.innerHTML = '✅ <strong>' + files.length + ' files</strong> (' + files.map(f => f.name).join(', ') + ')';
-            }
-        }
-        
-        updateSageImportButton();
-        input.value = '';
-    }
-    
-    function updateSageImportButton() {
-        const count = Object.keys(sageFiles).length;
-        const allBtn = document.getElementById('sageImportAll');
-        const desktopBtn = document.getElementById('sageDesktopImportAll');
-        
-        if (count > 0) {
-            if (allBtn) { allBtn.style.display = 'block'; }
-            if (desktopBtn) { desktopBtn.style.display = 'block'; }
-            const readyEl = document.getElementById('sageFilesReady');
-            if (readyEl) readyEl.textContent = count;
-        }
-    }
-    
-    async function executeSageImportAll() {
-        const types = Object.keys(sageFiles);
-        if (!types.length) return;
-        
-        // Use the existing smart-import flow for each file
-        const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance', 'supplier_invoices', 'customer_invoices'];
-        const sorted = importOrder.filter(t => types.includes(t));
-        
-        // Hide sage guide, show processing
-        document.getElementById('sageGuide').style.display = 'none';
-        document.getElementById('dropState').style.display = 'none';
-        document.getElementById('processingState').classList.add('active');
-        
-        let totalImported = 0;
-        let results = [];
-        
-        for (const dataType of sorted) {
-            const fileOrFiles = sageFiles[dataType];
-            const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
-            
-            for (const file of files) {
-                document.getElementById('processingText').textContent = 'Importing ' + dataType + '...';
-                document.getElementById('processingSub').textContent = file.name;
-                
-                try {
-                    // Step 1: Analyse
-                    const formData = new FormData();
-                    formData.append('file', file);
-                    
-                    const analyseResp = await fetch('/api/smart-import/analyse', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    const analysis = await analyseResp.json();
-                    
-                    if (!analysis.success) {
-                        results.push({type: dataType, file: file.name, success: false, error: analysis.error || 'Analysis failed'});
-                        continue;
-                    }
-                    
-                    // Step 2: Import
-                    document.getElementById('processingSub').textContent = 'Saving ' + (analysis.total_rows || '?') + ' ' + dataType + '...';
-                    
-                    const importResp = await fetch('/api/smart-import/batch', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(analysis)
-                    });
-                    const importResult = await importResp.json();
-                    
-                    const count = importResult.imported || importResult.total_imported || 0;
-                    totalImported += count;
-                    results.push({type: dataType, file: file.name, success: importResult.success, count: count});
-                    
-                } catch (err) {
-                    results.push({type: dataType, file: file.name, success: false, error: err.message});
-                }
-            }
-        }
-        
-        // Show success
-        document.getElementById('processingState').classList.remove('active');
-        document.getElementById('successState').style.display = 'block';
-        
-        let statsHtml = '';
-        for (const r of results) {
-            if (r.success) {
-                statsHtml += '<div class="stat-box"><div class="stat-number">' + r.count + '</div><div class="stat-label">' + r.type + '</div></div>';
-            } else {
-                statsHtml += '<div class="stat-box"><div class="stat-number" style="color:#ef4444;">✗</div><div class="stat-label">' + r.type + ': ' + (r.error || 'Failed') + '</div></div>';
-            }
-        }
-        document.getElementById('successStats').innerHTML = statsHtml;
-        
-        if (results.some(r => r.type === 'trial_balance' && r.success)) {
-            document.getElementById('reportPrompt').style.display = 'block';
-        }
-    }
-    </script>
-    
     <!-- STATE 1: Drop Zone -->
     <div id="dropState" class="card">
         <div class="drop-zone" id="dropZone">
@@ -44581,167 +43424,14 @@ def api_smart_import_analyse():
         total_lines = len([l for l in lines if l.strip()])
         
         # ═══════════════════════════════════════════════════════════════════════
-        # SAGE AUTO-DETECTION - Skip AI if we recognize the format
-        # Handles: sep= prefix, title rows, all Sage export types
+        # SAGE PASTEL AUTO-DETECTION - Skip AI if we recognize the format
         # ═══════════════════════════════════════════════════════════════════════
         
-        # Step 1: Find the REAL header line (skip sep=, title rows like "Trial Balance Report")
-        header_line = ""
-        header_line_idx = 0
-        sage_preamble_rows = 0
-        for idx, line in enumerate(lines[:10]):
-            stripped = line.strip().strip('\r')
-            # Skip sep= lines
-            if stripped.lower().startswith('sep='):
-                sage_preamble_rows = idx + 1
-                continue
-            # Skip title-only rows (single cell, no commas with actual data)
-            if ',' not in stripped and stripped.startswith('"') and stripped.endswith('"'):
-                sage_preamble_rows = idx + 1
-                continue
-            # Skip empty lines
-            if not stripped:
-                sage_preamble_rows = idx + 1
-                continue
-            # This looks like a real header or data row
-            header_line = stripped
-            header_line_idx = idx
-            break
-        
-        if not header_line and lines:
-            header_line = lines[0].strip()
-        
-        logger.info(f"[SMART-IMPORT] Header detection: preamble_rows={sage_preamble_rows}, header='{header_line[:80]}...'")
-        
-        # Step 2: Detect specific Sage formats
+        header_line = lines[0] if lines else ""
         is_sage_customers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line
         is_sage_suppliers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line and 'supplier' in filename.lower()
         
-        # Sage Business Cloud ItemExport: Code,Description,Category,Price Excl.,Price Incl.,Avg Cost,Last Cost,Qty On Hand,Active
-        is_sage_stock = ('Code' in header_line and 'Description' in header_line and 'Price Excl' in header_line and 'Qty On Hand' in header_line)
-        # Also detect quoted variant
-        if not is_sage_stock:
-            is_sage_stock = ('"Code"' in header_line and '"Description"' in header_line and 'Price' in header_line)
-        
-        # Sage Trial Balance Report: "Name","Category","Source","Debit","Credit"
-        is_sage_tb = ('"Name"' in header_line and '"Category"' in header_line and '"Source"' in header_line and '"Debit"' in header_line and '"Credit"' in header_line)
-        
-        # Sage Supplier Invoices Report: "Date","Document No.","Supplier Inv. No.","Supplier","Due Date"
-        is_sage_supplier_invoices = ('"Document No."' in header_line and '"Supplier Inv. No."' in header_line and '"Supplier"' in header_line and '"Total Outstanding"' in header_line)
-        
-        # Sage Customer Invoices / Sales Invoices: "Date","Document No.","Customer","Due Date"
-        is_sage_customer_invoices = ('"Document No."' in header_line and ('"Customer"' in header_line or '"Customer Inv. No."' in header_line) and '"Total Outstanding"' in header_line)
-        
-        if is_sage_stock:
-            # ═══ SAGE STOCK / ITEM EXPORT ═══
-            logger.info(f"[SMART-IMPORT] Detected Sage ItemExport format")
-            
-            # Parse headers to find exact column indices
-            import csv as csv_mod
-            parsed_headers = list(csv_mod.reader([header_line]))[0]
-            col_map = {}
-            for i, h in enumerate(parsed_headers):
-                h_clean = h.strip().lower()
-                if h_clean == 'code': col_map[str(i)] = 'code'
-                elif h_clean == 'description': col_map[str(i)] = 'description'
-                elif h_clean == 'category': col_map[str(i)] = 'category'
-                elif 'price excl' in h_clean: col_map[str(i)] = 'selling_price'
-                elif 'price incl' in h_clean: col_map[str(i)] = 'selling_price_incl'
-                elif 'avg cost' in h_clean or 'average cost' in h_clean: col_map[str(i)] = 'cost_price'
-                elif 'last cost' in h_clean: col_map[str(i)] = 'last_cost'
-                elif 'qty on hand' in h_clean or 'quantity' in h_clean: col_map[str(i)] = 'qty'
-                elif h_clean == 'active': col_map[str(i)] = 'active'
-            
-            result = {
-                "success": True,
-                "source_hint": "Sage Business Cloud",
-                "confidence": 1.0,
-                "data_type": "stock",
-                "data_type_label": "Stock / Inventory Items",
-                "header_row": header_line_idx,
-                "data_start_row": header_line_idx + 1,
-                "name_column": next((int(k) for k, v in col_map.items() if v == 'description'), 1),
-                "column_mapping": col_map,
-                "sage_preamble_rows": sage_preamble_rows
-            }
-        
-        elif is_sage_tb:
-            # ═══ SAGE TRIAL BALANCE ═══
-            logger.info(f"[SMART-IMPORT] Detected Sage Trial Balance Report format")
-            result = {
-                "success": True,
-                "source_hint": "Sage Business Cloud",
-                "confidence": 1.0,
-                "data_type": "chart_of_accounts",
-                "data_type_label": "Trial Balance / Chart of Accounts",
-                "header_row": header_line_idx,
-                "data_start_row": header_line_idx + 1,
-                "name_column": 0,
-                "column_mapping": {
-                    "0": "account_name",   # "Name" - e.g. "3200/000 : Bank Charges"
-                    "1": "category",       # "Category" - e.g. "Expenses", "Sales", "Current Assets"
-                    "2": "source",         # "Source" - "System Account" or "Account Balance"
-                    "3": "debit",          # "Debit"
-                    "4": "credit"          # "Credit"
-                },
-                "sage_preamble_rows": sage_preamble_rows
-            }
-        
-        elif is_sage_supplier_invoices:
-            # ═══ SAGE SUPPLIER INVOICES REPORT ═══
-            logger.info(f"[SMART-IMPORT] Detected Sage Supplier Invoices Report format")
-            result = {
-                "success": True,
-                "source_hint": "Sage Business Cloud",
-                "confidence": 1.0,
-                "data_type": "supplier_invoices",
-                "data_type_label": "Supplier Invoices (Purchases)",
-                "header_row": header_line_idx,
-                "data_start_row": header_line_idx + 1,
-                "name_column": 3,
-                "column_mapping": {
-                    "0": "date",               # "Date"
-                    "1": "document_no",        # "Document No."
-                    "2": "supplier_inv_no",    # "Supplier Inv. No."
-                    "3": "supplier",           # "Supplier" - e.g. "EPR001 : ELECT PROTECT..."
-                    "4": "due_date",           # "Due Date"
-                    "5": "anticipated_payment", # "Ant. Pmt."
-                    "6": "exclusive",          # "Exclusive" (excl VAT amount)
-                    "7": "vat",                # "VAT"
-                    "8": "total",              # "Total Purchases"
-                    "9": "outstanding"         # "Total Outstanding"
-                },
-                "sage_preamble_rows": sage_preamble_rows
-            }
-        
-        elif is_sage_customer_invoices:
-            # ═══ SAGE CUSTOMER INVOICES / SALES INVOICES ═══
-            logger.info(f"[SMART-IMPORT] Detected Sage Customer/Sales Invoices Report format")
-            result = {
-                "success": True,
-                "source_hint": "Sage Business Cloud",
-                "confidence": 1.0,
-                "data_type": "customer_invoices",
-                "data_type_label": "Customer Invoices (Sales)",
-                "header_row": header_line_idx,
-                "data_start_row": header_line_idx + 1,
-                "name_column": 3,
-                "column_mapping": {
-                    "0": "date",
-                    "1": "document_no",
-                    "2": "customer_inv_no",
-                    "3": "customer",
-                    "4": "due_date",
-                    "5": "anticipated_payment",
-                    "6": "exclusive",
-                    "7": "vat",
-                    "8": "total",
-                    "9": "outstanding"
-                },
-                "sage_preamble_rows": sage_preamble_rows
-            }
-        
-        elif is_sage_customers or is_sage_suppliers:
+        if is_sage_customers or is_sage_suppliers:
             # HARDCODED SAGE PASTEL MAPPING - 100% reliable
             logger.info(f"[SMART-IMPORT] Detected Sage Pastel {'Suppliers' if is_sage_suppliers else 'Customers'} format")
             result = {
@@ -44940,8 +43630,7 @@ Return ONLY the JSON, nothing else."""
             # Fallback: check standard key fields
             if not key_value:
                 key_fields = {'customers': 'name', 'suppliers': 'name', 'stock': 'description',
-                              'chart_of_accounts': 'account_name', 'transactions': 'account_code',
-                              'supplier_invoices': 'supplier', 'customer_invoices': 'customer'}
+                              'chart_of_accounts': 'account_name', 'transactions': 'account_code'}
                 key = key_fields.get(data_type, 'name')
                 key_value = row_data.get(key) or row_data.get('name') or row_data.get('description') or row_data.get('code')
             
@@ -44981,35 +43670,6 @@ Return ONLY the JSON, nothing else."""
                         row_data['name'] = key_value or f"Record {i}"
                     elif data_type == 'stock':
                         row_data['description'] = key_value or row_data.get('code', f"Item {i}")
-                
-                # 5. Sage TB: Split "3200/000 : Bank Charges" into code + name, map category to account_type
-                if data_type == 'chart_of_accounts':
-                    acct_name = str(row_data.get('account_name', '')).strip()
-                    # Split "3200/000 : Bank Charges" format
-                    if ' : ' in acct_name:
-                        parts = acct_name.split(' : ', 1)
-                        row_data['account_code'] = parts[0].strip()
-                        row_data['account_name'] = parts[1].strip()
-                    
-                    # Map Sage categories to account types
-                    cat = str(row_data.get('category', '')).strip().lower()
-                    cat_map = {
-                        'sales': 'income', 'other income': 'income', 'discount received': 'income',
-                        'cost of sales': 'cost_of_sales', 'expenses': 'expense',
-                        'current assets': 'asset', 'non-current assets': 'asset',
-                        'current liabilities': 'liability', 'non-current liabilities': 'liability',
-                        'owners equity': 'equity', "owner's equity": 'equity'
-                    }
-                    row_data['account_type'] = cat_map.get(cat, 'expense')
-                    
-                    # Skip "System Account" summary rows (keep only "Account Balance" detail rows)
-                    source = str(row_data.get('source', '')).strip()
-                    if source == 'System Account':
-                        continue  # Skip totals, only import individual accounts
-                    
-                    # Skip empty/total rows (last row has no name, just totals)
-                    if not row_data.get('account_name'):
-                        continue
                 
                 all_data.append(row_data)
                 if len(preview_data) < 5:
@@ -45059,7 +43719,7 @@ def api_smart_import_batch():
     try:
         data = request.get_json()
         data_type = data.get("data_type")
-        records = data.get("records", []) or data.get("all_data", [])
+        records = data.get("records", [])
         
         if not records:
             return jsonify({"success": False, "error": "No records to import"})
@@ -45151,139 +43811,16 @@ def api_smart_import_batch():
                     if not name:
                         status = "skipped"
                     else:
-                        # Sage TB: account_name already split from "3200/000 : Bank Charges"
-                        acct_code = str(row.get("account_code", "")).strip()
-                        acct_type = str(row.get("account_type", "expense")).strip().lower()
-                        
-                        # Calculate opening balance from debit/credit
-                        debit = float(row.get("debit", 0) or 0)
-                        credit = float(row.get("credit", 0) or 0)
-                        opening_balance = debit - credit  # Positive = debit balance, Negative = credit balance
-                        
-                        # Check if account already exists (by code or name)
-                        existing = None
-                        if acct_code:
-                            existing = db.get("chart_of_accounts", {"business_id": biz_id, "account_code": acct_code})
-                        if not existing:
-                            existing = db.get("chart_of_accounts", {"business_id": biz_id, "account_name": name})
-                        
-                        if existing:
-                            status = "skipped"
-                            error_msg = "Already exists"
-                        else:
-                            record = {
-                                "id": generate_id(),
-                                "business_id": biz_id,
-                                "account_name": name,
-                                "account_code": acct_code,
-                                "account_type": acct_type,
-                                "category": str(row.get("category", "")).strip(),
-                                "opening_balance": opening_balance,
-                                "debit": debit,
-                                "credit": credit,
-                                "is_active": True,
-                                "created_at": now()
-                            }
-                            success, resp = db.save("chart_of_accounts", record)
-                            if success:
-                                status = "imported"
-                            else:
-                                status = "error"
-                                error_msg = str(resp)[:50]
-                
-                elif data_type == "supplier_invoices":
-                    # Sage Supplier Invoices - import as bills/purchases
-                    supplier_raw = str(row.get("supplier", "")).strip()
-                    supplier_code = ""
-                    supplier_name = supplier_raw
-                    # Sage format: "EPR001 : ELECT PROTECT RESPONSE (PTY) LTD"
-                    if " : " in supplier_raw:
-                        parts = supplier_raw.split(" : ", 1)
-                        supplier_code = parts[0].strip()
-                        supplier_name = parts[1].strip()
-                    
-                    name = supplier_name
-                    doc_no = str(row.get("document_no", "")).strip()
-                    supplier_inv = str(row.get("supplier_inv_no", "")).strip()
-                    outstanding = float(row.get("outstanding", 0) or 0)
-                    
-                    if not supplier_name or supplier_name.lower().startswith("grand total"):
-                        status = "skipped"
-                        error_msg = "Skip row"
-                    elif outstanding == 0:
-                        status = "skipped"
-                        error_msg = "Already paid"
-                    else:
                         record = {
                             "id": generate_id(),
                             "business_id": biz_id,
-                            "supplier_name": supplier_name,
-                            "supplier_code": supplier_code,
-                            "invoice_number": supplier_inv or doc_no,
-                            "sage_doc_no": doc_no,
-                            "date": str(row.get("date", "")).strip(),
-                            "due_date": str(row.get("due_date", "")).strip(),
-                            "amount_excl": float(row.get("exclusive", 0) or 0),
-                            "vat_amount": float(row.get("vat", 0) or 0),
-                            "amount_incl": float(row.get("total", 0) or 0),
-                            "amount_outstanding": outstanding,
-                            "status": "outstanding",
-                            "source": "sage_import",
+                            "account_name": name,
+                            "account_code": str(row.get("account_code", "")).strip(),
+                            "account_type": str(row.get("account_type", "expense")).strip().lower(),
+                            "is_active": True,
                             "created_at": now()
                         }
-                        existing_supplier = db.get("suppliers", {"business_id": biz_id, "name": supplier_name})
-                        if existing_supplier:
-                            record["supplier_id"] = existing_supplier.get("id")
-                        
-                        success, resp = db.save("bills", record)
-                        if success:
-                            status = "imported"
-                        else:
-                            status = "error"
-                            error_msg = str(resp)[:50]
-                
-                elif data_type == "customer_invoices":
-                    # Sage Customer Invoices - import as sales invoices
-                    customer_raw = str(row.get("customer", "")).strip()
-                    customer_code = ""
-                    customer_name = customer_raw
-                    if " : " in customer_raw:
-                        parts = customer_raw.split(" : ", 1)
-                        customer_code = parts[0].strip()
-                        customer_name = parts[1].strip()
-                    
-                    name = customer_name
-                    doc_no = str(row.get("document_no", "")).strip()
-                    outstanding = float(row.get("outstanding", 0) or 0)
-                    
-                    if not customer_name or customer_name.lower().startswith("grand total"):
-                        status = "skipped"
-                        error_msg = "Skip row"
-                    elif outstanding == 0:
-                        status = "skipped"
-                        error_msg = "Already paid"
-                    else:
-                        record = {
-                            "id": generate_id(),
-                            "business_id": biz_id,
-                            "customer_name": customer_name,
-                            "customer_code": customer_code,
-                            "invoice_number": doc_no,
-                            "date": str(row.get("date", "")).strip(),
-                            "due_date": str(row.get("due_date", "")).strip(),
-                            "amount_excl": float(row.get("exclusive", 0) or 0),
-                            "vat_amount": float(row.get("vat", 0) or 0),
-                            "amount_incl": float(row.get("total", 0) or 0),
-                            "amount_outstanding": outstanding,
-                            "status": "outstanding",
-                            "source": "sage_import",
-                            "created_at": now()
-                        }
-                        existing_customer = db.get("customers", {"business_id": biz_id, "name": customer_name})
-                        if existing_customer:
-                            record["customer_id"] = existing_customer.get("id")
-                        
-                        success, resp = db.save("invoices", record)
+                        success, resp = db.save("chart_of_accounts", record)
                         if success:
                             status = "imported"
                         else:
@@ -45326,8 +43863,7 @@ def api_smart_import_batch():
                 "error": error_msg
             })
         
-        imported_count = sum(1 for r in results if r.get("status") == "imported")
-        return jsonify({"success": True, "results": results, "imported": imported_count, "total_imported": imported_count})
+        return jsonify({"success": True, "results": results})
         
     except Exception as e:
         import traceback
@@ -58921,7 +57457,7 @@ def tools_page():
 @app.route("/invoice/<invoice_id>/credit-note", methods=["GET", "POST"])
 @login_required
 def create_credit_note(invoice_id):
-    """Create credit note from invoice - supports partial credits (specific lines)"""
+    """Create credit note from invoice"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -58931,67 +57467,8 @@ def create_credit_note(invoice_id):
     if not invoice:
         return redirect("/invoices")
     
-    # Handle items - Supabase may return as list or JSON string
-    raw_items = invoice.get("items", "[]")
-    if isinstance(raw_items, list):
-        inv_items = raw_items
-    elif isinstance(raw_items, str):
-        try:
-            inv_items = json.loads(raw_items)
-        except:
-            inv_items = []
-    else:
-        inv_items = []
-    
-    logger.info(f"[CREDIT NOTE] Invoice {invoice.get('invoice_number')}: {len(inv_items)} items loaded, type={type(raw_items).__name__}")
-    
     if request.method == "POST":
         reason = request.form.get("reason", "")
-        credit_type = request.form.get("credit_type", "full")  # full or partial
-        
-        # Build credited items list
-        credited_items = []
-        cn_subtotal = Decimal("0")
-        
-        if credit_type == "partial":
-            # Get selected line items
-            selected_lines = request.form.getlist("credit_line[]")
-            credit_qtys = request.form.getlist("credit_qty[]")
-            
-            for i, item in enumerate(inv_items):
-                idx_str = str(i)
-                if idx_str in selected_lines:
-                    orig_qty = float(item.get("quantity") or item.get("qty") or 1)
-                    credit_qty_str = credit_qtys[i] if i < len(credit_qtys) else str(orig_qty)
-                    credit_qty = min(float(credit_qty_str or orig_qty), orig_qty)
-                    price = float(item.get("price") or item.get("unit_price") or 0)
-                    line_total = round(credit_qty * price, 2)
-                    cn_subtotal += Decimal(str(line_total))
-                    credited_items.append({
-                        "description": item.get("description", ""),
-                        "quantity": credit_qty,
-                        "price": price,
-                        "total": line_total
-                    })
-        else:
-            # Full credit - all items
-            for item in inv_items:
-                qty = float(item.get("quantity") or item.get("qty") or 1)
-                price = float(item.get("price") or item.get("unit_price") or 0)
-                line_total = float(item.get("total") or item.get("line_total") or round(qty * price, 2))
-                cn_subtotal += Decimal(str(line_total))
-                credited_items.append({
-                    "description": item.get("description", ""),
-                    "quantity": qty,
-                    "price": price,
-                    "total": line_total
-                })
-        
-        if not credited_items:
-            return redirect(f"/invoice/{invoice_id}/credit-note?error=No+items+selected")
-        
-        cn_vat = (cn_subtotal * VAT_RATE).quantize(Decimal("0.01"))
-        cn_total = cn_subtotal + cn_vat
         
         # Generate credit note number
         existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
@@ -59008,27 +57485,33 @@ def create_credit_note(invoice_id):
             "customer_id": invoice.get("customer_id"),
             "customer_name": invoice.get("customer_name"),
             "reason": reason,
-            "items": json.dumps(credited_items),
-            "subtotal": float(cn_subtotal),
-            "vat": float(cn_vat),
-            "total": float(cn_total),
-            "credit_type": credit_type,
+            "items": invoice.get("items"),
+            "subtotal": invoice.get("subtotal"),
+            "vat": invoice.get("vat"),
+            "total": invoice.get("total"),
             "created_by": user.get("id") if user else None,
             "created_at": now()
         }
         
         db.save("credit_notes", credit_note)
         
-        # Journal entries to reverse
+        # Create journal entries to reverse the original invoice
+        # Credit Note reverses: DR Debtors, CR Sales + VAT → now DR Sales + VAT, CR Debtors
+        total = float(invoice.get("total", 0))
+        subtotal = float(invoice.get("subtotal", 0))
+        vat = float(invoice.get("vat", 0))
+        inv_number = invoice.get("invoice_number", "")
+        customer_name = invoice.get("customer_name", "")
+        
         create_journal_entry(
             biz_id,
             today(),
-            f"Credit Note {cn_num} - {'partial ' if credit_type == 'partial' else ''}reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}",
+            f"Credit Note {cn_num} - reversing {inv_number} - {customer_name}",
             cn_num,
             [
-                {"account_code": "4000", "debit": float(cn_subtotal), "credit": 0},
-                {"account_code": "2100", "debit": float(cn_vat), "credit": 0},
-                {"account_code": "1200", "debit": 0, "credit": float(cn_total)},
+                {"account_code": "4000", "debit": subtotal, "credit": 0},   # Reverse Sales
+                {"account_code": "2100", "debit": vat, "credit": 0},        # Reverse VAT Output
+                {"account_code": "1200", "debit": 0, "credit": total},      # Reduce Debtors
             ]
         )
         
@@ -59037,161 +57520,40 @@ def create_credit_note(invoice_id):
         if customer_id:
             customer = db.get_one("customers", customer_id)
             if customer:
-                new_balance = float(customer.get("balance", 0)) - float(cn_total)
+                new_balance = float(customer.get("balance", 0)) - float(invoice.get("total", 0))
                 db.update("customers", customer_id, {"balance": new_balance})
         
-        # Mark invoice as credited only if FULL credit
-        if credit_type == "full":
-            db.update("invoices", invoice_id, {"status": "credited"})
-        else:
-            db.update("invoices", invoice_id, {"status": "partial_credit"})
+        # Mark invoice as credited
+        db.update("invoices", invoice_id, {"status": "credited"})
         
         return redirect(f"/credit-note/{cn_id}")
     
-    # GET - build form with line item selection
-    items_rows_html = ""
-    inv_subtotal = Decimal("0")
-    for i, item in enumerate(inv_items):
-        qty = float(item.get("quantity") or item.get("qty") or 1)
-        price = float(item.get("price") or item.get("unit_price") or 0)
-        line_total = float(item.get("total") or item.get("line_total") or round(qty * price, 2))
-        inv_subtotal += Decimal(str(line_total))
-        items_rows_html += f'''
-        <tr class="cn-line" data-idx="{i}" data-total="{line_total}">
-            <td style="text-align:center;">
-                <input type="checkbox" name="credit_line[]" value="{i}" class="cn-check" onchange="updateCNTotal()" checked>
-            </td>
-            <td>{safe_string(item.get("description", "-"))}</td>
-            <td style="text-align:center;">
-                <input type="number" name="credit_qty[]" value="{qty}" min="0.01" max="{qty}" step="0.01" class="cn-qty" onchange="updateCNTotal()" style="width:70px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
-                <span style="color:var(--text-muted);font-size:11px;">/ {qty}</span>
-            </td>
-            <td style="text-align:right;">{money(price)}</td>
-            <td style="text-align:right;" class="cn-line-total">{money(line_total)}</td>
-        </tr>
-        '''
-    
-    error_msg = request.args.get("error", "")
-    error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
-    
     content = f'''
-    {error_html}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">← Back to Invoice</a>
+        <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">-> Back to Invoice</a>
     </div>
     
     <div class="card">
-        <h2 style="margin-bottom:20px;">Create Credit Note</h2>
+        <h2 style="margin-bottom:20px;"> Create Credit Note</h2>
         
         <div style="background:rgba(239,68,68,0.1);padding:15px;border-radius:8px;margin-bottom:20px;">
             <p style="margin:0;"><strong>Invoice:</strong> {invoice.get("invoice_number")}</p>
             <p style="margin:5px 0 0 0;"><strong>Customer:</strong> {safe_string(invoice.get("customer_name", "-"))}</p>
-            <p style="margin:5px 0 0 0;"><strong>Invoice Total:</strong> {money(invoice.get("total", 0))}</p>
+            <p style="margin:5px 0 0 0;"><strong>Amount to Credit:</strong> <span style="font-size:20px;font-weight:bold;color:var(--red);">{money(invoice.get("total", 0))}</span></p>
         </div>
         
         <form method="POST">
-            <!-- Credit Type Toggle -->
-            <div style="margin-bottom:20px;">
-                <label style="display:block;margin-bottom:8px;font-weight:bold;">Credit Type</label>
-                <div style="display:flex;gap:10px;">
-                    <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--primary);border-radius:8px;cursor:pointer;background:rgba(99,102,241,0.1);" id="fullLabel">
-                        <input type="radio" name="credit_type" value="full" checked onchange="toggleCreditType()"> Full Credit
-                    </label>
-                    <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--border);border-radius:8px;cursor:pointer;" id="partialLabel">
-                        <input type="radio" name="credit_type" value="partial" onchange="toggleCreditType()"> Partial Credit (select lines)
-                    </label>
-                </div>
-            </div>
-            
-            <!-- Line Items Selection (shown for partial) -->
-            <div id="lineSelection" style="display:none;margin-bottom:20px;">
-                <label style="display:block;margin-bottom:8px;font-weight:bold;">Select Items to Credit</label>
-                <table class="table" style="font-size:14px;">
-                    <thead>
-                        <tr style="background:var(--bg);">
-                            <th style="width:40px;text-align:center;">
-                                <input type="checkbox" checked onchange="toggleAllLines(this)">
-                            </th>
-                            <th>Description</th>
-                            <th style="width:130px;text-align:center;">Credit Qty</th>
-                            <th style="width:100px;text-align:right;">Price</th>
-                            <th style="width:100px;text-align:right;">Total</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {items_rows_html}
-                    </tbody>
-                </table>
-            </div>
-            
-            <!-- Credit Total Display -->
-            <div style="text-align:right;margin-bottom:20px;padding:15px;background:rgba(239,68,68,0.05);border-radius:8px;border:1px solid rgba(239,68,68,0.2);">
-                <div style="margin-bottom:5px;">Subtotal: <strong id="cnSubtotal">{money(inv_subtotal)}</strong></div>
-                <div style="margin-bottom:5px;">VAT (15%): <strong id="cnVat">{money(float(inv_subtotal) * 0.15)}</strong></div>
-                <div style="font-size:20px;color:var(--red);">Credit Amount: <strong id="cnTotal">{money(float(inv_subtotal) * 1.15)}</strong></div>
-            </div>
-            
             <div style="margin-bottom:20px;">
                 <label style="display:block;margin-bottom:5px;font-weight:bold;">Reason for Credit Note</label>
-                <textarea name="reason" class="form-input" rows="3" placeholder="e.g., Goods returned, Pricing error, Partial return..." required></textarea>
+                <textarea name="reason" class="form-input" rows="3" placeholder="e.g., Goods returned, Pricing error, Duplicate invoice..." required></textarea>
             </div>
             
             <div style="display:flex;gap:10px;">
-                <button type="submit" class="btn btn-primary">Create Credit Note</button>
+                <button type="submit" class="btn btn-primary"> Create Credit Note</button>
                 <a href="/invoice/{invoice_id}" class="btn btn-secondary">Cancel</a>
             </div>
         </form>
     </div>
-    
-    <script>
-    function toggleCreditType() {{
-        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
-        document.getElementById('lineSelection').style.display = isPartial ? 'block' : 'none';
-        document.getElementById('fullLabel').style.borderColor = isPartial ? 'var(--border)' : 'var(--primary)';
-        document.getElementById('fullLabel').style.background = isPartial ? 'transparent' : 'rgba(99,102,241,0.1)';
-        document.getElementById('partialLabel').style.borderColor = isPartial ? 'var(--primary)' : 'var(--border)';
-        document.getElementById('partialLabel').style.background = isPartial ? 'rgba(99,102,241,0.1)' : 'transparent';
-        updateCNTotal();
-    }}
-    
-    function toggleAllLines(master) {{
-        document.querySelectorAll('.cn-check').forEach(cb => {{ cb.checked = master.checked; }});
-        updateCNTotal();
-    }}
-    
-    function updateCNTotal() {{
-        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
-        let subtotal = 0;
-        
-        if (isPartial) {{
-            document.querySelectorAll('.cn-line').forEach(row => {{
-                const cb = row.querySelector('.cn-check');
-                const qtyInput = row.querySelector('.cn-qty');
-                const price = parseFloat(row.querySelector('td:nth-child(4)').textContent.replace('R', '').replace(/,/g, '')) || 0;
-                const lineTotalCell = row.querySelector('.cn-line-total');
-                
-                if (cb.checked) {{
-                    const qty = parseFloat(qtyInput.value) || 0;
-                    const lineTotal = qty * price;
-                    lineTotalCell.textContent = 'R' + lineTotal.toFixed(2);
-                    subtotal += lineTotal;
-                    qtyInput.disabled = false;
-                }} else {{
-                    lineTotalCell.textContent = '-';
-                    qtyInput.disabled = true;
-                }}
-            }});
-        }} else {{
-            subtotal = {float(inv_subtotal)};
-        }}
-        
-        const vat = subtotal * 0.15;
-        const total = subtotal + vat;
-        document.getElementById('cnSubtotal').textContent = 'R' + subtotal.toFixed(2);
-        document.getElementById('cnVat').textContent = 'R' + vat.toFixed(2);
-        document.getElementById('cnTotal').textContent = 'R' + total.toFixed(2);
-    }}
-    </script>
     '''
     
     return render_page("Create Credit Note", content, user, "invoices")
@@ -60262,12 +58624,12 @@ def scan_page():
                     📷 Take Photo
                 </button>
                 <button type="button" class="btn btn-secondary" style="padding:25px;font-size:16px;" onclick="document.getElementById('fileInput').click()">
-                    📁 Upload File
+                    📁 Choose File
                 </button>
             </div>
             
             <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;" onchange="handleFile(this.files[0])">
-            <input type="file" id="fileInput" accept="image/*,.pdf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff" style="display:none;" onchange="handleFile(this.files[0])">
+            <input type="file" id="fileInput" accept="image/*,.pdf" style="display:none;" onchange="handleFile(this.files[0])">
         </div>
         
         <!-- STEP 3: Preview -->
