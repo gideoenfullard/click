@@ -1885,12 +1885,13 @@ def safe_uuid(value):
     return value if is_valid_uuid(value) else None
 
 def now() -> str:
-    """Current timestamp in ISO 8601 format for Supabase"""
+    """Current timestamp in ISO 8601 format for Supabase - always UTC"""
     return datetime.utcnow().isoformat() + 'Z'
 
 def today() -> str:
-    """Current date"""
-    return datetime.now().strftime("%Y-%m-%d")
+    """Current date in SA timezone (UTC+2)"""
+    sa_time = datetime.utcnow() + timedelta(hours=2)
+    return sa_time.strftime("%Y-%m-%d")
 
 def money(amount) -> str:
     """Format as currency"""
@@ -1898,6 +1899,25 @@ def money(amount) -> str:
         return f"R{float(amount):,.2f}"
     except:
         return "R0.00"
+
+def extract_time(timestamp_str) -> str:
+    """Extract HH:MM from any timestamp format, converted to SA time (UTC+2)
+    Handles: 2026-02-16T18:57:32+00:00, 2026-02-16T18:57:32.123456+00:00, 
+             2026-02-16T18:57:32Z, 2026-02-16T18:57:32.388Z
+    """
+    try:
+        ts = str(timestamp_str or "")
+        if 'T' in ts:
+            time_part = ts.split('T')[1]
+            hh = int(time_part[:2])
+            mm = time_part[3:5]
+            # If timestamp is UTC (ends with Z or +00:00), add 2 hours for SA
+            if 'Z' in ts or '+00:00' in ts:
+                hh = (hh + 2) % 24
+            return f"{hh:02d}:{mm}"
+        return "-"
+    except:
+        return "-"
 
 def safe_string(s: Any, max_len: int = 1000) -> str:
     """Safe string conversion - escapes HTML and JS special chars"""
@@ -3980,6 +4000,52 @@ ZANE_TOOLS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "save_memory",
+        "description": "Save an important fact, decision, preference, or context about the user or business for future reference. Use this whenever you learn something NEW and IMPORTANT that is NOT already stored in the database. Examples: user preferences ('Deon prefers Afrikaans reports'), business decisions ('decided to increase markup to 20%'), key people ('rekenmeester is Johan at ABC Accounting'), future plans ('wants to open a 4th store in March'), personal context ('wife birthday 15 March'). DO NOT save data that's already in the system (sales figures, customer balances, etc). Save the FACT, not the conversation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Category of memory", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation"]},
+                "fact": {"type": "string", "description": "The fact to remember. Be concise but complete. Include dates where relevant. Max 200 chars."},
+                "importance": {"type": "string", "description": "How important is this?", "enum": ["high", "medium", "low"], "default": "medium"}
+            },
+            "required": ["category", "fact"]
+        }
+    },
+    {
+        "name": "recall_memories",
+        "description": "Search your memories for relevant context. Use this when you need background info about the user, their preferences, past decisions, or previous conversations. Also use when the user asks 'do you remember...', 'what did I say about...', 'het ek gesê...', or references something from a past conversation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to search for in memories. Use keywords."},
+                "category": {"type": "string", "description": "Optional: filter by category", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation", "all"], "default": "all"}
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "list_memories",
+        "description": "List all saved memories, optionally filtered by category. Use when user asks 'what do you know about me?', 'wat onthou jy?', 'show me my memories', or wants to see/manage what Zane remembers.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "description": "Filter by category or 'all'", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation", "all"], "default": "all"}
+            }
+        }
+    },
+    {
+        "name": "forget_memory",
+        "description": "Delete a specific memory by its ID. Use when user asks to remove or forget something specific.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string", "description": "The ID of the memory to delete"}
+            },
+            "required": ["memory_id"]
+        }
     }
 ]
 
@@ -5355,9 +5421,11 @@ System tracks remaining balance automatically
 class ZaneToolHandler:
     """Executes tool calls from Zane and returns results."""
     
-    def __init__(self, db_instance, business_id: str):
+    def __init__(self, db_instance, business_id: str, user_id: str = ""):
         self.db = db_instance
         self.biz_id = business_id
+        self.business_id = business_id  # For memory tools
+        self.user_id = user_id  # For memory tools
     
     def execute(self, tool_name: str, tool_input: dict) -> str:
         """Route tool call to handler, return JSON string result."""
@@ -7001,6 +7069,131 @@ class ZaneToolHandler:
             "biggest_expense_category": expenses.get("biggest_category", "Unknown")
         }
 
+    # ═══════════════════════════════════════════════════════════════
+    # MEMORY TOOLS - Zane remembers across conversations
+    # ═══════════════════════════════════════════════════════════════
+    
+    def _tool_save_memory(self, params: dict) -> dict:
+        """Save a memory to the database"""
+        category = params.get("category", "conversation")
+        fact = params.get("fact", "")
+        importance = params.get("importance", "medium")
+        
+        if not fact:
+            return {"success": False, "error": "No fact to save"}
+        
+        if len(fact) > 500:
+            fact = fact[:500]
+        
+        memory_id = str(uuid.uuid4())[:8]
+        record = {
+            "id": f"mem_{memory_id}",
+            "business_id": self.business_id,
+            "user_id": self.user_id,
+            "category": category,
+            "fact": fact,
+            "importance": importance,
+            "created_at": now(),
+            "active": True
+        }
+        
+        ok, result = db.save("zane_memories", record)
+        if ok:
+            logger.info(f"[ZANE MEMORY] Saved: [{category}] {fact[:80]}...")
+            return {"success": True, "message": f"Saved to memory: {fact[:100]}...", "id": record["id"]}
+        else:
+            logger.error(f"[ZANE MEMORY] Save failed: {result}")
+            return {"success": False, "error": "Could not save memory"}
+    
+    def _tool_recall_memories(self, params: dict) -> dict:
+        """Search memories by keyword"""
+        query = params.get("query", "").lower()
+        category = params.get("category", "all")
+        
+        # Get all memories for this business
+        memories = db.get("zane_memories", {"business_id": self.business_id})
+        if not memories:
+            return {"memories": [], "message": "No memories saved yet."}
+        
+        # Filter active only
+        memories = [m for m in memories if m.get("active", True)]
+        
+        # Filter by category
+        if category and category != "all":
+            memories = [m for m in memories if m.get("category") == category]
+        
+        # Search by keyword
+        if query:
+            results = []
+            for m in memories:
+                fact = m.get("fact", "").lower()
+                cat = m.get("category", "").lower()
+                # Simple keyword matching
+                if any(word in fact for word in query.split()):
+                    # Score by relevance
+                    score = sum(1 for word in query.split() if word in fact)
+                    results.append((score, m))
+            
+            results.sort(key=lambda x: x[0], reverse=True)
+            memories = [m for _, m in results[:10]]
+        
+        # Format output
+        formatted = []
+        for m in memories[:15]:
+            formatted.append({
+                "id": m.get("id"),
+                "category": m.get("category"),
+                "fact": m.get("fact"),
+                "importance": m.get("importance", "medium"),
+                "saved_on": m.get("created_at", "")[:10]
+            })
+        
+        return {"memories": formatted, "total": len(formatted)}
+    
+    def _tool_list_memories(self, params: dict) -> dict:
+        """List all memories"""
+        category = params.get("category", "all")
+        
+        memories = db.get("zane_memories", {"business_id": self.business_id})
+        if not memories:
+            return {"memories": [], "message": "No memories saved yet. I'll start remembering important things as we talk!"}
+        
+        memories = [m for m in memories if m.get("active", True)]
+        
+        if category and category != "all":
+            memories = [m for m in memories if m.get("category") == category]
+        
+        # Sort by date (newest first)
+        memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+        
+        # Group by category
+        grouped = {}
+        for m in memories:
+            cat = m.get("category", "other")
+            if cat not in grouped:
+                grouped[cat] = []
+            grouped[cat].append({
+                "id": m.get("id"),
+                "fact": m.get("fact"),
+                "importance": m.get("importance", "medium"),
+                "saved_on": m.get("created_at", "")[:10]
+            })
+        
+        return {"memories_by_category": grouped, "total": len(memories)}
+    
+    def _tool_forget_memory(self, params: dict) -> dict:
+        """Delete a memory"""
+        memory_id = params.get("memory_id", "")
+        if not memory_id:
+            return {"success": False, "error": "No memory ID provided"}
+        
+        ok = db.delete("zane_memories", memory_id, self.business_id)
+        if ok:
+            logger.info(f"[ZANE MEMORY] Deleted: {memory_id}")
+            return {"success": True, "message": f"Memory {memory_id} forgotten."}
+        else:
+            return {"success": False, "error": "Could not delete memory"}
+
 
 def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     """Build lean system prompt for tool-use Zane. ~2000 tokens, no data dumps."""
@@ -7009,6 +7202,32 @@ def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     user_name = context.get("user_name", "there")
     currency = context.get("currency", "ZAR")
     vat_rate = context.get("vat_rate", 15)
+    
+    # Load memories for this business
+    biz_id = context.get("business_id", "")
+    memories_text = ""
+    if biz_id:
+        try:
+            memories = db.get("zane_memories", {"business_id": biz_id})
+            if memories:
+                active = [m for m in memories if m.get("active", True)]
+                # Sort: high importance first, then by date
+                active.sort(key=lambda m: (0 if m.get("importance") == "high" else 1 if m.get("importance") == "medium" else 2, m.get("created_at", "")), reverse=False)
+                active.sort(key=lambda m: m.get("importance", "medium") == "high", reverse=True)
+                
+                # Take top 30 memories (keep prompt lean)
+                top = active[:30]
+                if top:
+                    memory_lines = []
+                    for m in top:
+                        cat_emoji = {"business_info": "🏢", "preference": "⭐", "decision": "✅", 
+                                     "person": "👤", "plan": "📋", "policy": "📏", 
+                                     "personal": "💭", "conversation": "💬"}.get(m.get("category", ""), "📝")
+                        date = m.get("created_at", "")[:10]
+                        memories_text += f"  {cat_emoji} [{date}] {m.get('fact', '')}\n"
+                    memories_text = f"\n## YOUR MEMORIES (things you've learned about this user/business)\n{memories_text}"
+        except Exception as e:
+            logger.error(f"[ZANE] Failed to load memories: {e}")
     
     stats = {
         "stock_count": context.get("stock_count", 0),
@@ -7102,6 +7321,14 @@ When in doubt about what the user wants:
 - Stock items: {stats['stock_count']} | Customers: {stats['customer_count']} | Suppliers: {stats['supplier_count']}
 - Total debtors: R{stats['total_debtors']:,.0f} | Total creditors: R{stats['total_creditors']:,.0f}
 - Today's sales: R{stats['today_sales']:,.0f} | Stock value (cost): R{stats['stock_value']:,.0f}
+{memories_text}
+## MEMORY INSTRUCTIONS
+- When you learn something NEW and IMPORTANT about the user or business, use save_memory to remember it
+- Save facts like: preferences, decisions, key people, plans, policies, personal context
+- DO NOT save data already in the database (sales figures, customer info, stock prices)
+- When the user references past conversations, use recall_memories to find context
+- Be proactive: if you notice the user mentions something important, save it without being asked
+- You can also save conversation context: "User asked about VAT registration on 14 Feb 2026"
 
 ## HOW YOU WORK
 You have TOOLS to look up data and knowledge. ALWAYS use them for DATA:
@@ -7142,7 +7369,7 @@ When a user asks about stock, prices, products, items, inventory, or what's in s
 → Tell them to click on Stock in the menu, or click any item to see its full history
 → Use NAVIGATE action with url "/stock" 
 → Example: "Kyk gerus op die Stock bladsy - klik op enige item om sy volle geskiedenis, pryse en bewegings te sien!"
-→ For a specific item: "Gaan na Stock en soek '{item_name}' - klik op die ry om alles te sien."
+→ For a specific item: "Gaan na Stock en soek 'the item' - klik op die ry om alles te sien."
 This is FASTER and more accurate than me searching through thousands of items.
 
 For REMINDERS, NOTES & TO-DOS:
@@ -8227,7 +8454,7 @@ Once you have a customer, you can invoice! 📝"""
         system_prompt = build_zane_core_prompt(context, user_message)
         
         # Create tool handler connected to this business's data
-        tool_handler = ZaneToolHandler(db_instance=db, business_id=context.get("business_id"))
+        tool_handler = ZaneToolHandler(db_instance=db, business_id=context.get("business_id"), user_id=context.get("user_id", ""))
         
         logger.info(f"[BRAIN] Using TOOL-BASED mode for query")
         
@@ -12721,7 +12948,7 @@ class Context:
                     user_id = inv.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": str(inv.get("created_at", ""))[-8:-3] or "??:??",
+                        "time": extract_time(inv.get("created_at", "")) or "??:??",
                         "user": user_name,
                         "action": "Created invoice",
                         "detail": f"{inv.get('invoice_number', '')} for {inv.get('customer_name', '')} - R{float(inv.get('total', 0)):,.2f}",
@@ -12734,7 +12961,7 @@ class Context:
                     user_id = q.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": str(q.get("created_at", ""))[-8:-3] or "??:??",
+                        "time": extract_time(q.get("created_at", "")) or "??:??",
                         "user": user_name,
                         "action": "Created quote",
                         "detail": f"{q.get('quote_number', '')} for {q.get('customer_name', '')} - R{float(q.get('total', 0)):,.2f}",
@@ -12747,7 +12974,7 @@ class Context:
                     user_id = s.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": str(s.get("created_at", ""))[-8:-3] or "??:??",
+                        "time": extract_time(s.get("created_at", "")) or "??:??",
                         "user": user_name,
                         "action": "POS sale",
                         "detail": f"{s.get('payment_method', 'Cash')} - R{float(s.get('total', 0)):,.2f}",
@@ -13366,7 +13593,23 @@ PROBLEMS:
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
         # Professional prompt with structure - ENGLISH - STAFF ACCOUNTABILITY FOCUSED
+        
+        # Load Zane memories for business context
+        memories_context = ""
+        if business_id:
+            try:
+                memories = db.get("zane_memories", {"business_id": business_id})
+                if memories:
+                    mem_list = memories if isinstance(memories, list) else [memories]
+                    important = [m for m in mem_list if m.get("importance") == "high" and m.get("active", True)]
+                    if important:
+                        mem_lines = [m.get("fact", "") for m in important[:10]]
+                        memories_context = "\n\nBUSINESS CONTEXT (from previous conversations):\n" + "\n".join(f"- {l}" for l in mem_lines if l)
+            except:
+                pass
+        
         prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
+{memories_context}
 
 Write an insightful business summary for the owner about the last {days} day(s). The owner uses this to monitor staff performance in real-time.
 
@@ -13399,7 +13642,7 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-haiku-4-5-20251001",
-                    max_tokens=600,
+                    max_tokens=900,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 if message.content:
@@ -13492,7 +13735,7 @@ class ReportEngine:
         
         # Report-specific analysis prompts - AI NEVER calculates, only explains pre-calculated numbers
         analysis_prompts = {
-            "management": "Review the PRE-CALCULATED metrics below. Explain what they mean for the business: overall health, cash position, risks, opportunities, and what needs immediate attention. USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers.",
+            "management": "Review the PRE-CALCULATED metrics below. This is a YEAR-TO-DATE management statement showing cumulative performance from financial year start to current date. Cover: YTD revenue vs expenses, profitability trend, balance sheet health, cash position, debtors/creditors status, and key risks. USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers.",
             "kpi": "Review the PRE-CALCULATED KPIs below. Explain what each metric means: are debtor days healthy? Is stock turn good? How does gross margin look? USE ONLY THE NUMBERS PROVIDED - do not calculate anything yourself.",
             "sales": "Review the sales data below. Identify: top customers by value, any concerning patterns, and opportunities. USE ONLY THE NUMBERS PROVIDED - do not calculate totals or percentages yourself.",
             "debtor": "Review the debtor data below. Identify: which customers owe the most, who might be risky, and who to follow up with first. USE ONLY THE NUMBERS PROVIDED - do not calculate aging or totals yourself.",
@@ -16624,208 +16867,208 @@ PAGE_HELP = {
     "dashboard": {
         "title": "Dashboard",
         "tips": [
-            ("Wat sien ek hier?", "Die dashboard wys jou besigheid se hartklop - vandag se sales, wie skuld jou geld, en wat aandag nodig het."),
-            ("Rooi nommers?", "Rooi beteken aandag nodig: ooragstallige invoices, lae stock, of negatiewe cash flow."),
-            ("Hoe refresh ek?", "Data laai automaties. Trek af (pull down) op jou foon om te refresh."),
+            ("What am I looking at?", "The dashboard shows your business heartbeat - today's sales, who owes you money, and what needs attention."),
+            ("Red numbers?", "Red means attention needed: overdue invoices, low stock, or negative cash flow."),
+            ("How do I refresh?", "Data loads automatically. Pull down on mobile to refresh."),
         ]
     },
     "pos": {
         "title": "Point of Sale (POS)",
         "tips": [
-            ("Hoe maak ek 'n sale?", "Soek item bo → klik om by te voeg → kies betaalmetode → klaar!"),
-            ("Cash vs Account?", "Cash/Card = betaal nou (geen invoice). Account = op rekening (maak automaties 'n invoice)."),
-            ("Discount gee?", "Verander die prys of qty in die cart voor jy finalize."),
-            ("Hoe doen ek 'n refund?", "Maak 'n Credit Note onder Sales → Credit Notes."),
-            ("Kassaregister / Z-read?", "Klik 'Daily Sales' bo regs om vandag se opsomming te sien."),
+            ("How do I make a sale?", "Search item above → click to add → choose payment method → done!"),
+            ("Cash vs Account?", "Cash/Card = paid now (no invoice). Account = on credit (auto-creates an invoice)."),
+            ("How to give a discount?", "Change the price or qty in the cart before you finalize."),
+            ("How do I do a refund?", "Create a Credit Note under Sales → Credit Notes."),
+            ("Cash register / Z-read?", "Click 'Daily Sales' top right to see today's summary."),
         ]
     },
     "invoices": {
-        "title": "Invoices / Fakture",
+        "title": "Invoices",
         "tips": [
-            ("Nuwe invoice?", "Klik '+ New Invoice' bo regs, of maak 'n sale in POS met 'Account' betaling."),
-            ("Email invoice?", "Open die invoice → klik 'Email'. Kliënt kry 'n PDF met jou logo."),
-            ("Betaling ontvang?", "Open invoice → 'Record Payment' → vul bedrag en metode in."),
-            ("Status kleure?", "Groen = betaal. Oranje = outstanding. Rooi = ooragstallig of gecredit."),
-            ("Soek invoice?", "Gebruik die soek bar bo - soek op kliënt naam, invoice nommer, of bedrag."),
+            ("New invoice?", "Click '+ New Invoice' top right, or make a sale in POS with 'Account' payment."),
+            ("Email invoice?", "Open the invoice → click 'Email'. Customer gets a PDF with your logo."),
+            ("Record payment?", "Open invoice → 'Record Payment' → enter amount and method."),
+            ("Status colours?", "Green = paid. Orange = outstanding. Red = overdue or credited."),
+            ("Search?", "Use the search bar above - search by customer name, invoice number, or amount."),
         ]
     },
     "quotes": {
-        "title": "Quotes / Kwotasies",
+        "title": "Quotes",
         "tips": [
-            ("Nuwe quote?", "Klik '+ New Quote', voeg items by, save. Email dit aan die kliënt."),
-            ("Quote na invoice?", "Open die quote → klik 'Convert to Invoice'. Al die items kopieer oor."),
-            ("Geldigheid?", "Quotes het 'n geldigheids periode (default 30 dae). Stel dit in die quote."),
+            ("New quote?", "Click '+ New Quote', add items, save. Email it to the customer."),
+            ("Convert to invoice?", "Open the quote → click 'Convert to Invoice'. All items copy across."),
+            ("Validity?", "Quotes have a validity period (default 30 days). Set it in the quote."),
         ]
     },
     "customers": {
-        "title": "Customers / Kliënte",
+        "title": "Customers",
         "tips": [
-            ("Nuwe kliënt?", "Klik '+ New Customer' of net tik die naam in POS - hy word automaties bygevoeg."),
-            ("Statement stuur?", "Open kliënt → 'Email Statement'. Of bulk: Klik 'Email All Statements'."),
-            ("Wie skuld my?", "Kyk na die Balance kolom. Of gaan na Reports → Debtors Age Analysis."),
-            ("CC emails?", "Edit kliënt → vul CC emails in (komma geskei). Alle emails gaan na al die adresse."),
-            ("Kliënt geskiedenis?", "Klik op 'n kliënt om al sy invoices, quotes, betalings en sales te sien."),
+            ("New customer?", "Click '+ New Customer' or just type the name in POS - auto-added."),
+            ("Send statement?", "Open customer → 'Email Statement'. Or bulk: Click 'Email All Statements'."),
+            ("Who owes me?", "Check the Balance column. Or go to Reports → Debtors Age Analysis."),
+            ("CC emails?", "Edit customer → fill in CC emails (comma separated). All emails go to all addresses."),
+            ("Customer history?", "Click a customer to see all their invoices, quotes, payments and sales."),
         ]
     },
     "suppliers": {
-        "title": "Suppliers / Verskaffers",
+        "title": "Suppliers",
         "tips": [
-            ("Nuwe supplier?", "Klik '+ New Supplier' en vul die besonderhede in."),
-            ("Wat skuld ek?", "Kyk na die Balance kolom - dit wys wat jy elke supplier skuld."),
-            ("Supplier invoice boek?", "Scan die invoice of sê vir Zane: 'Record supplier invoice from [naam] for R[bedrag]'."),
+            ("New supplier?", "Click '+ New Supplier' and fill in the details."),
+            ("What do I owe?", "Check the Balance column - it shows what you owe each supplier."),
+            ("Record supplier invoice?", "Scan the invoice or tell Zane: 'Record supplier invoice from [name] for R[amount]'."),
         ]
     },
     "stock": {
-        "title": "Stock / Voorraad",
+        "title": "Stock / Inventory",
         "tips": [
-            ("Soek item?", "Gebruik die soek bar bo of filter op kategorie."),
-            ("Item geskiedenis?", "Klik enige plek in die ry → sien volle Timeline: aankope, verkope, deliveries, alles."),
-            ("Stock adjust?", "Open item → 'Adjust Stock' → add/remove/set quantity met 'n rede."),
-            ("Lae stock?", "Rooi qty = laer as 5 eenhede. Stel reorder levels in die item edit."),
-            ("Nuwe item?", "Klik '+ Add Stock' bo regs. Of import via /import vir baie items."),
-            ("Pryse verander?", "Klik op item → Edit → verander cost/selling price."),
+            ("Search item?", "Use the search bar above or filter by category."),
+            ("Item history?", "Click anywhere in the row → see full Timeline: purchases, sales, deliveries, everything."),
+            ("Adjust stock?", "Open item → 'Adjust Stock' → add/remove/set quantity with a reason."),
+            ("Low stock?", "Red qty = below 5 units. Set reorder levels in the item edit."),
+            ("New item?", "Click '+ Add Stock' top right. Or import via /import for bulk items."),
+            ("Change prices?", "Click on item → Edit → change cost/selling price."),
         ]
     },
     "expenses": {
-        "title": "Expenses / Uitgawes",
+        "title": "Expenses",
         "tips": [
-            ("Nuwe expense?", "Scan 'n slip met '📸 Scan Receipt' of sê vir Zane: 'Expense R500 for diesel'."),
-            ("Cash vs Card vs EFT?", "Kies die betaalmetode - dit bepaal watter bank/cash rekening gedebit word."),
-            ("Expense vs Supplier Invoice?", "Expense = eenmalige betaling (petrol, ete). Supplier Invoice = op rekening (betaal later)."),
-            ("Kategorieë?", "Elke expense word in 'n kategorie gesit vir jou belastingopgawe."),
+            ("New expense?", "Scan a receipt with '📸 Scan Receipt' or tell Zane: 'Expense R500 for diesel'."),
+            ("Cash vs Card vs EFT?", "Choose the payment method - it determines which bank/cash account is debited."),
+            ("Expense vs Supplier Invoice?", "Expense = once-off payment (petrol, meals). Supplier Invoice = on account (pay later)."),
+            ("Categories?", "Each expense is categorised for your tax return."),
         ]
     },
     "delivery-notes": {
-        "title": "Delivery Notes / Afleweringsnotas",
+        "title": "Delivery Notes",
         "tips": [
-            ("Nuwe delivery note?", "Klik '+ New Delivery Note' of maak een vanuit 'n invoice."),
-            ("Van invoice af?", "Open 'n invoice → 'Create Delivery Note'. Items kopieer automaties."),
-            ("Status?", "Draft = nog nie gestuur. Delivered = afgelewer en bevestig."),
+            ("New delivery note?", "Click '+ New Delivery Note' or create one from an invoice."),
+            ("From invoice?", "Open an invoice → 'Create Delivery Note'. Items copy automatically."),
+            ("Status?", "Draft = not yet sent. Delivered = delivered and confirmed."),
         ]
     },
     "payroll": {
-        "title": "Payroll / Salarisse",
+        "title": "Payroll",
         "tips": [
-            ("Nuwe werknemer?", "Klik '+ Add Employee' → vul besonderhede, salaris, belasting info in."),
-            ("Payroll run?", "Klik 'Run Payroll' → kies maand → review → approve. PAYE, UIF, SDL bereken automaties."),
-            ("Payslip sien?", "Open werknemer → klik op die payslip. Kan ook email aan werknemer."),
-            ("SARS submissions?", "Gaan na SARS → EMP201 (maandeliks) en EMP501 (jaarliks)."),
+            ("New employee?", "Click '+ Add Employee' → fill in details, salary, tax info."),
+            ("Run payroll?", "Click 'Run Payroll' → select month → review → approve. PAYE, UIF, SDL calculated automatically."),
+            ("View payslip?", "Open employee → click on the payslip. Can also email to employee."),
+            ("SARS submissions?", "Go to SARS → EMP201 (monthly) and EMP501 (annual)."),
         ]
     },
     "jobs": {
-        "title": "Job Cards / Werkkaarte",
+        "title": "Job Cards",
         "tips": [
-            ("Nuwe job?", "Klik '+ New Job' → kliënt, beskrywing, items/materials."),
-            ("Materials issue?", "Open job → 'Issue Materials' → stock word automaties afgetrek."),
-            ("Job na invoice?", "Open voltooide job → 'Invoice Job' → invoice word gemaak met al die items."),
+            ("New job?", "Click '+ New Job' → customer, description, items/materials."),
+            ("Issue materials?", "Open job → 'Issue Materials' → stock is automatically deducted."),
+            ("Job to invoice?", "Open completed job → 'Invoice Job' → invoice created with all items."),
         ]
     },
     "reports": {
-        "title": "Reports / Verslae",
+        "title": "Reports",
         "tips": [
-            ("Profit & Loss?", "Wys jou inkomste minus uitgawes = wins of verlies vir die periode."),
-            ("Debtors Age?", "Wie skuld jou geld en hoe lank al (30/60/90+ dae)."),
-            ("VAT report?", "Gaan na SARS → VAT201 vir jou VAT aangifte."),
-            ("Trial Balance?", "Wys al jou rekeninge se balanse - moet in balans wees (debits = credits)."),
+            ("Profit & Loss?", "Shows your income minus expenses = profit or loss for the period."),
+            ("Debtors Age?", "Who owes you money and for how long (30/60/90+ days)."),
+            ("VAT report?", "Go to SARS → VAT201 for your VAT return."),
+            ("Trial Balance?", "Shows all your account balances - must balance (debits = credits)."),
         ]
     },
     "recurring-invoices": {
-        "title": "Recurring Invoices / Herhalende Fakture",
+        "title": "Recurring Invoices",
         "tips": [
-            ("Wat is dit?", "Fakture wat automaties elke maand/week gemaak word - perfek vir huur, dienste, retainers."),
-            ("Hoe stel ek op?", "Klik '+ New Recurring' → kies kliënt, items, frequency (maandeliks/weekliks), begin datum."),
-            ("Stop recurring?", "Open die recurring invoice → 'Deactivate'. Geen nuwe invoices word meer gemaak."),
+            ("What is this?", "Invoices that are automatically created every month/week - perfect for rent, services, retainers."),
+            ("How to set up?", "Click '+ New Recurring' → choose customer, items, frequency (monthly/weekly), start date."),
+            ("Stop recurring?", "Open the recurring invoice → 'Deactivate'. No new invoices will be created."),
         ]
     },
     "subscriptions": {
-        "title": "Subscriptions / Herhalende Uitgawes",
+        "title": "Subscriptions / Recurring Expenses",
         "tips": [
-            ("Wat is dit?", "Jou besigheid se vaste maandelikse uitgawes: versekering, software, huur, telefoon, internet, ens."),
-            ("Hoe laai ek op?", "Klik '+ Add Subscription' → naam, bedrag, kategorie, frequency."),
-            ("Kategorieë?", "Versekering, Software, Telekommunikasie, Huur, Onderhoud, Lisensies, ens. Help met belasting."),
-            ("Auto expense?", "Subscriptions kan automaties elke maand as expense geboek word."),
+            ("What is this?", "Your business's fixed monthly expenses: insurance, software, rent, phone, internet, trackers, etc."),
+            ("How to add?", "Click '+ Add Subscription' → name, amount, category, frequency."),
+            ("Categories?", "Insurance, Software, Telecom, Rent, Maintenance, Licenses, Security, etc. Helps with tax."),
+            ("Auto expense?", "Subscriptions can automatically be booked as an expense each month."),
         ]
     },
     "rentals": {
-        "title": "Rentals / Huur & Eiendomme",
+        "title": "Rentals / Property Management",
         "tips": [
-            ("Wat is dit?", "Bestuur huurders, eiendomme, en munisipale rekeninge. Automatiese huur fakture."),
-            ("Nuwe huurder?", "Klik '+ New Rental' → eiendom, huurder, bedrag, deposito."),
-            ("Munisipal?", "Voeg munisipale kostes by → dit word aan die huurder deur gefaktureer."),
+            ("What is this?", "Manage tenants, properties, and municipal accounts. Automatic rent invoicing."),
+            ("New tenant?", "Click '+ New Rental' → property, tenant, amount, deposit."),
+            ("Municipal?", "Add municipal costs → they get invoiced through to the tenant."),
         ]
     },
     "banking": {
-        "title": "Banking / Bank",
+        "title": "Banking",
         "tips": [
-            ("Bank import?", "Laai jou bankstaat CSV op → ClickAI match transaksies automaties."),
-            ("Reconcile?", "Match bank transaksies met invoices/expenses. Groen ✓ = gematched."),
-            ("Ongematch?", "Items sonder match → maak 'n expense of payment aan."),
+            ("Bank import?", "Upload your bank statement CSV → ClickAI matches transactions automatically."),
+            ("Reconcile?", "Match bank transactions with invoices/expenses. Green ✓ = matched."),
+            ("Unmatched?", "Items without a match → create an expense or payment."),
         ]
     },
     "scan": {
         "title": "Document Scanner",
         "tips": [
-            ("Hoe scan ek?", "Klik die kamera knoppie → neem foto van slip/invoice → Jacqo (AI) lees dit automaties."),
-            ("Wat kan ek scan?", "Supplier invoices, kassabonne, expenses, bankstate, payslips."),
-            ("Scan-to-email?", "Stel jou printer op om na jou scan inbox te email. Gaan na Settings → Scan Inbox."),
-            ("Nie akkuraat?", "Review altyd die AI se resultaat. Verander foute voor jy save."),
+            ("How to scan?", "Click the camera button → take photo of receipt/invoice → AI reads it automatically."),
+            ("What can I scan?", "Supplier invoices, receipts, expenses, bank statements, payslips."),
+            ("Scan-to-email?", "Set up your printer to email to your scan inbox. Go to Settings → Scan Inbox."),
+            ("Not accurate?", "Always review the AI result. Fix errors before you save."),
         ]
     },
     "settings": {
-        "title": "Settings / Instellings",
+        "title": "Settings",
         "tips": [
-            ("Logo?", "Upload jou logo hier - dit verskyn op invoices, quotes, en statements."),
-            ("Email setup?", "SMTP instellings vir Gmail: smtp.gmail.com, port 587, gebruik 'n App Password (nie jou gewone password)."),
-            ("Users?", "Voeg span lede by met verskillende roles: Owner, Admin, Manager, Cashier, Viewer."),
-            ("VAT?", "Stel jou VAT nommer en registrasie status in."),
+            ("Logo?", "Upload your logo here - it appears on invoices, quotes, and statements."),
+            ("Email setup?", "SMTP settings for Gmail: smtp.gmail.com, port 587, use an App Password (not your normal password)."),
+            ("Users?", "Add team members with different roles: Owner, Admin, Manager, Cashier, Viewer."),
+            ("VAT?", "Set your VAT number and registration status here."),
         ]
     },
     "collections": {
-        "title": "Collections / Invorderings",
+        "title": "Collections",
         "tips": [
-            ("Wat is dit?", "Bestuur ooragstallige invoices - sien wie skuld, hoe lank, en stuur herinnerings."),
-            ("Stuur herinnering?", "Klik 'Send Reminder' langs die kliënt se naam."),
-            ("Prioriteit?", "Rooi = 90+ dae, dit moet ASAP aandag kry."),
+            ("What is this?", "Manage overdue invoices - see who owes, how long, and send reminders."),
+            ("Send reminder?", "Click 'Send Reminder' next to the customer's name."),
+            ("Priority?", "Red = 90+ days, this needs attention ASAP."),
         ]
     },
     "sars": {
         "title": "SARS Submissions",
         "tips": [
-            ("VAT201?", "Maandelikse/twee-maandelikse VAT aangifte. Klik 'Generate' → review → submit op eFiling."),
-            ("EMP201?", "Maandelikse werkgewer aangifte: PAYE + UIF + SDL. Generate → submit."),
-            ("EMP501?", "Jaarlikse recon van werknemers belasting. Generate → submit met IRP5's."),
+            ("VAT201?", "Monthly/bi-monthly VAT return. Click 'Generate' → review → submit on eFiling."),
+            ("EMP201?", "Monthly employer declaration: PAYE + UIF + SDL. Generate → submit."),
+            ("EMP501?", "Annual employee tax reconciliation. Generate → submit with IRP5s."),
         ]
     },
     "pulse": {
-        "title": "Pulse / Hartklop",
+        "title": "Pulse",
         "tips": [
-            ("Wat is Pulse?", "Jou besigheid se gesondheid op een plek - reminders, tasks, alerts, forecasts."),
-            ("Reminders?", "Sê vir Zane: 'Remind me Friday to call Botha' - dit verskyn hier."),
-            ("Notes?", "Sê vir Zane: 'Note: Johan wil 500 bolts volgende maand' - gestoor hier."),
+            ("What is Pulse?", "Your business health at a glance - reminders, tasks, alerts, forecasts."),
+            ("Reminders?", "Tell Zane: 'Remind me Friday to call Botha' - it shows up here."),
+            ("Notes?", "Tell Zane: 'Note: Johan wants 500 bolts next month' - stored here."),
         ]
     },
     "grv": {
-        "title": "GRV / Goedere Ontvang",
+        "title": "Goods Received (GRV)",
         "tips": [
-            ("Wat is GRV?", "Goods Received Voucher - bewys dat jy goedere van 'n supplier ontvang het."),
-            ("Van PO af?", "Open 'n Purchase Order → 'Receive Goods' → stock word automaties bygetel."),
-            ("Sonder PO?", "Klik '+ New GRV' → kies supplier, voeg items by."),
+            ("What is GRV?", "Goods Received Voucher - proof that you received goods from a supplier."),
+            ("From PO?", "Open a Purchase Order → 'Receive Goods' → stock is automatically added."),
+            ("Without PO?", "Click '+ New GRV' → choose supplier, add items."),
         ]
     },
     "purchases": {
         "title": "Purchase Orders",
         "tips": [
-            ("Nuwe PO?", "Klik '+ New Purchase Order' → kies supplier → voeg items by → save of email."),
-            ("Email aan supplier?", "Open PO → 'Email to Supplier'. Hulle kry 'n professionele PDF."),
-            ("Ontvang goedere?", "Open PO → 'Receive Goods' om 'n GRV te maak en stock in te boek."),
+            ("New PO?", "Click '+ New Purchase Order' → choose supplier → add items → save or email."),
+            ("Email to supplier?", "Open PO → 'Email to Supplier'. They get a professional PDF."),
+            ("Receive goods?", "Open PO → 'Receive Goods' to create a GRV and book stock in."),
         ]
     },
     "supplier-invoices": {
-        "title": "Supplier Invoices / Verskaffer Fakture",
+        "title": "Supplier Invoices",
         "tips": [
-            ("Wat is dit?", "Fakture van jou suppliers - wat JY skuld. Verskil van expenses: hierdie is op rekening."),
-            ("Nuwe supplier invoice?", "Scan dit met 📸 of sê vir Zane: 'Record supplier invoice from ABC for R5000'."),
-            ("Betaal?", "Klik 'Pay' langs die invoice → kies betaalmetode."),
+            ("What is this?", "Invoices from your suppliers - what YOU owe. Different from expenses: these are on account."),
+            ("New supplier invoice?", "Scan it with 📸 or tell Zane: 'Record supplier invoice from ABC for R5000'."),
+            ("Pay?", "Click 'Pay' next to the invoice → choose payment method."),
         ]
     },
 }
@@ -16877,6 +17120,10 @@ def get_page_help(active: str) -> str:
 def render_page(title: str, content: str, user: dict = None, active: str = "") -> str:
     """Render a full page - FAST: uses session cache, minimal DB calls"""
     _t("render_start")
+    
+    # Check for ?onboard=1 force flag on any page
+    if request.args.get("onboard") == "1":
+        session["force_onboard"] = True
     
     # Get current business - FROM SESSION (no DB call!)
     business = None
@@ -17617,21 +17864,16 @@ def get_zane_chat() -> str:
             <button class="zane-chat-close" onclick="toggleZaneChat()">×</button>
         </div>
         <div class="zane-chat-body" id="zaneChatBody">
-            <div class="zane-msg zane">Welcome. I'm Zane, your business assistant. I can help with:
-
-• <b>Stock:</b> "Do we have M16 bolts?"
-• <b>Invoices:</b> "Invoice ABC Traders for R5000"
-• <b>Reports:</b> "Show me today's sales"
-• <b>Reminders:</b> "Remind me Friday to follow up"
-• <b>System help:</b> "How do I create a quote?"
-• <b>🎤 Voice:</b> Tap mic to talk, hold mic for hands-free mode
-
-How can I assist you?</div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
+            <div class="zane-msg zane" id="zaneWelcome">Loading...</div>
+            <div id="zaneQuickBtns" style="display:none;flex-wrap:wrap;gap:8px;margin-top:10px;">
                 <button onclick="quickZane('Who owes us the most?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Top debtors</button>
                 <button onclick="quickZane('Show me low stock')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Low stock</button>
                 <button onclick="quickZane('What did we sell today?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Today's sales</button>
                 <button onclick="quickZane('Show my reminders and to-do list')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">📋 My list</button>
+            </div>
+            <!-- Onboarding Questions (hidden by default) -->
+            <div id="zaneOnboarding" style="display:none;margin-top:10px;">
+                <div id="onboardStep" style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);border-radius:10px;padding:12px;"></div>
             </div>
         </div>
         <div class="voice-mode-banner" id="voiceModeBanner">
@@ -18073,8 +18315,206 @@ How can I assist you?</div>
         
         if (isOpen) {
             document.getElementById('zaneInput').focus();
+            // Check onboarding on first open
+            if (!window._zaneOnboardChecked) {
+                window._zaneOnboardChecked = true;
+                checkZaneOnboarding();
+            }
         }
     }
+    
+    // ═══ ZANE ONBOARDING / SETUP WIZARD ═══
+    const onboardQuestions = [
+        {
+            id: 'industry',
+            q: 'What type of business do you run?',
+            type: 'buttons',
+            options: ['Retail / Shop', 'Hardware / Building', 'Manufacturing', 'Services / Professional', 'Restaurant / Food', 'Wholesale / Distribution', 'Construction', 'Transport / Logistics', 'Other'],
+            memory: 'Business type/industry: {val}'
+        },
+        {
+            id: 'products',
+            q: 'In a few words - what do you sell or do?',
+            type: 'text',
+            placeholder: 'e.g. stainless steel, workwear, plumbing supplies...',
+            memory: 'Main products/services: {val}'
+        },
+        {
+            id: 'size',
+            q: 'How many people work in the business?',
+            type: 'buttons',
+            options: ['Just me', '2-5', '6-15', '16-50', '50+'],
+            memory: 'Business size: {val} employees'
+        },
+        {
+            id: 'turnover',
+            q: 'Roughly what is your monthly turnover?',
+            type: 'buttons',
+            options: ['Under R50k', 'R50k-200k', 'R200k-500k', 'R500k-1M', 'R1M+'],
+            memory: 'Monthly turnover approximately: {val}'
+        },
+        {
+            id: 'vat',
+            q: 'Are you VAT registered?',
+            type: 'buttons',
+            options: ['Yes', 'No', 'Not sure'],
+            memory: 'VAT registered: {val}'
+        },
+        {
+            id: 'pain',
+            q: 'What is your BIGGEST frustration with your current bookkeeping?',
+            type: 'text',
+            placeholder: 'e.g. invoicing takes too long, cant track stock...',
+            memory: 'Main business pain point: {val}'
+        },
+        {
+            id: 'goals',
+            q: 'What do you most want ClickAI to help with?',
+            type: 'buttons',
+            options: ['Invoicing & Quotes', 'Stock Control', 'Financials & Reports', 'Payroll', 'Everything!'],
+            memory: 'Primary goal with ClickAI: {val}'
+        }
+    ];
+    
+    let onboardStep = 0;
+    let onboardAnswers = {};
+    
+    async function checkZaneOnboarding() {
+        try {
+            const resp = await fetch('/api/zane/onboard-status');
+            const data = await resp.json();
+            
+            const welcome = document.getElementById('zaneWelcome');
+            const quickBtns = document.getElementById('zaneQuickBtns');
+            const onboarding = document.getElementById('zaneOnboarding');
+            
+            if (data.needs_onboarding) {
+                // Show onboarding
+                welcome.innerHTML = "Hey! 👋 I'm <b>Zane</b>, your AI bookkeeper and business advisor.<br><br>Before we start, let me get to know your business — takes 2 minutes and makes me 10x smarter for you.";
+                onboarding.style.display = 'block';
+                quickBtns.style.display = 'none';
+                showOnboardStep(0);
+            } else {
+                // Normal welcome
+                welcome.innerHTML = "Welcome back. I'm Zane, your business advisor. Ask me anything — finances, invoices, stock, tax, or just how the business is doing.";
+                quickBtns.style.display = 'flex';
+                onboarding.style.display = 'none';
+            }
+        } catch(e) {
+            // Fallback to normal welcome
+            document.getElementById('zaneWelcome').innerHTML = "Welcome. I'm Zane, your business assistant. How can I help?";
+            document.getElementById('zaneQuickBtns').style.display = 'flex';
+        }
+    }
+    
+    function showOnboardStep(step) {
+        if (step >= onboardQuestions.length) {
+            finishOnboarding();
+            return;
+        }
+        
+        onboardStep = step;
+        const q = onboardQuestions[step];
+        const container = document.getElementById('onboardStep');
+        const progress = Math.round(((step) / onboardQuestions.length) * 100);
+        
+        let html = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:11px;color:var(--text-muted);">Step ${step+1} of ${onboardQuestions.length}</span>
+            <span style="font-size:11px;color:var(--primary);">${progress}%</span>
+        </div>
+        <div style="background:var(--border);border-radius:4px;height:4px;margin-bottom:12px;overflow:hidden;">
+            <div style="background:var(--primary);height:100%;width:${progress}%;transition:width 0.3s;"></div>
+        </div>
+        <div style="font-size:14px;font-weight:500;margin-bottom:10px;">${q.q}</div>`;
+        
+        if (q.type === 'buttons') {
+            html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+            for (const opt of q.options) {
+                html += `<button onclick="answerOnboard('${q.id}','${opt.replace(/'/g,"\\'")}')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;transition:all 0.15s;"
+                onmouseover="this.style.background='var(--primary)';this.style.color='white'" 
+                onmouseout="this.style.background='transparent';this.style.color='var(--primary)'">${opt}</button>`;
+            }
+            html += '</div>';
+        } else {
+            html += `<div style="display:flex;gap:6px;">
+                <input type="text" id="onboardInput" placeholder="${q.placeholder || ''}" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;" onkeypress="if(event.key==='Enter'){answerOnboard('${q.id}',this.value)}">
+                <button onclick="answerOnboard('${q.id}',document.getElementById('onboardInput').value)" style="padding:8px 14px;border-radius:6px;border:none;background:var(--primary);color:white;cursor:pointer;font-size:13px;">→</button>
+            </div>`;
+        }
+        
+        // Skip button
+        html += `<div style="text-align:right;margin-top:8px;">
+            <button onclick="answerOnboard('${q.id}','skip')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;">Skip →</button>
+        </div>`;
+        
+        container.innerHTML = html;
+        
+        // Focus text input
+        if (q.type === 'text') {
+            setTimeout(() => { const inp = document.getElementById('onboardInput'); if(inp) inp.focus(); }, 100);
+        }
+    }
+    
+    async function answerOnboard(id, value) {
+        if (!value || value === 'skip') {
+            showOnboardStep(onboardStep + 1);
+            return;
+        }
+        
+        onboardAnswers[id] = value;
+        
+        // Save this answer as a memory immediately
+        const q = onboardQuestions.find(q => q.id === id);
+        if (q && q.memory) {
+            const memoryText = q.memory.replace('{val}', value);
+            try {
+                fetch('/api/zane/onboard-save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({fact: memoryText, category: 'business_info', importance: 'high'})
+                });
+            } catch(e) {}
+        }
+        
+        // Show brief acknowledgment
+        const body = document.getElementById('zaneChatBody');
+        const ack = document.createElement('div');
+        ack.className = 'zane-msg user';
+        ack.textContent = value;
+        body.insertBefore(ack, document.getElementById('zaneOnboarding'));
+        
+        showOnboardStep(onboardStep + 1);
+        body.scrollTop = body.scrollHeight;
+    }
+    
+    async function finishOnboarding() {
+        const container = document.getElementById('onboardStep');
+        container.innerHTML = `<div style="text-align:center;padding:10px;">
+            <div style="font-size:28px;margin-bottom:8px;">🚀</div>
+            <div style="font-weight:600;margin-bottom:4px;">Setup Complete!</div>
+            <div style="font-size:12px;color:var(--text-muted);">I now know your business. Ask me anything.</div>
+        </div>`;
+        
+        // Mark onboarding done
+        try {
+            await fetch('/api/zane/onboard-complete', {method: 'POST'});
+        } catch(e) {}
+        
+        // After 2 seconds, switch to normal mode
+        setTimeout(() => {
+            document.getElementById('zaneOnboarding').style.display = 'none';
+            document.getElementById('zaneQuickBtns').style.display = 'flex';
+            document.getElementById('zaneWelcome').innerHTML = "I know your business now. Let's get to work — ask me anything about your finances, customers, stock, or tax.";
+        }, 2000);
+    }
+    
+    // Auto-check onboarding when chat is already open on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        if (localStorage.getItem('zane_chat_open') === 'true') {
+            window._zaneOnboardChecked = true;
+            setTimeout(checkZaneOnboarding, 500);
+        }
+    });
     
     async function sendZaneMsg() {
         const input = document.getElementById('zaneInput');
@@ -18882,6 +19322,129 @@ def api_ai():
     except Exception as e:
         logger.error(f"[AI] Error: {e}")
         return jsonify({"error": str(e), "response": f"Sorry, something went wrong: {str(e)}"})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ZANE ONBOARDING - First-time setup to make Zane smart from day 1
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/zane/onboard-status")
+@login_required
+def api_zane_onboard_status():
+    """Check if this business needs onboarding"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    # Allow force onboarding via session flag (set by ?onboard=1 on any page)
+    force = session.get("force_onboard", False)
+    if force:
+        session.pop("force_onboard", None)
+        return jsonify({"needs_onboarding": True, "forced": True})
+    
+    if not biz_id:
+        return jsonify({"needs_onboarding": False})
+    
+    try:
+        # Check if onboarding was completed (stored as a zane_memory)
+        memories = db.get("zane_memories", {"business_id": biz_id, "category": "business_info"})
+        if memories:
+            # If we have 3+ business_info memories, onboarding is done
+            if isinstance(memories, list) and len(memories) >= 3:
+                return jsonify({"needs_onboarding": False})
+            elif isinstance(memories, dict):
+                return jsonify({"needs_onboarding": False})
+        
+        # Also check if we have enough data already (stock, customers)
+        stock_count = 0
+        customer_count = 0
+        try:
+            stocks = db.get("stock_items", {"business_id": biz_id})
+            stock_count = len(stocks) if isinstance(stocks, list) else (1 if stocks else 0)
+            customers = db.get("customers", {"business_id": biz_id})
+            customer_count = len(customers) if isinstance(customers, list) else (1 if customers else 0)
+        except:
+            pass
+        
+        # If business has lots of data already, probably doesn't need onboarding
+        if stock_count > 50 and customer_count > 20:
+            return jsonify({"needs_onboarding": False, "reason": "has_data"})
+        
+        return jsonify({"needs_onboarding": True})
+    except Exception as e:
+        logger.error(f"[ZANE ONBOARD] Status check error: {e}")
+        return jsonify({"needs_onboarding": False})
+
+
+@app.route("/api/zane/onboard-save", methods=["POST"])
+@login_required
+def api_zane_onboard_save():
+    """Save an onboarding answer as a Zane memory"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False})
+    
+    try:
+        data = request.get_json()
+        fact = data.get("fact", "").strip()
+        category = data.get("category", "business_info")
+        importance = data.get("importance", "high")
+        
+        if not fact:
+            return jsonify({"success": False})
+        
+        record = {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "user_id": user.get("id", ""),
+            "fact": fact,
+            "category": category,
+            "importance": importance,
+            "source": "onboarding",
+            "active": True,
+            "created_at": now()
+        }
+        
+        success, resp = db.save("zane_memories", record)
+        logger.info(f"[ZANE ONBOARD] Saved memory: {fact[:60]}... success={success}")
+        return jsonify({"success": success})
+    except Exception as e:
+        logger.error(f"[ZANE ONBOARD] Save error: {e}")
+        return jsonify({"success": False})
+
+
+@app.route("/api/zane/onboard-complete", methods=["POST"])
+@login_required
+def api_zane_onboard_complete():
+    """Mark onboarding as complete"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False})
+    
+    try:
+        record = {
+            "id": generate_id(),
+            "business_id": biz_id,
+            "user_id": user.get("id", ""),
+            "fact": f"Onboarding completed on {today()}. Zane is fully configured for this business.",
+            "category": "business_info",
+            "importance": "high",
+            "source": "onboarding",
+            "active": True,
+            "created_at": now()
+        }
+        db.save("zane_memories", record)
+        logger.info(f"[ZANE ONBOARD] Onboarding completed for business {biz_id}")
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"[ZANE ONBOARD] Complete error: {e}")
+        return jsonify({"success": False})
 
 
 @app.route("/api/report", methods=["POST"])
@@ -22601,11 +23164,15 @@ def invoice_new():
         customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}" {selected}>{safe_string(c.get("name", ""))}</option>'
     
     # Stock datalist for autocomplete
-    stock_options = '<option value="NEW" data-price="0">+ Add New Stock Item</option>'
+    stock_options = '<option value="NEW" data-price="0" data-stockid="">+ Add New Stock Item</option>'
     for s in stock:
         desc = safe_string(s.get("description", ""))
+        code = safe_string(s.get("code", ""))
         price = float(s.get("price") or s.get("selling_price") or 0)
-        stock_options += f'<option value="{desc}" data-price="{price}">'
+        stock_id = s.get("id", "")
+        qty_avail = float(s.get("qty") or s.get("quantity") or 0)
+        label = f"{code} - {desc}" if code else desc
+        stock_options += f'<option value="{label}" data-price="{price}" data-stockid="{stock_id}" data-desc="{desc}" data-qty="{qty_avail}">'
     
     error_msg = request.args.get("error", "")
     error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
@@ -22647,14 +23214,17 @@ def invoice_new():
                     <tr>
                         <th style="width:45%">Description</th>
                         <th style="width:12%">Qty</th>
-                        <th style="width:18%">Price</th>
+                        <th style="width:18%">Price (excl)</th>
                         <th style="width:15%">Total</th>
                         <th style="width:10%"></th>
                     </tr>
                 </thead>
                 <tbody id="itemRows">
                     <tr>
-                        <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                        <td>
+                            <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
+                            <input type="hidden" name="item_stock_id[]" value="">
+                        </td>
                         <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td class="row-total">R0.00</td>
@@ -22697,11 +23267,13 @@ def invoice_new():
         }}
         const datalist = document.getElementById('stockList');
         const options = datalist.querySelectorAll('option');
+        const row = input.closest('tr');
+        const stockIdInput = row.querySelector('input[name="item_stock_id[]"]');
         for (let opt of options) {{
             if (opt.value === input.value) {{
-                const row = input.closest('tr');
                 const priceInput = row.querySelector('input[name="item_price[]"]');
                 priceInput.value = opt.dataset.price || '';
+                if (stockIdInput) stockIdInput.value = opt.dataset.stockid || '';
                 calcRow(priceInput);
                 break;
             }}
@@ -22712,11 +23284,14 @@ def invoice_new():
         const tbody = document.getElementById('itemRows');
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+            <td>
+                <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
+                <input type="hidden" name="item_stock_id[]" value="">
+            </td>
             <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td class="row-total">R0.00</td>
-            <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
+            <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">\u2715</button></td>
         `;
         tbody.appendChild(row);
     }}
@@ -26847,8 +27422,8 @@ def delivery_notes_list():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2>Delivery Notes</h2>
-        <a href="/delivery-note/new" class="btn btn-primary">+ New Delivery Note</a>
+        <h2>Goods Received Notes (GRN)</h2>
+        <a href="/delivery-note/new" class="btn btn-primary">+ New GRN</a>
     </div>
     
     <div class="card" style="padding:0;overflow:hidden;">
@@ -26881,13 +27456,13 @@ def delivery_notes_list():
     </script>
     '''
     
-    return render_page("Delivery Notes", content, user, "delivery-notes")
+    return render_page("Goods Received Notes", content, user, "delivery-notes")
 
 
 @app.route("/delivery-note/new", methods=["GET", "POST"])
 @login_required
 def delivery_note_new():
-    """Create new delivery note"""
+    """Create new GRN (goods received note)"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -26969,12 +27544,12 @@ def delivery_note_new():
                             new_qty = current_qty - sold_qty
                             # Allow negative stock - use update with biz_id
                             db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                            logger.info(f"[DELIVERY] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
+                            logger.info(f"[GRN] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
                             # Log stock movement
                             try:
                                 db.save("stock_movements", RecordFactory.stock_movement(
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
-                                    quantity=sold_qty, reference=f"Delivery Note {dn.get('dn_number', '')}" if dn else "Delivery Note"
+                                    quantity=sold_qty, reference=f"GRN {dn_num}"
                                 ))
                             except: pass
             
@@ -29597,7 +30172,7 @@ def business_pulse():
     }}
     
     async function completeReminder(id) {{
-        await fetch('/api/assistant/complete', {{
+        await fetch('/api/assistant/toggle', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: id, type: 'reminder'}})
@@ -29606,7 +30181,7 @@ def business_pulse():
     }}
     
     async function completeTodo(id) {{
-        await fetch('/api/assistant/complete', {{
+        await fetch('/api/assistant/toggle', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: id, type: 'todo'}})
@@ -30003,14 +30578,14 @@ def api_pulse_data():
             if p_date >= seven_days_ago:
                 who = user_names.get(p.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
-                activity_feed.append({"date": p_date, "time": str(p.get("created_at", ""))[-8:-3], "text": f'{p.get("customer_name", "Customer")} paid{who_tag}', "amount": float(p.get("amount", 0)), "icon": "&#10003;", "color": "#10b981"})
+                activity_feed.append({"date": p_date, "time": extract_time(p.get("created_at", "")), "text": f'{p.get("customer_name", "Customer")} paid{who_tag}', "amount": float(p.get("amount", 0)), "icon": "&#10003;", "color": "#10b981"})
         
         for inv in invoices:
             inv_date = str(inv.get("date", ""))[:10]
             if inv_date >= seven_days_ago and inv.get("status") != "paid":
                 who = user_names.get(inv.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
-                activity_feed.append({"date": inv_date, "time": str(inv.get("created_at", ""))[-8:-3], "text": f'Invoice {inv.get("invoice_number", "")} → {inv.get("customer_name", "")[:20]}{who_tag}', "amount": float(inv.get("total", 0)), "icon": "&#128196;", "color": "#f59e0b"})
+                activity_feed.append({"date": inv_date, "time": extract_time(inv.get("created_at", "")), "text": f'Invoice {inv.get("invoice_number", "")} → {inv.get("customer_name", "")[:20]}{who_tag}', "amount": float(inv.get("total", 0)), "icon": "&#128196;", "color": "#f59e0b"})
         
         for s in sales:
             s_date = str(s.get("date", ""))[:10]
@@ -30018,7 +30593,7 @@ def api_pulse_data():
                 who = user_names.get(s.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
                 method = s.get("payment_method", "cash")
-                activity_feed.append({"date": s_date, "time": str(s.get("created_at", ""))[-8:-3], "text": f'POS Sale #{str(s.get("id", ""))[:6]} ({method}){who_tag}', "amount": float(s.get("total", 0)), "icon": "&#128176;", "color": "#10b981"})
+                activity_feed.append({"date": s_date, "time": extract_time(s.get("created_at", "")), "text": f'POS Sale #{str(s.get("id", ""))[:6]} ({method}){who_tag}', "amount": float(s.get("total", 0)), "icon": "&#128176;", "color": "#10b981"})
         
         activity_feed.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
         
@@ -30242,15 +30817,30 @@ def api_assistant_items():
         reminder_items = []
         for r in pending_reminders[:25]:
             due = r.get("due_date", "")
+            due_time = r.get("due_time", "")
             is_overdue = due < today_str if due else False
             is_today = due == today_str
+            
+            # Build display string for due date
+            if is_overdue:
+                due_display = f"Due {due}" + (f" {due_time}" if due_time else "")
+            elif is_today:
+                due_display = f"Today" + (f" {due_time}" if due_time else "")
+            elif due:
+                due_display = f"Due {due}" + (f" {due_time}" if due_time else "")
+            else:
+                due_display = "No due date"
+            
             reminder_items.append({
                 "id": r.get("id", ""),
+                "title": r.get("message", r.get("title", "Reminder")),
                 "message": r.get("message", ""),
                 "due_date": due,
-                "due_time": r.get("due_time", ""),
+                "due_time": due_time,
+                "due_display": due_display,
                 "priority": r.get("priority", "normal"),
                 "linked_to": r.get("linked_to", ""),
+                "is_overdue": is_overdue,
                 "overdue": is_overdue,
                 "today": is_today
             })
@@ -30265,6 +30855,7 @@ def api_assistant_items():
         for t in pending_todos[:25]:
             todo_items.append({
                 "id": t.get("id", ""),
+                "title": t.get("task", t.get("title", "To-do")),
                 "task": t.get("task", ""),
                 "priority": t.get("priority", "normal"),
                 "category": t.get("category", "general")
@@ -32227,6 +32818,7 @@ def report_tb():
                 <option value="af">Afrikaans</option>
             </select>
             <button class="btn btn-primary" onclick="analyzeWithZane()" id="analyzeBtn">Analyze with Zane</button>
+            <button class="btn btn-secondary" onclick="downloadTBcsv()">📥 Download CSV</button>
             <button class="btn btn-secondary" onclick="window.print();">Print</button>
             <a href="/import" class="btn btn-secondary">Import TB</a>
             <label class="btn btn-secondary" style="cursor:pointer;margin:0;">
@@ -32237,7 +32829,7 @@ def report_tb():
         </div>
     </div>
     
-    {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Waarskuwing:</strong> Daar is <strong>{len(opening_entries)}</strong> opening balance entries vir <strong>{len(tb_accounts)}</strong> accounts. As jy meerdere kere geïmporteer het, klik "Clear OB" en import weer.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
+    {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Warning:</strong> There are <strong>{len(opening_entries)}</strong> opening balance entries for <strong>{len(tb_accounts)}</strong> accounts. If you imported multiple times, click "Clear OB" and import again.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
     
     <div class="card" style="padding:30px;">
         <!-- HEADER -->
@@ -32299,6 +32891,38 @@ def report_tb():
     const totalDebit = {total_debit};
     const totalCredit = {total_credit};
     const isBalanced = {"true" if is_balanced else "false"};
+    
+    function downloadTBcsv() {{
+        const tbData = {tb_data_json};
+        if (!tbData || tbData.length === 0) {{ alert('No trial balance data to download'); return; }}
+        
+        // Standard TB CSV format that any accounting software can read
+        let csv = 'Account Code,Account Name,Account Type,Debit,Credit\\n';
+        let totDr = 0, totCr = 0;
+        
+        tbData.forEach(row => {{
+            const code = (row.code || '').replace(/"/g, '""');
+            const name = (row.name || '').replace(/"/g, '""');
+            const type = '';
+            const dr = row.debit > 0 ? row.debit.toFixed(2) : '';
+            const cr = row.credit > 0 ? row.credit.toFixed(2) : '';
+            csv += `"${{code}}","${{name}}","${{type}}",${{dr}},${{cr}}\\n`;
+            totDr += row.debit || 0;
+            totCr += row.credit || 0;
+        }});
+        
+        csv += `,,TOTAL,${{totDr.toFixed(2)}},${{totCr.toFixed(2)}}\\n`;
+        
+        const blob = new Blob([csv], {{ type: 'text/csv;charset=utf-8;' }});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const bizName = document.title.split(' - ')[1] || 'Business';
+        const date = new Date().toISOString().split('T')[0];
+        a.download = `Trial_Balance_${{bizName.replace(/[^a-zA-Z0-9]/g, '_')}}_${{date}}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }}
     
     async function analyzeWithZane() {{
         const btn = document.getElementById('analyzeBtn');
@@ -32382,7 +33006,10 @@ def report_tb():
                     total_debit: uploadData.total_debit,
                     total_credit: uploadData.total_credit,
                     is_balanced: uploadData.is_balanced,
-                    lang: lang
+                    lang: lang,
+                    source_file: file.name,
+                    company_name: uploadData.company_name || '',
+                    tb_control_profit: uploadData.tb_control_profit || null
                 }})
             }});
             
@@ -32472,6 +33099,10 @@ def report_tb():
             alert('❌ Error: ' + err.message);
         }}
     }}
+    // Auto-analyze if redirected from import page
+    if (window.location.search.includes('auto_analyze=1')) {{
+        setTimeout(() => analyzeWithZane(), 500);
+    }}
     </script>
     '''
     
@@ -32528,7 +33159,26 @@ def api_tb_analyze():
     try:
         data = request.get_json()
         accounts = data.get("accounts", [])
-        lang = data.get("lang", "en")  # Default to English
+        lang = data.get("lang", "en")
+        
+        # If a source file was uploaded (external TB), note it in the report
+        source_file = data.get("source_file", "")
+        company_name = data.get("company_name", "")
+        
+        # IMPORTANT: If a CSV was uploaded, it's ALWAYS a third-party client's data
+        # The user wouldn't upload their own TB - ClickAI generates that internally
+        # So NEVER use the logged-in business name for uploaded TBs
+        if source_file:
+            if company_name:
+                report_company = company_name
+            else:
+                # Use filename without extension as company hint
+                clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
+                report_company = f"Client TB ({clean_name})"
+            is_third_party = True
+        else:
+            report_company = biz_name
+            is_third_party = False
         
         logger.info(f"[TB ANALYZE] Language selected: {lang}")
         
@@ -32816,78 +33466,277 @@ def api_tb_analyze():
         
         logger.info(f"[TB ANALYZE] Python calculated: Dr={total_debit:.2f} Cr={total_credit:.2f} Diff={difference:.2f}")
         
-        # Step 2: Categorize accounts by code and name patterns
-        def match_account(acc, codes=None, keywords=None, column="debit"):
-            """Match account by code prefix or name keywords"""
-            code = str(acc.get("code", "")).strip()
-            name = str(acc.get("name", "")).lower()
-            val = float(acc.get(column, 0) or 0)
+        # Step 2: Categorize accounts - USE CATEGORY COLUMN IF AVAILABLE
+        # This is critical: different accounting packages use different code schemes
+        # Sage Pastel: 1000=Sales, 2000=COS, 3000-4000=Expenses, 5000=Equity, 6000+=Assets
+        # Standard:    1000=Assets, 2000=Assets, 3000=Liabilities, 4000=Equity, 5000=Income, 6000+=Expenses
+        # So we CANNOT rely on codes - we must use the Category column
+        
+        has_categories = any(a.get("category") for a in accounts)
+        logger.info(f"[TB ANALYZE] Category column available: {has_categories}")
+        
+        if has_categories:
+            # ═══════════════════════════════════════════════════════════════
+            # CATEGORY-BASED CLASSIFICATION (reliable, works for ALL systems)
+            # ═══════════════════════════════════════════════════════════════
+            logger.info("[TB ANALYZE] Using CATEGORY column for classification")
             
-            if codes:
-                for c in codes:
-                    if code.startswith(c):
-                        return val
-            if keywords:
+            def cat_sum(acc_list, categories, column="debit"):
+                """Sum accounts matching category list"""
+                total = 0
+                for a in acc_list:
+                    cat = str(a.get("category", "")).lower().strip()
+                    for c in categories:
+                        if c in cat:
+                            total += float(a.get(column, 0) or 0)
+                            break
+                return total
+            
+            def cat_net(acc_list, categories):
+                """Net value (debit - credit) for matching categories"""
+                total = 0
+                for a in acc_list:
+                    cat = str(a.get("category", "")).lower().strip()
+                    for c in categories:
+                        if c in cat:
+                            dr = float(a.get("debit", 0) or 0)
+                            cr = float(a.get("credit", 0) or 0)
+                            total += dr - cr
+                            break
+                return total
+            
+            def name_match(acc, keywords, column="debit"):
+                """Match account by name keywords"""
+                name = str(acc.get("name", "")).lower()
+                val = float(acc.get(column, 0) or 0)
                 for kw in keywords:
                     if kw in name:
                         return val
-            return 0
-        
-        # ASSETS (Debit balances)
-        bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
-        cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
-        debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
-        stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
-        prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
-        vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
-        other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
-        
-        fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
-        accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
-        
-        # LIABILITIES (Credit balances)
-        creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
-        vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
-        paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
-        uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
-        loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
-        other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
-        
-        # EQUITY (Credit balances)
-        capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
-        retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
-        drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)  # Debit
-        reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
-        
-        # REVENUE (Credit balances)
-        sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
-        # Exclude returns from sales
-        for a in accounts:
-            if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
-                sales -= float(a.get("credit", 0) or 0)
-        
-        sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)  # Debit
-        cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
-        other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
-        
-        # EXPENSES (Debit balances)
-        salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
-        rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
-        electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
-        water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
-        telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
-        insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
-        bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
-        fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
-        repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
-        office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
-        advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
-        professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
-        depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
-        bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
-        interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
-        sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
-        
+                return 0
+            
+            # INCOME (Credit balances - sales, other income)
+            sales = cat_sum(accounts, ["sales", "revenue", "turnover", "omset"], "credit")
+            sales_returns = cat_sum(accounts, ["sales return", "return"], "debit")
+            cos = cat_sum(accounts, ["cost of sale", "cost of goods", "koste van verkope", "cogs"], "debit")
+            other_income = cat_sum(accounts, ["other income", "ander inkomste", "interest received"], "credit")
+            
+            # EXPENSES (Debit balances)
+            # Get all expense accounts individually for the breakdown
+            expense_accounts = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
+            
+            salaries = sum(name_match(a, ["salary", "salaries", "wage", "payroll", "salar"]) for a in expense_accounts)
+            rent = sum(name_match(a, ["rent"]) for a in expense_accounts)
+            electricity = sum(name_match(a, ["electric", "water", "eskom", "power", "elektris"]) for a in expense_accounts)
+            water = 0  # Often combined with electricity
+            telephone = sum(name_match(a, ["telephone", "internet", "cell", "mobile", "telkom", "telef"]) for a in expense_accounts)
+            insurance = sum(name_match(a, ["insurance", "verseker"]) for a in expense_accounts)
+            bank_charges = sum(name_match(a, ["bank charge", "bank fee", "bankkoste"]) for a in expense_accounts)
+            fuel = sum(name_match(a, ["fuel", "petrol", "diesel", "transport", "brandstof"]) for a in expense_accounts)
+            repairs = sum(name_match(a, ["repair", "maintenance", "onderhoud"]) for a in expense_accounts)
+            office = sum(name_match(a, ["office", "stationery", "supplies", "kantoor"]) for a in expense_accounts)
+            advertising = sum(name_match(a, ["advertising", "marketing", "promotion", "advertens"]) for a in expense_accounts)
+            professional = sum(name_match(a, ["professional", "accounting", "legal", "audit", "rekenmeest"]) for a in expense_accounts)
+            depreciation = sum(name_match(a, ["depreciation", "waardevermindering"]) for a in expense_accounts)
+            bad_debts = sum(name_match(a, ["bad debt", "doubtful", "slegte skuld"]) for a in expense_accounts)
+            interest_paid = sum(name_match(a, ["interest paid", "interest expense", "finance charge", "rente betaal"]) for a in expense_accounts)
+            
+            # Total expenses from category (more accurate than summing named items)
+            total_expenses_from_cat = cat_net(accounts, ["expense", "uitgawe", "operating"])
+            # Handle credit balance expenses (recoveries) - net them out
+            if total_expenses_from_cat < 0:
+                total_expenses_from_cat = 0
+            
+            # Sundry = total expenses minus named ones
+            named_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid
+            sundry_exp = max(0, total_expenses_from_cat - named_expenses)
+            
+            # BALANCE SHEET from categories
+            # Current Assets
+            bank = 0
+            cash = 0
+            debtors = 0
+            stock = 0
+            prepaid = 0
+            vat_input = 0
+            other_current = 0
+            
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                name = str(a.get("name", "")).lower()
+                dr = float(a.get("debit", 0) or 0)
+                cr = float(a.get("credit", 0) or 0)
+                net = dr - cr
+                
+                if "current asset" in cat and "non-current" not in cat or "bedryfsbate" in cat and "nie-bedryfs" not in cat:
+                    if any(kw in name for kw in ["bank", "fnb", "standard", "absa", "nedbank", "capitec", "investec"]):
+                        bank += net
+                    elif any(kw in name for kw in ["cash", "petty", "kontant"]):
+                        cash += net
+                    elif any(kw in name for kw in ["debtor", "receivable", "debiteur"]):
+                        debtors += net
+                    elif any(kw in name for kw in ["stock", "inventory", "voorraad", "goods", "finished"]):
+                        stock += net
+                    elif any(kw in name for kw in ["prepaid", "prepayment", "vooruitbetaal"]):
+                        prepaid += net
+                    elif any(kw in name for kw in ["vat input", "input vat", "btw inset"]):
+                        vat_input += net
+                    else:
+                        other_current += net
+                
+                elif "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
+                    pass  # Handled below
+                
+                elif "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
+                    pass  # Handled below
+                
+            # Fixed Assets
+            fixed_assets_cost = 0
+            accum_depr = 0
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                name = str(a.get("name", "")).lower()
+                dr = float(a.get("debit", 0) or 0)
+                cr = float(a.get("credit", 0) or 0)
+                
+                if "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
+                    if any(kw in name for kw in ["accumulated", "acc dep", "accum", "opgehoopte"]):
+                        accum_depr += cr
+                    else:
+                        fixed_assets_cost += dr
+            
+            # Liabilities
+            creditors = 0
+            vat_output = 0
+            paye = 0
+            uif = 0
+            other_liabilities = 0
+            loans = 0
+            
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                name = str(a.get("name", "")).lower()
+                dr = float(a.get("debit", 0) or 0)
+                cr = float(a.get("credit", 0) or 0)
+                net_cr = cr - dr  # Liabilities are credit balances
+                
+                if "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
+                    if any(kw in name for kw in ["creditor", "payable", "trade payable", "krediteur"]):
+                        creditors += net_cr
+                    elif any(kw in name for kw in ["vat output", "output vat", "vat payable", "btw uitset", "vat control", "vat / tax"]):
+                        vat_output += net_cr
+                    elif "paye" in name or "pay as you earn" in name:
+                        paye += net_cr
+                    elif "uif" in name or "unemployment" in name:
+                        uif += net_cr
+                    else:
+                        other_liabilities += net_cr
+                
+                elif "long term" in cat or "non-current liabilit" in cat or "langtermyn" in cat or "nie-bedryfs" in cat:
+                    loans += net_cr
+            
+            # Equity
+            capital = 0
+            retained = 0
+            drawings = 0
+            reserves = 0
+            
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                name = str(a.get("name", "")).lower()
+                dr = float(a.get("debit", 0) or 0)
+                cr = float(a.get("credit", 0) or 0)
+                
+                if "equity" in cat or "ekwiteit" in cat or "owner" in cat or "eienaar" in cat:
+                    if any(kw in name for kw in ["retained", "opgehoopte", "accumulated profit"]):
+                        retained += cr - dr
+                    elif any(kw in name for kw in ["drawing", "onttrekking"]):
+                        drawings += dr
+                    elif any(kw in name for kw in ["reserve"]):
+                        reserves += cr - dr
+                    else:
+                        capital += cr - dr
+            
+            # Use category-based total for expenses (more accurate)
+            total_expenses = total_expenses_from_cat if total_expenses_from_cat > 0 else named_expenses
+            
+        else:
+            # ═══════════════════════════════════════════════════════════════
+            # CODE-BASED CLASSIFICATION (fallback for files without Category)
+            # Assumes STANDARD chart: 1=Assets, 2=Assets, 3=Liab, 4=Equity, 5=Income, 6+=Expenses
+            # ═══════════════════════════════════════════════════════════════
+            logger.info("[TB ANALYZE] No category column - using CODE-BASED classification (standard chart)")
+            
+            def match_account(acc, codes=None, keywords=None, column="debit"):
+                """Match account by code prefix or name keywords"""
+                code = str(acc.get("code", "")).strip()
+                name = str(acc.get("name", "")).lower()
+                val = float(acc.get(column, 0) or 0)
+                
+                if codes:
+                    for c in codes:
+                        if code.startswith(c):
+                            return val
+                if keywords:
+                    for kw in keywords:
+                        if kw in name:
+                            return val
+                return 0
+            
+            # ASSETS (Debit balances)
+            bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
+            cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
+            debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
+            stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
+            prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
+            vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
+            other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
+            
+            fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
+            accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
+            
+            # LIABILITIES (Credit balances)
+            creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
+            vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
+            paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
+            uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
+            loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
+            other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
+            
+            # EQUITY (Credit balances)
+            capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
+            retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
+            drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)
+            reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
+            
+            # REVENUE (Credit balances)
+            sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
+            for a in accounts:
+                if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
+                    sales -= float(a.get("credit", 0) or 0)
+            
+            sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)
+            cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
+            other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
+            
+            # EXPENSES (Debit balances)
+            salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
+            rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
+            electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
+            water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
+            telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
+            insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
+            bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
+            fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
+            repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
+            office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
+            advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
+            professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
+            depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
+            bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
+            interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
+            sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
+            
+            total_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid + sundry_exp
         # Step 3: Calculate totals
         current_assets = bank + cash + debtors + stock + prepaid + vat_input + other_current
         fixed_assets_net = fixed_assets_cost - accum_depr
@@ -32930,6 +33779,59 @@ def api_tb_analyze():
         logger.info(f"[TB ANALYZE] P&L: Sales={net_sales:.2f}, COS={cos:.2f}, GP={gross_profit:.2f}, Exp={total_expenses:.2f}, NP={net_profit:.2f}")
         
         # ═══════════════════════════════════════════════════════════════════════
+        # VALIDATION: Compare our calculation to TB's own control figure
+        # ═══════════════════════════════════════════════════════════════════════
+        tb_control_profit = data.get("tb_control_profit")
+        validation_ok = True
+        validation_warning = ""
+        
+        if tb_control_profit is not None:
+            try:
+                control = float(tb_control_profit)
+                diff = abs(net_profit - control)
+                pct_diff = (diff / abs(control) * 100) if control != 0 else 0
+                
+                logger.info(f"[TB VALIDATE] Our net profit: R{net_profit:,.2f} | TB control: R{control:,.2f} | Diff: R{diff:,.2f} ({pct_diff:.1f}%)")
+                
+                if diff < 1.0:
+                    # Perfect match
+                    logger.info("[TB VALIDATE] ✅ PERFECT MATCH - our calculation matches TB control figure")
+                    validation_warning = ""
+                elif pct_diff < 5:
+                    # Close enough - rounding differences
+                    logger.info(f"[TB VALIDATE] ✅ Close match - {pct_diff:.1f}% difference (likely rounding)")
+                    validation_warning = ""
+                else:
+                    # Significant difference - WARN
+                    validation_ok = False
+                    logger.warning(f"[TB VALIDATE] ⚠️ MISMATCH - {pct_diff:.1f}% difference!")
+                    if lang == "af":
+                        validation_warning = f'''
+                        <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
+                            <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WAARSKUWING: Syfers Klop Nie</h3>
+                            <p style="margin:5px 0;">Ons berekening van netto wins (<strong>R {net_profit:,.2f}</strong>) verskil van die proefbalans se eie syfer (<strong>R {control:,.2f}</strong>) met <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
+                            <p style="margin:5px 0;color:var(--text-muted);">Dit kan beteken dat sommige rekeninge verkeerd geklassifiseer is. Kontroleer die data voor u op hierdie report staatmaak.</p>
+                        </div>'''
+                    else:
+                        validation_warning = f'''
+                        <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
+                            <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WARNING: Numbers Don't Match</h3>
+                            <p style="margin:5px 0;">Our calculated net profit (<strong>R {net_profit:,.2f}</strong>) differs from the trial balance's own figure (<strong>R {control:,.2f}</strong>) by <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
+                            <p style="margin:5px 0;color:var(--text-muted);">This may indicate some accounts were incorrectly classified. Please verify the data before relying on this report.</p>
+                        </div>'''
+            except (ValueError, TypeError) as e:
+                logger.warning(f"[TB VALIDATE] Could not parse control figure: {e}")
+        
+        # Build confidence indicator
+        if has_categories:
+            if validation_ok:
+                confidence_html = '<div style="background:rgba(16,185,129,0.15);border:1px solid #10b981;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">✅ <strong>High Confidence</strong> - Category column detected, control figure matches. Data classification verified.</div>'
+            else:
+                confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Review Required</strong> - Category column detected but control figure mismatch. Some accounts may be misclassified.</div>'
+        else:
+            confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Medium Confidence</strong> - No category column found. Accounts classified by code patterns. Please verify the numbers.</div>'
+        
+        # ═══════════════════════════════════════════════════════════════════════
         # BUILD REPORT - PYTHON GENERATES ALL NUMBERS IN HTML
         # ═══════════════════════════════════════════════════════════════════════
         
@@ -32961,7 +33863,10 @@ def api_tb_analyze():
         # Using language labels (L) for bilingual support
         report_html = f"""
 <h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:10px;">📊 {L["report_title"]}</h2>
-<p><strong>{L["company"]}:</strong> {safe_string(biz_name)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
+<p><strong>{L["company"]}:</strong> {safe_string(report_company)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
+
+{validation_warning}
+{confidence_html}
 
 <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
 
@@ -33168,7 +34073,7 @@ def api_tb_analyze():
         accounts_text += f"{L['acc_code']:<10} {L['acc_name']:<40} {L['debit']:>15} {L['credit']:>15}\n"
         accounts_text += "-" * 80 + "\n"
         
-        # Group accounts by category for better analysis
+        # Group accounts by CATEGORY (not by code - codes differ per accounting system!)
         asset_accounts = []
         liability_accounts = []
         equity_accounts = []
@@ -33179,24 +34084,42 @@ def api_tb_analyze():
         for acc in accounts:
             code = str(acc.get("code", "")).strip()
             name = str(acc.get("name", "")).strip()
+            cat = str(acc.get("category", "")).lower()
             dr = float(acc.get("debit", 0) or 0)
             cr = float(acc.get("credit", 0) or 0)
             
             line = f"{code:<10} {name[:40]:<40} R{dr:>13,.2f} R{cr:>13,.2f}"
             
-            # Classify by code
-            if code.startswith(("1", "2")):
-                asset_accounts.append(line)
-            elif code.startswith("3"):
-                liability_accounts.append(line)
-            elif code.startswith("4"):
-                equity_accounts.append(line)
-            elif code.startswith("5"):
-                income_accounts.append(line)
-            elif code.startswith(("6", "7", "8", "9")):
-                expense_accounts.append(line)
+            # Classify by CATEGORY first, fallback to code
+            if cat:
+                if any(kw in cat for kw in ["sales", "revenue", "other income", "income", "omset", "inkomste"]):
+                    income_accounts.append(line)
+                elif any(kw in cat for kw in ["cost of sale", "cogs", "koste van verkope"]):
+                    expense_accounts.append(line)  # COS goes with expenses for display
+                elif any(kw in cat for kw in ["expense", "uitgawe", "operating"]):
+                    expense_accounts.append(line)
+                elif any(kw in cat for kw in ["current asset", "non-current asset", "fixed asset", "bate"]):
+                    asset_accounts.append(line)
+                elif any(kw in cat for kw in ["current liabilit", "non-current liabilit", "long term", "laste"]):
+                    liability_accounts.append(line)
+                elif any(kw in cat for kw in ["equity", "owner", "ekwiteit", "eienaar"]):
+                    equity_accounts.append(line)
+                else:
+                    unclassified.append(line)
             else:
-                unclassified.append(line)
+                # Fallback to code-based (standard chart only)
+                if code.startswith(("1", "2")):
+                    asset_accounts.append(line)
+                elif code.startswith("3"):
+                    liability_accounts.append(line)
+                elif code.startswith("4"):
+                    equity_accounts.append(line)
+                elif code.startswith("5"):
+                    income_accounts.append(line)
+                elif code.startswith(("6", "7", "8", "9")):
+                    expense_accounts.append(line)
+                else:
+                    unclassified.append(line)
         
         accounts_text += f"\n📊 {L['assets_codes']}\n"
         accounts_text += "\n".join(asset_accounts) if asset_accounts else f"  {L['no_asset_acc']}\n"
@@ -33223,11 +34146,20 @@ def api_tb_analyze():
         # Build comprehensive prompt with ALL data - language based on user selection
         if lang == "af":
             # Afrikaans prompt
+            af_third_party = ""
+            if is_third_party:
+                af_third_party = f"""
+BELANGRIKE KONTEKS: Hierdie is 'n DERDE PARTY kliënt se proefbalans wat opgelaai is vir analise.
+Dit is NIE {biz_name} se eie data nie. MOENIE na {biz_name} verwys in jou analise nie.
+Analiseer dit as 'n onafhanklike kliënt se finansiële data.
+"""
             insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
+Jou naam is net "Zane" - MOENIE 'n van gebruik nie. Teken reports as "Zane, CA(SA)" alleen.
 
-BESIGHEID: {safe_string(biz_name)}
+BESIGHEID: {safe_string(report_company)}
 INDUSTRIE: {industry}
 DATUM: {today()}
+{af_third_party}
 
 {accounts_text}
 
@@ -33268,18 +34200,31 @@ SARS:
 
 JOU OPDRAG - SKRYF 'N VOLLEDIGE CA(SA) ANALISE VERSLAG IN AFRIKAANS
 
+KRITIEKE INSTRUKSIES:
+- Die rekeninge is REEDS KORREK geklassifiseer in die regte kategorieë (Bates, Laste, Ekwiteit, Inkomste, Uitgawes) deur die bronsstelsel se eie kategorisering
+- MOENIE rekeningkodes bevraagteken of herklassifiseer nie. Verskillende stelsels gebruik verskillende nommering (Sage Pastel gebruik 1xxx vir Verkope, standaard gebruik 5xxx). Die kategorieë hier bo is KORREK.
+- MOENIE sê rekeninge is "verkeerd geklassifiseer" of in die "verkeerde afdeling" gebaseer op hulle kodenommers nie
+- MOENIE bedrog-aantygings maak sonder duidelike bewyse nie
+- Gebruik die PYTHON-BEREKENDE syfers as bron van waarheid - moenie herbereken of weerspreek nie
+- As Python sê Netto Wins is positief, IS die besigheid winsgewend. Moenie anders sê nie.
+
 **1. UITVOERENDE OPSOMMING**
-[2-3 sinne: Algehele gesondheid van die besigheid. Is dit 'n "pass" of "fail"?]
+[2-3 sinne: Algehele gesondheid gebaseer op PYTHON-BEREKENDE verhoudings en winssyfers]
 
 **2. REKENING-VIR-REKENING ANALISE**
 Gaan deur ELKE rekening kategorie en noem:
-- Watter rekeninge lyk normaal
-- Watter rekeninge lyk VREEMD of BEKOMMEREND
+- Watter rekeninge lyk normaal vir die industrie
+- Watter BEDRAE lyk ongewoon of kommerwekkend
 - Watter rekeninge ONTBREEK wat daar behoort te wees
-- Enige klassifikasie probleme
+- MOENIE rekeningKODES kritiseer nie - fokus op BEDRAE en SALDO'S
 
 **3. ROOI VLAE EN RISIKOS**
-Lys ELKE probleem wat jy sien, met spesifieke rekening verwysings.
+Lys werklike bekommernisse gebaseer op die SYFERS:
+- Likwiditeitsprobleme?
+- Winsgewendheidskwessies?
+- Ongewone saldo's?
+- Ontbrekende voorsiening of toevallings?
+- MOENIE die rekeningnommeringstelsel as probleem vlag nie
 
 **4. SARS NAKOMING**
 - BTW posisie en betaaldatums
@@ -33291,17 +34236,36 @@ Gee TEN MINSTE 5 konkrete aksies met prioriteite (DRINGEND / BELANGRIK / MONITOR
 **6. VRAE VIR DIE KLIËNT**
 Lys 3-5 vrae wat jy sou vra.
 
+FORMAAT INSTRUKSIES:
+- Skryf SKOON HTML (geen markdown nie). Gebruik <h2>, <h3> vir opskrifte.
+- Vir tabelle: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Kolom</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Waarde</td></tr></table>
+- Vir kleur indicators: <span style="color:#ef4444;">✗ Sleg</span> of <span style="color:#10b981;">✓ Goed</span> of <span style="color:#f59e0b;">⚠ Waarskuwing</span>
+- ELKE tabel sel MOET inhoud hê - moet NOOIT leë selle los nie
+- Voltooi ALLE afdelings volledig - moenie halfpad stop nie
+
 REËLS:
 - Verwys na SPESIFIEKE rekeninge by naam en kode
-- Wees SPESIFIEK, nie generies nie
-- Skryf soos 'n regte CA(SA) wat omgee"""
+- Wees SPESIFIEK oor bedrae en persentasies
+- Skryf soos 'n regte CA(SA) wat omgee
+- Gebruik die PRESIESE syfers wat Python bereken het
+- MOET NOOIT sê die rekeningplan is "fout" of "verkeerd geklassifiseer" nie"""
         else:
             # English prompt (default)
+            third_party_note = ""
+            if is_third_party:
+                third_party_note = f"""
+IMPORTANT CONTEXT: This is a THIRD-PARTY client's trial balance that was uploaded for analysis.
+This is NOT {biz_name}'s own data. Do NOT reference {biz_name} anywhere in your analysis.
+Analyze this as an independent client's financial data. If you see references to other companies
+(e.g., loans from/to other entities), these are the CLIENT's intercompany relationships, not related to {biz_name}.
+"""
             insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
+Your name is simply "Zane" - do NOT use any surname. Sign reports as "Zane, CA(SA)" only.
 
-BUSINESS: {safe_string(biz_name)}
+BUSINESS: {safe_string(report_company)}
 INDUSTRY: {industry}
 DATE: {today()}
+{third_party_note}
 
 {accounts_text}
 
@@ -33342,23 +34306,31 @@ SARS (South African Revenue Service):
 
 YOUR TASK - WRITE A COMPLETE CA(SA) ANALYSIS REPORT IN ENGLISH
 
+CRITICAL INSTRUCTIONS:
+- The accounts have been PRE-CLASSIFIED into the correct categories (Assets, Liabilities, Equity, Income, Expenses) using the source system's own categorization
+- DO NOT question or reclassify account codes. Different accounting systems use different numbering (Sage Pastel uses 1xxx for Sales, standard uses 5xxx). The categories shown above are CORRECT.
+- DO NOT suggest accounts are "misclassified" or in the "wrong section" based on their code numbers
+- DO NOT make fraud allegations without clear evidence of actual fraud
+- Use the PYTHON-CALCULATED numbers as the source of truth - do not recalculate or contradict them
+- If Python says Net Profit is positive, the business IS profitable. Do not say otherwise.
+
 **1. EXECUTIVE SUMMARY**
-[2-3 sentences: Overall health of the business. Is this a "pass" or "fail"?]
+[2-3 sentences: Overall health based on the PYTHON-CALCULATED ratios and profit figures]
 
 **2. ACCOUNT-BY-ACCOUNT ANALYSIS**
 Go through EACH account category and note:
-- Which accounts look normal
-- Which accounts look UNUSUAL or CONCERNING (e.g., negative balances, unusual amounts)
-- Which accounts are MISSING that should be there
-- Any classification issues (wrong codes)
+- Which accounts look normal for the industry
+- Which AMOUNTS look unusual or concerning (e.g., very high expenses, credit balances on expense accounts)
+- Which accounts are MISSING that should be there (depreciation, bad debts, etc)
+- DO NOT criticize account CODES - focus on AMOUNTS and BALANCES
 
 **3. RED FLAGS AND RISKS**
-List EVERY problem you see, with specific account references:
-- TB not balancing? Where could the error be?
-- Liquidity problems?
-- Profitability issues?
-- Unusual transactions?
-- Possible errors or fraud risks?
+List genuine concerns based on the NUMBERS:
+- Liquidity problems (current ratio, quick ratio)?
+- Profitability issues (margins)?
+- Unusual balances (credit balances on expenses, large intercompany loans)?
+- Missing provisions or accruals?
+- DO NOT flag the account numbering system as a problem
 
 **4. SARS COMPLIANCE**
 - VAT: Is the position correct? When must it be paid?
@@ -33366,21 +34338,25 @@ List EVERY problem you see, with specific account references:
 - Any missing tax accounts?
 
 **5. SPECIFIC RECOMMENDATIONS**
-Give AT LEAST 5 concrete actions, each with:
-- The specific account or area
-- What needs to be done
-- Why it's important
-- Priority (URGENT / IMPORTANT / MONITOR)
+Give AT LEAST 5 concrete actions with priority (URGENT / IMPORTANT / MONITOR)
 
 **6. QUESTIONS FOR THE CLIENT**
-List 3-5 questions you would ask the business owner to better understand.
+List 3-5 questions you would ask the business owner.
+
+FORMAT INSTRUCTIONS:
+- Output CLEAN HTML only (no markdown). Use <h2>, <h3> for headings.
+- For tables use: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Column</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Value</td></tr></table>
+- For colored indicators use: <span style="color:#ef4444;">✗ Bad</span> or <span style="color:#10b981;">✓ Good</span> or <span style="color:#f59e0b;">⚠ Warning</span>
+- For section boxes use: <div style="padding:15px;background:rgba(99,102,241,0.1);border-radius:8px;margin:10px 0;">content</div>
+- EVERY table cell MUST have content - never leave cells empty
+- Complete ALL sections fully - do not stop halfway through a section
 
 RULES:
 - Refer to SPECIFIC accounts by name and code
-- Do NOT be generic - be SPECIFIC
-- If something looks wrong, say it directly
-- Write like a real CA(SA) who cares, not like a robot
-- Use the EXACT figures that Python calculated - do not make up new numbers"""
+- Do NOT be generic - be SPECIFIC about amounts and percentages
+- Write like a real CA(SA) who cares
+- Use the EXACT figures that Python calculated - do not make up new numbers
+- NEVER say the chart of accounts is "wrong" or "misclassified" - different systems use different codes"""
 
         insights_html = ""
         try:
@@ -33388,11 +34364,17 @@ RULES:
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-sonnet-4-5-20250929",
-                    max_tokens=3000,
+                    max_tokens=8000,
                     messages=[{"role": "user", "content": insights_prompt}]
                 )
                 if message.content and message.content[0].text:
                     insights_html = message.content[0].text
+                    
+                    # Check if report was truncated
+                    if hasattr(message, 'stop_reason') and message.stop_reason == 'max_tokens':
+                        logger.warning(f"[TB ANALYZE] Report was TRUNCATED (hit max_tokens limit)")
+                        insights_html += '<div style="margin-top:20px;padding:12px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:8px;color:#f59e0b;font-size:13px;">⚠️ Report was truncated due to length. The analysis above covers the main findings.</div>'
+                    
                     # Basic markdown to HTML
                     insights_html = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
                     insights_html = re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=re.MULTILINE)
@@ -33475,16 +34457,78 @@ def api_tb_upload_analyze():
         
         try:
             if filename.endswith('.csv'):
-                # Try different encodings
                 content = file.read()
-                for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                df = None
+                
+                # Strip BOM if present
+                if content[:3] == b'\xef\xbb\xbf':
+                    content = content[3:]
+                
+                # Decode content to text first
+                text = None
+                for enc in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
                     try:
-                        df = pd.read_csv(io.BytesIO(content), encoding=encoding)
+                        text = content.decode(enc)
                         break
                     except:
                         continue
+                
+                if not text:
+                    return jsonify({"success": False, "error": "Kon nie die CSV lees nie - encoding probleem."})
+                
+                # Clean up: remove Excel hints and find real header row
+                lines = [l.strip() for l in text.split('\n') if l.strip()]
+                
+                # Skip non-data rows at top (sep=, title rows)
+                header_row = 0
+                for i, line in enumerate(lines[:10]):
+                    stripped = line.strip().strip('"').strip()
+                    stripped_lower = stripped.lower()
+                    # Skip: sep=X lines
+                    if stripped_lower.startswith('sep='):
+                        header_row = i + 1
+                        continue
+                    # Skip: single-value title rows (no commas between values, just a title)
+                    # But NOT rows like "Name","Category","Debit","Credit" which are headers
+                    raw_no_quoted = line
+                    # Count commas outside quotes to check if it's a real CSV row
+                    in_quote = False
+                    comma_count = 0
+                    for ch in line:
+                        if ch == '"':
+                            in_quote = not in_quote
+                        elif ch == ',' and not in_quote:
+                            comma_count += 1
+                    if comma_count == 0:
+                        # Single value row = title, skip it
+                        header_row = i + 1
+                        continue
+                    # This has commas = real header or data row, stop
+                    break
+                
+                logger.info(f"[TB UPLOAD] Detected header at row {header_row}, skipping {header_row} rows")
+                
+                # Detect delimiter from header line
+                header_line = lines[header_row] if header_row < len(lines) else lines[0]
+                if ';' in header_line and header_line.count(';') > header_line.count(','):
+                    sep = ';'
+                elif '\t' in header_line:
+                    sep = '\t'
                 else:
-                    return jsonify({"success": False, "error": "Could not read CSV file - encoding issue"})
+                    sep = ','
+                
+                # Rebuild clean text without skipped rows
+                clean_text = '\n'.join(lines[header_row:])
+                
+                try:
+                    df = pd.read_csv(io.StringIO(clean_text), sep=sep, on_bad_lines='skip', engine='python')
+                    logger.info(f"[TB UPLOAD] Read {len(df)} rows, {len(df.columns)} cols: {list(df.columns)}")
+                except Exception as e:
+                    logger.error(f"[TB UPLOAD] pandas read failed: {e}")
+                
+                if df is None or len(df.columns) <= 1:
+                    return jsonify({"success": False, "error": "Kon nie die CSV lees nie. Probeer om dit as Excel (.xlsx) te save en weer te upload."})
+                    
             elif filename.endswith(('.xlsx', '.xls')):
                 df = pd.read_excel(file)
             else:
@@ -33495,86 +34539,259 @@ def api_tb_upload_analyze():
         
         logger.info(f"[TB UPLOAD] Read {len(df)} rows, columns: {list(df.columns)}")
         
-        # Try to identify columns (code, name/account, debit, credit)
+        # ═══════════════════════════════════════════════════════════
+        # SMART COLUMN DETECTION - tries hardcoded first, then AI
+        # Every accountant's TB looks different!
+        # ═══════════════════════════════════════════════════════════
         cols_lower = {c.lower().strip(): c for c in df.columns}
         
         # Find account code column
         code_col = None
-        for candidate in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'rekening kode', 'gl code', 'account_code']:
+        for candidate in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'rekening kode', 
+                          'gl code', 'account_code', 'acc no', 'account no', 'account number',
+                          'rekeningnommer', 'gl no', 'no', 'number', 'acc', 'account #']:
             if candidate in cols_lower:
                 code_col = cols_lower[candidate]
                 break
         
         # Find account name column
         name_col = None
-        for candidate in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 'rekening naam', 'acc name', 'account_name']:
+        for candidate in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 
+                          'rekening naam', 'acc name', 'account_name', 'rekeningnaam', 'omskrywing',
+                          'account description', 'ledger', 'ledger name', 'gl name', 'label',
+                          'type', 'account type']:
             if candidate in cols_lower:
                 name_col = cols_lower[candidate]
                 break
         
         # Find debit column
         debit_col = None
-        for candidate in ['debit', 'dr', 'debits', 'debit amount', 'debiet']:
+        for candidate in ['debit', 'dr', 'debits', 'debit amount', 'debiet', 'debit balance',
+                          'debiet saldo', 'debit total', 'dr amount', 'dr balance']:
             if candidate in cols_lower:
                 debit_col = cols_lower[candidate]
                 break
         
         # Find credit column
         credit_col = None
-        for candidate in ['credit', 'cr', 'credits', 'credit amount', 'krediet']:
+        for candidate in ['credit', 'cr', 'credits', 'credit amount', 'krediet', 'credit balance',
+                          'krediet saldo', 'credit total', 'cr amount', 'cr balance']:
             if candidate in cols_lower:
                 credit_col = cols_lower[candidate]
                 break
         
+        # Find single balance column (some TBs use one column with +/-)
+        balance_col = None
+        if not debit_col and not credit_col:
+            for candidate in ['balance', 'saldo', 'amount', 'bedrag', 'net balance', 'netto',
+                              'value', 'waarde', 'total', 'totaal', 'closing balance', 'closing',
+                              'sluitsaldo', 'net', 'movement', 'beweging']:
+                if candidate in cols_lower:
+                    balance_col = cols_lower[candidate]
+                    break
+        
+        # Find category/type column
+        category_col = None
+        for candidate in ['category', 'kategorie', 'type', 'account type', 'tipe', 'class',
+                          'group', 'groep', 'section', 'heading', 'opskrif']:
+            if candidate in cols_lower:
+                if cols_lower[candidate] != name_col:  # Don't use same col as name
+                    category_col = cols_lower[candidate]
+                    break
+        
+        # ═══════════════════════════════════════════════════════════
+        # AI FALLBACK - if we can't find columns, ask Claude
+        # ═══════════════════════════════════════════════════════════
+        ai_mapped = False
+        if not name_col or (not debit_col and not credit_col and not balance_col):
+            logger.info(f"[TB UPLOAD] Hardcoded mapping failed. Trying AI detection...")
+            try:
+                # Send sample to Claude for column detection
+                sample_rows = df.head(8).to_string()
+                col_list = list(df.columns)
+                
+                ai_prompt = f"""Analyze this trial balance / opening balance file and identify which columns map to what.
+
+COLUMNS: {col_list}
+
+SAMPLE DATA (first 8 rows):
+{sample_rows}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{{"account_code": "exact column name or null", "account_name": "exact column name", "debit": "exact column name or null", "credit": "exact column name or null", "balance": "exact column name or null", "category": "exact column name or null"}}
+
+Rules:
+- account_name: The column with account descriptions (e.g. "Sales", "Bank", "Rent")
+- account_code: The column with account numbers/codes (e.g. "1000", "4000/000")
+- debit/credit: Separate columns for debit and credit amounts
+- balance: Single column with positive/negative amounts (use ONLY if no separate debit/credit)
+- category: Column showing account type/category (Asset, Liability, Income, Expense)
+- Use exact column names from the COLUMNS list above
+- Use null if column doesn't exist"""
+
+                client = _anthropic_client
+                ai_response = client.messages.create(
+                    model="claude-sonnet-4-5-20250929",
+                    max_tokens=500,
+                    messages=[{"role": "user", "content": ai_prompt}]
+                )
+                
+                ai_text = ai_response.content[0].text.strip()
+                # Clean markdown if present
+                if '```' in ai_text:
+                    ai_text = ai_text.split('```')[1].replace('json', '').strip()
+                
+                ai_map = json.loads(ai_text)
+                logger.info(f"[TB UPLOAD] AI column mapping: {ai_map}")
+                
+                # Apply AI mapping
+                if ai_map.get("account_name") and ai_map["account_name"] in df.columns:
+                    name_col = ai_map["account_name"]
+                if ai_map.get("account_code") and ai_map["account_code"] in df.columns:
+                    code_col = ai_map["account_code"]
+                if ai_map.get("debit") and ai_map["debit"] in df.columns:
+                    debit_col = ai_map["debit"]
+                if ai_map.get("credit") and ai_map["credit"] in df.columns:
+                    credit_col = ai_map["credit"]
+                if ai_map.get("balance") and ai_map["balance"] in df.columns:
+                    balance_col = ai_map["balance"]
+                if ai_map.get("category") and ai_map["category"] in df.columns:
+                    category_col = ai_map["category"]
+                
+                ai_mapped = True
+                
+            except Exception as ai_err:
+                logger.error(f"[TB UPLOAD] AI detection failed: {ai_err}")
+        
         # Validate we found required columns
         if not name_col:
-            # Try first text column as name
+            # Last resort: try first text column as name
             for c in df.columns:
                 if df[c].dtype == 'object':
                     name_col = c
                     break
         
         if not name_col:
-            return jsonify({"success": False, "error": f"Could not identify account name column. Found: {list(df.columns)}"})
+            return jsonify({"success": False, "error": f"Kon nie rekening naam kolom vind nie. Kolomme in jou file: {list(df.columns)}"})
         
-        if not debit_col and not credit_col:
-            return jsonify({"success": False, "error": f"Could not identify debit/credit columns. Found: {list(df.columns)}"})
+        if not debit_col and not credit_col and not balance_col:
+            return jsonify({"success": False, "error": f"Kon nie debit/credit/balance kolomme vind nie. Kolomme in jou file: {list(df.columns)}"})
         
-        logger.info(f"[TB UPLOAD] Mapped columns - Code: {code_col}, Name: {name_col}, Debit: {debit_col}, Credit: {credit_col}")
+        mapped_info = f"Code: {code_col}, Name: {name_col}, Debit: {debit_col}, Credit: {credit_col}, Balance: {balance_col}, Category: {category_col}"
+        logger.info(f"[TB UPLOAD] Mapped columns {'(AI)' if ai_mapped else '(hardcoded)'} - {mapped_info}")
         
         # Build accounts list
         accounts = []
+        tb_control_profit = None  # Capture the TB's own net profit figure for validation
+        
         for idx, row in df.iterrows():
             name = str(row.get(name_col, '')).strip() if name_col else ''
-            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal']:
+            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net']:
                 continue
             
-            code = str(row.get(code_col, '')).strip() if code_col else f"A{idx:04d}"
-            if code.lower() in ['nan', 'none']:
+            # Capture the TB's own Net Profit/Loss figure as a control check
+            if name.lower() in ['net profit/loss', 'net profit/loss after tax', 'net profit', 'netto wins',
+                                 'net profit/loss before tax', 'netto wins/verlies', 'netto wins na belasting']:
+                # This row has the TB's calculated profit - grab it for validation
+                dr = float(str(row.get(debit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if debit_col else 0
+                cr = float(str(row.get(credit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if credit_col else 0
+                if cr > 0:
+                    tb_control_profit = cr  # Credit = profit
+                elif dr > 0:
+                    tb_control_profit = -dr  # Debit = loss
+                elif balance_col:
+                    bal = str(row.get(balance_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip()
+                    try:
+                        tb_control_profit = float(bal)
+                    except:
+                        pass
+                logger.info(f"[TB UPLOAD] Found control profit figure: R {tb_control_profit:,.2f}" if tb_control_profit else "[TB UPLOAD] Could not parse control profit")
+                continue  # Don't include in accounts list
+            
+            code = str(row.get(code_col, '')).strip() if code_col else ''
+            if code.lower() in ['nan', 'none', '']:
+                code = ''
+            
+            # Smart split: "1000/000 : Sales" → code="1000/000", name="Sales"
+            # Also handles: "1000 - Sales", "1000: Sales", "ACC001 Sales"
+            if not code and ' : ' in name:
+                parts = name.split(' : ', 1)
+                code = parts[0].strip()
+                name = parts[1].strip()
+            elif not code and ' - ' in name and name[0].isdigit():
+                parts = name.split(' - ', 1)
+                code = parts[0].strip()
+                name = parts[1].strip()
+            elif not code and ': ' in name and name[0].isdigit():
+                parts = name.split(': ', 1)
+                code = parts[0].strip()
+                name = parts[1].strip()
+            
+            if not code:
                 code = f"A{idx:04d}"
             
-            # Parse debit/credit values
+            # Clean up _AND_ → & (Sage Pastel export quirk)
+            name = name.replace('_AND_', '&').replace(' _and_ ', ' & ')
+            
+            # Parse debit/credit values - handles R1,000.00, R 1 000.00, (1000), -1000
             def parse_amount(val):
                 if pd.isna(val):
                     return 0.0
-                val = str(val).replace('R', '').replace(',', '').replace(' ', '').strip()
-                if val in ['', '-', 'nan', 'none']:
+                val = str(val).replace('R', '').replace('r', '').replace(',', '').replace(' ', '').strip()
+                # Handle bracket notation for negatives: (1000) = -1000
+                is_negative = False
+                if val.startswith('(') and val.endswith(')'):
+                    val = val[1:-1]
+                    is_negative = True
+                if val in ['', '-', 'nan', 'none', '0', '0.0', '0.00']:
                     return 0.0
                 try:
-                    return abs(float(val))
+                    result = float(val)
+                    return -result if is_negative else result
                 except:
                     return 0.0
             
-            debit = parse_amount(row.get(debit_col)) if debit_col else 0
-            credit = parse_amount(row.get(credit_col)) if credit_col else 0
+            debit = 0.0
+            credit = 0.0
+            
+            if debit_col and credit_col:
+                # Separate debit/credit columns
+                debit = abs(parse_amount(row.get(debit_col)))
+                credit = abs(parse_amount(row.get(credit_col)))
+            elif balance_col:
+                # Single balance column: positive = debit, negative = credit
+                bal = parse_amount(row.get(balance_col))
+                if bal > 0:
+                    debit = bal
+                elif bal < 0:
+                    credit = abs(bal)
+            elif debit_col:
+                # Only debit column
+                val = parse_amount(row.get(debit_col))
+                if val > 0:
+                    debit = val
+                else:
+                    credit = abs(val)
+            elif credit_col:
+                # Only credit column
+                val = parse_amount(row.get(credit_col))
+                if val > 0:
+                    credit = val
+                else:
+                    debit = abs(val)
             
             if debit > 0 or credit > 0:
-                accounts.append({
+                acc = {
                     "code": code,
                     "name": name,
                     "debit": debit,
                     "credit": credit
-                })
+                }
+                if category_col:
+                    cat = str(row.get(category_col, '')).strip()
+                    if cat and cat.lower() not in ['nan', 'none']:
+                        acc["category"] = cat
+                accounts.append(acc)
         
         if not accounts:
             return jsonify({"success": False, "error": "No valid account data found in file"})
@@ -33629,11 +34846,224 @@ def api_tb_upload_analyze():
             "total_credit": total_credit,
             "is_balanced": is_balanced,
             "message": f"Parsed {len(accounts)} accounts from {file.filename}",
+            "source_file": file.filename,
+            "tb_control_profit": tb_control_profit,
             "redirect_analyze": True
         })
         
     except Exception as e:
         logger.error(f"[TB UPLOAD] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/reports/tb/smart-report", methods=["POST"])
+@login_required
+def api_tb_smart_report():
+    """Generate different report types from uploaded TB data (management statement, KPI, etc.)"""
+    
+    try:
+        data = request.get_json()
+        accounts = data.get("accounts", [])
+        report_type = data.get("report_type", "management")
+        custom_request = data.get("custom_request", "")
+        lang = data.get("lang", "en")
+        source_file = data.get("source_file", "Uploaded TB")
+        tb_control_profit = data.get("tb_control_profit")
+        
+        if not accounts:
+            return jsonify({"success": False, "error": "No account data provided"})
+        
+        # ═══ PYTHON CALCULATES EVERYTHING FROM THE TB DATA ═══
+        has_categories = any(a.get("category") for a in accounts)
+        
+        def cat_sum(cats, column="debit"):
+            total = 0
+            for a in accounts:
+                cat = str(a.get("category", "")).lower()
+                for c in cats:
+                    if c in cat:
+                        total += float(a.get(column, 0) or 0)
+                        break
+            return total
+        
+        def name_sum(accs, keywords, column="debit"):
+            return sum(float(a.get(column, 0) or 0) for a in accs 
+                      if any(kw in str(a.get("name", "")).lower() for kw in keywords))
+        
+        if has_categories:
+            sales = cat_sum(["sales", "revenue", "turnover", "omset"], "credit")
+            cos = cat_sum(["cost of sale", "cost of goods", "koste van verkope"], "debit")
+            other_income = cat_sum(["other income", "ander inkomste"], "credit")
+            
+            expense_accs = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
+            total_expenses = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) for a in expense_accs)
+            if total_expenses < 0:
+                total_expenses = 0
+            
+            current_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
+                               for a in accounts if "current asset" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
+            fixed_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
+                             for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["fixed asset", "non-current asset"]))
+            current_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
+                             for a in accounts if "current liabilit" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
+            long_term_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
+                               for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["long term", "non-current liabilit"]))
+            equity = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
+                        for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["equity", "owner", "ekwiteit"]))
+            
+            salaries = name_sum(expense_accs, ["salary", "salaries", "wage", "payroll", "salar"])
+            rent = name_sum(expense_accs, ["rent", "huur"])
+            electricity = name_sum(expense_accs, ["electric", "water", "eskom", "elektris"])
+            advertising = name_sum(expense_accs, ["advertising", "marketing", "advertens"])
+            insurance = name_sum(expense_accs, ["insurance", "verseker"])
+            bank_charges = name_sum(expense_accs, ["bank charge", "bank fee", "bankkoste"])
+            depreciation = name_sum(expense_accs, ["depreciation", "waardevermindering"])
+            professional = name_sum(expense_accs, ["professional", "accounting", "legal", "audit", "rekenmeest"])
+        else:
+            sales = sum(float(a.get("credit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("5"))
+            cos = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("51"))
+            total_expenses = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", ""))[:1] in "6789")
+            other_income = 0
+            current_assets = current_liab = fixed_assets = long_term_liab = equity = 0
+            salaries = rent = electricity = advertising = insurance = bank_charges = depreciation = professional = 0
+        
+        gross_profit = sales - cos
+        net_profit = sales + other_income - cos - total_expenses
+        total_assets = current_assets + fixed_assets
+        total_liabilities = current_liab + long_term_liab
+        
+        gp_margin = round((gross_profit / sales * 100), 1) if sales > 0 else 0
+        np_margin = round((net_profit / (sales + other_income) * 100), 1) if (sales + other_income) > 0 else 0
+        current_ratio = round(current_assets / current_liab, 2) if current_liab > 0 else 0
+        debt_equity = round(total_liabilities / equity, 2) if equity > 0 else 0
+        sal_pct = round(salaries / sales * 100, 1) if sales > 0 else 0
+        rent_pct = round(rent / sales * 100, 1) if sales > 0 else 0
+        
+        validation_note = ""
+        if tb_control_profit is not None:
+            try:
+                control = float(tb_control_profit)
+                diff = abs(net_profit - control)
+                pct = (diff / abs(control) * 100) if control != 0 else 0
+                if pct > 5:
+                    validation_note = f"⚠️ Note: Calculated net profit (R{net_profit:,.2f}) differs from TB control figure (R{control:,.2f}) by {pct:.1f}%."
+            except:
+                pass
+        
+        clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
+        
+        data_for_ai = f"""
+CLIENT: {clean_name}
+DATA SOURCE: Uploaded Trial Balance ({len(accounts)} accounts)
+{validation_note}
+
+=== INCOME STATEMENT (Python-calculated, 100% accurate - DO NOT recalculate) ===
+Revenue/Sales: R{sales:,.2f}
+Cost of Sales: R{cos:,.2f}
+Gross Profit: R{gross_profit:,.2f} ({gp_margin}%)
+Other Income: R{other_income:,.2f}
+Total Expenses: R{total_expenses:,.2f}
+  - Salaries: R{salaries:,.2f} ({sal_pct}% of sales)
+  - Rent: R{rent:,.2f}
+  - Electricity/Water: R{electricity:,.2f}
+  - Advertising: R{advertising:,.2f}
+  - Insurance: R{insurance:,.2f}
+  - Bank Charges: R{bank_charges:,.2f}
+  - Depreciation: R{depreciation:,.2f}
+  - Professional Fees: R{professional:,.2f}
+Net Profit: R{net_profit:,.2f} ({np_margin}%)
+
+=== BALANCE SHEET ===
+Current Assets: R{current_assets:,.2f}
+Fixed Assets: R{fixed_assets:,.2f}
+Total Assets: R{total_assets:,.2f}
+Current Liabilities: R{current_liab:,.2f}
+Long-term Liabilities: R{long_term_liab:,.2f}
+Total Liabilities: R{total_liabilities:,.2f}
+Equity: R{equity:,.2f}
+
+=== RATIOS ===
+Current Ratio: {current_ratio}:1 (norm >1.5)
+Gross Margin: {gp_margin}%
+Net Margin: {np_margin}%
+Debt/Equity: {debt_equity}:1
+"""
+        
+        report_prompts = {
+            "management": """Write a professional MANAGEMENT STATEMENT (Year-to-Date). Structure:
+1. Executive Summary (2-3 sentences)
+2. Income Statement Analysis (revenue, margins, expense breakdown)
+3. Balance Sheet Summary
+4. Key Ratios & What They Mean
+5. Concerns & Red Flags
+6. Recommendations (5+ specific actions)""",
+            
+            "kpi": f"""Write a KPI DASHBOARD REPORT with traffic light status (Green/Amber/Red):
+1. Gross Profit Margin ({gp_margin}%)
+2. Net Profit Margin ({np_margin}%)
+3. Current Ratio ({current_ratio}:1)
+4. Salaries % of Sales ({sal_pct}%)
+5. Rent % of Sales ({rent_pct}%)
+6. Debt to Equity ({debt_equity}:1)
+For each: meaning, benchmark, and action.""",
+            
+            "sales": """Write a SALES ANALYSIS covering: revenue performance, cost structure, gross margin quality, expense impact, and improvement recommendations.""",
+            
+            "debtor": f"""Write a WORKING CAPITAL report: Current Ratio ({current_ratio}), cash position, liquidity risk, and recommendations.""",
+            
+            "forecast": """Write a FORWARD-LOOKING ANALYSIS: sustainability, cash flow outlook, scenario analysis (sales drop 10/20/30%), and strategic recommendations.""",
+            
+            "custom": f"""Answer this request: {custom_request or 'General financial overview'}"""
+        }
+        
+        prompt = report_prompts.get(report_type, report_prompts["management"])
+        
+        system_prompt = f"""You are Zane, a senior CA(SA). You are writing a report for a CLIENT's uploaded trial balance.
+Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, CA(SA)" only.
+RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
+{"Write in Afrikaans." if lang == "af" else "Write in English."} Use R (Rand) for all amounts.
+
+FORMAT RULES - OUTPUT CLEAN HTML:
+- Use <h2> for main sections, <h3> for subsections
+- Use <p> for paragraphs
+- Use <strong> for emphasis
+- Use <table> with inline styles for any data tables
+- Use <div style="background:rgba(239,68,68,0.1);border-left:3px solid #ef4444;padding:10px;margin:10px 0;"> for warnings/red flags
+- Use <div style="background:rgba(16,185,129,0.1);border-left:3px solid #10b981;padding:10px;margin:10px 0;"> for positive items
+- Use <div style="background:rgba(245,158,11,0.1);border-left:3px solid #f59e0b;padding:10px;margin:10px 0;"> for caution items
+- DO NOT use markdown (no ##, no **, no ---, no bullet points with -)
+- Use <ul><li> for lists
+- Make it visually professional and easy to scan"""
+
+        if not ANTHROPIC_API_KEY:
+            return jsonify({"success": False, "error": "AI not configured"})
+        
+        message = _anthropic_client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=8000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
+        )
+        
+        report = message.content[0].text if message.content else ""
+        
+        # Convert any remaining markdown to HTML (fallback if Sonnet mixed formats)
+        import re
+        report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
+        report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
+        report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
+        report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
+        report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
+        report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
+        report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
+        # Wrap plain text paragraphs
+        report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
+        return jsonify({"success": True, "report": report})
+        
+    except Exception as e:
+        logger.error(f"[TB SMART REPORT] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)})
@@ -35944,15 +37374,32 @@ def smart_reports_page():
     content = '''
     <div class="card">
         <h2 style="margin-bottom:15px;">Smart Reports</h2>
-        <p style="color:var(--text-muted);margin-bottom:20px;">
-            Ask Zane to write any report you need. Zane will analyze your data and generate a professional management report.
-        </p>
         
-        <h3 style="margin:20px 0 10px 0;">Quick Reports</h3>
+        <!-- DATA SOURCE SELECTOR -->
+        <div class="card" style="margin-bottom:20px;padding:15px;">
+            <h3 style="margin:0 0 10px 0;">📂 Data Source</h3>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                <button id="srcOwnBtn" class="btn btn-primary" onclick="setDataSource('own')" style="flex:none;">
+                    🏢 My Business Data
+                </button>
+                <label id="srcClientBtn" class="btn btn-secondary" style="cursor:pointer;flex:none;margin:0;">
+                    📁 Upload Client TB
+                    <input type="file" id="smartReportTBUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleSmartReportTB(this)">
+                </label>
+                <span id="dataSourceStatus" style="color:var(--text-muted);font-size:13px;">Using your own business data</span>
+            </div>
+        </div>
+        
+        <!-- REPORT TYPE SELECTION -->
+        <h3 style="margin:20px 0 10px 0;">Choose Report Type</h3>
         <div class="stats-grid">
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('management')">
                 <h4>Management Statement</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Full monthly overview with insights</p>
+                <p style="color:var(--text-muted);font-size:13px;">Year-to-date P&L, Balance Sheet & KPIs</p>
+            </div>
+            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('tb_analysis')">
+                <h4>TB Analysis</h4>
+                <p style="color:var(--text-muted);font-size:13px;">Full account-by-account CA(SA) review</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('kpi')">
                 <h4>KPI Dashboard</h4>
@@ -35965,10 +37412,6 @@ def smart_reports_page():
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('debtor')">
                 <h4>Debtor Risk Report</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Problem customers & recommendations</p>
-            </div>
-            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('stock')">
-                <h4>Stock Report</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Slow movers, reorder suggestions</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('forecast')">
                 <h4>Cash Flow Forecast</h4>
@@ -35986,7 +37429,7 @@ def smart_reports_page():
     
     <div id="reportLoading" style="display:none;text-align:center;padding:40px;">
         <div style="font-size:24px;margin-bottom:10px;">Generating Report...</div>
-        <p style="color:var(--text-muted);">Analyzing your business data. This may take up to 30 seconds.</p>
+        <p style="color:var(--text-muted);">Analyzing data. This may take up to 30 seconds.</p>
     </div>
     
     <div id="reportOutput" style="margin-top:20px;display:none;">
@@ -35995,38 +37438,113 @@ def smart_reports_page():
                 <h3 id="reportTitle" style="margin:0;">Report</h3>
                 <button class="btn btn-secondary" onclick="window.print();">Print</button>
             </div>
-            <div id="reportContent" style="white-space:pre-wrap;line-height:1.6;"></div>
+            <div id="reportContent" style="line-height:1.6;"></div>
         </div>
     </div>
     
     <style>
     .report-btn { transition: all 0.2s; border: 1px solid var(--border); }
     .report-btn:hover { border-color: var(--primary); transform: translateY(-2px); }
+    .report-btn.disabled { opacity: 0.5; pointer-events: none; }
     </style>
     
     <script>
+    // ═══ DATA SOURCE STATE ═══
+    let dataSource = 'own';  // 'own' or 'client'
+    let clientTBData = null;  // Parsed client TB data
+    let clientFileName = '';
+    
     const reportTitles = {
         'management': 'Management Statement',
+        'tb_analysis': 'TB Analysis',
         'kpi': 'Key Performance Indicators',
         'sales': 'Sales Analysis',
         'debtor': 'Debtor Risk Report',
-        'stock': 'Stock Analysis',
         'forecast': 'Cash Flow Forecast'
     };
     
+    function setDataSource(src) {
+        dataSource = src;
+        const ownBtn = document.getElementById('srcOwnBtn');
+        const clientBtn = document.getElementById('srcClientBtn');
+        const status = document.getElementById('dataSourceStatus');
+        
+        if (src === 'own') {
+            ownBtn.className = 'btn btn-primary';
+            clientBtn.className = 'btn btn-secondary';
+            clientTBData = null;
+            clientFileName = '';
+            status.textContent = 'Using your own business data';
+            status.style.color = 'var(--text-muted)';
+        }
+    }
+    
+    function handleSmartReportTB(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const status = document.getElementById('dataSourceStatus');
+        status.textContent = '⏳ Parsing ' + file.name + '...';
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('lang', document.documentElement.lang || 'en');
+        
+        fetch('/api/reports/tb/upload-analyze', {
+            method: 'POST',
+            body: formData
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                clientTBData = data;
+                clientFileName = file.name;
+                dataSource = 'client';
+                
+                // Update UI
+                document.getElementById('srcOwnBtn').className = 'btn btn-secondary';
+                document.getElementById('srcClientBtn').className = 'btn btn-primary';
+                status.innerHTML = '✅ <strong>' + file.name + '</strong> loaded (' + data.accounts.length + ' accounts) — Now choose a report type below';
+                status.style.color = '#10b981';
+            } else {
+                status.textContent = '❌ ' + (data.error || 'Upload failed');
+                status.style.color = '#ef4444';
+            }
+        })
+        .catch(e => {
+            status.textContent = '❌ Error: ' + e.message;
+            status.style.color = '#ef4444';
+        });
+        
+        input.value = '';
+    }
+    
     async function generateReport(type) {
         const title = reportTitles[type] || 'Report';
-        await runReport(type, null, title);
+        
+        if (dataSource === 'client' && clientTBData) {
+            // Generate from uploaded client TB
+            await runClientTBReport(type, title);
+        } else if (dataSource === 'client' && !clientTBData) {
+            alert('Upload a client TB first, then choose a report type.');
+        } else {
+            // Generate from own business data
+            await runOwnReport(type, null, title);
+        }
     }
     
     async function generateCustomReport() {
         const input = document.getElementById('customReportInput').value;
-        if (input) {
-            await runReport('custom', input, 'Custom Report');
+        if (!input) return;
+        
+        if (dataSource === 'client' && clientTBData) {
+            await runClientTBReport('custom', 'Custom Report', input);
+        } else {
+            await runOwnReport('custom', input, 'Custom Report');
         }
     }
     
-    async function runReport(type, customRequest, title) {
+    // ═══ OWN DATA REPORTS ═══
+    async function runOwnReport(type, customRequest, title) {
         document.getElementById('reportLoading').style.display = 'block';
         document.getElementById('reportOutput').style.display = 'none';
         
@@ -36034,29 +37552,78 @@ def smart_reports_page():
             const response = await fetch('/api/report', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    type: type,
-                    custom: customRequest
-                })
+                body: JSON.stringify({ type: type, custom: customRequest })
             });
-            
             const data = await response.json();
             
             document.getElementById('reportLoading').style.display = 'none';
             document.getElementById('reportOutput').style.display = 'block';
             document.getElementById('reportTitle').textContent = title;
-            
-            if (data.success) {
-                document.getElementById('reportContent').textContent = data.report;
-            } else {
-                document.getElementById('reportContent').textContent = 'Error: ' + (data.error || 'Failed to generate report');
-            }
-            
-            // Scroll to report
+            document.getElementById('reportContent').innerHTML = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
             document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
         } catch (e) {
             document.getElementById('reportLoading').style.display = 'none';
-            alert('Error generating report. Please try again.');
+            alert('Error generating report.');
+        }
+    }
+    
+    // ═══ CLIENT TB REPORTS ═══
+    async function runClientTBReport(type, title, customRequest) {
+        document.getElementById('reportLoading').style.display = 'block';
+        document.getElementById('reportOutput').style.display = 'none';
+        
+        try {
+            const lang = document.documentElement.lang || 'en';
+            let reportHtml = '';
+            
+            if (type === 'tb_analysis') {
+                // Full TB analysis (existing endpoint)
+                const response = await fetch('/api/reports/tb/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        accounts: clientTBData.accounts,
+                        total_debit: clientTBData.total_debit,
+                        total_credit: clientTBData.total_credit,
+                        is_balanced: clientTBData.is_balanced,
+                        lang: lang,
+                        source_file: clientFileName,
+                        company_name: '',
+                        tb_control_profit: clientTBData.tb_control_profit || null
+                    })
+                });
+                const data = await response.json();
+                reportHtml = data.success ? (data.analysis || '') : ('Error: ' + (data.error || 'Failed'));
+                
+            } else {
+                // Other report types from TB data (management, kpi, etc.)
+                const response = await fetch('/api/reports/tb/smart-report', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        accounts: clientTBData.accounts,
+                        total_debit: clientTBData.total_debit,
+                        total_credit: clientTBData.total_credit,
+                        is_balanced: clientTBData.is_balanced,
+                        tb_control_profit: clientTBData.tb_control_profit || null,
+                        report_type: type,
+                        custom_request: customRequest || null,
+                        lang: lang,
+                        source_file: clientFileName
+                    })
+                });
+                const data = await response.json();
+                reportHtml = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
+            }
+            
+            document.getElementById('reportLoading').style.display = 'none';
+            document.getElementById('reportOutput').style.display = 'block';
+            document.getElementById('reportTitle').textContent = title + ' — ' + clientFileName;
+            document.getElementById('reportContent').innerHTML = reportHtml;
+            document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
+        } catch (e) {
+            document.getElementById('reportLoading').style.display = 'none';
+            alert('Error generating report: ' + e.message);
         }
     }
     </script>
@@ -40188,6 +41755,15 @@ def pos_history():
     grand_total = cash_total + card_total + account_total + invoice_total
     transaction_count = len(sales) + len(invoices) + len(quotes)
     
+    # === EXPECTED CASH FOR Z-READ (always TODAY regardless of date filter) ===
+    # Cash in drawer = POS cash sales + cash-paid invoices (for today only)
+    today_str = today()
+    today_cash_sales = sum(float(s.get("total", 0)) for s in all_sales 
+                          if s.get("payment_method") == "cash" and (s.get("date") or "") == today_str)
+    today_cash_invoices = sum(float(i.get("total", 0)) for i in all_invoices 
+                             if i.get("payment_method") in ("cash",) and (i.get("date") or "") == today_str)
+    expected_cash_drawer = today_cash_sales + today_cash_invoices
+    
     # Build transaction rows
     rows = ""
     
@@ -40209,7 +41785,7 @@ def pos_history():
             "id": s.get("id"),
             "number": s.get("sale_number", "-"),
             "date": s.get("date", ""),
-            "time": s.get("created_at", "")[-8:-3] if s.get("created_at") else "-",
+            "time": extract_time(s.get("created_at", "")),
             "type": s.get("payment_method", "cash").upper(),
             "customer": s.get("customer_name", "Cash Sale"),
             "total": float(s.get("total", 0)),
@@ -40234,7 +41810,7 @@ def pos_history():
             "id": i.get("id"),
             "number": i.get("invoice_number", "-"),
             "date": i.get("date", ""),
-            "time": i.get("created_at", "")[-8:-3] if i.get("created_at") else "-",
+            "time": extract_time(i.get("created_at", "")),
             "type": "INVOICE",
             "customer": i.get("customer_name", "-"),
             "total": float(i.get("total", 0)),
@@ -40259,7 +41835,7 @@ def pos_history():
             "id": q.get("id"),
             "number": q.get("quote_number", "-"),
             "date": q.get("date", ""),
-            "time": q.get("created_at", "")[-8:-3] if q.get("created_at") else "-",
+            "time": extract_time(q.get("created_at", "")),
             "type": "QUOTE",
             "customer": q.get("customer_name", "-"),
             "total": float(q.get("total", 0)),
@@ -40425,10 +42001,52 @@ def pos_history():
         </div>
     </div>
     
-    <!-- Z-Read Modal -->
+    <!-- Z-Read Modal with Cash Denomination Count -->
     <div id="zreadModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
+        <div style="background:white;padding:0;border-radius:8px;max-width:500px;width:95%;max-height:95vh;overflow-y:auto;">
             <div id="zreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
+            <!-- Cash Count Section -->
+            <div id="cashCountSection" style="padding:0 30px 15px 30px;font-family:monospace;color:#000;">
+                <div style="border-top:2px dashed #000;margin:10px 0 15px 0;"></div>
+                <strong style="font-size:15px;">CASH COUNT</strong>
+                <p style="color:#666;font-size:11px;margin:4px 0 12px 0;">Enter quantity of each denomination:</p>
+                <table style="width:100%;border-collapse:collapse;" id="denomTable">
+                    <tr style="background:#f5f5f5;font-weight:bold;">
+                        <td style="padding:4px 8px;">Denomination</td>
+                        <td style="padding:4px 8px;text-align:center;width:70px;">Qty</td>
+                        <td style="padding:4px 8px;text-align:right;width:100px;">Total</td>
+                    </tr>
+                    <tr><td style="padding:4px 8px;">R200 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="200" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R100 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="100" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">R50 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="50" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R20 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="20" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">R10 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="10" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R5 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">R2 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R1 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">50c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">20c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">10c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                </table>
+                <div style="border-top:2px dashed #000;margin:12px 0;"></div>
+                <table style="width:100%;border-collapse:collapse;">
+                    <tr style="font-size:16px;font-weight:bold;">
+                        <td style="padding:4px 8px;">COUNTED:</td>
+                        <td style="text-align:right;padding:4px 8px;" id="cashCounted">R0.00</td>
+                    </tr>
+                    <tr style="font-size:14px;">
+                        <td style="padding:4px 8px;">Expected Cash:</td>
+                        <td style="text-align:right;padding:4px 8px;" id="cashExpected">{money(expected_cash_drawer)}</td>
+                    </tr>
+                    <tr id="diffRow" style="font-size:16px;font-weight:bold;">
+                        <td style="padding:4px 8px;">DIFFERENCE:</td>
+                        <td style="text-align:right;padding:4px 8px;" id="cashDiff">R0.00</td>
+                    </tr>
+                </table>
+                <div id="cashStatus" style="text-align:center;padding:10px;margin-top:10px;border-radius:6px;font-weight:bold;font-size:13px;background:#fef3c7;color:#92400e;">
+                    Tel die geld en vul die hoeveelhede in
+                </div>
+            </div>
             <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
                 <button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">✓ Close Day & Print</button>
                 <button onclick="closeModal('zreadModal')" class="btn btn-secondary" style="flex:1;">Cancel</button>
@@ -40521,7 +42139,60 @@ def pos_history():
         document.getElementById('xreadModal').style.display = 'flex';
     }}
     
+    const expectedCash = {float(expected_cash_drawer)};
+    
+    function calcCashUp() {{
+        let counted = 0;
+        document.querySelectorAll('.denom-input').forEach((input, idx) => {{
+            const val = parseFloat(input.dataset.val);
+            const qty = parseInt(input.value) || 0;
+            const lineTotal = val * qty;
+            counted += lineTotal;
+            const totalCells = document.querySelectorAll('.denom-total');
+            if (totalCells[idx]) totalCells[idx].textContent = 'R' + lineTotal.toFixed(2);
+        }});
+        
+        document.getElementById('cashCounted').textContent = 'R' + counted.toFixed(2);
+        const diff = counted - expectedCash;
+        const diffEl = document.getElementById('cashDiff');
+        const diffRow = document.getElementById('diffRow');
+        const statusEl = document.getElementById('cashStatus');
+        
+        diffEl.textContent = (diff >= 0 ? 'R' : '-R') + Math.abs(diff).toFixed(2);
+        
+        if (Math.abs(diff) < 0.01) {{
+            diffEl.style.color = '#059669';
+            diffRow.style.color = '#059669';
+            statusEl.style.background = '#d1fae5';
+            statusEl.style.color = '#065f46';
+            statusEl.textContent = 'Cash balanseer perfek!';
+        }} else if (diff > 0) {{
+            diffEl.style.color = '#2563eb';
+            diffRow.style.color = '#2563eb';
+            statusEl.style.background = '#dbeafe';
+            statusEl.style.color = '#1e40af';
+            statusEl.textContent = 'R' + diff.toFixed(2) + ' OOR (surplus)';
+        }} else {{
+            diffEl.style.color = '#dc2626';
+            diffRow.style.color = '#dc2626';
+            statusEl.style.background = '#fee2e2';
+            statusEl.style.color = '#991b1b';
+            statusEl.textContent = 'R' + Math.abs(diff).toFixed(2) + ' KORT (tekort)';
+        }}
+    }}
+    
     function printZRead() {{
+        // Reset denomination inputs
+        document.querySelectorAll('.denom-input').forEach(input => {{ input.value = 0; }});
+        document.querySelectorAll('.denom-total').forEach(cell => {{ cell.textContent = 'R0.00'; }});
+        document.getElementById('cashCounted').textContent = 'R0.00';
+        document.getElementById('cashDiff').textContent = 'R0.00';
+        document.getElementById('cashDiff').style.color = '#000';
+        document.getElementById('diffRow').style.color = '#000';
+        document.getElementById('cashStatus').textContent = 'Tel die geld en vul die hoeveelhede in';
+        document.getElementById('cashStatus').style.background = '#fef3c7';
+        document.getElementById('cashStatus').style.color = '#92400e';
+        
         const content = `
 <div style="text-align:center;margin-bottom:20px;">
 <strong style="font-size:18px;">Z-READ</strong><br>
@@ -40548,32 +42219,55 @@ def pos_history():
 </tr>
 <tr><td>Total Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
 </table>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<div style="margin-bottom:15px;">
-<strong>CASH DRAWER</strong>
-</div>
-<table style="width:100%;border-collapse:collapse;">
-<tr><td>Expected Cash:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
-<tr><td>Counted:</td><td style="text-align:right;border-bottom:1px solid #000;width:100px;">________</td></tr>
-<tr><td>Difference:</td><td style="text-align:right;">________</td></tr>
-</table>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<div style="text-align:center;">
-<div style="margin-top:30px;border-top:1px solid #000;width:200px;margin-left:auto;margin-right:auto;padding-top:5px;">
-Cashier Signature
-</div>
-</div>
-<div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">
-*** Z-READ - DAY CLOSED ***
-</div>
         `;
         document.getElementById('zreadContent').innerHTML = content;
         document.getElementById('zreadModal').style.display = 'flex';
     }}
     
+    function buildCashCountPrintHtml() {{
+        let html = '<hr style="border:1px dashed #000;margin:15px 0;"><strong>CASH DENOMINATION COUNT</strong><br><br>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<tr style="font-weight:bold;"><td>Denom</td><td style="text-align:center;">Qty</td><td style="text-align:right;">Total</td></tr>';
+        const denomLabels = ['R200','R100','R50','R20','R10','R5','R2','R1','50c','20c','10c'];
+        document.querySelectorAll('.denom-input').forEach((input, idx) => {{
+            const qty = parseInt(input.value) || 0;
+            if (qty > 0) {{
+                const val = parseFloat(input.dataset.val);
+                const lineTotal = val * qty;
+                html += '<tr><td>' + denomLabels[idx] + '</td><td style="text-align:center;">' + qty + '</td><td style="text-align:right;">R' + lineTotal.toFixed(2) + '</td></tr>';
+            }}
+        }});
+        html += '</table>';
+        
+        const counted = document.getElementById('cashCounted').textContent;
+        const diff = document.getElementById('cashDiff').textContent;
+        const status = document.getElementById('cashStatus').textContent;
+        
+        html += '<hr style="border:1px dashed #000;margin:10px 0;">';
+        html += '<table style="width:100%;border-collapse:collapse;">';
+        html += '<tr style="font-weight:bold;"><td>Counted:</td><td style="text-align:right;">' + counted + '</td></tr>';
+        html += '<tr><td>Expected:</td><td style="text-align:right;">{money(expected_cash_drawer)}</td></tr>';
+        html += '<tr style="font-weight:bold;font-size:16px;"><td>Difference:</td><td style="text-align:right;">' + diff + '</td></tr>';
+        html += '</table>';
+        html += '<div style="text-align:center;margin:10px 0;font-weight:bold;">' + status + '</div>';
+        
+        return html;
+    }}
+    
     function confirmZRead() {{
-        if (confirm('Close day for {date_desc}?\\n\\nThis will mark the day as closed.')) {{
-            window.print();
+        const counted = document.getElementById('cashCounted').textContent;
+        const diff = document.getElementById('cashDiff').textContent;
+        const status = document.getElementById('cashStatus').textContent;
+        
+        if (confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + counted + '\\nDifference: ' + diff + '\\n\\nThis will mark the day as closed.')) {{
+            // Build print content with cash count
+            const zContent = document.getElementById('zreadContent').innerHTML;
+            const cashHtml = buildCashCountPrintHtml();
+            
+            const printWindow = window.open('', '_blank', 'width=400,height=700');
+            printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + cashHtml + '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div></body></html>');
+            printWindow.document.close();
+            setTimeout(function() {{ printWindow.print(); }}, 300);
             closeModal('zreadModal');
         }}
     }}
@@ -40650,7 +42344,7 @@ def view_sale(sale_id):
                 <h2 style="margin:0;color:#000;">{biz_name}</h2>
                 <p style="color:#666;margin:5px 0;">TAX INVOICE / SLIP</p>
                 <p style="margin:5px 0;"><strong>{sale.get("sale_number", "-")}</strong></p>
-                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {sale.get("created_at", "")[-8:-3] if sale.get("created_at") else ""}</p>
+                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {extract_time(sale.get("created_at", ""))}</p>
             </div>
             
             <div style="margin-bottom:15px;">
@@ -40870,14 +42564,13 @@ def api_pos_sale():
             "business_id": biz_id,
             "sale_number": sale_num,
             "date": today(),
-            "customer_id": customer_id or None,
+            "customer_id": safe_uuid(customer_id),
             "customer_name": customer_name,
             "payment_method": payment_method,
             "items": json.dumps(items),
             "subtotal": float(subtotal),
             "vat": float(vat),
             "total": float(total),
-            "created_by": user.get("id") if user else None,  # Track who made the sale
             "created_at": now()
         }
         
@@ -40885,7 +42578,7 @@ def api_pos_sale():
         
         if not success:
             logger.error(f"[POS] Sale save failed: {err}")
-            return jsonify({"success": False, "error": "Failed to save sale"})
+            return jsonify({"success": False, "error": f"Failed to save sale: {str(err)[:200]}"})
         
         # === GL ENTRIES ===
         
@@ -40942,7 +42635,7 @@ def api_pos_sale():
                             try:
                                 db.save("stock_movements", RecordFactory.stock_movement(
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
-                                    quantity=qty_sold, reference=f"POS Sale {inv_number}" if inv_number else "POS Sale"
+                                    quantity=qty_sold, reference=f"POS Sale {sale_num}"
                                 ))
                             except: pass
                     else:
@@ -42091,6 +43784,355 @@ def smart_import_page():
         .error-box { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 12px; padding: 20px; text-align: center; color: #dc2626; }
     </style>
     
+    <!-- SWITCH FROM SAGE BANNER -->
+    <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(6,95,70,0.08));margin-bottom:20px;border:1px solid rgba(16,185,129,0.25);">
+        <div style="display:flex;align-items:center;gap:15px;cursor:pointer;" onclick="document.getElementById('sageGuide').style.display=document.getElementById('sageGuide').style.display==='none'?'block':'none';this.querySelector('.arrow').textContent=document.getElementById('sageGuide').style.display==='none'?'▶':'▼'">
+            <div style="font-size:36px;">🟢</div>
+            <div style="flex:1;">
+                <h2 style="margin:0 0 4px 0;font-size:20px;">Switching from Sage / Pastel?</h2>
+                <p style="color:var(--text-muted);margin:0;font-size:14px;">Follow these 4 steps - takes about 10 minutes. We handle the messy stuff.</p>
+            </div>
+            <span class="arrow" style="font-size:20px;color:var(--text-muted);">▶</span>
+        </div>
+        
+        <div id="sageGuide" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid rgba(16,185,129,0.2);">
+            
+            <!-- SAGE CLOUD vs DESKTOP -->
+            <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+                <button onclick="showSageGuide('cloud')" id="sgCloud" class="btn btn-primary" style="font-size:13px;">☁️ Sage Business Cloud</button>
+                <button onclick="showSageGuide('desktop')" id="sgDesktop" class="btn btn-secondary" style="font-size:13px;">🖥️ Sage 50cloud Pastel (Desktop)</button>
+            </div>
+            
+            <!-- SAGE CLOUD GUIDE -->
+            <div id="sageCloudGuide">
+                <div style="display:grid;gap:15px;">
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Contacts</strong> → Select all customers → <strong>Export</strong> (CSV icon top right)<br>
+                            <em>This gives you: Names, phones, emails, addresses, balances</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Customers CSV
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
+                            </label>
+                            <span class="sage-status" id="status-customers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Suppliers</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Contacts</strong> → Switch to <strong>Suppliers</strong> tab → Select all → <strong>Export</strong> (CSV)<br>
+                            <em>Same format as customers - names, contacts, balances</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Suppliers CSV
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
+                            </label>
+                            <span class="sage-status" id="status-suppliers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Stock / Products</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Products & Services</strong> → Select all → <strong>Export</strong> (CSV)<br>
+                            <em>Gives you: Codes, descriptions, prices, quantities</em><br>
+                            <span style="color:#f59e0b;">⚠️ Sage splits this into 2 files sometimes (prices + quantities). Upload both - we combine them.</span>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Stock CSV (one or both files)
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" multiple onchange="quickUploadMulti(this, 'stock')">
+                            </label>
+                            <span class="sage-status" id="status-stock" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance (Opening Balances)</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Reporting</strong> → <strong>Trial Balance</strong> → Export to CSV<br>
+                            <em>This sets your opening balances so your books are correct from day 1</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Trial Balance
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
+                            </label>
+                            <span class="sage-status" id="status-trial_balance" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">5</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Supplier Invoices (wat jy skuld)</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Reporting</strong> → <strong>Supplier Invoices</strong> → Set period → Export CSV<br>
+                            <em>Outstanding bills so you know what you still owe</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Supplier Invoices
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'supplier_invoices')">
+                            </label>
+                            <span class="sage-status" id="status-supplier_invoices" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">6</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Sales Invoices (wie skuld jou)</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Sales</strong> → <strong>Sales Invoices</strong> → Show 100 per page → Select all → Export CSV<br>
+                            <em>Outstanding invoices so you can chase payments</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Sales Invoices
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customer_invoices')">
+                            </label>
+                            <span class="sage-status" id="status-customer_invoices" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
+                </div>
+                
+                <!-- IMPORT ALL BUTTON -->
+                <div id="sageImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(16,185,129,0.08);border-radius:12px;">
+                    <p style="margin-bottom:12px;font-size:15px;">✅ <strong id="sageFilesReady">0</strong> files ready to import</p>
+                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;background:linear-gradient(135deg,#10b981,#059669);">
+                        🚀 Import Everything into ClickAI
+                    </button>
+                    <p style="color:var(--text-muted);font-size:12px;margin-top:8px;">Takes about 30 seconds. Your Sage data stays untouched.</p>
+                </div>
+            </div>
+            
+            <!-- SAGE DESKTOP GUIDE -->
+            <div id="sageDesktopGuide" style="display:none;">
+                <div style="display:grid;gap:15px;">
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers & Suppliers</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Customer List</strong> or <strong>Supplier List</strong><br>
+                            Save as CSV. Repeat for the other.
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Customers
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
+                            </label>
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Suppliers
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Inventory</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Inventory</strong><br>
+                            Save as CSV. This includes codes, descriptions, prices, quantities.
+                        </div>
+                        <div style="margin-top:10px;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Inventory
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'stock')">
+                            </label>
+                            <span class="sage-status" id="status-stock-desktop" style="font-size:12px;display:flex;align-items:center;gap:4px;margin-top:5px;"></span>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Pastel: <strong>Reports</strong> → <strong>Trial Balance</strong> → Print to Excel/CSV<br>
+                            Choose the last day of your current period.
+                        </div>
+                        <div style="margin-top:10px;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Trial Balance
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Employees (Optional)</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            If you use Sage Payroll: Export employee list to CSV<br>
+                            <em>Names, ID numbers, tax numbers, bank details, salaries</em>
+                        </div>
+                        <div style="margin-top:10px;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Employees
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'employees')">
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Same import all for desktop -->
+                <div id="sageDesktopImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(139,92,246,0.08);border-radius:12px;">
+                    <p style="margin-bottom:12px;font-size:15px;">✅ Files ready to import</p>
+                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;">
+                        🚀 Import Everything into ClickAI
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    // ═══ SAGE SWITCH WIZARD ═══
+    let sageFiles = {};  // {customers: File, suppliers: File, stock: [File], trial_balance: File}
+    
+    function showSageGuide(type) {
+        document.getElementById('sageCloudGuide').style.display = type === 'cloud' ? 'block' : 'none';
+        document.getElementById('sageDesktopGuide').style.display = type === 'desktop' ? 'block' : 'none';
+        document.getElementById('sgCloud').className = type === 'cloud' ? 'btn btn-primary' : 'btn btn-secondary';
+        document.getElementById('sgDesktop').className = type === 'desktop' ? 'btn btn-primary' : 'btn btn-secondary';
+        document.getElementById('sgCloud').style.fontSize = '13px';
+        document.getElementById('sgDesktop').style.fontSize = '13px';
+    }
+    
+    function quickUpload(input, dataType) {
+        const file = input.files[0];
+        if (!file) return;
+        sageFiles[dataType] = file;
+        
+        const status = document.getElementById('status-' + dataType);
+        if (status) status.innerHTML = '✅ <strong>' + file.name + '</strong>';
+        
+        updateSageImportButton();
+        input.value = '';
+    }
+    
+    function quickUploadMulti(input, dataType) {
+        const files = Array.from(input.files);
+        if (!files.length) return;
+        sageFiles[dataType] = files.length === 1 ? files[0] : files;
+        
+        const status = document.getElementById('status-' + dataType);
+        if (status) {
+            if (files.length === 1) {
+                status.innerHTML = '✅ <strong>' + files[0].name + '</strong>';
+            } else {
+                status.innerHTML = '✅ <strong>' + files.length + ' files</strong> (' + files.map(f => f.name).join(', ') + ')';
+            }
+        }
+        
+        updateSageImportButton();
+        input.value = '';
+    }
+    
+    function updateSageImportButton() {
+        const count = Object.keys(sageFiles).length;
+        const allBtn = document.getElementById('sageImportAll');
+        const desktopBtn = document.getElementById('sageDesktopImportAll');
+        
+        if (count > 0) {
+            if (allBtn) { allBtn.style.display = 'block'; }
+            if (desktopBtn) { desktopBtn.style.display = 'block'; }
+            const readyEl = document.getElementById('sageFilesReady');
+            if (readyEl) readyEl.textContent = count;
+        }
+    }
+    
+    async function executeSageImportAll() {
+        const types = Object.keys(sageFiles);
+        if (!types.length) return;
+        
+        // Use the existing smart-import flow for each file
+        const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance', 'supplier_invoices', 'customer_invoices'];
+        const sorted = importOrder.filter(t => types.includes(t));
+        
+        // Hide sage guide, show processing
+        document.getElementById('sageGuide').style.display = 'none';
+        document.getElementById('dropState').style.display = 'none';
+        document.getElementById('processingState').classList.add('active');
+        
+        let totalImported = 0;
+        let results = [];
+        
+        for (const dataType of sorted) {
+            const fileOrFiles = sageFiles[dataType];
+            const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+            
+            for (const file of files) {
+                document.getElementById('processingText').textContent = 'Importing ' + dataType + '...';
+                document.getElementById('processingSub').textContent = file.name;
+                
+                try {
+                    // Step 1: Analyse
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    
+                    const analyseResp = await fetch('/api/smart-import/analyse', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const analysis = await analyseResp.json();
+                    
+                    if (!analysis.success) {
+                        results.push({type: dataType, file: file.name, success: false, error: analysis.error || 'Analysis failed'});
+                        continue;
+                    }
+                    
+                    // Step 2: Import
+                    document.getElementById('processingSub').textContent = 'Saving ' + (analysis.total_rows || '?') + ' ' + dataType + '...';
+                    
+                    const importResp = await fetch('/api/smart-import/batch', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(analysis)
+                    });
+                    const importResult = await importResp.json();
+                    
+                    const count = importResult.imported || importResult.total_imported || 0;
+                    totalImported += count;
+                    results.push({type: dataType, file: file.name, success: importResult.success, count: count});
+                    
+                } catch (err) {
+                    results.push({type: dataType, file: file.name, success: false, error: err.message});
+                }
+            }
+        }
+        
+        // Show success
+        document.getElementById('processingState').classList.remove('active');
+        document.getElementById('successState').style.display = 'block';
+        
+        let statsHtml = '';
+        for (const r of results) {
+            if (r.success) {
+                statsHtml += '<div class="stat-box"><div class="stat-number">' + r.count + '</div><div class="stat-label">' + r.type + '</div></div>';
+            } else {
+                statsHtml += '<div class="stat-box"><div class="stat-number" style="color:#ef4444;">✗</div><div class="stat-label">' + r.type + ': ' + (r.error || 'Failed') + '</div></div>';
+            }
+        }
+        document.getElementById('successStats').innerHTML = statsHtml;
+        
+        if (results.some(r => r.type === 'trial_balance' && r.success)) {
+            document.getElementById('reportPrompt').style.display = 'block';
+        }
+    }
+    </script>
+    
     <!-- STATE 1: Drop Zone -->
     <div id="dropState" class="card">
         <div class="drop-zone" id="dropZone">
@@ -42161,8 +44203,16 @@ def smart_import_page():
         <div class="success-title">Import Complete!</div>
         <p style="color:var(--text-muted);font-size:16px;">Your data is now in ClickAI. Welcome aboard.</p>
         <div class="success-stats" id="successStats"></div>
-        <div style="margin-top:20px;">
+        <div id="successActions" style="margin-top:25px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
             <a href="/" class="import-btn" style="text-decoration:none;">Go to Dashboard →</a>
+        </div>
+        <div id="reportPrompt" style="display:none;margin-top:20px;padding:20px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);border-radius:12px;">
+            <p style="font-size:15px;margin-bottom:12px;">📊 <strong>Generate a professional AI report from your imported data?</strong></p>
+            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+                <button onclick="goToReport()" class="btn btn-primary" style="padding:12px 24px;font-size:15px;">
+                    📊 Generate Report
+                </button>
+            </div>
         </div>
     </div>
     
@@ -42421,6 +44471,32 @@ def smart_import_page():
             }
         }
         document.getElementById('successStats').innerHTML = statsHtml;
+        
+        // Show report prompt based on what was imported
+        const dataType = importData ? importData.data_type : '';
+        if (dataType === 'opening_balances' || dataType === 'accounts' || dataType === 'trial_balance') {
+            document.getElementById('reportPrompt').style.display = 'block';
+            window._reportUrl = '/reports/tb';
+        } else if (dataType === 'customers') {
+            document.getElementById('reportPrompt').style.display = 'block';
+            window._reportUrl = '/reports/debtors';
+        } else if (dataType === 'suppliers') {
+            document.getElementById('reportPrompt').style.display = 'block';
+            window._reportUrl = '/reports/aging';
+        } else if (dataType === 'stock') {
+            document.getElementById('reportPrompt').style.display = 'block';
+            window._reportUrl = '/stock';
+        }
+    }
+    
+    function goToReport() {
+        const url = window._reportUrl || '/reports';
+        // For TB, auto-trigger the analysis
+        if (url === '/reports/tb') {
+            window.location.href = url + '?auto_analyze=1';
+        } else {
+            window.location.href = url;
+        }
     }
     
     function resetImport() {
@@ -42505,14 +44581,167 @@ def api_smart_import_analyse():
         total_lines = len([l for l in lines if l.strip()])
         
         # ═══════════════════════════════════════════════════════════════════════
-        # SAGE PASTEL AUTO-DETECTION - Skip AI if we recognize the format
+        # SAGE AUTO-DETECTION - Skip AI if we recognize the format
+        # Handles: sep= prefix, title rows, all Sage export types
         # ═══════════════════════════════════════════════════════════════════════
         
-        header_line = lines[0] if lines else ""
+        # Step 1: Find the REAL header line (skip sep=, title rows like "Trial Balance Report")
+        header_line = ""
+        header_line_idx = 0
+        sage_preamble_rows = 0
+        for idx, line in enumerate(lines[:10]):
+            stripped = line.strip().strip('\r')
+            # Skip sep= lines
+            if stripped.lower().startswith('sep='):
+                sage_preamble_rows = idx + 1
+                continue
+            # Skip title-only rows (single cell, no commas with actual data)
+            if ',' not in stripped and stripped.startswith('"') and stripped.endswith('"'):
+                sage_preamble_rows = idx + 1
+                continue
+            # Skip empty lines
+            if not stripped:
+                sage_preamble_rows = idx + 1
+                continue
+            # This looks like a real header or data row
+            header_line = stripped
+            header_line_idx = idx
+            break
+        
+        if not header_line and lines:
+            header_line = lines[0].strip()
+        
+        logger.info(f"[SMART-IMPORT] Header detection: preamble_rows={sage_preamble_rows}, header='{header_line[:80]}...'")
+        
+        # Step 2: Detect specific Sage formats
         is_sage_customers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line
         is_sage_suppliers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line and 'supplier' in filename.lower()
         
-        if is_sage_customers or is_sage_suppliers:
+        # Sage Business Cloud ItemExport: Code,Description,Category,Price Excl.,Price Incl.,Avg Cost,Last Cost,Qty On Hand,Active
+        is_sage_stock = ('Code' in header_line and 'Description' in header_line and 'Price Excl' in header_line and 'Qty On Hand' in header_line)
+        # Also detect quoted variant
+        if not is_sage_stock:
+            is_sage_stock = ('"Code"' in header_line and '"Description"' in header_line and 'Price' in header_line)
+        
+        # Sage Trial Balance Report: "Name","Category","Source","Debit","Credit"
+        is_sage_tb = ('"Name"' in header_line and '"Category"' in header_line and '"Source"' in header_line and '"Debit"' in header_line and '"Credit"' in header_line)
+        
+        # Sage Supplier Invoices Report: "Date","Document No.","Supplier Inv. No.","Supplier","Due Date"
+        is_sage_supplier_invoices = ('"Document No."' in header_line and '"Supplier Inv. No."' in header_line and '"Supplier"' in header_line and '"Total Outstanding"' in header_line)
+        
+        # Sage Customer Invoices / Sales Invoices: "Date","Document No.","Customer","Due Date"
+        is_sage_customer_invoices = ('"Document No."' in header_line and ('"Customer"' in header_line or '"Customer Inv. No."' in header_line) and '"Total Outstanding"' in header_line)
+        
+        if is_sage_stock:
+            # ═══ SAGE STOCK / ITEM EXPORT ═══
+            logger.info(f"[SMART-IMPORT] Detected Sage ItemExport format")
+            
+            # Parse headers to find exact column indices
+            import csv as csv_mod
+            parsed_headers = list(csv_mod.reader([header_line]))[0]
+            col_map = {}
+            for i, h in enumerate(parsed_headers):
+                h_clean = h.strip().lower()
+                if h_clean == 'code': col_map[str(i)] = 'code'
+                elif h_clean == 'description': col_map[str(i)] = 'description'
+                elif h_clean == 'category': col_map[str(i)] = 'category'
+                elif 'price excl' in h_clean: col_map[str(i)] = 'selling_price'
+                elif 'price incl' in h_clean: col_map[str(i)] = 'selling_price_incl'
+                elif 'avg cost' in h_clean or 'average cost' in h_clean: col_map[str(i)] = 'cost_price'
+                elif 'last cost' in h_clean: col_map[str(i)] = 'last_cost'
+                elif 'qty on hand' in h_clean or 'quantity' in h_clean: col_map[str(i)] = 'qty'
+                elif h_clean == 'active': col_map[str(i)] = 'active'
+            
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "stock",
+                "data_type_label": "Stock / Inventory Items",
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": next((int(k) for k, v in col_map.items() if v == 'description'), 1),
+                "column_mapping": col_map,
+                "sage_preamble_rows": sage_preamble_rows
+            }
+        
+        elif is_sage_tb:
+            # ═══ SAGE TRIAL BALANCE ═══
+            logger.info(f"[SMART-IMPORT] Detected Sage Trial Balance Report format")
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "chart_of_accounts",
+                "data_type_label": "Trial Balance / Chart of Accounts",
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": 0,
+                "column_mapping": {
+                    "0": "account_name",   # "Name" - e.g. "3200/000 : Bank Charges"
+                    "1": "category",       # "Category" - e.g. "Expenses", "Sales", "Current Assets"
+                    "2": "source",         # "Source" - "System Account" or "Account Balance"
+                    "3": "debit",          # "Debit"
+                    "4": "credit"          # "Credit"
+                },
+                "sage_preamble_rows": sage_preamble_rows
+            }
+        
+        elif is_sage_supplier_invoices:
+            # ═══ SAGE SUPPLIER INVOICES REPORT ═══
+            logger.info(f"[SMART-IMPORT] Detected Sage Supplier Invoices Report format")
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "supplier_invoices",
+                "data_type_label": "Supplier Invoices (Purchases)",
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": 3,
+                "column_mapping": {
+                    "0": "date",               # "Date"
+                    "1": "document_no",        # "Document No."
+                    "2": "supplier_inv_no",    # "Supplier Inv. No."
+                    "3": "supplier",           # "Supplier" - e.g. "EPR001 : ELECT PROTECT..."
+                    "4": "due_date",           # "Due Date"
+                    "5": "anticipated_payment", # "Ant. Pmt."
+                    "6": "exclusive",          # "Exclusive" (excl VAT amount)
+                    "7": "vat",                # "VAT"
+                    "8": "total",              # "Total Purchases"
+                    "9": "outstanding"         # "Total Outstanding"
+                },
+                "sage_preamble_rows": sage_preamble_rows
+            }
+        
+        elif is_sage_customer_invoices:
+            # ═══ SAGE CUSTOMER INVOICES / SALES INVOICES ═══
+            logger.info(f"[SMART-IMPORT] Detected Sage Customer/Sales Invoices Report format")
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "customer_invoices",
+                "data_type_label": "Customer Invoices (Sales)",
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": 3,
+                "column_mapping": {
+                    "0": "date",
+                    "1": "document_no",
+                    "2": "customer_inv_no",
+                    "3": "customer",
+                    "4": "due_date",
+                    "5": "anticipated_payment",
+                    "6": "exclusive",
+                    "7": "vat",
+                    "8": "total",
+                    "9": "outstanding"
+                },
+                "sage_preamble_rows": sage_preamble_rows
+            }
+        
+        elif is_sage_customers or is_sage_suppliers:
             # HARDCODED SAGE PASTEL MAPPING - 100% reliable
             logger.info(f"[SMART-IMPORT] Detected Sage Pastel {'Suppliers' if is_sage_suppliers else 'Customers'} format")
             result = {
@@ -42711,7 +44940,8 @@ Return ONLY the JSON, nothing else."""
             # Fallback: check standard key fields
             if not key_value:
                 key_fields = {'customers': 'name', 'suppliers': 'name', 'stock': 'description',
-                              'chart_of_accounts': 'account_name', 'transactions': 'account_code'}
+                              'chart_of_accounts': 'account_name', 'transactions': 'account_code',
+                              'supplier_invoices': 'supplier', 'customer_invoices': 'customer'}
                 key = key_fields.get(data_type, 'name')
                 key_value = row_data.get(key) or row_data.get('name') or row_data.get('description') or row_data.get('code')
             
@@ -42751,6 +44981,35 @@ Return ONLY the JSON, nothing else."""
                         row_data['name'] = key_value or f"Record {i}"
                     elif data_type == 'stock':
                         row_data['description'] = key_value or row_data.get('code', f"Item {i}")
+                
+                # 5. Sage TB: Split "3200/000 : Bank Charges" into code + name, map category to account_type
+                if data_type == 'chart_of_accounts':
+                    acct_name = str(row_data.get('account_name', '')).strip()
+                    # Split "3200/000 : Bank Charges" format
+                    if ' : ' in acct_name:
+                        parts = acct_name.split(' : ', 1)
+                        row_data['account_code'] = parts[0].strip()
+                        row_data['account_name'] = parts[1].strip()
+                    
+                    # Map Sage categories to account types
+                    cat = str(row_data.get('category', '')).strip().lower()
+                    cat_map = {
+                        'sales': 'income', 'other income': 'income', 'discount received': 'income',
+                        'cost of sales': 'cost_of_sales', 'expenses': 'expense',
+                        'current assets': 'asset', 'non-current assets': 'asset',
+                        'current liabilities': 'liability', 'non-current liabilities': 'liability',
+                        'owners equity': 'equity', "owner's equity": 'equity'
+                    }
+                    row_data['account_type'] = cat_map.get(cat, 'expense')
+                    
+                    # Skip "System Account" summary rows (keep only "Account Balance" detail rows)
+                    source = str(row_data.get('source', '')).strip()
+                    if source == 'System Account':
+                        continue  # Skip totals, only import individual accounts
+                    
+                    # Skip empty/total rows (last row has no name, just totals)
+                    if not row_data.get('account_name'):
+                        continue
                 
                 all_data.append(row_data)
                 if len(preview_data) < 5:
@@ -42800,7 +45059,7 @@ def api_smart_import_batch():
     try:
         data = request.get_json()
         data_type = data.get("data_type")
-        records = data.get("records", [])
+        records = data.get("records", []) or data.get("all_data", [])
         
         if not records:
             return jsonify({"success": False, "error": "No records to import"})
@@ -42892,16 +45151,139 @@ def api_smart_import_batch():
                     if not name:
                         status = "skipped"
                     else:
+                        # Sage TB: account_name already split from "3200/000 : Bank Charges"
+                        acct_code = str(row.get("account_code", "")).strip()
+                        acct_type = str(row.get("account_type", "expense")).strip().lower()
+                        
+                        # Calculate opening balance from debit/credit
+                        debit = float(row.get("debit", 0) or 0)
+                        credit = float(row.get("credit", 0) or 0)
+                        opening_balance = debit - credit  # Positive = debit balance, Negative = credit balance
+                        
+                        # Check if account already exists (by code or name)
+                        existing = None
+                        if acct_code:
+                            existing = db.get("chart_of_accounts", {"business_id": biz_id, "account_code": acct_code})
+                        if not existing:
+                            existing = db.get("chart_of_accounts", {"business_id": biz_id, "account_name": name})
+                        
+                        if existing:
+                            status = "skipped"
+                            error_msg = "Already exists"
+                        else:
+                            record = {
+                                "id": generate_id(),
+                                "business_id": biz_id,
+                                "account_name": name,
+                                "account_code": acct_code,
+                                "account_type": acct_type,
+                                "category": str(row.get("category", "")).strip(),
+                                "opening_balance": opening_balance,
+                                "debit": debit,
+                                "credit": credit,
+                                "is_active": True,
+                                "created_at": now()
+                            }
+                            success, resp = db.save("chart_of_accounts", record)
+                            if success:
+                                status = "imported"
+                            else:
+                                status = "error"
+                                error_msg = str(resp)[:50]
+                
+                elif data_type == "supplier_invoices":
+                    # Sage Supplier Invoices - import as bills/purchases
+                    supplier_raw = str(row.get("supplier", "")).strip()
+                    supplier_code = ""
+                    supplier_name = supplier_raw
+                    # Sage format: "EPR001 : ELECT PROTECT RESPONSE (PTY) LTD"
+                    if " : " in supplier_raw:
+                        parts = supplier_raw.split(" : ", 1)
+                        supplier_code = parts[0].strip()
+                        supplier_name = parts[1].strip()
+                    
+                    name = supplier_name
+                    doc_no = str(row.get("document_no", "")).strip()
+                    supplier_inv = str(row.get("supplier_inv_no", "")).strip()
+                    outstanding = float(row.get("outstanding", 0) or 0)
+                    
+                    if not supplier_name or supplier_name.lower().startswith("grand total"):
+                        status = "skipped"
+                        error_msg = "Skip row"
+                    elif outstanding == 0:
+                        status = "skipped"
+                        error_msg = "Already paid"
+                    else:
                         record = {
                             "id": generate_id(),
                             "business_id": biz_id,
-                            "account_name": name,
-                            "account_code": str(row.get("account_code", "")).strip(),
-                            "account_type": str(row.get("account_type", "expense")).strip().lower(),
-                            "is_active": True,
+                            "supplier_name": supplier_name,
+                            "supplier_code": supplier_code,
+                            "invoice_number": supplier_inv or doc_no,
+                            "sage_doc_no": doc_no,
+                            "date": str(row.get("date", "")).strip(),
+                            "due_date": str(row.get("due_date", "")).strip(),
+                            "amount_excl": float(row.get("exclusive", 0) or 0),
+                            "vat_amount": float(row.get("vat", 0) or 0),
+                            "amount_incl": float(row.get("total", 0) or 0),
+                            "amount_outstanding": outstanding,
+                            "status": "outstanding",
+                            "source": "sage_import",
                             "created_at": now()
                         }
-                        success, resp = db.save("chart_of_accounts", record)
+                        existing_supplier = db.get("suppliers", {"business_id": biz_id, "name": supplier_name})
+                        if existing_supplier:
+                            record["supplier_id"] = existing_supplier.get("id")
+                        
+                        success, resp = db.save("bills", record)
+                        if success:
+                            status = "imported"
+                        else:
+                            status = "error"
+                            error_msg = str(resp)[:50]
+                
+                elif data_type == "customer_invoices":
+                    # Sage Customer Invoices - import as sales invoices
+                    customer_raw = str(row.get("customer", "")).strip()
+                    customer_code = ""
+                    customer_name = customer_raw
+                    if " : " in customer_raw:
+                        parts = customer_raw.split(" : ", 1)
+                        customer_code = parts[0].strip()
+                        customer_name = parts[1].strip()
+                    
+                    name = customer_name
+                    doc_no = str(row.get("document_no", "")).strip()
+                    outstanding = float(row.get("outstanding", 0) or 0)
+                    
+                    if not customer_name or customer_name.lower().startswith("grand total"):
+                        status = "skipped"
+                        error_msg = "Skip row"
+                    elif outstanding == 0:
+                        status = "skipped"
+                        error_msg = "Already paid"
+                    else:
+                        record = {
+                            "id": generate_id(),
+                            "business_id": biz_id,
+                            "customer_name": customer_name,
+                            "customer_code": customer_code,
+                            "invoice_number": doc_no,
+                            "date": str(row.get("date", "")).strip(),
+                            "due_date": str(row.get("due_date", "")).strip(),
+                            "amount_excl": float(row.get("exclusive", 0) or 0),
+                            "vat_amount": float(row.get("vat", 0) or 0),
+                            "amount_incl": float(row.get("total", 0) or 0),
+                            "amount_outstanding": outstanding,
+                            "status": "outstanding",
+                            "source": "sage_import",
+                            "created_at": now()
+                        }
+                        existing_customer = db.get("customers", {"business_id": biz_id, "name": customer_name})
+                        if existing_customer:
+                            record["customer_id"] = existing_customer.get("id")
+                        
+                        success, resp = db.save("invoices", record)
                         if success:
                             status = "imported"
                         else:
@@ -42944,7 +45326,8 @@ def api_smart_import_batch():
                 "error": error_msg
             })
         
-        return jsonify({"success": True, "results": results})
+        imported_count = sum(1 for r in results if r.get("status") == "imported")
+        return jsonify({"success": True, "results": results, "imported": imported_count, "total_imported": imported_count})
         
     except Exception as e:
         import traceback
@@ -56538,7 +58921,7 @@ def tools_page():
 @app.route("/invoice/<invoice_id>/credit-note", methods=["GET", "POST"])
 @login_required
 def create_credit_note(invoice_id):
-    """Create credit note from invoice"""
+    """Create credit note from invoice - supports partial credits (specific lines)"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -56548,8 +58931,67 @@ def create_credit_note(invoice_id):
     if not invoice:
         return redirect("/invoices")
     
+    # Handle items - Supabase may return as list or JSON string
+    raw_items = invoice.get("items", "[]")
+    if isinstance(raw_items, list):
+        inv_items = raw_items
+    elif isinstance(raw_items, str):
+        try:
+            inv_items = json.loads(raw_items)
+        except:
+            inv_items = []
+    else:
+        inv_items = []
+    
+    logger.info(f"[CREDIT NOTE] Invoice {invoice.get('invoice_number')}: {len(inv_items)} items loaded, type={type(raw_items).__name__}")
+    
     if request.method == "POST":
         reason = request.form.get("reason", "")
+        credit_type = request.form.get("credit_type", "full")  # full or partial
+        
+        # Build credited items list
+        credited_items = []
+        cn_subtotal = Decimal("0")
+        
+        if credit_type == "partial":
+            # Get selected line items
+            selected_lines = request.form.getlist("credit_line[]")
+            credit_qtys = request.form.getlist("credit_qty[]")
+            
+            for i, item in enumerate(inv_items):
+                idx_str = str(i)
+                if idx_str in selected_lines:
+                    orig_qty = float(item.get("quantity") or item.get("qty") or 1)
+                    credit_qty_str = credit_qtys[i] if i < len(credit_qtys) else str(orig_qty)
+                    credit_qty = min(float(credit_qty_str or orig_qty), orig_qty)
+                    price = float(item.get("price") or item.get("unit_price") or 0)
+                    line_total = round(credit_qty * price, 2)
+                    cn_subtotal += Decimal(str(line_total))
+                    credited_items.append({
+                        "description": item.get("description", ""),
+                        "quantity": credit_qty,
+                        "price": price,
+                        "total": line_total
+                    })
+        else:
+            # Full credit - all items
+            for item in inv_items:
+                qty = float(item.get("quantity") or item.get("qty") or 1)
+                price = float(item.get("price") or item.get("unit_price") or 0)
+                line_total = float(item.get("total") or item.get("line_total") or round(qty * price, 2))
+                cn_subtotal += Decimal(str(line_total))
+                credited_items.append({
+                    "description": item.get("description", ""),
+                    "quantity": qty,
+                    "price": price,
+                    "total": line_total
+                })
+        
+        if not credited_items:
+            return redirect(f"/invoice/{invoice_id}/credit-note?error=No+items+selected")
+        
+        cn_vat = (cn_subtotal * VAT_RATE).quantize(Decimal("0.01"))
+        cn_total = cn_subtotal + cn_vat
         
         # Generate credit note number
         existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
@@ -56566,33 +59008,27 @@ def create_credit_note(invoice_id):
             "customer_id": invoice.get("customer_id"),
             "customer_name": invoice.get("customer_name"),
             "reason": reason,
-            "items": invoice.get("items"),
-            "subtotal": invoice.get("subtotal"),
-            "vat": invoice.get("vat"),
-            "total": invoice.get("total"),
+            "items": json.dumps(credited_items),
+            "subtotal": float(cn_subtotal),
+            "vat": float(cn_vat),
+            "total": float(cn_total),
+            "credit_type": credit_type,
             "created_by": user.get("id") if user else None,
             "created_at": now()
         }
         
         db.save("credit_notes", credit_note)
         
-        # Create journal entries to reverse the original invoice
-        # Credit Note reverses: DR Debtors, CR Sales + VAT → now DR Sales + VAT, CR Debtors
-        total = float(invoice.get("total", 0))
-        subtotal = float(invoice.get("subtotal", 0))
-        vat = float(invoice.get("vat", 0))
-        inv_number = invoice.get("invoice_number", "")
-        customer_name = invoice.get("customer_name", "")
-        
+        # Journal entries to reverse
         create_journal_entry(
             biz_id,
             today(),
-            f"Credit Note {cn_num} - reversing {inv_number} - {customer_name}",
+            f"Credit Note {cn_num} - {'partial ' if credit_type == 'partial' else ''}reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}",
             cn_num,
             [
-                {"account_code": "4000", "debit": subtotal, "credit": 0},   # Reverse Sales
-                {"account_code": "2100", "debit": vat, "credit": 0},        # Reverse VAT Output
-                {"account_code": "1200", "debit": 0, "credit": total},      # Reduce Debtors
+                {"account_code": "4000", "debit": float(cn_subtotal), "credit": 0},
+                {"account_code": "2100", "debit": float(cn_vat), "credit": 0},
+                {"account_code": "1200", "debit": 0, "credit": float(cn_total)},
             ]
         )
         
@@ -56601,40 +59037,161 @@ def create_credit_note(invoice_id):
         if customer_id:
             customer = db.get_one("customers", customer_id)
             if customer:
-                new_balance = float(customer.get("balance", 0)) - float(invoice.get("total", 0))
+                new_balance = float(customer.get("balance", 0)) - float(cn_total)
                 db.update("customers", customer_id, {"balance": new_balance})
         
-        # Mark invoice as credited
-        db.update("invoices", invoice_id, {"status": "credited"})
+        # Mark invoice as credited only if FULL credit
+        if credit_type == "full":
+            db.update("invoices", invoice_id, {"status": "credited"})
+        else:
+            db.update("invoices", invoice_id, {"status": "partial_credit"})
         
         return redirect(f"/credit-note/{cn_id}")
     
+    # GET - build form with line item selection
+    items_rows_html = ""
+    inv_subtotal = Decimal("0")
+    for i, item in enumerate(inv_items):
+        qty = float(item.get("quantity") or item.get("qty") or 1)
+        price = float(item.get("price") or item.get("unit_price") or 0)
+        line_total = float(item.get("total") or item.get("line_total") or round(qty * price, 2))
+        inv_subtotal += Decimal(str(line_total))
+        items_rows_html += f'''
+        <tr class="cn-line" data-idx="{i}" data-total="{line_total}">
+            <td style="text-align:center;">
+                <input type="checkbox" name="credit_line[]" value="{i}" class="cn-check" onchange="updateCNTotal()" checked>
+            </td>
+            <td>{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;">
+                <input type="number" name="credit_qty[]" value="{qty}" min="0.01" max="{qty}" step="0.01" class="cn-qty" onchange="updateCNTotal()" style="width:70px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
+                <span style="color:var(--text-muted);font-size:11px;">/ {qty}</span>
+            </td>
+            <td style="text-align:right;">{money(price)}</td>
+            <td style="text-align:right;" class="cn-line-total">{money(line_total)}</td>
+        </tr>
+        '''
+    
+    error_msg = request.args.get("error", "")
+    error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
+    
     content = f'''
+    {error_html}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">-> Back to Invoice</a>
+        <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">← Back to Invoice</a>
     </div>
     
     <div class="card">
-        <h2 style="margin-bottom:20px;"> Create Credit Note</h2>
+        <h2 style="margin-bottom:20px;">Create Credit Note</h2>
         
         <div style="background:rgba(239,68,68,0.1);padding:15px;border-radius:8px;margin-bottom:20px;">
             <p style="margin:0;"><strong>Invoice:</strong> {invoice.get("invoice_number")}</p>
             <p style="margin:5px 0 0 0;"><strong>Customer:</strong> {safe_string(invoice.get("customer_name", "-"))}</p>
-            <p style="margin:5px 0 0 0;"><strong>Amount to Credit:</strong> <span style="font-size:20px;font-weight:bold;color:var(--red);">{money(invoice.get("total", 0))}</span></p>
+            <p style="margin:5px 0 0 0;"><strong>Invoice Total:</strong> {money(invoice.get("total", 0))}</p>
         </div>
         
         <form method="POST">
+            <!-- Credit Type Toggle -->
+            <div style="margin-bottom:20px;">
+                <label style="display:block;margin-bottom:8px;font-weight:bold;">Credit Type</label>
+                <div style="display:flex;gap:10px;">
+                    <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--primary);border-radius:8px;cursor:pointer;background:rgba(99,102,241,0.1);" id="fullLabel">
+                        <input type="radio" name="credit_type" value="full" checked onchange="toggleCreditType()"> Full Credit
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--border);border-radius:8px;cursor:pointer;" id="partialLabel">
+                        <input type="radio" name="credit_type" value="partial" onchange="toggleCreditType()"> Partial Credit (select lines)
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Line Items Selection (shown for partial) -->
+            <div id="lineSelection" style="display:none;margin-bottom:20px;">
+                <label style="display:block;margin-bottom:8px;font-weight:bold;">Select Items to Credit</label>
+                <table class="table" style="font-size:14px;">
+                    <thead>
+                        <tr style="background:var(--bg);">
+                            <th style="width:40px;text-align:center;">
+                                <input type="checkbox" checked onchange="toggleAllLines(this)">
+                            </th>
+                            <th>Description</th>
+                            <th style="width:130px;text-align:center;">Credit Qty</th>
+                            <th style="width:100px;text-align:right;">Price</th>
+                            <th style="width:100px;text-align:right;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {items_rows_html}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Credit Total Display -->
+            <div style="text-align:right;margin-bottom:20px;padding:15px;background:rgba(239,68,68,0.05);border-radius:8px;border:1px solid rgba(239,68,68,0.2);">
+                <div style="margin-bottom:5px;">Subtotal: <strong id="cnSubtotal">{money(inv_subtotal)}</strong></div>
+                <div style="margin-bottom:5px;">VAT (15%): <strong id="cnVat">{money(float(inv_subtotal) * 0.15)}</strong></div>
+                <div style="font-size:20px;color:var(--red);">Credit Amount: <strong id="cnTotal">{money(float(inv_subtotal) * 1.15)}</strong></div>
+            </div>
+            
             <div style="margin-bottom:20px;">
                 <label style="display:block;margin-bottom:5px;font-weight:bold;">Reason for Credit Note</label>
-                <textarea name="reason" class="form-input" rows="3" placeholder="e.g., Goods returned, Pricing error, Duplicate invoice..." required></textarea>
+                <textarea name="reason" class="form-input" rows="3" placeholder="e.g., Goods returned, Pricing error, Partial return..." required></textarea>
             </div>
             
             <div style="display:flex;gap:10px;">
-                <button type="submit" class="btn btn-primary"> Create Credit Note</button>
+                <button type="submit" class="btn btn-primary">Create Credit Note</button>
                 <a href="/invoice/{invoice_id}" class="btn btn-secondary">Cancel</a>
             </div>
         </form>
     </div>
+    
+    <script>
+    function toggleCreditType() {{
+        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
+        document.getElementById('lineSelection').style.display = isPartial ? 'block' : 'none';
+        document.getElementById('fullLabel').style.borderColor = isPartial ? 'var(--border)' : 'var(--primary)';
+        document.getElementById('fullLabel').style.background = isPartial ? 'transparent' : 'rgba(99,102,241,0.1)';
+        document.getElementById('partialLabel').style.borderColor = isPartial ? 'var(--primary)' : 'var(--border)';
+        document.getElementById('partialLabel').style.background = isPartial ? 'rgba(99,102,241,0.1)' : 'transparent';
+        updateCNTotal();
+    }}
+    
+    function toggleAllLines(master) {{
+        document.querySelectorAll('.cn-check').forEach(cb => {{ cb.checked = master.checked; }});
+        updateCNTotal();
+    }}
+    
+    function updateCNTotal() {{
+        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
+        let subtotal = 0;
+        
+        if (isPartial) {{
+            document.querySelectorAll('.cn-line').forEach(row => {{
+                const cb = row.querySelector('.cn-check');
+                const qtyInput = row.querySelector('.cn-qty');
+                const price = parseFloat(row.querySelector('td:nth-child(4)').textContent.replace('R', '').replace(/,/g, '')) || 0;
+                const lineTotalCell = row.querySelector('.cn-line-total');
+                
+                if (cb.checked) {{
+                    const qty = parseFloat(qtyInput.value) || 0;
+                    const lineTotal = qty * price;
+                    lineTotalCell.textContent = 'R' + lineTotal.toFixed(2);
+                    subtotal += lineTotal;
+                    qtyInput.disabled = false;
+                }} else {{
+                    lineTotalCell.textContent = '-';
+                    qtyInput.disabled = true;
+                }}
+            }});
+        }} else {{
+            subtotal = {float(inv_subtotal)};
+        }}
+        
+        const vat = subtotal * 0.15;
+        const total = subtotal + vat;
+        document.getElementById('cnSubtotal').textContent = 'R' + subtotal.toFixed(2);
+        document.getElementById('cnVat').textContent = 'R' + vat.toFixed(2);
+        document.getElementById('cnTotal').textContent = 'R' + total.toFixed(2);
+    }}
+    </script>
     '''
     
     return render_page("Create Credit Note", content, user, "invoices")
@@ -57705,12 +60262,12 @@ def scan_page():
                     📷 Take Photo
                 </button>
                 <button type="button" class="btn btn-secondary" style="padding:25px;font-size:16px;" onclick="document.getElementById('fileInput').click()">
-                    📁 Choose File
+                    📁 Upload File
                 </button>
             </div>
             
             <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;" onchange="handleFile(this.files[0])">
-            <input type="file" id="fileInput" accept="image/*,.pdf" style="display:none;" onchange="handleFile(this.files[0])">
+            <input type="file" id="fileInput" accept="image/*,.pdf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff" style="display:none;" onchange="handleFile(this.files[0])">
         </div>
         
         <!-- STEP 3: Preview -->
