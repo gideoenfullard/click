@@ -2299,21 +2299,11 @@ class DB:
         return item
     
     def update_stock(self, stock_id: str, updates: dict, biz_id: str = None):
-        """Update stock item - tries stock_items first, then stock
-        Handles column name differences between tables"""
-        # stock_items uses 'quantity', stock uses 'qty'
-        # Try stock_items first with 'quantity' only
-        stock_items_updates = {k: v for k, v in updates.items() if k != "qty"}
-        if "qty" in updates and "quantity" not in stock_items_updates:
-            stock_items_updates["quantity"] = updates["qty"]
-        
-        result = self.update("stock_items", stock_id, stock_items_updates, biz_id)
+        """Update stock item - tries stock_items first, then stock"""
+        # Try stock_items first
+        result = self.update("stock_items", stock_id, updates, biz_id)
         if not result:
-            # Try stock table with 'qty' only
-            stock_updates = {k: v for k, v in updates.items() if k != "quantity"}
-            if "quantity" in updates and "qty" not in stock_updates:
-                stock_updates["qty"] = updates["quantity"]
-            result = self.update("stock", stock_id, stock_updates, biz_id)
+            result = self.update("stock", stock_id, updates, biz_id)
         return result
     
     def save_stock(self, record: dict):
@@ -2918,7 +2908,7 @@ class RecordFactory:
             "id": kwargs.get("id") or generate_id(),
             "business_id": business_id,
             "stock_id": stock_id,
-            "date": kwargs.get("date") or today(),
+            "date": kwargs.get("date") or now(),
             "type": movement_type,  # 'in' or 'out'
             "quantity": float(quantity),
             "reference": kwargs.get("reference", ""),
