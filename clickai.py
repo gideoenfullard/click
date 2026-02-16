@@ -1638,31 +1638,6 @@ def generate_id() -> str:
     """Generate unique ID - full UUID for database"""
     return str(uuid.uuid4())
 
-
-def next_doc_number(records: list, field: str, prefix: str, pad: int = 5) -> str:
-    """Generate next document number by finding max existing number.
-    
-    Args:
-        records: List of existing records
-        field: Field name containing the number (e.g. 'po_number', 'grv_number')
-        prefix: Prefix to strip (e.g. 'PO-', 'GRV-', 'INV')
-        pad: Zero-padding width (default 5)
-    
-    Returns: Next number string like 'PO-00042'
-    """
-    max_num = 0
-    for r in records:
-        val = str(r.get(field, ""))
-        try:
-            # Strip the prefix and any extra dashes
-            num_str = val.replace(prefix, "").lstrip("-").lstrip("0") or "0"
-            num = int(num_str)
-            if num > max_num:
-                max_num = num
-        except (ValueError, TypeError):
-            pass
-    return f"{prefix}{max_num + 1:0{pad}d}"
-
 def is_valid_uuid(value) -> bool:
     """Check if a value is a valid UUID format"""
     if not value:
@@ -10489,16 +10464,7 @@ class Actions:
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        max_po = 0
-        for ep in existing:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = f"PO-{len(existing) + 1:04d}"
         
         # Build items
         if not items and description:
@@ -19268,14 +19234,8 @@ def stock_movements_page():
     rows_html = ""
     for m in movements[:500]:  # Limit to 500
         stock = stock_lookup.get(m.get("stock_id"), {})
-        stock_desc = stock.get("description") or stock.get("name") or stock.get("code") or ""
+        stock_desc = stock.get("description") or stock.get("code") or str(m.get("stock_id", "-"))[:8]
         stock_code = stock.get("code", "")
-        # If stock item not found in lookup, try to extract name from reference
-        if not stock_desc:
-            ref_str = str(m.get("reference") or "")
-            # Reference format: "GRV-XXXX | PO-XXXXX | Supplier Name" - not helpful for item name
-            # Just show "Unknown item" rather than a raw ID
-            stock_desc = "Unknown item"
         m_type = m.get("type", "")
         qty = float(m.get("quantity") or 0)
         m_date = str(m.get("date") or m.get("created_at") or "")[:16].replace("T", " ")
@@ -26995,69 +26955,6 @@ def grv_view(grv_id):
         
         {f'<div style="padding:0 40px 20px;"><div style="padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;"><strong>Notes:</strong> {safe_string(grv.get("notes", ""))}</div></div>' if grv.get("notes") else ""}
     </div>
-    
-    <!-- STOCK BOOKING REPORT -->
-    <div class="card no-print" style="margin-top:20px;">
-        <h3 style="margin:0 0 15px 0;">📦 Stock Booking Report — {grv.get("grv_number", "")}</h3>
-        <p style="color:var(--text-muted);margin:0 0 15px 0;font-size:13px;">Shows what happened to stock when this GRV was received</p>
-        <div style="overflow-x:auto;">
-        <table class="table" style="font-size:14px;">
-            <thead>
-                <tr style="background:var(--bg);">
-                    <th style="padding:10px;">GRV #</th>
-                    <th style="padding:10px;">Stock Code</th>
-                    <th style="padding:10px;">Description</th>
-                    <th style="padding:10px;text-align:center;">Qty Received</th>
-                    <th style="padding:10px;text-align:center;">Before</th>
-                    <th style="padding:10px;text-align:center;">After</th>
-                    <th style="padding:10px;">Status</th>
-                </tr>
-            </thead>
-            <tbody>'''
-    
-    stock_booked = 0
-    not_linked = 0
-    for item in items:
-        booked = item.get("booked_to_stock", False) or item.get("stock_id")
-        code = item.get("stock_code", "") or item.get("code", "")
-        name = item.get("stock_name", "") or item.get("description", "")
-        qty_recv = item.get("qty_received", 0)
-        before = item.get("stock_qty_before", "-")
-        after = item.get("stock_qty_after", "-")
-        
-        if booked and code:
-            stock_booked += 1
-            status_html = '<span style="color:#10b981;font-weight:600;">✅ Booked</span>'
-            before_str = str(before) if before != "-" else "-"
-            after_str = str(after) if after != "-" else "-"
-        else:
-            not_linked += 1
-            status_html = '<span style="color:#f59e0b;">⚠️ Not linked</span>'
-            before_str = "-"
-            after_str = "-"
-        
-        content += f'''
-                <tr style="border-bottom:1px solid var(--border);">
-                    <td style="padding:10px;color:var(--text-muted);font-size:13px;">{grv.get("grv_number", "")}</td>
-                    <td style="padding:10px;font-weight:600;">{safe_string(code) or "-"}</td>
-                    <td style="padding:10px;">{safe_string(name)}</td>
-                    <td style="padding:10px;text-align:center;font-weight:700;color:#10b981;">{qty_recv}</td>
-                    <td style="padding:10px;text-align:center;color:var(--text-muted);">{before_str}</td>
-                    <td style="padding:10px;text-align:center;font-weight:600;">{after_str}</td>
-                    <td style="padding:10px;">{status_html}</td>
-                </tr>'''
-    
-    content += f'''
-            </tbody>
-        </table>
-        </div>
-        <div style="display:flex;gap:15px;margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
-            <div style="background:rgba(16,185,129,0.1);padding:10px 20px;border-radius:8px;">
-                <span style="font-weight:700;color:#10b981;">{stock_booked}</span> <span style="color:var(--text-muted);font-size:13px;">items booked to stock</span>
-            </div>
-            {f'<div style="background:rgba(245,158,11,0.1);padding:10px 20px;border-radius:8px;"><span style="font-weight:700;color:#f59e0b;">{not_linked}</span> <span style="color:var(--text-muted);font-size:13px;">items not linked to stock</span></div>' if not_linked > 0 else ''}
-        </div>
-    </div>
     '''
     
     return render_page(f"GRV {grv.get('grv_number', '')}", content, user, "purchases")
@@ -32192,16 +32089,7 @@ def purchase_new():
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) or []
-        max_po = 0
-        for ep in existing:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = f"PO{len(existing) + 1:04d}"
         
         po_id = generate_id()
         po = {
@@ -33000,125 +32888,27 @@ def api_po_receive(po_id):
         items_received = 0
         all_received = True
         
-        # Get all existing stock for matching
-        all_stock = db.get_all_stock(biz_id) if biz_id else []
-        stock_by_code = {}
-        for s in all_stock:
-            code = str(s.get("code", "")).upper().strip()
-            if code:
-                stock_by_code[code] = s
-        
-        # Abbreviations for smart code generation
-        abbrevs = {"STAINLESS": "SS", "STEEL": "ST", "FLAT": "FL", "BAR": "BR", "ROUND": "RD", "SQUARE": "SQ", "PIPE": "PP", "TUBE": "TB", "SHEET": "SH", "PLATE": "PL", "ANGLE": "AN", "GALV": "GV", "HEX": "HX", "BOLT": "BLT", "NUT": "NT", "WASHER": "WS", "HOSE": "HS", "CLAMP": "CL", "VALVE": "VL", "FLANGE": "FL", "REDUCER": "RD", "COUPLING": "CP", "ELBOW": "EL", "TEE": "TE", "NIPPLE": "NP", "CAP": "CP", "PLUG": "PG", "BUSH": "BS", "FITTING": "FT", "SCREW": "SC"}
-        
         for idx_str, qty_received in quantities.items():
             idx = int(idx_str)
             if 0 <= idx < len(items):
                 items[idx]["qty_received"] = items[idx].get("qty_received", 0) + qty_received
                 items_received += qty_received
                 
-                if not update_stock:
-                    continue
-                
-                stock_id = items[idx].get("stock_id", "")
-                stock_item = None
-                
-                if stock_id:
+                # Update stock if requested and linked to stock item
+                if update_stock and items[idx].get("stock_id"):
+                    stock_id = items[idx]["stock_id"]
                     stock_item = db.get_one_stock(stock_id)
-                
-                if not stock_item and stock_id:
-                    # stock_id exists but item not found - try by code
-                    stock_item = stock_by_code.get(str(items[idx].get("code", "")).upper().strip())
-                
-                if not stock_item:
-                    # No stock item linked or found - try to match by description/code
-                    item_code = str(items[idx].get("code", "")).upper().strip()
-                    item_desc = str(items[idx].get("description", "")).upper().strip()
-                    
-                    # Try exact code match
-                    if item_code and item_code in stock_by_code:
-                        stock_item = stock_by_code[item_code]
-                        items[idx]["stock_id"] = stock_item["id"]
-                        logger.info(f"[PO RECEIVE] Matched by code: {item_code}")
-                    
-                    # Try description match against existing stock
-                    if not stock_item and item_desc:
-                        for s in all_stock:
-                            s_desc = str(s.get("description", "")).upper().strip()
-                            if s_desc and s_desc == item_desc:
-                                stock_item = s
-                                items[idx]["stock_id"] = s["id"]
-                                logger.info(f"[PO RECEIVE] Matched by description: {item_desc}")
-                                break
-                    
-                    # AUTO-CREATE stock item if no match found
-                    if not stock_item and item_desc:
-                        # Generate smart stock code
-                        desc_upper = item_desc
-                        words = desc_upper.split()
-                        
-                        # Extract sizes (numbers with optional MM/M etc)
-                        import re
-                        sizes = re.findall(r'\d+[Xx/]\d+(?:\.\d+)?(?:MM)?|\d+(?:\.\d+)?(?:MM|M|CM|KG)?', desc_upper)
-                        sizes = [s.replace("MM", "") for s in sizes]
-                        
-                        # Build code from abbreviations + sizes
-                        parts = []
-                        for w in words:
-                            w_clean = w.strip(".,;:-")
-                            if w_clean in abbrevs:
-                                parts.append(abbrevs[w_clean])
-                            elif len(w_clean) > 2 and w_clean.isalpha() and w_clean not in ("THE", "AND", "FOR", "WITH"):
-                                parts.append(w_clean[:2])
-                        
-                        if parts:
-                            smart_code = "-".join(parts[:3])
-                        else:
-                            smart_code = desc_upper[:6].replace(" ", "-")
-                        
-                        if sizes:
-                            smart_code += "-" + "-".join(sizes[:2])
-                        smart_code = smart_code[:15].upper()
-                        
-                        # Make code unique
-                        final_code = smart_code
-                        counter = 1
-                        while final_code in stock_by_code:
-                            final_code = f"{smart_code}-{counter}"
-                            counter += 1
-                        
-                        # Get price from PO item if available
-                        unit_price = float(items[idx].get("price", 0) or 0)
-                        
-                        # Create the stock item
-                        new_stock = RecordFactory.stock_item(
-                            business_id=biz_id,
-                            description=items[idx].get("description", item_desc),
-                            code=final_code,
-                            quantity=0,  # Will be updated below
-                            cost_price=unit_price,
-                            selling_price=round(unit_price * 1.3, 2) if unit_price else 0
-                        )
-                        db.save_stock(new_stock)
-                        
-                        stock_item = new_stock
-                        items[idx]["stock_id"] = new_stock["id"]
-                        stock_by_code[final_code] = new_stock
-                        logger.info(f"[PO RECEIVE] Auto-created stock: {final_code} = {item_desc}")
-                
-                # Now update the stock quantity
-                if stock_item:
-                    current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                    new_qty = current_qty + qty_received
-                    db.update_stock(stock_item["id"], {"qty": new_qty, "quantity": new_qty}, biz_id)
-                    logger.info(f"[PO RECEIVE] Updated stock {stock_item.get('code')}: {current_qty} + {qty_received} = {new_qty}")
-                    
-                    # Store stock info in item for GRV tracking
-                    items[idx]["stock_id"] = stock_item["id"]
-                    items[idx]["stock_code"] = stock_item.get("code", "")
-                    items[idx]["stock_name"] = stock_item.get("name", stock_item.get("description", ""))
-                    items[idx]["stock_qty_before"] = round(current_qty, 2)
-                    items[idx]["stock_qty_after"] = round(new_qty, 2)
+                    if stock_item:
+                        new_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0) + qty_received
+                        db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                        logger.info(f"[PO] Updated stock {stock_item.get('code')}: +{qty_received} = {new_qty}")
+                        # Log stock movement
+                        try:
+                            db.save("stock_movements", RecordFactory.stock_movement(
+                                business_id=biz_id, stock_id=stock_id, movement_type="in",
+                                quantity=qty_received, reference=f"PO Receive {po.get('po_number', '')}"
+                            ))
+                        except: pass
         
         # Check if all items fully received
         for item in items:
@@ -33142,17 +32932,7 @@ def api_po_receive(po_id):
         # CREATE GRV (Goods Received Voucher) document
         grv_id = generate_id()
         existing_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
-        # Find highest existing GRV number to avoid duplicates
-        max_grv = 0
-        for eg in existing_grvs:
-            gn = eg.get("grv_number", "")
-            try:
-                num_part = int(gn.replace("GRV-", ""))
-                if num_part > max_grv:
-                    max_grv = num_part
-            except:
-                pass
-        grv_num = f"GRV-{max_grv + 1:04d}"
+        grv_num = f"GRV-{len(existing_grvs) + 1:04d}"
         
         # Build received items list
         received_items = []
@@ -33164,12 +32944,7 @@ def api_po_receive(po_id):
                     "code": items[idx].get("code", ""),
                     "qty_ordered": items[idx].get("qty", 1),
                     "qty_received": qty_received,
-                    "stock_id": items[idx].get("stock_id", ""),
-                    "stock_code": items[idx].get("stock_code", ""),
-                    "stock_name": items[idx].get("stock_name", ""),
-                    "stock_qty_before": items[idx].get("stock_qty_before", 0),
-                    "stock_qty_after": items[idx].get("stock_qty_after", 0),
-                    "booked_to_stock": bool(items[idx].get("stock_id"))
+                    "stock_id": items[idx].get("stock_id", "")
                 })
         
         grv = {
@@ -33191,20 +32966,6 @@ def api_po_receive(po_id):
         try:
             db.save("goods_received", grv)
             logger.info(f"[GRV] Created {grv_num} from {po.get('po_number')} - {len(received_items)} items")
-            
-            # Log stock movements with GRV reference
-            for ri in received_items:
-                if ri.get("stock_id") and ri.get("booked_to_stock"):
-                    try:
-                        item_desc = ri.get("stock_name") or ri.get("stock_code") or ri.get("description", "")
-                        db.save("stock_movements", RecordFactory.stock_movement(
-                            business_id=biz_id, stock_id=ri["stock_id"], movement_type="in",
-                            quantity=ri["qty_received"], 
-                            reference=f"{grv_num} | {po.get('po_number', '')} | {safe_string(po.get('supplier_name', ''))}"
-                        ))
-                    except:
-                        pass
-                        
         except Exception as ge:
             logger.error(f"[GRV] Save failed: {ge}")
         
@@ -39062,16 +38823,7 @@ def api_pos_quick_po():
         
         # Generate PO number
         existing_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
-        max_po = 0
-        for ep in existing_pos:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = f"PO-{len(existing_pos) + 1:05d}"
         
         # Create PO
         po = {
@@ -39431,16 +39183,7 @@ def api_pos_purchase_order():
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        max_po = 0
-        for ep in existing:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = f"PO-{len(existing) + 1:05d}"
         
         # Clean items - remove any prices that might have snuck in
         clean_items = []
@@ -46583,12 +46326,11 @@ def api_banking_import():
                 
                 if not pdf_text:
                     try:
-                        import pdfplumber
-                        with pdfplumber.open(tmp_path) as pdf_doc:
-                            for page in pdf_doc.pages:
-                                page_text = page.extract_text()
-                                if page_text:
-                                    pdf_text += page_text + "\n"
+                        import fitz
+                        doc = fitz.open(tmp_path)
+                        for page in doc:
+                            pdf_text += page.get_text() + "\n"
+                        doc.close()
                     except:
                         pass
                 
@@ -46597,34 +46339,19 @@ def api_banking_import():
                     logger.info("[BANK IMPORT] Scanned PDF detected - using AI to read")
                     
                     try:
-                        import base64
-                        from PIL import Image as PILImage
-                        import io as _io
+                        import fitz, base64
+                        doc = fitz.open(tmp_path)
                         all_transactions = []
                         
-                        # Convert PDF pages to images using pdf2image (poppler) or pdfplumber fallback
-                        page_images = []
-                        try:
-                            from pdf2image import convert_from_path
-                            pil_images = convert_from_path(tmp_path, dpi=200)
-                            for img in pil_images:
-                                buf = _io.BytesIO()
-                                img.save(buf, format='JPEG', quality=85)
-                                page_images.append(buf.getvalue())
-                        except ImportError:
-                            # Fallback: use pdfplumber to render pages
-                            import pdfplumber
-                            with pdfplumber.open(tmp_path) as pdf_doc:
-                                for page in pdf_doc.pages:
-                                    page_img = page.to_image(resolution=200)
-                                    buf = _io.BytesIO()
-                                    page_img.save(buf, format='JPEG', quality=85)
-                                    page_images.append(buf.getvalue())
-                        
-                        for page_num, img_bytes in enumerate(page_images):
+                        for page_num in range(len(doc)):
+                            page = doc[page_num]
+                            pix = page.get_pixmap(dpi=200)
+                            img_bytes = pix.tobytes("png")
                             
                             # Compress if needed
                             if len(img_bytes) > 3500000:
+                                from PIL import Image as PILImage
+                                import io as _io
                                 img = PILImage.open(_io.BytesIO(img_bytes))
                                 quality = 70
                                 max_dim = 1600
@@ -46640,13 +46367,16 @@ def api_banking_import():
                                     quality -= 10
                                     max_dim -= 200
                                 img_bytes = buf.getvalue()
+                                media_type = "image/jpeg"
+                            else:
+                                media_type = "image/png"
                             
-                            media_type = "image/jpeg"
                             b64_img = base64.b64encode(img_bytes).decode('utf-8')
                             
                             # Send to Claude API
                             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
                             if not api_key:
+                                doc.close()
                                 os.unlink(tmp_path)
                                 return jsonify({"success": False, "error": "AI API key not configured"})
                             
@@ -46710,7 +46440,7 @@ RULES:
                                 except json.JSONDecodeError as je:
                                     logger.error(f"[BANK IMPORT] JSON parse error page {page_num + 1}: {je}")
                         
-                        
+                        doc.close()
                         os.unlink(tmp_path)
                         
                         if not all_transactions:
@@ -57562,17 +57292,12 @@ def scan_inbox_page():
             const data = await response.json();
             
             if (data.success) {{
-                // Only remove from inbox if transactions were actually imported
-                const shouldRemoveFromInbox = !(data.imported !== undefined && data.imported === 0);
-                
-                if (shouldRemoveFromInbox) {{
-                    // Remove from inbox
-                    await fetch('/api/scan/remove-from-inbox', {{
-                        method: 'POST',
-                        headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{id: currentItemId}})
-                    }});
-                }}
+                // Remove from inbox
+                await fetch('/api/scan/remove-from-inbox', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{id: currentItemId}})
+                }});
                 
                 // Build detailed success message
                 let msg = ' Saved successfully!';
@@ -57587,17 +57312,9 @@ def scan_inbox_page():
                 if (data.supplier_created) {{
                     msg += '\\nNew supplier created';
                 }}
-                if (data.imported !== undefined) {{
-                    msg = '🏦 ' + (data.message || 'Imported ' + data.imported + ' transactions');
-                }}
                 
                 alert(msg);
-                
-                if (redirect === '/banking' && data.imported > 0) {{
-                    window.location = '/banking';
-                }} else {{
-                    window.location.reload();
-                }}
+                window.location.reload();
             }} else {{
                 alert(' ' + (data.error || 'Failed to save'));
             }}
@@ -58991,33 +58708,19 @@ def api_scan_save_bank_statement():
         
         imported = 0
         skipped = 0
-        errors = []
         
         for txn in transactions:
-            description = str(txn.get("description", "")).strip()
-            date = str(txn.get("date", "")).strip()
+            amount = float(txn.get("amount", 0))
+            description = txn.get("description", "").strip()
+            date = txn.get("date", "")
             
-            if not description:
+            if not description or amount == 0:
                 skipped += 1
                 continue
             
-            # Handle both formats:
-            # Format 1: "amount" field (negative=debit, positive=credit)
-            # Format 2: separate "debit" and "credit" fields
-            amount = float(txn.get("amount", 0) or 0)
-            
-            if amount != 0:
-                debit = round(abs(amount), 2) if amount < 0 else 0.0
-                credit = round(amount, 2) if amount > 0 else 0.0
-            else:
-                # Try separate debit/credit fields
-                debit = round(abs(float(txn.get("debit", 0) or 0)), 2)
-                credit = round(abs(float(txn.get("credit", 0) or 0)), 2)
-            
-            # Skip if truly no amount at all
-            if debit == 0 and credit == 0:
-                skipped += 1
-                continue
+            # Debit (money out) vs Credit (money in)
+            debit = abs(amount) if amount < 0 else 0
+            credit = amount if amount > 0 else 0
             
             # Check for duplicate
             dup_key = f"{str(date)[:10]}|{description}|{debit}|{credit}"
@@ -59030,8 +58733,8 @@ def api_scan_save_bank_statement():
                 "business_id": biz_id,
                 "date": date,
                 "description": description,
-                "debit": debit,
-                "credit": credit,
+                "debit": round(debit, 2),
+                "credit": round(credit, 2),
                 "balance": float(txn.get("balance", 0)) if txn.get("balance") else None,
                 "bank_name": bank_name,
                 "source": "scan",
@@ -59039,31 +58742,14 @@ def api_scan_save_bank_statement():
                 "created_at": now()
             }
             
-            success, result = db.save("bank_transactions", bank_txn)
+            success, _ = db.save("bank_transactions", bank_txn)
             if success:
                 imported += 1
                 existing_keys.add(dup_key)
             else:
                 skipped += 1
-                errors.append(str(result)[:100])
         
-        logger.info(f"[BANK IMPORT] Scanned: {imported} imported, {skipped} skipped from {bank_name}" + (f" Errors: {errors[:3]}" if errors else ""))
-        
-        if imported == 0 and errors:
-            return jsonify({
-                "success": False,
-                "error": f"Failed to import transactions. {len(errors)} database errors: {errors[0] if errors else 'Unknown'}",
-                "imported": 0,
-                "skipped": skipped
-            })
-        
-        if imported == 0 and skipped > 0:
-            return jsonify({
-                "success": True,
-                "message": f"All {skipped} transactions were duplicates (already imported)",
-                "imported": 0,
-                "skipped": skipped
-            })
+        logger.info(f"[BANK IMPORT] Scanned: {imported} imported, {skipped} skipped from {bank_name}")
         
         return jsonify({
             "success": True,
