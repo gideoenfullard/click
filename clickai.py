@@ -42244,7 +42244,6 @@ def pos_history():
             closeModal('zreadModal');
         }}
     }}
-    }}
     
     // Close modal on background click
     document.getElementById('xreadModal').addEventListener('click', function(e) {{
