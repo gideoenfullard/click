@@ -2299,12 +2299,32 @@ class DB:
         return item
     
     def update_stock(self, stock_id: str, updates: dict, biz_id: str = None):
-        """Update stock item - tries stock_items first, then stock"""
-        # Try stock_items first
-        result = self.update("stock_items", stock_id, updates, biz_id)
-        if not result:
-            result = self.update("stock", stock_id, updates, biz_id)
-        return result
+        """Update stock item - handles column name differences between tables.
+        stock_items uses 'quantity', stock table may use 'qty'.
+        Supabase rejects entire PATCH if ANY column doesn't exist (PGRST204)."""
+        
+        new_qty = updates.get("quantity") or updates.get("qty")
+        
+        # Try stock_items with 'quantity' only
+        result = self.update("stock_items", stock_id, {"quantity": new_qty}, biz_id)
+        if result:
+            logger.info(f"[STOCK UPDATE] stock_items {stock_id}: quantity={new_qty} OK")
+            return True
+        
+        # Try stock table with 'qty' only
+        result = self.update("stock", stock_id, {"qty": new_qty}, biz_id)
+        if result:
+            logger.info(f"[STOCK UPDATE] stock {stock_id}: qty={new_qty} OK")
+            return True
+        
+        # Try stock table with 'quantity'
+        result = self.update("stock", stock_id, {"quantity": new_qty}, biz_id)
+        if result:
+            logger.info(f"[STOCK UPDATE] stock {stock_id}: quantity={new_qty} OK")
+            return True
+        
+        logger.error(f"[STOCK UPDATE] FAILED for {stock_id} - tried all tables/columns")
+        return False
     
     def save_stock(self, record: dict):
         """Save stock item to stock_items (preferred table)"""
@@ -2368,7 +2388,7 @@ class DB:
         return results[0] if results else None
     
     def save(self, table: str, data: dict) -> Tuple[bool, Any]:
-        """Insert or update record"""
+        """Insert or update record - auto-handles unknown column errors (PGRST204)"""
         try:
             if not data.get("id"):
                 data["id"] = generate_id()
@@ -2390,6 +2410,28 @@ class DB:
             if response.status_code in (200, 201):
                 result = response.json()
                 return True, result[0] if result else data
+            
+            # Auto-fix: if column not found (PGRST204), remove offending column and retry
+            if response.status_code == 400 and "PGRST204" in response.text:
+                try:
+                    err_data = response.json()
+                    err_msg = err_data.get("message", "")
+                    if "Could not find" in err_msg and "column" in err_msg:
+                        bad_col = err_msg.split("'")[1]
+                        logger.warning(f"[DB SAVE] Column '{bad_col}' not in {table} - removing and retrying")
+                        data.pop(bad_col, None)
+                        response2 = requests.post(
+                            url,
+                            headers={**self.headers, "Prefer": "return=representation,resolution=merge-duplicates"},
+                            json=data,
+                            timeout=30
+                        )
+                        if response2.status_code in (200, 201):
+                            result = response2.json()
+                            logger.info(f"[DB SAVE] {table} retry SUCCESS after removing '{bad_col}'")
+                            return True, result[0] if result else data
+                except Exception as retry_err:
+                    logger.error(f"[DB SAVE] Retry failed: {retry_err}")
             
             # Detailed error message
             error_msg = f"HTTP {response.status_code}: {response.text[:300]}"
@@ -2524,7 +2566,7 @@ class DB:
         return (success, failed)
     
     def update(self, table: str, id: str, data: dict, business_id: str = None) -> bool:
-        """Update record - with verification"""
+        """Update record - with verification. Auto-handles unknown column errors (PGRST204)."""
         try:
             url = f"{self.url}/rest/v1/{table}?id=eq.{id}"
             if business_id:
@@ -2546,9 +2588,28 @@ class DB:
             elif response.status_code == 204:
                 logger.info(f"[DB UPDATE] {table} id={id}: status=204 (assumed ok)")
                 return True
-            else:
-                logger.error(f"[DB UPDATE] {table} id={id}: status={response.status_code} - {response.text[:100]}")
-                return False
+            
+            # Auto-fix: if column not found (PGRST204), remove it and retry
+            if response.status_code == 400 and "PGRST204" in response.text:
+                try:
+                    err_data = response.json()
+                    err_msg = err_data.get("message", "")
+                    if "Could not find" in err_msg and "column" in err_msg:
+                        bad_col = err_msg.split("'")[1]
+                        logger.warning(f"[DB UPDATE] Column '{bad_col}' not in {table} - removing and retrying")
+                        data.pop(bad_col, None)
+                        if data:
+                            response2 = requests.patch(url, headers=headers, json=data, timeout=30)
+                            if response2.status_code == 200:
+                                updated = response2.json()
+                                if updated and len(updated) > 0:
+                                    logger.info(f"[DB UPDATE] {table} id={id}: retry SUCCESS after removing '{bad_col}'")
+                                    return True
+                except Exception as retry_err:
+                    logger.error(f"[DB UPDATE] Retry failed: {retry_err}")
+            
+            logger.error(f"[DB UPDATE] {table} id={id}: status={response.status_code} - {response.text[:100]}")
+            return False
                 
         except Exception as e:
             logger.error(f"[DB UPDATE] Error: {e}")
@@ -2908,11 +2969,10 @@ class RecordFactory:
             "id": kwargs.get("id") or generate_id(),
             "business_id": business_id,
             "stock_id": stock_id,
-            "date": kwargs.get("date") or now(),
+            "date": kwargs.get("date") or today(),
             "type": movement_type,  # 'in' or 'out'
             "quantity": float(quantity),
             "reference": kwargs.get("reference", ""),
-            "created_by": kwargs.get("created_by", ""),
             "created_at": kwargs.get("created_at") or now()
         }
     
