@@ -14,7 +14,7 @@ VERSION: 2.0.266
 CREATED: January 2026
 UPDATED: January 20, 2026
 
-NEW IN v2.0.222:
+\nNEW IN v2.0.222:
 - JOB CARD SYSTEM - Beautiful manufacturing/workshop management
 - Quote → Job Card with one click
 - Simple 3-card interface: Materials | Labour | Complete
@@ -482,7 +482,7 @@ class fulltech_addon:
         }
     
     @classmethod
-    def calc_sheet_piece(cls, length_mm, width_mm, thickness_mm, finish="N4 + PVC", custom_prices=None):
+    def calc_sheet_piece(cls, length_mm, width_mm, thickness_mm, finish="N4 + PVC"):
         """
         Calculate sheet/plate piece price
         - Large plates: 6000 x 1500mm (special pricing)
@@ -490,24 +490,10 @@ class fulltech_addon:
         - Full sheet or larger: base price
         - Piece >= 1 sqm: +40%
         - Piece < 1 sqm: +60%
-        
-        custom_prices: dict with optional keys: sheet_cold, sheet_hot, large_plates, min_charge
         """
         length_mm = float(length_mm)
         width_mm = float(width_mm)
         thickness = float(thickness_mm)
-        
-        # Use custom prices if provided, otherwise defaults
-        if custom_prices:
-            sheet_cold = {**cls.SHEET_COLD, **(custom_prices.get("sheet_cold", {}) or {})}
-            sheet_hot = {**cls.SHEET_HOT, **(custom_prices.get("sheet_hot", {}) or {})}
-            large_plates = {**cls.LARGE_PLATES, **(custom_prices.get("large_plates", {}) or {})}
-            min_charge = custom_prices.get("min_charge", cls.MIN_CHARGE_PIECE) or cls.MIN_CHARGE_PIECE
-        else:
-            sheet_cold = cls.SHEET_COLD
-            sheet_hot = cls.SHEET_HOT
-            large_plates = cls.LARGE_PLATES
-            min_charge = cls.MIN_CHARGE_PIECE
         
         # Calculate sqm
         sqm = (length_mm / 1000) * (width_mm / 1000)
@@ -515,11 +501,11 @@ class fulltech_addon:
         # Check for LARGE PLATE first (6000x1500)
         large_plate_key = f"6000x1500x{thickness}"
         # Also try without decimal for whole numbers
-        if large_plate_key not in large_plates:
+        if large_plate_key not in cls.LARGE_PLATES:
             large_plate_key = f"6000x1500x{int(thickness)}.0"
         
         is_large_plate = False
-        if large_plate_key in large_plates:
+        if large_plate_key in cls.LARGE_PLATES:
             # Check if dimensions fit a large plate
             fits_large = (length_mm <= 6000 and width_mm <= 1500) or \
                         (length_mm <= 1500 and width_mm <= 6000)
@@ -528,13 +514,13 @@ class fulltech_addon:
             
             if fits_large and sqm >= large_sqm * 0.90:  # Within 10% of full large plate
                 is_large_plate = True
-                base_price = large_plates[large_plate_key]
+                base_price = cls.LARGE_PLATES[large_plate_key]
                 markup = 0
                 markup_text = "Full large plate (6000x1500)"
             elif fits_large and length_mm > 2500 or width_mm > 2500:
                 # Needs large plate but is a cut piece
                 is_large_plate = True
-                base_price = large_plates[large_plate_key]
+                base_price = cls.LARGE_PLATES[large_plate_key]
                 if sqm >= 1.0:
                     markup = 0.40
                     markup_text = "+40% (large plate piece ≥ 1m²)"
@@ -563,19 +549,19 @@ class fulltech_addon:
             if thickness > 3:
                 # Hot rolled
                 t_key = str(thickness).replace(".0", "")
-                if t_key in sheet_hot:
-                    prices = sheet_hot[t_key]
+                if t_key in cls.SHEET_HOT:
+                    prices = cls.SHEET_HOT[t_key]
                     base_price = prices.get(finish_upper, prices.get("N4 ONLY", 325.40))
                 else:
                     base_price = 325.40  # Default hot rolled
             else:
                 # Cold rolled
-                base_price = sheet_cold.get(finish_upper, 34.08)
+                base_price = cls.SHEET_COLD.get(finish_upper, 34.08)
         
         # Calculate final price
         final_price_sqm = base_price * (1 + markup)
         subtotal = sqm * final_price_sqm
-        total = max(subtotal, min_charge)
+        total = max(subtotal, cls.MIN_CHARGE_PIECE)
         
         return {
             "length_mm": length_mm,
@@ -590,7 +576,7 @@ class fulltech_addon:
             "final_price_sqm": round(final_price_sqm, 2),
             "subtotal": round(subtotal, 2),
             "total": round(total, 2),
-            "min_applied": subtotal < min_charge,
+            "min_applied": subtotal < cls.MIN_CHARGE_PIECE,
         }
     
     @classmethod
@@ -880,8 +866,6 @@ TABLES = {
     "receipts": "receipts",
     "pos_sales": "pos_sales",
     "stock_movements": "stock_movements",
-    "goods_received": "goods_received",
-    "purchase_orders": "purchase_orders",
 }
 
 # Stock column mapping - maps display names to actual DB columns
@@ -1034,6 +1018,11 @@ def preprocess_image_for_ocr(image_data: bytes, filename: str) -> bytes:
         # Open image
         img = Image.open(io.BytesIO(image_data))
         
+        # Skip if already large enough
+        if img.width >= 1500 and img.height >= 1500:
+            logger.info(f"[IMAGE] Skipping preprocessing - {filename} already good size ({img.width}x{img.height})")
+            return image_data
+        
         # Convert to RGB if needed
         if img.mode not in ('RGB', 'L'):
             img = img.convert('RGB')
@@ -1051,7 +1040,7 @@ def preprocess_image_for_ocr(image_data: bytes, filename: str) -> bytes:
         img = enhancer.enhance(1.2)
         
         # 4. Increase resolution if too small - Claude lees beter met groter images
-        # For bank statements with dense tables, we need HIGH resolution
+        # But don't go crazy - limit to 2000px max
         if img.width < 1500:
             scale = min(1500 / img.width, 2.0)  # Max 2x scaling
             new_size = (int(img.width * scale), int(img.height * scale))
@@ -1654,224 +1643,6 @@ def generate_id() -> str:
     """Generate unique ID - full UUID for database"""
     return str(uuid.uuid4())
 
-
-def next_doc_number(records: list, field: str, prefix: str, pad: int = 5) -> str:
-    """Generate next document number by finding max existing number.
-    
-    Args:
-        records: List of existing records
-        field: Field name containing the number (e.g. 'po_number', 'grv_number')
-        prefix: Prefix to strip (e.g. 'PO-', 'GRV-', 'INV')
-        pad: Zero-padding width (default 5)
-    
-    Returns: Next number string like 'PO-00042'
-    """
-    max_num = 0
-    for r in records:
-        val = str(r.get(field, ""))
-        try:
-            # Strip the prefix and any extra dashes
-            num_str = val.replace(prefix, "").lstrip("-").lstrip("0") or "0"
-            num = int(num_str)
-            if num > max_num:
-                max_num = num
-        except (ValueError, TypeError):
-            pass
-    return f"{prefix}{max_num + 1:0{pad}d}"
-
-
-def smart_stock_code(description: str, existing_codes: set = None) -> str:
-    """Generate a smart, unique stock code from a product description.
-    
-    Examples:
-        'BOLT M10X110 HT'           → BLT-10-110-HT
-        'SAFETY BOOT DOT STC CHELSEA BROWN 9' → SFT-BT-CHEL-9
-        'GUMBOOT SHOVA WHITE/GREY 9' → GMB-SHOV-9
-        'CL ANKLE NSTC OUTBACK BLACK 8' → ANK-OUTB-BLK-8
-        'HOSE CLAMP GS36 44X70MM'   → HS-CL-GS36-44X70
-        'SILICONE CLEAR 260ML'      → SIL-CLR-260
-        'FLAT BAR 40X3 SS'          → FL-BR-40X3-SS
-    """
-    import re
-    if not description:
-        return "ITM-001"
-    
-    if existing_codes is None:
-        existing_codes = set()
-    
-    desc = description.upper().strip()
-    words = desc.split()
-    
-    # Product type codes - PRIMARY identifier
-    product_types = {
-        "BOLT": "BLT", "BOLTS": "BLT", "NUT": "NT", "NUTS": "NT",
-        "WASHER": "WS", "WASHERS": "WS", "SCREW": "SCR", "SCREWS": "SCR",
-        "STUD": "STD", "RIVET": "RVT", "BEARING": "BRG", "CIRCLIP": "CLP",
-        "SEAL": "SL", "ORING": "OR", "SET": "SET", "CAP": "CAP",
-        "PIPE": "PP", "TUBE": "TB", "BAR": "BR", "ANGLE": "AN",
-        "CHANNEL": "CHL", "BEAM": "BM", "SHEET": "SH", "PLATE": "PL",
-        "ELBOW": "EL", "TEE": "TE", "VALVE": "VL", "FLANGE": "FLG",
-        "REDUCER": "RED", "COUPLING": "CPL", "NIPPLE": "NIP", "PLUG": "PLG",
-        "BUSH": "BSH", "FITTING": "FIT", "CLAMP": "CL", "HOSE": "HS",
-        "CABLE": "CB", "CHAIN": "CH", "DISC": "DSC", "SANDPAPER": "SND",
-        "SILICONE": "SIL", "ADHESIVE": "ADH", "TAPE": "TP",
-    }
-    
-    # Footwear/PPE - need EXTRA detail (brand/style) because many variants per size
-    footwear_types = {
-        "BOOT": "BT", "BOOTS": "BT", "SHOE": "SH", "SHOES": "SH",
-        "GUMBOOT": "GMB", "GUMBOOTS": "GMB",
-        "SAFETY": "SFT", "ANKLE": "ANK", "OVERALL": "OVL", "OVERALLS": "OVL",
-        "JACKET": "JKT", "GLOVE": "GL", "GLOVES": "GL",
-        "CONTI": "CNT", "GOGGLE": "GGL", "GOGGLES": "GGL",
-        "HELMET": "HLM", "HARDHAT": "HH", "VEST": "VST",
-        "EARPLUG": "EP", "EARMUFF": "EM", "MASK": "MSK", "RESPIRATOR": "RSP",
-    }
-    
-    # Modifiers that should appear in code
-    modifier_map = {
-        "HT": "HT", "Z/P": "ZP", "S/S": "SS", "SS": "SS",
-        "GALV": "GV", "GALVANISED": "GV", "GALVANIZED": "GV",
-        "BLACK": "BLK", "WHITE": "WHT", "GREY": "GRY", "GRAY": "GRY",
-        "BROWN": "BRN", "RED": "RED", "BLUE": "BLU", "GREEN": "GRN",
-        "YELLOW": "YEL", "ORANGE": "ORG", "CLEAR": "CLR",
-        "CHROME": "CHR", "BRASS": "BRS", "COPPER": "CU", "NYLON": "NYL",
-        "PVC": "PVC", "HDPE": "HDPE", "MILD": "MS",
-    }
-    
-    # Colour words to skip when building brand/style parts
-    colours = {"BLACK", "WHITE", "GREY", "GRAY", "BROWN", "RED", "BLUE", "GREEN", 
-               "YELLOW", "ORANGE", "CLEAR", "CHROME"}
-    
-    # Skip words (noise)
-    skip_words = {"THE", "AND", "FOR", "WITH", "IN", "OF", "A", "AN", "PER", 
-                  "EACH", "PAIR", "SIZE", "NO", "NR", "NUMBER", "PACK",
-                  "STC", "NSTC", "DOT", "SABS", "CL"}
-    
-    # Extract sizes and dimensions
-    sizes = re.findall(r'(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)', desc)
-    plain_sizes = re.findall(r'(?<![Xx/\d])(\d+(?:\.\d+)?)(?:MM|ML|M|CM|KG|L)?(?![Xx/\d])', desc)
-    
-    # Find product type
-    product_code = ""
-    is_footwear = False
-    for w in words:
-        w_clean = w.strip(".,;:-/()")
-        if w_clean in footwear_types:
-            product_code = footwear_types[w_clean]
-            is_footwear = True
-            break
-        if w_clean in product_types:
-            product_code = product_types[w_clean]
-            break
-    
-    # For footwear, check if compound like "SAFETY BOOT" or "GUMBOOT"
-    if is_footwear:
-        # Build code: TYPE + BRAND/STYLE + SIZE
-        parts = []
-        
-        # Check for compound types: "SAFETY BOOT" → SFT-BT
-        compound_types = [
-            (["SAFETY", "BOOT"], "SFT-BT"), (["SAFETY", "BOOTS"], "SFT-BT"),
-            (["SAFETY", "SHOE"], "SFT-SH"), (["SAFETY", "SHOES"], "SFT-SH"),
-            (["ANKLE", "BOOT"], "ANK-BT"), (["ANKLE", "BOOTS"], "ANK-BT"),
-        ]
-        compound_found = False
-        for comp_words, comp_code in compound_types:
-            if all(cw in words or any(cw in w for w in words) for cw in comp_words):
-                parts.append(comp_code)
-                compound_found = True
-                break
-        
-        if not compound_found:
-            parts.append(product_code)
-        
-        # Add brand/style words (CHELSEA, SHOVA, INKUNZI, OUTBACK, UTECH etc)
-        type_words = set(k for k in {**footwear_types, **product_types})
-        brand_parts = []
-        for w in words:
-            w_clean = w.strip(".,;:-/()")
-            if (w_clean not in type_words and w_clean not in skip_words and 
-                w_clean not in colours and len(w_clean) > 1 and 
-                w_clean.isalpha() and not w_clean.isdigit()):
-                brand_parts.append(w_clean[:4])
-                if len(brand_parts) >= 2:
-                    break
-        if brand_parts:
-            parts.extend(brand_parts[:2])
-        
-        # Add colour if present
-        for w in words:
-            w_clean = w.strip(".,;:-/()")
-            if w_clean in modifier_map and w_clean in colours:
-                parts.append(modifier_map[w_clean])
-                break
-        
-        # Add size (last plain number is usually shoe size)
-        if plain_sizes:
-            parts.append(plain_sizes[-1])
-        
-        smart_code = "-".join(parts)
-    
-    elif product_code:
-        # Regular products: TYPE + DIMENSIONS + MODIFIERS
-        parts = [product_code]
-        
-        # Add dimension sizes (e.g. M10X110, 40X3)
-        if sizes:
-            for dim in sizes[:2]:
-                parts.append(f"{dim[0]}X{dim[1]}")
-        elif plain_sizes:
-            for s in plain_sizes[:2]:
-                parts.append(s)
-        
-        # Check for product sub-codes (GS36, M10, etc) - but NOT parts of dimensions
-        sub_codes = re.findall(r'([A-Z]{1,3}\d{1,4})', desc)
-        dim_numbers = set()
-        for dim in sizes:
-            dim_numbers.add(dim[0])
-            dim_numbers.add(dim[1])
-        for sc in sub_codes:
-            sc_num = re.sub(r'[A-Z]', '', sc)
-            if sc not in parts and len(sc) <= 5 and sc_num not in dim_numbers:
-                parts.insert(1, sc)
-                break
-        
-        # Add modifiers (HT, ZP, SS etc)
-        for w in words:
-            w_clean = w.strip(".,;:-/()")
-            if w_clean in modifier_map and modifier_map[w_clean] not in parts:
-                parts.append(modifier_map[w_clean])
-        
-        smart_code = "-".join(parts)
-    
-    else:
-        # Unknown product type - use first significant words + sizes
-        parts = []
-        for w in words:
-            w_clean = w.strip(".,;:-/()")
-            if w_clean in modifier_map:
-                parts.append(modifier_map[w_clean])
-            elif w_clean not in skip_words and len(w_clean) > 1 and w_clean.isalpha():
-                parts.append(w_clean[:3])
-            if len(parts) >= 3:
-                break
-        if plain_sizes:
-            parts.append(plain_sizes[0])
-        smart_code = "-".join(parts) if parts else desc[:8].replace(" ", "-")
-    
-    # Trim to max length
-    smart_code = smart_code[:20].upper().rstrip("-")
-    
-    # Ensure uniqueness
-    final_code = smart_code
-    counter = 1
-    while final_code.upper() in {c.upper() for c in existing_codes}:
-        final_code = f"{smart_code}-{counter}"
-        counter += 1
-    
-    return final_code
-
 def is_valid_uuid(value) -> bool:
     """Check if a value is a valid UUID format"""
     if not value:
@@ -1885,13 +1656,12 @@ def safe_uuid(value):
     return value if is_valid_uuid(value) else None
 
 def now() -> str:
-    """Current timestamp in ISO 8601 format for Supabase - always UTC"""
+    """Current timestamp in ISO 8601 format for Supabase"""
     return datetime.utcnow().isoformat() + 'Z'
 
 def today() -> str:
-    """Current date in SA timezone (UTC+2)"""
-    sa_time = datetime.utcnow() + timedelta(hours=2)
-    return sa_time.strftime("%Y-%m-%d")
+    """Current date"""
+    return datetime.now().strftime("%Y-%m-%d")
 
 def money(amount) -> str:
     """Format as currency"""
@@ -1899,25 +1669,6 @@ def money(amount) -> str:
         return f"R{float(amount):,.2f}"
     except:
         return "R0.00"
-
-def extract_time(timestamp_str) -> str:
-    """Extract HH:MM from any timestamp format, converted to SA time (UTC+2)
-    Handles: 2026-02-16T18:57:32+00:00, 2026-02-16T18:57:32.123456+00:00, 
-             2026-02-16T18:57:32Z, 2026-02-16T18:57:32.388Z
-    """
-    try:
-        ts = str(timestamp_str or "")
-        if 'T' in ts:
-            time_part = ts.split('T')[1]
-            hh = int(time_part[:2])
-            mm = time_part[3:5]
-            # If timestamp is UTC (ends with Z or +00:00), add 2 hours for SA
-            if 'Z' in ts or '+00:00' in ts:
-                hh = (hh + 2) % 24
-            return f"{hh:02d}:{mm}"
-        return "-"
-    except:
-        return "-"
 
 def safe_string(s: Any, max_len: int = 1000) -> str:
     """Safe string conversion - escapes HTML and JS special chars"""
@@ -2299,32 +2050,12 @@ class DB:
         return item
     
     def update_stock(self, stock_id: str, updates: dict, biz_id: str = None):
-        """Update stock item - handles column name differences between tables.
-        stock_items uses 'quantity', stock table may use 'qty'.
-        Supabase rejects entire PATCH if ANY column doesn't exist (PGRST204)."""
-        
-        new_qty = updates.get("quantity") or updates.get("qty")
-        
-        # Try stock_items with 'quantity' only
-        result = self.update("stock_items", stock_id, {"quantity": new_qty}, biz_id)
-        if result:
-            logger.info(f"[STOCK UPDATE] stock_items {stock_id}: quantity={new_qty} OK")
-            return True
-        
-        # Try stock table with 'qty' only
-        result = self.update("stock", stock_id, {"qty": new_qty}, biz_id)
-        if result:
-            logger.info(f"[STOCK UPDATE] stock {stock_id}: qty={new_qty} OK")
-            return True
-        
-        # Try stock table with 'quantity'
-        result = self.update("stock", stock_id, {"quantity": new_qty}, biz_id)
-        if result:
-            logger.info(f"[STOCK UPDATE] stock {stock_id}: quantity={new_qty} OK")
-            return True
-        
-        logger.error(f"[STOCK UPDATE] FAILED for {stock_id} - tried all tables/columns")
-        return False
+        """Update stock item - tries stock_items first, then stock"""
+        # Try stock_items first
+        result = self.update("stock_items", stock_id, updates, biz_id)
+        if not result:
+            result = self.update("stock", stock_id, updates, biz_id)
+        return result
     
     def save_stock(self, record: dict):
         """Save stock item to stock_items (preferred table)"""
@@ -2388,7 +2119,7 @@ class DB:
         return results[0] if results else None
     
     def save(self, table: str, data: dict) -> Tuple[bool, Any]:
-        """Insert or update record - auto-handles unknown column errors (PGRST204)"""
+        """Insert or update record"""
         try:
             if not data.get("id"):
                 data["id"] = generate_id()
@@ -2410,28 +2141,6 @@ class DB:
             if response.status_code in (200, 201):
                 result = response.json()
                 return True, result[0] if result else data
-            
-            # Auto-fix: if column not found (PGRST204), remove offending column and retry
-            if response.status_code == 400 and "PGRST204" in response.text:
-                try:
-                    err_data = response.json()
-                    err_msg = err_data.get("message", "")
-                    if "Could not find" in err_msg and "column" in err_msg:
-                        bad_col = err_msg.split("'")[1]
-                        logger.warning(f"[DB SAVE] Column '{bad_col}' not in {table} - removing and retrying")
-                        data.pop(bad_col, None)
-                        response2 = requests.post(
-                            url,
-                            headers={**self.headers, "Prefer": "return=representation,resolution=merge-duplicates"},
-                            json=data,
-                            timeout=30
-                        )
-                        if response2.status_code in (200, 201):
-                            result = response2.json()
-                            logger.info(f"[DB SAVE] {table} retry SUCCESS after removing '{bad_col}'")
-                            return True, result[0] if result else data
-                except Exception as retry_err:
-                    logger.error(f"[DB SAVE] Retry failed: {retry_err}")
             
             # Detailed error message
             error_msg = f"HTTP {response.status_code}: {response.text[:300]}"
@@ -2566,7 +2275,7 @@ class DB:
         return (success, failed)
     
     def update(self, table: str, id: str, data: dict, business_id: str = None) -> bool:
-        """Update record - with verification. Auto-handles unknown column errors (PGRST204)."""
+        """Update record - with verification"""
         try:
             url = f"{self.url}/rest/v1/{table}?id=eq.{id}"
             if business_id:
@@ -2588,28 +2297,9 @@ class DB:
             elif response.status_code == 204:
                 logger.info(f"[DB UPDATE] {table} id={id}: status=204 (assumed ok)")
                 return True
-            
-            # Auto-fix: if column not found (PGRST204), remove it and retry
-            if response.status_code == 400 and "PGRST204" in response.text:
-                try:
-                    err_data = response.json()
-                    err_msg = err_data.get("message", "")
-                    if "Could not find" in err_msg and "column" in err_msg:
-                        bad_col = err_msg.split("'")[1]
-                        logger.warning(f"[DB UPDATE] Column '{bad_col}' not in {table} - removing and retrying")
-                        data.pop(bad_col, None)
-                        if data:
-                            response2 = requests.patch(url, headers=headers, json=data, timeout=30)
-                            if response2.status_code == 200:
-                                updated = response2.json()
-                                if updated and len(updated) > 0:
-                                    logger.info(f"[DB UPDATE] {table} id={id}: retry SUCCESS after removing '{bad_col}'")
-                                    return True
-                except Exception as retry_err:
-                    logger.error(f"[DB UPDATE] Retry failed: {retry_err}")
-            
-            logger.error(f"[DB UPDATE] {table} id={id}: status={response.status_code} - {response.text[:100]}")
-            return False
+            else:
+                logger.error(f"[DB UPDATE] {table} id={id}: status={response.status_code} - {response.text[:100]}")
+                return False
                 
         except Exception as e:
             logger.error(f"[DB UPDATE] Error: {e}")
@@ -2969,7 +2659,7 @@ class RecordFactory:
             "id": kwargs.get("id") or generate_id(),
             "business_id": business_id,
             "stock_id": stock_id,
-            "date": kwargs.get("date") or today(),
+            "date": kwargs.get("date") or now(),
             "type": movement_type,  # 'in' or 'out'
             "quantity": float(quantity),
             "reference": kwargs.get("reference", ""),
@@ -3195,7 +2885,6 @@ class RecordFactory:
             "vat": vat,
             "total": total,
             "payment_method": kwargs.get("payment_method", "cash"),
-            "created_by": kwargs.get("created_by", ""),
             "created_at": kwargs.get("created_at") or now()
         }
     
@@ -3229,7 +2918,6 @@ class RecordFactory:
             "total": float(kwargs.get("total", 0)),
             "status": kwargs.get("status", "draft"),
             "received_date": kwargs.get("received_date"),
-            "created_by": kwargs.get("created_by", ""),
             "created_at": kwargs.get("created_at") or now()
         }
     
@@ -3381,8 +3069,7 @@ class RecordFactory:
             "total_additional_cost": float(kwargs.get("total_additional_cost", 0)),
             "total_actual_cost": float(kwargs.get("total_actual_cost", 0)),
             "profit_loss": float(kwargs.get("profit_loss", 0)),
-            "is_active": kwargs.get("is_active", True),
-            "created_by": kwargs.get("created_by", "")
+            "is_active": kwargs.get("is_active", True)
         }
     
     @staticmethod
@@ -3418,8 +3105,8 @@ class ZaneMemory:
     - created_at: timestamp
     """
     
-    MAX_MESSAGES = 30  # Load last 30 messages (15 exchanges)
-    MAX_CONTENT_LENGTH = 2000  # Truncate long messages
+    MAX_MESSAGES = 20  # Load last 20 messages (10 exchanges)
+    MAX_CONTENT_LENGTH = 1000  # Truncate long messages
     
     @classmethod
     def load(cls, business_id: str, user_id: str) -> list:
@@ -3705,6 +3392,20 @@ class PayrollSettings:
 
 ZANE_TOOLS = [
     {
+        "name": "search_stock",
+        "description": "Search stock/inventory items by code, description, or category. Use when user asks about products, prices, stock levels, availability. Also use for 'list all stock in category X' type queries.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search term - item code, description, or category (e.g. 'M12', 'hex bolt', 'stainless'). Use empty string to get all items (with filters)."},
+                "category": {"type": "string", "description": "Filter by category name (exact or partial match)"},
+                "low_stock_only": {"type": "boolean", "description": "Only return items with qty < 5", "default": False},
+                "out_of_stock_only": {"type": "boolean", "description": "Only return items with qty = 0", "default": False}
+            },
+            "required": ["query"]
+        }
+    },
+    {
         "name": "search_customers",
         "description": "Search customers by name, phone, or email. Returns name, phone, email, balance, address. Use for finding customer info, checking balances, or before creating invoices/quotes.",
         "input_schema": {
@@ -3829,12 +3530,22 @@ ZANE_TOOLS = [
         }
     },
     {
-        "name": "get_accounting_help",
-        "description": "Get accounting and bookkeeping guidance. Use when user asks about accounting procedures, tax questions, VAT, journal entries, payroll calculations, depreciation, deductions, SARS compliance, or any financial/tax topic. This is Zane's expert knowledge base for SA accounting and tax.",
+        "name": "get_stock_valuation",
+        "description": "Get stock valuation summary: cost value, retail value, categories, top items.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "topic": {"type": "string", "description": "The accounting/tax topic - e.g. 'rental income', 'vat return', 'journal entry', 'bad debt write off', 'payroll setup', 'depreciation', 'provisional tax', 'fringe benefits', 'capital gains'"}
+                "category": {"type": "string", "description": "Filter by category (optional)"}
+            }
+        }
+    },
+    {
+        "name": "get_accounting_help",
+        "description": "Get accounting guidance OR ClickAI program help. Use when user asks HOW to do something: accounting procedures (VAT, journal entries, payroll, etc.) OR how to use the software (create invoice, use POS, add stock, scan documents, run reports, set up business, import data, manage customers/suppliers, process payroll, job cards, bank reconciliation, collections, etc.). This is Zane's knowledge base for BOTH accounting AND step-by-step program instructions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "The topic - accounting (e.g. 'rental income', 'vat return', 'journal entry') OR program how-to (e.g. 'create invoice', 'use pos', 'add stock', 'scan receipt', 'process payroll', 'import data', 'add customer', 'run report', 'job card', 'bank reconciliation', 'how zane works', 'setup business', 'collections')"}
             },
             "required": ["topic"]
         }
@@ -3893,218 +3604,6 @@ ZANE_TOOLS = [
                 "search_query": {"type": "string", "description": "For search: search term to find in notes/reminders/todos"}
             },
             "required": ["action", "type"]
-        }
-    },
-    # ── NEW MEGA BRAIN TOOLS ──────────────────────────────────────
-    {
-        "name": "get_purchase_orders",
-        "description": "Get purchase orders (POs) to suppliers. Use when user asks about orders placed, pending deliveries, what we ordered, or supplier orders.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "supplier_name": {"type": "string", "description": "Filter by supplier name (partial match)"},
-                "status": {"type": "string", "description": "Filter: draft, sent, partial, received, cancelled", "enum": ["draft", "sent", "partial", "received", "cancelled"]},
-                "days_back": {"type": "integer", "description": "Only POs from last N days (default 60)", "default": 60},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
-            }
-        }
-    },
-    {
-        "name": "get_goods_received",
-        "description": "Get GRVs (goods received vouchers/notes). Use when user asks about deliveries received, stock received, GRV, goods in, supplier deliveries.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "supplier_name": {"type": "string", "description": "Filter by supplier name"},
-                "po_number": {"type": "string", "description": "Filter by purchase order number"},
-                "days_back": {"type": "integer", "description": "Only GRVs from last N days (default 60)", "default": 60},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
-            }
-        }
-    },
-    {
-        "name": "get_delivery_notes",
-        "description": "Get delivery notes sent to customers. Use when user asks about deliveries made, items dispatched, what was delivered.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "customer_name": {"type": "string", "description": "Filter by customer name"},
-                "status": {"type": "string", "description": "Filter: draft, dispatched, delivered", "enum": ["draft", "dispatched", "delivered"]},
-                "days_back": {"type": "integer", "description": "Only DNs from last N days (default 30)", "default": 30},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
-            }
-        }
-    },
-    {
-        "name": "get_credit_notes",
-        "description": "Get credit notes issued to customers. Use when user asks about returns, credits given, refunds, credit notes.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "customer_name": {"type": "string", "description": "Filter by customer name"},
-                "days_back": {"type": "integer", "description": "Only CNs from last N days (default 60)", "default": 60},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
-            }
-        }
-    },
-    {
-        "name": "get_payments",
-        "description": "Get payment records - money received from customers OR paid to suppliers. Use when user asks about payments, receipts, money in/out, who paid, payment history.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Filter by customer or supplier name"},
-                "direction": {"type": "string", "description": "Filter: received (from customers) or made (to suppliers)", "enum": ["received", "made"]},
-                "days_back": {"type": "integer", "description": "Only payments from last N days (default 30)", "default": 30},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
-            }
-        }
-    },
-    {
-        "name": "get_journal_entries",
-        "description": "Get journal entries / GL entries. Use when user asks about journals, general ledger, accounting entries, GL, double-entry records.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "description": {"type": "string", "description": "Search in journal description/reference"},
-                "account": {"type": "string", "description": "Filter by account name"},
-                "days_back": {"type": "integer", "description": "Only entries from last N days (default 30)", "default": 30},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
-            }
-        }
-    },
-    {
-        "name": "get_scan_queue",
-        "description": "Get scanned documents in the inbox - invoices, receipts, statements waiting to be processed. Use when user asks about scanned items, scan inbox, pending scans, documents to process.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "status": {"type": "string", "description": "Filter: pending, processed, error", "enum": ["pending", "processed", "error"]},
-                "scan_type": {"type": "string", "description": "Filter: supplier_invoice, receipt, expense, bank_statement, payslip"},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
-            }
-        }
-    },
-    {
-        "name": "get_recurring_invoices",
-        "description": "Get recurring/subscription invoices. Use when user asks about recurring billing, monthly invoices, subscription invoices, auto-invoices.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "customer_name": {"type": "string", "description": "Filter by customer name"},
-                "status": {"type": "string", "description": "Filter: active, paused", "enum": ["active", "paused"]}
-            }
-        }
-    },
-    {
-        "name": "get_rentals",
-        "description": "Get rental/property/tenant information. Use when user asks about rentals, tenants, properties, lease agreements, municipal charges, rent.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "tenant_name": {"type": "string", "description": "Filter by tenant name"},
-                "status": {"type": "string", "description": "Filter: active, ended", "enum": ["active", "ended"]}
-            }
-        }
-    },
-    {
-        "name": "get_timesheets",
-        "description": "Get timesheet/clock entries for employees. Use when user asks about hours worked, time tracking, attendance, clock in/out, who worked when.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "employee_name": {"type": "string", "description": "Filter by employee name"},
-                "days_back": {"type": "integer", "description": "Only entries from last N days (default 7)", "default": 7},
-                "limit": {"type": "integer", "description": "Max results (default 50)", "default": 50}
-            }
-        }
-    },
-    {
-        "name": "get_payslips",
-        "description": "Get payslip records. Use when user asks about payslips, salary payments, pay runs, wage history, what was paid to employees.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "employee_name": {"type": "string", "description": "Filter by employee name"},
-                "month": {"type": "string", "description": "Filter by month (YYYY-MM format, e.g. '2025-01')"},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
-            }
-        }
-    },
-    {
-        "name": "get_receipts",
-        "description": "Get receipt records (payments received from customers). Use when user asks about receipts, money received, customer payments, receipt book.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "customer_name": {"type": "string", "description": "Filter by customer name"},
-                "days_back": {"type": "integer", "description": "Only receipts from last N days (default 30)", "default": 30},
-                "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20}
-            }
-        }
-    },
-    {
-        "name": "get_subscriptions",
-        "description": "Get business subscriptions/recurring expenses. Use when user asks about subscriptions, monthly costs, recurring expenses.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "status": {"type": "string", "description": "Filter: active, cancelled", "enum": ["active", "cancelled"]}
-            }
-        }
-    },
-    {
-        "name": "get_business_health_check",
-        "description": "Get a COMPLETE business health check with score, insights, and actions. Use when user asks 'how is my business doing?', 'business health', 'give me an overview', 'hoe gaan dit met my besigheid?', or any general question about business performance. This tool does ALL the calculations and gives you pre-written insights - just read them to the user.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    {
-        "name": "save_memory",
-        "description": "Save an important fact, decision, preference, or context about the user or business for future reference. Use this whenever you learn something NEW and IMPORTANT that is NOT already stored in the database. Examples: user preferences ('Deon prefers Afrikaans reports'), business decisions ('decided to increase markup to 20%'), key people ('rekenmeester is Johan at ABC Accounting'), future plans ('wants to open a 4th store in March'), personal context ('wife birthday 15 March'). DO NOT save data that's already in the system (sales figures, customer balances, etc). Save the FACT, not the conversation.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "category": {"type": "string", "description": "Category of memory", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation"]},
-                "fact": {"type": "string", "description": "The fact to remember. Be concise but complete. Include dates where relevant. Max 200 chars."},
-                "importance": {"type": "string", "description": "How important is this?", "enum": ["high", "medium", "low"], "default": "medium"}
-            },
-            "required": ["category", "fact"]
-        }
-    },
-    {
-        "name": "recall_memories",
-        "description": "Search your memories for relevant context. Use this when you need background info about the user, their preferences, past decisions, or previous conversations. Also use when the user asks 'do you remember...', 'what did I say about...', 'het ek gesê...', or references something from a past conversation.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "What to search for in memories. Use keywords."},
-                "category": {"type": "string", "description": "Optional: filter by category", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation", "all"], "default": "all"}
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "list_memories",
-        "description": "List all saved memories, optionally filtered by category. Use when user asks 'what do you know about me?', 'wat onthou jy?', 'show me my memories', or wants to see/manage what Zane remembers.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "category": {"type": "string", "description": "Filter by category or 'all'", "enum": ["business_info", "preference", "decision", "person", "plan", "policy", "personal", "conversation", "all"], "default": "all"}
-            }
-        }
-    },
-    {
-        "name": "forget_memory",
-        "description": "Delete a specific memory by its ID. Use when user asks to remove or forget something specific.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "memory_id": {"type": "string", "description": "The ID of the memory to delete"}
-            },
-            "required": ["memory_id"]
         }
     }
 ]
@@ -5474,18 +4973,526 @@ System tracks remaining balance automatically
     }
 }
 
-# Program how-to guides removed - now handled by PAGE_HELP system (? button on each page)
-# This saves ~500 lines and removes program questions from Zane's AI calls
+# ═══════════════════════════════════════════════════════════════════
+# CLICKAI PROGRAM GUIDES - How to use the software step-by-step
+# ═══════════════════════════════════════════════════════════════════
+
+CLICKAI_PROGRAM_KNOWLEDGE = {
+
+    "clickai_invoices": {
+        "title": "How to Create & Manage Invoices in ClickAI",
+        "guide": """
+## Creating an Invoice
+
+### Quick Way (from POS):
+1. Go to /pos (click POS in the menu)
+2. Search for items → add to cart
+3. Select customer from dropdown (or type name)
+4. Click "Account" as payment method
+5. Done! Invoice created automatically with next number
+
+### From Invoices Page:
+1. Go to Sales → Invoices (/invoices)
+2. Click "+ New Invoice"
+3. Select customer (type to search)
+4. Add line items:
+   - Type item code or description → select from stock
+   - Set quantity and price
+   - VAT calculates automatically (15%)
+5. Click "Save" or "Save & Email"
+
+### Email an Invoice:
+- Open the invoice → Click "Email" button
+- Customer gets a professional PDF with your logo
+- They can view online via the Customer Portal link
+
+### Record Payment Against Invoice:
+- Open invoice → Click "Record Payment"
+- Enter amount, date, payment method (EFT/Cash/Card)
+- Partial payments allowed - system tracks balance
+
+### Convert Quote to Invoice:
+- Open the quote → Click "Convert to Invoice"
+- All items copy across automatically
+- Quote status changes to "Converted"
+
+### Tips:
+- Invoice numbers auto-increment (INV-0001, INV-0002...)
+- POS sales with "Account" payment = automatic invoice
+- Overdue invoices show in red on the list
+- Use Collections page to chase overdue invoices
+- Statements can be emailed from Customer page
+"""
+    },
+
+    "clickai_quotes": {
+        "title": "How to Create & Manage Quotes in ClickAI",
+        "guide": """
+## Creating a Quote
+
+### Steps:
+1. Go to Sales → Quotes (/quotes)
+2. Click "+ New Quote"
+3. Select customer (type to search)
+4. Add line items:
+   - Search stock by code or description
+   - Set qty, price (defaults from stock)
+   - Add custom line items not in stock
+5. Add notes if needed (terms, lead time, etc.)
+6. Click "Save" or "Save & Email"
+
+### Email a Quote:
+- Open quote → Click "Email"
+- Customer gets professional PDF
+
+### Convert to Invoice:
+- Open quote → Click "Convert to Invoice"
+- All items and prices copy automatically
+
+### Convert to Job Card:
+- Open quote → Click "Create Job Card"
+- BOM (Bill of Materials) created from quote items
+- Track materials, labour, and profitability vs quoted price
+
+### Tips:
+- Quote numbers: QUO-0001, QUO-0002...
+- Quotes don't affect stock or accounts until converted
+- Use Zane: "quote John Smith for 50x M16 bolts" → auto-creates
+- Valid for 30 days by default (change in Settings)
+"""
+    },
+
+    "clickai_pos": {
+        "title": "How to Use the POS (Point of Sale) in ClickAI",
+        "guide": """
+## POS - Daily Sales
+
+### Making a Sale:
+1. Go to /pos (POS in menu)
+2. Search for items:
+   - Type code, description, or category
+   - Click item to add to cart (qty = 1)
+   - Click again or change qty in cart
+3. Quick qty: Type "5*M16" to add 5x M16 bolts
+4. Select customer or leave as "Cash Sale"
+5. Choose payment: Cash / Card / Account
+6. Click "Complete Sale"
+
+### Payment Methods:
+- **Cash**: Cash drawer. System tracks expected cash.
+- **Card**: Card machine. No cash drawer impact.
+- **Account**: Creates invoice on customer account. Customer must be selected!
+
+### POS History:
+- Click "History" on POS page → /pos/history
+- Default shows last 30 days
+- Search by customer, slip number, or item name
+- Quick filters: Today, Yesterday, This Week, This Month, etc.
+- X-Read: Interim report (mid-day check)
+- Z-Read: End of day close (print & sign)
+
+### Thermal Printer:
+- Settings → Printer Setup → Enter printer IP
+- 80mm thermal receipt prints automatically
+
+### Tips:
+- POS automatically deducts stock quantity
+- Each sale gets a slip number
+- Staff users can be limited to POS-only access
+- Returns: Find original sale in History → process credit note
+"""
+    },
+
+    "clickai_stock": {
+        "title": "How to Manage Stock/Inventory in ClickAI",
+        "guide": """
+## Stock Management
+
+### Add a Stock Item:
+1. Go to Inventory → Stock (/stock)
+2. Click "+ New Item"
+3. Fill in:
+   - **Code**: Unique code (e.g., M16-80-88)
+   - **Description**: Full name
+   - **Category**: Select or create new
+   - **Cost Price**: What YOU pay (excl VAT)
+   - **Selling Price**: What customer pays (excl VAT)
+   - **Quantity**: Current stock on hand
+   - **Min Level**: Reorder alert trigger
+4. Click "Save"
+
+### Import Stock (bulk):
+1. Settings → Import (/import) → Select "Stock Items"
+2. Upload CSV or Excel → AI maps columns
+3. Review → Import. Can also "Add 50% markup" or "Generate codes"
+
+### Stock Adjustments:
+- Select items → Adjust quantities after stock count
+- System creates journal entries automatically
+
+### Tips:
+- Stock value shows on Dashboard (cost × qty)
+- Negative stock = oversold (investigate!)
+- Low stock items highlighted in POS
+- Cost of Sales calculated automatically on each sale
+- Bolt Calculator: Built-in weight/price calculator for fasteners
+"""
+    },
+
+    "clickai_customers": {
+        "title": "How to Manage Customers in ClickAI",
+        "guide": """
+## Customer Management
+
+### Add a Customer:
+1. Go to Sales → Customers (/customers)
+2. Click "+ New Customer"
+3. Fill in: Name, Phone, Email, Address, VAT number → Save
+- OR type name in POS/Invoice → auto-creates
+- OR tell Zane: "add customer John Smith 082 123 4567"
+
+### Customer Page Shows:
+- Balance owing, all invoices, payments, quotes, statement button
+
+### Email Statement:
+- Open customer → Click "Email Statement" → PDF sent
+- Bulk: Customers page → "Email All Statements" (one click!)
+
+### Tips:
+- Collections page (/collections) → chase overdue invoices
+- Zane: "show me who owes the most" → instant debtors report
+- Customer Portal: customers view invoices online
+- Import from CSV: Settings → Import → Customers
+"""
+    },
+
+    "clickai_suppliers": {
+        "title": "How to Manage Suppliers in ClickAI",
+        "guide": """
+## Supplier Management
+
+### Add a Supplier:
+1. Go to Purchases → Suppliers (/suppliers)
+2. Click "+ New Supplier"
+3. Fill in: Name, Phone, Email, Address, VAT number, Bank details → Save
+
+### Record Supplier Invoice:
+- Scan Inbox → AI extracts from email/photo → Book as Expense/Stock
+- OR: Expenses → New Expense → Select supplier
+
+### Make Payment:
+- Open supplier → "Record Payment" → Enter amount, date, reference
+
+### Scanner Memory:
+- First scan: confirm category. Future scans: auto-categorized!
+
+### Tips:
+- Aged Creditors report shows what you owe and when
+- Zane: "how much do we owe suppliers?" → instant answer
+"""
+    },
+
+    "clickai_expenses": {
+        "title": "How to Record Expenses in ClickAI",
+        "guide": """
+## Recording Expenses
+
+### Manual Entry:
+1. Go to Expenses (/expenses)
+2. Click "+ New Expense"
+3. Fill in: Supplier, Date, Amount, Category, Payment method, Reference → Save
+
+### Scan a Receipt/Invoice (FASTEST!):
+1. Go to Scan Inbox (/scan)
+2. "Check Email" → AI reads emailed invoices, OR "Upload" → photo of receipt
+3. AI extracts: supplier, amount, VAT, items
+4. Zane suggests: stock or expense? which category? VAT claimable?
+5. Click action button → Done! Journal entries auto-created.
+
+### Action Buttons:
+- 🟠 Book as Expense (credit purchase)
+- 🟢 Expense Paid (cash/card purchase)
+- 🔵 Stock Purchase Credit (items go to stock, unpaid)
+- 🟦 Stock Purchase Paid (stock + paid)
+
+### Tips:
+- Fuel receipts: VAT NOT claimable (Zane knows this!)
+- Keep receipts 5 years (SARS requirement)
+- Zane: "what did we spend on repairs this month?" → instant answer
+"""
+    },
+
+    "clickai_scanning": {
+        "title": "How Document Scanning Works in ClickAI",
+        "guide": """
+## AI Document Scanning
+
+### Scan Inbox (Email):
+1. Go to Scan Inbox (/scan)
+2. "Check Email" → AI reads attached invoices from your email
+3. Review extracted data → fix if needed → click action button
+
+### Upload Photos:
+- Click "Upload" → take photo of receipt/invoice
+- AI reads handwritten and printed text
+- Works with SA invoices in English and Afrikaans
+
+### Timesheet Scanning:
+1. Payroll → Timesheets → "Scan Timesheet"
+2. Upload photo of handwritten timesheet
+3. AI reads names and clock in/out times
+4. Python calculates hours (AI never calculates!)
+5. Review → Process to payroll
+
+### Smart Scan (POS):
+- From POS → "Smart Scan" → upload any document
+- AI identifies type: invoice, receipt, timesheet, customer order
+- Routes to correct processing flow
+
+### Tips:
+- Print timesheet template: has job numbers pre-printed
+- Better photo = better results (good lighting, flat surface)
+- Scanner Memory learns your suppliers' formats
+"""
+    },
+
+    "clickai_payroll": {
+        "title": "How to Process Payroll in ClickAI",
+        "guide": """
+## Payroll Processing
+
+### Setup (once-off):
+1. Payroll → Settings (/payroll/settings)
+2. Configure: normal hours, Friday hours, OT rates, lunch deduction, pay cycle
+
+### Add Employees:
+1. Payroll → Employees → "+ New Employee"
+2. Enter: Name, ID number, tax number, salary/rate, bank details → Save
+
+### Process Pay Run:
+1. Payroll → "Process Pay Run"
+2. Select period → Enter hours (or scan timesheets)
+3. Review: basic pay, overtime, PAYE, UIF, SDL (all calculated by Python)
+4. Click "Approve & Process" → Payslips generated
+
+### Email Payslips:
+- After processing → "Email Payslips" → each employee gets PDF
+
+### SARS: EMP201 (monthly), EMP501 (annual), IRP5 certificates → Reports → SARS
+
+### Tips:
+- Timesheet hours go to BOTH payroll AND job cards
+- UIF: 1% employee + 1% employer (max R177.12 each)
+- SDL: 1% of payroll (exempt if < R500,000/year)
+"""
+    },
+
+    "clickai_jobs": {
+        "title": "How to Use Job Cards in ClickAI",
+        "guide": """
+## Job Cards (Quote → Build → Deliver → Invoice)
+
+### Create Job Card:
+**From Quote (recommended):** Open quote → "Create Job Card" → BOM auto-created
+**Direct:** Jobs (/jobs) → "+ New Job Card" → enter details + BOM manually
+
+### During the Job:
+1. **Issue Materials**: Job Card → "Issue Stock" → stock qty decreases, cost to job
+2. **Log Time**: Scan timesheets with job number → hours auto-link
+3. **Track**: See live: Materials + Labour cost vs Quoted price = Profit/Loss %
+
+### Complete & Invoice:
+1. "Complete" → 2. "DN & Invoice" (one click = Delivery Note + Invoice!)
+3. Job profitability finalised
+
+### Tips:
+- Write job numbers on timesheets (JC-2026-001)
+- Zane: "how's job JC-2026-001 doing?" → live profitability
+"""
+    },
+
+    "clickai_banking": {
+        "title": "How to Do Bank Reconciliation in ClickAI",
+        "guide": """
+## Bank Reconciliation
+
+### Import Statement:
+1. Banking (/banking) → "Import Statement"
+2. Upload CSV from bank (FNB, ABSA, Standard, Nedbank, Capitec)
+3. AI reads format automatically
+
+### Reconcile:
+1. For each bank entry → system suggests matches
+2. Click to match → both sides reconcile
+3. Unmatched → create new expense/income or investigate
+
+### Tips:
+- Download CSV from internet banking (not PDF!)
+- Reconcile weekly - don't let it pile up
+- Zane: "reconcile my bank" for guidance
+"""
+    },
+
+    "clickai_reports": {
+        "title": "How to Run Reports in ClickAI",
+        "guide": """
+## Reports
+
+### Go to Reports (/reports):
+- **Financial**: Income Statement, Balance Sheet, Trial Balance, Cash Flow
+- **Tax**: VAT201, EMP201, EMP501
+- **Business**: Aged Debtors/Creditors, GL, Stock Valuation, Sales
+
+### Smart Reports (AI-Powered):
+1. Reports → Smart Reports (/reports/smart)
+2. Select type → Opus analyses your data
+3. Professional report with insights and action items
+4. Like a R5,000/hour CA reviewing your books!
+
+### Business Pulse (/pulse):
+- Daily AI briefing of what happened
+- Team activity, alerts, action items
+- Refresh anytime for latest update
+
+### Tips:
+- Zane: "show me this month's profit" → instant
+- Smart Reports give actionable advice, not just numbers
+"""
+    },
+
+    "clickai_settings": {
+        "title": "How to Set Up Your Business in ClickAI",
+        "guide": """
+## Business Setup
+
+### Settings (/settings):
+1. **Business Info**: Name, reg number, VAT number, address, logo, bank details
+2. **Financial**: Year start, VAT period, payment terms
+3. **Invoice**: Number prefix, starting number, T&Cs
+4. **Chart of Accounts**: SA standard pre-loaded, add custom accounts
+5. **Team**: Add users → Admin / Staff / POS Only roles
+6. **Multi-Business**: Click "+" → max 2 businesses per account
+
+### First-Time Checklist:
+1. Add business info + logo
+2. Set up email (for sending invoices)
+3. Configure thermal printer IP (for POS)
+4. Import data (customers, suppliers, stock)
+5. Set opening balances (if switching from another system)
+6. Add team members with correct roles
+
+### Tips:
+- Logo appears on all invoices and quotes
+- Import order: Chart of Accounts → Customers → Suppliers → Stock → Balances
+"""
+    },
+
+    "clickai_import": {
+        "title": "How to Import Data into ClickAI",
+        "guide": """
+## Importing Data
+
+### Steps:
+1. Settings → Import (/import)
+2. Select type (Customers, Suppliers, Stock, Transactions)
+3. Upload CSV or Excel → AI maps columns automatically
+4. Review mapping → Import
+
+### AI Features:
+- "Add 50% markup" → calculates selling prices from cost
+- "Generate codes" → creates stock codes from descriptions
+- "Add categories" → categorizes items automatically
+- Handles messy data, duplicates, formatting issues
+
+### Migration Hub:
+- Settings → Migrate → Connect to Sage/Xero/QuickBooks
+- Pull data automatically (no CSV export needed!)
+
+### Import Order: Chart of Accounts → Customers → Suppliers → Stock → Balances → Invoices
+
+### Tips:
+- NEVER clean your CSV - AI handles messy data!
+- Test with small file first if unsure
+"""
+    },
+
+    "clickai_collections": {
+        "title": "How to Chase Overdue Invoices in ClickAI",
+        "guide": """
+## Collections
+
+### Collections (/collections):
+- All customers with overdue invoices, sorted by most overdue
+- **Individual**: Click customer → "Send Reminder" (Email/WhatsApp)
+- **Bulk**: "Email All" → reminder to ALL overdue customers
+
+### WhatsApp:
+- Click WhatsApp icon → opens with pre-written message including amounts
+
+### Tips:
+- Check weekly. Zane: "who owes us the most?"
+- Aged Debtors report: 30/60/90 day aging
+- Mark customers "On Hold" to stop new credit
+"""
+    },
+
+    "clickai_payments": {
+        "title": "How to Record Payments in ClickAI",
+        "guide": """
+## Payments
+
+### Customer Payment (money IN):
+- Open customer OR invoice → "Record Payment"
+- Enter: amount, date, method (EFT/Cash/Card), reference → Save
+- Partial payments tracked. Invoice shows remaining balance.
+
+### Supplier Payment (money OUT):
+- Open supplier → "Record Payment" → Enter details → Save
+
+### Tips:
+- Always use bank reference for EFT (easy to reconcile)
+- Zane: "record payment from John Smith R5000" → quick capture
+- Over-payment creates credit balance on account
+"""
+    },
+
+    "clickai_zane_help": {
+        "title": "How to Use Zane (AI Assistant) in ClickAI",
+        "guide": """
+## Zane - Your AI Assistant
+
+### Access: Chat bubble (bottom right) on any page
+
+### Quick Actions:
+- "invoice John Smith for R5000 steel" → Creates invoice
+- "quote ABC Trading for 100x M16 bolts" → Creates quote
+- "add customer Jane 082 123 4567" → Creates customer
+
+### Search: "find M16 bolts", "how much does John owe?", "what stock is low?"
+
+### Reports: "how's business?", "today's sales", "who owes most?"
+
+### Accounting: "how do I handle VAT?", "journal entry for bad debt"
+
+### Navigation: "take me to invoices", "go to stock"
+
+### Language: English + Afrikaans. Mix freely: "hoeveel skuld John Smith?"
+
+### Tips: Remembers last 16 messages. Knows YOUR data. Qualified SA bookkeeper.
+"""
+    }
+}
+
+# Merge program knowledge into accounting knowledge
+ACCOUNTING_KNOWLEDGE.update(CLICKAI_PROGRAM_KNOWLEDGE)
 
 
 class ZaneToolHandler:
     """Executes tool calls from Zane and returns results."""
     
-    def __init__(self, db_instance, business_id: str, user_id: str = ""):
+    def __init__(self, db_instance, business_id: str):
         self.db = db_instance
         self.biz_id = business_id
-        self.business_id = business_id  # For memory tools
-        self.user_id = user_id  # For memory tools
     
     def execute(self, tool_name: str, tool_input: dict) -> str:
         """Route tool call to handler, return JSON string result."""
@@ -5585,216 +5592,32 @@ class ZaneToolHandler:
         return {"total_matches": len(results), "suppliers": results[:30]}
     
     def _tool_get_debtors(self, params: dict) -> dict:
-        """Get debtors with AGING analysis pre-calculated"""
         min_amount = params.get("min_amount", 0)
         limit = params.get("limit", 20)
-        
         customers = self.db.get("customers", {"business_id": self.biz_id}) or []
-        invoices = self.db.get("invoices", {"business_id": self.biz_id}) or []
-        
-        # Build outstanding invoices per customer with aging
-        today = datetime.now().date()
-        customer_aging = {}
-        
-        for inv in invoices:
-            if inv.get("status") not in ("outstanding", "sent", "overdue"):
-                continue
-            
-            cust_id = inv.get("customer_id", "")
-            cust_name = inv.get("customer_name", "Unknown")
-            amount = float(inv.get("total", 0) or 0)
-            
-            # Calculate days old
-            inv_date = inv.get("date", "")
-            if inv_date:
-                try:
-                    inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d").date()
-                    days_old = (today - inv_dt).days
-                except:
-                    days_old = 0
-            else:
-                days_old = 0
-            
-            if cust_name not in customer_aging:
-                customer_aging[cust_name] = {
-                    "name": cust_name, "phone": "", "email": "",
-                    "total": 0, "current": 0, "days_30": 0, "days_60": 0, "days_90": 0, "days_120_plus": 0,
-                    "oldest_invoice_days": 0, "invoice_count": 0
-                }
-            
-            ca = customer_aging[cust_name]
-            ca["total"] += amount
-            ca["invoice_count"] += 1
-            if days_old > ca["oldest_invoice_days"]:
-                ca["oldest_invoice_days"] = days_old
-            
-            # Aging buckets
-            if days_old <= 30:
-                ca["current"] += amount
-            elif days_old <= 60:
-                ca["days_30"] += amount
-            elif days_old <= 90:
-                ca["days_60"] += amount
-            elif days_old <= 120:
-                ca["days_90"] += amount
-            else:
-                ca["days_120_plus"] += amount
-        
-        # Add phone/email from customer records
+        debtors = []
+        total_owed = 0
         for c in customers:
-            name = c.get("name", "")
-            if name in customer_aging:
-                customer_aging[name]["phone"] = c.get("phone", "")
-                customer_aging[name]["email"] = c.get("email", "")
-        
-        # Also add customers with balance but no outstanding invoices
-        for c in customers:
-            name = c.get("name", "")
             balance = float(c.get("balance", 0) or 0)
-            if balance > 0 and name not in customer_aging:
-                customer_aging[name] = {
-                    "name": name, "phone": c.get("phone", ""), "email": c.get("email", ""),
-                    "total": balance, "current": balance, "days_30": 0, "days_60": 0, 
-                    "days_90": 0, "days_120_plus": 0, "oldest_invoice_days": 0, "invoice_count": 0
-                }
-        
-        # Filter and sort
-        debtors = [d for d in customer_aging.values() if d["total"] > min_amount]
-        debtors.sort(key=lambda x: x["total"], reverse=True)
-        
-        # Calculate totals
-        total_owed = sum(d["total"] for d in debtors)
-        total_current = sum(d["current"] for d in debtors)
-        total_30 = sum(d["days_30"] for d in debtors)
-        total_60 = sum(d["days_60"] for d in debtors)
-        total_90 = sum(d["days_90"] for d in debtors)
-        total_120_plus = sum(d["days_120_plus"] for d in debtors)
-        
-        # Problem debtors (90+ days)
-        problem_debtors = [d for d in debtors if d["days_90"] > 0 or d["days_120_plus"] > 0]
-        
-        # Pre-calculated insight
-        if total_120_plus > 0:
-            health = "CRITICAL"
-            insight = f"R{total_120_plus:,.0f} is 120+ days old - HIGH RISK of bad debt. Immediate action needed."
-        elif total_90 > 0:
-            health = "WARNING"
-            insight = f"R{total_90:,.0f} is 90+ days old. Follow up urgently before it becomes bad debt."
-        elif total_60 > 0:
-            health = "MONITOR"
-            insight = f"R{total_60:,.0f} is 60+ days old. Send reminders soon."
-        else:
-            health = "GOOD"
-            insight = "All debtors are within 60 days. Keep up the good collection efforts."
-        
-        return {
-            "total_debtors": len(debtors),
-            "total_owed": total_owed,
-            "aging_summary": {
-                "current_0_30": total_current,
-                "days_31_60": total_30,
-                "days_61_90": total_60,
-                "days_91_120": total_90,
-                "days_120_plus": total_120_plus
-            },
-            "health_status": health,
-            "insight": insight,
-            "problem_debtors_count": len(problem_debtors),
-            "problem_debtors": problem_debtors[:5],  # Top 5 problem debtors
-            "debtors": debtors[:limit]
-        }
+            if balance > min_amount:
+                total_owed += balance
+                debtors.append({"name": c.get("name", ""), "phone": c.get("phone", ""),
+                                "balance": balance, "email": c.get("email", "")})
+        debtors.sort(key=lambda x: x["balance"], reverse=True)
+        return {"total_debtors": len(debtors), "total_owed": total_owed, "debtors": debtors[:limit]}
     
     def _tool_get_creditors(self, params: dict) -> dict:
-        """Get creditors with aging analysis"""
         limit = params.get("limit", 20)
         suppliers = self.db.get("suppliers", {"business_id": self.biz_id}) or []
-        supplier_invoices = self.db.get("supplier_invoices", {"business_id": self.biz_id}) or []
-        
-        today = datetime.now().date()
-        supplier_aging = {}
-        
-        # Build aging from supplier invoices
-        for inv in supplier_invoices:
-            if inv.get("status") == "paid":
-                continue
-            
-            supp_name = inv.get("supplier_name", "Unknown")
-            amount = float(inv.get("total", 0) or inv.get("amount", 0) or 0)
-            
-            inv_date = inv.get("date", "")
-            if inv_date:
-                try:
-                    inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d").date()
-                    days_old = (today - inv_dt).days
-                except:
-                    days_old = 0
-            else:
-                days_old = 0
-            
-            if supp_name not in supplier_aging:
-                supplier_aging[supp_name] = {
-                    "name": supp_name, "phone": "", 
-                    "total": 0, "current": 0, "days_30": 0, "days_60": 0, "days_90_plus": 0
-                }
-            
-            sa = supplier_aging[supp_name]
-            sa["total"] += amount
-            
-            if days_old <= 30:
-                sa["current"] += amount
-            elif days_old <= 60:
-                sa["days_30"] += amount
-            elif days_old <= 90:
-                sa["days_60"] += amount
-            else:
-                sa["days_90_plus"] += amount
-        
-        # Add suppliers with balance but no invoices
+        creditors = []
+        total_owed = 0
         for s in suppliers:
-            name = s.get("name", "")
             balance = float(s.get("balance", 0) or 0)
             if balance > 0:
-                if name in supplier_aging:
-                    supplier_aging[name]["phone"] = s.get("phone", "")
-                else:
-                    supplier_aging[name] = {
-                        "name": name, "phone": s.get("phone", ""),
-                        "total": balance, "current": balance, "days_30": 0, "days_60": 0, "days_90_plus": 0
-                    }
-        
-        creditors = list(supplier_aging.values())
-        creditors.sort(key=lambda x: x["total"], reverse=True)
-        
-        total_owed = sum(c["total"] for c in creditors)
-        total_current = sum(c["current"] for c in creditors)
-        total_30 = sum(c["days_30"] for c in creditors)
-        total_60 = sum(c["days_60"] for c in creditors)
-        total_90_plus = sum(c["days_90_plus"] for c in creditors)
-        
-        # Insight
-        if total_90_plus > total_owed * 0.3:
-            status = "OVERDUE"
-            insight = f"R{total_90_plus:,.0f} is 90+ days overdue. Risk of supplier problems or legal action."
-        elif total_60 > total_owed * 0.3:
-            status = "WATCH"
-            insight = f"R{total_60:,.0f} is 60-90 days. Pay soon to maintain good supplier relationships."
-        else:
-            status = "OK"
-            insight = "Most payables are current. Good supplier management."
-        
-        return {
-            "total_creditors": len(creditors),
-            "total_owed": total_owed,
-            "aging_summary": {
-                "current_0_30": total_current,
-                "days_31_60": total_30,
-                "days_61_90": total_60,
-                "days_90_plus": total_90_plus
-            },
-            "status": status,
-            "insight": insight,
-            "creditors": creditors[:limit]
-        }
+                total_owed += balance
+                creditors.append({"name": s.get("name", ""), "balance": balance, "phone": s.get("phone", "")})
+        creditors.sort(key=lambda x: x["balance"], reverse=True)
+        return {"total_creditors": len(creditors), "total_owed": total_owed, "creditors": creditors[:limit]}
     
     def _tool_get_invoices(self, params: dict) -> dict:
         customer_name = params.get("customer_name", "").lower()
@@ -5839,352 +5662,79 @@ class ZaneToolHandler:
         return {"total_matches": len(results), "quotes": results[:limit]}
     
     def _tool_get_sales_summary(self, params: dict) -> dict:
-        """Get sales summary with period comparison"""
         period = params.get("period", "this_month")
         customer_filter = params.get("customer_name", "").lower()
         now = datetime.now()
-        
-        # Determine date ranges
         if period == "today":
             start = end = now.strftime("%Y-%m-%d")
-            prev_start = prev_end = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         elif period == "yesterday":
-            yd = now - timedelta(days=1)
-            start = end = yd.strftime("%Y-%m-%d")
-            prev_start = prev_end = (yd - timedelta(days=1)).strftime("%Y-%m-%d")
+            yd = now - timedelta(days=1); start = end = yd.strftime("%Y-%m-%d")
         elif period == "this_week":
-            start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
-            end = now.strftime("%Y-%m-%d")
-            prev_start = (now - timedelta(days=now.weekday() + 7)).strftime("%Y-%m-%d")
-            prev_end = (now - timedelta(days=now.weekday() + 1)).strftime("%Y-%m-%d")
+            start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d"); end = now.strftime("%Y-%m-%d")
         elif period == "last_week":
-            lm = now - timedelta(days=now.weekday() + 7)
-            start = lm.strftime("%Y-%m-%d")
-            end = (lm + timedelta(days=6)).strftime("%Y-%m-%d")
-            prev_start = (lm - timedelta(days=7)).strftime("%Y-%m-%d")
-            prev_end = (lm - timedelta(days=1)).strftime("%Y-%m-%d")
+            lm = now - timedelta(days=now.weekday() + 7); start = lm.strftime("%Y-%m-%d"); end = (lm + timedelta(days=6)).strftime("%Y-%m-%d")
         elif period == "this_month":
-            start = now.strftime("%Y-%m-01")
-            end = now.strftime("%Y-%m-%d")
-            ft = now.replace(day=1)
-            lp = ft - timedelta(days=1)
-            prev_start = lp.strftime("%Y-%m-01")
-            prev_end = lp.strftime("%Y-%m-%d")
+            start = now.strftime("%Y-%m-01"); end = now.strftime("%Y-%m-%d")
         elif period == "last_month":
-            ft = now.replace(day=1)
-            lp = ft - timedelta(days=1)
-            start = lp.strftime("%Y-%m-01")
-            end = lp.strftime("%Y-%m-%d")
-            pp = lp.replace(day=1) - timedelta(days=1)
-            prev_start = pp.strftime("%Y-%m-01")
-            prev_end = pp.strftime("%Y-%m-%d")
+            ft = now.replace(day=1); lp = ft - timedelta(days=1); start = lp.strftime("%Y-%m-01"); end = lp.strftime("%Y-%m-%d")
         elif period == "this_year":
-            start = now.strftime("%Y-01-01")
-            end = now.strftime("%Y-%m-%d")
-            prev_start = f"{now.year - 1}-01-01"
-            prev_end = f"{now.year - 1}-{now.strftime('%m-%d')}"
+            start = now.strftime("%Y-01-01"); end = now.strftime("%Y-%m-%d")
         else:
-            start = now.strftime("%Y-%m-01")
-            end = now.strftime("%Y-%m-%d")
-            prev_start = prev_end = ""
+            start = now.strftime("%Y-%m-01"); end = now.strftime("%Y-%m-%d")
         
         sales = self.db.get("sales", {"business_id": self.biz_id}) or []
-        invoices = self.db.get("invoices", {"business_id": self.biz_id}) or []
-        
-        # Current period
-        total_sales = 0
-        total_invoiced = 0
-        count = 0
-        customer_totals = {}
-        payment_methods = {}
-        
+        total_sales = 0; count = 0; customer_totals = {}; payment_methods = {}
         for s in sales:
             sd = s.get("date", "")
             if not sd or sd < start or sd > end:
                 continue
             if customer_filter and customer_filter not in str(s.get("customer_name", "")).lower():
                 continue
-            amt = float(s.get("total", 0) or 0)
-            total_sales += amt
-            count += 1
-            cn = s.get("customer_name", "Walk-in")
-            customer_totals[cn] = customer_totals.get(cn, 0) + amt
-            pm = s.get("payment_method", "unknown")
-            payment_methods[pm] = payment_methods.get(pm, 0) + amt
+            amt = float(s.get("total", 0) or 0); total_sales += amt; count += 1
+            cn = s.get("customer_name", "Walk-in"); customer_totals[cn] = customer_totals.get(cn, 0) + amt
+            pm = s.get("payment_method", "unknown"); payment_methods[pm] = payment_methods.get(pm, 0) + amt
         
-        # Add invoices to total
-        for inv in invoices:
-            inv_date = inv.get("date", "")
-            if not inv_date or inv_date < start or inv_date > end:
-                continue
-            total_invoiced += float(inv.get("total", 0) or 0)
-        
-        # Previous period (for comparison)
-        prev_sales = 0
-        prev_count = 0
-        if prev_start:
-            for s in sales:
-                sd = s.get("date", "")
-                if sd and sd >= prev_start and sd <= prev_end:
-                    prev_sales += float(s.get("total", 0) or 0)
-                    prev_count += 1
-        
-        # Calculate change
-        if prev_sales > 0:
-            change_pct = ((total_sales - prev_sales) / prev_sales) * 100
-        else:
-            change_pct = 0
-        
-        # Insight
-        if change_pct > 20:
-            trend = "UP"
-            insight = f"Sales up {change_pct:.0f}% vs previous period! Great momentum."
-        elif change_pct > 0:
-            trend = "STEADY_UP"
-            insight = f"Sales up {change_pct:.0f}% vs previous period."
-        elif change_pct > -10:
-            trend = "FLAT"
-            insight = "Sales roughly flat vs previous period."
-        elif change_pct > -30:
-            trend = "DOWN"
-            insight = f"Sales down {abs(change_pct):.0f}% vs previous period. Monitor closely."
-        else:
-            trend = "DECLINING"
-            insight = f"Sales down {abs(change_pct):.0f}%! Investigate causes urgently."
-        
-        top_cust = sorted(customer_totals.items(), key=lambda x: x[1], reverse=True)[:5]
-        
-        return {
-            "period": period,
-            "date_range": f"{start} to {end}",
-            "total_sales": total_sales,
-            "total_invoiced": total_invoiced,
-            "combined_revenue": total_sales + total_invoiced,
-            "transaction_count": count,
-            "average_sale": total_sales / count if count else 0,
-            "previous_period_sales": prev_sales,
-            "change_pct": round(change_pct, 1),
-            "trend": trend,
-            "insight": insight,
-            "top_customers": [{"name": n, "total": t} for n, t in top_cust],
-            "payment_methods": payment_methods
-        }
+        top_cust = sorted(customer_totals.items(), key=lambda x: x[1], reverse=True)[:10]
+        return {"period": period, "date_range": f"{start} to {end}", "total_sales": total_sales,
+                "transaction_count": count, "average_sale": total_sales / count if count else 0,
+                "top_customers": [{"name": n, "total": t} for n, t in top_cust], "payment_methods": payment_methods}
     
     def _tool_get_expenses(self, params: dict) -> dict:
-        """Get expenses with trend analysis and insights"""
         category = params.get("category", "").lower()
         days_back = params.get("days_back", 30)
         limit = params.get("limit", 20)
-        
         expenses = self.db.get("expenses", {"business_id": self.biz_id}) or []
-        now = datetime.now()
-        cutoff = (now - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        prev_cutoff = (now - timedelta(days=days_back*2)).strftime("%Y-%m-%d")
-        
-        # Current period
+        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
         results = []; total = 0; cat_totals = {}
-        # Previous period (for comparison)
-        prev_total = 0; prev_cat_totals = {}
-        
         for e in expenses:
             ed = e.get("date", "")
-            if not ed:
+            if ed and ed < cutoff:
                 continue
-            amt = float(e.get("amount", 0) or 0)
-            c = e.get("category", "Other")
-            
-            if ed >= cutoff:
-                # Current period
-                if category and category not in c.lower():
-                    continue
-                total += amt
-                cat_totals[c] = cat_totals.get(c, 0) + amt
-                results.append({"description": e.get("description", ""), "amount": amt, "category": c,
-                                "date": ed, "supplier": e.get("supplier_name", "")})
-            elif ed >= prev_cutoff:
-                # Previous period
-                prev_total += amt
-                prev_cat_totals[c] = prev_cat_totals.get(c, 0) + amt
-        
+            if category and category not in str(e.get("category", "")).lower():
+                continue
+            amt = float(e.get("amount", 0) or 0); total += amt
+            c = e.get("category", "Other"); cat_totals[c] = cat_totals.get(c, 0) + amt
+            results.append({"description": e.get("description", ""), "amount": amt, "category": c,
+                            "date": ed, "supplier": e.get("supplier_name", "")})
         results.sort(key=lambda x: x["date"] or "", reverse=True)
-        
-        # Calculate change
-        if prev_total > 0:
-            change_pct = ((total - prev_total) / prev_total) * 100
-        else:
-            change_pct = 0
-        
-        # Find biggest category
-        sorted_cats = sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)
-        biggest_cat = sorted_cats[0] if sorted_cats else ("None", 0)
-        
-        # Find unusual increases
-        unusual = []
-        for cat, amt in cat_totals.items():
-            prev_amt = prev_cat_totals.get(cat, 0)
-            if prev_amt > 0 and amt > prev_amt * 1.5:  # 50%+ increase
-                unusual.append(f"{cat} up {((amt-prev_amt)/prev_amt)*100:.0f}%")
-        
-        # Generate insight
-        if change_pct > 30:
-            status = "HIGH"
-            insight = f"Expenses up {change_pct:.0f}% vs previous period. Biggest: {biggest_cat[0]} (R{biggest_cat[1]:,.0f})."
-        elif change_pct > 10:
-            status = "RISING"
-            insight = f"Expenses up {change_pct:.0f}%. Monitor {biggest_cat[0]} which is your biggest expense."
-        elif change_pct < -20:
-            status = "DECREASING"
-            insight = f"Expenses down {abs(change_pct):.0f}% - good cost control!"
-        else:
-            status = "STABLE"
-            insight = f"Expenses stable. Biggest category: {biggest_cat[0]} (R{biggest_cat[1]:,.0f})."
-        
-        if unusual:
-            insight += f" Unusual: {', '.join(unusual[:2])}."
-        
-        return {
-            "total_expenses": total,
-            "count": len(results),
-            "previous_period_total": prev_total,
-            "change_pct": round(change_pct, 1),
-            "status": status,
-            "insight": insight,
-            "biggest_category": biggest_cat[0],
-            "biggest_category_amount": biggest_cat[1],
-            "unusual_increases": unusual[:3],
-            "by_category": dict(sorted_cats[:10]),
-            "expenses": results[:limit]
-        }
+        return {"total_expenses": total, "count": len(results),
+                "by_category": dict(sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)), "expenses": results[:limit]}
     
     def _tool_get_financial_overview(self, params: dict) -> dict:
-        """Get financial overview with PRE-CALCULATED insights - Zane doesn't need to do math"""
         period = params.get("period", "this_month")
-        
-        # Get raw data
         sales = self._tool_get_sales_summary({"period": period})
         expenses = self._tool_get_expenses({"days_back": 30 if "month" in period else 365})
         debtors = self._tool_get_debtors({"limit": 5})
         creditors = self._tool_get_creditors({"limit": 5})
         stock_val = self._tool_get_stock_valuation({})
-        
-        # Key numbers
-        income = sales["total_sales"]
-        exp_total = expenses["total_expenses"]
-        profit = income - exp_total
-        margin = ((profit) / income * 100) if income > 0 else 0
-        total_debtors = debtors["total_owed"]
-        total_creditors = creditors["total_owed"]
-        stock_cost = stock_val["total_cost_value"]
-        
-        # === PRE-CALCULATED INSIGHTS ===
-        
-        # 1. Profitability assessment
-        if margin >= 20:
-            profit_status = "HEALTHY"
-            profit_insight = f"Gross margin of {margin:.1f}% is good for most industries."
-        elif margin >= 10:
-            profit_status = "OK"
-            profit_insight = f"Margin of {margin:.1f}% is acceptable but could be improved."
-        elif margin > 0:
-            profit_status = "LOW"
-            profit_insight = f"Margin of {margin:.1f}% is thin. Review pricing or costs."
-        else:
-            profit_status = "LOSS"
-            profit_insight = f"Making a LOSS of R{abs(profit):,.0f}. Urgent action needed."
-        
-        # 2. Cash flow risk (debtors vs creditors)
-        if total_creditors > 0:
-            debtor_creditor_ratio = total_debtors / total_creditors
-        else:
-            debtor_creditor_ratio = 0
-        
-        if total_debtors > total_creditors * 1.5:
-            cash_status = "TIGHT"
-            cash_insight = f"Debtors (R{total_debtors:,.0f}) much higher than creditors (R{total_creditors:,.0f}). Cash may be tight - focus on collections."
-        elif total_creditors > total_debtors * 1.5:
-            cash_status = "WARNING"
-            cash_insight = f"You owe more (R{total_creditors:,.0f}) than you're owed (R{total_debtors:,.0f}). Watch cash flow."
-        else:
-            cash_status = "BALANCED"
-            cash_insight = "Debtors and creditors are reasonably balanced."
-        
-        # 3. Stock assessment
-        if income > 0:
-            stock_to_sales_ratio = stock_cost / (income * 12 / 30) if income > 0 else 0  # Approximate monthly
-        else:
-            stock_to_sales_ratio = 0
-        
-        if stock_cost > income * 2:
-            stock_status = "OVERSTOCKED"
-            stock_insight = f"Stock value (R{stock_cost:,.0f}) is very high vs sales. May have dead stock."
-        elif stock_cost < income * 0.3:
-            stock_status = "LOW"
-            stock_insight = f"Stock levels seem low. Watch for stockouts."
-        else:
-            stock_status = "OK"
-            stock_insight = "Stock levels appear appropriate for sales volume."
-        
-        # 4. Overall health score (0-100)
-        score = 50  # Start at neutral
-        if margin >= 20: score += 20
-        elif margin >= 10: score += 10
-        elif margin < 0: score -= 20
-        
-        if cash_status == "BALANCED": score += 15
-        elif cash_status == "TIGHT": score -= 10
-        elif cash_status == "WARNING": score -= 15
-        
-        if debtors.get("health_status") == "GOOD": score += 15
-        elif debtors.get("health_status") == "CRITICAL": score -= 20
-        elif debtors.get("health_status") == "WARNING": score -= 10
-        
-        score = max(0, min(100, score))  # Clamp 0-100
-        
-        if score >= 70:
-            overall_status = "HEALTHY"
-            overall_insight = "Business is in good shape overall."
-        elif score >= 50:
-            overall_status = "OK"
-            overall_insight = "Business is stable but has areas to improve."
-        elif score >= 30:
-            overall_status = "CONCERNING"
-            overall_insight = "Several warning signs - needs attention."
-        else:
-            overall_status = "CRITICAL"
-            overall_insight = "Business has serious issues that need urgent action."
-        
-        return {
-            "period": period,
-            "health_score": score,
-            "overall_status": overall_status,
-            "overall_insight": overall_insight,
-            
-            # Financials (pre-calculated)
-            "income": income,
-            "expenses": exp_total,
-            "profit_loss": profit,
-            "margin_pct": round(margin, 1),
-            "profit_status": profit_status,
-            "profit_insight": profit_insight,
-            
-            # Cash position
-            "total_debtors": total_debtors,
-            "total_creditors": total_creditors,
-            "cash_status": cash_status,
-            "cash_insight": cash_insight,
-            "debtors_health": debtors.get("health_status", "UNKNOWN"),
-            "debtors_insight": debtors.get("insight", ""),
-            
-            # Stock
-            "stock_cost_value": stock_cost,
-            "stock_status": stock_status,
-            "stock_insight": stock_insight,
-            
-            # Top items (limited for context)
-            "top_debtors": [{"name": d["name"], "total": d["total"]} for d in debtors["debtors"][:3]],
-            "top_creditors": creditors["creditors"][:3],
-            "top_expenses": list(expenses["by_category"].items())[:3]
-        }
+        income = sales["total_sales"]; exp_total = expenses["total_expenses"]
+        return {"period": period, "income": income, "expenses": exp_total,
+                "profit_loss": income - exp_total,
+                "margin_pct": ((income - exp_total) / income * 100) if income > 0 else 0,
+                "total_debtors": debtors["total_owed"], "total_creditors": creditors["total_owed"],
+                "stock_cost_value": stock_val["total_cost_value"], "stock_retail_value": stock_val["total_retail_value"],
+                "top_debtors": debtors["debtors"][:5], "top_creditors": creditors["creditors"][:5],
+                "expense_breakdown": expenses["by_category"]}
     
     def _tool_get_employees(self, params: dict) -> dict:
         name_filter = params.get("name", "").lower()
@@ -6217,98 +5767,25 @@ class ZaneToolHandler:
         return {"total_jobs": len(results), "jobs": results[:limit]}
     
     def _tool_get_stock_valuation(self, params: dict) -> dict:
-        """Stock valuation with PRE-CALCULATED insights"""
         category_filter = params.get("category", "").lower()
         all_stock = self.db.get_all_stock(self.biz_id)
-        
-        total_cost = 0
-        total_retail = 0
-        item_count = 0
-        cat_vals = {}
-        top_items = []
-        out_of_stock = []
-        low_stock = []
-        negative_margin = []
-        dead_stock = []  # High value, no movement
-        
+        total_cost = 0; total_retail = 0; item_count = 0; cat_vals = {}; top_items = []
         for s in all_stock:
             cat = s.get("category", "Uncategorised")
             if category_filter and category_filter not in cat.lower():
                 continue
-            
             qty = float(s.get("qty") or s.get("quantity") or 0)
             cost = float(s.get("cost") or s.get("cost_price") or 0)
             price = float(s.get("price") or s.get("selling_price") or 0)
-            code = s.get("code", "")
-            desc = s.get("description", "")[:30]
-            
-            cv = qty * cost
-            rv = qty * price
-            total_cost += cv
-            total_retail += rv
-            item_count += 1
+            cv = qty * cost; rv = qty * price; total_cost += cv; total_retail += rv; item_count += 1
             cat_vals[cat] = cat_vals.get(cat, 0) + cv
-            
-            top_items.append({"code": code, "description": desc, "qty": qty, "cost_value": cv, "retail_value": rv})
-            
-            # Problem detection
-            if qty <= 0:
-                out_of_stock.append({"code": code, "description": desc})
-            elif qty < 5:
-                low_stock.append({"code": code, "description": desc, "qty": qty})
-            
-            # Margin issues
-            if cost > 0 and price > 0:
-                margin = (price - cost) / cost * 100
-                if margin < 0:
-                    negative_margin.append({"code": code, "description": desc, "cost": cost, "price": price, "margin": margin})
-            
-            # Dead stock (high value items - would need sales data for real analysis)
-            if cv > 5000 and qty > 20:
-                dead_stock.append({"code": code, "description": desc, "qty": qty, "value": cv})
-        
+            top_items.append({"code": s.get("code", ""), "description": s.get("description", ""),
+                              "qty": qty, "cost_value": cv, "retail_value": rv})
         top_items.sort(key=lambda x: x["cost_value"], reverse=True)
-        
-        # Calculate insights
-        potential_profit = total_retail - total_cost
-        margin_pct = (potential_profit / total_cost * 100) if total_cost > 0 else 0
-        
-        # Stock health assessment
-        problems = []
-        if len(out_of_stock) > 5:
-            problems.append(f"{len(out_of_stock)} items out of stock")
-        if len(low_stock) > 10:
-            problems.append(f"{len(low_stock)} items running low")
-        if len(negative_margin) > 0:
-            problems.append(f"{len(negative_margin)} items selling below cost!")
-        
-        if not problems:
-            health_status = "GOOD"
-            insight = f"Stock is healthy. {item_count} items worth R{total_cost:,.0f} (cost) with {margin_pct:.0f}% potential margin."
-        elif len(problems) == 1:
-            health_status = "MONITOR"
-            insight = f"Minor issue: {problems[0]}. Total stock value R{total_cost:,.0f}."
-        else:
-            health_status = "ATTENTION"
-            insight = f"Stock issues: {', '.join(problems)}. Review needed."
-        
-        return {
-            "total_items": item_count,
-            "total_cost_value": total_cost,
-            "total_retail_value": total_retail,
-            "potential_profit": potential_profit,
-            "potential_margin_pct": round(margin_pct, 1),
-            "health_status": health_status,
-            "insight": insight,
-            "out_of_stock_count": len(out_of_stock),
-            "low_stock_count": len(low_stock),
-            "negative_margin_count": len(negative_margin),
-            "out_of_stock": out_of_stock[:5],
-            "low_stock": low_stock[:5],
-            "negative_margin_items": negative_margin[:5],
-            "categories": dict(sorted(cat_vals.items(), key=lambda x: x[1], reverse=True)[:5]),
-            "top_items_by_value": top_items[:5]
-        }
+        return {"total_items": item_count, "total_cost_value": total_cost, "total_retail_value": total_retail,
+                "potential_profit": total_retail - total_cost,
+                "categories": dict(sorted(cat_vals.items(), key=lambda x: x[1], reverse=True)[:10]),
+                "top_items_by_value": top_items[:10]}
     
     def _tool_get_accounting_help(self, params: dict) -> dict:
         topic = params.get("topic", "").lower().strip()
@@ -6452,6 +5929,124 @@ class ZaneToolHandler:
             "advance": "staff_advances", "staff loan": "staff_advances",
             "voorskot": "staff_advances", "personeellening": "staff_advances",
             "employee loan": "staff_advances",
+
+            # ═══════════════════════════════════════════════════════════
+            # CLICKAI PROGRAM HOW-TO (longer phrases match first!)
+            # ═══════════════════════════════════════════════════════════
+            # Invoices - program
+            "create invoice": "clickai_invoices", "maak faktuur": "clickai_invoices",
+            "make invoice": "clickai_invoices", "new invoice": "clickai_invoices",
+            "nuwe faktuur": "clickai_invoices", "send invoice": "clickai_invoices",
+            "email invoice": "clickai_invoices", "stuur faktuur": "clickai_invoices",
+            "record payment": "clickai_payments", "ontvang betaling": "clickai_payments",
+            "convert quote": "clickai_invoices", "hoe werk faktuur": "clickai_invoices",
+            "how invoice": "clickai_invoices",
+            # Quotes - program
+            "create quote": "clickai_quotes", "maak kwotasie": "clickai_quotes",
+            "make quote": "clickai_quotes", "new quote": "clickai_quotes",
+            "nuwe kwotasie": "clickai_quotes", "send quote": "clickai_quotes",
+            "email quote": "clickai_quotes", "hoe werk kwotasie": "clickai_quotes",
+            "how quote": "clickai_quotes",
+            # POS - program
+            "how pos": "clickai_pos", "hoe werk pos": "clickai_pos",
+            "use pos": "clickai_pos", "point of sale": "clickai_pos",
+            "make sale": "clickai_pos", "ring up": "clickai_pos",
+            "maak verkoop": "clickai_pos", "kassaregister": "clickai_pos",
+            "cash register": "clickai_pos", "pos history": "clickai_pos",
+            "x-read": "clickai_pos", "z-read": "clickai_pos",
+            "x read": "clickai_pos", "z read": "clickai_pos",
+            "slip history": "clickai_pos", "daily sales": "clickai_pos",
+            # Stock - program
+            "add stock": "clickai_stock", "add item": "clickai_stock",
+            "voeg voorraad": "clickai_stock", "new stock": "clickai_stock",
+            "nuwe item": "clickai_stock", "how stock": "clickai_stock",
+            "hoe werk voorraad": "clickai_stock", "import stock": "clickai_stock",
+            "stock category": "clickai_stock", "kategorie": "clickai_stock",
+            # Customers - program
+            "add customer": "clickai_customers", "voeg klient": "clickai_customers",
+            "new customer": "clickai_customers", "nuwe klient": "clickai_customers",
+            "email statement": "clickai_customers", "stuur staat": "clickai_customers",
+            "customer statement": "clickai_customers", "how customer": "clickai_customers",
+            "hoe klient": "clickai_customers", "customer portal": "clickai_customers",
+            # Suppliers - program
+            "add supplier": "clickai_suppliers", "voeg verskaffer": "clickai_suppliers",
+            "new supplier": "clickai_suppliers", "nuwe verskaffer": "clickai_suppliers",
+            "how supplier": "clickai_suppliers", "hoe verskaffer": "clickai_suppliers",
+            "supplier payment": "clickai_suppliers",
+            # Expenses - program
+            "add expense": "clickai_expenses", "voeg uitgawe": "clickai_expenses",
+            "new expense": "clickai_expenses", "nuwe uitgawe": "clickai_expenses",
+            "record expense": "clickai_expenses", "how expense": "clickai_expenses",
+            "hoe uitgawe": "clickai_expenses", "book expense": "clickai_expenses",
+            # Scanning - program
+            "scan invoice": "clickai_scanning", "scan receipt": "clickai_scanning",
+            "scan kwitansie": "clickai_scanning", "scan document": "clickai_scanning",
+            "check email": "clickai_scanning", "scan inbox": "clickai_scanning",
+            "upload receipt": "clickai_scanning", "photo invoice": "clickai_scanning",
+            "scan timesheet": "clickai_scanning", "skandeer": "clickai_scanning",
+            "how scan": "clickai_scanning", "hoe skandeer": "clickai_scanning",
+            # Payroll - program (longer phrases override accounting "payroll")
+            "process payroll": "clickai_payroll", "run payroll": "clickai_payroll",
+            "process pay": "clickai_payroll", "hoe betaal": "clickai_payroll",
+            "how payroll work": "clickai_payroll", "add employee": "clickai_payroll",
+            "voeg werknemer": "clickai_payroll", "email payslip": "clickai_payroll",
+            "payslip history": "clickai_payroll",
+            # Jobs - program
+            "create job": "clickai_jobs", "maak werkkaart": "clickai_jobs",
+            "new job card": "clickai_jobs", "nuwe werkkaart": "clickai_jobs",
+            "job card": "clickai_jobs", "werkkaart": "clickai_jobs",
+            "issue stock": "clickai_jobs", "log time": "clickai_jobs",
+            "delivery note": "clickai_jobs", "how job": "clickai_jobs",
+            "bom": "clickai_jobs", "bill of material": "clickai_jobs",
+            # Banking - program
+            "import bank": "clickai_banking", "upload statement": "clickai_banking",
+            "bank reconcil": "clickai_banking", "how banking": "clickai_banking",
+            "hoe bank": "clickai_banking",
+            # Reports - program
+            "run report": "clickai_reports", "how report": "clickai_reports",
+            "generate report": "clickai_reports", "smart report": "clickai_reports",
+            "hoe verslag": "clickai_reports", "business pulse": "clickai_reports",
+            "pulse report": "clickai_reports",
+            # Settings - program
+            "setup business": "clickai_settings", "set up business": "clickai_settings",
+            "business setup": "clickai_settings", "how settings": "clickai_settings",
+            "configure": "clickai_settings", "stel op": "clickai_settings",
+            "add user": "clickai_settings", "add team": "clickai_settings",
+            "voeg gebruiker": "clickai_settings", "team member": "clickai_settings",
+            "multi business": "clickai_settings",
+            # Import - program
+            "import data": "clickai_import", "import csv": "clickai_import",
+            "import excel": "clickai_import", "import customer": "clickai_import",
+            "import supplier": "clickai_import", "how import": "clickai_import",
+            "hoe import": "clickai_import", "migration": "clickai_import",
+            "migrate data": "clickai_import",
+            # Collections - program
+            "chase debt": "clickai_collections", "overdue invoice": "clickai_collections",
+            "send reminder": "clickai_collections", "how collect": "clickai_collections",
+            "agterstallig": "clickai_collections", "hoe vorder": "clickai_collections",
+            "collections": "clickai_collections",
+            # Payments - program
+            "how payment": "clickai_payments", "hoe betaling": "clickai_payments",
+            "allocate payment": "clickai_payments", "partial payment": "clickai_payments",
+            # Zane help
+            "how zane": "clickai_zane_help", "hoe werk zane": "clickai_zane_help",
+            "what can zane": "clickai_zane_help", "wat kan zane": "clickai_zane_help",
+            "use zane": "clickai_zane_help", "gebruik zane": "clickai_zane_help",
+            "help me": "clickai_zane_help", "how does this work": "clickai_zane_help",
+            "hoe werk hierdie": "clickai_zane_help",
+            # Standalone program keywords (Zane may extract just the noun)
+            "invoice": "clickai_invoices", "faktuur": "clickai_invoices",
+            "quote": "clickai_quotes", "kwotasie": "clickai_quotes",
+            "pos": "clickai_pos", "till": "clickai_pos",
+            "stock": "clickai_stock", "voorraad": "clickai_stock", "inventory": "clickai_stock",
+            "customer": "clickai_customers", "klient": "clickai_customers",
+            "supplier": "clickai_suppliers", "verskaffer": "clickai_suppliers",
+            "expense": "clickai_expenses", "uitgawe": "clickai_expenses",
+            "scan": "clickai_scanning",
+            "import": "clickai_import",
+            "report": "clickai_reports", "verslag": "clickai_reports",
+            "setting": "clickai_settings", "instelling": "clickai_settings",
+            "payment": "clickai_payments", "betaling": "clickai_payments"
         }
         
         # Find best match - try longest keyword first for accuracy
@@ -6637,623 +6232,6 @@ class ZaneToolHandler:
 
         return {"error": f"Unknown action: {action}"}
 
-    # ── NEW MEGA BRAIN TOOL HANDLERS ──────────────────────────────
-
-    def _tool_get_purchase_orders(self, params: dict) -> dict:
-        supplier_name = params.get("supplier_name", "").lower()
-        status = params.get("status", "")
-        days_back = params.get("days_back", 60)
-        limit = params.get("limit", 20)
-        orders = db.get("purchase_orders", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        results = []
-        total_value = 0
-        for po in orders:
-            po_date = po.get("date", "")
-            if po_date and po_date < cutoff:
-                continue
-            if supplier_name and supplier_name not in str(po.get("supplier_name", "")).lower():
-                continue
-            if status and po.get("status", "").lower() != status:
-                continue
-            total = float(po.get("total", 0) or 0)
-            total_value += total
-            results.append({"po_number": po.get("po_number", ""), "supplier_name": po.get("supplier_name", ""),
-                            "total": total, "status": po.get("status", ""), "date": po_date,
-                            "items": po.get("items", [])[:10], "id": po.get("id")})
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        return {"total_matches": len(results), "total_value": total_value, "purchase_orders": results[:limit]}
-
-    def _tool_get_goods_received(self, params: dict) -> dict:
-        supplier_name = params.get("supplier_name", "").lower()
-        po_number = params.get("po_number", "").lower()
-        days_back = params.get("days_back", 60)
-        limit = params.get("limit", 20)
-        grvs = db.get("goods_received", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        results = []
-        for g in grvs:
-            g_date = g.get("date", g.get("received_date", ""))
-            if g_date and g_date < cutoff:
-                continue
-            if supplier_name and supplier_name not in str(g.get("supplier_name", "")).lower():
-                continue
-            if po_number and po_number not in str(g.get("po_number", "")).lower():
-                continue
-            results.append({"grv_number": g.get("grv_number", ""), "supplier_name": g.get("supplier_name", ""),
-                            "po_number": g.get("po_number", ""), "date": g_date,
-                            "items": g.get("items", [])[:10], "total": float(g.get("total", 0) or 0),
-                            "id": g.get("id")})
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        return {"total_matches": len(results), "goods_received": results[:limit]}
-
-    def _tool_get_delivery_notes(self, params: dict) -> dict:
-        customer_name = params.get("customer_name", "").lower()
-        status = params.get("status", "")
-        days_back = params.get("days_back", 30)
-        limit = params.get("limit", 20)
-        notes = db.get("delivery_notes", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        results = []
-        for dn in notes:
-            dn_date = dn.get("date", "")
-            if dn_date and dn_date < cutoff:
-                continue
-            if customer_name and customer_name not in str(dn.get("customer_name", "")).lower():
-                continue
-            if status and dn.get("status", "").lower() != status:
-                continue
-            results.append({"dn_number": dn.get("dn_number", dn.get("delivery_note_number", "")),
-                            "customer_name": dn.get("customer_name", ""), "status": dn.get("status", ""),
-                            "date": dn_date, "items": dn.get("items", [])[:10],
-                            "invoice_number": dn.get("invoice_number", ""), "id": dn.get("id")})
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        return {"total_matches": len(results), "delivery_notes": results[:limit]}
-
-    def _tool_get_credit_notes(self, params: dict) -> dict:
-        customer_name = params.get("customer_name", "").lower()
-        days_back = params.get("days_back", 60)
-        limit = params.get("limit", 20)
-        cns = db.get("credit_notes", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        results = []
-        total_value = 0
-        for cn in cns:
-            cn_date = cn.get("date", "")
-            if cn_date and cn_date < cutoff:
-                continue
-            if customer_name and customer_name not in str(cn.get("customer_name", "")).lower():
-                continue
-            total = float(cn.get("total", 0) or 0)
-            total_value += total
-            results.append({"cn_number": cn.get("credit_note_number", cn.get("cn_number", "")),
-                            "customer_name": cn.get("customer_name", ""), "total": total,
-                            "date": cn_date, "invoice_number": cn.get("invoice_number", ""),
-                            "reason": cn.get("reason", ""), "id": cn.get("id")})
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        return {"total_matches": len(results), "total_value": total_value, "credit_notes": results[:limit]}
-
-    def _tool_get_payments(self, params: dict) -> dict:
-        name_filter = params.get("name", "").lower()
-        direction = params.get("direction", "")
-        days_back = params.get("days_back", 30)
-        limit = params.get("limit", 20)
-        payments = db.get("payments", {"business_id": self.biz_id}) or []
-        receipts = db.get("receipts", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        results = []
-
-        if direction != "made":
-            for r in receipts:
-                r_date = r.get("date", "")
-                if r_date and r_date < cutoff:
-                    continue
-                cust = str(r.get("customer_name", "")).lower()
-                if name_filter and name_filter not in cust:
-                    continue
-                results.append({"type": "received", "name": r.get("customer_name", ""),
-                                "amount": float(r.get("amount", 0) or 0), "date": r_date,
-                                "method": r.get("payment_method", ""), "reference": r.get("reference", ""),
-                                "invoice_number": r.get("invoice_number", "")})
-
-        if direction != "received":
-            for p in payments:
-                p_date = p.get("date", "")
-                if p_date and p_date < cutoff:
-                    continue
-                supplier = str(p.get("supplier_name", p.get("name", ""))).lower()
-                if name_filter and name_filter not in supplier:
-                    continue
-                results.append({"type": "made", "name": p.get("supplier_name", p.get("name", "")),
-                                "amount": float(p.get("amount", 0) or 0), "date": p_date,
-                                "method": p.get("payment_method", ""), "reference": p.get("reference", "")})
-
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        total_in = sum(r["amount"] for r in results if r["type"] == "received")
-        total_out = sum(r["amount"] for r in results if r["type"] == "made")
-        return {"total_matches": len(results), "total_received": total_in, "total_paid": total_out,
-                "payments": results[:limit]}
-
-    def _tool_get_stock_movements(self, params: dict) -> dict:
-        stock_code = params.get("stock_code", "").lower()
-        movement_type = params.get("movement_type", "")
-        days_back = params.get("days_back", 30)
-        limit = params.get("limit", 30)
-        movements = db.get("stock_movements", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        results = []
-        for m in movements:
-            m_date = m.get("date", m.get("created_at", ""))[:10] if m.get("date", m.get("created_at")) else ""
-            if m_date and m_date < cutoff:
-                continue
-            if stock_code:
-                searchable = f"{m.get('stock_code', '')} {m.get('description', '')}".lower()
-                if stock_code not in searchable:
-                    continue
-            if movement_type and movement_type not in str(m.get("type", m.get("movement_type", ""))).lower():
-                continue
-            results.append({"date": m_date, "stock_code": m.get("stock_code", ""),
-                            "description": m.get("description", ""), "type": m.get("type", m.get("movement_type", "")),
-                            "quantity": float(m.get("quantity", 0) or 0),
-                            "reference": m.get("reference", ""), "user": m.get("user_name", "")})
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        return {"total_matches": len(results), "movements": results[:limit]}
-
-    def _tool_get_journal_entries(self, params: dict) -> dict:
-        desc_search = params.get("description", "").lower()
-        account_filter = params.get("account", "").lower()
-        days_back = params.get("days_back", 30)
-        limit = params.get("limit", 20)
-        entries = db.get("journal_entries", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        results = []
-        for je in entries:
-            je_date = je.get("date", "")
-            if je_date and je_date < cutoff:
-                continue
-            if desc_search:
-                searchable = f"{je.get('description', '')} {je.get('reference', '')}".lower()
-                if desc_search not in searchable:
-                    continue
-            if account_filter:
-                line_accounts = " ".join(l.get("account", "") for l in je.get("entries", je.get("lines", []))).lower()
-                if account_filter not in line_accounts:
-                    continue
-            results.append({"date": je_date, "description": je.get("description", ""),
-                            "reference": je.get("reference", ""),
-                            "entries": je.get("entries", je.get("lines", []))[:10],
-                            "id": je.get("id")})
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        return {"total_matches": len(results), "journal_entries": results[:limit]}
-
-    def _tool_get_scan_queue(self, params: dict) -> dict:
-        status_filter = params.get("status", "")
-        scan_type = params.get("scan_type", "")
-        limit = params.get("limit", 20)
-        # Try scan_inbox first, then scanned_documents
-        items = db.get("scan_inbox", {"business_id": self.biz_id}) or []
-        if not items:
-            items = db.get("scanned_documents", {"business_id": self.biz_id}) or []
-        results = []
-        for item in items:
-            if status_filter and item.get("status", "pending").lower() != status_filter:
-                continue
-            if scan_type and item.get("scan_type", item.get("type", "")).lower() != scan_type:
-                continue
-            results.append({"id": item.get("id"), "type": item.get("scan_type", item.get("type", "")),
-                            "status": item.get("status", "pending"),
-                            "supplier_name": item.get("supplier_name", ""),
-                            "amount": float(item.get("amount", item.get("total", 0)) or 0),
-                            "date": item.get("date", item.get("created_at", ""))[:10] if item.get("date", item.get("created_at")) else "",
-                            "description": item.get("description", item.get("filename", ""))})
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        pending = sum(1 for r in results if r["status"] == "pending")
-        return {"total_matches": len(results), "pending_count": pending, "items": results[:limit]}
-
-    def _tool_get_recurring_invoices(self, params: dict) -> dict:
-        customer_name = params.get("customer_name", "").lower()
-        status = params.get("status", "")
-        recurring = db.get("recurring_invoices", {"business_id": self.biz_id}) or []
-        results = []
-        for r in recurring:
-            if customer_name and customer_name not in str(r.get("customer_name", "")).lower():
-                continue
-            if status and r.get("status", "active").lower() != status:
-                continue
-            results.append({"id": r.get("id"), "customer_name": r.get("customer_name", ""),
-                            "total": float(r.get("total", 0) or 0),
-                            "frequency": r.get("frequency", "monthly"),
-                            "next_date": r.get("next_date", r.get("next_invoice_date", "")),
-                            "status": r.get("status", "active"),
-                            "description": r.get("description", "")})
-        total_monthly = sum(r["total"] for r in results if r.get("frequency") == "monthly" and r.get("status") == "active")
-        return {"total_matches": len(results), "estimated_monthly_income": total_monthly, "recurring_invoices": results}
-
-    def _tool_get_rentals(self, params: dict) -> dict:
-        tenant_name = params.get("tenant_name", "").lower()
-        status = params.get("status", "")
-        rentals = db.get("rentals", {"business_id": self.biz_id}) or []
-        results = []
-        total_monthly_rent = 0
-        for r in rentals:
-            if tenant_name and tenant_name not in str(r.get("tenant_name", r.get("customer_name", ""))).lower():
-                continue
-            if status and r.get("status", "active").lower() != status:
-                continue
-            rent = float(r.get("rent_amount", r.get("monthly_rent", 0)) or 0)
-            total_monthly_rent += rent
-            results.append({"id": r.get("id"),
-                            "tenant_name": r.get("tenant_name", r.get("customer_name", "")),
-                            "property": r.get("property_name", r.get("unit", r.get("description", ""))),
-                            "rent_amount": rent, "status": r.get("status", "active"),
-                            "lease_start": r.get("lease_start", r.get("start_date", "")),
-                            "lease_end": r.get("lease_end", r.get("end_date", "")),
-                            "deposit": float(r.get("deposit", 0) or 0)})
-        return {"total_matches": len(results), "total_monthly_rent": total_monthly_rent, "rentals": results}
-
-    def _tool_get_timesheets(self, params: dict) -> dict:
-        employee_name = params.get("employee_name", "").lower()
-        days_back = params.get("days_back", 7)
-        limit = params.get("limit", 50)
-        entries = db.get("timesheet_entries", {"business_id": self.biz_id}) or []
-        if not entries:
-            entries = db.get("timesheets", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        results = []
-        for e in entries:
-            e_date = e.get("date", "")
-            if e_date and e_date < cutoff:
-                continue
-            if employee_name and employee_name not in str(e.get("employee_name", e.get("name", ""))).lower():
-                continue
-            hours = float(e.get("hours", 0) or 0)
-            results.append({"date": e_date, "employee_name": e.get("employee_name", e.get("name", "")),
-                            "hours": hours, "start_time": e.get("start_time", ""),
-                            "end_time": e.get("end_time", ""),
-                            "job": e.get("job_number", e.get("job", "")),
-                            "notes": e.get("notes", "")})
-        results.sort(key=lambda x: (x["date"] or "", x["employee_name"]), reverse=True)
-        total_hours = sum(r["hours"] for r in results)
-        return {"total_matches": len(results), "total_hours": total_hours, "entries": results[:limit]}
-
-    def _tool_get_payslips(self, params: dict) -> dict:
-        employee_name = params.get("employee_name", "").lower()
-        month = params.get("month", "")
-        limit = params.get("limit", 20)
-        payslips = db.get("payslips", {"business_id": self.biz_id}) or []
-        results = []
-        total_paid = 0
-        for ps in payslips:
-            if employee_name and employee_name not in str(ps.get("employee_name", ps.get("name", ""))).lower():
-                continue
-            ps_date = ps.get("date", ps.get("pay_date", ""))
-            if month and not ps_date.startswith(month):
-                continue
-            net = float(ps.get("net_pay", ps.get("net", ps.get("total", 0))) or 0)
-            total_paid += net
-            results.append({"date": ps_date,
-                            "employee_name": ps.get("employee_name", ps.get("name", "")),
-                            "gross": float(ps.get("gross_pay", ps.get("gross", 0)) or 0),
-                            "net": net, "paye": float(ps.get("paye", 0) or 0),
-                            "uif": float(ps.get("uif", 0) or 0),
-                            "id": ps.get("id")})
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        return {"total_matches": len(results), "total_net_paid": total_paid, "payslips": results[:limit]}
-
-    def _tool_get_receipts(self, params: dict) -> dict:
-        customer_name = params.get("customer_name", "").lower()
-        days_back = params.get("days_back", 30)
-        limit = params.get("limit", 20)
-        receipts = db.get("receipts", {"business_id": self.biz_id}) or []
-        cutoff = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        results = []
-        total_received = 0
-        for r in receipts:
-            r_date = r.get("date", "")
-            if r_date and r_date < cutoff:
-                continue
-            if customer_name and customer_name not in str(r.get("customer_name", "")).lower():
-                continue
-            amt = float(r.get("amount", 0) or 0)
-            total_received += amt
-            results.append({"date": r_date, "customer_name": r.get("customer_name", ""),
-                            "amount": amt, "method": r.get("payment_method", r.get("method", "")),
-                            "reference": r.get("reference", ""),
-                            "invoice_number": r.get("invoice_number", "")})
-        results.sort(key=lambda x: x["date"] or "", reverse=True)
-        return {"total_matches": len(results), "total_received": total_received, "receipts": results[:limit]}
-
-    def _tool_get_subscriptions(self, params: dict) -> dict:
-        status = params.get("status", "")
-        subs = db.get("subscriptions", {"business_id": self.biz_id}) or []
-        results = []
-        total_monthly = 0
-        for s in subs:
-            if status and s.get("status", "active").lower() != status:
-                continue
-            amount = float(s.get("amount", s.get("monthly_cost", 0)) or 0)
-            freq = s.get("frequency", "monthly")
-            monthly_equiv = amount if freq == "monthly" else amount / 12 if freq == "yearly" else amount / 3 if freq == "quarterly" else amount * 4.33
-            if s.get("status", "active") == "active":
-                total_monthly += monthly_equiv
-            results.append({"name": s.get("name", s.get("description", "")),
-                            "amount": amount,
-                            "frequency": freq,
-                            "category": s.get("category", ""),
-                            "supplier_name": s.get("supplier_name", ""),
-                            "next_date": s.get("next_due", s.get("next_date", s.get("next_billing_date", ""))),
-                            "status": s.get("status", "active"),
-                            # Allocation details
-                            "allocated_to": s.get("allocated_to", ""),
-                            "gl_account": s.get("gl_account", ""),
-                            "department": s.get("department", ""),
-                            "reference_number": s.get("reference_number", ""),
-                            "notes": s.get("notes", "")})
-        return {"total_matches": len(results), "total_monthly_cost": round(total_monthly, 2), "subscriptions": results}
-    
-    def _tool_get_business_health_check(self, params: dict) -> dict:
-        """
-        SMART business health check - Python does ALL the math.
-        Returns ONLY insights and recommendations, not raw data.
-        Zane just needs to read and explain.
-        """
-        # Gather data (internal - not returned to Zane)
-        sales = self._tool_get_sales_summary({"period": "this_month"})
-        prev_sales = self._tool_get_sales_summary({"period": "last_month"})
-        expenses = self._tool_get_expenses({"days_back": 30})
-        debtors = self._tool_get_debtors({"limit": 5})
-        creditors = self._tool_get_creditors({"limit": 5})
-        
-        # === CALCULATE EVERYTHING ===
-        income = sales.get("total_sales", 0) + sales.get("total_invoiced", 0)
-        prev_income = prev_sales.get("total_sales", 0) + prev_sales.get("total_invoiced", 0)
-        exp_total = expenses.get("total_expenses", 0)
-        profit = income - exp_total
-        margin = (profit / income * 100) if income > 0 else 0
-        
-        total_debtors = debtors.get("total_owed", 0)
-        total_creditors = creditors.get("total_owed", 0)
-        debtors_90_plus = debtors.get("aging_summary", {}).get("days_91_120", 0) + debtors.get("aging_summary", {}).get("days_120_plus", 0)
-        
-        # Revenue trend
-        if prev_income > 0:
-            revenue_change = ((income - prev_income) / prev_income) * 100
-        else:
-            revenue_change = 0
-        
-        # === BUILD INSIGHTS (this is what Zane sees) ===
-        insights = []
-        warnings = []
-        actions = []
-        
-        # 1. Profitability
-        if margin >= 25:
-            insights.append(f"✓ Healthy profit margin of {margin:.1f}%")
-        elif margin >= 10:
-            insights.append(f"○ Acceptable margin of {margin:.1f}% - room for improvement")
-        elif margin > 0:
-            warnings.append(f"⚠ Low margin of {margin:.1f}% - review pricing or cut costs")
-            actions.append("Review your pricing - you might be selling too cheap")
-        else:
-            warnings.append(f"⛔ Making a LOSS of R{abs(profit):,.0f}")
-            actions.append("URGENT: Identify why you're losing money")
-        
-        # 2. Revenue trend
-        if revenue_change > 20:
-            insights.append(f"✓ Revenue UP {revenue_change:.0f}% vs last month - great momentum!")
-        elif revenue_change > 0:
-            insights.append(f"○ Revenue up {revenue_change:.0f}% vs last month")
-        elif revenue_change > -10:
-            insights.append(f"○ Revenue flat vs last month")
-        else:
-            warnings.append(f"⚠ Revenue DOWN {abs(revenue_change):.0f}% vs last month")
-            actions.append("Investigate why sales are dropping")
-        
-        # 3. Debtors health
-        if debtors_90_plus > 0:
-            warnings.append(f"⚠ R{debtors_90_plus:,.0f} is 90+ days overdue - high bad debt risk")
-            # Get problem customer names
-            problem_names = [d["name"] for d in debtors.get("problem_debtors", [])[:3]]
-            if problem_names:
-                actions.append(f"Call these debtors TODAY: {', '.join(problem_names)}")
-        elif total_debtors > income * 2:
-            warnings.append(f"⚠ Debtors (R{total_debtors:,.0f}) are high vs monthly sales")
-            actions.append("Tighten credit terms or improve collections")
-        else:
-            insights.append(f"✓ Debtors under control (R{total_debtors:,.0f})")
-        
-        # 4. Creditors
-        creditors_90_plus = creditors.get("aging_summary", {}).get("days_90_plus", 0)
-        if creditors_90_plus > 0:
-            warnings.append(f"⚠ R{creditors_90_plus:,.0f} owed to suppliers is 90+ days - risk of COD or legal")
-            actions.append("Contact overdue suppliers to arrange payment plans")
-        
-        # 5. Cash flow indicator
-        if total_debtors > total_creditors * 1.5:
-            insights.append("○ You're owed more than you owe - but make sure debtors pay!")
-        elif total_creditors > total_debtors * 1.5:
-            warnings.append("⚠ You owe more than you're owed - watch cash flow")
-        
-        # 6. Expense trend
-        exp_change = expenses.get("change_pct", 0)
-        if exp_change > 30:
-            warnings.append(f"⚠ Expenses up {exp_change:.0f}% - {expenses.get('biggest_category', 'Unknown')} is biggest")
-            actions.append(f"Review {expenses.get('biggest_category', 'expenses')} - why the increase?")
-        
-        # === HEALTH SCORE (0-100) ===
-        score = 50
-        score += 20 if margin >= 20 else (10 if margin >= 10 else (-20 if margin < 0 else 0))
-        score += 10 if revenue_change > 10 else (-10 if revenue_change < -10 else 0)
-        score += 15 if debtors_90_plus == 0 else -15
-        score += 10 if creditors_90_plus == 0 else -10
-        score = max(0, min(100, score))
-        
-        # Overall status
-        if score >= 70:
-            status = "HEALTHY"
-            summary = "Business is doing well overall."
-        elif score >= 50:
-            status = "OK"
-            summary = "Business is stable with some areas to watch."
-        elif score >= 30:
-            status = "CONCERNING"
-            summary = "Several issues need attention."
-        else:
-            status = "CRITICAL"
-            summary = "Serious problems require immediate action."
-        
-        # === RETURN COMPACT RESULT ===
-        return {
-            "health_score": score,
-            "status": status,
-            "summary": summary,
-            
-            # Key numbers (pre-calculated, formatted)
-            "this_month_revenue": f"R{income:,.0f}",
-            "this_month_expenses": f"R{exp_total:,.0f}",
-            "this_month_profit": f"R{profit:,.0f}",
-            "profit_margin": f"{margin:.1f}%",
-            "revenue_vs_last_month": f"{revenue_change:+.0f}%",
-            
-            "total_debtors": f"R{total_debtors:,.0f}",
-            "total_creditors": f"R{total_creditors:,.0f}",
-            "debtors_90_plus": f"R{debtors_90_plus:,.0f}" if debtors_90_plus > 0 else "None",
-            
-            # Pre-written insights (Zane just reads these)
-            "good_news": insights,
-            "warnings": warnings,
-            "recommended_actions": actions,
-            
-            # Top 3 only
-            "top_debtors": [f"{d['name']}: R{d['total']:,.0f}" for d in debtors.get("debtors", [])[:3]],
-            "biggest_expense_category": expenses.get("biggest_category", "Unknown")
-        }
-
-    # ═══════════════════════════════════════════════════════════════
-    # MEMORY TOOLS - Zane remembers across conversations
-    # ═══════════════════════════════════════════════════════════════
-    
-    def _tool_save_memory(self, params: dict) -> dict:
-        """Save a memory to the database"""
-        category = params.get("category", "conversation")
-        fact = params.get("fact", "")
-        importance = params.get("importance", "medium")
-        
-        if not fact:
-            return {"success": False, "error": "No fact to save"}
-        
-        if len(fact) > 500:
-            fact = fact[:500]
-        
-        memory_id = str(uuid.uuid4())[:8]
-        record = {
-            "id": f"mem_{memory_id}",
-            "business_id": self.business_id,
-            "user_id": self.user_id,
-            "category": category,
-            "fact": fact,
-            "importance": importance,
-            "created_at": now(),
-            "active": True
-        }
-        
-        ok, result = db.save("zane_memories", record)
-        if ok:
-            logger.info(f"[ZANE MEMORY] Saved: [{category}] {fact[:80]}...")
-            return {"success": True, "message": f"Saved to memory: {fact[:100]}...", "id": record["id"]}
-        else:
-            logger.error(f"[ZANE MEMORY] Save failed: {result}")
-            return {"success": False, "error": "Could not save memory"}
-    
-    def _tool_recall_memories(self, params: dict) -> dict:
-        """Search memories by keyword"""
-        query = params.get("query", "").lower()
-        category = params.get("category", "all")
-        
-        # Get all memories for this business
-        memories = db.get("zane_memories", {"business_id": self.business_id})
-        if not memories:
-            return {"memories": [], "message": "No memories saved yet."}
-        
-        # Filter active only
-        memories = [m for m in memories if m.get("active", True)]
-        
-        # Filter by category
-        if category and category != "all":
-            memories = [m for m in memories if m.get("category") == category]
-        
-        # Search by keyword
-        if query:
-            results = []
-            for m in memories:
-                fact = m.get("fact", "").lower()
-                cat = m.get("category", "").lower()
-                # Simple keyword matching
-                if any(word in fact for word in query.split()):
-                    # Score by relevance
-                    score = sum(1 for word in query.split() if word in fact)
-                    results.append((score, m))
-            
-            results.sort(key=lambda x: x[0], reverse=True)
-            memories = [m for _, m in results[:10]]
-        
-        # Format output
-        formatted = []
-        for m in memories[:15]:
-            formatted.append({
-                "id": m.get("id"),
-                "category": m.get("category"),
-                "fact": m.get("fact"),
-                "importance": m.get("importance", "medium"),
-                "saved_on": m.get("created_at", "")[:10]
-            })
-        
-        return {"memories": formatted, "total": len(formatted)}
-    
-    def _tool_list_memories(self, params: dict) -> dict:
-        """List all memories"""
-        category = params.get("category", "all")
-        
-        memories = db.get("zane_memories", {"business_id": self.business_id})
-        if not memories:
-            return {"memories": [], "message": "No memories saved yet. I'll start remembering important things as we talk!"}
-        
-        memories = [m for m in memories if m.get("active", True)]
-        
-        if category and category != "all":
-            memories = [m for m in memories if m.get("category") == category]
-        
-        # Sort by date (newest first)
-        memories.sort(key=lambda m: m.get("created_at", ""), reverse=True)
-        
-        # Group by category
-        grouped = {}
-        for m in memories:
-            cat = m.get("category", "other")
-            if cat not in grouped:
-                grouped[cat] = []
-            grouped[cat].append({
-                "id": m.get("id"),
-                "fact": m.get("fact"),
-                "importance": m.get("importance", "medium"),
-                "saved_on": m.get("created_at", "")[:10]
-            })
-        
-        return {"memories_by_category": grouped, "total": len(memories)}
-    
-    def _tool_forget_memory(self, params: dict) -> dict:
-        """Delete a memory"""
-        memory_id = params.get("memory_id", "")
-        if not memory_id:
-            return {"success": False, "error": "No memory ID provided"}
-        
-        ok = db.delete("zane_memories", memory_id, self.business_id)
-        if ok:
-            logger.info(f"[ZANE MEMORY] Deleted: {memory_id}")
-            return {"success": True, "message": f"Memory {memory_id} forgotten."}
-        else:
-            return {"success": False, "error": "Could not delete memory"}
-
 
 def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     """Build lean system prompt for tool-use Zane. ~2000 tokens, no data dumps."""
@@ -7262,32 +6240,6 @@ def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     user_name = context.get("user_name", "there")
     currency = context.get("currency", "ZAR")
     vat_rate = context.get("vat_rate", 15)
-    
-    # Load memories for this business
-    biz_id = context.get("business_id", "")
-    memories_text = ""
-    if biz_id:
-        try:
-            memories = db.get("zane_memories", {"business_id": biz_id})
-            if memories:
-                active = [m for m in memories if m.get("active", True)]
-                # Sort: high importance first, then by date
-                active.sort(key=lambda m: (0 if m.get("importance") == "high" else 1 if m.get("importance") == "medium" else 2, m.get("created_at", "")), reverse=False)
-                active.sort(key=lambda m: m.get("importance", "medium") == "high", reverse=True)
-                
-                # Take top 30 memories (keep prompt lean)
-                top = active[:30]
-                if top:
-                    memory_lines = []
-                    for m in top:
-                        cat_emoji = {"business_info": "🏢", "preference": "⭐", "decision": "✅", 
-                                     "person": "👤", "plan": "📋", "policy": "📏", 
-                                     "personal": "💭", "conversation": "💬"}.get(m.get("category", ""), "📝")
-                        date = m.get("created_at", "")[:10]
-                        memories_text += f"  {cat_emoji} [{date}] {m.get('fact', '')}\n"
-                    memories_text = f"\n## YOUR MEMORIES (things you've learned about this user/business)\n{memories_text}"
-        except Exception as e:
-            logger.error(f"[ZANE] Failed to load memories: {e}")
     
     stats = {
         "stock_count": context.get("stock_count", 0),
@@ -7309,6 +6261,14 @@ def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     _needs_nav = any(w in msg_lower for w in [
         "how do i", "where is", "how to", "hoe doen", "hoe om",
         "navigate", "help me find", "stap vir stap", "wys my hoe"
+    ])
+    
+    _needs_steel = any(w in msg_lower for w in [
+        "steel", "staal", "bolt", "bout", "nut", "moer", "washer",
+        "m6", "m8", "m10", "m12", "m16", "m20", "grade 8.8",
+        "stainless", "galvanised", "304", "316", "mild steel",
+        "flat bar", "round bar", "angle iron", "channel", "i-beam",
+        "sheet", "plate", "pipe", "tube", "rod", "hex"
     ])
     
     prompt = f"""You are Zane, the senior business advisor and head bookkeeper for {biz_name}.
@@ -7334,103 +6294,30 @@ for standard bookkeeping questions. You ARE the accountant they consult.
 - Honest about business performance - don't sugarcoat bad news
 - Proactive: spot problems before they become crises
 
-## ⚠️ GOLDEN RULES (NEVER BREAK THESE) ⚠️
-
-### RULE 1: NEVER ASK UNNECESSARY QUESTIONS
-When a user asks something, ANSWER IT. Don't ask clarifying questions unless genuinely impossible 
-to answer without more info. 90% of the time you can just USE A TOOL and answer.
-
-BAD: "Which customer are you looking for?" → JUST search_customers with what they gave you
-BAD: "Can you give me more details?" → USE the tools first, THEN answer with what you found
-BAD: "What time period do you mean?" → Default to this_month and answer
-BAD: "Do you want me to check?" → YES! Just check! Don't ask, DO IT.
-
-### RULE 2: ALWAYS USE TOOLS FIRST, TALK SECOND
-Before typing ANY response about data, CALL A TOOL. Never guess. Never say "I don't have access."
-You ALWAYS have access via tools. Use them.
-
-"Wat skuld Botha?" → call search_customers("Botha") → answer with the balance
-"Hoe lyk die sales?" → call get_sales_summary("this_month") → answer with data
-"Wat kos M12 bolts?" → NAVIGATE to /stock → "Klik op Stock en soek M12 - jy sal die prys en qty sien!"
-
-### RULE 3: GIVE COMPLETE ANSWERS
-Don't give half-answers. When someone asks about finances, include:
-- The actual numbers
-- What it means for the business
-- What action to take (if relevant)
-- One useful suggestion
-
-### RULE 4: NEVER SAY THESE PHRASES
-FORBIDDEN: "I don't have access to...", "I'm not able to...", "I cannot see...", 
-"Could you provide more...", "I would need to know...", "Unfortunately I...",
-"I'm an AI...", "As an AI assistant...", "I don't have real-time..."
-You are ZANE. You have FULL access to everything via your tools. ACT like it.
-
-### RULE 5: DEFAULT TO ACTION
-When in doubt about what the user wants:
-- If they mention a customer → search_customers and show info
-- If they mention stock/product/price → NAVIGATE to /stock (you don't do stock lookups)
-- If they ask "how is business" → get_financial_overview AND get_sales_summary
-- If they mention money/payment → get_debtors or get_creditors
-- If they ask how to do something → get_accounting_help THEN give step-by-step
-- Call MULTIPLE tools for complex questions. Don't be lazy.
-
 ## BUSINESS CONTEXT
 - Business: {biz_name} ({biz_type})
 - Currency: {currency} | VAT: {vat_rate}%
 - Stock items: {stats['stock_count']} | Customers: {stats['customer_count']} | Suppliers: {stats['supplier_count']}
 - Total debtors: R{stats['total_debtors']:,.0f} | Total creditors: R{stats['total_creditors']:,.0f}
 - Today's sales: R{stats['today_sales']:,.0f} | Stock value (cost): R{stats['stock_value']:,.0f}
-{memories_text}
-## MEMORY INSTRUCTIONS
-- When you learn something NEW and IMPORTANT about the user or business, use save_memory to remember it
-- Save facts like: preferences, decisions, key people, plans, policies, personal context
-- DO NOT save data already in the database (sales figures, customer info, stock prices)
-- When the user references past conversations, use recall_memories to find context
-- Be proactive: if you notice the user mentions something important, save it without being asked
-- You can also save conversation context: "User asked about VAT registration on 14 Feb 2026"
 
 ## HOW YOU WORK
 You have TOOLS to look up data and knowledge. ALWAYS use them for DATA:
+- Stock/price/availability → search_stock (NEVER guess a price)
 - Customer info/balance → search_customers
 - Supplier info → search_suppliers
 - Who owes money → get_debtors
-- Who we owe → get_creditors
 - Business health → get_financial_overview
 - Sales figures → get_sales_summary
 - Expenses → get_expenses
 - Invoices → get_invoices
-- Quotes → get_quotes
-- Purchase orders → get_purchase_orders (what we ordered from suppliers)
-- Goods received (GRV) → get_goods_received (deliveries from suppliers)
-- Delivery notes → get_delivery_notes (deliveries TO customers)
-- Credit notes → get_credit_notes (returns/credits to customers)
-- Payments in/out → get_payments (money received or paid)
-- Receipts → get_receipts (customer payment records)
-- Journal entries / GL → get_journal_entries (accounting double-entry records)
-- Scan inbox → get_scan_queue (scanned docs waiting to be processed)
-- Recurring invoices → get_recurring_invoices (auto-billing setups)
-- Rentals/tenants → get_rentals (property management, leases, municipal)
-- Timesheets → get_timesheets (employee hours, attendance, clock records)
-- Payslips → get_payslips (salary payment history per employee)
-- Subscriptions → get_subscriptions (recurring business expenses)
-- Employee/payroll info → get_employees
-- Job cards → get_jobs
-- Bookkeeping/accounting/tax guidance → get_accounting_help
+- Bookkeeping/accounting HOW-TO → get_accounting_help
+- ClickAI program HOW-TO (how to use features) → get_accounting_help
 - Create reminder → create_reminder ("remind me Friday to call John")
 - Save a note → create_note ("note: Johan wants 500 bolts next month")
 - Add to-do → create_todo ("I need to call the bank about overdraft")
 - List/complete/delete/search tasks → manage_tasks
 - Call MULTIPLE tools in one turn for complex questions
-
-## STOCK / INVENTORY QUESTIONS → REDIRECT TO UI
-You do NOT handle stock queries (prices, quantities, availability, stock search, movements).
-When a user asks about stock, prices, products, items, inventory, or what's in stock:
-→ Tell them to click on Stock in the menu, or click any item to see its full history
-→ Use NAVIGATE action with url "/stock" 
-→ Example: "Kyk gerus op die Stock bladsy - klik op enige item om sy volle geskiedenis, pryse en bewegings te sien!"
-→ For a specific item: "Gaan na Stock en soek 'the item' - klik op die ry om alles te sien."
-This is FASTER and more accurate than me searching through thousands of items.
 
 For REMINDERS, NOTES & TO-DOS:
 - "remind me", "herinner my", "don't forget", "follow up" → create_reminder
@@ -7442,19 +6329,13 @@ For REMINDERS, NOTES & TO-DOS:
 - Calculate due_date from natural language: "Friday" = next Friday, "in 3 days" = today + 3
 - Items show on the Pulse page automatically
 
-For ACCOUNTING/TAX questions:
+For ACCOUNTING or PROGRAM HOW-TO questions:
 1. FIRST call get_accounting_help to check if there's a specific guide
-2. If the guide covers it → use that guide (it has detailed accounting procedures)
+2. If the guide covers it → use that guide (it has step-by-step ClickAI instructions)
 3. If NO guide found → answer from your OWN expert knowledge (you know this stuff)
-4. For accounting: include journal entries, VAT treatment, and practical steps
-5. NEVER say "I don't have information" - you are a qualified bookkeeper with 20 years experience
-
-## PROGRAM HOW-TO QUESTIONS → REDIRECT TO ? BUTTON
-You do NOT answer "how do I use the system" questions. Every page has a ? help button.
-When a user asks how to create an invoice, use POS, add stock, scan docs, set up email, etc:
-→ Tell them to click the ? button on that page for step-by-step help
-→ Example: "Klik die ? knoppie regs onder op die Invoices bladsy - dit wys jou stap-vir-stap hoe!"
-→ You are an ACCOUNTANT, not a user manual. Focus on the FINANCIAL side.
+4. For accounting: include journal entries, VAT treatment, and ClickAI steps
+5. For program: include exact navigation, what to click, and shortcuts
+6. NEVER say "I don't have information" - you are a qualified bookkeeper AND you know ClickAI inside-out
 
 ## SA TAX QUICK REFERENCE (2024/2025)
 - VAT: 15% | VAT registration threshold: R1,000,000/year
@@ -7486,63 +6367,17 @@ For actions:
 }}}}
 
 Valid actions: QUERY, CREATE_INVOICE, CREATE_QUOTE, CREATE_CUSTOMER, CREATE_SUPPLIER, 
-NAVIGATE, SEND_STATEMENT, SEND_INVOICE, RECORD_PAYMENT, ADD_EXPENSE, 
-GENERATE_CODES, ADD_STOCK_ITEM, BOOK_STOCK_IN, CREATE_PO, RECORD_SUPPLIER_INVOICE,
-CREATE_JOB, RUN_PAYROLL, POS_SALE, CONVERT_QUOTE, DELETE_CUSTOMER, DELETE_SUPPLIER, DELETE_STOCK
+NAVIGATE, SEND_STATEMENT, SEND_INVOICE, RECORD_PAYMENT, ADD_EXPENSE
 
 ## CRITICAL RULES
-- NEVER guess data. ALWAYS use tools for balances, names, invoices
-- Stock/price/inventory questions → ALWAYS redirect to /stock page (NAVIGATE action)
+- NEVER guess data. ALWAYS use tools for prices, quantities, balances, names
 - Prices: ALWAYS state excl/incl VAT
+- Stock: Flag if qty is low (<5) or zero
 - Financial: Always mention upcoming obligations
 - Don't say "lyk goed" without listing what's outstanding
 - After actions, confirm what was done + suggest next steps
 - For emails: Write professionally, include all relevant details
 - For accounting: Give complete answers with journal entries
-- ANSWER FIRST, ask questions only if absolutely impossible to proceed
-
-## CLICKAI SYSTEM AWARENESS (know this to give smart admin advice)
-You know what ClickAI can do, so recommend the RIGHT feature for each situation:
-
-**Subscriptions** (/subscriptions): For ANY recurring monthly/annual expense - insurance, vehicle trackers, 
-software licenses, internet, phone contracts, equipment rentals, security, pest control. 
-Categories: Insurance, Software, Telecom, Rent, Maintenance, Licenses, Security, Cleaning, Other.
-Auto-creates expenses each month. ALWAYS recommend this over manual monthly expenses.
-
-**Recurring Invoices** (/recurring-invoices): For ANY repeating customer billing - rent, retainers, 
-monthly services, support contracts. Auto-generates invoices on schedule. 
-
-**Rentals** (/rentals): Full property management - tenants, leases, municipal passthrough, deposits.
-Use for any rental/property income. NOT for equipment rentals (use recurring invoices for that).
-
-**Job Cards** (/jobs): For project-based work - manufacturing, repairs, installations, construction.
-Track materials, labour, progress. Convert to invoice when done.
-
-**POS** (/pos): Walk-in sales. Cash = immediate. Card = immediate. Account = creates invoice automatically.
-
-**Delivery Notes**: Proof of delivery. Can create from invoice or standalone. 
-
-**Credit Notes**: Returns, refunds, corrections. Reduces customer balance.
-
-**Scan & Process** (/scan): AI reads supplier invoices, receipts, bank statements from photos/PDFs.
-Scan-to-email from printer also works.
-
-**Collections** (/collections): Chase overdue invoices. Auto-reminders. Age analysis.
-
-**SARS** (/sars): VAT201, EMP201, EMP501 generation. All calculated from actual data.
-
-**Bank Import** (/banking/import): Upload CSV bank statements. Auto-match to invoices/expenses.
-
-**Stock Detail** (/stock/{id}): Click any stock item → full lifecycle timeline: every purchase, 
-sale, delivery, job usage, movement. With dates, refs, quantities, costs.
-
-**Pulse** (/pulse): Dashboard with reminders, tasks, notes, forecasts, reorder alerts.
-
-When giving advice, recommend the BEST feature:
-- "Where do I book insurance?" → "Under Subscriptions - it auto-tracks monthly"
-- "Customer wants monthly billing" → "Set up a Recurring Invoice"  
-- "Where is my stock history?" → "Click the item in Stock - you'll see the full timeline"
-- "I need to chase debtors" → "Use Collections - it shows age analysis and sends reminders"
 """
     
     if _needs_printer:
@@ -7595,15 +6430,30 @@ Accounting: /accounting (journal entries, chart of accounts)
 Settings: /settings (business info, VAT, users, preferences)
 """
 
+    if _needs_steel:
+        prompt += """
+## STEEL & HARDWARE KNOWLEDGE
+**Bolt grades:** 4.6 (mild), 8.8 (high tensile), 10.9 (very high tensile), 12.9 (highest), A2/A4 (stainless)
+**Bolt naming:** M16x80 = Metric, 16mm diameter, 80mm length
+**Common combos:** Bolt + nut + 2 washers (flat + spring)
+**Stainless grades:** 304 (general, not magnetic), 316 (marine/chemical, more expensive)
+**Mild steel:** Cheapest, rusts without treatment (paint/galvanise/zinc)
+**Galvanised:** Zinc coated mild steel, outdoor use
+**Structural sections:** Equal angle, unequal angle, channel, I-beam, H-beam, T-section
+**Sheet/plate:** < 3mm = sheet, ≥ 3mm = plate (priced per kg or per sheet)
+**Pricing:** Steel usually priced per kg or per metre, bolts per unit or per box
+**VAT:** All steel products standard rated (15%)
+"""
+
     return prompt
 
 
 def call_zane_with_tools(system_prompt, user_message, tool_handler, chat_history=None,
-                         model="claude-sonnet-4-5-20250929", api_key="", max_turns=8):
+                         model="claude-sonnet-4-5-20250929", api_key="", max_turns=5):
     """Call Zane with tool loop. Returns final text response."""
     messages = []
     if chat_history:
-        for msg in chat_history[-20:]:
+        for msg in chat_history[-12:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_message})
     
@@ -8136,7 +6986,7 @@ Once you have a customer, you can invoice! 📝"""
         
         # WHO OWES US / DEBTORS - Use ALL customers, not just summary
         if any(kw in msg_lower for kw in ["who owes", "owes us", "owes me", "debtors", "outstanding customers", "customers owe"]):
-            all_customers = context.get("all_customers") or db.get("customers", {"business_id": context.get("business_id")}) or []
+            all_customers = context.get("all_customers", [])
             # Filter to only those with balance > 0
             debtors = [c for c in all_customers if float(c.get("balance", 0)) > 0]
             # Sort by balance desc
@@ -8158,7 +7008,7 @@ Once you have a customer, you can invoice! 📝"""
         
         # WHAT DO WE OWE / CREDITORS - Use ALL suppliers
         if any(kw in msg_lower for kw in ["we owe", "i owe", "creditors", "outstanding suppliers", "owe suppliers"]):
-            all_suppliers = context.get("all_suppliers") or db.get("suppliers", {"business_id": context.get("business_id")}) or []
+            all_suppliers = context.get("all_suppliers", [])
             creditors = [s for s in all_suppliers if float(s.get("balance", 0)) > 0]
             creditors = sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)
             total = sum(float(c.get("balance", 0)) for c in creditors)
@@ -8514,7 +7364,7 @@ Once you have a customer, you can invoice! 📝"""
         system_prompt = build_zane_core_prompt(context, user_message)
         
         # Create tool handler connected to this business's data
-        tool_handler = ZaneToolHandler(db_instance=db, business_id=context.get("business_id"), user_id=context.get("user_id", ""))
+        tool_handler = ZaneToolHandler(db_instance=db, business_id=context.get("business_id"))
         
         logger.info(f"[BRAIN] Using TOOL-BASED mode for query")
         
@@ -9332,11 +8182,6 @@ You are NOT just a bookkeeper - you are a FINANCIAL ANALYST who provides ACTIONA
     Required: employee_name, hours
     Optional: job_number, date, description
 
-23. **GENERATE_CODES** - "Generate stock codes" / "Make smart codes" / "Create stock codes" / "Regenerate codes"
-    No data required - generates smart unique codes for ALL stock items from their descriptions
-    Examples: BOLT M10X110 HT → BLT-10X110-HT, SAFETY BOOT CHELSEA BROWN 9 → SFT-BT-CHEL-BRN-9
-    This is a REAL action that updates the database immediately.
-
 ## Warning: DANGEROUS DELETE ACTIONS - REQUIRE CONFIRMATION!
 When user wants to delete, FIRST send without confirmed. System will warn them.
 When user confirms with "ja delete X" or "yes delete X", send with confirmed: true
@@ -10115,43 +8960,6 @@ Fokus op verkope en invorderings vir die res van die maand."
                 if result["success"]:
                     actions_taken.append(result["message"])
                     result_data = result.get("data", {})
-            
-            elif action in ("GENERATE_CODES", "STOCK_CODES", "SMART_CODES"):
-                # Generate smart stock codes for all items
-                biz_id = context.get("business_id")
-                all_stock = db.get_all_stock(biz_id) if biz_id else []
-                if not all_stock:
-                    actions_taken.append("No stock items found to generate codes for.")
-                else:
-                    existing_codes = set()
-                    for s in all_stock:
-                        c = str(s.get("code", "")).upper().strip()
-                        if c:
-                            existing_codes.add(c)
-                    
-                    updates = []
-                    for item in all_stock:
-                        desc = item.get("description", "").strip()
-                        if not desc:
-                            continue
-                        new_code = smart_stock_code(desc, existing_codes)
-                        old_code = str(item.get("code", "")).strip()
-                        if new_code and new_code.upper() != old_code.upper():
-                            updates.append({"id": item["id"], "data": {"code": new_code}})
-                            existing_codes.add(new_code.upper())
-                    
-                    if updates:
-                        s1, f1 = db.update_many("stock_items", updates, biz_id)
-                        s2, f2 = db.update_many("stock", updates, biz_id)
-                        updated = s1 + s2
-                        actions_taken.append(f"✅ Generated smart codes for {updated} of {len(all_stock)} stock items")
-                    else:
-                        actions_taken.append(f"All {len(all_stock)} items already have good codes")
-            
-            elif action in ("APPLY_MARKUP", "SET_MARKUP", "STOCK_MARKUP"):
-                # Apply markup pricing - pass to zane-edit endpoint logic
-                actions_taken.append("Use the ⚡ Stock Manager button on the Stock page to apply markup pricing. You can set rules like 'under R50 = 80% markup, rest 50%'.")
-                result_data = {"navigate": "/stock"}
             
             # Build response with optional navigation data
             # Add warnings to response text if any
@@ -11121,7 +9929,6 @@ class Actions:
             "customer_name": customer["name"],
             "amount": float(amount),
             "date": today(),
-            "created_by": context.get("user_id", ""),
             "created_at": now()
         })
         
@@ -11662,16 +10469,7 @@ class Actions:
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        max_po = 0
-        for ep in existing:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = f"PO-{len(existing) + 1:04d}"
         
         # Build items
         if not items and description:
@@ -12093,16 +10891,10 @@ class Actions:
         if "duplicate" in criteria_lower:
             seen_keys = {}
             
-            # For stock, use DESCRIPTION as the unique key (not code - codes can differ for same item)
-            # For others, use 'name'
+            # For stock, use 'code' as the unique key. For others, use 'name'
             def get_dedup_key(r):
                 if table in ["stock", "stock_items"]:
-                    # Primary: description (the real identifier)
-                    # Fallback: code
-                    desc = (r.get("description") or "").lower().strip()
-                    if desc:
-                        return desc
-                    return (r.get("code") or "").lower().strip()
+                    return (r.get("code") or r.get("description") or "").lower().strip()
                 return (r.get("name") or "").lower().strip()
             
             # Sort by created_at (oldest first) - keep oldest, delete rest
@@ -12112,32 +10904,10 @@ class Actions:
                 key = get_dedup_key(r)
                 if key:
                     if key in seen_keys:
-                        # Duplicate found - merge qty into the keeper, then mark for deletion
-                        keeper = seen_keys[key]
-                        if table in ["stock", "stock_items"]:
-                            dup_qty = float(r.get("quantity") or r.get("qty") or 0)
-                            if dup_qty > 0:
-                                keeper_qty = float(keeper.get("quantity") or keeper.get("qty") or 0)
-                                merged_qty = keeper_qty + dup_qty
-                                keeper["quantity"] = merged_qty
-                                keeper["qty"] = merged_qty
-                                keeper["_qty_merged"] = True
+                        # Duplicate found - mark for deletion (keep the first/oldest one)
                         to_delete.append(r)
                     else:
                         seen_keys[key] = r  # Keep this one (the oldest)
-            
-            # Update keepers that had qty merged
-            if table in ["stock", "stock_items"]:
-                for key, keeper in seen_keys.items():
-                    if keeper.get("_qty_merged"):
-                        try:
-                            db.update_stock(keeper["id"], {
-                                "qty": keeper["qty"], 
-                                "quantity": keeper["quantity"]
-                            }, biz_id)
-                            logger.info(f"[BULK DELETE] Merged qty into {keeper.get('code')}: now {keeper['qty']}")
-                        except:
-                            pass
             
             logger.info(f"[BULK DELETE] Found {len(to_delete)} duplicates to delete, keeping {len(seen_keys)} unique records")
             
@@ -12146,45 +10916,25 @@ class Actions:
                 # Get stock_items too
                 stock_items_records = db.get("stock_items", {"business_id": biz_id}) or []
                 
-                # Merge for dedup using DESCRIPTION as key
+                # Merge for dedup - items from stock_items first (newer/preferred)
                 all_stock = stock_items_records + records
-                seen_descs = {}
+                seen_codes = {}
                 extra_delete_stock = []
                 extra_delete_stock_items = []
                 
                 sorted_all = sorted(all_stock, key=lambda x: x.get("created_at", "") or "")
                 for s in sorted_all:
-                    desc = (s.get("description") or s.get("code") or "").lower().strip()
-                    if not desc:
+                    code = (s.get("code") or "").lower().strip()
+                    if not code:
                         continue
-                    if desc in seen_descs:
-                        # Merge qty into keeper
-                        keeper = seen_descs[desc]
-                        dup_qty = float(s.get("quantity") or s.get("qty") or 0)
-                        if dup_qty > 0:
-                            keeper_qty = float(keeper.get("quantity") or keeper.get("qty") or 0)
-                            keeper["quantity"] = keeper_qty + dup_qty
-                            keeper["qty"] = keeper_qty + dup_qty
-                            keeper["_cross_merged"] = True
-                        
-                        # Mark for deletion from correct table
+                    if code in seen_codes:
+                        # This is a dup - figure out which table it's from
                         if s in stock_items_records:
                             extra_delete_stock_items.append(s)
                         else:
                             extra_delete_stock.append(s)
                     else:
-                        seen_descs[desc] = s
-                
-                # Update keepers with merged qty
-                for desc, keeper in seen_descs.items():
-                    if keeper.get("_cross_merged"):
-                        try:
-                            db.update_stock(keeper["id"], {
-                                "qty": keeper["qty"],
-                                "quantity": keeper["quantity"]
-                            }, biz_id)
-                        except:
-                            pass
+                        seen_codes[code] = s
                 
                 # Delete cross-table dups
                 for s in extra_delete_stock:
@@ -12623,8 +11373,19 @@ class Actions:
                                     logger.info(f"[EXPENSE] {li_desc} → {expense_category}: R{li_total:.2f}")
                                     continue  # Don't book to stock
                                 
-                                # Generate smart code for STOCK items using shared function
-                                smart_code = smart_stock_code(li_desc, set(stock_by_code.keys()))
+                                # Generate smart code for STOCK items
+                                product_code = ""
+                                for prod, code in product_types.items():
+                                    if prod in desc_upper:
+                                        product_code = code
+                                        break
+                                
+                                sizes = re.findall(r'M?(\d+(?:\.\d+)?)', desc_upper)
+                                if product_code:
+                                    smart_code = product_code + ("-" + "-".join(sizes[:2]) if sizes else "")
+                                else:
+                                    smart_code = desc_upper[:3] + ("-" + sizes[0] if sizes else "")
+                                smart_code = smart_code[:15].upper()
                                 
                                 # Try to match
                                 matched = stock_by_code.get(smart_code)
@@ -12658,6 +11419,10 @@ class Actions:
                                 else:
                                     # CREATE new stock item
                                     final_code = smart_code
+                                    counter = 1
+                                    while final_code in stock_by_code:
+                                        final_code = f"{smart_code}-{counter}"
+                                        counter += 1
                                     
                                     # Use RecordFactory.stock_item() for 'stock_items' table
                                     new_stock = RecordFactory.stock_item(
@@ -13008,7 +11773,7 @@ class Context:
                     user_id = inv.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": extract_time(inv.get("created_at", "")) or "??:??",
+                        "time": str(inv.get("created_at", ""))[-8:-3] or "??:??",
                         "user": user_name,
                         "action": "Created invoice",
                         "detail": f"{inv.get('invoice_number', '')} for {inv.get('customer_name', '')} - R{float(inv.get('total', 0)):,.2f}",
@@ -13021,7 +11786,7 @@ class Context:
                     user_id = q.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": extract_time(q.get("created_at", "")) or "??:??",
+                        "time": str(q.get("created_at", ""))[-8:-3] or "??:??",
                         "user": user_name,
                         "action": "Created quote",
                         "detail": f"{q.get('quote_number', '')} for {q.get('customer_name', '')} - R{float(q.get('total', 0)):,.2f}",
@@ -13034,7 +11799,7 @@ class Context:
                     user_id = s.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": extract_time(s.get("created_at", "")) or "??:??",
+                        "time": str(s.get("created_at", ""))[-8:-3] or "??:??",
                         "user": user_name,
                         "action": "POS sale",
                         "detail": f"{s.get('payment_method', 'Cash')} - R{float(s.get('total', 0)):,.2f}",
@@ -13082,94 +11847,127 @@ class Context:
     
     @staticmethod
     def get_full_context(user: dict, business: dict) -> dict:
-        """Get lean business context for AI - stats only, tools fetch detail data.
-        
-        MEGA BRAIN ARCHITECTURE:
-        - This function loads ONLY counts and summary totals (~fast, ~small)
-        - Zane's 30+ tools fetch actual data on demand when needed
-        - Result: "what time is it?" doesn't load 5000 stock items
-        - Result: "show me POs" triggers get_purchase_orders tool, not pre-loading
-        """
+        """Get FULL business context for AI - Zane sees EVERYTHING"""
         
         biz_id = business.get("id") if business else None
         
-        # ── LIGHTWEIGHT STATS ONLY ────────────────────────────────
-        # Load counts and totals for the system prompt dashboard
-        # Tools will fetch actual records when Zane needs them
-        
+        # Get ALL data
         customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
         suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
         stock = db.get_all_stock(biz_id)
-        sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-        employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
         invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
+        quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
+        sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
         expenses = db.get("expenses", {"business_id": biz_id}) if biz_id else []
+        employees = db.get("employees", {"business_id": biz_id}) if biz_id else []
+        jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
         
-        # Calculate summary numbers
-        debtors = [c for c in customers if float(c.get("balance", 0) or 0) > 0]
-        total_debtors = sum(float(c.get("balance", 0) or 0) for c in debtors)
+        # Calculate summaries
+        debtors = [c for c in customers if float(c.get("balance", 0)) > 0]
+        total_debtors = sum(float(c.get("balance", 0)) for c in debtors)
         
-        creditors = [s for s in suppliers if float(s.get("balance", 0) or 0) > 0]
-        total_creditors = sum(float(s.get("balance", 0) or 0) for s in creditors)
+        creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
+        total_creditors = sum(float(s.get("balance", 0)) for s in creditors)
         
-        today_sales = sum(float(s.get("total", 0) or 0) for s in sales if s.get("date") == today())
-        total_sales = sum(float(s.get("total", 0) or 0) for s in sales)
-        total_expenses = sum(float(e.get("amount", 0) or 0) for e in expenses)
-        total_payroll = sum(float(e.get("salary", 0) or 0) for e in employees)
+        low_stock = [s for s in stock if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5))]
         
+        # Sort by date - NO LIMITS
+        recent_invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
+        recent_quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
+        recent_sales = sorted(sales, key=lambda x: x.get("date", ""), reverse=True)
+        recent_expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)
+        
+        # Financial summaries
+        total_invoiced = sum(float(i.get("total", 0)) for i in invoices)
+        total_outstanding = sum(float(i.get("total", 0)) for i in invoices if i.get("status") == "outstanding")
+        total_paid = sum(float(i.get("total", 0)) for i in invoices if i.get("status") == "paid")
+        
+        total_quoted = sum(float(q.get("total", 0)) for q in quotes)
+        pending_quotes = [q for q in quotes if q.get("status") == "pending"]
+        
+        total_sales = sum(float(s.get("total", 0)) for s in sales)
+        today_sales = sum(float(s.get("total", 0)) for s in sales if s.get("date") == today())
+        
+        total_expenses = sum(float(e.get("amount", 0)) for e in expenses)
+        
+        # Stock value
         stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock)
         stock_retail_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("price") or s.get("selling_price") or 0) for s in stock)
         
-        low_stock = [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0)} 
-                     for s in stock if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5))]
-        
-        total_invoiced = sum(float(i.get("total", 0) or 0) for i in invoices)
-        total_outstanding = sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") == "outstanding")
-        total_paid = sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") == "paid")
-        
-        # Summaries for reports (compact, not full records)
-        customers_summary = [{"name": c.get("name"), "balance": c.get("balance", 0), "phone": c.get("phone", "")} 
-                            for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
-        suppliers_summary = [{"name": s.get("name"), "balance": s.get("balance", 0), "phone": s.get("phone", "")} 
-                            for s in sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
+        # Employee/payroll info
+        total_payroll = sum(float(e.get("salary", 0)) for e in employees)
         
         return {
             "business_id": biz_id,
             "business_name": business.get("name", "Business") if business else "Business",
             "user_name": user.get("name", "there") if user else "there",
             "user_id": user.get("id") if user else None,
-            "user_role": user.get("role", "owner") if user else "owner",
+            "user_role": user.get("role", "owner") if user else "owner",  # For role-based access control
             "business_type": business.get("industry_type", business.get("business_type", "General")) if business else "General",
             
-            # COUNTS - for system prompt
+            # CUSTOMERS - Include ALL for searching, plus summary of debtors
             "customer_count": len(customers),
-            "supplier_count": len(suppliers),
-            "stock_count": len(stock),
-            "employee_count": len(employees),
-            "invoice_count": len(invoices),
-            
-            # TOTALS - for system prompt + ReportEngine
+            "all_customers": [{"id": c.get("id"), "name": c.get("name", ""), "phone": c.get("phone", ""), "email": c.get("email", ""), "balance": float(c.get("balance", 0))} for c in customers],
+            "customers_summary": [{"name": c.get("name"), "balance": c.get("balance", 0), "phone": c.get("phone", "")} for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)],
+            "debtors": debtors,
             "total_debtors": total_debtors,
+            
+            # SUPPLIERS - Include ALL for searching
+            "supplier_count": len(suppliers),
+            "all_suppliers": [{"id": s.get("id"), "name": s.get("name", ""), "phone": s.get("phone", ""), "email": s.get("email", ""), "balance": float(s.get("balance", 0))} for s in suppliers],
+            "suppliers_summary": [{"name": s.get("name"), "balance": s.get("balance", 0), "phone": s.get("phone", "")} for s in sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)],
+            "creditors": creditors,
             "total_creditors": total_creditors,
-            "today_sales": today_sales,
-            "total_sales": total_sales,
-            "total_expenses": total_expenses,
-            "total_payroll": total_payroll,
+            
+            # STOCK - Include ALL for searching
+            "stock_count": len(stock),
+            "all_stock": [{"id": s.get("id"), "code": s.get("code", ""), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0), "price": s.get("price") or s.get("selling_price", 0), "cost": s.get("cost") or s.get("cost_price", 0), "category": s.get("category", "")} for s in stock],
+            "stock_summary": [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0), "price": s.get("price") or s.get("selling_price", 0), "category": s.get("category", "")} for s in stock],
+            "low_stock": [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0)} for s in low_stock],
             "stock_value": stock_value,
             "stock_retail_value": stock_retail_value,
+            
+            # INVOICES - ALL
+            "invoice_count": len(invoices),
+            "all_invoices": invoices,
+            "recent_invoices": [{"number": i.get("invoice_number"), "customer": i.get("customer_name"), "total": i.get("total"), "status": i.get("status"), "date": i.get("date")} for i in recent_invoices],
             "total_invoiced": total_invoiced,
             "total_outstanding": total_outstanding,
             "total_paid": total_paid,
             
-            # COMPACT SUMMARIES - for ReportEngine (not full records)
-            "debtors": debtors,
-            "creditors": creditors,
-            "customers_summary": customers_summary,
-            "suppliers_summary": suppliers_summary,
-            "low_stock": low_stock[:20],
+            # QUOTES - ALL
+            "quote_count": len(quotes),
+            "all_quotes": quotes,
+            "recent_quotes": [{"number": q.get("quote_number"), "customer": q.get("customer_name"), "total": q.get("total"), "status": q.get("status"), "date": q.get("date")} for q in recent_quotes],
+            "total_quoted": total_quoted,
+            "pending_quotes_count": len(pending_quotes),
             
-            # TEAM ACTIVITY - lightweight
-            "team_activity": Context._get_team_activity(biz_id, invoices, [], sales),
+            # SALES (POS) - ALL
+            "sales_count": len(sales),
+            "all_sales": sales,
+            "recent_sales": [{"date": s.get("date"), "customer": s.get("customer_name", "Cash"), "total": s.get("total"), "method": s.get("payment_method")} for s in recent_sales],
+            "total_sales": total_sales,
+            "today_sales": today_sales,
+            
+            # EXPENSES - ALL
+            "expense_count": len(expenses),
+            "all_expenses": expenses,
+            "recent_expenses": [{"date": e.get("date"), "description": e.get("description", ""), "amount": e.get("amount"), "category": e.get("category")} for e in recent_expenses],
+            "total_expenses": total_expenses,
+            
+            # EMPLOYEES/PAYROLL - ALL
+            "employee_count": len(employees),
+            "all_employees": employees,
+            "employees_summary": [{"name": e.get("name"), "position": e.get("position", ""), "salary": e.get("salary", 0)} for e in employees],
+            "total_payroll": total_payroll,
+            
+            # JOBS - ALL
+            "job_count": len(jobs),
+            "all_jobs": jobs,
+            "jobs_summary": [{"number": j.get("job_number"), "customer": j.get("customer_name"), "status": j.get("status"), "total": j.get("total")} for j in jobs],
+            
+            # TEAM ACTIVITY - Who did what today (for managers monitoring staff like Sue)
+            "team_activity": Context._get_team_activity(biz_id, invoices, quotes, sales),
             
             # AUDIT LOG - Recent changes (last 50)
             "recent_audit": Context._get_recent_audit(biz_id),
@@ -13285,7 +12083,7 @@ class DailyBriefing:
             logger.error(f"[BRIEFING] Data gathered. Sales: R{data.get('total_sales', 0)}, Invoices: R{data.get('total_invoiced', 0)}")
             
             # Generate briefing
-            briefing_text = cls._write_catchup_briefing(biz_name, owner_name, data, business_id=business_id)
+            briefing_text = cls._write_catchup_briefing(biz_name, owner_name, data)
             
             # Record this view (don't fail if table missing)
             try:
@@ -13505,7 +12303,7 @@ class DailyBriefing:
         }
     
     @classmethod
-    def _write_catchup_briefing(cls, biz_name: str, owner_name: str, data: dict, business_id: str = None) -> Optional[str]:
+    def _write_catchup_briefing(cls, biz_name: str, owner_name: str, data: dict) -> Optional[str]:
         """Use Claude Haiku to write a natural catch-up briefing."""
         
         logger.info(f"[BRIEFING] === CALLED === ANTHROPIC_KEY={'SET' if ANTHROPIC_API_KEY else 'EMPTY'}")
@@ -13653,23 +12451,7 @@ PROBLEMS:
         greeting_full = f"{greeting} {first_name}" if first_name else greeting
         
         # Professional prompt with structure - ENGLISH - STAFF ACCOUNTABILITY FOCUSED
-        
-        # Load Zane memories for business context
-        memories_context = ""
-        if business_id:
-            try:
-                memories = db.get("zane_memories", {"business_id": business_id})
-                if memories:
-                    mem_list = memories if isinstance(memories, list) else [memories]
-                    important = [m for m in mem_list if m.get("importance") == "high" and m.get("active", True)]
-                    if important:
-                        mem_lines = [m.get("fact", "") for m in important[:10]]
-                        memories_context = "\n\nBUSINESS CONTEXT (from previous conversations):\n" + "\n".join(f"- {l}" for l in mem_lines if l)
-            except:
-                pass
-        
         prompt = f"""You are Zane, a highly qualified business advisor with a BCom Honours and MBA background. You advise {biz_name}.
-{memories_context}
 
 Write an insightful business summary for the owner about the last {days} day(s). The owner uses this to monitor staff performance in real-time.
 
@@ -13702,7 +12484,7 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-haiku-4-5-20251001",
-                    max_tokens=900,
+                    max_tokens=600,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 if message.content:
@@ -13795,7 +12577,7 @@ class ReportEngine:
         
         # Report-specific analysis prompts - AI NEVER calculates, only explains pre-calculated numbers
         analysis_prompts = {
-            "management": "Review the PRE-CALCULATED metrics below. This is a YEAR-TO-DATE management statement showing cumulative performance from financial year start to current date. Cover: YTD revenue vs expenses, profitability trend, balance sheet health, cash position, debtors/creditors status, and key risks. USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers.",
+            "management": "Review the PRE-CALCULATED metrics below. Explain what they mean for the business: overall health, cash position, risks, opportunities, and what needs immediate attention. USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers.",
             "kpi": "Review the PRE-CALCULATED KPIs below. Explain what each metric means: are debtor days healthy? Is stock turn good? How does gross margin look? USE ONLY THE NUMBERS PROVIDED - do not calculate anything yourself.",
             "sales": "Review the sales data below. Identify: top customers by value, any concerning patterns, and opportunities. USE ONLY THE NUMBERS PROVIDED - do not calculate totals or percentages yourself.",
             "debtor": "Review the debtor data below. Identify: which customers owe the most, who might be risky, and who to follow up with first. USE ONLY THE NUMBERS PROVIDED - do not calculate aging or totals yourself.",
@@ -16917,273 +15699,9 @@ select.form-input optgroup {
 """
 
 
-# ═══════════════════════════════════════════════════════════════════
-# PAGE HELP SYSTEM - Contextual help per page (ZERO API calls)
-# Instead of using Zane (expensive AI) as a user manual, 
-# each page has a ? button with instant help
-# ═══════════════════════════════════════════════════════════════════
-
-PAGE_HELP = {
-    "dashboard": {
-        "title": "Dashboard",
-        "tips": [
-            ("What am I looking at?", "The dashboard shows your business heartbeat - today's sales, who owes you money, and what needs attention."),
-            ("Red numbers?", "Red means attention needed: overdue invoices, low stock, or negative cash flow."),
-            ("How do I refresh?", "Data loads automatically. Pull down on mobile to refresh."),
-        ]
-    },
-    "pos": {
-        "title": "Point of Sale (POS)",
-        "tips": [
-            ("How do I make a sale?", "Search item above → click to add → choose payment method → done!"),
-            ("Cash vs Account?", "Cash/Card = paid now (no invoice). Account = on credit (auto-creates an invoice)."),
-            ("How to give a discount?", "Change the price or qty in the cart before you finalize."),
-            ("How do I do a refund?", "Create a Credit Note under Sales → Credit Notes."),
-            ("Cash register / Z-read?", "Click 'Daily Sales' top right to see today's summary."),
-        ]
-    },
-    "invoices": {
-        "title": "Invoices",
-        "tips": [
-            ("New invoice?", "Click '+ New Invoice' top right, or make a sale in POS with 'Account' payment."),
-            ("Email invoice?", "Open the invoice → click 'Email'. Customer gets a PDF with your logo."),
-            ("Record payment?", "Open invoice → 'Record Payment' → enter amount and method."),
-            ("Status colours?", "Green = paid. Orange = outstanding. Red = overdue or credited."),
-            ("Search?", "Use the search bar above - search by customer name, invoice number, or amount."),
-        ]
-    },
-    "quotes": {
-        "title": "Quotes",
-        "tips": [
-            ("New quote?", "Click '+ New Quote', add items, save. Email it to the customer."),
-            ("Convert to invoice?", "Open the quote → click 'Convert to Invoice'. All items copy across."),
-            ("Validity?", "Quotes have a validity period (default 30 days). Set it in the quote."),
-        ]
-    },
-    "customers": {
-        "title": "Customers",
-        "tips": [
-            ("New customer?", "Click '+ New Customer' or just type the name in POS - auto-added."),
-            ("Send statement?", "Open customer → 'Email Statement'. Or bulk: Click 'Email All Statements'."),
-            ("Who owes me?", "Check the Balance column. Or go to Reports → Debtors Age Analysis."),
-            ("CC emails?", "Edit customer → fill in CC emails (comma separated). All emails go to all addresses."),
-            ("Customer history?", "Click a customer to see all their invoices, quotes, payments and sales."),
-        ]
-    },
-    "suppliers": {
-        "title": "Suppliers",
-        "tips": [
-            ("New supplier?", "Click '+ New Supplier' and fill in the details."),
-            ("What do I owe?", "Check the Balance column - it shows what you owe each supplier."),
-            ("Record supplier invoice?", "Scan the invoice or tell Zane: 'Record supplier invoice from [name] for R[amount]'."),
-        ]
-    },
-    "stock": {
-        "title": "Stock / Inventory",
-        "tips": [
-            ("Search item?", "Use the search bar above or filter by category."),
-            ("Item history?", "Click anywhere in the row → see full Timeline: purchases, sales, deliveries, everything."),
-            ("Adjust stock?", "Open item → 'Adjust Stock' → add/remove/set quantity with a reason."),
-            ("Low stock?", "Red qty = below 5 units. Set reorder levels in the item edit."),
-            ("New item?", "Click '+ Add Stock' top right. Or import via /import for bulk items."),
-            ("Change prices?", "Click on item → Edit → change cost/selling price."),
-        ]
-    },
-    "expenses": {
-        "title": "Expenses",
-        "tips": [
-            ("New expense?", "Scan a receipt with '📸 Scan Receipt' or tell Zane: 'Expense R500 for diesel'."),
-            ("Cash vs Card vs EFT?", "Choose the payment method - it determines which bank/cash account is debited."),
-            ("Expense vs Supplier Invoice?", "Expense = once-off payment (petrol, meals). Supplier Invoice = on account (pay later)."),
-            ("Categories?", "Each expense is categorised for your tax return."),
-        ]
-    },
-    "delivery-notes": {
-        "title": "Delivery Notes",
-        "tips": [
-            ("New delivery note?", "Click '+ New Delivery Note' or create one from an invoice."),
-            ("From invoice?", "Open an invoice → 'Create Delivery Note'. Items copy automatically."),
-            ("Status?", "Draft = not yet sent. Delivered = delivered and confirmed."),
-        ]
-    },
-    "payroll": {
-        "title": "Payroll",
-        "tips": [
-            ("New employee?", "Click '+ Add Employee' → fill in details, salary, tax info."),
-            ("Run payroll?", "Click 'Run Payroll' → select month → review → approve. PAYE, UIF, SDL calculated automatically."),
-            ("View payslip?", "Open employee → click on the payslip. Can also email to employee."),
-            ("SARS submissions?", "Go to SARS → EMP201 (monthly) and EMP501 (annual)."),
-        ]
-    },
-    "jobs": {
-        "title": "Job Cards",
-        "tips": [
-            ("New job?", "Click '+ New Job' → customer, description, items/materials."),
-            ("Issue materials?", "Open job → 'Issue Materials' → stock is automatically deducted."),
-            ("Job to invoice?", "Open completed job → 'Invoice Job' → invoice created with all items."),
-        ]
-    },
-    "reports": {
-        "title": "Reports",
-        "tips": [
-            ("Profit & Loss?", "Shows your income minus expenses = profit or loss for the period."),
-            ("Debtors Age?", "Who owes you money and for how long (30/60/90+ days)."),
-            ("VAT report?", "Go to SARS → VAT201 for your VAT return."),
-            ("Trial Balance?", "Shows all your account balances - must balance (debits = credits)."),
-        ]
-    },
-    "recurring-invoices": {
-        "title": "Recurring Invoices",
-        "tips": [
-            ("What is this?", "Invoices that are automatically created every month/week - perfect for rent, services, retainers."),
-            ("How to set up?", "Click '+ New Recurring' → choose customer, items, frequency (monthly/weekly), start date."),
-            ("Stop recurring?", "Open the recurring invoice → 'Deactivate'. No new invoices will be created."),
-        ]
-    },
-    "subscriptions": {
-        "title": "Subscriptions / Recurring Expenses",
-        "tips": [
-            ("What is this?", "Your business's fixed monthly expenses: insurance, software, rent, phone, internet, trackers, etc."),
-            ("How to add?", "Click '+ Add Subscription' → name, amount, category, frequency."),
-            ("Categories?", "Insurance, Software, Telecom, Rent, Maintenance, Licenses, Security, etc. Helps with tax."),
-            ("Auto expense?", "Subscriptions can automatically be booked as an expense each month."),
-        ]
-    },
-    "rentals": {
-        "title": "Rentals / Property Management",
-        "tips": [
-            ("What is this?", "Manage tenants, properties, and municipal accounts. Automatic rent invoicing."),
-            ("New tenant?", "Click '+ New Rental' → property, tenant, amount, deposit."),
-            ("Municipal?", "Add municipal costs → they get invoiced through to the tenant."),
-        ]
-    },
-    "banking": {
-        "title": "Banking",
-        "tips": [
-            ("Bank import?", "Upload your bank statement CSV → ClickAI matches transactions automatically."),
-            ("Reconcile?", "Match bank transactions with invoices/expenses. Green ✓ = matched."),
-            ("Unmatched?", "Items without a match → create an expense or payment."),
-        ]
-    },
-    "scan": {
-        "title": "Document Scanner",
-        "tips": [
-            ("How to scan?", "Click the camera button → take photo of receipt/invoice → AI reads it automatically."),
-            ("What can I scan?", "Supplier invoices, receipts, expenses, bank statements, payslips."),
-            ("Scan-to-email?", "Set up your printer to email to your scan inbox. Go to Settings → Scan Inbox."),
-            ("Not accurate?", "Always review the AI result. Fix errors before you save."),
-        ]
-    },
-    "settings": {
-        "title": "Settings",
-        "tips": [
-            ("Logo?", "Upload your logo here - it appears on invoices, quotes, and statements."),
-            ("Email setup?", "SMTP settings for Gmail: smtp.gmail.com, port 587, use an App Password (not your normal password)."),
-            ("Users?", "Add team members with different roles: Owner, Admin, Manager, Cashier, Viewer."),
-            ("VAT?", "Set your VAT number and registration status here."),
-        ]
-    },
-    "collections": {
-        "title": "Collections",
-        "tips": [
-            ("What is this?", "Manage overdue invoices - see who owes, how long, and send reminders."),
-            ("Send reminder?", "Click 'Send Reminder' next to the customer's name."),
-            ("Priority?", "Red = 90+ days, this needs attention ASAP."),
-        ]
-    },
-    "sars": {
-        "title": "SARS Submissions",
-        "tips": [
-            ("VAT201?", "Monthly/bi-monthly VAT return. Click 'Generate' → review → submit on eFiling."),
-            ("EMP201?", "Monthly employer declaration: PAYE + UIF + SDL. Generate → submit."),
-            ("EMP501?", "Annual employee tax reconciliation. Generate → submit with IRP5s."),
-        ]
-    },
-    "pulse": {
-        "title": "Pulse",
-        "tips": [
-            ("What is Pulse?", "Your business health at a glance - reminders, tasks, alerts, forecasts."),
-            ("Reminders?", "Tell Zane: 'Remind me Friday to call Botha' - it shows up here."),
-            ("Notes?", "Tell Zane: 'Note: Johan wants 500 bolts next month' - stored here."),
-        ]
-    },
-    "grv": {
-        "title": "Goods Received (GRV)",
-        "tips": [
-            ("What is GRV?", "Goods Received Voucher - proof that you received goods from a supplier."),
-            ("From PO?", "Open a Purchase Order → 'Receive Goods' → stock is automatically added."),
-            ("Without PO?", "Click '+ New GRV' → choose supplier, add items."),
-        ]
-    },
-    "purchases": {
-        "title": "Purchase Orders",
-        "tips": [
-            ("New PO?", "Click '+ New Purchase Order' → choose supplier → add items → save or email."),
-            ("Email to supplier?", "Open PO → 'Email to Supplier'. They get a professional PDF."),
-            ("Receive goods?", "Open PO → 'Receive Goods' to create a GRV and book stock in."),
-        ]
-    },
-    "supplier-invoices": {
-        "title": "Supplier Invoices",
-        "tips": [
-            ("What is this?", "Invoices from your suppliers - what YOU owe. Different from expenses: these are on account."),
-            ("New supplier invoice?", "Scan it with 📸 or tell Zane: 'Record supplier invoice from ABC for R5000'."),
-            ("Pay?", "Click 'Pay' next to the invoice → choose payment method."),
-        ]
-    },
-}
-
-def get_page_help(active: str) -> str:
-    """Generate the floating help button and drawer for a page"""
-    help_data = PAGE_HELP.get(active)
-    if not help_data:
-        return ""
-    
-    tips_html = ""
-    for question, answer in help_data.get("tips", []):
-        tips_html += f'''
-        <div style="margin-bottom:12px;">
-            <div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none';this.querySelector('span').textContent=this.nextElementSibling.style.display==='none'?'+':'-'" 
-                 style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--bg);border-radius:8px;font-weight:600;font-size:14px;">
-                {question} <span style="color:var(--primary);font-size:18px;">+</span>
-            </div>
-            <div style="display:none;padding:8px 12px;color:var(--text-muted);font-size:13px;line-height:1.5;">
-                {answer}
-            </div>
-        </div>'''
-    
-    return f'''
-    <!-- Help Button -->
-    <div id="helpBtn" onclick="document.getElementById('helpDrawer').style.display='flex'" 
-         style="position:fixed;bottom:90px;right:20px;width:44px;height:44px;border-radius:50%;background:var(--primary);color:white;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:bold;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.3);z-index:998;">
-        ?
-    </div>
-    
-    <!-- Help Drawer -->
-    <div id="helpDrawer" onclick="if(event.target===this)this.style.display='none'" 
-         style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1001;align-items:flex-end;justify-content:center;">
-        <div style="background:var(--card);width:100%;max-width:500px;max-height:75vh;border-radius:16px 16px 0 0;overflow-y:auto;padding:20px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                <h3 style="margin:0;">💡 {help_data["title"]} Help</h3>
-                <button onclick="document.getElementById('helpDrawer').style.display='none'" 
-                        style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-muted);">✕</button>
-            </div>
-            {tips_html}
-            <div style="margin-top:15px;padding-top:12px;border-top:1px solid var(--border);text-align:center;">
-                <p style="color:var(--text-muted);font-size:12px;margin:0;">Vir boekhou en belasting vrae, vra vir Zane 💬</p>
-            </div>
-        </div>
-    </div>
-    '''
-
-
 def render_page(title: str, content: str, user: dict = None, active: str = "") -> str:
     """Render a full page - FAST: uses session cache, minimal DB calls"""
     _t("render_start")
-    
-    # Check for ?onboard=1 force flag on any page
-    if request.args.get("onboard") == "1":
-        session["force_onboard"] = True
     
     # Get current business - FROM SESSION (no DB call!)
     business = None
@@ -17377,8 +15895,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     </div>
     
     {get_zane_chat()}
-    
-    {get_page_help(active)}
     
     {get_zane_proactive_tip(active)}
     
@@ -17924,16 +16440,21 @@ def get_zane_chat() -> str:
             <button class="zane-chat-close" onclick="toggleZaneChat()">×</button>
         </div>
         <div class="zane-chat-body" id="zaneChatBody">
-            <div class="zane-msg zane" id="zaneWelcome">Loading...</div>
-            <div id="zaneQuickBtns" style="display:none;flex-wrap:wrap;gap:8px;margin-top:10px;">
+            <div class="zane-msg zane">Welcome. I'm Zane, your business assistant. I can help with:
+
+• <b>Stock:</b> "Do we have M16 bolts?"
+• <b>Invoices:</b> "Invoice ABC Traders for R5000"
+• <b>Reports:</b> "Show me today's sales"
+• <b>Reminders:</b> "Remind me Friday to follow up"
+• <b>System help:</b> "How do I create a quote?"
+• <b>🎤 Voice:</b> Tap mic to talk, hold mic for hands-free mode
+
+How can I assist you?</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
                 <button onclick="quickZane('Who owes us the most?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Top debtors</button>
                 <button onclick="quickZane('Show me low stock')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Low stock</button>
                 <button onclick="quickZane('What did we sell today?')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">Today's sales</button>
                 <button onclick="quickZane('Show my reminders and to-do list')" style="padding:6px 12px;border-radius:15px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;">📋 My list</button>
-            </div>
-            <!-- Onboarding Questions (hidden by default) -->
-            <div id="zaneOnboarding" style="display:none;margin-top:10px;">
-                <div id="onboardStep" style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);border-radius:10px;padding:12px;"></div>
             </div>
         </div>
         <div class="voice-mode-banner" id="voiceModeBanner">
@@ -18375,206 +16896,8 @@ def get_zane_chat() -> str:
         
         if (isOpen) {
             document.getElementById('zaneInput').focus();
-            // Check onboarding on first open
-            if (!window._zaneOnboardChecked) {
-                window._zaneOnboardChecked = true;
-                checkZaneOnboarding();
-            }
         }
     }
-    
-    // ═══ ZANE ONBOARDING / SETUP WIZARD ═══
-    const onboardQuestions = [
-        {
-            id: 'industry',
-            q: 'What type of business do you run?',
-            type: 'buttons',
-            options: ['Retail / Shop', 'Hardware / Building', 'Manufacturing', 'Services / Professional', 'Restaurant / Food', 'Wholesale / Distribution', 'Construction', 'Transport / Logistics', 'Other'],
-            memory: 'Business type/industry: {val}'
-        },
-        {
-            id: 'products',
-            q: 'In a few words - what do you sell or do?',
-            type: 'text',
-            placeholder: 'e.g. stainless steel, workwear, plumbing supplies...',
-            memory: 'Main products/services: {val}'
-        },
-        {
-            id: 'size',
-            q: 'How many people work in the business?',
-            type: 'buttons',
-            options: ['Just me', '2-5', '6-15', '16-50', '50+'],
-            memory: 'Business size: {val} employees'
-        },
-        {
-            id: 'turnover',
-            q: 'Roughly what is your monthly turnover?',
-            type: 'buttons',
-            options: ['Under R50k', 'R50k-200k', 'R200k-500k', 'R500k-1M', 'R1M+'],
-            memory: 'Monthly turnover approximately: {val}'
-        },
-        {
-            id: 'vat',
-            q: 'Are you VAT registered?',
-            type: 'buttons',
-            options: ['Yes', 'No', 'Not sure'],
-            memory: 'VAT registered: {val}'
-        },
-        {
-            id: 'pain',
-            q: 'What is your BIGGEST frustration with your current bookkeeping?',
-            type: 'text',
-            placeholder: 'e.g. invoicing takes too long, cant track stock...',
-            memory: 'Main business pain point: {val}'
-        },
-        {
-            id: 'goals',
-            q: 'What do you most want ClickAI to help with?',
-            type: 'buttons',
-            options: ['Invoicing & Quotes', 'Stock Control', 'Financials & Reports', 'Payroll', 'Everything!'],
-            memory: 'Primary goal with ClickAI: {val}'
-        }
-    ];
-    
-    let onboardStep = 0;
-    let onboardAnswers = {};
-    
-    async function checkZaneOnboarding() {
-        try {
-            const resp = await fetch('/api/zane/onboard-status');
-            const data = await resp.json();
-            
-            const welcome = document.getElementById('zaneWelcome');
-            const quickBtns = document.getElementById('zaneQuickBtns');
-            const onboarding = document.getElementById('zaneOnboarding');
-            
-            if (data.needs_onboarding) {
-                // Show onboarding
-                welcome.innerHTML = "Hey! 👋 I'm <b>Zane</b>, your AI bookkeeper and business advisor.<br><br>Before we start, let me get to know your business — takes 2 minutes and makes me 10x smarter for you.";
-                onboarding.style.display = 'block';
-                quickBtns.style.display = 'none';
-                showOnboardStep(0);
-            } else {
-                // Normal welcome
-                welcome.innerHTML = "Welcome back. I'm Zane, your business advisor. Ask me anything — finances, invoices, stock, tax, or just how the business is doing.";
-                quickBtns.style.display = 'flex';
-                onboarding.style.display = 'none';
-            }
-        } catch(e) {
-            // Fallback to normal welcome
-            document.getElementById('zaneWelcome').innerHTML = "Welcome. I'm Zane, your business assistant. How can I help?";
-            document.getElementById('zaneQuickBtns').style.display = 'flex';
-        }
-    }
-    
-    function showOnboardStep(step) {
-        if (step >= onboardQuestions.length) {
-            finishOnboarding();
-            return;
-        }
-        
-        onboardStep = step;
-        const q = onboardQuestions[step];
-        const container = document.getElementById('onboardStep');
-        const progress = Math.round(((step) / onboardQuestions.length) * 100);
-        
-        let html = `<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-size:11px;color:var(--text-muted);">Step ${step+1} of ${onboardQuestions.length}</span>
-            <span style="font-size:11px;color:var(--primary);">${progress}%</span>
-        </div>
-        <div style="background:var(--border);border-radius:4px;height:4px;margin-bottom:12px;overflow:hidden;">
-            <div style="background:var(--primary);height:100%;width:${progress}%;transition:width 0.3s;"></div>
-        </div>
-        <div style="font-size:14px;font-weight:500;margin-bottom:10px;">${q.q}</div>`;
-        
-        if (q.type === 'buttons') {
-            html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
-            for (const opt of q.options) {
-                html += `<button onclick="answerOnboard('${q.id}','${opt.replace(/'/g,"\\'")}')" style="padding:6px 12px;border-radius:8px;border:1px solid var(--primary);background:transparent;color:var(--primary);font-size:12px;cursor:pointer;transition:all 0.15s;"
-                onmouseover="this.style.background='var(--primary)';this.style.color='white'" 
-                onmouseout="this.style.background='transparent';this.style.color='var(--primary)'">${opt}</button>`;
-            }
-            html += '</div>';
-        } else {
-            html += `<div style="display:flex;gap:6px;">
-                <input type="text" id="onboardInput" placeholder="${q.placeholder || ''}" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;" onkeypress="if(event.key==='Enter'){answerOnboard('${q.id}',this.value)}">
-                <button onclick="answerOnboard('${q.id}',document.getElementById('onboardInput').value)" style="padding:8px 14px;border-radius:6px;border:none;background:var(--primary);color:white;cursor:pointer;font-size:13px;">→</button>
-            </div>`;
-        }
-        
-        // Skip button
-        html += `<div style="text-align:right;margin-top:8px;">
-            <button onclick="answerOnboard('${q.id}','skip')" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;">Skip →</button>
-        </div>`;
-        
-        container.innerHTML = html;
-        
-        // Focus text input
-        if (q.type === 'text') {
-            setTimeout(() => { const inp = document.getElementById('onboardInput'); if(inp) inp.focus(); }, 100);
-        }
-    }
-    
-    async function answerOnboard(id, value) {
-        if (!value || value === 'skip') {
-            showOnboardStep(onboardStep + 1);
-            return;
-        }
-        
-        onboardAnswers[id] = value;
-        
-        // Save this answer as a memory immediately
-        const q = onboardQuestions.find(q => q.id === id);
-        if (q && q.memory) {
-            const memoryText = q.memory.replace('{val}', value);
-            try {
-                fetch('/api/zane/onboard-save', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({fact: memoryText, category: 'business_info', importance: 'high'})
-                });
-            } catch(e) {}
-        }
-        
-        // Show brief acknowledgment
-        const body = document.getElementById('zaneChatBody');
-        const ack = document.createElement('div');
-        ack.className = 'zane-msg user';
-        ack.textContent = value;
-        body.insertBefore(ack, document.getElementById('zaneOnboarding'));
-        
-        showOnboardStep(onboardStep + 1);
-        body.scrollTop = body.scrollHeight;
-    }
-    
-    async function finishOnboarding() {
-        const container = document.getElementById('onboardStep');
-        container.innerHTML = `<div style="text-align:center;padding:10px;">
-            <div style="font-size:28px;margin-bottom:8px;">🚀</div>
-            <div style="font-weight:600;margin-bottom:4px;">Setup Complete!</div>
-            <div style="font-size:12px;color:var(--text-muted);">I now know your business. Ask me anything.</div>
-        </div>`;
-        
-        // Mark onboarding done
-        try {
-            await fetch('/api/zane/onboard-complete', {method: 'POST'});
-        } catch(e) {}
-        
-        // After 2 seconds, switch to normal mode
-        setTimeout(() => {
-            document.getElementById('zaneOnboarding').style.display = 'none';
-            document.getElementById('zaneQuickBtns').style.display = 'flex';
-            document.getElementById('zaneWelcome').innerHTML = "I know your business now. Let's get to work — ask me anything about your finances, customers, stock, or tax.";
-        }, 2000);
-    }
-    
-    // Auto-check onboarding when chat is already open on page load
-    document.addEventListener('DOMContentLoaded', function() {
-        if (localStorage.getItem('zane_chat_open') === 'true') {
-            window._zaneOnboardChecked = true;
-            setTimeout(checkZaneOnboarding, 500);
-        }
-    });
     
     async function sendZaneMsg() {
         const input = document.getElementById('zaneInput');
@@ -19382,129 +17705,6 @@ def api_ai():
     except Exception as e:
         logger.error(f"[AI] Error: {e}")
         return jsonify({"error": str(e), "response": f"Sorry, something went wrong: {str(e)}"})
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ZANE ONBOARDING - First-time setup to make Zane smart from day 1
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.route("/api/zane/onboard-status")
-@login_required
-def api_zane_onboard_status():
-    """Check if this business needs onboarding"""
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    # Allow force onboarding via session flag (set by ?onboard=1 on any page)
-    force = session.get("force_onboard", False)
-    if force:
-        session.pop("force_onboard", None)
-        return jsonify({"needs_onboarding": True, "forced": True})
-    
-    if not biz_id:
-        return jsonify({"needs_onboarding": False})
-    
-    try:
-        # Check if onboarding was completed (stored as a zane_memory)
-        memories = db.get("zane_memories", {"business_id": biz_id, "category": "business_info"})
-        if memories:
-            # If we have 3+ business_info memories, onboarding is done
-            if isinstance(memories, list) and len(memories) >= 3:
-                return jsonify({"needs_onboarding": False})
-            elif isinstance(memories, dict):
-                return jsonify({"needs_onboarding": False})
-        
-        # Also check if we have enough data already (stock, customers)
-        stock_count = 0
-        customer_count = 0
-        try:
-            stocks = db.get("stock_items", {"business_id": biz_id})
-            stock_count = len(stocks) if isinstance(stocks, list) else (1 if stocks else 0)
-            customers = db.get("customers", {"business_id": biz_id})
-            customer_count = len(customers) if isinstance(customers, list) else (1 if customers else 0)
-        except:
-            pass
-        
-        # If business has lots of data already, probably doesn't need onboarding
-        if stock_count > 50 and customer_count > 20:
-            return jsonify({"needs_onboarding": False, "reason": "has_data"})
-        
-        return jsonify({"needs_onboarding": True})
-    except Exception as e:
-        logger.error(f"[ZANE ONBOARD] Status check error: {e}")
-        return jsonify({"needs_onboarding": False})
-
-
-@app.route("/api/zane/onboard-save", methods=["POST"])
-@login_required
-def api_zane_onboard_save():
-    """Save an onboarding answer as a Zane memory"""
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    if not biz_id:
-        return jsonify({"success": False})
-    
-    try:
-        data = request.get_json()
-        fact = data.get("fact", "").strip()
-        category = data.get("category", "business_info")
-        importance = data.get("importance", "high")
-        
-        if not fact:
-            return jsonify({"success": False})
-        
-        record = {
-            "id": generate_id(),
-            "business_id": biz_id,
-            "user_id": user.get("id", ""),
-            "fact": fact,
-            "category": category,
-            "importance": importance,
-            "source": "onboarding",
-            "active": True,
-            "created_at": now()
-        }
-        
-        success, resp = db.save("zane_memories", record)
-        logger.info(f"[ZANE ONBOARD] Saved memory: {fact[:60]}... success={success}")
-        return jsonify({"success": success})
-    except Exception as e:
-        logger.error(f"[ZANE ONBOARD] Save error: {e}")
-        return jsonify({"success": False})
-
-
-@app.route("/api/zane/onboard-complete", methods=["POST"])
-@login_required
-def api_zane_onboard_complete():
-    """Mark onboarding as complete"""
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    if not biz_id:
-        return jsonify({"success": False})
-    
-    try:
-        record = {
-            "id": generate_id(),
-            "business_id": biz_id,
-            "user_id": user.get("id", ""),
-            "fact": f"Onboarding completed on {today()}. Zane is fully configured for this business.",
-            "category": "business_info",
-            "importance": "high",
-            "source": "onboarding",
-            "active": True,
-            "created_at": now()
-        }
-        db.save("zane_memories", record)
-        logger.info(f"[ZANE ONBOARD] Onboarding completed for business {biz_id}")
-        return jsonify({"success": True})
-    except Exception as e:
-        logger.error(f"[ZANE ONBOARD] Complete error: {e}")
-        return jsonify({"success": False})
 
 
 @app.route("/api/report", methods=["POST"])
@@ -20352,11 +18552,10 @@ def customer_view(customer_id):
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/customers" style="color:var(--text-muted);">← Back to Customers</a>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <div style="display:flex;gap:10px;">
             <a href="/customer/{customer_id}/edit" class="btn btn-secondary">✏️ Edit</a>
             <a href="/statement/{customer_id}" class="btn btn-secondary">📄 Statement</a>
             <a href="/statement/{customer_id}?email=1" class="btn btn-secondary">📧 Email Statement</a>
-            <button onclick="showEmailModal()" class="btn btn-secondary">📨 Email Group</button>
             <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
         </div>
     </div>
@@ -20395,10 +18594,6 @@ def customer_view(customer_id):
             <div>
                 <span style="color:var(--text-muted);font-size:11px;display:block;">EMAIL</span>
                 <span style="font-size:14px;">{safe_string(customer.get("email", "-"))}</span>
-            </div>
-            <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">CC EMAILS</span>
-                <span style="font-size:14px;">{safe_string(customer.get("email_cc", "-")) or "-"}</span>
             </div>
             <div>
                 <span style="color:var(--text-muted);font-size:11px;display:block;">FAX</span>
@@ -20521,88 +18716,6 @@ def customer_view(customer_id):
             </tbody>
         </table>
     </div>
-    
-    <!-- Email Group Modal -->
-    <div id="emailGroupModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
-        <div style="background:var(--card);padding:25px;border-radius:12px;max-width:550px;width:95%;">
-            <h3 style="margin-bottom:15px;">📨 Send Email to {safe_string(customer.get("name", ""))}</h3>
-            <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">Email will be sent to all addresses for this customer</p>
-            
-            <div style="background:var(--bg);padding:10px;border-radius:8px;margin-bottom:15px;">
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:5px;">RECIPIENTS:</div>
-                <div id="recipientList" style="font-size:13px;">
-                    {f'<span style="background:var(--primary);color:white;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px;display:inline-block;">{safe_string(customer.get("email", ""))}</span>' if customer.get("email") else '<span style="color:var(--red);">No primary email set</span>'}
-                    {''.join(f'<span style="background:#6366f1;color:white;padding:2px 8px;border-radius:12px;font-size:12px;margin:2px;display:inline-block;">{e.strip()}</span>' for e in (customer.get("email_cc", "") or "").split(",") if e.strip())}
-                </div>
-            </div>
-            
-            <form id="emailGroupForm">
-                <input type="hidden" name="customer_id" value="{customer_id}">
-                <div style="margin-bottom:15px;">
-                    <label style="display:block;margin-bottom:5px;">Subject</label>
-                    <input type="text" id="egSubject" placeholder="e.g. Monthly Statement - {safe_string(customer.get('name', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
-                </div>
-                <div style="margin-bottom:15px;">
-                    <label style="display:block;margin-bottom:5px;">Message</label>
-                    <textarea id="egMessage" rows="5" placeholder="Type your message here..." style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);"></textarea>
-                </div>
-                <div style="margin-bottom:15px;">
-                    <label style="display:block;margin-bottom:5px;">Attach</label>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="egAttachStatement"> 📄 Latest Statement</label>
-                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="egAttachInvoice"> 📋 Latest Invoice</label>
-                    </div>
-                </div>
-                <div style="display:flex;gap:10px;">
-                    <button type="button" onclick="sendGroupEmail()" class="btn btn-primary" style="flex:1;">📧 Send to All</button>
-                    <button type="button" onclick="hideEmailModal()" class="btn btn-secondary">Cancel</button>
-                </div>
-            </form>
-        </div>
-    </div>
-    
-    <script>
-    function showEmailModal() {{
-        document.getElementById('emailGroupModal').style.display = 'flex';
-    }}
-    function hideEmailModal() {{
-        document.getElementById('emailGroupModal').style.display = 'none';
-    }}
-    async function sendGroupEmail() {{
-        const subject = document.getElementById('egSubject').value;
-        const message = document.getElementById('egMessage').value;
-        const attachStatement = document.getElementById('egAttachStatement').checked;
-        const attachInvoice = document.getElementById('egAttachInvoice').checked;
-        
-        if (!subject || !message) {{
-            alert('Please fill in subject and message');
-            return;
-        }}
-        
-        try {{
-            const resp = await fetch('/api/customer/email-group', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{
-                    customer_id: '{customer_id}',
-                    subject: subject,
-                    message: message,
-                    attach_statement: attachStatement,
-                    attach_invoice: attachInvoice
-                }})
-            }});
-            const data = await resp.json();
-            if (data.success) {{
-                alert('✅ Email sent to ' + data.sent_to + ' recipients!');
-                hideEmailModal();
-            }} else {{
-                alert('❌ Error: ' + (data.error || 'Failed to send'));
-            }}
-        }} catch(e) {{
-            alert('Error sending email: ' + e.message);
-        }}
-    }}
-    </script>
     
     '''
     
@@ -20766,7 +18879,6 @@ def customer_edit(customer_id):
         phone = request.form.get("phone", "").strip()
         cell = request.form.get("cell", "").strip()
         email = request.form.get("email", "").strip()
-        email_cc = request.form.get("email_cc", "").strip()
         address = request.form.get("address", "").strip()
         code = request.form.get("code", "").strip()
         contact_name = request.form.get("contact_name", "").strip()
@@ -20792,7 +18904,6 @@ def customer_edit(customer_id):
                 "phone": phone,
                 "cell": cell,
                 "email": email,
-                "email_cc": email_cc,
                 "address": address,
                 "contact_name": contact_name,
                 "category": category,
@@ -20855,10 +18966,6 @@ def customer_edit(customer_id):
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
                     <input type="email" name="email" value="{safe_string(c.get('email', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
-            </div>
-            <div style="margin-bottom:15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">📧 CC / Additional Emails <span style="color:var(--text-muted);font-weight:normal;font-size:12px;">(comma separated - invoices & statements will go to all)</span></label>
-                <input type="text" name="email_cc" value="{safe_string(c.get('email_cc', ''))}" placeholder="e.g. accounts@company.co.za, manager@company.co.za, boss@company.co.za" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
                 <div>
@@ -20949,7 +19056,6 @@ def stock_page():
                 </select>
                 <a href="/fulltech" class="btn" style="background:#8b5cf6;">🔩 Bolt Pricer</a>
                 <a href="/stock/movements" class="btn btn-secondary">📋 Movements</a>
-                <button onclick="showStockManager()" class="btn" style="background:#f59e0b;">⚡ Stock Manager</button>
                 <a href="/stock/new" class="btn btn-primary">+ Add Stock</a>
             </div>
         </div>
@@ -21028,15 +19134,15 @@ def stock_page():
             const cost = parseFloat(s.cost_price||s.cost||0);
             const price = parseFloat(s.selling_price||s.price||0);
             const qtyStyle = qty < 5 ? 'color:var(--red);' : '';
-            html += `<tr class="stock-row" data-search="${(s.code||'').toLowerCase()} ${(s.description||'').toLowerCase()}" data-cat="${(cat||'').toLowerCase()}" onclick="window.location='/stock/${s.id}'" style="cursor:pointer;">
-                <td><strong style="color:var(--primary);">${s.code||'-'}</strong></td>
+            html += `<tr class="stock-row" data-search="${(s.code||'').toLowerCase()} ${(s.description||'').toLowerCase()}" data-cat="${(cat||'').toLowerCase()}">
+                <td><a href="/stock/${s.id}"><strong>${s.code||'-'}</strong></a></td>
                 <td>${s.description||'-'}</td>
                 <td style="color:var(--text-muted);font-size:11px;">${cat}</td>
                 <td style="text-align:right;${qtyStyle}">${qty.toFixed(0)}</td>
                 <td style="color:var(--text-muted);">${s.unit||''}</td>
                 <td style="text-align:right;">R${cost.toFixed(2)}</td>
                 <td style="text-align:right;">R${price.toFixed(2)}</td>
-                <td style="font-size:11px;color:var(--text-muted);">📜</td>
+                <td><a href="/stock/${s.id}" style="color:var(--primary);font-size:11px;">Edit</a></td>
             </tr>`;
         });
         
@@ -21090,116 +19196,7 @@ def stock_page():
     
     // Init
     loadStock();
-    
-    // ═══════════════════════════════════════════
-    // STOCK MANAGER - Generate codes, markup, etc
-    // ═══════════════════════════════════════════
-    function showStockManager() {
-        document.getElementById('stockManagerModal').style.display = 'flex';
-    }
-    
-    function hideStockManager() {
-        document.getElementById('stockManagerModal').style.display = 'none';
-    }
-    
-    async function runStockCommand(command) {
-        const btn = event.target;
-        const origText = btn.textContent;
-        btn.textContent = '⏳ Working...';
-        btn.disabled = true;
-        
-        const resultDiv = document.getElementById('stockManagerResult');
-        resultDiv.innerHTML = '<div style="color:var(--text-muted);">Processing...</div>';
-        
-        let offset = 0;
-        let totalUpdated = 0;
-        let totalProcessed = 0;
-        let totalItems = 0;
-        
-        // Process in batches
-        while (true) {
-            try {
-                const response = await fetch('/api/stock/zane-edit', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({command: command, offset: offset, limit: 100})
-                });
-                const data = await response.json();
-                
-                if (!data.success) {
-                    resultDiv.innerHTML = '<div style="color:var(--red);">❌ ' + (data.error || 'Failed') + '</div>';
-                    break;
-                }
-                
-                totalUpdated += data.updated || 0;
-                totalProcessed += data.processed || 0;
-                totalItems = data.total || totalItems;
-                
-                resultDiv.innerHTML = '<div style="color:#22c55e;">✅ Updated ' + totalUpdated + ' of ' + totalItems + ' items (' + totalProcessed + ' processed)</div>';
-                
-                if (!data.hasMore) break;
-                offset += 100;
-            } catch (e) {
-                resultDiv.innerHTML = '<div style="color:var(--red);">❌ Error: ' + e.message + '</div>';
-                break;
-            }
-        }
-        
-        btn.textContent = origText;
-        btn.disabled = false;
-        
-        // Refresh stock list
-        if (totalUpdated > 0) {
-            sessionStorage.removeItem(CACHE_KEY);
-            loadStock();
-        }
-    }
-    
-    function runCustomCommand() {
-        const input = document.getElementById('customStockCommand');
-        if (input.value.trim()) {
-            runStockCommand(input.value.trim());
-        }
-    }
     </script>
-    
-    <!-- Stock Manager Modal -->
-    <div id="stockManagerModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
-        <div style="background:var(--card);border-radius:12px;padding:30px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-                <h3 style="margin:0;">⚡ Stock Manager</h3>
-                <button onclick="hideStockManager()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">✕</button>
-            </div>
-            
-            <div style="display:flex;flex-direction:column;gap:12px;">
-                <button onclick="runStockCommand('generate smart codes')" class="btn" style="background:#8b5cf6;text-align:left;padding:12px 16px;">
-                    🏷️ Generate Smart Stock Codes
-                    <div style="font-size:11px;opacity:0.8;margin-top:2px;">Creates unique codes from descriptions (BLT-10X110-HT, SFT-BT-CHEL-9, etc)</div>
-                </button>
-                
-                <button onclick="runStockCommand('50% markup')" class="btn" style="background:#10b981;text-align:left;padding:12px 16px;">
-                    💰 Apply 50% Markup
-                    <div style="font-size:11px;opacity:0.8;margin-top:2px;">Set selling price = cost × 1.5 for all items</div>
-                </button>
-                
-                <button onclick="runStockCommand('assign categories')" class="btn" style="background:#3b82f6;text-align:left;padding:12px 16px;">
-                    📂 Auto-Assign Categories
-                    <div style="font-size:11px;opacity:0.8;margin-top:2px;">Bolts → Fasteners, Boots → PPE, Pipes → Pipes & Tubes, etc</div>
-                </button>
-                
-                <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
-                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Custom Command</label>
-                    <div style="display:flex;gap:8px;">
-                        <input type="text" id="customStockCommand" placeholder="e.g. 'under R50 = 80% markup, rest 50%'" 
-                            class="form-input" style="flex:1;" onkeydown="if(event.key==='Enter')runCustomCommand()">
-                        <button onclick="runCustomCommand()" class="btn btn-primary">Run</button>
-                    </div>
-                </div>
-            </div>
-            
-            <div id="stockManagerResult" style="margin-top:15px;padding:10px;background:var(--bg);border-radius:6px;min-height:30px;"></div>
-        </div>
-    </div>
     '''
     
     return render_page("Stock", content, user, "stock")
@@ -21242,14 +19239,8 @@ def stock_movements_page():
     rows_html = ""
     for m in movements[:500]:  # Limit to 500
         stock = stock_lookup.get(m.get("stock_id"), {})
-        stock_desc = stock.get("description") or stock.get("name") or stock.get("code") or ""
+        stock_desc = stock.get("description") or stock.get("code") or str(m.get("stock_id", "-"))[:8]
         stock_code = stock.get("code", "")
-        # If stock item not found in lookup, try to extract name from reference
-        if not stock_desc:
-            ref_str = str(m.get("reference") or "")
-            # Reference format: "GRV-XXXX | PO-XXXXX | Supplier Name" - not helpful for item name
-            # Just show "Unknown item" rather than a raw ID
-            stock_desc = "Unknown item"
         m_type = m.get("type", "")
         qty = float(m.get("quantity") or 0)
         m_date = str(m.get("date") or m.get("created_at") or "")[:16].replace("T", " ")
@@ -21350,637 +19341,6 @@ def stock_movements_page():
     '''
     
     return render_page("Stock Movements", content, user, "stock")
-
-
-@app.route("/stock/<stock_id>")
-@login_required
-def stock_detail(stock_id):
-    """Stock Item Detail - EVERYTHING about one item in one place"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    currency = business.get("currency", "R") if business else "R"
-    
-    if not biz_id:
-        return redirect("/stock")
-    
-    # Get the stock item
-    item = db.get_one_stock(stock_id)
-    if not item or item.get("business_id") != biz_id:
-        flash("Stock item not found", "error")
-        return redirect("/stock")
-    
-    code = item.get("code", "")
-    desc = item.get("description", "Unknown")
-    qty = float(item.get("quantity", 0) or 0)
-    cost = float(item.get("cost_price", 0) or 0)
-    price = float(item.get("selling_price", 0) or 0)
-    category = item.get("category", "General")
-    unit = item.get("unit", "each")
-    reorder = int(item.get("reorder_level", 0) or 0)
-    
-    # Calculate stock value
-    stock_value = qty * cost
-    potential_revenue = qty * price
-    potential_profit = potential_revenue - stock_value
-    margin_pct = ((price - cost) / price * 100) if price > 0 else 0
-    
-    # === GATHER ALL HISTORY ===
-    
-    # 1. Stock Movements
-    all_movements = db.get("stock_movements", {"business_id": biz_id}) or []
-    movements = [m for m in all_movements if m.get("stock_id") == stock_id or str(m.get("item_code", "")).upper() == code.upper()]
-    movements.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-    
-    # 2. Purchase History (from goods_received and supplier_invoices)
-    purchases = []
-    
-    # From goods_received
-    all_grn = db.get("goods_received", {"business_id": biz_id}) or []
-    for grn in all_grn:
-        items = grn.get("items", [])
-        if not isinstance(items, list):
-            continue
-        for line in items:
-            if not isinstance(line, dict):
-                continue
-            if str(line.get("code", "")).upper() == code.upper() or str(line.get("stock_id", "")) == stock_id:
-                purchases.append({
-                    "date": grn.get("date", ""),
-                    "supplier": grn.get("supplier_name", "Unknown"),
-                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                    "cost": float(line.get("cost", line.get("unit_cost", line.get("cost_price", 0))) or 0),
-                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                    "ref": grn.get("grn_number", grn.get("reference", "")),
-                    "type": "GRN"
-                })
-    
-    # From supplier_invoices
-    all_bills = db.get("supplier_invoices", {"business_id": biz_id}) or []
-    for bill in all_bills:
-        items = bill.get("items", [])
-        if not isinstance(items, list):
-            continue
-        for line in items:
-            if not isinstance(line, dict):
-                continue
-            if str(line.get("code", "")).upper() == code.upper():
-                purchases.append({
-                    "date": bill.get("date", ""),
-                    "supplier": bill.get("supplier_name", "Unknown"),
-                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                    "cost": float(line.get("unit_price", line.get("cost", 0)) or 0),
-                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                    "ref": bill.get("invoice_number", bill.get("number", "")),
-                    "type": "Invoice"
-                })
-    
-    purchases.sort(key=lambda x: x.get("date", ""), reverse=True)
-    
-    # 3. Sales History (from invoices and pos_sales)
-    sales = []
-    
-    # From invoices
-    all_invoices = db.get("invoices", {"business_id": biz_id}) or []
-    for inv in all_invoices:
-        items = inv.get("items", [])
-        if not isinstance(items, list):
-            continue
-        for line in items:
-            if not isinstance(line, dict):
-                continue
-            if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
-                sales.append({
-                    "date": inv.get("date", ""),
-                    "customer": inv.get("customer_name", "Walk-in"),
-                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                    "price": float(line.get("price", line.get("unit_price", 0)) or 0),
-                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                    "ref": inv.get("invoice_number", ""),
-                    "type": "Invoice"
-                })
-    
-    # From POS sales
-    all_pos = db.get("pos_sales", {"business_id": biz_id}) or []
-    for sale in all_pos:
-        items = sale.get("items", [])
-        if not isinstance(items, list):
-            continue
-        for line in items:
-            if not isinstance(line, dict):
-                continue
-            if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
-                sales.append({
-                    "date": sale.get("date", ""),
-                    "customer": sale.get("customer_name", "Walk-in"),
-                    "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                    "price": float(line.get("price", line.get("unit_price", 0)) or 0),
-                    "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                    "ref": sale.get("receipt_number", sale.get("sale_number", "")),
-                    "type": "POS"
-                })
-    
-    sales.sort(key=lambda x: x.get("date", ""), reverse=True)
-    
-    # 4. Job Usage (from job_materials)
-    job_usage = []
-    all_job_materials = db.get("job_materials", {"business_id": biz_id}) or []
-    all_jobs = db.get("jobs", {"business_id": biz_id}) or []
-    job_lookup = {j.get("id"): j for j in all_jobs}
-    
-    for jm in all_job_materials:
-        if str(jm.get("item_code", jm.get("code", ""))).upper() == code.upper() or str(jm.get("stock_id", "")) == stock_id:
-            job = job_lookup.get(jm.get("job_card_id", jm.get("job_id", "")), {})
-            job_usage.append({
-                "date": jm.get("date", jm.get("created_at", ""))[:10],
-                "job_number": job.get("job_number", jm.get("job_card_id", "")[:8]),
-                "job_title": job.get("title", job.get("description", ""))[:40],
-                "customer": job.get("customer_name", ""),
-                "qty": float(jm.get("qty", jm.get("quantity", 0)) or 0),
-                "cost": float(jm.get("unit_cost", jm.get("cost", 0)) or 0)
-            })
-    
-    job_usage.sort(key=lambda x: x.get("date", ""), reverse=True)
-    
-    # === CALCULATE STATS ===
-    total_purchased = sum(p.get("qty", 0) for p in purchases)
-    total_purchase_value = sum(p.get("total", 0) for p in purchases)
-    avg_purchase_cost = total_purchase_value / total_purchased if total_purchased > 0 else 0
-    
-    total_sold = sum(s.get("qty", 0) for s in sales)
-    total_sales_value = sum(s.get("total", 0) for s in sales)
-    avg_sale_price = total_sales_value / total_sold if total_sold > 0 else 0
-    
-    total_job_usage = sum(j.get("qty", 0) for j in job_usage)
-    
-    # Unique suppliers
-    unique_suppliers = list(set(p.get("supplier", "") for p in purchases if p.get("supplier")))
-    
-    # Last purchase info
-    last_purchase = purchases[0] if purchases else None
-    last_sale = sales[0] if sales else None
-    
-    # === GATHER DELIVERY NOTES & QUOTES ===
-    
-    # 5. Delivery Notes (item leaving the building)
-    deliveries = []
-    try:
-        all_dn = db.get("delivery_notes", {"business_id": biz_id}) or []
-        for dn in all_dn:
-            dn_items = dn.get("items", [])
-            if not isinstance(dn_items, list):
-                continue
-            for line in dn_items:
-                if not isinstance(line, dict):
-                    continue
-                if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
-                    deliveries.append({
-                        "date": dn.get("date", dn.get("delivery_date", "")),
-                        "customer": dn.get("customer_name", ""),
-                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                        "ref": dn.get("delivery_note_number", dn.get("dn_number", dn.get("reference", ""))),
-                        "invoice_ref": dn.get("invoice_number", ""),
-                        "status": dn.get("status", "delivered")
-                    })
-        deliveries.sort(key=lambda x: x.get("date", ""), reverse=True)
-    except:
-        deliveries = []
-    
-    # 6. Quotes that include this item
-    quotes = []
-    try:
-        all_quotes = db.get("quotes", {"business_id": biz_id}) or []
-        for q in all_quotes:
-            q_items = q.get("items", [])
-            if not isinstance(q_items, list):
-                continue
-            for line in q_items:
-                if not isinstance(line, dict):
-                    continue
-                if str(line.get("code", line.get("item_code", ""))).upper() == code.upper():
-                    quotes.append({
-                        "date": q.get("date", ""),
-                        "customer": q.get("customer_name", ""),
-                        "qty": float(line.get("qty", line.get("quantity", 0)) or 0),
-                        "price": float(line.get("price", line.get("unit_price", 0)) or 0),
-                        "total": float(line.get("total", line.get("line_total", 0)) or 0),
-                        "ref": q.get("quote_number", ""),
-                        "status": q.get("status", "draft")
-                    })
-        quotes.sort(key=lambda x: x.get("date", ""), reverse=True)
-    except:
-        quotes = []
-    
-    # === BUILD TIMELINE (Full lifecycle of the item) ===
-    timeline_events = []
-    
-    # Add purchases to timeline
-    for p in purchases:
-        timeline_events.append({
-            "date": p.get("date", ""),
-            "icon": "🛒",
-            "color": "#3b82f6",
-            "title": f"Purchased from {safe_string(p.get('supplier', 'Unknown'))}",
-            "detail": f"{p.get('qty', 0):.0f} x {currency}{p.get('cost', 0):,.2f} = {currency}{p.get('total', 0):,.2f}",
-            "ref": p.get("ref", ""),
-            "ref_type": p.get("type", ""),
-            "sort": 1
-        })
-    
-    # Add sales to timeline
-    for s in sales:
-        timeline_events.append({
-            "date": s.get("date", ""),
-            "icon": "💰",
-            "color": "#10b981",
-            "title": f"Sold to {safe_string(s.get('customer', 'Walk-in'))}",
-            "detail": f"{s.get('qty', 0):.0f} x {currency}{s.get('price', 0):,.2f} = {currency}{s.get('total', 0):,.2f}",
-            "ref": s.get("ref", ""),
-            "ref_type": s.get("type", ""),
-            "sort": 3
-        })
-    
-    # Add deliveries to timeline
-    for d in deliveries:
-        timeline_events.append({
-            "date": d.get("date", ""),
-            "icon": "🚚",
-            "color": "#8b5cf6",
-            "title": f"Delivered to {safe_string(d.get('customer', ''))}",
-            "detail": f"{d.get('qty', 0):.0f} units delivered",
-            "ref": d.get("ref", ""),
-            "ref_type": "Delivery Note",
-            "sort": 4
-        })
-    
-    # Add job usage to timeline
-    for j in job_usage:
-        timeline_events.append({
-            "date": j.get("date", ""),
-            "icon": "🔧",
-            "color": "#f59e0b",
-            "title": f"Used in Job {j.get('job_number', '')} - {safe_string(j.get('customer', ''))}",
-            "detail": f"{j.get('qty', 0):.0f} units used | {safe_string(j.get('job_title', ''))}",
-            "ref": j.get("job_number", ""),
-            "ref_type": "Job Card",
-            "sort": 3
-        })
-    
-    # Add stock movements to timeline
-    for m in movements:
-        m_qty = float(m.get("quantity", 0) or 0)
-        m_type = m.get("movement_type", m.get("type", "adjustment"))
-        timeline_events.append({
-            "date": str(m.get("created_at", m.get("date", "")))[:10],
-            "icon": "📦" if m_qty > 0 else "📤",
-            "color": "#10b981" if m_qty > 0 else "#ef4444",
-            "title": f"Stock {m_type}: {m_qty:+.0f} units",
-            "detail": m.get("reference", m.get("note", ""))[:50],
-            "ref": "",
-            "ref_type": "Movement",
-            "sort": 2
-        })
-    
-    # Add quotes to timeline
-    for q in quotes:
-        status_emoji = "✅" if q.get("status") == "accepted" else "⏳" if q.get("status") == "sent" else "📝"
-        timeline_events.append({
-            "date": q.get("date", ""),
-            "icon": status_emoji,
-            "color": "#6366f1",
-            "title": f"Quoted to {safe_string(q.get('customer', ''))}",
-            "detail": f"{q.get('qty', 0):.0f} x {currency}{q.get('price', 0):,.2f} = {currency}{q.get('total', 0):,.2f} ({q.get('status', 'draft')})",
-            "ref": q.get("ref", ""),
-            "ref_type": "Quote",
-            "sort": 0
-        })
-    
-    # Sort timeline by date (newest first), then by sort order
-    timeline_events.sort(key=lambda x: (x.get("date", ""), x.get("sort", 0)), reverse=True)
-    
-    # Build timeline HTML
-    timeline_html = ""
-    for evt in timeline_events[:50]:
-        ref_badge = f'<span style="background:rgba(255,255,255,0.1);padding:2px 8px;border-radius:4px;font-size:11px;margin-left:8px;">{evt["ref_type"]}: {evt["ref"]}</span>' if evt.get("ref") else ""
-        timeline_html += f'''
-        <div style="display:flex;gap:15px;padding:12px 0;border-bottom:1px solid var(--border);">
-            <div style="width:40px;height:40px;border-radius:50%;background:{evt["color"]}22;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">
-                {evt["icon"]}
-            </div>
-            <div style="flex:1;min-width:0;">
-                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px;">
-                    <strong style="color:{evt['color']};">{evt["title"]}</strong>
-                    {ref_badge}
-                </div>
-                <div style="color:var(--text-muted);font-size:13px;margin-top:2px;">{evt["detail"]}</div>
-            </div>
-            <div style="color:var(--text-muted);font-size:12px;white-space:nowrap;">{evt["date"]}</div>
-        </div>'''
-    
-    if not timeline_html:
-        timeline_html = '<div style="text-align:center;color:var(--text-muted);padding:40px;">No history yet - this item has no recorded activity</div>'
-    
-    # === BUILD HTML ===
-    
-    # Movement rows
-    movement_rows = ""
-    for m in movements[:20]:
-        m_type = m.get("movement_type", m.get("type", ""))
-        m_qty = float(m.get("quantity", 0) or 0)
-        m_date = str(m.get("created_at", m.get("date", "")))[:10]
-        m_ref = m.get("reference", m.get("note", ""))[:30]
-        color = "#10b981" if m_qty > 0 else "#ef4444"
-        movement_rows += f'<tr><td>{m_date}</td><td>{m_type}</td><td style="color:{color};font-weight:bold;">{m_qty:+.0f}</td><td>{m_ref}</td></tr>'
-    
-    if not movement_rows:
-        movement_rows = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px;">No movements recorded</td></tr>'
-    
-    # Purchase rows
-    purchase_rows = ""
-    for p in purchases[:15]:
-        purchase_rows += f'''<tr>
-            <td>{p.get("date", "-")}</td>
-            <td><strong>{safe_string(p.get("supplier", ""))}</strong></td>
-            <td style="text-align:right;">{p.get("qty", 0):.0f}</td>
-            <td style="text-align:right;">{currency}{p.get("cost", 0):,.2f}</td>
-            <td style="text-align:right;font-weight:bold;">{currency}{p.get("total", 0):,.2f}</td>
-            <td><span style="background:rgba(59,130,246,0.15);color:#3b82f6;padding:2px 8px;border-radius:4px;font-size:12px;">{p.get("type", "")}</span> {p.get("ref", "")}</td>
-        </tr>'''
-    
-    if not purchase_rows:
-        purchase_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No purchase history</td></tr>'
-    
-    # Sales rows - enhanced with customer name prominent and invoice number
-    sales_rows = ""
-    for s in sales[:15]:
-        type_color = "#10b981" if s.get("type") == "Invoice" else "#f59e0b"
-        sales_rows += f'''<tr>
-            <td>{s.get("date", "-")}</td>
-            <td><strong style="font-size:14px;">{safe_string(s.get("customer", "Walk-in"))}</strong></td>
-            <td><span style="background:rgba({("16,185,129" if s.get("type") == "Invoice" else "245,158,11")},0.15);color:{type_color};padding:2px 8px;border-radius:4px;font-size:12px;">{s.get("type", "")}</span> <strong>{s.get("ref", "")}</strong></td>
-            <td style="text-align:right;">{s.get("qty", 0):.0f}</td>
-            <td style="text-align:right;">{currency}{s.get("price", 0):,.2f}</td>
-            <td style="text-align:right;font-weight:bold;color:#10b981;">{currency}{s.get("total", 0):,.2f}</td>
-        </tr>'''
-    
-    if not sales_rows:
-        sales_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No sales history</td></tr>'
-    
-    # Job usage rows
-    job_rows = ""
-    for j in job_usage[:10]:
-        job_rows += f'''<tr>
-            <td>{j.get("date", "-")}</td>
-            <td><strong>{j.get("job_number", "")}</strong></td>
-            <td>{safe_string(j.get("job_title", ""))}</td>
-            <td>{safe_string(j.get("customer", ""))}</td>
-            <td style="text-align:right;">{j.get("qty", 0):.0f}</td>
-            <td style="text-align:right;">{currency}{j.get("cost", 0):,.2f}</td>
-        </tr>'''
-    
-    if not job_rows:
-        job_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">Not used in any jobs</td></tr>'
-    
-    # Delivery rows
-    delivery_rows = ""
-    for d in deliveries[:10]:
-        status_badge = '<span style="background:#10b981;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">Delivered</span>' if d.get("status") == "delivered" else '<span style="background:#f59e0b;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">Pending</span>'
-        delivery_rows += f'''<tr>
-            <td>{d.get("date", "-")}</td>
-            <td><strong>{safe_string(d.get("customer", ""))}</strong></td>
-            <td style="text-align:right;">{d.get("qty", 0):.0f}</td>
-            <td>{d.get("ref", "")}</td>
-            <td>{d.get("invoice_ref", "")}</td>
-            <td>{status_badge}</td>
-        </tr>'''
-    
-    if not delivery_rows:
-        delivery_rows = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px;">No deliveries recorded</td></tr>'
-    
-    # Supplier chips
-    supplier_chips = ""
-    for sup in unique_suppliers[:5]:
-        supplier_chips += f'<span style="background:var(--primary);color:white;padding:4px 10px;border-radius:12px;font-size:12px;margin:2px;">{safe_string(sup)}</span> '
-    
-    if not supplier_chips:
-        supplier_chips = '<span style="color:var(--text-muted);">No suppliers on record</span>'
-    
-    # Stock status
-    if qty <= 0:
-        stock_status = '<span style="background:#ef4444;color:white;padding:4px 12px;border-radius:12px;">OUT OF STOCK</span>'
-    elif qty <= reorder:
-        stock_status = '<span style="background:#f59e0b;color:white;padding:4px 12px;border-radius:12px;">LOW STOCK</span>'
-    else:
-        stock_status = '<span style="background:#10b981;color:white;padding:4px 12px;border-radius:12px;">IN STOCK</span>'
-    
-    # Total events for timeline badge
-    total_events = len(timeline_events)
-    
-    content = f'''
-    <div style="margin-bottom:20px;">
-        <a href="/stock" style="color:var(--primary);text-decoration:none;">← Back to Stock</a>
-    </div>
-    
-    <!-- Item Header -->
-    <div class="card" style="margin-bottom:20px;">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:15px;">
-            <div>
-                <div style="display:flex;align-items:center;gap:15px;margin-bottom:10px;">
-                    <h1 style="margin:0;font-size:28px;">{safe_string(desc)}</h1>
-                    {stock_status}
-                </div>
-                <div style="color:var(--text-muted);font-size:14px;">
-                    <strong>Code:</strong> {code or '-'} &nbsp;|&nbsp; 
-                    <strong>Category:</strong> {category} &nbsp;|&nbsp;
-                    <strong>Unit:</strong> {unit}
-                </div>
-            </div>
-            <div style="display:flex;gap:10px;">
-                <a href="/stock/edit/{stock_id}" class="btn btn-primary">✏️ Edit Item</a>
-                <button onclick="showAdjustModal()" class="btn btn-secondary">📦 Adjust Stock</button>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Key Numbers -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px;margin-bottom:20px;">
-        <div class="card" style="text-align:center;padding:20px;">
-            <div style="font-size:32px;font-weight:bold;color:var(--primary);">{qty:,.0f}</div>
-            <div style="color:var(--text-muted);font-size:13px;">Quantity on Hand</div>
-        </div>
-        <div class="card" style="text-align:center;padding:20px;">
-            <div style="font-size:32px;font-weight:bold;">{currency}{cost:,.2f}</div>
-            <div style="color:var(--text-muted);font-size:13px;">Cost Price</div>
-        </div>
-        <div class="card" style="text-align:center;padding:20px;">
-            <div style="font-size:32px;font-weight:bold;color:#10b981;">{currency}{price:,.2f}</div>
-            <div style="color:var(--text-muted);font-size:13px;">Selling Price</div>
-        </div>
-        <div class="card" style="text-align:center;padding:20px;">
-            <div style="font-size:32px;font-weight:bold;">{margin_pct:.1f}%</div>
-            <div style="color:var(--text-muted);font-size:13px;">Margin</div>
-        </div>
-        <div class="card" style="text-align:center;padding:20px;">
-            <div style="font-size:32px;font-weight:bold;">{currency}{stock_value:,.0f}</div>
-            <div style="color:var(--text-muted);font-size:13px;">Stock Value</div>
-        </div>
-    </div>
-    
-    <!-- Quick Stats -->
-    <div class="card" style="margin-bottom:20px;">
-        <h3 style="margin-bottom:15px;">📊 Quick Stats</h3>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;">
-            <div>
-                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Total Purchased</div>
-                <div style="font-size:18px;font-weight:bold;">{total_purchased:,.0f} units ({currency}{total_purchase_value:,.0f})</div>
-            </div>
-            <div>
-                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Total Sold</div>
-                <div style="font-size:18px;font-weight:bold;color:#10b981;">{total_sold:,.0f} units ({currency}{total_sales_value:,.0f})</div>
-            </div>
-            <div>
-                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Used in Jobs</div>
-                <div style="font-size:18px;font-weight:bold;">{total_job_usage:,.0f} units</div>
-            </div>
-            <div>
-                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Avg Purchase Cost</div>
-                <div style="font-size:18px;font-weight:bold;">{currency}{avg_purchase_cost:,.2f}</div>
-            </div>
-            <div>
-                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Avg Sale Price</div>
-                <div style="font-size:18px;font-weight:bold;">{currency}{avg_sale_price:,.2f}</div>
-            </div>
-            <div>
-                <div style="color:var(--text-muted);font-size:12px;margin-bottom:3px;">Reorder Level</div>
-                <div style="font-size:18px;font-weight:bold;">{reorder}</div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Suppliers -->
-    <div class="card" style="margin-bottom:20px;">
-        <h3 style="margin-bottom:10px;">🏭 Suppliers</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:5px;">
-            {supplier_chips}
-        </div>
-        {f'<div style="margin-top:10px;padding:10px;background:rgba(16,185,129,0.1);border-radius:8px;"><strong>Last purchased:</strong> {last_purchase.get("date", "")} from {last_purchase.get("supplier", "")} - {last_purchase.get("qty", 0):.0f} x {currency}{last_purchase.get("cost", 0):,.2f}</div>' if last_purchase else ''}
-    </div>
-    
-    <!-- Tabs for History -->
-    <div class="card">
-        <div style="display:flex;gap:5px;border-bottom:1px solid var(--border);margin-bottom:15px;padding-bottom:10px;flex-wrap:wrap;">
-            <button onclick="showTab('timeline')" class="tab-btn active" id="tab-timeline">📜 Timeline ({total_events})</button>
-            <button onclick="showTab('purchases')" class="tab-btn" id="tab-purchases">🛒 Purchases ({len(purchases)})</button>
-            <button onclick="showTab('sales')" class="tab-btn" id="tab-sales">💰 Sales ({len(sales)})</button>
-            <button onclick="showTab('deliveries')" class="tab-btn" id="tab-deliveries">🚚 Deliveries ({len(deliveries)})</button>
-            <button onclick="showTab('movements')" class="tab-btn" id="tab-movements">📦 Movements ({len(movements)})</button>
-            <button onclick="showTab('jobs')" class="tab-btn" id="tab-jobs">🔧 Jobs ({len(job_usage)})</button>
-        </div>
-        
-        <!-- Timeline Tab (DEFAULT - full lifecycle) -->
-        <div id="panel-timeline" class="tab-panel">
-            <div style="padding:0 5px;">
-                {timeline_html}
-            </div>
-        </div>
-        
-        <!-- Purchases Tab -->
-        <div id="panel-purchases" class="tab-panel" style="display:none;">
-            <table class="table">
-                <thead><tr><th>Date</th><th>Supplier</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Total</th><th>Type / Ref</th></tr></thead>
-                <tbody>{purchase_rows}</tbody>
-            </table>
-        </div>
-        
-        <!-- Sales Tab -->
-        <div id="panel-sales" class="tab-panel" style="display:none;">
-            <table class="table">
-                <thead><tr><th>Date</th><th>Customer</th><th>Invoice / Receipt</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th></tr></thead>
-                <tbody>{sales_rows}</tbody>
-            </table>
-        </div>
-        
-        <!-- Deliveries Tab -->
-        <div id="panel-deliveries" class="tab-panel" style="display:none;">
-            <table class="table">
-                <thead><tr><th>Date</th><th>Customer</th><th style="text-align:right;">Qty</th><th>DN #</th><th>Invoice Ref</th><th>Status</th></tr></thead>
-                <tbody>{delivery_rows}</tbody>
-            </table>
-        </div>
-        
-        <!-- Movements Tab -->
-        <div id="panel-movements" class="tab-panel" style="display:none;">
-            <table class="table">
-                <thead><tr><th>Date</th><th>Type</th><th>Qty</th><th>Reference</th></tr></thead>
-                <tbody>{movement_rows}</tbody>
-            </table>
-        </div>
-        
-        <!-- Jobs Tab -->
-        <div id="panel-jobs" class="tab-panel" style="display:none;">
-            <table class="table">
-                <thead><tr><th>Date</th><th>Job #</th><th>Description</th><th>Customer</th><th style="text-align:right;">Qty Used</th><th style="text-align:right;">Cost</th></tr></thead>
-                <tbody>{job_rows}</tbody>
-            </table>
-        </div>
-    </div>
-    
-    <!-- Adjust Stock Modal -->
-    <div id="adjustModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
-        <div style="background:var(--card);padding:25px;border-radius:12px;max-width:400px;width:90%;">
-            <h3 style="margin-bottom:15px;">📦 Adjust Stock</h3>
-            <form method="POST" action="/api/stock/adjust">
-                <input type="hidden" name="stock_id" value="{stock_id}">
-                <div style="margin-bottom:15px;">
-                    <label style="display:block;margin-bottom:5px;">Adjustment Type</label>
-                    <select name="type" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
-                        <option value="add">➕ Add Stock (received, found, correction)</option>
-                        <option value="remove">➖ Remove Stock (damaged, lost, used)</option>
-                        <option value="set">🔄 Set Exact Quantity (stocktake)</option>
-                    </select>
-                </div>
-                <div style="margin-bottom:15px;">
-                    <label style="display:block;margin-bottom:5px;">Quantity</label>
-                    <input type="number" name="quantity" step="0.01" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
-                </div>
-                <div style="margin-bottom:15px;">
-                    <label style="display:block;margin-bottom:5px;">Reason/Note</label>
-                    <input type="text" name="note" placeholder="e.g., Stocktake adjustment" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);">
-                </div>
-                <div style="display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary" style="flex:1;">Save Adjustment</button>
-                    <button type="button" onclick="hideAdjustModal()" class="btn btn-secondary">Cancel</button>
-                </div>
-            </form>
-        </div>
-    </div>
-    
-    <style>
-        .tab-btn {{ padding:8px 16px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:6px;font-size:13px; }}
-        .tab-btn:hover {{ background:var(--bg); }}
-        .tab-btn.active {{ background:var(--primary);color:white; }}
-    </style>
-    
-    <script>
-        function showTab(name) {{
-            document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.getElementById('panel-' + name).style.display = 'block';
-            document.getElementById('tab-' + name).classList.add('active');
-        }}
-        
-        function showAdjustModal() {{
-            document.getElementById('adjustModal').style.display = 'flex';
-        }}
-        
-        function hideAdjustModal() {{
-            document.getElementById('adjustModal').style.display = 'none';
-        }}
-    </script>
-    '''
-    
-    return render_page(f"Stock: {desc}", content, user, "stock")
 
 
 @app.route("/stock/new", methods=["GET", "POST"])
@@ -22524,84 +19884,6 @@ def api_suppliers_all():
     return jsonify({"success": True, "items": items})
 
 
-@app.route("/api/stock/adjust", methods=["POST"])
-@login_required
-def api_stock_adjust():
-    """Adjust stock quantity - add, remove, or set exact"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    if not biz_id:
-        flash("No business selected", "error")
-        return redirect("/stock")
-    
-    stock_id = request.form.get("stock_id", "")
-    adj_type = request.form.get("type", "add")
-    quantity = request.form.get("quantity", "0")
-    note = request.form.get("note", "Manual adjustment")
-    
-    try:
-        qty = float(quantity)
-    except:
-        flash("Invalid quantity", "error")
-        return redirect(f"/stock/{stock_id}")
-    
-    # Get current stock item
-    item = db.get_one_stock(stock_id)
-    if not item or item.get("business_id") != biz_id:
-        flash("Stock item not found", "error")
-        return redirect("/stock")
-    
-    current_qty = float(item.get("quantity", 0) or 0)
-    
-    # Calculate new quantity
-    if adj_type == "add":
-        new_qty = current_qty + qty
-        movement_qty = qty
-        movement_type = "adjustment_in"
-    elif adj_type == "remove":
-        new_qty = current_qty - qty
-        movement_qty = -qty
-        movement_type = "adjustment_out"
-    else:  # set
-        new_qty = qty
-        movement_qty = qty - current_qty
-        movement_type = "stocktake"
-    
-    # Update stock
-    result = db.update_stock(stock_id, {"quantity": new_qty}, biz_id)
-    
-    if result:
-        # Record movement
-        movement = RecordFactory.stock_movement(
-            business_id=biz_id,
-            stock_id=stock_id,
-            movement_type=movement_type,
-            quantity=movement_qty,
-            reference=note,
-            note=f"Previous: {current_qty}, New: {new_qty}",
-            created_by=user.get("id", "") if user else ""
-        )
-        db.save("stock_movements", movement)
-        
-        flash(f"Stock adjusted: {current_qty} → {new_qty}", "success")
-    else:
-        flash("Failed to adjust stock", "error")
-    
-    return redirect(f"/stock/{stock_id}")
-
-
-@app.route("/stock/edit/<stock_id>", methods=["GET", "POST"])
-@login_required
-def stock_edit(stock_id):
-    """Edit stock item - redirect to detail page with edit capability"""
-    # For now, redirect to detail page
-    # The detail page has all the info, edit can be done inline or via modal
-    return redirect(f"/stock/{stock_id}")
-
-
 @app.route("/api/stock/search")
 @login_required
 def api_stock_search():
@@ -22823,29 +20105,71 @@ def api_stock_zane_edit():
     updated = 0
     
     # 
-    # SMART CODES - Generate codes like BLT-10X110-HT from "BOLT M10X110 HT"
+    # SMART CODES - Generate codes like BLT-16-50 from "HEX BOLT 16 X 50"
     # 
     if "code" in command and ("smart" in command or "generate" in command or "create" in command or "make" in command):
         
-        # Collect all existing codes for uniqueness
-        existing_codes = set()
-        for item in all_stock:
-            c = str(item.get("code", "")).upper().strip()
-            if c:
-                existing_codes.add(c)
+        import re
+        
+        # Product type mappings
+        product_types = {
+            "BOLT": "BLT", "BOLTS": "BLT", "NUT": "NT", "NUTS": "NT",
+            "WASHER": "WS", "WASHERS": "WS", "SCREW": "SCR", "SCREWS": "SCR",
+            "SET": "SET", "CAP": "CAP", "STUD": "STD", "RIVET": "RVT",
+            "BEARING": "BRG", "CIRCLIP": "CLP", "SEAL": "SL", "ORING": "OR",
+            "BOOT": "BT", "BOOTS": "BT", "GUMBOOT": "BT", "JACKET": "JK", 
+            "OVERALL": "OVL", "CONTI": "CNT", "GLOVE": "GL", "GLOVES": "GL", 
+            "SHIRT": "SHT", "JEAN": "JN", "TROUSER": "TR", "GOGGLE": "GGL",
+            "ELBOW": "EL", "TEE": "TE", "VALVE": "VL", "FLANGE": "FL",
+            "BAR": "BAR", "PIPE": "PP", "TUBE": "TB", "ANGLE": "AN",
+            "CLAMP": "CL", "HOSE": "HS", "CABLE": "CB", "CHAIN": "CH",
+            "SHEET": "SH", "PLATE": "PL", "SANDPAPER": "SND", "DISC": "DSC",
+        }
         
         updates = []
         for item in stock_batch:
-            desc = item.get("description", "").strip()
+            desc = item.get("description", "").upper()
             if not desc:
                 continue
             
-            new_code = smart_stock_code(desc, existing_codes)
+            # Find product type
+            product_code = ""
+            for prod, code in product_types.items():
+                if prod in desc:
+                    product_code = code
+                    break
+            
+            # Find all numbers/sizes
+            sizes = re.findall(r'M?(\d+(?:\.\d+)?(?:/\d+)?)', desc)
+            
+            # Find modifiers
+            modifiers = []
+            if "S/S" in desc or " SS " in desc or desc.startswith("SS "):
+                modifiers.append("SS")
+            if " HT" in desc or desc.endswith("HT"):
+                modifiers.append("HT")
+            if "Z/P" in desc:
+                modifiers.append("ZP")
+            
+            # Build code
+            if product_code:
+                parts = [product_code]
+                for s in sizes[:2]:
+                    parts.append(s.replace("/", "-"))
+                parts.extend(modifiers)
+                new_code = "-".join(parts)
+            else:
+                words = desc.split()
+                sig_word = next((w for w in words if len(w) > 2 and w.isalpha()), "")
+                new_code = sig_word[:3] if sig_word else "ITM"
+                if sizes:
+                    new_code += "-" + "-".join(sizes[:2])
+            
+            new_code = new_code.strip("-").upper()[:15]
             old_code = item.get("code", "")
             
             if new_code and new_code != old_code:
                 updates.append({"id": item["id"], "data": {"code": new_code}})
-                existing_codes.add(new_code.upper())
         
         # Batch update
         if updates:
@@ -23073,10 +20397,7 @@ def invoices_page():
                 <a href="/invoice/new" class="btn btn-primary">+ New Invoice</a>
             </div>
         </div>
-        <div style="margin-bottom:15px;">
-            <input type="text" id="searchInvoices" placeholder="🔍 Search by customer, invoice number, amount..." oninput="filterTable('searchInvoices','invoiceTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
-        </div>
-        <table class="table" id="invoiceTable">
+        <table class="table">
             <thead>
                 <tr><th>Number</th><th>Date</th><th>Customer</th><th>Amount</th><th>Status</th></tr>
             </thead>
@@ -23085,15 +20406,6 @@ def invoices_page():
             </tbody>
         </table>
     </div>
-    <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
-    }}
-    </script>
     '''
     
     return render_page("Invoices", content, user, "invoices")
@@ -23224,15 +20536,11 @@ def invoice_new():
         customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}" {selected}>{safe_string(c.get("name", ""))}</option>'
     
     # Stock datalist for autocomplete
-    stock_options = '<option value="NEW" data-price="0" data-stockid="">+ Add New Stock Item</option>'
+    stock_options = '<option value="NEW" data-price="0">+ Add New Stock Item</option>'
     for s in stock:
         desc = safe_string(s.get("description", ""))
-        code = safe_string(s.get("code", ""))
         price = float(s.get("price") or s.get("selling_price") or 0)
-        stock_id = s.get("id", "")
-        qty_avail = float(s.get("qty") or s.get("quantity") or 0)
-        label = f"{code} - {desc}" if code else desc
-        stock_options += f'<option value="{label}" data-price="{price}" data-stockid="{stock_id}" data-desc="{desc}" data-qty="{qty_avail}">'
+        stock_options += f'<option value="{desc}" data-price="{price}">'
     
     error_msg = request.args.get("error", "")
     error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
@@ -23274,17 +20582,14 @@ def invoice_new():
                     <tr>
                         <th style="width:45%">Description</th>
                         <th style="width:12%">Qty</th>
-                        <th style="width:18%">Price (excl)</th>
+                        <th style="width:18%">Price</th>
                         <th style="width:15%">Total</th>
                         <th style="width:10%"></th>
                     </tr>
                 </thead>
                 <tbody id="itemRows">
                     <tr>
-                        <td>
-                            <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
-                            <input type="hidden" name="item_stock_id[]" value="">
-                        </td>
+                        <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td class="row-total">R0.00</td>
@@ -23327,13 +20632,11 @@ def invoice_new():
         }}
         const datalist = document.getElementById('stockList');
         const options = datalist.querySelectorAll('option');
-        const row = input.closest('tr');
-        const stockIdInput = row.querySelector('input[name="item_stock_id[]"]');
         for (let opt of options) {{
             if (opt.value === input.value) {{
+                const row = input.closest('tr');
                 const priceInput = row.querySelector('input[name="item_price[]"]');
                 priceInput.value = opt.dataset.price || '';
-                if (stockIdInput) stockIdInput.value = opt.dataset.stockid || '';
                 calcRow(priceInput);
                 break;
             }}
@@ -23344,14 +20647,11 @@ def invoice_new():
         const tbody = document.getElementById('itemRows');
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>
-                <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
-                <input type="hidden" name="item_stock_id[]" value="">
-            </td>
+            <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td class="row-total">R0.00</td>
-            <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">\u2715</button></td>
+            <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
         `;
         tbody.appendChild(row);
     }}
@@ -25384,7 +22684,7 @@ Return valid JSON only, no other text."""
 @app.route("/subscriptions")
 @login_required
 def subscriptions_page():
-    """Subscription and recurring expense management with sub-allocations"""
+    """Subscription and recurring expense management"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -25401,18 +22701,6 @@ def subscriptions_page():
     active = [s for s in subscriptions if s.get("status") == "active"]
     total_monthly = sum(float(s.get("amount", 0)) for s in active if s.get("frequency") == "monthly")
     total_yearly = sum(float(s.get("amount", 0)) for s in active if s.get("frequency") == "yearly")
-    total_quarterly = sum(float(s.get("amount", 0)) for s in active if s.get("frequency") == "quarterly")
-    # Normalize to monthly for total burn rate
-    monthly_burn = total_monthly + (total_yearly / 12) + (total_quarterly / 3)
-    
-    # Group by category for summary
-    cat_totals = {}
-    for s in active:
-        cat = s.get("category", "Other")
-        amt = float(s.get("amount", 0))
-        freq = s.get("frequency", "monthly")
-        monthly_equiv = amt if freq == "monthly" else amt / 12 if freq == "yearly" else amt / 3
-        cat_totals[cat] = cat_totals.get(cat, 0) + monthly_equiv
     
     # Build rows
     rows_html = ""
@@ -25421,30 +22709,11 @@ def subscriptions_page():
         status_color = "var(--green)" if status == "active" else "var(--text-muted)"
         freq = s.get("frequency", "monthly")
         
-        # Sub-allocation details line
-        details_parts = []
-        if s.get("allocated_to"):
-            details_parts.append(f"🏷️ {safe_string(s.get('allocated_to', ''))}")
-        if s.get("gl_account"):
-            details_parts.append(f"📒 {safe_string(s.get('gl_account', ''))}")
-        if s.get("department"):
-            details_parts.append(f"🏢 {safe_string(s.get('department', ''))}")
-        if s.get("reference_number"):
-            details_parts.append(f"# {safe_string(s.get('reference_number', ''))}")
-        details_line = " · ".join(details_parts)
-        
-        # Notes line
-        notes_line = ""
-        if s.get("notes"):
-            notes_line = f'<div style="color:var(--text-muted);font-size:11px;margin-top:2px;">📝 {safe_string(s.get("notes", ""))}</div>'
-        
         rows_html += f'''
         <tr>
             <td>
                 <strong>{safe_string(s.get("name", "-"))}</strong>
                 <div style="color:var(--text-muted);font-size:12px;">{safe_string(s.get("supplier_name", ""))}</div>
-                {f'<div style="font-size:11px;margin-top:2px;">{details_line}</div>' if details_line else ''}
-                {notes_line}
             </td>
             <td>{safe_string(s.get("category", "-"))}</td>
             <td style="text-align:right;font-weight:bold;">{money(s.get("amount", 0))}</td>
@@ -25457,22 +22726,11 @@ def subscriptions_page():
         </tr>
         '''
     
-    # Category breakdown mini-table
-    cat_breakdown = ""
-    if cat_totals:
-        cat_rows = "".join([f'<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);"><span>{cat}</span><span style="font-weight:bold;">{money(amt)}/m</span></div>' for cat, amt in sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)])
-        cat_breakdown = f'''
-        <div class="stat-card" style="grid-column:span 2;">
-            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">BREAKDOWN BY CATEGORY (monthly equiv.)</div>
-            {cat_rows}
-        </div>
-        '''
-    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
             <h2 style="margin:0;">📦 Subscriptions & Recurring Expenses</h2>
-            <p style="color:var(--text-muted);margin:5px 0 0 0;">Track monthly/yearly costs with full allocation — know exactly what each Rand is for</p>
+            <p style="color:var(--text-muted);margin:5px 0 0 0;">Track monthly/yearly subscriptions - manual or AI scanned</p>
         </div>
         <div style="display:flex;gap:10px;">
             <button onclick="showAddModal()" class="btn btn-primary">+ Add Subscription</button>
@@ -25490,22 +22748,21 @@ def subscriptions_page():
             <div class="stat-value" style="color:var(--green);">{len(active)}</div>
             <div class="stat-label">Active</div>
         </div>
-        <div class="stat-card" style="border-left:3px solid var(--primary);">
-            <div class="stat-value">{money(monthly_burn)}</div>
-            <div class="stat-label">Monthly Burn Rate</div>
+        <div class="stat-card">
+            <div class="stat-value">{money(total_monthly)}</div>
+            <div class="stat-label">Monthly</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">{money(monthly_burn * 12)}</div>
-            <div class="stat-label">Annual Cost</div>
+            <div class="stat-value">{money(total_yearly)}</div>
+            <div class="stat-label">Yearly</div>
         </div>
-        {cat_breakdown}
     </div>
     
     <div class="card">
         <table class="data-table">
             <thead>
                 <tr>
-                    <th>Subscription / Allocation</th>
+                    <th>Subscription</th>
                     <th>Category</th>
                     <th style="text-align:right;">Amount</th>
                     <th>Frequency</th>
@@ -25519,9 +22776,9 @@ def subscriptions_page():
         </table>
     </div>
     
-    <!-- Add/Edit Modal - UPGRADED with sub-allocations -->
+    <!-- Add/Edit Modal -->
     <div id="addModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
-        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:550px;max-height:90vh;overflow-y:auto;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
             <h3 style="margin-top:0;" id="modalTitle">➕ Add Subscription</h3>
             
             <form action="/api/subscription/save" method="POST" id="subscriptionForm">
@@ -25529,13 +22786,13 @@ def subscriptions_page():
                 
                 <div class="form-group">
                     <label class="form-label">Name *</label>
-                    <input type="text" name="name" id="subName" class="form-input" required placeholder="e.g. Netstar Vehicle Tracking">
+                    <input type="text" name="name" id="subName" class="form-input" required placeholder="e.g. Microsoft 365">
                 </div>
                 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
                     <div class="form-group">
                         <label class="form-label">Amount *</label>
-                        <input type="number" name="amount" id="subAmount" class="form-input" required step="0.01" placeholder="450.00">
+                        <input type="number" name="amount" id="subAmount" class="form-input" required step="0.01" placeholder="199.00">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Frequency</label>
@@ -25543,7 +22800,6 @@ def subscriptions_page():
                             <option value="monthly">Monthly</option>
                             <option value="yearly">Yearly</option>
                             <option value="quarterly">Quarterly</option>
-                            <option value="weekly">Weekly</option>
                         </select>
                     </div>
                 </div>
@@ -25552,97 +22808,17 @@ def subscriptions_page():
                     <div class="form-group">
                         <label class="form-label">Category</label>
                         <select name="category" id="subCategory" class="form-input">
-                            <optgroup label="Vehicle">
-                                <option value="Vehicle Tracking">Vehicle Tracking</option>
-                                <option value="Vehicle Insurance">Vehicle Insurance</option>
-                                <option value="Vehicle Finance">Vehicle Finance</option>
-                                <option value="Vehicle Service Plan">Vehicle Service Plan</option>
-                            </optgroup>
-                            <optgroup label="Property">
-                                <option value="Rates & Taxes">Rates & Taxes</option>
-                                <option value="Building Insurance">Building Insurance</option>
-                                <option value="Building Maintenance">Building Service/Maintenance</option>
-                                <option value="Rent">Rent</option>
-                                <option value="Security">Security / Armed Response</option>
-                            </optgroup>
-                            <optgroup label="Utilities">
-                                <option value="Electricity">Electricity</option>
-                                <option value="Water">Water</option>
-                                <option value="Internet">Internet / Fibre</option>
-                                <option value="Telephone">Telephone / Airtime</option>
-                            </optgroup>
-                            <optgroup label="Business">
-                                <option value="Software">Software / SaaS</option>
-                                <option value="Insurance">Business Insurance</option>
-                                <option value="Accounting">Accounting / Bookkeeping</option>
-                                <option value="Banking">Bank Fees</option>
-                                <option value="Marketing">Marketing / Advertising</option>
-                                <option value="Membership">Membership / Association</option>
-                                <option value="Services">Professional Services</option>
-                            </optgroup>
-                            <optgroup label="Staff">
-                                <option value="Medical Aid">Medical Aid</option>
-                                <option value="Provident Fund">Provident / Pension Fund</option>
-                                <option value="Staff Welfare">Staff Welfare</option>
-                            </optgroup>
+                            <option value="Software">Software</option>
+                            <option value="Insurance">Insurance</option>
+                            <option value="Utilities">Utilities</option>
+                            <option value="Services">Services</option>
+                            <option value="Marketing">Marketing</option>
                             <option value="Other">Other</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Supplier / Provider</label>
-                        <input type="text" name="supplier_name" id="subSupplier" class="form-input" placeholder="e.g. Netstar, City of Joburg">
-                    </div>
-                </div>
-                
-                <!-- SUB-ALLOCATION SECTION -->
-                <div style="background:var(--bg);border-radius:8px;padding:15px;margin:15px 0;border:1px solid var(--border);">
-                    <div style="font-size:12px;font-weight:bold;color:var(--primary);margin-bottom:10px;">📋 ALLOCATION DETAILS — What is this expense for?</div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Allocated To (Asset / Item)</label>
-                        <input type="text" name="allocated_to" id="subAllocatedTo" class="form-input" placeholder="e.g. Toyota Hilux BA 23 GP, 12 Main Rd Warehouse, Office Aircon">
-                        <div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Which vehicle, property, machine, or item is this expense for?</div>
-                    </div>
-                    
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
-                        <div class="form-group">
-                            <label class="form-label">GL Account (Expense Account)</label>
-                            <select name="gl_account" id="subGlAccount" class="form-input">
-                                <option value="">— Auto from Category —</option>
-                                <option value="Motor Vehicle Expenses">Motor Vehicle Expenses</option>
-                                <option value="Vehicle Tracking">Vehicle Tracking</option>
-                                <option value="Vehicle Insurance">Vehicle Insurance</option>
-                                <option value="Vehicle Finance Costs">Vehicle Finance Costs</option>
-                                <option value="Municipal Rates & Taxes">Municipal Rates & Taxes</option>
-                                <option value="Building Maintenance">Building Maintenance</option>
-                                <option value="Repairs & Maintenance">Repairs & Maintenance</option>
-                                <option value="Security Costs">Security Costs</option>
-                                <option value="Rent Paid">Rent Paid</option>
-                                <option value="Insurance">Insurance</option>
-                                <option value="Electricity">Electricity</option>
-                                <option value="Water & Sewage">Water & Sewage</option>
-                                <option value="Telephone & Internet">Telephone & Internet</option>
-                                <option value="Computer Expenses">Computer Expenses</option>
-                                <option value="Software & Subscriptions">Software & Subscriptions</option>
-                                <option value="Bank Charges">Bank Charges</option>
-                                <option value="Marketing & Advertising">Marketing & Advertising</option>
-                                <option value="Professional Fees">Professional Fees</option>
-                                <option value="Membership & Subscriptions">Membership & Subscriptions</option>
-                                <option value="Medical Aid Contributions">Medical Aid Contributions</option>
-                                <option value="Pension/Provident Fund">Pension/Provident Fund</option>
-                                <option value="Staff Welfare">Staff Welfare</option>
-                                <option value="Sundry Expenses">Sundry Expenses</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Department / Branch</label>
-                            <input type="text" name="department" id="subDepartment" class="form-input" placeholder="e.g. Workshop, Office, Pub, B&B">
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Reference / Account Number</label>
-                        <input type="text" name="reference_number" id="subRefNumber" class="form-input" placeholder="e.g. Policy #VH-12345, Account 9087654">
+                        <label class="form-label">Supplier</label>
+                        <input type="text" name="supplier_name" id="subSupplier" class="form-input" placeholder="e.g. Microsoft">
                     </div>
                 </div>
                 
@@ -25653,7 +22829,7 @@ def subscriptions_page():
                 
                 <div class="form-group">
                     <label class="form-label">Notes</label>
-                    <input type="text" name="notes" id="subNotes" class="form-input" placeholder="Any additional details">
+                    <input type="text" name="notes" id="subNotes" class="form-input" placeholder="Account details, etc.">
                 </div>
                 
                 <div style="display:flex;gap:10px;margin-top:20px;">
@@ -25718,10 +22894,6 @@ def subscriptions_page():
                     document.getElementById('subSupplier').value = s.supplier_name || '';
                     document.getElementById('subNextDue').value = s.next_due || '';
                     document.getElementById('subNotes').value = s.notes || '';
-                    document.getElementById('subAllocatedTo').value = s.allocated_to || '';
-                    document.getElementById('subGlAccount').value = s.gl_account || '';
-                    document.getElementById('subDepartment').value = s.department || '';
-                    document.getElementById('subRefNumber').value = s.reference_number || '';
                     document.getElementById('addModal').style.display = 'flex';
                 }}
             }});
@@ -25763,7 +22935,6 @@ def subscriptions_page():
                 document.getElementById('subAmount').value = result.amount || '';
                 document.getElementById('subSupplier').value = result.supplier || '';
                 document.getElementById('subCategory').value = result.category || 'Software';
-                if (result.reference) document.getElementById('subRefNumber').value = result.reference;
                 showAddModal();
                 document.getElementById('modalTitle').textContent = '✓ Scanned - Review & Save';
             }} else {{
@@ -25801,11 +22972,6 @@ def api_subscription_save():
             "supplier_name": request.form.get("supplier_name", "").strip(),
             "next_due": request.form.get("next_due", ""),
             "notes": request.form.get("notes", "").strip(),
-            # Sub-allocation fields
-            "allocated_to": request.form.get("allocated_to", "").strip(),
-            "gl_account": request.form.get("gl_account", "").strip(),
-            "department": request.form.get("department", "").strip(),
-            "reference_number": request.form.get("reference_number", "").strip(),
             "status": "active",
             "created_at": now() if not sub_id else None
         }
@@ -26585,10 +23751,7 @@ def quotes_page():
             <h3 class="card-title" style="margin:0;">Quotes ({len(quotes)})</h3>
             <a href="/quote/new" class="btn btn-primary">+ New Quote</a>
         </div>
-        <div style="margin-bottom:15px;">
-            <input type="text" id="searchQuotes" placeholder="🔍 Search by customer, quote number, amount..." oninput="filterTable('searchQuotes','quoteTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
-        </div>
-        <table class="table" id="quoteTable">
+        <table class="table">
             <thead>
                 <tr><th>Number</th><th>Date</th><th>Customer</th><th>Amount</th><th>Status</th></tr>
             </thead>
@@ -26597,15 +23760,6 @@ def quotes_page():
             </tbody>
         </table>
     </div>
-    <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
-    }}
-    </script>
     '''
     
     return render_page("Quotes", content, user, "quotes")
@@ -27482,15 +24636,12 @@ def delivery_notes_list():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2>Goods Received Notes (GRN)</h2>
-        <a href="/delivery-note/new" class="btn btn-primary">+ New GRN</a>
+        <h2>Delivery Notes</h2>
+        <a href="/delivery-note/new" class="btn btn-primary">+ New Delivery Note</a>
     </div>
     
     <div class="card" style="padding:0;overflow:hidden;">
-        <div style="padding:15px 15px 0 15px;">
-            <input type="text" id="searchDN" placeholder="🔍 Search by customer, DN number, invoice..." oninput="filterTable('searchDN','dnTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
-        </div>
-        <table class="data-table" id="dnTable">
+        <table class="data-table">
             <thead>
                 <tr>
                     <th>Number</th>
@@ -27505,24 +24656,15 @@ def delivery_notes_list():
             </tbody>
         </table>
     </div>
-    <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
-    }}
-    </script>
     '''
     
-    return render_page("Goods Received Notes", content, user, "delivery-notes")
+    return render_page("Delivery Notes", content, user, "delivery-notes")
 
 
 @app.route("/delivery-note/new", methods=["GET", "POST"])
 @login_required
 def delivery_note_new():
-    """Create new GRN (goods received note)"""
+    """Create new delivery note"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -27604,12 +24746,12 @@ def delivery_note_new():
                             new_qty = current_qty - sold_qty
                             # Allow negative stock - use update with biz_id
                             db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                            logger.info(f"[GRN] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
+                            logger.info(f"[DELIVERY] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
                             # Log stock movement
                             try:
                                 db.save("stock_movements", RecordFactory.stock_movement(
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
-                                    quantity=sold_qty, reference=f"GRN {dn_num}"
+                                    quantity=sold_qty, reference=f"Delivery Note {dn.get('dn_number', '')}" if dn else "Delivery Note"
                                 ))
                             except: pass
             
@@ -27996,13 +25138,6 @@ def expenses_page():
         '''
     
     content = f'''
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-        <div></div>
-        <div style="display:flex;gap:10px;">
-            <a href="/subscriptions" class="btn btn-secondary">📦 Recurring Expenses</a>
-            <a href="/scan" class="btn btn-primary">📸 Scan Receipt</a>
-        </div>
-    </div>
     <div class="stats-grid" style="margin-bottom:20px;">
         <div class="stat-card">
             <div class="stat-value">{len(expenses)}</div>
@@ -28042,11 +25177,8 @@ def expenses_page():
             <h3 class="card-title" style="margin:0;">Expenses</h3>
             <a href="/scan" class="btn btn-primary">📸 Scan Receipt</a>
         </div>
-        <div style="margin-bottom:15px;">
-            <input type="text" id="searchExpenses" placeholder="🔍 Search by supplier, description, category, amount..." oninput="filterTable('searchExpenses','expenseTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
-        </div>
         <div style="overflow-x:auto;">
-        <table class="table" id="expenseTable">
+        <table class="table">
             <thead>
                 <tr>
                     <th>Exp #</th>
@@ -28066,15 +25198,6 @@ def expenses_page():
         </table>
         </div>
     </div>
-    <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
-    }}
-    </script>
     '''
     
     return render_page("Expenses", content, user, "expenses")
@@ -29837,69 +26960,6 @@ def grv_view(grv_id):
         
         {f'<div style="padding:0 40px 20px;"><div style="padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;"><strong>Notes:</strong> {safe_string(grv.get("notes", ""))}</div></div>' if grv.get("notes") else ""}
     </div>
-    
-    <!-- STOCK BOOKING REPORT -->
-    <div class="card no-print" style="margin-top:20px;">
-        <h3 style="margin:0 0 15px 0;">📦 Stock Booking Report — {grv.get("grv_number", "")}</h3>
-        <p style="color:var(--text-muted);margin:0 0 15px 0;font-size:13px;">Shows what happened to stock when this GRV was received</p>
-        <div style="overflow-x:auto;">
-        <table class="table" style="font-size:14px;">
-            <thead>
-                <tr style="background:var(--bg);">
-                    <th style="padding:10px;">GRV #</th>
-                    <th style="padding:10px;">Stock Code</th>
-                    <th style="padding:10px;">Description</th>
-                    <th style="padding:10px;text-align:center;">Qty Received</th>
-                    <th style="padding:10px;text-align:center;">Before</th>
-                    <th style="padding:10px;text-align:center;">After</th>
-                    <th style="padding:10px;">Status</th>
-                </tr>
-            </thead>
-            <tbody>'''
-    
-    stock_booked = 0
-    not_linked = 0
-    for item in items:
-        booked = item.get("booked_to_stock", False) or item.get("stock_id")
-        code = item.get("stock_code", "") or item.get("code", "")
-        name = item.get("stock_name", "") or item.get("description", "")
-        qty_recv = item.get("qty_received", 0)
-        before = item.get("stock_qty_before", "-")
-        after = item.get("stock_qty_after", "-")
-        
-        if booked and code:
-            stock_booked += 1
-            status_html = '<span style="color:#10b981;font-weight:600;">✅ Booked</span>'
-            before_str = str(before) if before != "-" else "-"
-            after_str = str(after) if after != "-" else "-"
-        else:
-            not_linked += 1
-            status_html = '<span style="color:#f59e0b;">⚠️ Not linked</span>'
-            before_str = "-"
-            after_str = "-"
-        
-        content += f'''
-                <tr style="border-bottom:1px solid var(--border);">
-                    <td style="padding:10px;color:var(--text-muted);font-size:13px;">{grv.get("grv_number", "")}</td>
-                    <td style="padding:10px;font-weight:600;">{safe_string(code) or "-"}</td>
-                    <td style="padding:10px;">{safe_string(name)}</td>
-                    <td style="padding:10px;text-align:center;font-weight:700;color:#10b981;">{qty_recv}</td>
-                    <td style="padding:10px;text-align:center;color:var(--text-muted);">{before_str}</td>
-                    <td style="padding:10px;text-align:center;font-weight:600;">{after_str}</td>
-                    <td style="padding:10px;">{status_html}</td>
-                </tr>'''
-    
-    content += f'''
-            </tbody>
-        </table>
-        </div>
-        <div style="display:flex;gap:15px;margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
-            <div style="background:rgba(16,185,129,0.1);padding:10px 20px;border-radius:8px;">
-                <span style="font-weight:700;color:#10b981;">{stock_booked}</span> <span style="color:var(--text-muted);font-size:13px;">items booked to stock</span>
-            </div>
-            {f'<div style="background:rgba(245,158,11,0.1);padding:10px 20px;border-radius:8px;"><span style="font-weight:700;color:#f59e0b;">{not_linked}</span> <span style="color:var(--text-muted);font-size:13px;">items not linked to stock</span></div>' if not_linked > 0 else ''}
-        </div>
-    </div>
     '''
     
     return render_page(f"GRV {grv.get('grv_number', '')}", content, user, "purchases")
@@ -30232,7 +27292,7 @@ def business_pulse():
     }}
     
     async function completeReminder(id) {{
-        await fetch('/api/assistant/toggle', {{
+        await fetch('/api/assistant/complete', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: id, type: 'reminder'}})
@@ -30241,7 +27301,7 @@ def business_pulse():
     }}
     
     async function completeTodo(id) {{
-        await fetch('/api/assistant/toggle', {{
+        await fetch('/api/assistant/complete', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{id: id, type: 'todo'}})
@@ -30638,14 +27698,14 @@ def api_pulse_data():
             if p_date >= seven_days_ago:
                 who = user_names.get(p.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
-                activity_feed.append({"date": p_date, "time": extract_time(p.get("created_at", "")), "text": f'{p.get("customer_name", "Customer")} paid{who_tag}', "amount": float(p.get("amount", 0)), "icon": "&#10003;", "color": "#10b981"})
+                activity_feed.append({"date": p_date, "time": str(p.get("created_at", ""))[-8:-3], "text": f'{p.get("customer_name", "Customer")} paid{who_tag}', "amount": float(p.get("amount", 0)), "icon": "&#10003;", "color": "#10b981"})
         
         for inv in invoices:
             inv_date = str(inv.get("date", ""))[:10]
             if inv_date >= seven_days_ago and inv.get("status") != "paid":
                 who = user_names.get(inv.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
-                activity_feed.append({"date": inv_date, "time": extract_time(inv.get("created_at", "")), "text": f'Invoice {inv.get("invoice_number", "")} → {inv.get("customer_name", "")[:20]}{who_tag}', "amount": float(inv.get("total", 0)), "icon": "&#128196;", "color": "#f59e0b"})
+                activity_feed.append({"date": inv_date, "time": str(inv.get("created_at", ""))[-8:-3], "text": f'Invoice {inv.get("invoice_number", "")} → {inv.get("customer_name", "")[:20]}{who_tag}', "amount": float(inv.get("total", 0)), "icon": "&#128196;", "color": "#f59e0b"})
         
         for s in sales:
             s_date = str(s.get("date", ""))[:10]
@@ -30653,7 +27713,7 @@ def api_pulse_data():
                 who = user_names.get(s.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
                 method = s.get("payment_method", "cash")
-                activity_feed.append({"date": s_date, "time": extract_time(s.get("created_at", "")), "text": f'POS Sale #{str(s.get("id", ""))[:6]} ({method}){who_tag}', "amount": float(s.get("total", 0)), "icon": "&#128176;", "color": "#10b981"})
+                activity_feed.append({"date": s_date, "time": str(s.get("created_at", ""))[-8:-3], "text": f'POS Sale #{str(s.get("id", ""))[:6]} ({method}){who_tag}', "amount": float(s.get("total", 0)), "icon": "&#128176;", "color": "#10b981"})
         
         activity_feed.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
         
@@ -30835,10 +27895,8 @@ def api_briefing_generate():
                     logger.info(f"[BRIEFING] Background generation complete")
                 else:
                     logger.error(f"[BRIEFING] Background generation failed: {result.get('error')}")
-                    # DON'T cache failure - let it retry on next refresh
             except Exception as e:
                 logger.error(f"[BRIEFING] Background thread error: {e}")
-                # DON'T cache errors - let it retry on next refresh
             finally:
                 _briefing_cache.pop(gen_key, None)
         
@@ -30877,30 +27935,15 @@ def api_assistant_items():
         reminder_items = []
         for r in pending_reminders[:25]:
             due = r.get("due_date", "")
-            due_time = r.get("due_time", "")
             is_overdue = due < today_str if due else False
             is_today = due == today_str
-            
-            # Build display string for due date
-            if is_overdue:
-                due_display = f"Due {due}" + (f" {due_time}" if due_time else "")
-            elif is_today:
-                due_display = f"Today" + (f" {due_time}" if due_time else "")
-            elif due:
-                due_display = f"Due {due}" + (f" {due_time}" if due_time else "")
-            else:
-                due_display = "No due date"
-            
             reminder_items.append({
                 "id": r.get("id", ""),
-                "title": r.get("message", r.get("title", "Reminder")),
                 "message": r.get("message", ""),
                 "due_date": due,
-                "due_time": due_time,
-                "due_display": due_display,
+                "due_time": r.get("due_time", ""),
                 "priority": r.get("priority", "normal"),
                 "linked_to": r.get("linked_to", ""),
-                "is_overdue": is_overdue,
                 "overdue": is_overdue,
                 "today": is_today
             })
@@ -30915,7 +27958,6 @@ def api_assistant_items():
         for t in pending_todos[:25]:
             todo_items.append({
                 "id": t.get("id", ""),
-                "title": t.get("task", t.get("title", "To-do")),
                 "task": t.get("task", ""),
                 "priority": t.get("priority", "normal"),
                 "category": t.get("category", "general")
@@ -32878,7 +29920,6 @@ def report_tb():
                 <option value="af">Afrikaans</option>
             </select>
             <button class="btn btn-primary" onclick="analyzeWithZane()" id="analyzeBtn">Analyze with Zane</button>
-            <button class="btn btn-secondary" onclick="downloadTBcsv()">📥 Download CSV</button>
             <button class="btn btn-secondary" onclick="window.print();">Print</button>
             <a href="/import" class="btn btn-secondary">Import TB</a>
             <label class="btn btn-secondary" style="cursor:pointer;margin:0;">
@@ -32889,7 +29930,7 @@ def report_tb():
         </div>
     </div>
     
-    {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Warning:</strong> There are <strong>{len(opening_entries)}</strong> opening balance entries for <strong>{len(tb_accounts)}</strong> accounts. If you imported multiple times, click "Clear OB" and import again.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
+    {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Waarskuwing:</strong> Daar is <strong>{len(opening_entries)}</strong> opening balance entries vir <strong>{len(tb_accounts)}</strong> accounts. As jy meerdere kere geïmporteer het, klik "Clear OB" en import weer.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
     
     <div class="card" style="padding:30px;">
         <!-- HEADER -->
@@ -32951,38 +29992,6 @@ def report_tb():
     const totalDebit = {total_debit};
     const totalCredit = {total_credit};
     const isBalanced = {"true" if is_balanced else "false"};
-    
-    function downloadTBcsv() {{
-        const tbData = {tb_data_json};
-        if (!tbData || tbData.length === 0) {{ alert('No trial balance data to download'); return; }}
-        
-        // Standard TB CSV format that any accounting software can read
-        let csv = 'Account Code,Account Name,Account Type,Debit,Credit\\n';
-        let totDr = 0, totCr = 0;
-        
-        tbData.forEach(row => {{
-            const code = (row.code || '').replace(/"/g, '""');
-            const name = (row.name || '').replace(/"/g, '""');
-            const type = '';
-            const dr = row.debit > 0 ? row.debit.toFixed(2) : '';
-            const cr = row.credit > 0 ? row.credit.toFixed(2) : '';
-            csv += `"${{code}}","${{name}}","${{type}}",${{dr}},${{cr}}\\n`;
-            totDr += row.debit || 0;
-            totCr += row.credit || 0;
-        }});
-        
-        csv += `,,TOTAL,${{totDr.toFixed(2)}},${{totCr.toFixed(2)}}\\n`;
-        
-        const blob = new Blob([csv], {{ type: 'text/csv;charset=utf-8;' }});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const bizName = document.title.split(' - ')[1] || 'Business';
-        const date = new Date().toISOString().split('T')[0];
-        a.download = `Trial_Balance_${{bizName.replace(/[^a-zA-Z0-9]/g, '_')}}_${{date}}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-    }}
     
     async function analyzeWithZane() {{
         const btn = document.getElementById('analyzeBtn');
@@ -33066,10 +30075,7 @@ def report_tb():
                     total_debit: uploadData.total_debit,
                     total_credit: uploadData.total_credit,
                     is_balanced: uploadData.is_balanced,
-                    lang: lang,
-                    source_file: file.name,
-                    company_name: uploadData.company_name || '',
-                    tb_control_profit: uploadData.tb_control_profit || null
+                    lang: lang
                 }})
             }});
             
@@ -33159,10 +30165,6 @@ def report_tb():
             alert('❌ Error: ' + err.message);
         }}
     }}
-    // Auto-analyze if redirected from import page
-    if (window.location.search.includes('auto_analyze=1')) {{
-        setTimeout(() => analyzeWithZane(), 500);
-    }}
     </script>
     '''
     
@@ -33219,26 +30221,7 @@ def api_tb_analyze():
     try:
         data = request.get_json()
         accounts = data.get("accounts", [])
-        lang = data.get("lang", "en")
-        
-        # If a source file was uploaded (external TB), note it in the report
-        source_file = data.get("source_file", "")
-        company_name = data.get("company_name", "")
-        
-        # IMPORTANT: If a CSV was uploaded, it's ALWAYS a third-party client's data
-        # The user wouldn't upload their own TB - ClickAI generates that internally
-        # So NEVER use the logged-in business name for uploaded TBs
-        if source_file:
-            if company_name:
-                report_company = company_name
-            else:
-                # Use filename without extension as company hint
-                clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
-                report_company = f"Client TB ({clean_name})"
-            is_third_party = True
-        else:
-            report_company = biz_name
-            is_third_party = False
+        lang = data.get("lang", "en")  # Default to English
         
         logger.info(f"[TB ANALYZE] Language selected: {lang}")
         
@@ -33526,277 +30509,78 @@ def api_tb_analyze():
         
         logger.info(f"[TB ANALYZE] Python calculated: Dr={total_debit:.2f} Cr={total_credit:.2f} Diff={difference:.2f}")
         
-        # Step 2: Categorize accounts - USE CATEGORY COLUMN IF AVAILABLE
-        # This is critical: different accounting packages use different code schemes
-        # Sage Pastel: 1000=Sales, 2000=COS, 3000-4000=Expenses, 5000=Equity, 6000+=Assets
-        # Standard:    1000=Assets, 2000=Assets, 3000=Liabilities, 4000=Equity, 5000=Income, 6000+=Expenses
-        # So we CANNOT rely on codes - we must use the Category column
-        
-        has_categories = any(a.get("category") for a in accounts)
-        logger.info(f"[TB ANALYZE] Category column available: {has_categories}")
-        
-        if has_categories:
-            # ═══════════════════════════════════════════════════════════════
-            # CATEGORY-BASED CLASSIFICATION (reliable, works for ALL systems)
-            # ═══════════════════════════════════════════════════════════════
-            logger.info("[TB ANALYZE] Using CATEGORY column for classification")
+        # Step 2: Categorize accounts by code and name patterns
+        def match_account(acc, codes=None, keywords=None, column="debit"):
+            """Match account by code prefix or name keywords"""
+            code = str(acc.get("code", "")).strip()
+            name = str(acc.get("name", "")).lower()
+            val = float(acc.get(column, 0) or 0)
             
-            def cat_sum(acc_list, categories, column="debit"):
-                """Sum accounts matching category list"""
-                total = 0
-                for a in acc_list:
-                    cat = str(a.get("category", "")).lower().strip()
-                    for c in categories:
-                        if c in cat:
-                            total += float(a.get(column, 0) or 0)
-                            break
-                return total
-            
-            def cat_net(acc_list, categories):
-                """Net value (debit - credit) for matching categories"""
-                total = 0
-                for a in acc_list:
-                    cat = str(a.get("category", "")).lower().strip()
-                    for c in categories:
-                        if c in cat:
-                            dr = float(a.get("debit", 0) or 0)
-                            cr = float(a.get("credit", 0) or 0)
-                            total += dr - cr
-                            break
-                return total
-            
-            def name_match(acc, keywords, column="debit"):
-                """Match account by name keywords"""
-                name = str(acc.get("name", "")).lower()
-                val = float(acc.get(column, 0) or 0)
+            if codes:
+                for c in codes:
+                    if code.startswith(c):
+                        return val
+            if keywords:
                 for kw in keywords:
                     if kw in name:
                         return val
-                return 0
-            
-            # INCOME (Credit balances - sales, other income)
-            sales = cat_sum(accounts, ["sales", "revenue", "turnover", "omset"], "credit")
-            sales_returns = cat_sum(accounts, ["sales return", "return"], "debit")
-            cos = cat_sum(accounts, ["cost of sale", "cost of goods", "koste van verkope", "cogs"], "debit")
-            other_income = cat_sum(accounts, ["other income", "ander inkomste", "interest received"], "credit")
-            
-            # EXPENSES (Debit balances)
-            # Get all expense accounts individually for the breakdown
-            expense_accounts = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
-            
-            salaries = sum(name_match(a, ["salary", "salaries", "wage", "payroll", "salar"]) for a in expense_accounts)
-            rent = sum(name_match(a, ["rent"]) for a in expense_accounts)
-            electricity = sum(name_match(a, ["electric", "water", "eskom", "power", "elektris"]) for a in expense_accounts)
-            water = 0  # Often combined with electricity
-            telephone = sum(name_match(a, ["telephone", "internet", "cell", "mobile", "telkom", "telef"]) for a in expense_accounts)
-            insurance = sum(name_match(a, ["insurance", "verseker"]) for a in expense_accounts)
-            bank_charges = sum(name_match(a, ["bank charge", "bank fee", "bankkoste"]) for a in expense_accounts)
-            fuel = sum(name_match(a, ["fuel", "petrol", "diesel", "transport", "brandstof"]) for a in expense_accounts)
-            repairs = sum(name_match(a, ["repair", "maintenance", "onderhoud"]) for a in expense_accounts)
-            office = sum(name_match(a, ["office", "stationery", "supplies", "kantoor"]) for a in expense_accounts)
-            advertising = sum(name_match(a, ["advertising", "marketing", "promotion", "advertens"]) for a in expense_accounts)
-            professional = sum(name_match(a, ["professional", "accounting", "legal", "audit", "rekenmeest"]) for a in expense_accounts)
-            depreciation = sum(name_match(a, ["depreciation", "waardevermindering"]) for a in expense_accounts)
-            bad_debts = sum(name_match(a, ["bad debt", "doubtful", "slegte skuld"]) for a in expense_accounts)
-            interest_paid = sum(name_match(a, ["interest paid", "interest expense", "finance charge", "rente betaal"]) for a in expense_accounts)
-            
-            # Total expenses from category (more accurate than summing named items)
-            total_expenses_from_cat = cat_net(accounts, ["expense", "uitgawe", "operating"])
-            # Handle credit balance expenses (recoveries) - net them out
-            if total_expenses_from_cat < 0:
-                total_expenses_from_cat = 0
-            
-            # Sundry = total expenses minus named ones
-            named_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid
-            sundry_exp = max(0, total_expenses_from_cat - named_expenses)
-            
-            # BALANCE SHEET from categories
-            # Current Assets
-            bank = 0
-            cash = 0
-            debtors = 0
-            stock = 0
-            prepaid = 0
-            vat_input = 0
-            other_current = 0
-            
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                name = str(a.get("name", "")).lower()
-                dr = float(a.get("debit", 0) or 0)
-                cr = float(a.get("credit", 0) or 0)
-                net = dr - cr
-                
-                if "current asset" in cat and "non-current" not in cat or "bedryfsbate" in cat and "nie-bedryfs" not in cat:
-                    if any(kw in name for kw in ["bank", "fnb", "standard", "absa", "nedbank", "capitec", "investec"]):
-                        bank += net
-                    elif any(kw in name for kw in ["cash", "petty", "kontant"]):
-                        cash += net
-                    elif any(kw in name for kw in ["debtor", "receivable", "debiteur"]):
-                        debtors += net
-                    elif any(kw in name for kw in ["stock", "inventory", "voorraad", "goods", "finished"]):
-                        stock += net
-                    elif any(kw in name for kw in ["prepaid", "prepayment", "vooruitbetaal"]):
-                        prepaid += net
-                    elif any(kw in name for kw in ["vat input", "input vat", "btw inset"]):
-                        vat_input += net
-                    else:
-                        other_current += net
-                
-                elif "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
-                    pass  # Handled below
-                
-                elif "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
-                    pass  # Handled below
-                
-            # Fixed Assets
-            fixed_assets_cost = 0
-            accum_depr = 0
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                name = str(a.get("name", "")).lower()
-                dr = float(a.get("debit", 0) or 0)
-                cr = float(a.get("credit", 0) or 0)
-                
-                if "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
-                    if any(kw in name for kw in ["accumulated", "acc dep", "accum", "opgehoopte"]):
-                        accum_depr += cr
-                    else:
-                        fixed_assets_cost += dr
-            
-            # Liabilities
-            creditors = 0
-            vat_output = 0
-            paye = 0
-            uif = 0
-            other_liabilities = 0
-            loans = 0
-            
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                name = str(a.get("name", "")).lower()
-                dr = float(a.get("debit", 0) or 0)
-                cr = float(a.get("credit", 0) or 0)
-                net_cr = cr - dr  # Liabilities are credit balances
-                
-                if "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
-                    if any(kw in name for kw in ["creditor", "payable", "trade payable", "krediteur"]):
-                        creditors += net_cr
-                    elif any(kw in name for kw in ["vat output", "output vat", "vat payable", "btw uitset", "vat control", "vat / tax"]):
-                        vat_output += net_cr
-                    elif "paye" in name or "pay as you earn" in name:
-                        paye += net_cr
-                    elif "uif" in name or "unemployment" in name:
-                        uif += net_cr
-                    else:
-                        other_liabilities += net_cr
-                
-                elif "long term" in cat or "non-current liabilit" in cat or "langtermyn" in cat or "nie-bedryfs" in cat:
-                    loans += net_cr
-            
-            # Equity
-            capital = 0
-            retained = 0
-            drawings = 0
-            reserves = 0
-            
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                name = str(a.get("name", "")).lower()
-                dr = float(a.get("debit", 0) or 0)
-                cr = float(a.get("credit", 0) or 0)
-                
-                if "equity" in cat or "ekwiteit" in cat or "owner" in cat or "eienaar" in cat:
-                    if any(kw in name for kw in ["retained", "opgehoopte", "accumulated profit"]):
-                        retained += cr - dr
-                    elif any(kw in name for kw in ["drawing", "onttrekking"]):
-                        drawings += dr
-                    elif any(kw in name for kw in ["reserve"]):
-                        reserves += cr - dr
-                    else:
-                        capital += cr - dr
-            
-            # Use category-based total for expenses (more accurate)
-            total_expenses = total_expenses_from_cat if total_expenses_from_cat > 0 else named_expenses
-            
-        else:
-            # ═══════════════════════════════════════════════════════════════
-            # CODE-BASED CLASSIFICATION (fallback for files without Category)
-            # Assumes STANDARD chart: 1=Assets, 2=Assets, 3=Liab, 4=Equity, 5=Income, 6+=Expenses
-            # ═══════════════════════════════════════════════════════════════
-            logger.info("[TB ANALYZE] No category column - using CODE-BASED classification (standard chart)")
-            
-            def match_account(acc, codes=None, keywords=None, column="debit"):
-                """Match account by code prefix or name keywords"""
-                code = str(acc.get("code", "")).strip()
-                name = str(acc.get("name", "")).lower()
-                val = float(acc.get(column, 0) or 0)
-                
-                if codes:
-                    for c in codes:
-                        if code.startswith(c):
-                            return val
-                if keywords:
-                    for kw in keywords:
-                        if kw in name:
-                            return val
-                return 0
-            
-            # ASSETS (Debit balances)
-            bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
-            cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
-            debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
-            stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
-            prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
-            vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
-            other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
-            
-            fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
-            accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
-            
-            # LIABILITIES (Credit balances)
-            creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
-            vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
-            paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
-            uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
-            loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
-            other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
-            
-            # EQUITY (Credit balances)
-            capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
-            retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
-            drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)
-            reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
-            
-            # REVENUE (Credit balances)
-            sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
-            for a in accounts:
-                if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
-                    sales -= float(a.get("credit", 0) or 0)
-            
-            sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)
-            cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
-            other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
-            
-            # EXPENSES (Debit balances)
-            salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
-            rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
-            electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
-            water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
-            telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
-            insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
-            bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
-            fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
-            repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
-            office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
-            advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
-            professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
-            depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
-            bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
-            interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
-            sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
-            
-            total_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid + sundry_exp
+            return 0
+        
+        # ASSETS (Debit balances)
+        bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
+        cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
+        debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
+        stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
+        prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
+        vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
+        other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
+        
+        fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
+        accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
+        
+        # LIABILITIES (Credit balances)
+        creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
+        vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
+        paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
+        uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
+        loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
+        other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
+        
+        # EQUITY (Credit balances)
+        capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
+        retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
+        drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)  # Debit
+        reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
+        
+        # REVENUE (Credit balances)
+        sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
+        # Exclude returns from sales
+        for a in accounts:
+            if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
+                sales -= float(a.get("credit", 0) or 0)
+        
+        sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)  # Debit
+        cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
+        other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
+        
+        # EXPENSES (Debit balances)
+        salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
+        rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
+        electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
+        water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
+        telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
+        insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
+        bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
+        fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
+        repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
+        office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
+        advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
+        professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
+        depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
+        bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
+        interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
+        sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
+        
         # Step 3: Calculate totals
         current_assets = bank + cash + debtors + stock + prepaid + vat_input + other_current
         fixed_assets_net = fixed_assets_cost - accum_depr
@@ -33839,59 +30623,6 @@ def api_tb_analyze():
         logger.info(f"[TB ANALYZE] P&L: Sales={net_sales:.2f}, COS={cos:.2f}, GP={gross_profit:.2f}, Exp={total_expenses:.2f}, NP={net_profit:.2f}")
         
         # ═══════════════════════════════════════════════════════════════════════
-        # VALIDATION: Compare our calculation to TB's own control figure
-        # ═══════════════════════════════════════════════════════════════════════
-        tb_control_profit = data.get("tb_control_profit")
-        validation_ok = True
-        validation_warning = ""
-        
-        if tb_control_profit is not None:
-            try:
-                control = float(tb_control_profit)
-                diff = abs(net_profit - control)
-                pct_diff = (diff / abs(control) * 100) if control != 0 else 0
-                
-                logger.info(f"[TB VALIDATE] Our net profit: R{net_profit:,.2f} | TB control: R{control:,.2f} | Diff: R{diff:,.2f} ({pct_diff:.1f}%)")
-                
-                if diff < 1.0:
-                    # Perfect match
-                    logger.info("[TB VALIDATE] ✅ PERFECT MATCH - our calculation matches TB control figure")
-                    validation_warning = ""
-                elif pct_diff < 5:
-                    # Close enough - rounding differences
-                    logger.info(f"[TB VALIDATE] ✅ Close match - {pct_diff:.1f}% difference (likely rounding)")
-                    validation_warning = ""
-                else:
-                    # Significant difference - WARN
-                    validation_ok = False
-                    logger.warning(f"[TB VALIDATE] ⚠️ MISMATCH - {pct_diff:.1f}% difference!")
-                    if lang == "af":
-                        validation_warning = f'''
-                        <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
-                            <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WAARSKUWING: Syfers Klop Nie</h3>
-                            <p style="margin:5px 0;">Ons berekening van netto wins (<strong>R {net_profit:,.2f}</strong>) verskil van die proefbalans se eie syfer (<strong>R {control:,.2f}</strong>) met <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
-                            <p style="margin:5px 0;color:var(--text-muted);">Dit kan beteken dat sommige rekeninge verkeerd geklassifiseer is. Kontroleer die data voor u op hierdie report staatmaak.</p>
-                        </div>'''
-                    else:
-                        validation_warning = f'''
-                        <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
-                            <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WARNING: Numbers Don't Match</h3>
-                            <p style="margin:5px 0;">Our calculated net profit (<strong>R {net_profit:,.2f}</strong>) differs from the trial balance's own figure (<strong>R {control:,.2f}</strong>) by <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
-                            <p style="margin:5px 0;color:var(--text-muted);">This may indicate some accounts were incorrectly classified. Please verify the data before relying on this report.</p>
-                        </div>'''
-            except (ValueError, TypeError) as e:
-                logger.warning(f"[TB VALIDATE] Could not parse control figure: {e}")
-        
-        # Build confidence indicator
-        if has_categories:
-            if validation_ok:
-                confidence_html = '<div style="background:rgba(16,185,129,0.15);border:1px solid #10b981;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">✅ <strong>High Confidence</strong> - Category column detected, control figure matches. Data classification verified.</div>'
-            else:
-                confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Review Required</strong> - Category column detected but control figure mismatch. Some accounts may be misclassified.</div>'
-        else:
-            confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Medium Confidence</strong> - No category column found. Accounts classified by code patterns. Please verify the numbers.</div>'
-        
-        # ═══════════════════════════════════════════════════════════════════════
         # BUILD REPORT - PYTHON GENERATES ALL NUMBERS IN HTML
         # ═══════════════════════════════════════════════════════════════════════
         
@@ -33923,10 +30654,7 @@ def api_tb_analyze():
         # Using language labels (L) for bilingual support
         report_html = f"""
 <h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:10px;">📊 {L["report_title"]}</h2>
-<p><strong>{L["company"]}:</strong> {safe_string(report_company)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
-
-{validation_warning}
-{confidence_html}
+<p><strong>{L["company"]}:</strong> {safe_string(biz_name)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
 
 <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
 
@@ -34133,7 +30861,7 @@ def api_tb_analyze():
         accounts_text += f"{L['acc_code']:<10} {L['acc_name']:<40} {L['debit']:>15} {L['credit']:>15}\n"
         accounts_text += "-" * 80 + "\n"
         
-        # Group accounts by CATEGORY (not by code - codes differ per accounting system!)
+        # Group accounts by category for better analysis
         asset_accounts = []
         liability_accounts = []
         equity_accounts = []
@@ -34144,42 +30872,24 @@ def api_tb_analyze():
         for acc in accounts:
             code = str(acc.get("code", "")).strip()
             name = str(acc.get("name", "")).strip()
-            cat = str(acc.get("category", "")).lower()
             dr = float(acc.get("debit", 0) or 0)
             cr = float(acc.get("credit", 0) or 0)
             
             line = f"{code:<10} {name[:40]:<40} R{dr:>13,.2f} R{cr:>13,.2f}"
             
-            # Classify by CATEGORY first, fallback to code
-            if cat:
-                if any(kw in cat for kw in ["sales", "revenue", "other income", "income", "omset", "inkomste"]):
-                    income_accounts.append(line)
-                elif any(kw in cat for kw in ["cost of sale", "cogs", "koste van verkope"]):
-                    expense_accounts.append(line)  # COS goes with expenses for display
-                elif any(kw in cat for kw in ["expense", "uitgawe", "operating"]):
-                    expense_accounts.append(line)
-                elif any(kw in cat for kw in ["current asset", "non-current asset", "fixed asset", "bate"]):
-                    asset_accounts.append(line)
-                elif any(kw in cat for kw in ["current liabilit", "non-current liabilit", "long term", "laste"]):
-                    liability_accounts.append(line)
-                elif any(kw in cat for kw in ["equity", "owner", "ekwiteit", "eienaar"]):
-                    equity_accounts.append(line)
-                else:
-                    unclassified.append(line)
+            # Classify by code
+            if code.startswith(("1", "2")):
+                asset_accounts.append(line)
+            elif code.startswith("3"):
+                liability_accounts.append(line)
+            elif code.startswith("4"):
+                equity_accounts.append(line)
+            elif code.startswith("5"):
+                income_accounts.append(line)
+            elif code.startswith(("6", "7", "8", "9")):
+                expense_accounts.append(line)
             else:
-                # Fallback to code-based (standard chart only)
-                if code.startswith(("1", "2")):
-                    asset_accounts.append(line)
-                elif code.startswith("3"):
-                    liability_accounts.append(line)
-                elif code.startswith("4"):
-                    equity_accounts.append(line)
-                elif code.startswith("5"):
-                    income_accounts.append(line)
-                elif code.startswith(("6", "7", "8", "9")):
-                    expense_accounts.append(line)
-                else:
-                    unclassified.append(line)
+                unclassified.append(line)
         
         accounts_text += f"\n📊 {L['assets_codes']}\n"
         accounts_text += "\n".join(asset_accounts) if asset_accounts else f"  {L['no_asset_acc']}\n"
@@ -34206,20 +30916,11 @@ def api_tb_analyze():
         # Build comprehensive prompt with ALL data - language based on user selection
         if lang == "af":
             # Afrikaans prompt
-            af_third_party = ""
-            if is_third_party:
-                af_third_party = f"""
-BELANGRIKE KONTEKS: Hierdie is 'n DERDE PARTY kliënt se proefbalans wat opgelaai is vir analise.
-Dit is NIE {biz_name} se eie data nie. MOENIE na {biz_name} verwys in jou analise nie.
-Analiseer dit as 'n onafhanklike kliënt se finansiële data.
-"""
             insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
-Jou naam is net "Zane" - MOENIE 'n van gebruik nie. Teken reports as "Zane, CA(SA)" alleen.
 
-BESIGHEID: {safe_string(report_company)}
+BESIGHEID: {safe_string(biz_name)}
 INDUSTRIE: {industry}
 DATUM: {today()}
-{af_third_party}
 
 {accounts_text}
 
@@ -34260,31 +30961,18 @@ SARS:
 
 JOU OPDRAG - SKRYF 'N VOLLEDIGE CA(SA) ANALISE VERSLAG IN AFRIKAANS
 
-KRITIEKE INSTRUKSIES:
-- Die rekeninge is REEDS KORREK geklassifiseer in die regte kategorieë (Bates, Laste, Ekwiteit, Inkomste, Uitgawes) deur die bronsstelsel se eie kategorisering
-- MOENIE rekeningkodes bevraagteken of herklassifiseer nie. Verskillende stelsels gebruik verskillende nommering (Sage Pastel gebruik 1xxx vir Verkope, standaard gebruik 5xxx). Die kategorieë hier bo is KORREK.
-- MOENIE sê rekeninge is "verkeerd geklassifiseer" of in die "verkeerde afdeling" gebaseer op hulle kodenommers nie
-- MOENIE bedrog-aantygings maak sonder duidelike bewyse nie
-- Gebruik die PYTHON-BEREKENDE syfers as bron van waarheid - moenie herbereken of weerspreek nie
-- As Python sê Netto Wins is positief, IS die besigheid winsgewend. Moenie anders sê nie.
-
 **1. UITVOERENDE OPSOMMING**
-[2-3 sinne: Algehele gesondheid gebaseer op PYTHON-BEREKENDE verhoudings en winssyfers]
+[2-3 sinne: Algehele gesondheid van die besigheid. Is dit 'n "pass" of "fail"?]
 
 **2. REKENING-VIR-REKENING ANALISE**
 Gaan deur ELKE rekening kategorie en noem:
-- Watter rekeninge lyk normaal vir die industrie
-- Watter BEDRAE lyk ongewoon of kommerwekkend
+- Watter rekeninge lyk normaal
+- Watter rekeninge lyk VREEMD of BEKOMMEREND
 - Watter rekeninge ONTBREEK wat daar behoort te wees
-- MOENIE rekeningKODES kritiseer nie - fokus op BEDRAE en SALDO'S
+- Enige klassifikasie probleme
 
 **3. ROOI VLAE EN RISIKOS**
-Lys werklike bekommernisse gebaseer op die SYFERS:
-- Likwiditeitsprobleme?
-- Winsgewendheidskwessies?
-- Ongewone saldo's?
-- Ontbrekende voorsiening of toevallings?
-- MOENIE die rekeningnommeringstelsel as probleem vlag nie
+Lys ELKE probleem wat jy sien, met spesifieke rekening verwysings.
 
 **4. SARS NAKOMING**
 - BTW posisie en betaaldatums
@@ -34296,36 +30984,17 @@ Gee TEN MINSTE 5 konkrete aksies met prioriteite (DRINGEND / BELANGRIK / MONITOR
 **6. VRAE VIR DIE KLIËNT**
 Lys 3-5 vrae wat jy sou vra.
 
-FORMAAT INSTRUKSIES:
-- Skryf SKOON HTML (geen markdown nie). Gebruik <h2>, <h3> vir opskrifte.
-- Vir tabelle: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Kolom</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Waarde</td></tr></table>
-- Vir kleur indicators: <span style="color:#ef4444;">✗ Sleg</span> of <span style="color:#10b981;">✓ Goed</span> of <span style="color:#f59e0b;">⚠ Waarskuwing</span>
-- ELKE tabel sel MOET inhoud hê - moet NOOIT leë selle los nie
-- Voltooi ALLE afdelings volledig - moenie halfpad stop nie
-
 REËLS:
 - Verwys na SPESIFIEKE rekeninge by naam en kode
-- Wees SPESIFIEK oor bedrae en persentasies
-- Skryf soos 'n regte CA(SA) wat omgee
-- Gebruik die PRESIESE syfers wat Python bereken het
-- MOET NOOIT sê die rekeningplan is "fout" of "verkeerd geklassifiseer" nie"""
+- Wees SPESIFIEK, nie generies nie
+- Skryf soos 'n regte CA(SA) wat omgee"""
         else:
             # English prompt (default)
-            third_party_note = ""
-            if is_third_party:
-                third_party_note = f"""
-IMPORTANT CONTEXT: This is a THIRD-PARTY client's trial balance that was uploaded for analysis.
-This is NOT {biz_name}'s own data. Do NOT reference {biz_name} anywhere in your analysis.
-Analyze this as an independent client's financial data. If you see references to other companies
-(e.g., loans from/to other entities), these are the CLIENT's intercompany relationships, not related to {biz_name}.
-"""
             insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
-Your name is simply "Zane" - do NOT use any surname. Sign reports as "Zane, CA(SA)" only.
 
-BUSINESS: {safe_string(report_company)}
+BUSINESS: {safe_string(biz_name)}
 INDUSTRY: {industry}
 DATE: {today()}
-{third_party_note}
 
 {accounts_text}
 
@@ -34366,31 +31035,23 @@ SARS (South African Revenue Service):
 
 YOUR TASK - WRITE A COMPLETE CA(SA) ANALYSIS REPORT IN ENGLISH
 
-CRITICAL INSTRUCTIONS:
-- The accounts have been PRE-CLASSIFIED into the correct categories (Assets, Liabilities, Equity, Income, Expenses) using the source system's own categorization
-- DO NOT question or reclassify account codes. Different accounting systems use different numbering (Sage Pastel uses 1xxx for Sales, standard uses 5xxx). The categories shown above are CORRECT.
-- DO NOT suggest accounts are "misclassified" or in the "wrong section" based on their code numbers
-- DO NOT make fraud allegations without clear evidence of actual fraud
-- Use the PYTHON-CALCULATED numbers as the source of truth - do not recalculate or contradict them
-- If Python says Net Profit is positive, the business IS profitable. Do not say otherwise.
-
 **1. EXECUTIVE SUMMARY**
-[2-3 sentences: Overall health based on the PYTHON-CALCULATED ratios and profit figures]
+[2-3 sentences: Overall health of the business. Is this a "pass" or "fail"?]
 
 **2. ACCOUNT-BY-ACCOUNT ANALYSIS**
 Go through EACH account category and note:
-- Which accounts look normal for the industry
-- Which AMOUNTS look unusual or concerning (e.g., very high expenses, credit balances on expense accounts)
-- Which accounts are MISSING that should be there (depreciation, bad debts, etc)
-- DO NOT criticize account CODES - focus on AMOUNTS and BALANCES
+- Which accounts look normal
+- Which accounts look UNUSUAL or CONCERNING (e.g., negative balances, unusual amounts)
+- Which accounts are MISSING that should be there
+- Any classification issues (wrong codes)
 
 **3. RED FLAGS AND RISKS**
-List genuine concerns based on the NUMBERS:
-- Liquidity problems (current ratio, quick ratio)?
-- Profitability issues (margins)?
-- Unusual balances (credit balances on expenses, large intercompany loans)?
-- Missing provisions or accruals?
-- DO NOT flag the account numbering system as a problem
+List EVERY problem you see, with specific account references:
+- TB not balancing? Where could the error be?
+- Liquidity problems?
+- Profitability issues?
+- Unusual transactions?
+- Possible errors or fraud risks?
 
 **4. SARS COMPLIANCE**
 - VAT: Is the position correct? When must it be paid?
@@ -34398,25 +31059,21 @@ List genuine concerns based on the NUMBERS:
 - Any missing tax accounts?
 
 **5. SPECIFIC RECOMMENDATIONS**
-Give AT LEAST 5 concrete actions with priority (URGENT / IMPORTANT / MONITOR)
+Give AT LEAST 5 concrete actions, each with:
+- The specific account or area
+- What needs to be done
+- Why it's important
+- Priority (URGENT / IMPORTANT / MONITOR)
 
 **6. QUESTIONS FOR THE CLIENT**
-List 3-5 questions you would ask the business owner.
-
-FORMAT INSTRUCTIONS:
-- Output CLEAN HTML only (no markdown). Use <h2>, <h3> for headings.
-- For tables use: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Column</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Value</td></tr></table>
-- For colored indicators use: <span style="color:#ef4444;">✗ Bad</span> or <span style="color:#10b981;">✓ Good</span> or <span style="color:#f59e0b;">⚠ Warning</span>
-- For section boxes use: <div style="padding:15px;background:rgba(99,102,241,0.1);border-radius:8px;margin:10px 0;">content</div>
-- EVERY table cell MUST have content - never leave cells empty
-- Complete ALL sections fully - do not stop halfway through a section
+List 3-5 questions you would ask the business owner to better understand.
 
 RULES:
 - Refer to SPECIFIC accounts by name and code
-- Do NOT be generic - be SPECIFIC about amounts and percentages
-- Write like a real CA(SA) who cares
-- Use the EXACT figures that Python calculated - do not make up new numbers
-- NEVER say the chart of accounts is "wrong" or "misclassified" - different systems use different codes"""
+- Do NOT be generic - be SPECIFIC
+- If something looks wrong, say it directly
+- Write like a real CA(SA) who cares, not like a robot
+- Use the EXACT figures that Python calculated - do not make up new numbers"""
 
         insights_html = ""
         try:
@@ -34424,17 +31081,11 @@ RULES:
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-sonnet-4-5-20250929",
-                    max_tokens=8000,
+                    max_tokens=3000,
                     messages=[{"role": "user", "content": insights_prompt}]
                 )
                 if message.content and message.content[0].text:
                     insights_html = message.content[0].text
-                    
-                    # Check if report was truncated
-                    if hasattr(message, 'stop_reason') and message.stop_reason == 'max_tokens':
-                        logger.warning(f"[TB ANALYZE] Report was TRUNCATED (hit max_tokens limit)")
-                        insights_html += '<div style="margin-top:20px;padding:12px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:8px;color:#f59e0b;font-size:13px;">⚠️ Report was truncated due to length. The analysis above covers the main findings.</div>'
-                    
                     # Basic markdown to HTML
                     insights_html = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
                     insights_html = re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=re.MULTILINE)
@@ -34517,78 +31168,16 @@ def api_tb_upload_analyze():
         
         try:
             if filename.endswith('.csv'):
+                # Try different encodings
                 content = file.read()
-                df = None
-                
-                # Strip BOM if present
-                if content[:3] == b'\xef\xbb\xbf':
-                    content = content[3:]
-                
-                # Decode content to text first
-                text = None
-                for enc in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                for encoding in ['utf-8', 'latin-1', 'cp1252']:
                     try:
-                        text = content.decode(enc)
+                        df = pd.read_csv(io.BytesIO(content), encoding=encoding)
                         break
                     except:
                         continue
-                
-                if not text:
-                    return jsonify({"success": False, "error": "Kon nie die CSV lees nie - encoding probleem."})
-                
-                # Clean up: remove Excel hints and find real header row
-                lines = [l.strip() for l in text.split('\n') if l.strip()]
-                
-                # Skip non-data rows at top (sep=, title rows)
-                header_row = 0
-                for i, line in enumerate(lines[:10]):
-                    stripped = line.strip().strip('"').strip()
-                    stripped_lower = stripped.lower()
-                    # Skip: sep=X lines
-                    if stripped_lower.startswith('sep='):
-                        header_row = i + 1
-                        continue
-                    # Skip: single-value title rows (no commas between values, just a title)
-                    # But NOT rows like "Name","Category","Debit","Credit" which are headers
-                    raw_no_quoted = line
-                    # Count commas outside quotes to check if it's a real CSV row
-                    in_quote = False
-                    comma_count = 0
-                    for ch in line:
-                        if ch == '"':
-                            in_quote = not in_quote
-                        elif ch == ',' and not in_quote:
-                            comma_count += 1
-                    if comma_count == 0:
-                        # Single value row = title, skip it
-                        header_row = i + 1
-                        continue
-                    # This has commas = real header or data row, stop
-                    break
-                
-                logger.info(f"[TB UPLOAD] Detected header at row {header_row}, skipping {header_row} rows")
-                
-                # Detect delimiter from header line
-                header_line = lines[header_row] if header_row < len(lines) else lines[0]
-                if ';' in header_line and header_line.count(';') > header_line.count(','):
-                    sep = ';'
-                elif '\t' in header_line:
-                    sep = '\t'
                 else:
-                    sep = ','
-                
-                # Rebuild clean text without skipped rows
-                clean_text = '\n'.join(lines[header_row:])
-                
-                try:
-                    df = pd.read_csv(io.StringIO(clean_text), sep=sep, on_bad_lines='skip', engine='python')
-                    logger.info(f"[TB UPLOAD] Read {len(df)} rows, {len(df.columns)} cols: {list(df.columns)}")
-                except Exception as e:
-                    logger.error(f"[TB UPLOAD] pandas read failed: {e}")
-                
-                if df is None or len(df.columns) <= 1:
-                    return jsonify({"success": False, "error": "Kon nie die CSV lees nie. Probeer om dit as Excel (.xlsx) te save en weer te upload."})
-                    
+                    return jsonify({"success": False, "error": "Could not read CSV file - encoding issue"})
             elif filename.endswith(('.xlsx', '.xls')):
                 df = pd.read_excel(file)
             else:
@@ -34599,259 +31188,86 @@ def api_tb_upload_analyze():
         
         logger.info(f"[TB UPLOAD] Read {len(df)} rows, columns: {list(df.columns)}")
         
-        # ═══════════════════════════════════════════════════════════
-        # SMART COLUMN DETECTION - tries hardcoded first, then AI
-        # Every accountant's TB looks different!
-        # ═══════════════════════════════════════════════════════════
+        # Try to identify columns (code, name/account, debit, credit)
         cols_lower = {c.lower().strip(): c for c in df.columns}
         
         # Find account code column
         code_col = None
-        for candidate in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'rekening kode', 
-                          'gl code', 'account_code', 'acc no', 'account no', 'account number',
-                          'rekeningnommer', 'gl no', 'no', 'number', 'acc', 'account #']:
+        for candidate in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'rekening kode', 'gl code', 'account_code']:
             if candidate in cols_lower:
                 code_col = cols_lower[candidate]
                 break
         
         # Find account name column
         name_col = None
-        for candidate in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 
-                          'rekening naam', 'acc name', 'account_name', 'rekeningnaam', 'omskrywing',
-                          'account description', 'ledger', 'ledger name', 'gl name', 'label',
-                          'type', 'account type']:
+        for candidate in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 'rekening naam', 'acc name', 'account_name']:
             if candidate in cols_lower:
                 name_col = cols_lower[candidate]
                 break
         
         # Find debit column
         debit_col = None
-        for candidate in ['debit', 'dr', 'debits', 'debit amount', 'debiet', 'debit balance',
-                          'debiet saldo', 'debit total', 'dr amount', 'dr balance']:
+        for candidate in ['debit', 'dr', 'debits', 'debit amount', 'debiet']:
             if candidate in cols_lower:
                 debit_col = cols_lower[candidate]
                 break
         
         # Find credit column
         credit_col = None
-        for candidate in ['credit', 'cr', 'credits', 'credit amount', 'krediet', 'credit balance',
-                          'krediet saldo', 'credit total', 'cr amount', 'cr balance']:
+        for candidate in ['credit', 'cr', 'credits', 'credit amount', 'krediet']:
             if candidate in cols_lower:
                 credit_col = cols_lower[candidate]
                 break
         
-        # Find single balance column (some TBs use one column with +/-)
-        balance_col = None
-        if not debit_col and not credit_col:
-            for candidate in ['balance', 'saldo', 'amount', 'bedrag', 'net balance', 'netto',
-                              'value', 'waarde', 'total', 'totaal', 'closing balance', 'closing',
-                              'sluitsaldo', 'net', 'movement', 'beweging']:
-                if candidate in cols_lower:
-                    balance_col = cols_lower[candidate]
-                    break
-        
-        # Find category/type column
-        category_col = None
-        for candidate in ['category', 'kategorie', 'type', 'account type', 'tipe', 'class',
-                          'group', 'groep', 'section', 'heading', 'opskrif']:
-            if candidate in cols_lower:
-                if cols_lower[candidate] != name_col:  # Don't use same col as name
-                    category_col = cols_lower[candidate]
-                    break
-        
-        # ═══════════════════════════════════════════════════════════
-        # AI FALLBACK - if we can't find columns, ask Claude
-        # ═══════════════════════════════════════════════════════════
-        ai_mapped = False
-        if not name_col or (not debit_col and not credit_col and not balance_col):
-            logger.info(f"[TB UPLOAD] Hardcoded mapping failed. Trying AI detection...")
-            try:
-                # Send sample to Claude for column detection
-                sample_rows = df.head(8).to_string()
-                col_list = list(df.columns)
-                
-                ai_prompt = f"""Analyze this trial balance / opening balance file and identify which columns map to what.
-
-COLUMNS: {col_list}
-
-SAMPLE DATA (first 8 rows):
-{sample_rows}
-
-Return ONLY valid JSON (no markdown, no explanation):
-{{"account_code": "exact column name or null", "account_name": "exact column name", "debit": "exact column name or null", "credit": "exact column name or null", "balance": "exact column name or null", "category": "exact column name or null"}}
-
-Rules:
-- account_name: The column with account descriptions (e.g. "Sales", "Bank", "Rent")
-- account_code: The column with account numbers/codes (e.g. "1000", "4000/000")
-- debit/credit: Separate columns for debit and credit amounts
-- balance: Single column with positive/negative amounts (use ONLY if no separate debit/credit)
-- category: Column showing account type/category (Asset, Liability, Income, Expense)
-- Use exact column names from the COLUMNS list above
-- Use null if column doesn't exist"""
-
-                client = _anthropic_client
-                ai_response = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=500,
-                    messages=[{"role": "user", "content": ai_prompt}]
-                )
-                
-                ai_text = ai_response.content[0].text.strip()
-                # Clean markdown if present
-                if '```' in ai_text:
-                    ai_text = ai_text.split('```')[1].replace('json', '').strip()
-                
-                ai_map = json.loads(ai_text)
-                logger.info(f"[TB UPLOAD] AI column mapping: {ai_map}")
-                
-                # Apply AI mapping
-                if ai_map.get("account_name") and ai_map["account_name"] in df.columns:
-                    name_col = ai_map["account_name"]
-                if ai_map.get("account_code") and ai_map["account_code"] in df.columns:
-                    code_col = ai_map["account_code"]
-                if ai_map.get("debit") and ai_map["debit"] in df.columns:
-                    debit_col = ai_map["debit"]
-                if ai_map.get("credit") and ai_map["credit"] in df.columns:
-                    credit_col = ai_map["credit"]
-                if ai_map.get("balance") and ai_map["balance"] in df.columns:
-                    balance_col = ai_map["balance"]
-                if ai_map.get("category") and ai_map["category"] in df.columns:
-                    category_col = ai_map["category"]
-                
-                ai_mapped = True
-                
-            except Exception as ai_err:
-                logger.error(f"[TB UPLOAD] AI detection failed: {ai_err}")
-        
         # Validate we found required columns
         if not name_col:
-            # Last resort: try first text column as name
+            # Try first text column as name
             for c in df.columns:
                 if df[c].dtype == 'object':
                     name_col = c
                     break
         
         if not name_col:
-            return jsonify({"success": False, "error": f"Kon nie rekening naam kolom vind nie. Kolomme in jou file: {list(df.columns)}"})
+            return jsonify({"success": False, "error": f"Could not identify account name column. Found: {list(df.columns)}"})
         
-        if not debit_col and not credit_col and not balance_col:
-            return jsonify({"success": False, "error": f"Kon nie debit/credit/balance kolomme vind nie. Kolomme in jou file: {list(df.columns)}"})
+        if not debit_col and not credit_col:
+            return jsonify({"success": False, "error": f"Could not identify debit/credit columns. Found: {list(df.columns)}"})
         
-        mapped_info = f"Code: {code_col}, Name: {name_col}, Debit: {debit_col}, Credit: {credit_col}, Balance: {balance_col}, Category: {category_col}"
-        logger.info(f"[TB UPLOAD] Mapped columns {'(AI)' if ai_mapped else '(hardcoded)'} - {mapped_info}")
+        logger.info(f"[TB UPLOAD] Mapped columns - Code: {code_col}, Name: {name_col}, Debit: {debit_col}, Credit: {credit_col}")
         
         # Build accounts list
         accounts = []
-        tb_control_profit = None  # Capture the TB's own net profit figure for validation
-        
         for idx, row in df.iterrows():
             name = str(row.get(name_col, '')).strip() if name_col else ''
-            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net']:
+            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal']:
                 continue
             
-            # Capture the TB's own Net Profit/Loss figure as a control check
-            if name.lower() in ['net profit/loss', 'net profit/loss after tax', 'net profit', 'netto wins',
-                                 'net profit/loss before tax', 'netto wins/verlies', 'netto wins na belasting']:
-                # This row has the TB's calculated profit - grab it for validation
-                dr = float(str(row.get(debit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if debit_col else 0
-                cr = float(str(row.get(credit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if credit_col else 0
-                if cr > 0:
-                    tb_control_profit = cr  # Credit = profit
-                elif dr > 0:
-                    tb_control_profit = -dr  # Debit = loss
-                elif balance_col:
-                    bal = str(row.get(balance_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip()
-                    try:
-                        tb_control_profit = float(bal)
-                    except:
-                        pass
-                logger.info(f"[TB UPLOAD] Found control profit figure: R {tb_control_profit:,.2f}" if tb_control_profit else "[TB UPLOAD] Could not parse control profit")
-                continue  # Don't include in accounts list
-            
-            code = str(row.get(code_col, '')).strip() if code_col else ''
-            if code.lower() in ['nan', 'none', '']:
-                code = ''
-            
-            # Smart split: "1000/000 : Sales" → code="1000/000", name="Sales"
-            # Also handles: "1000 - Sales", "1000: Sales", "ACC001 Sales"
-            if not code and ' : ' in name:
-                parts = name.split(' : ', 1)
-                code = parts[0].strip()
-                name = parts[1].strip()
-            elif not code and ' - ' in name and name[0].isdigit():
-                parts = name.split(' - ', 1)
-                code = parts[0].strip()
-                name = parts[1].strip()
-            elif not code and ': ' in name and name[0].isdigit():
-                parts = name.split(': ', 1)
-                code = parts[0].strip()
-                name = parts[1].strip()
-            
-            if not code:
+            code = str(row.get(code_col, '')).strip() if code_col else f"A{idx:04d}"
+            if code.lower() in ['nan', 'none']:
                 code = f"A{idx:04d}"
             
-            # Clean up _AND_ → & (Sage Pastel export quirk)
-            name = name.replace('_AND_', '&').replace(' _and_ ', ' & ')
-            
-            # Parse debit/credit values - handles R1,000.00, R 1 000.00, (1000), -1000
+            # Parse debit/credit values
             def parse_amount(val):
                 if pd.isna(val):
                     return 0.0
-                val = str(val).replace('R', '').replace('r', '').replace(',', '').replace(' ', '').strip()
-                # Handle bracket notation for negatives: (1000) = -1000
-                is_negative = False
-                if val.startswith('(') and val.endswith(')'):
-                    val = val[1:-1]
-                    is_negative = True
-                if val in ['', '-', 'nan', 'none', '0', '0.0', '0.00']:
+                val = str(val).replace('R', '').replace(',', '').replace(' ', '').strip()
+                if val in ['', '-', 'nan', 'none']:
                     return 0.0
                 try:
-                    result = float(val)
-                    return -result if is_negative else result
+                    return abs(float(val))
                 except:
                     return 0.0
             
-            debit = 0.0
-            credit = 0.0
-            
-            if debit_col and credit_col:
-                # Separate debit/credit columns
-                debit = abs(parse_amount(row.get(debit_col)))
-                credit = abs(parse_amount(row.get(credit_col)))
-            elif balance_col:
-                # Single balance column: positive = debit, negative = credit
-                bal = parse_amount(row.get(balance_col))
-                if bal > 0:
-                    debit = bal
-                elif bal < 0:
-                    credit = abs(bal)
-            elif debit_col:
-                # Only debit column
-                val = parse_amount(row.get(debit_col))
-                if val > 0:
-                    debit = val
-                else:
-                    credit = abs(val)
-            elif credit_col:
-                # Only credit column
-                val = parse_amount(row.get(credit_col))
-                if val > 0:
-                    credit = val
-                else:
-                    debit = abs(val)
+            debit = parse_amount(row.get(debit_col)) if debit_col else 0
+            credit = parse_amount(row.get(credit_col)) if credit_col else 0
             
             if debit > 0 or credit > 0:
-                acc = {
+                accounts.append({
                     "code": code,
                     "name": name,
                     "debit": debit,
                     "credit": credit
-                }
-                if category_col:
-                    cat = str(row.get(category_col, '')).strip()
-                    if cat and cat.lower() not in ['nan', 'none']:
-                        acc["category"] = cat
-                accounts.append(acc)
+                })
         
         if not accounts:
             return jsonify({"success": False, "error": "No valid account data found in file"})
@@ -34906,224 +31322,11 @@ Rules:
             "total_credit": total_credit,
             "is_balanced": is_balanced,
             "message": f"Parsed {len(accounts)} accounts from {file.filename}",
-            "source_file": file.filename,
-            "tb_control_profit": tb_control_profit,
             "redirect_analyze": True
         })
         
     except Exception as e:
         logger.error(f"[TB UPLOAD] Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/reports/tb/smart-report", methods=["POST"])
-@login_required
-def api_tb_smart_report():
-    """Generate different report types from uploaded TB data (management statement, KPI, etc.)"""
-    
-    try:
-        data = request.get_json()
-        accounts = data.get("accounts", [])
-        report_type = data.get("report_type", "management")
-        custom_request = data.get("custom_request", "")
-        lang = data.get("lang", "en")
-        source_file = data.get("source_file", "Uploaded TB")
-        tb_control_profit = data.get("tb_control_profit")
-        
-        if not accounts:
-            return jsonify({"success": False, "error": "No account data provided"})
-        
-        # ═══ PYTHON CALCULATES EVERYTHING FROM THE TB DATA ═══
-        has_categories = any(a.get("category") for a in accounts)
-        
-        def cat_sum(cats, column="debit"):
-            total = 0
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                for c in cats:
-                    if c in cat:
-                        total += float(a.get(column, 0) or 0)
-                        break
-            return total
-        
-        def name_sum(accs, keywords, column="debit"):
-            return sum(float(a.get(column, 0) or 0) for a in accs 
-                      if any(kw in str(a.get("name", "")).lower() for kw in keywords))
-        
-        if has_categories:
-            sales = cat_sum(["sales", "revenue", "turnover", "omset"], "credit")
-            cos = cat_sum(["cost of sale", "cost of goods", "koste van verkope"], "debit")
-            other_income = cat_sum(["other income", "ander inkomste"], "credit")
-            
-            expense_accs = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
-            total_expenses = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) for a in expense_accs)
-            if total_expenses < 0:
-                total_expenses = 0
-            
-            current_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
-                               for a in accounts if "current asset" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
-            fixed_assets = sum(float(a.get("debit", 0) or 0) - float(a.get("credit", 0) or 0) 
-                             for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["fixed asset", "non-current asset"]))
-            current_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                             for a in accounts if "current liabilit" in str(a.get("category", "")).lower() and "non-current" not in str(a.get("category", "")).lower())
-            long_term_liab = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                               for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["long term", "non-current liabilit"]))
-            equity = sum(float(a.get("credit", 0) or 0) - float(a.get("debit", 0) or 0) 
-                        for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["equity", "owner", "ekwiteit"]))
-            
-            salaries = name_sum(expense_accs, ["salary", "salaries", "wage", "payroll", "salar"])
-            rent = name_sum(expense_accs, ["rent", "huur"])
-            electricity = name_sum(expense_accs, ["electric", "water", "eskom", "elektris"])
-            advertising = name_sum(expense_accs, ["advertising", "marketing", "advertens"])
-            insurance = name_sum(expense_accs, ["insurance", "verseker"])
-            bank_charges = name_sum(expense_accs, ["bank charge", "bank fee", "bankkoste"])
-            depreciation = name_sum(expense_accs, ["depreciation", "waardevermindering"])
-            professional = name_sum(expense_accs, ["professional", "accounting", "legal", "audit", "rekenmeest"])
-        else:
-            sales = sum(float(a.get("credit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("5"))
-            cos = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", "")).startswith("51"))
-            total_expenses = sum(float(a.get("debit", 0) or 0) for a in accounts if str(a.get("code", ""))[:1] in "6789")
-            other_income = 0
-            current_assets = current_liab = fixed_assets = long_term_liab = equity = 0
-            salaries = rent = electricity = advertising = insurance = bank_charges = depreciation = professional = 0
-        
-        gross_profit = sales - cos
-        net_profit = sales + other_income - cos - total_expenses
-        total_assets = current_assets + fixed_assets
-        total_liabilities = current_liab + long_term_liab
-        
-        gp_margin = round((gross_profit / sales * 100), 1) if sales > 0 else 0
-        np_margin = round((net_profit / (sales + other_income) * 100), 1) if (sales + other_income) > 0 else 0
-        current_ratio = round(current_assets / current_liab, 2) if current_liab > 0 else 0
-        debt_equity = round(total_liabilities / equity, 2) if equity > 0 else 0
-        sal_pct = round(salaries / sales * 100, 1) if sales > 0 else 0
-        rent_pct = round(rent / sales * 100, 1) if sales > 0 else 0
-        
-        validation_note = ""
-        if tb_control_profit is not None:
-            try:
-                control = float(tb_control_profit)
-                diff = abs(net_profit - control)
-                pct = (diff / abs(control) * 100) if control != 0 else 0
-                if pct > 5:
-                    validation_note = f"⚠️ Note: Calculated net profit (R{net_profit:,.2f}) differs from TB control figure (R{control:,.2f}) by {pct:.1f}%."
-            except:
-                pass
-        
-        clean_name = source_file.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').strip()
-        
-        data_for_ai = f"""
-CLIENT: {clean_name}
-DATA SOURCE: Uploaded Trial Balance ({len(accounts)} accounts)
-{validation_note}
-
-=== INCOME STATEMENT (Python-calculated, 100% accurate - DO NOT recalculate) ===
-Revenue/Sales: R{sales:,.2f}
-Cost of Sales: R{cos:,.2f}
-Gross Profit: R{gross_profit:,.2f} ({gp_margin}%)
-Other Income: R{other_income:,.2f}
-Total Expenses: R{total_expenses:,.2f}
-  - Salaries: R{salaries:,.2f} ({sal_pct}% of sales)
-  - Rent: R{rent:,.2f}
-  - Electricity/Water: R{electricity:,.2f}
-  - Advertising: R{advertising:,.2f}
-  - Insurance: R{insurance:,.2f}
-  - Bank Charges: R{bank_charges:,.2f}
-  - Depreciation: R{depreciation:,.2f}
-  - Professional Fees: R{professional:,.2f}
-Net Profit: R{net_profit:,.2f} ({np_margin}%)
-
-=== BALANCE SHEET ===
-Current Assets: R{current_assets:,.2f}
-Fixed Assets: R{fixed_assets:,.2f}
-Total Assets: R{total_assets:,.2f}
-Current Liabilities: R{current_liab:,.2f}
-Long-term Liabilities: R{long_term_liab:,.2f}
-Total Liabilities: R{total_liabilities:,.2f}
-Equity: R{equity:,.2f}
-
-=== RATIOS ===
-Current Ratio: {current_ratio}:1 (norm >1.5)
-Gross Margin: {gp_margin}%
-Net Margin: {np_margin}%
-Debt/Equity: {debt_equity}:1
-"""
-        
-        report_prompts = {
-            "management": """Write a professional MANAGEMENT STATEMENT (Year-to-Date). Structure:
-1. Executive Summary (2-3 sentences)
-2. Income Statement Analysis (revenue, margins, expense breakdown)
-3. Balance Sheet Summary
-4. Key Ratios & What They Mean
-5. Concerns & Red Flags
-6. Recommendations (5+ specific actions)""",
-            
-            "kpi": f"""Write a KPI DASHBOARD REPORT with traffic light status (Green/Amber/Red):
-1. Gross Profit Margin ({gp_margin}%)
-2. Net Profit Margin ({np_margin}%)
-3. Current Ratio ({current_ratio}:1)
-4. Salaries % of Sales ({sal_pct}%)
-5. Rent % of Sales ({rent_pct}%)
-6. Debt to Equity ({debt_equity}:1)
-For each: meaning, benchmark, and action.""",
-            
-            "sales": """Write a SALES ANALYSIS covering: revenue performance, cost structure, gross margin quality, expense impact, and improvement recommendations.""",
-            
-            "debtor": f"""Write a WORKING CAPITAL report: Current Ratio ({current_ratio}), cash position, liquidity risk, and recommendations.""",
-            
-            "forecast": """Write a FORWARD-LOOKING ANALYSIS: sustainability, cash flow outlook, scenario analysis (sales drop 10/20/30%), and strategic recommendations.""",
-            
-            "custom": f"""Answer this request: {custom_request or 'General financial overview'}"""
-        }
-        
-        prompt = report_prompts.get(report_type, report_prompts["management"])
-        
-        system_prompt = f"""You are Zane, a senior CA(SA). You are writing a report for a CLIENT's uploaded trial balance.
-Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, CA(SA)" only.
-RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
-{"Write in Afrikaans." if lang == "af" else "Write in English."} Use R (Rand) for all amounts.
-
-FORMAT RULES - OUTPUT CLEAN HTML:
-- Use <h2> for main sections, <h3> for subsections
-- Use <p> for paragraphs
-- Use <strong> for emphasis
-- Use <table> with inline styles for any data tables
-- Use <div style="background:rgba(239,68,68,0.1);border-left:3px solid #ef4444;padding:10px;margin:10px 0;"> for warnings/red flags
-- Use <div style="background:rgba(16,185,129,0.1);border-left:3px solid #10b981;padding:10px;margin:10px 0;"> for positive items
-- Use <div style="background:rgba(245,158,11,0.1);border-left:3px solid #f59e0b;padding:10px;margin:10px 0;"> for caution items
-- DO NOT use markdown (no ##, no **, no ---, no bullet points with -)
-- Use <ul><li> for lists
-- Make it visually professional and easy to scan"""
-
-        if not ANTHROPIC_API_KEY:
-            return jsonify({"success": False, "error": "AI not configured"})
-        
-        message = _anthropic_client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=8000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
-        )
-        
-        report = message.content[0].text if message.content else ""
-        
-        # Convert any remaining markdown to HTML (fallback if Sonnet mixed formats)
-        import re
-        report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
-        report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
-        report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
-        report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
-        report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
-        report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
-        report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
-        # Wrap plain text paragraphs
-        report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
-        return jsonify({"success": True, "report": report})
-        
-    except Exception as e:
-        logger.error(f"[TB SMART REPORT] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)})
@@ -35799,11 +32002,7 @@ def purchases_page():
             </div>
         </div>
         
-        <div style="margin-bottom:15px;">
-            <input type="text" id="searchPO" placeholder="🔍 Search by supplier, PO number, amount..." oninput="filterTable('searchPO','poTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
-        </div>
-        
-        <table class="table" id="poTable">
+        <table class="table">
             <thead>
                 <tr>
                     <th>PO Number</th>
@@ -35841,15 +32040,6 @@ def purchases_page():
             </div>
         </div>
     </div>
-    <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
-    }}
-    </script>
     '''
     
     return render_page("Purchase Orders", content, user, "purchases")
@@ -35904,16 +32094,7 @@ def purchase_new():
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) or []
-        max_po = 0
-        for ep in existing:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = f"PO{len(existing) + 1:04d}"
         
         po_id = generate_id()
         po = {
@@ -36712,94 +32893,27 @@ def api_po_receive(po_id):
         items_received = 0
         all_received = True
         
-        # Get all existing stock for matching
-        all_stock = db.get_all_stock(biz_id) if biz_id else []
-        stock_by_code = {}
-        for s in all_stock:
-            code = str(s.get("code", "")).upper().strip()
-            if code:
-                stock_by_code[code] = s
-        
-        # Abbreviations for smart code generation
-        abbrevs = {"STAINLESS": "SS", "STEEL": "ST", "FLAT": "FL", "BAR": "BR", "ROUND": "RD", "SQUARE": "SQ", "PIPE": "PP", "TUBE": "TB", "SHEET": "SH", "PLATE": "PL", "ANGLE": "AN", "GALV": "GV", "HEX": "HX", "BOLT": "BLT", "NUT": "NT", "WASHER": "WS", "HOSE": "HS", "CLAMP": "CL", "VALVE": "VL", "FLANGE": "FL", "REDUCER": "RD", "COUPLING": "CP", "ELBOW": "EL", "TEE": "TE", "NIPPLE": "NP", "CAP": "CP", "PLUG": "PG", "BUSH": "BS", "FITTING": "FT", "SCREW": "SC"}
-        
         for idx_str, qty_received in quantities.items():
             idx = int(idx_str)
             if 0 <= idx < len(items):
                 items[idx]["qty_received"] = items[idx].get("qty_received", 0) + qty_received
                 items_received += qty_received
                 
-                if not update_stock:
-                    continue
-                
-                stock_id = items[idx].get("stock_id", "")
-                stock_item = None
-                
-                if stock_id:
+                # Update stock if requested and linked to stock item
+                if update_stock and items[idx].get("stock_id"):
+                    stock_id = items[idx]["stock_id"]
                     stock_item = db.get_one_stock(stock_id)
-                
-                if not stock_item and stock_id:
-                    # stock_id exists but item not found - try by code
-                    stock_item = stock_by_code.get(str(items[idx].get("code", "")).upper().strip())
-                
-                if not stock_item:
-                    # No stock item linked or found - try to match by description/code
-                    item_code = str(items[idx].get("code", "")).upper().strip()
-                    item_desc = str(items[idx].get("description", "")).upper().strip()
-                    
-                    # Try exact code match
-                    if item_code and item_code in stock_by_code:
-                        stock_item = stock_by_code[item_code]
-                        items[idx]["stock_id"] = stock_item["id"]
-                        logger.info(f"[PO RECEIVE] Matched by code: {item_code}")
-                    
-                    # Try description match against existing stock
-                    if not stock_item and item_desc:
-                        for s in all_stock:
-                            s_desc = str(s.get("description", "")).upper().strip()
-                            if s_desc and s_desc == item_desc:
-                                stock_item = s
-                                items[idx]["stock_id"] = s["id"]
-                                logger.info(f"[PO RECEIVE] Matched by description: {item_desc}")
-                                break
-                    
-                    # AUTO-CREATE stock item if no match found
-                    if not stock_item and item_desc:
-                        # Generate smart stock code using shared function
-                        final_code = smart_stock_code(item_desc, set(stock_by_code.keys()))
-                        
-                        # Get price from PO item if available
-                        unit_price = float(items[idx].get("price", 0) or 0)
-                        
-                        # Create the stock item
-                        new_stock = RecordFactory.stock_item(
-                            business_id=biz_id,
-                            description=items[idx].get("description", item_desc),
-                            code=final_code,
-                            quantity=0,  # Will be updated below
-                            cost_price=unit_price,
-                            selling_price=round(unit_price * 1.3, 2) if unit_price else 0
-                        )
-                        db.save_stock(new_stock)
-                        
-                        stock_item = new_stock
-                        items[idx]["stock_id"] = new_stock["id"]
-                        stock_by_code[final_code] = new_stock
-                        logger.info(f"[PO RECEIVE] Auto-created stock: {final_code} = {item_desc}")
-                
-                # Now update the stock quantity
-                if stock_item:
-                    current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                    new_qty = current_qty + qty_received
-                    db.update_stock(stock_item["id"], {"qty": new_qty, "quantity": new_qty}, biz_id)
-                    logger.info(f"[PO RECEIVE] Updated stock {stock_item.get('code')}: {current_qty} + {qty_received} = {new_qty}")
-                    
-                    # Store stock info in item for GRV tracking
-                    items[idx]["stock_id"] = stock_item["id"]
-                    items[idx]["stock_code"] = stock_item.get("code", "")
-                    items[idx]["stock_name"] = stock_item.get("name", stock_item.get("description", ""))
-                    items[idx]["stock_qty_before"] = round(current_qty, 2)
-                    items[idx]["stock_qty_after"] = round(new_qty, 2)
+                    if stock_item:
+                        new_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0) + qty_received
+                        db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                        logger.info(f"[PO] Updated stock {stock_item.get('code')}: +{qty_received} = {new_qty}")
+                        # Log stock movement
+                        try:
+                            db.save("stock_movements", RecordFactory.stock_movement(
+                                business_id=biz_id, stock_id=stock_id, movement_type="in",
+                                quantity=qty_received, reference=f"PO Receive {po.get('po_number', '')}"
+                            ))
+                        except: pass
         
         # Check if all items fully received
         for item in items:
@@ -36823,17 +32937,7 @@ def api_po_receive(po_id):
         # CREATE GRV (Goods Received Voucher) document
         grv_id = generate_id()
         existing_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
-        # Find highest existing GRV number to avoid duplicates
-        max_grv = 0
-        for eg in existing_grvs:
-            gn = eg.get("grv_number", "")
-            try:
-                num_part = int(gn.replace("GRV-", ""))
-                if num_part > max_grv:
-                    max_grv = num_part
-            except:
-                pass
-        grv_num = f"GRV-{max_grv + 1:04d}"
+        grv_num = f"GRV-{len(existing_grvs) + 1:04d}"
         
         # Build received items list
         received_items = []
@@ -36845,12 +32949,7 @@ def api_po_receive(po_id):
                     "code": items[idx].get("code", ""),
                     "qty_ordered": items[idx].get("qty", 1),
                     "qty_received": qty_received,
-                    "stock_id": items[idx].get("stock_id", ""),
-                    "stock_code": items[idx].get("stock_code", ""),
-                    "stock_name": items[idx].get("stock_name", ""),
-                    "stock_qty_before": items[idx].get("stock_qty_before", 0),
-                    "stock_qty_after": items[idx].get("stock_qty_after", 0),
-                    "booked_to_stock": bool(items[idx].get("stock_id"))
+                    "stock_id": items[idx].get("stock_id", "")
                 })
         
         grv = {
@@ -36869,44 +32968,13 @@ def api_po_receive(po_id):
             "created_at": now()
         }
         
-        grv_saved = False
-        grv_error = ""
         try:
-            success, result = db.save("goods_received", grv)
-            if success:
-                grv_saved = True
-                logger.info(f"[GRV] Created {grv_num} from {po.get('po_number')} - {len(received_items)} items")
-            else:
-                grv_error = str(result)
-                logger.error(f"[GRV] Save failed: {result}")
+            db.save("goods_received", grv)
+            logger.info(f"[GRV] Created {grv_num} from {po.get('po_number')} - {len(received_items)} items")
         except Exception as ge:
-            grv_error = str(ge)
-            logger.error(f"[GRV] Save exception: {ge}")
+            logger.error(f"[GRV] Save failed: {ge}")
         
-        # Log stock movements SEPARATELY - don't let GRV failure block this
-        movements_logged = 0
-        for ri in received_items:
-            if ri.get("stock_id") and ri.get("booked_to_stock"):
-                try:
-                    db.save("stock_movements", RecordFactory.stock_movement(
-                        business_id=biz_id, stock_id=ri["stock_id"], movement_type="in",
-                        quantity=ri["qty_received"], 
-                        reference=f"{grv_num} | {po.get('po_number', '')} | {safe_string(po.get('supplier_name', ''))}"
-                    ))
-                    movements_logged += 1
-                except Exception as me:
-                    logger.error(f"[GRV] Movement save failed for {ri.get('stock_code')}: {me}")
-        
-        logger.info(f"[GRV] {grv_num}: GRV saved={grv_saved}, movements={movements_logged}/{len(received_items)}")
-        
-        # Build status message - be honest about what happened
-        if grv_saved:
-            status_msg = f"GRV {grv_num} created! " + ("All items received. Stock updated." if all_received else f"{items_received} items received (partial delivery)")
-        else:
-            # GRV table might not exist - stock was still updated
-            status_msg = f"Stock updated ({items_received} items received). GRV document could not be saved - please check database table 'goods_received' exists."
-            if "Could not find" in grv_error:
-                status_msg += " Table needs to be created in Supabase."
+        status_msg = f"GRV {grv_num} created! " + ("All items received. Stock updated." if all_received else f"{items_received} items received (partial delivery)")
         
         return jsonify({"success": True, "message": status_msg, "all_received": all_received, "grv_id": grv_id, "grv_number": grv_num})
         
@@ -37149,11 +33217,7 @@ def supplier_invoices_page():
             <div class="stat-label">Total Unpaid</div>
         </div>
         
-        <div style="margin-bottom:15px;">
-            <input type="text" id="searchSI" placeholder="🔍 Search by supplier, invoice number, amount..." oninput="filterTable('searchSI','siTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
-        </div>
-        
-        <table class="table" id="siTable">
+        <table class="table">
             <thead>
                 <tr><th>Invoice #</th><th>Date</th><th>Supplier</th><th>Amount</th><th>Status</th><th>Action</th></tr>
             </thead>
@@ -37164,13 +33228,6 @@ def supplier_invoices_page():
     </div>
     
     <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
-    }}
     function paySupplier(invNum) {{
         document.getElementById('aiInput').value = 'Pay supplier invoice ' + invNum;
         document.getElementById('sendBtn').click();
@@ -37434,32 +33491,15 @@ def smart_reports_page():
     content = '''
     <div class="card">
         <h2 style="margin-bottom:15px;">Smart Reports</h2>
+        <p style="color:var(--text-muted);margin-bottom:20px;">
+            Ask Zane to write any report you need. Zane will analyze your data and generate a professional management report.
+        </p>
         
-        <!-- DATA SOURCE SELECTOR -->
-        <div class="card" style="margin-bottom:20px;padding:15px;">
-            <h3 style="margin:0 0 10px 0;">📂 Data Source</h3>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                <button id="srcOwnBtn" class="btn btn-primary" onclick="setDataSource('own')" style="flex:none;">
-                    🏢 My Business Data
-                </button>
-                <label id="srcClientBtn" class="btn btn-secondary" style="cursor:pointer;flex:none;margin:0;">
-                    📁 Upload Client TB
-                    <input type="file" id="smartReportTBUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleSmartReportTB(this)">
-                </label>
-                <span id="dataSourceStatus" style="color:var(--text-muted);font-size:13px;">Using your own business data</span>
-            </div>
-        </div>
-        
-        <!-- REPORT TYPE SELECTION -->
-        <h3 style="margin:20px 0 10px 0;">Choose Report Type</h3>
+        <h3 style="margin:20px 0 10px 0;">Quick Reports</h3>
         <div class="stats-grid">
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('management')">
                 <h4>Management Statement</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Year-to-date P&L, Balance Sheet & KPIs</p>
-            </div>
-            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('tb_analysis')">
-                <h4>TB Analysis</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Full account-by-account CA(SA) review</p>
+                <p style="color:var(--text-muted);font-size:13px;">Full monthly overview with insights</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('kpi')">
                 <h4>KPI Dashboard</h4>
@@ -37472,6 +33512,10 @@ def smart_reports_page():
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('debtor')">
                 <h4>Debtor Risk Report</h4>
                 <p style="color:var(--text-muted);font-size:13px;">Problem customers & recommendations</p>
+            </div>
+            <div class="card report-btn" style="cursor:pointer" onclick="generateReport('stock')">
+                <h4>Stock Report</h4>
+                <p style="color:var(--text-muted);font-size:13px;">Slow movers, reorder suggestions</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('forecast')">
                 <h4>Cash Flow Forecast</h4>
@@ -37489,7 +33533,7 @@ def smart_reports_page():
     
     <div id="reportLoading" style="display:none;text-align:center;padding:40px;">
         <div style="font-size:24px;margin-bottom:10px;">Generating Report...</div>
-        <p style="color:var(--text-muted);">Analyzing data. This may take up to 30 seconds.</p>
+        <p style="color:var(--text-muted);">Analyzing your business data. This may take up to 30 seconds.</p>
     </div>
     
     <div id="reportOutput" style="margin-top:20px;display:none;">
@@ -37498,113 +33542,38 @@ def smart_reports_page():
                 <h3 id="reportTitle" style="margin:0;">Report</h3>
                 <button class="btn btn-secondary" onclick="window.print();">Print</button>
             </div>
-            <div id="reportContent" style="line-height:1.6;"></div>
+            <div id="reportContent" style="white-space:pre-wrap;line-height:1.6;"></div>
         </div>
     </div>
     
     <style>
     .report-btn { transition: all 0.2s; border: 1px solid var(--border); }
     .report-btn:hover { border-color: var(--primary); transform: translateY(-2px); }
-    .report-btn.disabled { opacity: 0.5; pointer-events: none; }
     </style>
     
     <script>
-    // ═══ DATA SOURCE STATE ═══
-    let dataSource = 'own';  // 'own' or 'client'
-    let clientTBData = null;  // Parsed client TB data
-    let clientFileName = '';
-    
     const reportTitles = {
         'management': 'Management Statement',
-        'tb_analysis': 'TB Analysis',
         'kpi': 'Key Performance Indicators',
         'sales': 'Sales Analysis',
         'debtor': 'Debtor Risk Report',
+        'stock': 'Stock Analysis',
         'forecast': 'Cash Flow Forecast'
     };
     
-    function setDataSource(src) {
-        dataSource = src;
-        const ownBtn = document.getElementById('srcOwnBtn');
-        const clientBtn = document.getElementById('srcClientBtn');
-        const status = document.getElementById('dataSourceStatus');
-        
-        if (src === 'own') {
-            ownBtn.className = 'btn btn-primary';
-            clientBtn.className = 'btn btn-secondary';
-            clientTBData = null;
-            clientFileName = '';
-            status.textContent = 'Using your own business data';
-            status.style.color = 'var(--text-muted)';
-        }
-    }
-    
-    function handleSmartReportTB(input) {
-        const file = input.files[0];
-        if (!file) return;
-        const status = document.getElementById('dataSourceStatus');
-        status.textContent = '⏳ Parsing ' + file.name + '...';
-        
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('lang', document.documentElement.lang || 'en');
-        
-        fetch('/api/reports/tb/upload-analyze', {
-            method: 'POST',
-            body: formData
-        })
-        .then(r => r.json())
-        .then(data => {
-            if (data.success) {
-                clientTBData = data;
-                clientFileName = file.name;
-                dataSource = 'client';
-                
-                // Update UI
-                document.getElementById('srcOwnBtn').className = 'btn btn-secondary';
-                document.getElementById('srcClientBtn').className = 'btn btn-primary';
-                status.innerHTML = '✅ <strong>' + file.name + '</strong> loaded (' + data.accounts.length + ' accounts) — Now choose a report type below';
-                status.style.color = '#10b981';
-            } else {
-                status.textContent = '❌ ' + (data.error || 'Upload failed');
-                status.style.color = '#ef4444';
-            }
-        })
-        .catch(e => {
-            status.textContent = '❌ Error: ' + e.message;
-            status.style.color = '#ef4444';
-        });
-        
-        input.value = '';
-    }
-    
     async function generateReport(type) {
         const title = reportTitles[type] || 'Report';
-        
-        if (dataSource === 'client' && clientTBData) {
-            // Generate from uploaded client TB
-            await runClientTBReport(type, title);
-        } else if (dataSource === 'client' && !clientTBData) {
-            alert('Upload a client TB first, then choose a report type.');
-        } else {
-            // Generate from own business data
-            await runOwnReport(type, null, title);
-        }
+        await runReport(type, null, title);
     }
     
     async function generateCustomReport() {
         const input = document.getElementById('customReportInput').value;
-        if (!input) return;
-        
-        if (dataSource === 'client' && clientTBData) {
-            await runClientTBReport('custom', 'Custom Report', input);
-        } else {
-            await runOwnReport('custom', input, 'Custom Report');
+        if (input) {
+            await runReport('custom', input, 'Custom Report');
         }
     }
     
-    // ═══ OWN DATA REPORTS ═══
-    async function runOwnReport(type, customRequest, title) {
+    async function runReport(type, customRequest, title) {
         document.getElementById('reportLoading').style.display = 'block';
         document.getElementById('reportOutput').style.display = 'none';
         
@@ -37612,78 +33581,29 @@ def smart_reports_page():
             const response = await fetch('/api/report', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ type: type, custom: customRequest })
+                body: JSON.stringify({
+                    type: type,
+                    custom: customRequest
+                })
             });
+            
             const data = await response.json();
             
             document.getElementById('reportLoading').style.display = 'none';
             document.getElementById('reportOutput').style.display = 'block';
             document.getElementById('reportTitle').textContent = title;
-            document.getElementById('reportContent').innerHTML = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
-            document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
-        } catch (e) {
-            document.getElementById('reportLoading').style.display = 'none';
-            alert('Error generating report.');
-        }
-    }
-    
-    // ═══ CLIENT TB REPORTS ═══
-    async function runClientTBReport(type, title, customRequest) {
-        document.getElementById('reportLoading').style.display = 'block';
-        document.getElementById('reportOutput').style.display = 'none';
-        
-        try {
-            const lang = document.documentElement.lang || 'en';
-            let reportHtml = '';
             
-            if (type === 'tb_analysis') {
-                // Full TB analysis (existing endpoint)
-                const response = await fetch('/api/reports/tb/analyze', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        accounts: clientTBData.accounts,
-                        total_debit: clientTBData.total_debit,
-                        total_credit: clientTBData.total_credit,
-                        is_balanced: clientTBData.is_balanced,
-                        lang: lang,
-                        source_file: clientFileName,
-                        company_name: '',
-                        tb_control_profit: clientTBData.tb_control_profit || null
-                    })
-                });
-                const data = await response.json();
-                reportHtml = data.success ? (data.analysis || '') : ('Error: ' + (data.error || 'Failed'));
-                
+            if (data.success) {
+                document.getElementById('reportContent').textContent = data.report;
             } else {
-                // Other report types from TB data (management, kpi, etc.)
-                const response = await fetch('/api/reports/tb/smart-report', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        accounts: clientTBData.accounts,
-                        total_debit: clientTBData.total_debit,
-                        total_credit: clientTBData.total_credit,
-                        is_balanced: clientTBData.is_balanced,
-                        tb_control_profit: clientTBData.tb_control_profit || null,
-                        report_type: type,
-                        custom_request: customRequest || null,
-                        lang: lang,
-                        source_file: clientFileName
-                    })
-                });
-                const data = await response.json();
-                reportHtml = data.success ? (data.report || '') : ('Error: ' + (data.error || 'Failed'));
+                document.getElementById('reportContent').textContent = 'Error: ' + (data.error || 'Failed to generate report');
             }
             
-            document.getElementById('reportLoading').style.display = 'none';
-            document.getElementById('reportOutput').style.display = 'block';
-            document.getElementById('reportTitle').textContent = title + ' — ' + clientFileName;
-            document.getElementById('reportContent').innerHTML = reportHtml;
+            // Scroll to report
             document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
         } catch (e) {
             document.getElementById('reportLoading').style.display = 'none';
-            alert('Error generating report: ' + e.message);
+            alert('Error generating report. Please try again.');
         }
     }
     </script>
@@ -41815,15 +37735,6 @@ def pos_history():
     grand_total = cash_total + card_total + account_total + invoice_total
     transaction_count = len(sales) + len(invoices) + len(quotes)
     
-    # === EXPECTED CASH FOR Z-READ (always TODAY regardless of date filter) ===
-    # Cash in drawer = POS cash sales + cash-paid invoices (for today only)
-    today_str = today()
-    today_cash_sales = sum(float(s.get("total", 0)) for s in all_sales 
-                          if s.get("payment_method") == "cash" and (s.get("date") or "") == today_str)
-    today_cash_invoices = sum(float(i.get("total", 0)) for i in all_invoices 
-                             if i.get("payment_method") in ("cash",) and (i.get("date") or "") == today_str)
-    expected_cash_drawer = today_cash_sales + today_cash_invoices
-    
     # Build transaction rows
     rows = ""
     
@@ -41845,7 +37756,7 @@ def pos_history():
             "id": s.get("id"),
             "number": s.get("sale_number", "-"),
             "date": s.get("date", ""),
-            "time": extract_time(s.get("created_at", "")),
+            "time": s.get("created_at", "")[-8:-3] if s.get("created_at") else "-",
             "type": s.get("payment_method", "cash").upper(),
             "customer": s.get("customer_name", "Cash Sale"),
             "total": float(s.get("total", 0)),
@@ -41870,7 +37781,7 @@ def pos_history():
             "id": i.get("id"),
             "number": i.get("invoice_number", "-"),
             "date": i.get("date", ""),
-            "time": extract_time(i.get("created_at", "")),
+            "time": i.get("created_at", "")[-8:-3] if i.get("created_at") else "-",
             "type": "INVOICE",
             "customer": i.get("customer_name", "-"),
             "total": float(i.get("total", 0)),
@@ -41895,7 +37806,7 @@ def pos_history():
             "id": q.get("id"),
             "number": q.get("quote_number", "-"),
             "date": q.get("date", ""),
-            "time": extract_time(q.get("created_at", "")),
+            "time": q.get("created_at", "")[-8:-3] if q.get("created_at") else "-",
             "type": "QUOTE",
             "customer": q.get("customer_name", "-"),
             "total": float(q.get("total", 0)),
@@ -42061,52 +37972,10 @@ def pos_history():
         </div>
     </div>
     
-    <!-- Z-Read Modal with Cash Denomination Count -->
+    <!-- Z-Read Modal -->
     <div id="zreadModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:white;padding:0;border-radius:8px;max-width:500px;width:95%;max-height:95vh;overflow-y:auto;">
+        <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
             <div id="zreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
-            <!-- Cash Count Section -->
-            <div id="cashCountSection" style="padding:0 30px 15px 30px;font-family:monospace;color:#000;">
-                <div style="border-top:2px dashed #000;margin:10px 0 15px 0;"></div>
-                <strong style="font-size:15px;">CASH COUNT</strong>
-                <p style="color:#666;font-size:11px;margin:4px 0 12px 0;">Enter quantity of each denomination:</p>
-                <table style="width:100%;border-collapse:collapse;" id="denomTable">
-                    <tr style="background:#f5f5f5;font-weight:bold;">
-                        <td style="padding:4px 8px;">Denomination</td>
-                        <td style="padding:4px 8px;text-align:center;width:70px;">Qty</td>
-                        <td style="padding:4px 8px;text-align:right;width:100px;">Total</td>
-                    </tr>
-                    <tr><td style="padding:4px 8px;">R200 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="200" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R100 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="100" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">R50 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="50" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R20 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="20" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">R10 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="10" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R5 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">R2 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R1 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">50c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">20c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                    <tr><td style="padding:4px 8px;">10c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
-                </table>
-                <div style="border-top:2px dashed #000;margin:12px 0;"></div>
-                <table style="width:100%;border-collapse:collapse;">
-                    <tr style="font-size:16px;font-weight:bold;">
-                        <td style="padding:4px 8px;">COUNTED:</td>
-                        <td style="text-align:right;padding:4px 8px;" id="cashCounted">R0.00</td>
-                    </tr>
-                    <tr style="font-size:14px;">
-                        <td style="padding:4px 8px;">Expected Cash:</td>
-                        <td style="text-align:right;padding:4px 8px;" id="cashExpected">{money(expected_cash_drawer)}</td>
-                    </tr>
-                    <tr id="diffRow" style="font-size:16px;font-weight:bold;">
-                        <td style="padding:4px 8px;">DIFFERENCE:</td>
-                        <td style="text-align:right;padding:4px 8px;" id="cashDiff">R0.00</td>
-                    </tr>
-                </table>
-                <div id="cashStatus" style="text-align:center;padding:10px;margin-top:10px;border-radius:6px;font-weight:bold;font-size:13px;background:#fef3c7;color:#92400e;">
-                    Tel die geld en vul die hoeveelhede in
-                </div>
-            </div>
             <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
                 <button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">✓ Close Day & Print</button>
                 <button onclick="closeModal('zreadModal')" class="btn btn-secondary" style="flex:1;">Cancel</button>
@@ -42199,60 +38068,7 @@ def pos_history():
         document.getElementById('xreadModal').style.display = 'flex';
     }}
     
-    const expectedCash = {float(expected_cash_drawer)};
-    
-    function calcCashUp() {{
-        let counted = 0;
-        document.querySelectorAll('.denom-input').forEach((input, idx) => {{
-            const val = parseFloat(input.dataset.val);
-            const qty = parseInt(input.value) || 0;
-            const lineTotal = val * qty;
-            counted += lineTotal;
-            const totalCells = document.querySelectorAll('.denom-total');
-            if (totalCells[idx]) totalCells[idx].textContent = 'R' + lineTotal.toFixed(2);
-        }});
-        
-        document.getElementById('cashCounted').textContent = 'R' + counted.toFixed(2);
-        const diff = counted - expectedCash;
-        const diffEl = document.getElementById('cashDiff');
-        const diffRow = document.getElementById('diffRow');
-        const statusEl = document.getElementById('cashStatus');
-        
-        diffEl.textContent = (diff >= 0 ? 'R' : '-R') + Math.abs(diff).toFixed(2);
-        
-        if (Math.abs(diff) < 0.01) {{
-            diffEl.style.color = '#059669';
-            diffRow.style.color = '#059669';
-            statusEl.style.background = '#d1fae5';
-            statusEl.style.color = '#065f46';
-            statusEl.textContent = 'Cash balanseer perfek!';
-        }} else if (diff > 0) {{
-            diffEl.style.color = '#2563eb';
-            diffRow.style.color = '#2563eb';
-            statusEl.style.background = '#dbeafe';
-            statusEl.style.color = '#1e40af';
-            statusEl.textContent = 'R' + diff.toFixed(2) + ' OOR (surplus)';
-        }} else {{
-            diffEl.style.color = '#dc2626';
-            diffRow.style.color = '#dc2626';
-            statusEl.style.background = '#fee2e2';
-            statusEl.style.color = '#991b1b';
-            statusEl.textContent = 'R' + Math.abs(diff).toFixed(2) + ' KORT (tekort)';
-        }}
-    }}
-    
     function printZRead() {{
-        // Reset denomination inputs
-        document.querySelectorAll('.denom-input').forEach(input => {{ input.value = 0; }});
-        document.querySelectorAll('.denom-total').forEach(cell => {{ cell.textContent = 'R0.00'; }});
-        document.getElementById('cashCounted').textContent = 'R0.00';
-        document.getElementById('cashDiff').textContent = 'R0.00';
-        document.getElementById('cashDiff').style.color = '#000';
-        document.getElementById('diffRow').style.color = '#000';
-        document.getElementById('cashStatus').textContent = 'Tel die geld en vul die hoeveelhede in';
-        document.getElementById('cashStatus').style.background = '#fef3c7';
-        document.getElementById('cashStatus').style.color = '#92400e';
-        
         const content = `
 <div style="text-align:center;margin-bottom:20px;">
 <strong style="font-size:18px;">Z-READ</strong><br>
@@ -42279,55 +38095,32 @@ def pos_history():
 </tr>
 <tr><td>Total Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
 </table>
+<hr style="border:1px dashed #000;margin:15px 0;">
+<div style="margin-bottom:15px;">
+<strong>CASH DRAWER</strong>
+</div>
+<table style="width:100%;border-collapse:collapse;">
+<tr><td>Expected Cash:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
+<tr><td>Counted:</td><td style="text-align:right;border-bottom:1px solid #000;width:100px;">________</td></tr>
+<tr><td>Difference:</td><td style="text-align:right;">________</td></tr>
+</table>
+<hr style="border:1px dashed #000;margin:15px 0;">
+<div style="text-align:center;">
+<div style="margin-top:30px;border-top:1px solid #000;width:200px;margin-left:auto;margin-right:auto;padding-top:5px;">
+Cashier Signature
+</div>
+</div>
+<div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">
+*** Z-READ - DAY CLOSED ***
+</div>
         `;
         document.getElementById('zreadContent').innerHTML = content;
         document.getElementById('zreadModal').style.display = 'flex';
     }}
     
-    function buildCashCountPrintHtml() {{
-        let html = '<hr style="border:1px dashed #000;margin:15px 0;"><strong>CASH DENOMINATION COUNT</strong><br><br>';
-        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-        html += '<tr style="font-weight:bold;"><td>Denom</td><td style="text-align:center;">Qty</td><td style="text-align:right;">Total</td></tr>';
-        const denomLabels = ['R200','R100','R50','R20','R10','R5','R2','R1','50c','20c','10c'];
-        document.querySelectorAll('.denom-input').forEach((input, idx) => {{
-            const qty = parseInt(input.value) || 0;
-            if (qty > 0) {{
-                const val = parseFloat(input.dataset.val);
-                const lineTotal = val * qty;
-                html += '<tr><td>' + denomLabels[idx] + '</td><td style="text-align:center;">' + qty + '</td><td style="text-align:right;">R' + lineTotal.toFixed(2) + '</td></tr>';
-            }}
-        }});
-        html += '</table>';
-        
-        const counted = document.getElementById('cashCounted').textContent;
-        const diff = document.getElementById('cashDiff').textContent;
-        const status = document.getElementById('cashStatus').textContent;
-        
-        html += '<hr style="border:1px dashed #000;margin:10px 0;">';
-        html += '<table style="width:100%;border-collapse:collapse;">';
-        html += '<tr style="font-weight:bold;"><td>Counted:</td><td style="text-align:right;">' + counted + '</td></tr>';
-        html += '<tr><td>Expected:</td><td style="text-align:right;">{money(expected_cash_drawer)}</td></tr>';
-        html += '<tr style="font-weight:bold;font-size:16px;"><td>Difference:</td><td style="text-align:right;">' + diff + '</td></tr>';
-        html += '</table>';
-        html += '<div style="text-align:center;margin:10px 0;font-weight:bold;">' + status + '</div>';
-        
-        return html;
-    }}
-    
     function confirmZRead() {{
-        const counted = document.getElementById('cashCounted').textContent;
-        const diff = document.getElementById('cashDiff').textContent;
-        const status = document.getElementById('cashStatus').textContent;
-        
-        if (confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + counted + '\\nDifference: ' + diff + '\\n\\nThis will mark the day as closed.')) {{
-            // Build print content with cash count
-            const zContent = document.getElementById('zreadContent').innerHTML;
-            const cashHtml = buildCashCountPrintHtml();
-            
-            const printWindow = window.open('', '_blank', 'width=400,height=700');
-            printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + cashHtml + '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div></body></html>');
-            printWindow.document.close();
-            setTimeout(function() {{ printWindow.print(); }}, 300);
+        if (confirm('Close day for {date_desc}?\\n\\nThis will mark the day as closed.')) {{
+            window.print();
             closeModal('zreadModal');
         }}
     }}
@@ -42404,7 +38197,7 @@ def view_sale(sale_id):
                 <h2 style="margin:0;color:#000;">{biz_name}</h2>
                 <p style="color:#666;margin:5px 0;">TAX INVOICE / SLIP</p>
                 <p style="margin:5px 0;"><strong>{sale.get("sale_number", "-")}</strong></p>
-                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {extract_time(sale.get("created_at", ""))}</p>
+                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {sale.get("created_at", "")[-8:-3] if sale.get("created_at") else ""}</p>
             </div>
             
             <div style="margin-bottom:15px;">
@@ -42624,7 +38417,7 @@ def api_pos_sale():
             "business_id": biz_id,
             "sale_number": sale_num,
             "date": today(),
-            "customer_id": safe_uuid(customer_id),
+            "customer_id": customer_id or None,
             "customer_name": customer_name,
             "payment_method": payment_method,
             "items": json.dumps(items),
@@ -42638,7 +38431,7 @@ def api_pos_sale():
         
         if not success:
             logger.error(f"[POS] Sale save failed: {err}")
-            return jsonify({"success": False, "error": f"Failed to save sale: {str(err)[:200]}"})
+            return jsonify({"success": False, "error": "Failed to save sale"})
         
         # === GL ENTRIES ===
         
@@ -42695,7 +38488,7 @@ def api_pos_sale():
                             try:
                                 db.save("stock_movements", RecordFactory.stock_movement(
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
-                                    quantity=qty_sold, reference=f"POS Sale {sale_num}"
+                                    quantity=qty_sold, reference=f"POS Sale {inv_number}" if inv_number else "POS Sale"
                                 ))
                             except: pass
                     else:
@@ -43035,16 +38828,7 @@ def api_pos_quick_po():
         
         # Generate PO number
         existing_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
-        max_po = 0
-        for ep in existing_pos:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = f"PO-{len(existing_pos) + 1:05d}"
         
         # Create PO
         po = {
@@ -43404,16 +39188,7 @@ def api_pos_purchase_order():
         
         # Generate PO number
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        max_po = 0
-        for ep in existing:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = f"PO-{len(existing) + 1:05d}"
         
         # Clean items - remove any prices that might have snuck in
         clean_items = []
@@ -43562,85 +39337,6 @@ def api_customer_update(customer_id):
             
     except Exception as e:
         logger.error(f"[API] Customer update error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
-@app.route("/api/customer/email-group", methods=["POST"])
-@login_required
-def api_customer_email_group():
-    """Send email to customer and all CC addresses"""
-    
-    try:
-        data = request.get_json()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        customer_id = data.get("customer_id")
-        subject = data.get("subject", "").strip()
-        message = data.get("message", "").strip()
-        
-        if not subject or not message:
-            return jsonify({"success": False, "error": "Subject and message required"})
-        
-        customer = db.get_one("customers", customer_id)
-        if not customer:
-            return jsonify({"success": False, "error": "Customer not found"})
-        
-        # Collect all email addresses
-        recipients = []
-        primary_email = (customer.get("email") or "").strip()
-        if primary_email:
-            recipients.append(primary_email)
-        
-        cc_emails = (customer.get("email_cc") or "").strip()
-        if cc_emails:
-            for email in cc_emails.split(","):
-                email = email.strip()
-                if email and "@" in email and email not in recipients:
-                    recipients.append(email)
-        
-        if not recipients:
-            return jsonify({"success": False, "error": "No email addresses found for this customer. Add emails in customer edit."})
-        
-        # Build email body
-        biz_name = business.get("name", "")
-        html_body = f"""
-        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-            <div style="background:#1e293b;color:white;padding:20px;text-align:center;border-radius:8px 8px 0 0;">
-                <h2 style="margin:0;">{safe_string(biz_name)}</h2>
-            </div>
-            <div style="padding:20px;background:#f8fafc;border:1px solid #e2e8f0;">
-                <p>Dear {safe_string(customer.get("name", "Customer"))},</p>
-                <div style="white-space:pre-wrap;">{safe_string(message)}</div>
-            </div>
-            <div style="padding:15px;text-align:center;color:#64748b;font-size:12px;">
-                Sent via ClickAI - {safe_string(biz_name)}
-            </div>
-        </div>
-        """
-        
-        # Send to all recipients
-        sent_count = 0
-        errors = []
-        for recipient in recipients:
-            try:
-                send_email(recipient, subject, html_body)
-                sent_count += 1
-                logger.info(f"[EMAIL GROUP] Sent to {recipient} for customer {customer.get('name')}")
-            except Exception as e:
-                errors.append(f"{recipient}: {str(e)}")
-                logger.error(f"[EMAIL GROUP] Failed to send to {recipient}: {e}")
-        
-        if sent_count > 0:
-            return jsonify({"success": True, "sent_to": sent_count, "total": len(recipients), "errors": errors})
-        else:
-            return jsonify({"success": False, "error": f"Failed to send to all recipients: {'; '.join(errors)}"})
-    
-    except Exception as e:
-        logger.error(f"[EMAIL GROUP] Error: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 
@@ -43844,355 +39540,6 @@ def smart_import_page():
         .error-box { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 12px; padding: 20px; text-align: center; color: #dc2626; }
     </style>
     
-    <!-- SWITCH FROM SAGE BANNER -->
-    <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(6,95,70,0.08));margin-bottom:20px;border:1px solid rgba(16,185,129,0.25);">
-        <div style="display:flex;align-items:center;gap:15px;cursor:pointer;" onclick="document.getElementById('sageGuide').style.display=document.getElementById('sageGuide').style.display==='none'?'block':'none';this.querySelector('.arrow').textContent=document.getElementById('sageGuide').style.display==='none'?'▶':'▼'">
-            <div style="font-size:36px;">🟢</div>
-            <div style="flex:1;">
-                <h2 style="margin:0 0 4px 0;font-size:20px;">Switching from Sage / Pastel?</h2>
-                <p style="color:var(--text-muted);margin:0;font-size:14px;">Follow these 4 steps - takes about 10 minutes. We handle the messy stuff.</p>
-            </div>
-            <span class="arrow" style="font-size:20px;color:var(--text-muted);">▶</span>
-        </div>
-        
-        <div id="sageGuide" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid rgba(16,185,129,0.2);">
-            
-            <!-- SAGE CLOUD vs DESKTOP -->
-            <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
-                <button onclick="showSageGuide('cloud')" id="sgCloud" class="btn btn-primary" style="font-size:13px;">☁️ Sage Business Cloud</button>
-                <button onclick="showSageGuide('desktop')" id="sgDesktop" class="btn btn-secondary" style="font-size:13px;">🖥️ Sage 50cloud Pastel (Desktop)</button>
-            </div>
-            
-            <!-- SAGE CLOUD GUIDE -->
-            <div id="sageCloudGuide">
-                <div style="display:grid;gap:15px;">
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Contacts</strong> → Select all customers → <strong>Export</strong> (CSV icon top right)<br>
-                            <em>This gives you: Names, phones, emails, addresses, balances</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Customers CSV
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
-                            </label>
-                            <span class="sage-status" id="status-customers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Suppliers</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Contacts</strong> → Switch to <strong>Suppliers</strong> tab → Select all → <strong>Export</strong> (CSV)<br>
-                            <em>Same format as customers - names, contacts, balances</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Suppliers CSV
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
-                            </label>
-                            <span class="sage-status" id="status-suppliers" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Stock / Products</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Products & Services</strong> → Select all → <strong>Export</strong> (CSV)<br>
-                            <em>Gives you: Codes, descriptions, prices, quantities</em><br>
-                            <span style="color:#f59e0b;">⚠️ Sage splits this into 2 files sometimes (prices + quantities). Upload both - we combine them.</span>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Stock CSV (one or both files)
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" multiple onchange="quickUploadMulti(this, 'stock')">
-                            </label>
-                            <span class="sage-status" id="status-stock" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance (Opening Balances)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Reporting</strong> → <strong>Trial Balance</strong> → Export to CSV<br>
-                            <em>This sets your opening balances so your books are correct from day 1</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Trial Balance
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
-                            </label>
-                            <span class="sage-status" id="status-trial_balance" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">5</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Supplier Invoices (wat jy skuld)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Reporting</strong> → <strong>Supplier Invoices</strong> → Set period → Export CSV<br>
-                            <em>Outstanding bills so you know what you still owe</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Supplier Invoices
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'supplier_invoices')">
-                            </label>
-                            <span class="sage-status" id="status-supplier_invoices" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">6</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Sales Invoices (wie skuld jou)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Sage: <strong>Sales</strong> → <strong>Sales Invoices</strong> → Show 100 per page → Select all → Export CSV<br>
-                            <em>Outstanding invoices so you can chase payments</em>
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Sales Invoices
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customer_invoices')">
-                            </label>
-                            <span class="sage-status" id="status-customer_invoices" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
-                        </div>
-                    </div>
-                    
-                </div>
-                
-                <!-- IMPORT ALL BUTTON -->
-                <div id="sageImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(16,185,129,0.08);border-radius:12px;">
-                    <p style="margin-bottom:12px;font-size:15px;">✅ <strong id="sageFilesReady">0</strong> files ready to import</p>
-                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;background:linear-gradient(135deg,#10b981,#059669);">
-                        🚀 Import Everything into ClickAI
-                    </button>
-                    <p style="color:var(--text-muted);font-size:12px;margin-top:8px;">Takes about 30 seconds. Your Sage data stays untouched.</p>
-                </div>
-            </div>
-            
-            <!-- SAGE DESKTOP GUIDE -->
-            <div id="sageDesktopGuide" style="display:none;">
-                <div style="display:grid;gap:15px;">
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">1</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customers & Suppliers</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Customer List</strong> or <strong>Supplier List</strong><br>
-                            Save as CSV. Repeat for the other.
-                        </div>
-                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Customers
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'customers')">
-                            </label>
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Suppliers
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'suppliers')">
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">2</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Inventory</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Pastel: <strong>File</strong> → <strong>Export / Import</strong> → Select <strong>Inventory</strong><br>
-                            Save as CSV. This includes codes, descriptions, prices, quantities.
-                        </div>
-                        <div style="margin-top:10px;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Inventory
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'stock')">
-                            </label>
-                            <span class="sage-status" id="status-stock-desktop" style="font-size:12px;display:flex;align-items:center;gap:4px;margin-top:5px;"></span>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">3</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Trial Balance</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            In Pastel: <strong>Reports</strong> → <strong>Trial Balance</strong> → Print to Excel/CSV<br>
-                            Choose the last day of your current period.
-                        </div>
-                        <div style="margin-top:10px;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Trial Balance
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'trial_balance')">
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
-                        <div style="position:absolute;top:-10px;left:15px;background:#8b5cf6;color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">4</div>
-                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Employees (Optional)</h4>
-                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
-                            If you use Sage Payroll: Export employee list to CSV<br>
-                            <em>Names, ID numbers, tax numbers, bank details, salaries</em>
-                        </div>
-                        <div style="margin-top:10px;">
-                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
-                                📄 Upload Employees
-                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'employees')">
-                            </label>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Same import all for desktop -->
-                <div id="sageDesktopImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(139,92,246,0.08);border-radius:12px;">
-                    <p style="margin-bottom:12px;font-size:15px;">✅ Files ready to import</p>
-                    <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;">
-                        🚀 Import Everything into ClickAI
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-    // ═══ SAGE SWITCH WIZARD ═══
-    let sageFiles = {};  // {customers: File, suppliers: File, stock: [File], trial_balance: File}
-    
-    function showSageGuide(type) {
-        document.getElementById('sageCloudGuide').style.display = type === 'cloud' ? 'block' : 'none';
-        document.getElementById('sageDesktopGuide').style.display = type === 'desktop' ? 'block' : 'none';
-        document.getElementById('sgCloud').className = type === 'cloud' ? 'btn btn-primary' : 'btn btn-secondary';
-        document.getElementById('sgDesktop').className = type === 'desktop' ? 'btn btn-primary' : 'btn btn-secondary';
-        document.getElementById('sgCloud').style.fontSize = '13px';
-        document.getElementById('sgDesktop').style.fontSize = '13px';
-    }
-    
-    function quickUpload(input, dataType) {
-        const file = input.files[0];
-        if (!file) return;
-        sageFiles[dataType] = file;
-        
-        const status = document.getElementById('status-' + dataType);
-        if (status) status.innerHTML = '✅ <strong>' + file.name + '</strong>';
-        
-        updateSageImportButton();
-        input.value = '';
-    }
-    
-    function quickUploadMulti(input, dataType) {
-        const files = Array.from(input.files);
-        if (!files.length) return;
-        sageFiles[dataType] = files.length === 1 ? files[0] : files;
-        
-        const status = document.getElementById('status-' + dataType);
-        if (status) {
-            if (files.length === 1) {
-                status.innerHTML = '✅ <strong>' + files[0].name + '</strong>';
-            } else {
-                status.innerHTML = '✅ <strong>' + files.length + ' files</strong> (' + files.map(f => f.name).join(', ') + ')';
-            }
-        }
-        
-        updateSageImportButton();
-        input.value = '';
-    }
-    
-    function updateSageImportButton() {
-        const count = Object.keys(sageFiles).length;
-        const allBtn = document.getElementById('sageImportAll');
-        const desktopBtn = document.getElementById('sageDesktopImportAll');
-        
-        if (count > 0) {
-            if (allBtn) { allBtn.style.display = 'block'; }
-            if (desktopBtn) { desktopBtn.style.display = 'block'; }
-            const readyEl = document.getElementById('sageFilesReady');
-            if (readyEl) readyEl.textContent = count;
-        }
-    }
-    
-    async function executeSageImportAll() {
-        const types = Object.keys(sageFiles);
-        if (!types.length) return;
-        
-        // Use the existing smart-import flow for each file
-        const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance', 'supplier_invoices', 'customer_invoices'];
-        const sorted = importOrder.filter(t => types.includes(t));
-        
-        // Hide sage guide, show processing
-        document.getElementById('sageGuide').style.display = 'none';
-        document.getElementById('dropState').style.display = 'none';
-        document.getElementById('processingState').classList.add('active');
-        
-        let totalImported = 0;
-        let results = [];
-        
-        for (const dataType of sorted) {
-            const fileOrFiles = sageFiles[dataType];
-            const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
-            
-            for (const file of files) {
-                document.getElementById('processingText').textContent = 'Importing ' + dataType + '...';
-                document.getElementById('processingSub').textContent = file.name;
-                
-                try {
-                    // Step 1: Analyse
-                    const formData = new FormData();
-                    formData.append('file', file);
-                    
-                    const analyseResp = await fetch('/api/smart-import/analyse', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    const analysis = await analyseResp.json();
-                    
-                    if (!analysis.success) {
-                        results.push({type: dataType, file: file.name, success: false, error: analysis.error || 'Analysis failed'});
-                        continue;
-                    }
-                    
-                    // Step 2: Import
-                    document.getElementById('processingSub').textContent = 'Saving ' + (analysis.total_rows || '?') + ' ' + dataType + '...';
-                    
-                    const importResp = await fetch('/api/smart-import/batch', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify(analysis)
-                    });
-                    const importResult = await importResp.json();
-                    
-                    const count = importResult.imported || importResult.total_imported || 0;
-                    totalImported += count;
-                    results.push({type: dataType, file: file.name, success: importResult.success, count: count});
-                    
-                } catch (err) {
-                    results.push({type: dataType, file: file.name, success: false, error: err.message});
-                }
-            }
-        }
-        
-        // Show success
-        document.getElementById('processingState').classList.remove('active');
-        document.getElementById('successState').style.display = 'block';
-        
-        let statsHtml = '';
-        for (const r of results) {
-            if (r.success) {
-                statsHtml += '<div class="stat-box"><div class="stat-number">' + r.count + '</div><div class="stat-label">' + r.type + '</div></div>';
-            } else {
-                statsHtml += '<div class="stat-box"><div class="stat-number" style="color:#ef4444;">✗</div><div class="stat-label">' + r.type + ': ' + (r.error || 'Failed') + '</div></div>';
-            }
-        }
-        document.getElementById('successStats').innerHTML = statsHtml;
-        
-        if (results.some(r => r.type === 'trial_balance' && r.success)) {
-            document.getElementById('reportPrompt').style.display = 'block';
-        }
-    }
-    </script>
-    
     <!-- STATE 1: Drop Zone -->
     <div id="dropState" class="card">
         <div class="drop-zone" id="dropZone">
@@ -44263,16 +39610,8 @@ def smart_import_page():
         <div class="success-title">Import Complete!</div>
         <p style="color:var(--text-muted);font-size:16px;">Your data is now in ClickAI. Welcome aboard.</p>
         <div class="success-stats" id="successStats"></div>
-        <div id="successActions" style="margin-top:25px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+        <div style="margin-top:20px;">
             <a href="/" class="import-btn" style="text-decoration:none;">Go to Dashboard →</a>
-        </div>
-        <div id="reportPrompt" style="display:none;margin-top:20px;padding:20px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);border-radius:12px;">
-            <p style="font-size:15px;margin-bottom:12px;">📊 <strong>Generate a professional AI report from your imported data?</strong></p>
-            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-                <button onclick="goToReport()" class="btn btn-primary" style="padding:12px 24px;font-size:15px;">
-                    📊 Generate Report
-                </button>
-            </div>
         </div>
     </div>
     
@@ -44531,32 +39870,6 @@ def smart_import_page():
             }
         }
         document.getElementById('successStats').innerHTML = statsHtml;
-        
-        // Show report prompt based on what was imported
-        const dataType = importData ? importData.data_type : '';
-        if (dataType === 'opening_balances' || dataType === 'accounts' || dataType === 'trial_balance') {
-            document.getElementById('reportPrompt').style.display = 'block';
-            window._reportUrl = '/reports/tb';
-        } else if (dataType === 'customers') {
-            document.getElementById('reportPrompt').style.display = 'block';
-            window._reportUrl = '/reports/debtors';
-        } else if (dataType === 'suppliers') {
-            document.getElementById('reportPrompt').style.display = 'block';
-            window._reportUrl = '/reports/aging';
-        } else if (dataType === 'stock') {
-            document.getElementById('reportPrompt').style.display = 'block';
-            window._reportUrl = '/stock';
-        }
-    }
-    
-    function goToReport() {
-        const url = window._reportUrl || '/reports';
-        // For TB, auto-trigger the analysis
-        if (url === '/reports/tb') {
-            window.location.href = url + '?auto_analyze=1';
-        } else {
-            window.location.href = url;
-        }
     }
     
     function resetImport() {
@@ -44641,167 +39954,14 @@ def api_smart_import_analyse():
         total_lines = len([l for l in lines if l.strip()])
         
         # ═══════════════════════════════════════════════════════════════════════
-        # SAGE AUTO-DETECTION - Skip AI if we recognize the format
-        # Handles: sep= prefix, title rows, all Sage export types
+        # SAGE PASTEL AUTO-DETECTION - Skip AI if we recognize the format
         # ═══════════════════════════════════════════════════════════════════════
         
-        # Step 1: Find the REAL header line (skip sep=, title rows like "Trial Balance Report")
-        header_line = ""
-        header_line_idx = 0
-        sage_preamble_rows = 0
-        for idx, line in enumerate(lines[:10]):
-            stripped = line.strip().strip('\r')
-            # Skip sep= lines
-            if stripped.lower().startswith('sep='):
-                sage_preamble_rows = idx + 1
-                continue
-            # Skip title-only rows (single cell, no commas with actual data)
-            if ',' not in stripped and stripped.startswith('"') and stripped.endswith('"'):
-                sage_preamble_rows = idx + 1
-                continue
-            # Skip empty lines
-            if not stripped:
-                sage_preamble_rows = idx + 1
-                continue
-            # This looks like a real header or data row
-            header_line = stripped
-            header_line_idx = idx
-            break
-        
-        if not header_line and lines:
-            header_line = lines[0].strip()
-        
-        logger.info(f"[SMART-IMPORT] Header detection: preamble_rows={sage_preamble_rows}, header='{header_line[:80]}...'")
-        
-        # Step 2: Detect specific Sage formats
+        header_line = lines[0] if lines else ""
         is_sage_customers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line
         is_sage_suppliers = '"Name","Category","Opening Balance"' in header_line and '"Contact Name","Telephone Number"' in header_line and 'supplier' in filename.lower()
         
-        # Sage Business Cloud ItemExport: Code,Description,Category,Price Excl.,Price Incl.,Avg Cost,Last Cost,Qty On Hand,Active
-        is_sage_stock = ('Code' in header_line and 'Description' in header_line and 'Price Excl' in header_line and 'Qty On Hand' in header_line)
-        # Also detect quoted variant
-        if not is_sage_stock:
-            is_sage_stock = ('"Code"' in header_line and '"Description"' in header_line and 'Price' in header_line)
-        
-        # Sage Trial Balance Report: "Name","Category","Source","Debit","Credit"
-        is_sage_tb = ('"Name"' in header_line and '"Category"' in header_line and '"Source"' in header_line and '"Debit"' in header_line and '"Credit"' in header_line)
-        
-        # Sage Supplier Invoices Report: "Date","Document No.","Supplier Inv. No.","Supplier","Due Date"
-        is_sage_supplier_invoices = ('"Document No."' in header_line and '"Supplier Inv. No."' in header_line and '"Supplier"' in header_line and '"Total Outstanding"' in header_line)
-        
-        # Sage Customer Invoices / Sales Invoices: "Date","Document No.","Customer","Due Date"
-        is_sage_customer_invoices = ('"Document No."' in header_line and ('"Customer"' in header_line or '"Customer Inv. No."' in header_line) and '"Total Outstanding"' in header_line)
-        
-        if is_sage_stock:
-            # ═══ SAGE STOCK / ITEM EXPORT ═══
-            logger.info(f"[SMART-IMPORT] Detected Sage ItemExport format")
-            
-            # Parse headers to find exact column indices
-            import csv as csv_mod
-            parsed_headers = list(csv_mod.reader([header_line]))[0]
-            col_map = {}
-            for i, h in enumerate(parsed_headers):
-                h_clean = h.strip().lower()
-                if h_clean == 'code': col_map[str(i)] = 'code'
-                elif h_clean == 'description': col_map[str(i)] = 'description'
-                elif h_clean == 'category': col_map[str(i)] = 'category'
-                elif 'price excl' in h_clean: col_map[str(i)] = 'selling_price'
-                elif 'price incl' in h_clean: col_map[str(i)] = 'selling_price_incl'
-                elif 'avg cost' in h_clean or 'average cost' in h_clean: col_map[str(i)] = 'cost_price'
-                elif 'last cost' in h_clean: col_map[str(i)] = 'last_cost'
-                elif 'qty on hand' in h_clean or 'quantity' in h_clean: col_map[str(i)] = 'qty'
-                elif h_clean == 'active': col_map[str(i)] = 'active'
-            
-            result = {
-                "success": True,
-                "source_hint": "Sage Business Cloud",
-                "confidence": 1.0,
-                "data_type": "stock",
-                "data_type_label": "Stock / Inventory Items",
-                "header_row": header_line_idx,
-                "data_start_row": header_line_idx + 1,
-                "name_column": next((int(k) for k, v in col_map.items() if v == 'description'), 1),
-                "column_mapping": col_map,
-                "sage_preamble_rows": sage_preamble_rows
-            }
-        
-        elif is_sage_tb:
-            # ═══ SAGE TRIAL BALANCE ═══
-            logger.info(f"[SMART-IMPORT] Detected Sage Trial Balance Report format")
-            result = {
-                "success": True,
-                "source_hint": "Sage Business Cloud",
-                "confidence": 1.0,
-                "data_type": "chart_of_accounts",
-                "data_type_label": "Trial Balance / Chart of Accounts",
-                "header_row": header_line_idx,
-                "data_start_row": header_line_idx + 1,
-                "name_column": 0,
-                "column_mapping": {
-                    "0": "account_name",   # "Name" - e.g. "3200/000 : Bank Charges"
-                    "1": "category",       # "Category" - e.g. "Expenses", "Sales", "Current Assets"
-                    "2": "source",         # "Source" - "System Account" or "Account Balance"
-                    "3": "debit",          # "Debit"
-                    "4": "credit"          # "Credit"
-                },
-                "sage_preamble_rows": sage_preamble_rows
-            }
-        
-        elif is_sage_supplier_invoices:
-            # ═══ SAGE SUPPLIER INVOICES REPORT ═══
-            logger.info(f"[SMART-IMPORT] Detected Sage Supplier Invoices Report format")
-            result = {
-                "success": True,
-                "source_hint": "Sage Business Cloud",
-                "confidence": 1.0,
-                "data_type": "supplier_invoices",
-                "data_type_label": "Supplier Invoices (Purchases)",
-                "header_row": header_line_idx,
-                "data_start_row": header_line_idx + 1,
-                "name_column": 3,
-                "column_mapping": {
-                    "0": "date",               # "Date"
-                    "1": "document_no",        # "Document No."
-                    "2": "supplier_inv_no",    # "Supplier Inv. No."
-                    "3": "supplier",           # "Supplier" - e.g. "EPR001 : ELECT PROTECT..."
-                    "4": "due_date",           # "Due Date"
-                    "5": "anticipated_payment", # "Ant. Pmt."
-                    "6": "exclusive",          # "Exclusive" (excl VAT amount)
-                    "7": "vat",                # "VAT"
-                    "8": "total",              # "Total Purchases"
-                    "9": "outstanding"         # "Total Outstanding"
-                },
-                "sage_preamble_rows": sage_preamble_rows
-            }
-        
-        elif is_sage_customer_invoices:
-            # ═══ SAGE CUSTOMER INVOICES / SALES INVOICES ═══
-            logger.info(f"[SMART-IMPORT] Detected Sage Customer/Sales Invoices Report format")
-            result = {
-                "success": True,
-                "source_hint": "Sage Business Cloud",
-                "confidence": 1.0,
-                "data_type": "customer_invoices",
-                "data_type_label": "Customer Invoices (Sales)",
-                "header_row": header_line_idx,
-                "data_start_row": header_line_idx + 1,
-                "name_column": 3,
-                "column_mapping": {
-                    "0": "date",
-                    "1": "document_no",
-                    "2": "customer_inv_no",
-                    "3": "customer",
-                    "4": "due_date",
-                    "5": "anticipated_payment",
-                    "6": "exclusive",
-                    "7": "vat",
-                    "8": "total",
-                    "9": "outstanding"
-                },
-                "sage_preamble_rows": sage_preamble_rows
-            }
-        
-        elif is_sage_customers or is_sage_suppliers:
+        if is_sage_customers or is_sage_suppliers:
             # HARDCODED SAGE PASTEL MAPPING - 100% reliable
             logger.info(f"[SMART-IMPORT] Detected Sage Pastel {'Suppliers' if is_sage_suppliers else 'Customers'} format")
             result = {
@@ -45000,8 +40160,7 @@ Return ONLY the JSON, nothing else."""
             # Fallback: check standard key fields
             if not key_value:
                 key_fields = {'customers': 'name', 'suppliers': 'name', 'stock': 'description',
-                              'chart_of_accounts': 'account_name', 'transactions': 'account_code',
-                              'supplier_invoices': 'supplier', 'customer_invoices': 'customer'}
+                              'chart_of_accounts': 'account_name', 'transactions': 'account_code'}
                 key = key_fields.get(data_type, 'name')
                 key_value = row_data.get(key) or row_data.get('name') or row_data.get('description') or row_data.get('code')
             
@@ -45041,35 +40200,6 @@ Return ONLY the JSON, nothing else."""
                         row_data['name'] = key_value or f"Record {i}"
                     elif data_type == 'stock':
                         row_data['description'] = key_value or row_data.get('code', f"Item {i}")
-                
-                # 5. Sage TB: Split "3200/000 : Bank Charges" into code + name, map category to account_type
-                if data_type == 'chart_of_accounts':
-                    acct_name = str(row_data.get('account_name', '')).strip()
-                    # Split "3200/000 : Bank Charges" format
-                    if ' : ' in acct_name:
-                        parts = acct_name.split(' : ', 1)
-                        row_data['account_code'] = parts[0].strip()
-                        row_data['account_name'] = parts[1].strip()
-                    
-                    # Map Sage categories to account types
-                    cat = str(row_data.get('category', '')).strip().lower()
-                    cat_map = {
-                        'sales': 'income', 'other income': 'income', 'discount received': 'income',
-                        'cost of sales': 'cost_of_sales', 'expenses': 'expense',
-                        'current assets': 'asset', 'non-current assets': 'asset',
-                        'current liabilities': 'liability', 'non-current liabilities': 'liability',
-                        'owners equity': 'equity', "owner's equity": 'equity'
-                    }
-                    row_data['account_type'] = cat_map.get(cat, 'expense')
-                    
-                    # Skip "System Account" summary rows (keep only "Account Balance" detail rows)
-                    source = str(row_data.get('source', '')).strip()
-                    if source == 'System Account':
-                        continue  # Skip totals, only import individual accounts
-                    
-                    # Skip empty/total rows (last row has no name, just totals)
-                    if not row_data.get('account_name'):
-                        continue
                 
                 all_data.append(row_data)
                 if len(preview_data) < 5:
@@ -45119,7 +40249,7 @@ def api_smart_import_batch():
     try:
         data = request.get_json()
         data_type = data.get("data_type")
-        records = data.get("records", []) or data.get("all_data", [])
+        records = data.get("records", [])
         
         if not records:
             return jsonify({"success": False, "error": "No records to import"})
@@ -45211,139 +40341,16 @@ def api_smart_import_batch():
                     if not name:
                         status = "skipped"
                     else:
-                        # Sage TB: account_name already split from "3200/000 : Bank Charges"
-                        acct_code = str(row.get("account_code", "")).strip()
-                        acct_type = str(row.get("account_type", "expense")).strip().lower()
-                        
-                        # Calculate opening balance from debit/credit
-                        debit = float(row.get("debit", 0) or 0)
-                        credit = float(row.get("credit", 0) or 0)
-                        opening_balance = debit - credit  # Positive = debit balance, Negative = credit balance
-                        
-                        # Check if account already exists (by code or name)
-                        existing = None
-                        if acct_code:
-                            existing = db.get("chart_of_accounts", {"business_id": biz_id, "account_code": acct_code})
-                        if not existing:
-                            existing = db.get("chart_of_accounts", {"business_id": biz_id, "account_name": name})
-                        
-                        if existing:
-                            status = "skipped"
-                            error_msg = "Already exists"
-                        else:
-                            record = {
-                                "id": generate_id(),
-                                "business_id": biz_id,
-                                "account_name": name,
-                                "account_code": acct_code,
-                                "account_type": acct_type,
-                                "category": str(row.get("category", "")).strip(),
-                                "opening_balance": opening_balance,
-                                "debit": debit,
-                                "credit": credit,
-                                "is_active": True,
-                                "created_at": now()
-                            }
-                            success, resp = db.save("chart_of_accounts", record)
-                            if success:
-                                status = "imported"
-                            else:
-                                status = "error"
-                                error_msg = str(resp)[:50]
-                
-                elif data_type == "supplier_invoices":
-                    # Sage Supplier Invoices - import as bills/purchases
-                    supplier_raw = str(row.get("supplier", "")).strip()
-                    supplier_code = ""
-                    supplier_name = supplier_raw
-                    # Sage format: "EPR001 : ELECT PROTECT RESPONSE (PTY) LTD"
-                    if " : " in supplier_raw:
-                        parts = supplier_raw.split(" : ", 1)
-                        supplier_code = parts[0].strip()
-                        supplier_name = parts[1].strip()
-                    
-                    name = supplier_name
-                    doc_no = str(row.get("document_no", "")).strip()
-                    supplier_inv = str(row.get("supplier_inv_no", "")).strip()
-                    outstanding = float(row.get("outstanding", 0) or 0)
-                    
-                    if not supplier_name or supplier_name.lower().startswith("grand total"):
-                        status = "skipped"
-                        error_msg = "Skip row"
-                    elif outstanding == 0:
-                        status = "skipped"
-                        error_msg = "Already paid"
-                    else:
                         record = {
                             "id": generate_id(),
                             "business_id": biz_id,
-                            "supplier_name": supplier_name,
-                            "supplier_code": supplier_code,
-                            "invoice_number": supplier_inv or doc_no,
-                            "sage_doc_no": doc_no,
-                            "date": str(row.get("date", "")).strip(),
-                            "due_date": str(row.get("due_date", "")).strip(),
-                            "amount_excl": float(row.get("exclusive", 0) or 0),
-                            "vat_amount": float(row.get("vat", 0) or 0),
-                            "amount_incl": float(row.get("total", 0) or 0),
-                            "amount_outstanding": outstanding,
-                            "status": "outstanding",
-                            "source": "sage_import",
+                            "account_name": name,
+                            "account_code": str(row.get("account_code", "")).strip(),
+                            "account_type": str(row.get("account_type", "expense")).strip().lower(),
+                            "is_active": True,
                             "created_at": now()
                         }
-                        existing_supplier = db.get("suppliers", {"business_id": biz_id, "name": supplier_name})
-                        if existing_supplier:
-                            record["supplier_id"] = existing_supplier.get("id")
-                        
-                        success, resp = db.save("bills", record)
-                        if success:
-                            status = "imported"
-                        else:
-                            status = "error"
-                            error_msg = str(resp)[:50]
-                
-                elif data_type == "customer_invoices":
-                    # Sage Customer Invoices - import as sales invoices
-                    customer_raw = str(row.get("customer", "")).strip()
-                    customer_code = ""
-                    customer_name = customer_raw
-                    if " : " in customer_raw:
-                        parts = customer_raw.split(" : ", 1)
-                        customer_code = parts[0].strip()
-                        customer_name = parts[1].strip()
-                    
-                    name = customer_name
-                    doc_no = str(row.get("document_no", "")).strip()
-                    outstanding = float(row.get("outstanding", 0) or 0)
-                    
-                    if not customer_name or customer_name.lower().startswith("grand total"):
-                        status = "skipped"
-                        error_msg = "Skip row"
-                    elif outstanding == 0:
-                        status = "skipped"
-                        error_msg = "Already paid"
-                    else:
-                        record = {
-                            "id": generate_id(),
-                            "business_id": biz_id,
-                            "customer_name": customer_name,
-                            "customer_code": customer_code,
-                            "invoice_number": doc_no,
-                            "date": str(row.get("date", "")).strip(),
-                            "due_date": str(row.get("due_date", "")).strip(),
-                            "amount_excl": float(row.get("exclusive", 0) or 0),
-                            "vat_amount": float(row.get("vat", 0) or 0),
-                            "amount_incl": float(row.get("total", 0) or 0),
-                            "amount_outstanding": outstanding,
-                            "status": "outstanding",
-                            "source": "sage_import",
-                            "created_at": now()
-                        }
-                        existing_customer = db.get("customers", {"business_id": biz_id, "name": customer_name})
-                        if existing_customer:
-                            record["customer_id"] = existing_customer.get("id")
-                        
-                        success, resp = db.save("invoices", record)
+                        success, resp = db.save("chart_of_accounts", record)
                         if success:
                             status = "imported"
                         else:
@@ -45386,8 +40393,7 @@ def api_smart_import_batch():
                 "error": error_msg
             })
         
-        imported_count = sum(1 for r in results if r.get("status") == "imported")
-        return jsonify({"success": True, "results": results, "imported": imported_count, "total_imported": imported_count})
+        return jsonify({"success": True, "results": results})
         
     except Exception as e:
         import traceback
@@ -46779,7 +41785,6 @@ def import_page():
                         <option value="customers">Customers (with balances)</option>
                         <option value="suppliers">Suppliers (with balances)</option>
                         <option value="stock">Stock / Inventory Items</option>
-                        <option value="stock_update">↳ Update Stock (Qty/Cost only - matches on Code)</option>
                         <option value="chart_of_accounts">Chart of Accounts</option>
                         <option value="opening_balances">Opening Trial Balance</option>
                     </optgroup>
@@ -47469,7 +42474,6 @@ def api_import_analyze():
             "customers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
             "suppliers": {"required": ["name"], "optional": ["code", "phone", "email", "address", "balance", "category", "contact_name", "vat_number", "fax", "cell"]},
             "stock": {"required": ["description"], "optional": ["code", "cost_price", "selling_price", "price_wholesale", "price_trade", "price_vip", "quantity", "category", "unit"]},
-            "stock_update": {"required": ["code"], "optional": ["quantity", "cost_price", "selling_price", "value"]},  # Update existing stock by code
             "employees": {"required": ["name"], "optional": ["code", "id_number", "position", "role", "department", "salary", "rate", "start_date", "bank", "account", "branch", "phone", "email", "status"]},
             "opening_balances": {"required": ["account"], "optional": ["code", "amount", "debit", "credit", "type"]},
             "chart_of_accounts": {"required": ["name"], "optional": ["code", "type", "parent"]},
@@ -48981,8 +43985,27 @@ IMPORTANT: Only set true for actions the user EXPLICITLY asked for.
                     if not desc:
                         continue
                     
-                    code = smart_stock_code(desc, used_codes)
-                    used_codes.add(code.upper())
+                    words = desc.split()
+                    parts = []
+                    size = ""
+                    for w in words:
+                        if any(c.isdigit() for c in w):
+                            size = w.replace("MM", "")[:8]
+                        elif w in abbrevs:
+                            parts.append(abbrevs[w])
+                        elif len(w) > 2:
+                            parts.append(w[:2])
+                    
+                    code = "-".join(parts[:3]) if parts else desc[:8]
+                    if size:
+                        code += "-" + size
+                    
+                    base = code[:12]
+                    n = 1
+                    while code in used_codes:
+                        code = f"{base}-{n}"
+                        n += 1
+                    used_codes.add(code)
                     
                     row[code_idx] = code
                     codes_done += 1
@@ -49680,66 +44703,6 @@ def api_import_execute():
                     if unit:
                         record["unit"] = unit
                     records.append(record)
-                
-                elif import_type == "stock_update":
-                    # UPDATE existing stock items by matching on code
-                    # Does NOT create new items - only updates qty/cost/price
-                    code_idx = mapping.get("code")
-                    if code_idx is None or code_idx >= len(row):
-                        skipped += 1
-                        continue
-                    
-                    code = str(row[code_idx]).strip()
-                    if not code:
-                        skipped += 1
-                        continue
-                    
-                    # Build updates dict with only fields that have values
-                    updates = {}
-                    
-                    # Quantity
-                    if mapping.get("quantity") is not None and mapping.get("quantity") < len(row):
-                        try:
-                            val = str(row[mapping.get("quantity")]).replace(",", "").strip()
-                            if val:
-                                updates["quantity"] = int(float(val))
-                        except:
-                            pass
-                    
-                    # Cost price
-                    if mapping.get("cost_price") is not None and mapping.get("cost_price") < len(row):
-                        try:
-                            val = str(row[mapping.get("cost_price")]).replace("R", "").replace(",", "").strip()
-                            if val:
-                                updates["cost_price"] = float(val)
-                        except:
-                            pass
-                    
-                    # If we have "value" but no cost_price, calculate cost from value/qty
-                    if "cost_price" not in updates and mapping.get("value") is not None and mapping.get("value") < len(row):
-                        try:
-                            val = str(row[mapping.get("value")]).replace("R", "").replace(",", "").strip()
-                            if val and updates.get("quantity", 0) > 0:
-                                total_value = float(val)
-                                updates["cost_price"] = total_value / updates["quantity"]
-                        except:
-                            pass
-                    
-                    # Selling price (if provided)
-                    if mapping.get("selling_price") is not None and mapping.get("selling_price") < len(row):
-                        try:
-                            val = str(row[mapping.get("selling_price")]).replace("R", "").replace(",", "").strip()
-                            if val:
-                                updates["selling_price"] = float(val)
-                        except:
-                            pass
-                    
-                    if not updates:
-                        skipped += 1
-                        continue
-                    
-                    # Store for batch processing (we'll handle this specially below)
-                    records.append({"code": code, "updates": updates})
                 
                 elif import_type == "employees":
                     # Handle both formats:
@@ -50770,57 +45733,6 @@ def api_import_execute():
         print(f"[IMPORT-EXECUTE] Records built: {len(records)}, skipped: {skipped}", flush=True)
         logger.info(f"[IMPORT] Records to save: {len(records)}, skipped so far: {skipped}")
         
-        # === SPECIAL HANDLER: stock_update - UPDATE existing items, don't create new ===
-        if import_type == "stock_update" and records:
-            print(f"[STOCK-UPDATE] Updating {len(records)} existing stock items by code...", flush=True)
-            
-            # Load all existing stock to match by code
-            existing_stock = db.get_all_stock(biz_id)
-            code_to_item = {}
-            for item in existing_stock:
-                item_code = str(item.get("code", "")).strip().upper()
-                if item_code:
-                    code_to_item[item_code] = item
-            
-            print(f"[STOCK-UPDATE] Found {len(code_to_item)} existing items to match against", flush=True)
-            
-            updated = 0
-            not_found = 0
-            
-            for rec in records:
-                code = str(rec.get("code", "")).strip().upper()
-                updates = rec.get("updates", {})
-                
-                if code in code_to_item:
-                    existing = code_to_item[code]
-                    stock_id = existing.get("id")
-                    
-                    if stock_id and updates:
-                        # Update the item
-                        result = db.update_stock(stock_id, updates, biz_id)
-                        if result:
-                            updated += 1
-                            if updated <= 3:
-                                print(f"[STOCK-UPDATE] ✓ Updated {code}: {updates}", flush=True)
-                        else:
-                            skipped += 1
-                    else:
-                        skipped += 1
-                else:
-                    not_found += 1
-                    if not_found <= 5:
-                        print(f"[STOCK-UPDATE] ✗ Code not found: {code}", flush=True)
-            
-            print(f"[STOCK-UPDATE] Done: {updated} updated, {not_found} not found, {skipped} skipped", flush=True)
-            
-            return jsonify({
-                "success": True,
-                "imported": updated,
-                "errors": not_found,
-                "skipped": skipped,
-                "message": f"Updated {updated} items. {not_found} codes not found in existing stock."
-            })
-        
         if records:
             # Map import_type to actual table name - uses TABLES config + import-specific aliases
             table_map = {**TABLES,  # Base from config
@@ -51135,13 +46047,10 @@ def banking_page():
     <!-- HEADER -->
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
         <h2 style="margin:0;">🏦 Bank Reconciliation</h2>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <a href="/subscriptions" class="btn btn-secondary">📦 Recurring Expenses</a>
-            <label class="btn btn-primary" style="cursor:pointer;">
-                📥 Import Statement
-                <input type="file" accept=".csv,.pdf" style="display:none;" onchange="uploadStatement(this.files[0])">
-            </label>
-        </div>
+        <label class="btn btn-primary" style="cursor:pointer;">
+            📥 Import Statement
+            <input type="file" accept=".csv" style="display:none;" onchange="uploadStatement(this.files[0])">
+        </label>
     </div>
     
     <!-- SUMMARY CARDS -->
@@ -51386,7 +46295,7 @@ def banking_page():
 @app.route("/api/banking/import", methods=["POST"])
 @login_required
 def api_banking_import():
-    """Import bank statement CSV or PDF with SMART AUTO-MATCHING"""
+    """Import bank statement CSV with SMART AUTO-MATCHING"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -51397,279 +46306,15 @@ def api_banking_import():
         if not file:
             return jsonify({"success": False, "error": "No file uploaded"})
         
-        filename = file.filename.lower()
+        content = file.read().decode('utf-8', errors='ignore')
+        reader = csv.reader(io.StringIO(content))
+        rows = list(reader)
         
-        # ═══════════════════════════════════════════════════════════════
-        # PDF PARSING - Standard Bank, ABSA, FNB, Nedbank, Capitec
-        # ═══════════════════════════════════════════════════════════════
-        if filename.endswith('.pdf'):
-            try:
-                import subprocess, tempfile, os
-                
-                # Save PDF to temp file
-                pdf_bytes = file.read()
-                with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
-                    tmp.write(pdf_bytes)
-                    tmp_path = tmp.name
-                
-                # First try text extraction
-                pdf_text = ""
-                try:
-                    result = subprocess.run(['pdftotext', '-layout', tmp_path, '-'], capture_output=True, text=True, timeout=30)
-                    pdf_text = result.stdout.strip()
-                except:
-                    pass
-                
-                if not pdf_text:
-                    try:
-                        import pdfplumber
-                        with pdfplumber.open(tmp_path) as pdf_doc:
-                            for page in pdf_doc.pages:
-                                page_text = page.extract_text()
-                                if page_text:
-                                    pdf_text += page_text + "\n"
-                    except:
-                        pass
-                
-                # If text extraction failed (scanned PDF), use Claude AI via images
-                if not pdf_text or len(pdf_text) < 50:
-                    logger.info("[BANK IMPORT] Scanned PDF detected - using AI to read")
-                    
-                    try:
-                        import base64
-                        from PIL import Image as PILImage
-                        import io as _io
-                        all_transactions = []
-                        
-                        # Convert PDF pages to images using pdf2image (poppler) or pdfplumber fallback
-                        page_images = []
-                        try:
-                            from pdf2image import convert_from_path
-                            pil_images = convert_from_path(tmp_path, dpi=200)
-                            for img in pil_images:
-                                buf = _io.BytesIO()
-                                img.save(buf, format='JPEG', quality=85)
-                                page_images.append(buf.getvalue())
-                        except ImportError:
-                            # Fallback: use pdfplumber to render pages
-                            import pdfplumber
-                            with pdfplumber.open(tmp_path) as pdf_doc:
-                                for page in pdf_doc.pages:
-                                    page_img = page.to_image(resolution=200)
-                                    buf = _io.BytesIO()
-                                    page_img.save(buf, format='JPEG', quality=85)
-                                    page_images.append(buf.getvalue())
-                        
-                        for page_num, img_bytes in enumerate(page_images):
-                            
-                            # Compress if needed
-                            if len(img_bytes) > 3500000:
-                                img = PILImage.open(_io.BytesIO(img_bytes))
-                                quality = 70
-                                max_dim = 1600
-                                while True:
-                                    w, h = img.size
-                                    if max(w, h) > max_dim:
-                                        ratio = max_dim / max(w, h)
-                                        img = img.resize((int(w*ratio), int(h*ratio)), PILImage.LANCZOS)
-                                    buf = _io.BytesIO()
-                                    img.save(buf, format='JPEG', quality=quality)
-                                    if buf.tell() < 3500000 or quality <= 30:
-                                        break
-                                    quality -= 10
-                                    max_dim -= 200
-                                img_bytes = buf.getvalue()
-                            
-                            media_type = "image/jpeg"
-                            b64_img = base64.b64encode(img_bytes).decode('utf-8')
-                            
-                            # Send to Claude API
-                            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-                            if not api_key:
-                                os.unlink(tmp_path)
-                                return jsonify({"success": False, "error": "AI API key not configured"})
-                            
-                            prompt = """Extract ALL bank transactions from this bank statement image.
-
-Return ONLY valid JSON array, no other text. Each transaction must have:
-- "date": "YYYY-MM-DD" format
-- "description": the transaction description/details
-- "debit": amount as number (money going OUT, positive number) or 0
-- "credit": amount as number (money coming IN, positive number) or 0
-- "balance": the running balance after this transaction
-
-RULES:
-- Payments OUT (debits, purchases, fees) go in "debit" field as POSITIVE numbers
-- Money IN (credits, deposits, settlements) go in "credit" field as POSITIVE numbers
-- Skip "BALANCE BROUGHT FORWARD" and "CLOSING BALANCE" rows
-- Read EVERY transaction row, do not skip any
-- Extract amounts exactly as shown on the statement
-- Include service fees, bank charges etc as debits"""
-
-                            import requests as req
-                            resp = req.post(
-                                "https://api.anthropic.com/v1/messages",
-                                headers={
-                                    "x-api-key": api_key,
-                                    "anthropic-version": "2023-06-01",
-                                    "content-type": "application/json"
-                                },
-                                json={
-                                    "model": "claude-sonnet-4-20250514",
-                                    "max_tokens": 8000,
-                                    "messages": [{
-                                        "role": "user",
-                                        "content": [
-                                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_img}},
-                                            {"type": "text", "text": prompt}
-                                        ]
-                                    }]
-                                },
-                                timeout=120
-                            )
-                            
-                            if resp.status_code != 200:
-                                logger.error(f"[BANK IMPORT] AI API error: {resp.status_code} {resp.text[:200]}")
-                                continue
-                            
-                            ai_result = resp.json()
-                            ai_text = ""
-                            for block in ai_result.get("content", []):
-                                if block.get("type") == "text":
-                                    ai_text += block["text"]
-                            
-                            # Parse JSON from AI response
-                            import re
-                            json_match = re.search(r'\[.*\]', ai_text, re.DOTALL)
-                            if json_match:
-                                try:
-                                    page_txns = json.loads(json_match.group(0))
-                                    all_transactions.extend(page_txns)
-                                    logger.info(f"[BANK IMPORT] Page {page_num + 1}: {len(page_txns)} transactions")
-                                except json.JSONDecodeError as je:
-                                    logger.error(f"[BANK IMPORT] JSON parse error page {page_num + 1}: {je}")
-                        
-                        
-                        os.unlink(tmp_path)
-                        
-                        if not all_transactions:
-                            return jsonify({"success": False, "error": "AI could not read any transactions from the PDF"})
-                        
-                        # Convert to standard format
-                        data_rows = []
-                        for tx in all_transactions:
-                            data_rows.append([
-                                str(tx.get("date", "")),
-                                str(tx.get("description", "")),
-                                float(tx.get("debit", 0)),
-                                float(tx.get("credit", 0)),
-                                float(tx.get("balance", 0))
-                            ])
-                        
-                        date_col = 0
-                        desc_col = 1
-                        debit_col = 2
-                        credit_col = 3
-                        amount_col = None
-                        
-                        logger.info(f"[BANK IMPORT] AI extracted {len(data_rows)} total transactions from PDF")
-                        
-                    except Exception as ai_err:
-                        os.unlink(tmp_path)
-                        logger.error(f"[BANK IMPORT] AI PDF error: {ai_err}")
-                        return jsonify({"success": False, "error": f"Failed to read scanned PDF: {str(ai_err)}"})
-                
-                else:
-                    os.unlink(tmp_path)
-                    # Text-based PDF parsing
-                    import re
-                    
-                    transactions = []
-                    lines = pdf_text.split('\n')
-                    
-                    logger.info(f"[BANK IMPORT] Text PDF: {len(lines)} lines")
-                    
-                    date_pattern = re.compile(r'(20\d{6})')
-                    amount_pattern = re.compile(r'-?[\d,]+\.\d{2}')
-                    
-                    i = 0
-                    while i < len(lines):
-                        line = lines[i].strip()
-                        if not line:
-                            i += 1
-                            continue
-                        
-                        if any(skip in line.upper() for skip in ['PAGE', 'DETAILS', 'SERVICE FEE', 'CURRENT ACCOUNT', 'STATEMENT', 'STANDARD BANK', 'COMPUTER GENERATED', 'END OF REPORT', 'BRANCH', 'VAT REGISTRATION', 'CLOSING BALANCE', 'BALANCE BROUGHT']):
-                            i += 1
-                            continue
-                        
-                        date_match = date_pattern.search(line)
-                        if date_match:
-                            raw_date = date_match.group(1)
-                            tx_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
-                            
-                            numbers = amount_pattern.findall(line)
-                            
-                            if len(numbers) >= 2:
-                                first_num_pos = line.find(numbers[0])
-                                description = line[:first_num_pos].strip()
-                                description = re.sub(r'^\d+\s+', '', description).strip()
-                                
-                                if not description:
-                                    i += 1
-                                    continue
-                                
-                                clean_nums = [float(n.replace(',', '')) for n in numbers]
-                                balance = clean_nums[-1]
-                                debit = 0.0
-                                credit = 0.0
-                                for n in clean_nums[:-1]:
-                                    if n < 0:
-                                        debit = abs(n)
-                                    elif n > 0:
-                                        credit = n
-                                
-                                if debit == 0 and credit == 0:
-                                    i += 1
-                                    continue
-                                
-                                transactions.append({
-                                    "date": tx_date,
-                                    "description": description,
-                                    "debit": round(debit, 2),
-                                    "credit": round(credit, 2),
-                                    "balance": round(balance, 2)
-                                })
-                        i += 1
-                    
-                    data_rows = []
-                    for tx in transactions:
-                        data_rows.append([tx["date"], tx["description"], tx["debit"], tx["credit"], tx["balance"]])
-                    
-                    date_col = 0
-                    desc_col = 1
-                    debit_col = 2
-                    credit_col = 3
-                    amount_col = None
-                    
-                    if not data_rows:
-                        return jsonify({"success": False, "error": "Could not parse transactions from PDF text"})
-                
-            except Exception as pdf_err:
-                logger.error(f"[BANK IMPORT] PDF parse error: {pdf_err}")
-                return jsonify({"success": False, "error": f"PDF parse error: {str(pdf_err)}"})
+        if len(rows) < 2:
+            return jsonify({"success": False, "error": "File is empty"})
         
-        else:
-            # CSV PARSING (existing logic)
-            content = file.read().decode('utf-8', errors='ignore')
-            reader = csv.reader(io.StringIO(content))
-            rows = list(reader)
-        
-            if len(rows) < 2:
-                return jsonify({"success": False, "error": "File is empty"})
-            
-            headers = [str(h).lower() if not isinstance(h, list) else str(h[0]).lower() for h in rows[0]]
-            data_rows = rows[1:]
+        headers = [str(h).lower() if not isinstance(h, list) else str(h[0]).lower() for h in rows[0]]
+        data_rows = rows[1:]
         
         def cell_str(cell):
             if cell is None:
@@ -51680,24 +46325,22 @@ RULES:
                 return str(cell).strip() if cell is not None else ""
             return str(cell).strip()
         
-        # For CSV: clean data and find columns
-        if not filename.endswith('.pdf'):
-            data_rows = [[cell_str(cell) for cell in row] for row in data_rows]
-            
-            # Find columns
-            date_col = desc_col = amount_col = debit_col = credit_col = None
-            
-            for i, h in enumerate(headers):
-                if "date" in h:
-                    date_col = i
-                elif "desc" in h or "narr" in h or "particular" in h:
-                    desc_col = i
-                elif "amount" in h:
-                    amount_col = i
-                elif "debit" in h:
-                    debit_col = i
-                elif "credit" in h:
-                    credit_col = i
+        data_rows = [[cell_str(cell) for cell in row] for row in data_rows]
+        
+        # Find columns
+        date_col = desc_col = amount_col = debit_col = credit_col = None
+        
+        for i, h in enumerate(headers):
+            if "date" in h:
+                date_col = i
+            elif "desc" in h or "narr" in h or "particular" in h:
+                desc_col = i
+            elif "amount" in h:
+                amount_col = i
+            elif "debit" in h:
+                debit_col = i
+            elif "credit" in h:
+                credit_col = i
         
         # ═══════════════════════════════════════════════════════════════
         # GET DATA FOR SMART MATCHING
@@ -52065,8 +46708,7 @@ def job_new():
                 customer_name=customer_name,
                 customer_id=safe_uuid(customer_id),
                 description=description,
-                status="open",
-                created_by=user.get("id") if user else None
+                status="open"
             )
             job_id = job["id"]
             
@@ -56945,7 +51587,6 @@ def api_staging_approve(item_id):
                 "description": item.get("description", ""),
                 "category": item.get("category", "General"),
                 "amount": float(item.get("amount", 0)),
-                "created_by": user.get("id") if user else None,
                 "created_at": now()
             })
         elif item_type == "supplier_invoice":
@@ -56957,7 +51598,6 @@ def api_staging_approve(item_id):
                 "invoice_number": item.get("invoice_number", ""),
                 "total": float(item.get("amount", 0)),
                 "status": "unpaid",
-                "created_by": user.get("id") if user else None,
                 "created_at": now()
             })
         
@@ -57738,19 +52378,11 @@ def sheet_pieces():
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
     if "fulltech" not in biz_name:
         return redirect("/tools")
-    
-    # Load custom prices from business settings
-    custom_prices = None
-    if biz_id:
-        biz_data = db.get_one("businesses", biz_id) or {}
-        all_custom = biz_data.get("custom_prices", {}) or {}
-        custom_prices = all_custom.get("sheet_pieces", None)
     
     result_html = ""
     
@@ -57762,14 +52394,13 @@ def sheet_pieces():
             finish = request.form.get("finish", "N4 + PVC")
             qty = int(request.form.get("qty", 1) or 1)
             
-            # Pass custom prices to calculator
-            result = fulltech_addon.calc_sheet_piece(length, width, thickness, finish, custom_prices)
+            result = fulltech_addon.calc_sheet_piece(length, width, thickness, finish)
             
             total_with_qty = result["total"] * qty
             
             result_html = f'''
             <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.05));margin-top:20px;">
-                <h3 style="margin:0 0 20px 0;color:var(--green);">📊 Results</h3>
+                <h3 style="margin:0 0 20px 0;color:var(--green);">[CHART] Results</h3>
                 
                 <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:15px;margin-bottom:20px;">
                     <div style="background:var(--card);padding:15px;border-radius:8px;text-align:center;">
@@ -58657,259 +53288,6 @@ def api_category_delete(cat_id):
         return jsonify({"success": False})
 
 
-@app.route("/tools/price-editor", methods=["GET", "POST"])
-@login_required
-def price_editor():
-    """Edit Fulltech steel prices - especially for Sheet Pieces calculator"""
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    # Fulltech only
-    biz_name = (business.get("name", "") if business else "").lower()
-    if "fulltech" not in biz_name:
-        return redirect("/tools")
-    
-    # Handle price updates via AJAX
-    if request.method == "POST":
-        try:
-            data = request.get_json() if request.is_json else {}
-            price_type = data.get("type", "")
-            new_prices = data.get("prices", {})
-            
-            existing = db.get_one("businesses", biz_id) or {}
-            custom_prices = existing.get("custom_prices", {}) or {}
-            
-            # Get existing prices for this type, or use defaults
-            existing_type_prices = custom_prices.get(price_type, {})
-            
-            # MERGE: Only update values that are not 0 or empty
-            # This preserves existing prices if user leaves fields empty
-            def merge_prices(existing, new):
-                """Recursively merge, only updating non-zero values"""
-                if isinstance(new, dict):
-                    result = dict(existing) if isinstance(existing, dict) else {}
-                    for k, v in new.items():
-                        if isinstance(v, dict):
-                            result[k] = merge_prices(result.get(k, {}), v)
-                        elif v and v != 0:  # Only update if not empty/zero
-                            result[k] = v
-                    return result
-                return new if new and new != 0 else existing
-            
-            merged = merge_prices(existing_type_prices, new_prices)
-            custom_prices[price_type] = merged
-            
-            db.save("businesses", {"id": biz_id, "custom_prices": custom_prices})
-            
-            return jsonify({"success": True, "message": f"{price_type} prices updated"})
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)})
-    
-    # Get current prices - check for custom overrides first
-    biz_data = db.get_one("businesses", biz_id) or {}
-    custom = biz_data.get("custom_prices", {}) or {}
-    sheet_pieces_custom = custom.get("sheet_pieces", {})
-    
-    # Use custom prices if available, otherwise defaults
-    sheet_cold = sheet_pieces_custom.get("sheet_cold", {}) or fulltech_addon.SHEET_COLD
-    # Merge with defaults to ensure all finishes exist
-    sheet_cold = {**fulltech_addon.SHEET_COLD, **sheet_cold}
-    
-    sheet_hot = sheet_pieces_custom.get("sheet_hot", {}) or fulltech_addon.SHEET_HOT
-    sheet_hot = {**fulltech_addon.SHEET_HOT, **sheet_hot}
-    
-    large_plates = sheet_pieces_custom.get("large_plates", {}) or fulltech_addon.LARGE_PLATES
-    large_plates = {**fulltech_addon.LARGE_PLATES, **large_plates}
-    
-    min_charge = float(sheet_pieces_custom.get("min_charge", 0) or 0) or fulltech_addon.MIN_CHARGE_PIECE
-    
-    # Build cold rolled rows
-    cold_rows = ""
-    for finish, price in sheet_cold.items():
-        try:
-            price_val = float(price) if price else 0
-        except:
-            price_val = 0
-        cold_rows += f'''
-        <tr>
-            <td style="padding:10px;">{finish}</td>
-            <td style="padding:10px;"><input type="number" step="0.01" value="{price_val:.2f}" id="cold_{finish.replace(' ', '_').replace('+', '_')}" class="price-input" style="width:100px;padding:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);"></td>
-        </tr>'''
-    
-    # Build hot rolled rows
-    hot_rows = ""
-    for thick, prices in sheet_hot.items():
-        if isinstance(prices, dict):
-            n4_only = float(prices.get("N4 ONLY", 0) or 0)
-            n4_pvc = float(prices.get("N4 + PVC", 0) or 0)
-        else:
-            n4_only = 0
-            n4_pvc = 0
-        hot_rows += f'''
-        <tr>
-            <td style="padding:10px;">{thick}mm</td>
-            <td style="padding:10px;"><input type="number" step="0.01" value="{n4_only:.2f}" id="hot_{thick}_n4" class="price-input" style="width:100px;padding:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);"></td>
-            <td style="padding:10px;"><input type="number" step="0.01" value="{n4_pvc:.2f}" id="hot_{thick}_pvc" class="price-input" style="width:100px;padding:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);"></td>
-        </tr>'''
-    
-    # Build large plate rows
-    large_rows = ""
-    for plate, price in large_plates.items():
-        try:
-            price_val = float(price) if price else 0
-        except:
-            price_val = 0
-        large_rows += f'''
-        <tr>
-            <td style="padding:10px;">{plate}</td>
-            <td style="padding:10px;"><input type="number" step="0.01" value="{price_val:.2f}" id="large_{plate.replace('x', '_')}" class="price-input" style="width:120px;padding:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);"></td>
-        </tr>'''
-    
-    content = f'''
-    <style>
-    .price-input {{
-        -webkit-appearance: none;
-        -moz-appearance: textfield;
-    }}
-    .price-input:focus {{
-        outline: 2px solid var(--primary);
-        outline-offset: -2px;
-    }}
-    </style>
-    
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2>💰 Price Editor</h2>
-        <a href="/tools" class="btn" style="background:var(--bg-card);border:1px solid var(--border);">← Back to Tools</a>
-    </div>
-    
-    <p style="color:var(--text-muted);margin-bottom:25px;">Edit prices used in <strong>Sheet Pieces Calculator</strong> and Smart Quote. These are R/m² rates.</p>
-    
-    <!-- SHEET PIECES PRICES - THE IMPORTANT ONES -->
-    <div class="card" style="margin-bottom:20px;border:2px solid var(--primary);">
-        <h3 style="color:var(--primary);margin-bottom:5px;">📐 Sheet Pieces Prices</h3>
-        <p style="color:var(--text-muted);font-size:13px;margin-bottom:20px;">These prices are used in the Sheet Pieces calculator</p>
-        
-        <!-- Minimum Charge -->
-        <div style="background:var(--bg);padding:15px;border-radius:8px;margin-bottom:20px;">
-            <label style="display:block;margin-bottom:8px;font-weight:bold;">Minimum Charge per Piece</label>
-            <div style="display:flex;align-items:center;gap:10px;">
-                <span>R</span>
-                <input type="number" step="0.01" value="{min_charge:.2f}" id="min_charge" class="price-input" style="width:120px;padding:10px;font-size:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:4px;color:var(--text);">
-            </div>
-            <p style="color:var(--text-muted);font-size:12px;margin-top:5px;">Applied when calculated price is below this amount</p>
-        </div>
-        
-        <!-- Cold Rolled -->
-        <h4 style="margin:20px 0 10px 0;">Cold Rolled Sheet (≤3mm) - R/m²</h4>
-        <table style="width:100%;border-collapse:collapse;">
-            <thead>
-                <tr style="background:var(--bg);"><th style="padding:10px;text-align:left;">Finish</th><th style="padding:10px;text-align:left;">Price/m²</th></tr>
-            </thead>
-            <tbody>{cold_rows}</tbody>
-        </table>
-        
-        <!-- Hot Rolled -->
-        <h4 style="margin:25px 0 10px 0;">Hot Rolled Plate (>3mm) - R/m²</h4>
-        <table style="width:100%;border-collapse:collapse;">
-            <thead>
-                <tr style="background:var(--bg);"><th style="padding:10px;text-align:left;">Thickness</th><th style="padding:10px;text-align:left;">N4 Only</th><th style="padding:10px;text-align:left;">N4 + PVC</th></tr>
-            </thead>
-            <tbody>{hot_rows}</tbody>
-        </table>
-        
-        <!-- Large Plates -->
-        <h4 style="margin:25px 0 10px 0;">Large Plates (6000x1500) - R/m²</h4>
-        <table style="width:100%;border-collapse:collapse;">
-            <thead>
-                <tr style="background:var(--bg);"><th style="padding:10px;text-align:left;">Size</th><th style="padding:10px;text-align:left;">Price/m²</th></tr>
-            </thead>
-            <tbody>{large_rows}</tbody>
-        </table>
-        
-        <button onclick="saveSheetPrices()" class="btn" style="margin-top:20px;background:var(--green);width:100%;padding:15px;font-size:16px;">💾 Save Sheet Prices</button>
-    </div>
-    
-    <div id="save-status" style="display:none;padding:15px;border-radius:8px;margin-top:15px;"></div>
-    
-    <script>
-    async function saveSheetPrices() {{
-        const btn = event.target;
-        btn.disabled = true;
-        btn.textContent = 'Saving...';
-        
-        // Collect cold rolled prices
-        const sheet_cold = {{}};
-        document.querySelectorAll('[id^="cold_"]').forEach(inp => {{
-            const finish = inp.id.replace('cold_', '').replace(/_/g, ' ').replace('  ', ' + ');
-            sheet_cold[finish] = parseFloat(inp.value) || 0;
-        }});
-        
-        // Collect hot rolled prices
-        const sheet_hot = {{}};
-        ['4.5', '6', '8', '10'].forEach(t => {{
-            const n4 = document.getElementById('hot_' + t + '_n4');
-            const pvc = document.getElementById('hot_' + t + '_pvc');
-            if (n4 && pvc) {{
-                sheet_hot[t] = {{
-                    'N4 ONLY': parseFloat(n4.value) || 0,
-                    'N4 + PVC': parseFloat(pvc.value) || 0
-                }};
-            }}
-        }});
-        
-        // Collect large plate prices
-        const large_plates = {{}};
-        document.querySelectorAll('[id^="large_"]').forEach(inp => {{
-            const plate = inp.id.replace('large_', '').replace(/_/g, 'x');
-            large_plates[plate] = parseFloat(inp.value) || 0;
-        }});
-        
-        // Get min charge
-        const min_charge = parseFloat(document.getElementById('min_charge').value) || 222.52;
-        
-        try {{
-            const res = await fetch('/tools/price-editor', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{
-                    type: 'sheet_pieces',
-                    prices: {{
-                        sheet_cold: sheet_cold,
-                        sheet_hot: sheet_hot,
-                        large_plates: large_plates,
-                        min_charge: min_charge
-                    }}
-                }})
-            }});
-            const data = await res.json();
-            
-            const status = document.getElementById('save-status');
-            if (data.success) {{
-                status.style.display = 'block';
-                status.style.background = 'rgba(16,185,129,0.2)';
-                status.style.color = 'var(--green)';
-                status.innerHTML = '✓ Prices saved! The Sheet Pieces calculator will now use these prices.';
-            }} else {{
-                status.style.display = 'block';
-                status.style.background = 'rgba(239,68,68,0.2)';
-                status.style.color = 'var(--red)';
-                status.innerHTML = '✗ Error: ' + data.error;
-            }}
-        }} catch(e) {{
-            alert('Error saving: ' + e);
-        }}
-        
-        btn.disabled = false;
-        btn.textContent = '💾 Save Sheet Prices';
-    }}
-    </script>
-    '''
-    
-    return render_page("Price Editor", content, user, "tools")
-
-
 @app.route("/tools")
 @login_required
 def tools_page():
@@ -58942,10 +53320,6 @@ def tools_page():
             <div class="card" style="cursor:pointer" onclick="window.location='/tools/sheet-pieces'">
                 <h3>📐 Sheet Pieces</h3>
                 <p style="color:var(--text-muted)">Plates & cut pieces pricing</p>
-            </div>
-            <div class="card" style="cursor:pointer;border:1px solid var(--primary);" onclick="window.location='/tools/price-editor'">
-                <h3>💰 Price Editor</h3>
-                <p style="color:var(--text-muted)">Edit tube, sheet & bolt prices</p>
             </div>
         </div>
         '''
@@ -58981,7 +53355,7 @@ def tools_page():
 @app.route("/invoice/<invoice_id>/credit-note", methods=["GET", "POST"])
 @login_required
 def create_credit_note(invoice_id):
-    """Create credit note from invoice - supports partial credits (specific lines)"""
+    """Create credit note from invoice"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -58991,67 +53365,8 @@ def create_credit_note(invoice_id):
     if not invoice:
         return redirect("/invoices")
     
-    # Handle items - Supabase may return as list or JSON string
-    raw_items = invoice.get("items", "[]")
-    if isinstance(raw_items, list):
-        inv_items = raw_items
-    elif isinstance(raw_items, str):
-        try:
-            inv_items = json.loads(raw_items)
-        except:
-            inv_items = []
-    else:
-        inv_items = []
-    
-    logger.info(f"[CREDIT NOTE] Invoice {invoice.get('invoice_number')}: {len(inv_items)} items loaded, type={type(raw_items).__name__}")
-    
     if request.method == "POST":
         reason = request.form.get("reason", "")
-        credit_type = request.form.get("credit_type", "full")  # full or partial
-        
-        # Build credited items list
-        credited_items = []
-        cn_subtotal = Decimal("0")
-        
-        if credit_type == "partial":
-            # Get selected line items
-            selected_lines = request.form.getlist("credit_line[]")
-            credit_qtys = request.form.getlist("credit_qty[]")
-            
-            for i, item in enumerate(inv_items):
-                idx_str = str(i)
-                if idx_str in selected_lines:
-                    orig_qty = float(item.get("quantity") or item.get("qty") or 1)
-                    credit_qty_str = credit_qtys[i] if i < len(credit_qtys) else str(orig_qty)
-                    credit_qty = min(float(credit_qty_str or orig_qty), orig_qty)
-                    price = float(item.get("price") or item.get("unit_price") or 0)
-                    line_total = round(credit_qty * price, 2)
-                    cn_subtotal += Decimal(str(line_total))
-                    credited_items.append({
-                        "description": item.get("description", ""),
-                        "quantity": credit_qty,
-                        "price": price,
-                        "total": line_total
-                    })
-        else:
-            # Full credit - all items
-            for item in inv_items:
-                qty = float(item.get("quantity") or item.get("qty") or 1)
-                price = float(item.get("price") or item.get("unit_price") or 0)
-                line_total = float(item.get("total") or item.get("line_total") or round(qty * price, 2))
-                cn_subtotal += Decimal(str(line_total))
-                credited_items.append({
-                    "description": item.get("description", ""),
-                    "quantity": qty,
-                    "price": price,
-                    "total": line_total
-                })
-        
-        if not credited_items:
-            return redirect(f"/invoice/{invoice_id}/credit-note?error=No+items+selected")
-        
-        cn_vat = (cn_subtotal * VAT_RATE).quantize(Decimal("0.01"))
-        cn_total = cn_subtotal + cn_vat
         
         # Generate credit note number
         existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
@@ -59068,27 +53383,32 @@ def create_credit_note(invoice_id):
             "customer_id": invoice.get("customer_id"),
             "customer_name": invoice.get("customer_name"),
             "reason": reason,
-            "items": json.dumps(credited_items),
-            "subtotal": float(cn_subtotal),
-            "vat": float(cn_vat),
-            "total": float(cn_total),
-            "credit_type": credit_type,
-            "created_by": user.get("id") if user else None,
+            "items": invoice.get("items"),
+            "subtotal": invoice.get("subtotal"),
+            "vat": invoice.get("vat"),
+            "total": invoice.get("total"),
             "created_at": now()
         }
         
         db.save("credit_notes", credit_note)
         
-        # Journal entries to reverse
+        # Create journal entries to reverse the original invoice
+        # Credit Note reverses: DR Debtors, CR Sales + VAT → now DR Sales + VAT, CR Debtors
+        total = float(invoice.get("total", 0))
+        subtotal = float(invoice.get("subtotal", 0))
+        vat = float(invoice.get("vat", 0))
+        inv_number = invoice.get("invoice_number", "")
+        customer_name = invoice.get("customer_name", "")
+        
         create_journal_entry(
             biz_id,
             today(),
-            f"Credit Note {cn_num} - {'partial ' if credit_type == 'partial' else ''}reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}",
+            f"Credit Note {cn_num} - reversing {inv_number} - {customer_name}",
             cn_num,
             [
-                {"account_code": "4000", "debit": float(cn_subtotal), "credit": 0},
-                {"account_code": "2100", "debit": float(cn_vat), "credit": 0},
-                {"account_code": "1200", "debit": 0, "credit": float(cn_total)},
+                {"account_code": "4000", "debit": subtotal, "credit": 0},   # Reverse Sales
+                {"account_code": "2100", "debit": vat, "credit": 0},        # Reverse VAT Output
+                {"account_code": "1200", "debit": 0, "credit": total},      # Reduce Debtors
             ]
         )
         
@@ -59097,161 +53417,40 @@ def create_credit_note(invoice_id):
         if customer_id:
             customer = db.get_one("customers", customer_id)
             if customer:
-                new_balance = float(customer.get("balance", 0)) - float(cn_total)
+                new_balance = float(customer.get("balance", 0)) - float(invoice.get("total", 0))
                 db.update("customers", customer_id, {"balance": new_balance})
         
-        # Mark invoice as credited only if FULL credit
-        if credit_type == "full":
-            db.update("invoices", invoice_id, {"status": "credited"})
-        else:
-            db.update("invoices", invoice_id, {"status": "partial_credit"})
+        # Mark invoice as credited
+        db.update("invoices", invoice_id, {"status": "credited"})
         
         return redirect(f"/credit-note/{cn_id}")
     
-    # GET - build form with line item selection
-    items_rows_html = ""
-    inv_subtotal = Decimal("0")
-    for i, item in enumerate(inv_items):
-        qty = float(item.get("quantity") or item.get("qty") or 1)
-        price = float(item.get("price") or item.get("unit_price") or 0)
-        line_total = float(item.get("total") or item.get("line_total") or round(qty * price, 2))
-        inv_subtotal += Decimal(str(line_total))
-        items_rows_html += f'''
-        <tr class="cn-line" data-idx="{i}" data-total="{line_total}">
-            <td style="text-align:center;">
-                <input type="checkbox" name="credit_line[]" value="{i}" class="cn-check" onchange="updateCNTotal()" checked>
-            </td>
-            <td>{safe_string(item.get("description", "-"))}</td>
-            <td style="text-align:center;">
-                <input type="number" name="credit_qty[]" value="{qty}" min="0.01" max="{qty}" step="0.01" class="cn-qty" onchange="updateCNTotal()" style="width:70px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
-                <span style="color:var(--text-muted);font-size:11px;">/ {qty}</span>
-            </td>
-            <td style="text-align:right;">{money(price)}</td>
-            <td style="text-align:right;" class="cn-line-total">{money(line_total)}</td>
-        </tr>
-        '''
-    
-    error_msg = request.args.get("error", "")
-    error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
-    
     content = f'''
-    {error_html}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">← Back to Invoice</a>
+        <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">-> Back to Invoice</a>
     </div>
     
     <div class="card">
-        <h2 style="margin-bottom:20px;">Create Credit Note</h2>
+        <h2 style="margin-bottom:20px;"> Create Credit Note</h2>
         
         <div style="background:rgba(239,68,68,0.1);padding:15px;border-radius:8px;margin-bottom:20px;">
             <p style="margin:0;"><strong>Invoice:</strong> {invoice.get("invoice_number")}</p>
             <p style="margin:5px 0 0 0;"><strong>Customer:</strong> {safe_string(invoice.get("customer_name", "-"))}</p>
-            <p style="margin:5px 0 0 0;"><strong>Invoice Total:</strong> {money(invoice.get("total", 0))}</p>
+            <p style="margin:5px 0 0 0;"><strong>Amount to Credit:</strong> <span style="font-size:20px;font-weight:bold;color:var(--red);">{money(invoice.get("total", 0))}</span></p>
         </div>
         
         <form method="POST">
-            <!-- Credit Type Toggle -->
-            <div style="margin-bottom:20px;">
-                <label style="display:block;margin-bottom:8px;font-weight:bold;">Credit Type</label>
-                <div style="display:flex;gap:10px;">
-                    <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--primary);border-radius:8px;cursor:pointer;background:rgba(99,102,241,0.1);" id="fullLabel">
-                        <input type="radio" name="credit_type" value="full" checked onchange="toggleCreditType()"> Full Credit
-                    </label>
-                    <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--border);border-radius:8px;cursor:pointer;" id="partialLabel">
-                        <input type="radio" name="credit_type" value="partial" onchange="toggleCreditType()"> Partial Credit (select lines)
-                    </label>
-                </div>
-            </div>
-            
-            <!-- Line Items Selection (shown for partial) -->
-            <div id="lineSelection" style="display:none;margin-bottom:20px;">
-                <label style="display:block;margin-bottom:8px;font-weight:bold;">Select Items to Credit</label>
-                <table class="table" style="font-size:14px;">
-                    <thead>
-                        <tr style="background:var(--bg);">
-                            <th style="width:40px;text-align:center;">
-                                <input type="checkbox" checked onchange="toggleAllLines(this)">
-                            </th>
-                            <th>Description</th>
-                            <th style="width:130px;text-align:center;">Credit Qty</th>
-                            <th style="width:100px;text-align:right;">Price</th>
-                            <th style="width:100px;text-align:right;">Total</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {items_rows_html}
-                    </tbody>
-                </table>
-            </div>
-            
-            <!-- Credit Total Display -->
-            <div style="text-align:right;margin-bottom:20px;padding:15px;background:rgba(239,68,68,0.05);border-radius:8px;border:1px solid rgba(239,68,68,0.2);">
-                <div style="margin-bottom:5px;">Subtotal: <strong id="cnSubtotal">{money(inv_subtotal)}</strong></div>
-                <div style="margin-bottom:5px;">VAT (15%): <strong id="cnVat">{money(float(inv_subtotal) * 0.15)}</strong></div>
-                <div style="font-size:20px;color:var(--red);">Credit Amount: <strong id="cnTotal">{money(float(inv_subtotal) * 1.15)}</strong></div>
-            </div>
-            
             <div style="margin-bottom:20px;">
                 <label style="display:block;margin-bottom:5px;font-weight:bold;">Reason for Credit Note</label>
-                <textarea name="reason" class="form-input" rows="3" placeholder="e.g., Goods returned, Pricing error, Partial return..." required></textarea>
+                <textarea name="reason" class="form-input" rows="3" placeholder="e.g., Goods returned, Pricing error, Duplicate invoice..." required></textarea>
             </div>
             
             <div style="display:flex;gap:10px;">
-                <button type="submit" class="btn btn-primary">Create Credit Note</button>
+                <button type="submit" class="btn btn-primary"> Create Credit Note</button>
                 <a href="/invoice/{invoice_id}" class="btn btn-secondary">Cancel</a>
             </div>
         </form>
     </div>
-    
-    <script>
-    function toggleCreditType() {{
-        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
-        document.getElementById('lineSelection').style.display = isPartial ? 'block' : 'none';
-        document.getElementById('fullLabel').style.borderColor = isPartial ? 'var(--border)' : 'var(--primary)';
-        document.getElementById('fullLabel').style.background = isPartial ? 'transparent' : 'rgba(99,102,241,0.1)';
-        document.getElementById('partialLabel').style.borderColor = isPartial ? 'var(--primary)' : 'var(--border)';
-        document.getElementById('partialLabel').style.background = isPartial ? 'rgba(99,102,241,0.1)' : 'transparent';
-        updateCNTotal();
-    }}
-    
-    function toggleAllLines(master) {{
-        document.querySelectorAll('.cn-check').forEach(cb => {{ cb.checked = master.checked; }});
-        updateCNTotal();
-    }}
-    
-    function updateCNTotal() {{
-        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
-        let subtotal = 0;
-        
-        if (isPartial) {{
-            document.querySelectorAll('.cn-line').forEach(row => {{
-                const cb = row.querySelector('.cn-check');
-                const qtyInput = row.querySelector('.cn-qty');
-                const price = parseFloat(row.querySelector('td:nth-child(4)').textContent.replace('R', '').replace(/,/g, '')) || 0;
-                const lineTotalCell = row.querySelector('.cn-line-total');
-                
-                if (cb.checked) {{
-                    const qty = parseFloat(qtyInput.value) || 0;
-                    const lineTotal = qty * price;
-                    lineTotalCell.textContent = 'R' + lineTotal.toFixed(2);
-                    subtotal += lineTotal;
-                    qtyInput.disabled = false;
-                }} else {{
-                    lineTotalCell.textContent = '-';
-                    qtyInput.disabled = true;
-                }}
-            }});
-        }} else {{
-            subtotal = {float(inv_subtotal)};
-        }}
-        
-        const vat = subtotal * 0.15;
-        const total = subtotal + vat;
-        document.getElementById('cnSubtotal').textContent = 'R' + subtotal.toFixed(2);
-        document.getElementById('cnVat').textContent = 'R' + vat.toFixed(2);
-        document.getElementById('cnTotal').textContent = 'R' + total.toFixed(2);
-    }}
-    </script>
     '''
     
     return render_page("Create Credit Note", content, user, "invoices")
@@ -60322,12 +54521,12 @@ def scan_page():
                     📷 Take Photo
                 </button>
                 <button type="button" class="btn btn-secondary" style="padding:25px;font-size:16px;" onclick="document.getElementById('fileInput').click()">
-                    📁 Upload File
+                    📁 Choose File
                 </button>
             </div>
             
             <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;" onchange="handleFile(this.files[0])">
-            <input type="file" id="fileInput" accept="image/*,.pdf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff" style="display:none;" onchange="handleFile(this.files[0])">
+            <input type="file" id="fileInput" accept="image/*,.pdf" style="display:none;" onchange="handleFile(this.files[0])">
         </div>
         
         <!-- STEP 3: Preview -->
@@ -60809,54 +55008,41 @@ Return ONLY JSON:
 
 ONLY read times - DO NOT calculate hours. Extract ALL employees."""
         elif scan_type == 'bank_statement':
-            prompt = """You are reading a South African bank statement. Extract ALL transactions visible on this page.
+            prompt = """Read this bank statement carefully. Extract ALL transactions visible on the page.
 
-THIS IS A STANDARD BANK STATEMENT FORMAT with columns:
-- Details (description - may span multiple lines)
-- Service Fee
-- Debit (money OUT - shown as negative numbers like -229.00)  
-- Credit (money IN - shown as positive numbers like 1,272.40)
-- Date (format YYYYMMDD like 20260130)
-- Balance (running balance - usually negative for overdraft)
+For each transaction, extract:
+- date: The transaction date (format as YYYY-MM-DD if possible)
+- description: The full transaction description/narrative exactly as printed
+- amount: The transaction amount (negative for debits/payments, positive for credits/deposits)
+- balance: The running balance after this transaction (if shown)
 
-CRITICAL RULES:
-1. Read EVERY SINGLE transaction row from top to bottom - DO NOT SKIP ANY
-2. Some descriptions span 2-3 lines (e.g. "DEBIT CARD PURCHASE FROM" on line 1, "LENMED RANDFONLENMED" on line 2, "RANDFONTE" on line 3) - combine these into ONE transaction
-3. The Debit column has NEGATIVE numbers (payments out) - extract as positive debit
-4. The Credit column has positive numbers (money in) - extract as positive credit
-5. IGNORE "BALANCE BROUGHT FORWARD" and "CLOSING BALANCE" rows
-6. IGNORE any handwritten marks, lines drawn through text, or annotations
-7. If text is partially obscured by a line, still try to read what you can see
-8. Service fees like "DEBIT CARD PURCHASE FEE", "OVERDRAFT SERVICE FEE", "MONTHLY MANAGEMENT FEE" are debits
-
-Also extract from the header:
-- bank_name: "Standard Bank" (or whatever bank it is)
-- account_number: The account number (mask middle digits)
+Also extract:
+- bank_name: The bank name (FNB, ABSA, Standard Bank, Nedbank, Capitec, etc.)
+- account_number: The account number (mask middle digits for security)
 - account_holder: The account holder name
-- statement_period: The statement date/period
-- opening_balance: First balance shown
-- closing_balance: Last balance shown
+- statement_period: The period covered
+- opening_balance: The opening balance
+- closing_balance: The closing balance
 
-Return ONLY valid JSON:
+Return ONLY JSON:
 {
-    "bank_name": "Standard Bank",
-    "account_number": "02XXXX7398",
-    "account_holder": "FULLTECH STAINLESS T",
-    "statement_period": "2026-02-11",
-    "opening_balance": -442469.72,
-    "closing_balance": -367284.35,
+    "bank_name": "FNB",
+    "account_number": "62XXXX1234",
+    "account_holder": "Company Name",
+    "statement_period": "01 Jan 2026 - 31 Jan 2026",
+    "opening_balance": 0.00,
+    "closing_balance": 0.00,
     "transactions": [
-        {"date": "2026-01-30", "description": "ACCOUNT PAYMENT COPYTYPE TOSHIBAFUL0003", "amount": -229.00, "balance": -442698.72},
-        {"date": "2026-01-30", "description": "CREDIT CARD EFTPOS SETTLEMENT CR EFTPOS 28B 0001283095827", "amount": 1272.40, "balance": -441426.32}
+        {"date": "2026-01-02", "description": "POS PURCHASE - WOOLWORTHS", "amount": -250.00, "balance": 9750.00},
+        {"date": "2026-01-03", "description": "CREDIT TRANSFER - CLIENT ABC", "amount": 5000.00, "balance": 14750.00}
     ]
 }
 
 Rules:
-- Debits/payments/fees = NEGATIVE amount
-- Credits/deposits/settlements = POSITIVE amount  
-- Read EVERY row, even bank charges and small fees
-- Combine multi-line descriptions into one string
-- Date format: YYYY-MM-DD"""
+- Debits/payments/charges must be NEGATIVE amounts
+- Credits/deposits/income must be POSITIVE amounts
+- Read EVERY transaction row - do not skip any
+- Extract amounts EXACTLY as shown"""
         else:
             prompt = """Read this invoice/receipt carefully. Extract ALL line items AND supplier details.
 
@@ -60897,122 +55083,26 @@ NOTE: For line_total, qty, unit_price, subtotal, vat, total - read ONLY what is 
 If ANY number is not visible on the document, set it to 0. Python handles all math."""
         
         client = _anthropic_client
+        message = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=4000,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                    {"type": "text", "text": prompt}
+                ]
+            }]
+        )
         
-        # ══════════════════════════════════════════════════════════════════════
-        # BANK STATEMENT SPLIT: Dense pages get split into top/bottom halves
-        # This dramatically improves accuracy for pages with 30+ transactions
-        # ══════════════════════════════════════════════════════════════════════
-        if scan_type == 'bank_statement':
-            logger.info(f"[SCAN] Bank statement - splitting image for better accuracy")
-            try:
-                from PIL import Image as PILImage
-                img = PILImage.open(io.BytesIO(file_data))
-                w, h = img.size
-                
-                # Split into top half and bottom half with 10% overlap
-                overlap = int(h * 0.1)
-                top_half = img.crop((0, 0, w, h // 2 + overlap))
-                bottom_half = img.crop((0, h // 2 - overlap, w, h))
-                
-                all_transactions = []
-                header_info = {}
-                
-                for part_name, part_img in [("top", top_half), ("bottom", bottom_half)]:
-                    buf = io.BytesIO()
-                    if part_img.mode != 'RGB':
-                        part_img = part_img.convert('RGB')
-                    part_img.save(buf, format='JPEG', quality=90)
-                    part_data = buf.getvalue()
-                    part_b64 = base64.b64encode(part_data).decode('utf-8')
-                    
-                    logger.info(f"[SCAN] Sending bank statement {part_name} half ({len(part_data)/1024:.0f}KB)")
-                    
-                    part_message = client.messages.create(
-                        model="claude-sonnet-4-5-20250929",
-                        max_tokens=6000,
-                        messages=[{
-                            "role": "user",
-                            "content": [
-                                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": part_b64}},
-                                {"type": "text", "text": prompt}
-                            ]
-                        }]
-                    )
-                    
-                    part_text = part_message.content[0].text.strip()
-                    part_data_json = extract_json_from_text(part_text)
-                    
-                    if part_data_json:
-                        # Collect transactions
-                        txns = part_data_json.get("transactions", [])
-                        all_transactions.extend(txns)
-                        logger.info(f"[SCAN] Bank {part_name}: {len(txns)} transactions found")
-                        
-                        # Keep header info from first part
-                        if part_name == "top":
-                            header_info = {k: v for k, v in part_data_json.items() if k != "transactions"}
-                    else:
-                        logger.warning(f"[SCAN] Bank {part_name}: no JSON extracted")
-                
-                # Deduplicate transactions by date+amount+balance combo
-                seen = set()
-                unique_txns = []
-                for tx in all_transactions:
-                    key = f"{tx.get('date','')}|{tx.get('amount',0)}|{tx.get('balance',0)}"
-                    if key not in seen:
-                        seen.add(key)
-                        unique_txns.append(tx)
-                
-                # Sort by balance (since balance is running, this gives chronological order)
-                # Or sort by date
-                unique_txns.sort(key=lambda x: (x.get("date", ""), str(x.get("balance", 0))))
-                
-                extracted = header_info
-                extracted["transactions"] = unique_txns
-                extracted["ai_source"] = "Claude Sonnet (split)"
-                
-                logger.info(f"[SCAN] Bank statement total: {len(unique_txns)} unique transactions (from {len(all_transactions)} raw)")
-                
-            except Exception as split_err:
-                logger.warning(f"[SCAN] Split failed ({split_err}), falling back to single image")
-                # Fallback to single image
-                message = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=6000,
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
-                            {"type": "text", "text": prompt}
-                        ]
-                    }]
-                )
-                response_text = message.content[0].text.strip()
-                extracted = extract_json_from_text(response_text)
-                if not extracted:
-                    return jsonify({"success": False, "error": "Could not read bank statement"})
-                extracted["ai_source"] = "Claude Sonnet"
-        else:
-            message = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=4000,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
-                        {"type": "text", "text": prompt}
-                    ]
-                }]
-            )
+        response_text = message.content[0].text.strip()
+        extracted = extract_json_from_text(response_text)
         
-            response_text = message.content[0].text.strip()
-            extracted = extract_json_from_text(response_text)
-            
-            if not extracted:
-                logger.error(f"[SCAN] No JSON found in first attempt: {response_text[:200]}")
-                return jsonify({"success": False, "error": "Could not read document"})
-            
-            extracted["ai_source"] = "Claude Sonnet"
+        if not extracted:
+            logger.error(f"[SCAN] No JSON found in first attempt: {response_text[:200]}")
+            return jsonify({"success": False, "error": "Could not read document"})
+        
+        extracted["ai_source"] = "Claude Sonnet"
         
         # ══════════════════════════════════════════════════════════════════════
         # STEP 3: CONFIDENCE CHECK + RETRY if critical fields missing
@@ -62845,17 +56935,12 @@ def scan_inbox_page():
             const data = await response.json();
             
             if (data.success) {{
-                // Only remove from inbox if transactions were actually imported
-                const shouldRemoveFromInbox = !(data.imported !== undefined && data.imported === 0);
-                
-                if (shouldRemoveFromInbox) {{
-                    // Remove from inbox
-                    await fetch('/api/scan/remove-from-inbox', {{
-                        method: 'POST',
-                        headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{id: currentItemId}})
-                    }});
-                }}
+                // Remove from inbox
+                await fetch('/api/scan/remove-from-inbox', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{id: currentItemId}})
+                }});
                 
                 // Build detailed success message
                 let msg = ' Saved successfully!';
@@ -62870,17 +56955,9 @@ def scan_inbox_page():
                 if (data.supplier_created) {{
                     msg += '\\nNew supplier created';
                 }}
-                if (data.imported !== undefined) {{
-                    msg = '🏦 ' + (data.message || 'Imported ' + data.imported + ' transactions');
-                }}
                 
                 alert(msg);
-                
-                if (redirect === '/banking' && data.imported > 0) {{
-                    window.location = '/banking';
-                }} else {{
-                    window.location.reload();
-                }}
+                window.location.reload();
             }} else {{
                 alert(' ' + (data.error || 'Failed to save'));
             }}
@@ -63491,7 +57568,6 @@ def api_scan_save_supplier_invoice():
     try:
         data = request.get_json()
         business = Auth.get_current_business()
-        user = Auth.get_current_user()
         biz_id = business.get("id") if business else None
         
         if not biz_id:
@@ -63641,8 +57717,39 @@ def api_scan_save_supplier_invoice():
                     logger.info(f"[SCAN] Expense: {desc} → {expense_category}: R{line_total:.2f}")
                     continue  # Don't book to stock
                 
-                # Generate SMART CODE from description using shared function
-                smart_code = smart_stock_code(desc, set(stock_by_code.keys()))
+                # Generate SMART CODE from description (same logic as Zane)
+                product_code = ""
+                for prod, code in product_types.items():
+                    if prod in desc_upper:
+                        product_code = code
+                        break
+                
+                # Extract sizes/numbers
+                sizes = re.findall(r'M?(\d+(?:\.\d+)?(?:/\d+)?)', desc_upper)
+                
+                # Find modifiers
+                modifiers = []
+                if "S/S" in desc_upper or " SS " in desc_upper or desc_upper.startswith("SS "):
+                    modifiers.append("SS")
+                if " HT" in desc_upper or desc_upper.endswith("HT"):
+                    modifiers.append("HT")
+                if "Z/P" in desc_upper:
+                    modifiers.append("ZP")
+                
+                # Build smart code
+                if product_code:
+                    parts = [product_code]
+                    for s in sizes[:2]:
+                        parts.append(s.replace("/", "-"))
+                    parts.extend(modifiers)
+                    smart_code = "-".join(parts).strip("-").upper()[:15]
+                else:
+                    words = desc_upper.split()
+                    sig_word = next((w for w in words if len(w) > 2 and w.isalpha()), "")
+                    smart_code = sig_word[:3] if sig_word else "ITM"
+                    if sizes:
+                        smart_code += "-" + "-".join(sizes[:2])
+                    smart_code = smart_code[:15]
                 
                 # MATCH 1: Try exact smart code match
                 matched = stock_by_code.get(smart_code)
@@ -63702,7 +57809,7 @@ def api_scan_save_supplier_invoice():
                     # Update existing stock - add qty, update cost
                     stock_items_matched += 1
                     new_qty = float(matched.get("quantity", matched.get("qty", 0))) + qty
-                    table = "stock" if matched in all_stock else "stock_items"
+                    table = "stock" if matched in existing_stock else "stock_items"
                     db.save(table, {
                         "id": matched["id"],
                         "quantity": new_qty,
@@ -63716,8 +57823,12 @@ def api_scan_save_supplier_invoice():
                     # Create new stock item with smart code
                     stock_items_created += 1
                     
-                    # smart_stock_code already ensures uniqueness
+                    # Make code unique if it already exists
                     final_code = smart_code
+                    counter = 1
+                    while final_code in stock_by_code:
+                        final_code = f"{smart_code}-{counter}"
+                        counter += 1
                     
                     # Use RecordFactory.stock_item() for 'stock_items' table
                     new_stock = RecordFactory.stock_item(
@@ -64018,7 +58129,6 @@ def api_scan_save_expense():
         
         total_amount = float(data.get("total", 0))
         payment_method = data.get("payment_method", "cash")
-        user = Auth.get_current_user()
         expense = RecordFactory.expense(
             business_id=biz_id,
             description=desc,
@@ -64032,8 +58142,7 @@ def api_scan_save_expense():
             supplier=data.get("supplier_name", ""),
             supplier_name=data.get("supplier_name", ""),
             payment_method=payment_method,
-            status="paid",
-            created_by=user.get("id") if user else None
+            status="paid"
         )
         exp_id = expense["id"]
         
@@ -64242,33 +58351,19 @@ def api_scan_save_bank_statement():
         
         imported = 0
         skipped = 0
-        errors = []
         
         for txn in transactions:
-            description = str(txn.get("description", "")).strip()
-            date = str(txn.get("date", "")).strip()
+            amount = float(txn.get("amount", 0))
+            description = txn.get("description", "").strip()
+            date = txn.get("date", "")
             
-            if not description:
+            if not description or amount == 0:
                 skipped += 1
                 continue
             
-            # Handle both formats:
-            # Format 1: "amount" field (negative=debit, positive=credit)
-            # Format 2: separate "debit" and "credit" fields
-            amount = float(txn.get("amount", 0) or 0)
-            
-            if amount != 0:
-                debit = round(abs(amount), 2) if amount < 0 else 0.0
-                credit = round(amount, 2) if amount > 0 else 0.0
-            else:
-                # Try separate debit/credit fields
-                debit = round(abs(float(txn.get("debit", 0) or 0)), 2)
-                credit = round(abs(float(txn.get("credit", 0) or 0)), 2)
-            
-            # Skip if truly no amount at all
-            if debit == 0 and credit == 0:
-                skipped += 1
-                continue
+            # Debit (money out) vs Credit (money in)
+            debit = abs(amount) if amount < 0 else 0
+            credit = amount if amount > 0 else 0
             
             # Check for duplicate
             dup_key = f"{str(date)[:10]}|{description}|{debit}|{credit}"
@@ -64281,8 +58376,8 @@ def api_scan_save_bank_statement():
                 "business_id": biz_id,
                 "date": date,
                 "description": description,
-                "debit": debit,
-                "credit": credit,
+                "debit": round(debit, 2),
+                "credit": round(credit, 2),
                 "balance": float(txn.get("balance", 0)) if txn.get("balance") else None,
                 "bank_name": bank_name,
                 "source": "scan",
@@ -64290,31 +58385,14 @@ def api_scan_save_bank_statement():
                 "created_at": now()
             }
             
-            success, result = db.save("bank_transactions", bank_txn)
+            success, _ = db.save("bank_transactions", bank_txn)
             if success:
                 imported += 1
                 existing_keys.add(dup_key)
             else:
                 skipped += 1
-                errors.append(str(result)[:100])
         
-        logger.info(f"[BANK IMPORT] Scanned: {imported} imported, {skipped} skipped from {bank_name}" + (f" Errors: {errors[:3]}" if errors else ""))
-        
-        if imported == 0 and errors:
-            return jsonify({
-                "success": False,
-                "error": f"Failed to import transactions. {len(errors)} database errors: {errors[0] if errors else 'Unknown'}",
-                "imported": 0,
-                "skipped": skipped
-            })
-        
-        if imported == 0 and skipped > 0:
-            return jsonify({
-                "success": True,
-                "message": f"All {skipped} transactions were duplicates (already imported)",
-                "imported": 0,
-                "skipped": skipped
-            })
+        logger.info(f"[BANK IMPORT] Scanned: {imported} imported, {skipped} skipped from {bank_name}")
         
         return jsonify({
             "success": True,
