@@ -19974,6 +19974,7 @@ def dashboard():
                 </div>
             </div>
             <div style="display: flex; flex-wrap: wrap; gap: 15px;">
+                <a href="/smart-import" class="btn btn-primary" style="padding: 15px 25px; background:linear-gradient(135deg,#10b981,#059669);">🚀 Switch from Sage / Xero / Pastel</a>
                 {import_btns}
                 <a href="/pos" class="btn" style="padding: 15px 25px; background:var(--surface);">🛒 Open POS</a>
                 <a href="/scan" class="btn" style="padding: 15px 25px; background:#f59e0b; color:white;">📸 Scan Invoice</a>
@@ -44394,6 +44395,10 @@ def smart_import_page():
                 <!-- IMPORT ALL BUTTON -->
                 <div id="sageImportAll" style="display:none;text-align:center;margin-top:20px;padding:20px;background:rgba(16,185,129,0.08);border-radius:12px;">
                     <p style="margin-bottom:12px;font-size:15px;">✅ <strong id="sageFilesReady">0</strong> files ready to import</p>
+                    <label style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:15px;cursor:pointer;font-size:14px;">
+                        <input type="checkbox" id="sageReplaceMode" style="width:18px;height:18px;cursor:pointer;">
+                        <span>🔄 <strong>Replace existing data</strong> (clear old customers/suppliers/stock and import fresh)</span>
+                    </label>
                     <button onclick="executeSageImportAll()" class="btn btn-primary" style="padding:14px 40px;font-size:16px;background:linear-gradient(135deg,#10b981,#059669);">
                         🚀 Import Everything into ClickAI
                     </button>
@@ -44542,6 +44547,12 @@ def smart_import_page():
         const types = Object.keys(sageFiles);
         if (!types.length) return;
         
+        const replaceMode = document.getElementById('sageReplaceMode') ? document.getElementById('sageReplaceMode').checked : false;
+        
+        if (replaceMode) {
+            if (!confirm('⚠️ REPLACE MODE\\n\\nThis will DELETE all existing customers, suppliers, and stock,\\nthen import fresh from your files.\\n\\nInvoices, sales, and financial data will NOT be affected.\\n\\nAre you sure?')) return;
+        }
+        
         // Use the existing smart-import flow for each file
         const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance', 'supplier_invoices', 'customer_invoices'];
         const sorted = importOrder.filter(t => types.includes(t));
@@ -44559,11 +44570,26 @@ def smart_import_page():
             const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
             
             for (const file of files) {
-                document.getElementById('processingText').textContent = 'Importing ' + dataType + '...';
+                document.getElementById('processingText').textContent = 'Importing ' + dataType.replace('_', ' ') + '...';
                 document.getElementById('processingSub').textContent = file.name;
                 
                 try {
-                    // Step 1: Analyse
+                    // TRIAL BALANCE uses dedicated endpoint (saves to journal_entries as OB)
+                    if (dataType === 'trial_balance') {
+                        const tbForm = new FormData();
+                        tbForm.append('file', file);
+                        const tbResp = await fetch('/api/reports/tb/import-save', {
+                            method: 'POST',
+                            body: tbForm
+                        });
+                        const tbResult = await tbResp.json();
+                        const count = tbResult.accounts_saved || 0;
+                        totalImported += count;
+                        results.push({type: dataType, file: file.name, success: tbResult.success, count: count, error: tbResult.error});
+                        continue;
+                    }
+                    
+                    // ALL OTHER TYPES: Analyse → Batch flow
                     const formData = new FormData();
                     formData.append('file', file);
                     
@@ -44578,8 +44604,16 @@ def smart_import_page():
                         continue;
                     }
                     
+                    // Override data_type if user specified it (AI may detect differently)
+                    if (dataType && analysis.data_type !== dataType) {
+                        analysis.data_type = dataType;
+                    }
+                    
+                    // Pass replace mode flag
+                    analysis.replace = replaceMode;
+                    
                     // Step 2: Import
-                    document.getElementById('processingSub').textContent = 'Saving ' + (analysis.total_rows || '?') + ' ' + dataType + '...';
+                    document.getElementById('processingSub').textContent = 'Saving ' + (analysis.total_rows || '?') + ' ' + dataType.replace('_', ' ') + '...';
                     
                     const importResp = await fetch('/api/smart-import/batch', {
                         method: 'POST',
@@ -45545,9 +45579,32 @@ def api_smart_import_batch():
         data = request.get_json()
         data_type = data.get("data_type")
         records = data.get("records", []) or data.get("all_data", [])
+        replace_mode = data.get("replace", False)  # Replace existing records instead of skipping
         
         if not records:
             return jsonify({"success": False, "error": "No records to import"})
+        
+        # If replace mode, clear existing data first for clean slate
+        cleared = 0
+        if replace_mode and data_type in ("customers", "suppliers", "stock"):
+            if data_type == "stock":
+                # Stock has two tables - clear both
+                for tbl in ["stock_items", "stock"]:
+                    existing = db.get(tbl, {"business_id": biz_id}) or []
+                    for rec in existing:
+                        try:
+                            db.delete(tbl, rec.get("id"), biz_id)
+                            cleared += 1
+                        except: pass
+            else:
+                table = {"customers": "customers", "suppliers": "suppliers"}[data_type]
+                existing = db.get(table, {"business_id": biz_id}) or []
+                for rec in existing:
+                    try:
+                        db.delete(table, rec.get("id"), biz_id)
+                        cleared += 1
+                    except: pass
+            logger.info(f"[SMART-IMPORT] Replace mode: cleared {cleared} existing {data_type}")
         
         results = []
         
@@ -45563,9 +45620,18 @@ def api_smart_import_batch():
                         status = "skipped"
                         error_msg = "No name"
                     else:
-                        existing = db.get("customers", {"business_id": biz_id, "name": name})
+                        existing = None if replace_mode else db.get("customers", {"business_id": biz_id, "name": name})
                         if existing:
-                            status = "skipped"
+                            # Update existing record
+                            exist_id = existing[0].get("id") if isinstance(existing, list) else existing.get("id")
+                            code = str(row.get("account_code", row.get("code", ""))).strip()
+                            exclude_fields = {'name', 'account_code', 'code', 'business_id', 'id'}
+                            updates = {k: v for k, v in row.items() if k not in exclude_fields and v}
+                            updates["name"] = name
+                            if code: updates["code"] = code
+                            success, resp = db.update("customers", exist_id, updates)
+                            status = "updated" if success else "error"
+                            if not success: error_msg = str(resp)[:50]
                         else:
                             # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
                             code = str(row.get("account_code", row.get("code", ""))).strip()
@@ -45589,9 +45655,17 @@ def api_smart_import_batch():
                     if not name:
                         status = "skipped"
                     else:
-                        existing = db.get("suppliers", {"business_id": biz_id, "name": name})
+                        existing = None if replace_mode else db.get("suppliers", {"business_id": biz_id, "name": name})
                         if existing:
-                            status = "skipped"
+                            exist_id = existing[0].get("id") if isinstance(existing, list) else existing.get("id")
+                            code = str(row.get("account_code", row.get("code", ""))).strip()
+                            exclude_fields = {'name', 'account_code', 'code', 'business_id', 'id'}
+                            updates = {k: v for k, v in row.items() if k not in exclude_fields and v}
+                            updates["name"] = name
+                            if code: updates["code"] = code
+                            success, resp = db.update("suppliers", exist_id, updates)
+                            status = "updated" if success else "error"
+                            if not success: error_msg = str(resp)[:50]
                         else:
                             # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
                             code = str(row.get("account_code", row.get("code", ""))).strip()
@@ -45811,8 +45885,11 @@ def api_smart_import_batch():
                 "error": error_msg
             })
         
-        imported_count = sum(1 for r in results if r.get("status") == "imported")
-        return jsonify({"success": True, "results": results, "imported": imported_count, "total_imported": imported_count})
+        imported_count = sum(1 for r in results if r.get("status") in ("imported", "updated"))
+        updated_count = sum(1 for r in results if r.get("status") == "updated")
+        new_count = sum(1 for r in results if r.get("status") == "imported")
+        return jsonify({"success": True, "results": results, "imported": imported_count, "total_imported": imported_count,
+                        "new_records": new_count, "updated_records": updated_count, "cleared": cleared if replace_mode else 0})
         
     except Exception as e:
         import traceback
