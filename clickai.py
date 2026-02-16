@@ -1885,12 +1885,14 @@ def safe_uuid(value):
     return value if is_valid_uuid(value) else None
 
 def now() -> str:
-    """Current timestamp in ISO 8601 format for Supabase"""
-    return datetime.utcnow().isoformat() + 'Z'
+    """Current timestamp in ISO 8601 format for Supabase - SA timezone (UTC+2)"""
+    sa_time = datetime.utcnow() + timedelta(hours=2)
+    return sa_time.isoformat() + 'Z'
 
 def today() -> str:
-    """Current date"""
-    return datetime.now().strftime("%Y-%m-%d")
+    """Current date in SA timezone"""
+    sa_time = datetime.utcnow() + timedelta(hours=2)
+    return sa_time.strftime("%Y-%m-%d")
 
 def money(amount) -> str:
     """Format as currency"""
@@ -2888,7 +2890,7 @@ class RecordFactory:
             "id": kwargs.get("id") or generate_id(),
             "business_id": business_id,
             "stock_id": stock_id,
-            "date": kwargs.get("date") or now(),
+            "date": kwargs.get("date") or today(),
             "type": movement_type,  # 'in' or 'out'
             "quantity": float(quantity),
             "reference": kwargs.get("reference", ""),
@@ -23144,11 +23146,15 @@ def invoice_new():
         customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}" {selected}>{safe_string(c.get("name", ""))}</option>'
     
     # Stock datalist for autocomplete
-    stock_options = '<option value="NEW" data-price="0">+ Add New Stock Item</option>'
+    stock_options = '<option value="NEW" data-price="0" data-stockid="">+ Add New Stock Item</option>'
     for s in stock:
         desc = safe_string(s.get("description", ""))
+        code = safe_string(s.get("code", ""))
         price = float(s.get("price") or s.get("selling_price") or 0)
-        stock_options += f'<option value="{desc}" data-price="{price}">'
+        stock_id = s.get("id", "")
+        qty_avail = float(s.get("qty") or s.get("quantity") or 0)
+        label = f"{code} - {desc}" if code else desc
+        stock_options += f'<option value="{label}" data-price="{price}" data-stockid="{stock_id}" data-desc="{desc}" data-qty="{qty_avail}">'
     
     error_msg = request.args.get("error", "")
     error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
@@ -23190,14 +23196,17 @@ def invoice_new():
                     <tr>
                         <th style="width:45%">Description</th>
                         <th style="width:12%">Qty</th>
-                        <th style="width:18%">Price</th>
+                        <th style="width:18%">Price (excl)</th>
                         <th style="width:15%">Total</th>
                         <th style="width:10%"></th>
                     </tr>
                 </thead>
                 <tbody id="itemRows">
                     <tr>
-                        <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                        <td>
+                            <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
+                            <input type="hidden" name="item_stock_id[]" value="">
+                        </td>
                         <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td class="row-total">R0.00</td>
@@ -23240,11 +23249,13 @@ def invoice_new():
         }}
         const datalist = document.getElementById('stockList');
         const options = datalist.querySelectorAll('option');
+        const row = input.closest('tr');
+        const stockIdInput = row.querySelector('input[name="item_stock_id[]"]');
         for (let opt of options) {{
             if (opt.value === input.value) {{
-                const row = input.closest('tr');
                 const priceInput = row.querySelector('input[name="item_price[]"]');
                 priceInput.value = opt.dataset.price || '';
+                if (stockIdInput) stockIdInput.value = opt.dataset.stockid || '';
                 calcRow(priceInput);
                 break;
             }}
@@ -23255,11 +23266,14 @@ def invoice_new():
         const tbody = document.getElementById('itemRows');
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+            <td>
+                <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
+                <input type="hidden" name="item_stock_id[]" value="">
+            </td>
             <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td class="row-total">R0.00</td>
-            <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
+            <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">\u2715</button></td>
         `;
         tbody.appendChild(row);
     }}
@@ -27390,8 +27404,8 @@ def delivery_notes_list():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2>Delivery Notes</h2>
-        <a href="/delivery-note/new" class="btn btn-primary">+ New Delivery Note</a>
+        <h2>Goods Received Notes (GRN)</h2>
+        <a href="/delivery-note/new" class="btn btn-primary">+ New GRN</a>
     </div>
     
     <div class="card" style="padding:0;overflow:hidden;">
@@ -27424,13 +27438,13 @@ def delivery_notes_list():
     </script>
     '''
     
-    return render_page("Delivery Notes", content, user, "delivery-notes")
+    return render_page("Goods Received Notes", content, user, "delivery-notes")
 
 
 @app.route("/delivery-note/new", methods=["GET", "POST"])
 @login_required
 def delivery_note_new():
-    """Create new delivery note"""
+    """Create new GRN (goods received note)"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -27512,12 +27526,12 @@ def delivery_note_new():
                             new_qty = current_qty - sold_qty
                             # Allow negative stock - use update with biz_id
                             db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                            logger.info(f"[DELIVERY] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
+                            logger.info(f"[GRN] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
                             # Log stock movement
                             try:
                                 db.save("stock_movements", RecordFactory.stock_movement(
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
-                                    quantity=sold_qty, reference=f"Delivery Note {dn.get('dn_number', '')}" if dn else "Delivery Note"
+                                    quantity=sold_qty, reference=f"GRN {dn_num}"
                                 ))
                             except: pass
             
@@ -41960,10 +41974,52 @@ def pos_history():
         </div>
     </div>
     
-    <!-- Z-Read Modal -->
+    <!-- Z-Read Modal with Cash Denomination Count -->
     <div id="zreadModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;justify-content:center;align-items:center;">
-        <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
+        <div style="background:white;padding:0;border-radius:8px;max-width:500px;width:95%;max-height:95vh;overflow-y:auto;">
             <div id="zreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
+            <!-- Cash Count Section -->
+            <div id="cashCountSection" style="padding:0 30px 15px 30px;font-family:monospace;color:#000;">
+                <div style="border-top:2px dashed #000;margin:10px 0 15px 0;"></div>
+                <strong style="font-size:15px;">CASH COUNT</strong>
+                <p style="color:#666;font-size:11px;margin:4px 0 12px 0;">Enter quantity of each denomination:</p>
+                <table style="width:100%;border-collapse:collapse;" id="denomTable">
+                    <tr style="background:#f5f5f5;font-weight:bold;">
+                        <td style="padding:4px 8px;">Denomination</td>
+                        <td style="padding:4px 8px;text-align:center;width:70px;">Qty</td>
+                        <td style="padding:4px 8px;text-align:right;width:100px;">Total</td>
+                    </tr>
+                    <tr><td style="padding:4px 8px;">R200 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="200" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R100 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="100" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">R50 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="50" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R20 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="20" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">R10 Notes</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="10" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R5 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">R2 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">R1 Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">50c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.5" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr style="background:#fafafa;"><td style="padding:4px 8px;">20c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.2" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                    <tr><td style="padding:4px 8px;">10c Coins</td><td style="text-align:center;"><input type="number" class="denom-input" data-val="0.1" value="0" min="0" onchange="calcCashUp()" oninput="calcCashUp()" style="width:55px;text-align:center;padding:4px;border:1px solid #ccc;border-radius:4px;font-family:monospace;"></td><td style="text-align:right;padding:4px 8px;" class="denom-total">R0.00</td></tr>
+                </table>
+                <div style="border-top:2px dashed #000;margin:12px 0;"></div>
+                <table style="width:100%;border-collapse:collapse;">
+                    <tr style="font-size:16px;font-weight:bold;">
+                        <td style="padding:4px 8px;">COUNTED:</td>
+                        <td style="text-align:right;padding:4px 8px;" id="cashCounted">R0.00</td>
+                    </tr>
+                    <tr style="font-size:14px;">
+                        <td style="padding:4px 8px;">Expected Cash:</td>
+                        <td style="text-align:right;padding:4px 8px;" id="cashExpected">{money(cash_total)}</td>
+                    </tr>
+                    <tr id="diffRow" style="font-size:16px;font-weight:bold;">
+                        <td style="padding:4px 8px;">DIFFERENCE:</td>
+                        <td style="text-align:right;padding:4px 8px;" id="cashDiff">R0.00</td>
+                    </tr>
+                </table>
+                <div id="cashStatus" style="text-align:center;padding:10px;margin-top:10px;border-radius:6px;font-weight:bold;font-size:13px;background:#fef3c7;color:#92400e;">
+                    Tel die geld en vul die hoeveelhede in
+                </div>
+            </div>
             <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
                 <button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">✓ Close Day & Print</button>
                 <button onclick="closeModal('zreadModal')" class="btn btn-secondary" style="flex:1;">Cancel</button>
@@ -42056,7 +42112,60 @@ def pos_history():
         document.getElementById('xreadModal').style.display = 'flex';
     }}
     
+    const expectedCash = {float(cash_total)};
+    
+    function calcCashUp() {{
+        let counted = 0;
+        document.querySelectorAll('.denom-input').forEach((input, idx) => {{
+            const val = parseFloat(input.dataset.val);
+            const qty = parseInt(input.value) || 0;
+            const lineTotal = val * qty;
+            counted += lineTotal;
+            const totalCells = document.querySelectorAll('.denom-total');
+            if (totalCells[idx]) totalCells[idx].textContent = 'R' + lineTotal.toFixed(2);
+        }});
+        
+        document.getElementById('cashCounted').textContent = 'R' + counted.toFixed(2);
+        const diff = counted - expectedCash;
+        const diffEl = document.getElementById('cashDiff');
+        const diffRow = document.getElementById('diffRow');
+        const statusEl = document.getElementById('cashStatus');
+        
+        diffEl.textContent = (diff >= 0 ? 'R' : '-R') + Math.abs(diff).toFixed(2);
+        
+        if (Math.abs(diff) < 0.01) {{
+            diffEl.style.color = '#059669';
+            diffRow.style.color = '#059669';
+            statusEl.style.background = '#d1fae5';
+            statusEl.style.color = '#065f46';
+            statusEl.textContent = 'Cash balanseer perfek!';
+        }} else if (diff > 0) {{
+            diffEl.style.color = '#2563eb';
+            diffRow.style.color = '#2563eb';
+            statusEl.style.background = '#dbeafe';
+            statusEl.style.color = '#1e40af';
+            statusEl.textContent = 'R' + diff.toFixed(2) + ' OOR (surplus)';
+        }} else {{
+            diffEl.style.color = '#dc2626';
+            diffRow.style.color = '#dc2626';
+            statusEl.style.background = '#fee2e2';
+            statusEl.style.color = '#991b1b';
+            statusEl.textContent = 'R' + Math.abs(diff).toFixed(2) + ' KORT (tekort)';
+        }}
+    }}
+    
     function printZRead() {{
+        // Reset denomination inputs
+        document.querySelectorAll('.denom-input').forEach(input => {{ input.value = 0; }});
+        document.querySelectorAll('.denom-total').forEach(cell => {{ cell.textContent = 'R0.00'; }});
+        document.getElementById('cashCounted').textContent = 'R0.00';
+        document.getElementById('cashDiff').textContent = 'R0.00';
+        document.getElementById('cashDiff').style.color = '#000';
+        document.getElementById('diffRow').style.color = '#000';
+        document.getElementById('cashStatus').textContent = 'Tel die geld en vul die hoeveelhede in';
+        document.getElementById('cashStatus').style.background = '#fef3c7';
+        document.getElementById('cashStatus').style.color = '#92400e';
+        
         const content = `
 <div style="text-align:center;margin-bottom:20px;">
 <strong style="font-size:18px;">Z-READ</strong><br>
@@ -42083,34 +42192,58 @@ def pos_history():
 </tr>
 <tr><td>Total Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
 </table>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<div style="margin-bottom:15px;">
-<strong>CASH DRAWER</strong>
-</div>
-<table style="width:100%;border-collapse:collapse;">
-<tr><td>Expected Cash:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
-<tr><td>Counted:</td><td style="text-align:right;border-bottom:1px solid #000;width:100px;">________</td></tr>
-<tr><td>Difference:</td><td style="text-align:right;">________</td></tr>
-</table>
-<hr style="border:1px dashed #000;margin:15px 0;">
-<div style="text-align:center;">
-<div style="margin-top:30px;border-top:1px solid #000;width:200px;margin-left:auto;margin-right:auto;padding-top:5px;">
-Cashier Signature
-</div>
-</div>
-<div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">
-*** Z-READ - DAY CLOSED ***
-</div>
         `;
         document.getElementById('zreadContent').innerHTML = content;
         document.getElementById('zreadModal').style.display = 'flex';
     }}
     
+    function buildCashCountPrintHtml() {{
+        let html = '<hr style="border:1px dashed #000;margin:15px 0;"><strong>CASH DENOMINATION COUNT</strong><br><br>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<tr style="font-weight:bold;"><td>Denom</td><td style="text-align:center;">Qty</td><td style="text-align:right;">Total</td></tr>';
+        const denomLabels = ['R200','R100','R50','R20','R10','R5','R2','R1','50c','20c','10c'];
+        document.querySelectorAll('.denom-input').forEach((input, idx) => {{
+            const qty = parseInt(input.value) || 0;
+            if (qty > 0) {{
+                const val = parseFloat(input.dataset.val);
+                const lineTotal = val * qty;
+                html += '<tr><td>' + denomLabels[idx] + '</td><td style="text-align:center;">' + qty + '</td><td style="text-align:right;">R' + lineTotal.toFixed(2) + '</td></tr>';
+            }}
+        }});
+        html += '</table>';
+        
+        const counted = document.getElementById('cashCounted').textContent;
+        const diff = document.getElementById('cashDiff').textContent;
+        const status = document.getElementById('cashStatus').textContent;
+        
+        html += '<hr style="border:1px dashed #000;margin:10px 0;">';
+        html += '<table style="width:100%;border-collapse:collapse;">';
+        html += '<tr style="font-weight:bold;"><td>Counted:</td><td style="text-align:right;">' + counted + '</td></tr>';
+        html += '<tr><td>Expected:</td><td style="text-align:right;">{money(cash_total)}</td></tr>';
+        html += '<tr style="font-weight:bold;font-size:16px;"><td>Difference:</td><td style="text-align:right;">' + diff + '</td></tr>';
+        html += '</table>';
+        html += '<div style="text-align:center;margin:10px 0;font-weight:bold;">' + status + '</div>';
+        
+        return html;
+    }}
+    
     function confirmZRead() {{
-        if (confirm('Close day for {date_desc}?\\n\\nThis will mark the day as closed.')) {{
-            window.print();
+        const counted = document.getElementById('cashCounted').textContent;
+        const diff = document.getElementById('cashDiff').textContent;
+        const status = document.getElementById('cashStatus').textContent;
+        
+        if (confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + counted + '\\nDifference: ' + diff + '\\n\\nThis will mark the day as closed.')) {{
+            // Build print content with cash count
+            const zContent = document.getElementById('zreadContent').innerHTML;
+            const cashHtml = buildCashCountPrintHtml();
+            
+            const printWindow = window.open('', '_blank', 'width=400,height=700');
+            printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + cashHtml + '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div></body></html>');
+            printWindow.document.close();
+            setTimeout(function() {{ printWindow.print(); }}, 300);
             closeModal('zreadModal');
         }}
+    }}
     }}
     
     // Close modal on background click
@@ -42477,7 +42610,7 @@ def api_pos_sale():
                             try:
                                 db.save("stock_movements", RecordFactory.stock_movement(
                                     business_id=biz_id, stock_id=stock_id, movement_type="out",
-                                    quantity=qty_sold, reference=f"POS Sale {inv_number}" if inv_number else "POS Sale"
+                                    quantity=qty_sold, reference=f"POS Sale {sale_num}"
                                 ))
                             except: pass
                     else:
@@ -58763,7 +58896,7 @@ def tools_page():
 @app.route("/invoice/<invoice_id>/credit-note", methods=["GET", "POST"])
 @login_required
 def create_credit_note(invoice_id):
-    """Create credit note from invoice"""
+    """Create credit note from invoice - supports partial credits (specific lines)"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -58773,8 +58906,58 @@ def create_credit_note(invoice_id):
     if not invoice:
         return redirect("/invoices")
     
+    try:
+        inv_items = json.loads(invoice.get("items", "[]"))
+    except:
+        inv_items = []
+    
     if request.method == "POST":
         reason = request.form.get("reason", "")
+        credit_type = request.form.get("credit_type", "full")  # full or partial
+        
+        # Build credited items list
+        credited_items = []
+        cn_subtotal = Decimal("0")
+        
+        if credit_type == "partial":
+            # Get selected line items
+            selected_lines = request.form.getlist("credit_line[]")
+            credit_qtys = request.form.getlist("credit_qty[]")
+            
+            for i, item in enumerate(inv_items):
+                idx_str = str(i)
+                if idx_str in selected_lines:
+                    orig_qty = float(item.get("quantity") or item.get("qty") or 1)
+                    credit_qty_str = credit_qtys[i] if i < len(credit_qtys) else str(orig_qty)
+                    credit_qty = min(float(credit_qty_str or orig_qty), orig_qty)
+                    price = float(item.get("price") or item.get("unit_price") or 0)
+                    line_total = round(credit_qty * price, 2)
+                    cn_subtotal += Decimal(str(line_total))
+                    credited_items.append({
+                        "description": item.get("description", ""),
+                        "quantity": credit_qty,
+                        "price": price,
+                        "total": line_total
+                    })
+        else:
+            # Full credit - all items
+            for item in inv_items:
+                qty = float(item.get("quantity") or item.get("qty") or 1)
+                price = float(item.get("price") or item.get("unit_price") or 0)
+                line_total = float(item.get("total") or item.get("line_total") or round(qty * price, 2))
+                cn_subtotal += Decimal(str(line_total))
+                credited_items.append({
+                    "description": item.get("description", ""),
+                    "quantity": qty,
+                    "price": price,
+                    "total": line_total
+                })
+        
+        if not credited_items:
+            return redirect(f"/invoice/{invoice_id}/credit-note?error=No+items+selected")
+        
+        cn_vat = (cn_subtotal * VAT_RATE).quantize(Decimal("0.01"))
+        cn_total = cn_subtotal + cn_vat
         
         # Generate credit note number
         existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
@@ -58791,33 +58974,27 @@ def create_credit_note(invoice_id):
             "customer_id": invoice.get("customer_id"),
             "customer_name": invoice.get("customer_name"),
             "reason": reason,
-            "items": invoice.get("items"),
-            "subtotal": invoice.get("subtotal"),
-            "vat": invoice.get("vat"),
-            "total": invoice.get("total"),
+            "items": json.dumps(credited_items),
+            "subtotal": float(cn_subtotal),
+            "vat": float(cn_vat),
+            "total": float(cn_total),
+            "credit_type": credit_type,
             "created_by": user.get("id") if user else None,
             "created_at": now()
         }
         
         db.save("credit_notes", credit_note)
         
-        # Create journal entries to reverse the original invoice
-        # Credit Note reverses: DR Debtors, CR Sales + VAT → now DR Sales + VAT, CR Debtors
-        total = float(invoice.get("total", 0))
-        subtotal = float(invoice.get("subtotal", 0))
-        vat = float(invoice.get("vat", 0))
-        inv_number = invoice.get("invoice_number", "")
-        customer_name = invoice.get("customer_name", "")
-        
+        # Journal entries to reverse
         create_journal_entry(
             biz_id,
             today(),
-            f"Credit Note {cn_num} - reversing {inv_number} - {customer_name}",
+            f"Credit Note {cn_num} - {'partial ' if credit_type == 'partial' else ''}reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}",
             cn_num,
             [
-                {"account_code": "4000", "debit": subtotal, "credit": 0},   # Reverse Sales
-                {"account_code": "2100", "debit": vat, "credit": 0},        # Reverse VAT Output
-                {"account_code": "1200", "debit": 0, "credit": total},      # Reduce Debtors
+                {"account_code": "4000", "debit": float(cn_subtotal), "credit": 0},
+                {"account_code": "2100", "debit": float(cn_vat), "credit": 0},
+                {"account_code": "1200", "debit": 0, "credit": float(cn_total)},
             ]
         )
         
@@ -58826,40 +59003,161 @@ def create_credit_note(invoice_id):
         if customer_id:
             customer = db.get_one("customers", customer_id)
             if customer:
-                new_balance = float(customer.get("balance", 0)) - float(invoice.get("total", 0))
+                new_balance = float(customer.get("balance", 0)) - float(cn_total)
                 db.update("customers", customer_id, {"balance": new_balance})
         
-        # Mark invoice as credited
-        db.update("invoices", invoice_id, {"status": "credited"})
+        # Mark invoice as credited only if FULL credit
+        if credit_type == "full":
+            db.update("invoices", invoice_id, {"status": "credited"})
+        else:
+            db.update("invoices", invoice_id, {"status": "partial_credit"})
         
         return redirect(f"/credit-note/{cn_id}")
     
+    # GET - build form with line item selection
+    items_rows_html = ""
+    inv_subtotal = Decimal("0")
+    for i, item in enumerate(inv_items):
+        qty = float(item.get("quantity") or item.get("qty") or 1)
+        price = float(item.get("price") or item.get("unit_price") or 0)
+        line_total = float(item.get("total") or item.get("line_total") or round(qty * price, 2))
+        inv_subtotal += Decimal(str(line_total))
+        items_rows_html += f'''
+        <tr class="cn-line" data-idx="{i}" data-total="{line_total}">
+            <td style="text-align:center;">
+                <input type="checkbox" name="credit_line[]" value="{i}" class="cn-check" onchange="updateCNTotal()" checked>
+            </td>
+            <td>{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;">
+                <input type="number" name="credit_qty[]" value="{qty}" min="0.01" max="{qty}" step="0.01" class="cn-qty" onchange="updateCNTotal()" style="width:70px;padding:4px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
+                <span style="color:var(--text-muted);font-size:11px;">/ {qty}</span>
+            </td>
+            <td style="text-align:right;">{money(price)}</td>
+            <td style="text-align:right;" class="cn-line-total">{money(line_total)}</td>
+        </tr>
+        '''
+    
+    error_msg = request.args.get("error", "")
+    error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
+    
     content = f'''
+    {error_html}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">-> Back to Invoice</a>
+        <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">← Back to Invoice</a>
     </div>
     
     <div class="card">
-        <h2 style="margin-bottom:20px;"> Create Credit Note</h2>
+        <h2 style="margin-bottom:20px;">Create Credit Note</h2>
         
         <div style="background:rgba(239,68,68,0.1);padding:15px;border-radius:8px;margin-bottom:20px;">
             <p style="margin:0;"><strong>Invoice:</strong> {invoice.get("invoice_number")}</p>
             <p style="margin:5px 0 0 0;"><strong>Customer:</strong> {safe_string(invoice.get("customer_name", "-"))}</p>
-            <p style="margin:5px 0 0 0;"><strong>Amount to Credit:</strong> <span style="font-size:20px;font-weight:bold;color:var(--red);">{money(invoice.get("total", 0))}</span></p>
+            <p style="margin:5px 0 0 0;"><strong>Invoice Total:</strong> {money(invoice.get("total", 0))}</p>
         </div>
         
         <form method="POST">
+            <!-- Credit Type Toggle -->
+            <div style="margin-bottom:20px;">
+                <label style="display:block;margin-bottom:8px;font-weight:bold;">Credit Type</label>
+                <div style="display:flex;gap:10px;">
+                    <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--primary);border-radius:8px;cursor:pointer;background:rgba(99,102,241,0.1);" id="fullLabel">
+                        <input type="radio" name="credit_type" value="full" checked onchange="toggleCreditType()"> Full Credit
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;padding:10px 20px;border:2px solid var(--border);border-radius:8px;cursor:pointer;" id="partialLabel">
+                        <input type="radio" name="credit_type" value="partial" onchange="toggleCreditType()"> Partial Credit (select lines)
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Line Items Selection (shown for partial) -->
+            <div id="lineSelection" style="display:none;margin-bottom:20px;">
+                <label style="display:block;margin-bottom:8px;font-weight:bold;">Select Items to Credit</label>
+                <table class="table" style="font-size:14px;">
+                    <thead>
+                        <tr style="background:var(--bg);">
+                            <th style="width:40px;text-align:center;">
+                                <input type="checkbox" checked onchange="toggleAllLines(this)">
+                            </th>
+                            <th>Description</th>
+                            <th style="width:130px;text-align:center;">Credit Qty</th>
+                            <th style="width:100px;text-align:right;">Price</th>
+                            <th style="width:100px;text-align:right;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {items_rows_html}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Credit Total Display -->
+            <div style="text-align:right;margin-bottom:20px;padding:15px;background:rgba(239,68,68,0.05);border-radius:8px;border:1px solid rgba(239,68,68,0.2);">
+                <div style="margin-bottom:5px;">Subtotal: <strong id="cnSubtotal">{money(inv_subtotal)}</strong></div>
+                <div style="margin-bottom:5px;">VAT (15%): <strong id="cnVat">{money(float(inv_subtotal) * 0.15)}</strong></div>
+                <div style="font-size:20px;color:var(--red);">Credit Amount: <strong id="cnTotal">{money(float(inv_subtotal) * 1.15)}</strong></div>
+            </div>
+            
             <div style="margin-bottom:20px;">
                 <label style="display:block;margin-bottom:5px;font-weight:bold;">Reason for Credit Note</label>
-                <textarea name="reason" class="form-input" rows="3" placeholder="e.g., Goods returned, Pricing error, Duplicate invoice..." required></textarea>
+                <textarea name="reason" class="form-input" rows="3" placeholder="e.g., Goods returned, Pricing error, Partial return..." required></textarea>
             </div>
             
             <div style="display:flex;gap:10px;">
-                <button type="submit" class="btn btn-primary"> Create Credit Note</button>
+                <button type="submit" class="btn btn-primary">Create Credit Note</button>
                 <a href="/invoice/{invoice_id}" class="btn btn-secondary">Cancel</a>
             </div>
         </form>
     </div>
+    
+    <script>
+    function toggleCreditType() {{
+        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
+        document.getElementById('lineSelection').style.display = isPartial ? 'block' : 'none';
+        document.getElementById('fullLabel').style.borderColor = isPartial ? 'var(--border)' : 'var(--primary)';
+        document.getElementById('fullLabel').style.background = isPartial ? 'transparent' : 'rgba(99,102,241,0.1)';
+        document.getElementById('partialLabel').style.borderColor = isPartial ? 'var(--primary)' : 'var(--border)';
+        document.getElementById('partialLabel').style.background = isPartial ? 'rgba(99,102,241,0.1)' : 'transparent';
+        updateCNTotal();
+    }}
+    
+    function toggleAllLines(master) {{
+        document.querySelectorAll('.cn-check').forEach(cb => {{ cb.checked = master.checked; }});
+        updateCNTotal();
+    }}
+    
+    function updateCNTotal() {{
+        const isPartial = document.querySelector('input[name="credit_type"][value="partial"]').checked;
+        let subtotal = 0;
+        
+        if (isPartial) {{
+            document.querySelectorAll('.cn-line').forEach(row => {{
+                const cb = row.querySelector('.cn-check');
+                const qtyInput = row.querySelector('.cn-qty');
+                const price = parseFloat(row.querySelector('td:nth-child(4)').textContent.replace('R', '').replace(/,/g, '')) || 0;
+                const lineTotalCell = row.querySelector('.cn-line-total');
+                
+                if (cb.checked) {{
+                    const qty = parseFloat(qtyInput.value) || 0;
+                    const lineTotal = qty * price;
+                    lineTotalCell.textContent = 'R' + lineTotal.toFixed(2);
+                    subtotal += lineTotal;
+                    qtyInput.disabled = false;
+                }} else {{
+                    lineTotalCell.textContent = '-';
+                    qtyInput.disabled = true;
+                }}
+            }});
+        }} else {{
+            subtotal = {float(inv_subtotal)};
+        }}
+        
+        const vat = subtotal * 0.15;
+        const total = subtotal + vat;
+        document.getElementById('cnSubtotal').textContent = 'R' + subtotal.toFixed(2);
+        document.getElementById('cnVat').textContent = 'R' + vat.toFixed(2);
+        document.getElementById('cnTotal').textContent = 'R' + total.toFixed(2);
+    }}
+    </script>
     '''
     
     return render_page("Create Credit Note", content, user, "invoices")
@@ -59930,12 +60228,12 @@ def scan_page():
                     📷 Take Photo
                 </button>
                 <button type="button" class="btn btn-secondary" style="padding:25px;font-size:16px;" onclick="document.getElementById('fileInput').click()">
-                    📁 Choose File
+                    📁 Upload File
                 </button>
             </div>
             
             <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;" onchange="handleFile(this.files[0])">
-            <input type="file" id="fileInput" accept="image/*,.pdf" style="display:none;" onchange="handleFile(this.files[0])">
+            <input type="file" id="fileInput" accept="image/*,.pdf,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff" style="display:none;" onchange="handleFile(this.files[0])">
         </div>
         
         <!-- STEP 3: Preview -->
