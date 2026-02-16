@@ -16624,208 +16624,208 @@ PAGE_HELP = {
     "dashboard": {
         "title": "Dashboard",
         "tips": [
-            ("What am I looking at?", "The dashboard shows your business heartbeat - today's sales, who owes you money, and what needs attention."),
-            ("Red numbers?", "Red means attention needed: overdue invoices, low stock, or negative cash flow."),
-            ("How do I refresh?", "Data loads automatically. Pull down on mobile to refresh."),
+            ("Wat sien ek hier?", "Die dashboard wys jou besigheid se hartklop - vandag se sales, wie skuld jou geld, en wat aandag nodig het."),
+            ("Rooi nommers?", "Rooi beteken aandag nodig: ooragstallige invoices, lae stock, of negatiewe cash flow."),
+            ("Hoe refresh ek?", "Data laai automaties. Trek af (pull down) op jou foon om te refresh."),
         ]
     },
     "pos": {
         "title": "Point of Sale (POS)",
         "tips": [
-            ("How do I make a sale?", "Search item above → click to add → choose payment method → done!"),
-            ("Cash vs Account?", "Cash/Card = paid now (no invoice). Account = on credit (auto-creates an invoice)."),
-            ("How to give a discount?", "Change the price or qty in the cart before you finalize."),
-            ("How do I do a refund?", "Create a Credit Note under Sales → Credit Notes."),
-            ("Cash register / Z-read?", "Click 'Daily Sales' top right to see today's summary."),
+            ("Hoe maak ek 'n sale?", "Soek item bo → klik om by te voeg → kies betaalmetode → klaar!"),
+            ("Cash vs Account?", "Cash/Card = betaal nou (geen invoice). Account = op rekening (maak automaties 'n invoice)."),
+            ("Discount gee?", "Verander die prys of qty in die cart voor jy finalize."),
+            ("Hoe doen ek 'n refund?", "Maak 'n Credit Note onder Sales → Credit Notes."),
+            ("Kassaregister / Z-read?", "Klik 'Daily Sales' bo regs om vandag se opsomming te sien."),
         ]
     },
     "invoices": {
-        "title": "Invoices",
+        "title": "Invoices / Fakture",
         "tips": [
-            ("New invoice?", "Click '+ New Invoice' top right, or make a sale in POS with 'Account' payment."),
-            ("Email invoice?", "Open the invoice → click 'Email'. Customer gets a PDF with your logo."),
-            ("Record payment?", "Open invoice → 'Record Payment' → enter amount and method."),
-            ("Status colours?", "Green = paid. Orange = outstanding. Red = overdue or credited."),
-            ("Search?", "Use the search bar above - search by customer name, invoice number, or amount."),
+            ("Nuwe invoice?", "Klik '+ New Invoice' bo regs, of maak 'n sale in POS met 'Account' betaling."),
+            ("Email invoice?", "Open die invoice → klik 'Email'. Kliënt kry 'n PDF met jou logo."),
+            ("Betaling ontvang?", "Open invoice → 'Record Payment' → vul bedrag en metode in."),
+            ("Status kleure?", "Groen = betaal. Oranje = outstanding. Rooi = ooragstallig of gecredit."),
+            ("Soek invoice?", "Gebruik die soek bar bo - soek op kliënt naam, invoice nommer, of bedrag."),
         ]
     },
     "quotes": {
-        "title": "Quotes",
+        "title": "Quotes / Kwotasies",
         "tips": [
-            ("New quote?", "Click '+ New Quote', add items, save. Email it to the customer."),
-            ("Convert to invoice?", "Open the quote → click 'Convert to Invoice'. All items copy across."),
-            ("Validity?", "Quotes have a validity period (default 30 days). Set it in the quote."),
+            ("Nuwe quote?", "Klik '+ New Quote', voeg items by, save. Email dit aan die kliënt."),
+            ("Quote na invoice?", "Open die quote → klik 'Convert to Invoice'. Al die items kopieer oor."),
+            ("Geldigheid?", "Quotes het 'n geldigheids periode (default 30 dae). Stel dit in die quote."),
         ]
     },
     "customers": {
-        "title": "Customers",
+        "title": "Customers / Kliënte",
         "tips": [
-            ("New customer?", "Click '+ New Customer' or just type the name in POS - auto-added."),
-            ("Send statement?", "Open customer → 'Email Statement'. Or bulk: Click 'Email All Statements'."),
-            ("Who owes me?", "Check the Balance column. Or go to Reports → Debtors Age Analysis."),
-            ("CC emails?", "Edit customer → fill in CC emails (comma separated). All emails go to all addresses."),
-            ("Customer history?", "Click a customer to see all their invoices, quotes, payments and sales."),
+            ("Nuwe kliënt?", "Klik '+ New Customer' of net tik die naam in POS - hy word automaties bygevoeg."),
+            ("Statement stuur?", "Open kliënt → 'Email Statement'. Of bulk: Klik 'Email All Statements'."),
+            ("Wie skuld my?", "Kyk na die Balance kolom. Of gaan na Reports → Debtors Age Analysis."),
+            ("CC emails?", "Edit kliënt → vul CC emails in (komma geskei). Alle emails gaan na al die adresse."),
+            ("Kliënt geskiedenis?", "Klik op 'n kliënt om al sy invoices, quotes, betalings en sales te sien."),
         ]
     },
     "suppliers": {
-        "title": "Suppliers",
+        "title": "Suppliers / Verskaffers",
         "tips": [
-            ("New supplier?", "Click '+ New Supplier' and fill in the details."),
-            ("What do I owe?", "Check the Balance column - it shows what you owe each supplier."),
-            ("Record supplier invoice?", "Scan the invoice or tell Zane: 'Record supplier invoice from [name] for R[amount]'."),
+            ("Nuwe supplier?", "Klik '+ New Supplier' en vul die besonderhede in."),
+            ("Wat skuld ek?", "Kyk na die Balance kolom - dit wys wat jy elke supplier skuld."),
+            ("Supplier invoice boek?", "Scan die invoice of sê vir Zane: 'Record supplier invoice from [naam] for R[bedrag]'."),
         ]
     },
     "stock": {
-        "title": "Stock / Inventory",
+        "title": "Stock / Voorraad",
         "tips": [
-            ("Search item?", "Use the search bar above or filter by category."),
-            ("Item history?", "Click anywhere in the row → see full Timeline: purchases, sales, deliveries, everything."),
-            ("Adjust stock?", "Open item → 'Adjust Stock' → add/remove/set quantity with a reason."),
-            ("Low stock?", "Red qty = below 5 units. Set reorder levels in the item edit."),
-            ("New item?", "Click '+ Add Stock' top right. Or import via /import for bulk items."),
-            ("Change prices?", "Click on item → Edit → change cost/selling price."),
+            ("Soek item?", "Gebruik die soek bar bo of filter op kategorie."),
+            ("Item geskiedenis?", "Klik enige plek in die ry → sien volle Timeline: aankope, verkope, deliveries, alles."),
+            ("Stock adjust?", "Open item → 'Adjust Stock' → add/remove/set quantity met 'n rede."),
+            ("Lae stock?", "Rooi qty = laer as 5 eenhede. Stel reorder levels in die item edit."),
+            ("Nuwe item?", "Klik '+ Add Stock' bo regs. Of import via /import vir baie items."),
+            ("Pryse verander?", "Klik op item → Edit → verander cost/selling price."),
         ]
     },
     "expenses": {
-        "title": "Expenses",
+        "title": "Expenses / Uitgawes",
         "tips": [
-            ("New expense?", "Scan a receipt with '📸 Scan Receipt' or tell Zane: 'Expense R500 for diesel'."),
-            ("Cash vs Card vs EFT?", "Choose the payment method - it determines which bank/cash account is debited."),
-            ("Expense vs Supplier Invoice?", "Expense = once-off payment (petrol, meals). Supplier Invoice = on account (pay later)."),
-            ("Categories?", "Each expense is categorised for your tax return."),
+            ("Nuwe expense?", "Scan 'n slip met '📸 Scan Receipt' of sê vir Zane: 'Expense R500 for diesel'."),
+            ("Cash vs Card vs EFT?", "Kies die betaalmetode - dit bepaal watter bank/cash rekening gedebit word."),
+            ("Expense vs Supplier Invoice?", "Expense = eenmalige betaling (petrol, ete). Supplier Invoice = op rekening (betaal later)."),
+            ("Kategorieë?", "Elke expense word in 'n kategorie gesit vir jou belastingopgawe."),
         ]
     },
     "delivery-notes": {
-        "title": "Delivery Notes",
+        "title": "Delivery Notes / Afleweringsnotas",
         "tips": [
-            ("New delivery note?", "Click '+ New Delivery Note' or create one from an invoice."),
-            ("From invoice?", "Open an invoice → 'Create Delivery Note'. Items copy automatically."),
-            ("Status?", "Draft = not yet sent. Delivered = delivered and confirmed."),
+            ("Nuwe delivery note?", "Klik '+ New Delivery Note' of maak een vanuit 'n invoice."),
+            ("Van invoice af?", "Open 'n invoice → 'Create Delivery Note'. Items kopieer automaties."),
+            ("Status?", "Draft = nog nie gestuur. Delivered = afgelewer en bevestig."),
         ]
     },
     "payroll": {
-        "title": "Payroll",
+        "title": "Payroll / Salarisse",
         "tips": [
-            ("New employee?", "Click '+ Add Employee' → fill in details, salary, tax info."),
-            ("Run payroll?", "Click 'Run Payroll' → select month → review → approve. PAYE, UIF, SDL calculated automatically."),
-            ("View payslip?", "Open employee → click on the payslip. Can also email to employee."),
-            ("SARS submissions?", "Go to SARS → EMP201 (monthly) and EMP501 (annual)."),
+            ("Nuwe werknemer?", "Klik '+ Add Employee' → vul besonderhede, salaris, belasting info in."),
+            ("Payroll run?", "Klik 'Run Payroll' → kies maand → review → approve. PAYE, UIF, SDL bereken automaties."),
+            ("Payslip sien?", "Open werknemer → klik op die payslip. Kan ook email aan werknemer."),
+            ("SARS submissions?", "Gaan na SARS → EMP201 (maandeliks) en EMP501 (jaarliks)."),
         ]
     },
     "jobs": {
-        "title": "Job Cards",
+        "title": "Job Cards / Werkkaarte",
         "tips": [
-            ("New job?", "Click '+ New Job' → customer, description, items/materials."),
-            ("Issue materials?", "Open job → 'Issue Materials' → stock is automatically deducted."),
-            ("Job to invoice?", "Open completed job → 'Invoice Job' → invoice created with all items."),
+            ("Nuwe job?", "Klik '+ New Job' → kliënt, beskrywing, items/materials."),
+            ("Materials issue?", "Open job → 'Issue Materials' → stock word automaties afgetrek."),
+            ("Job na invoice?", "Open voltooide job → 'Invoice Job' → invoice word gemaak met al die items."),
         ]
     },
     "reports": {
-        "title": "Reports",
+        "title": "Reports / Verslae",
         "tips": [
-            ("Profit & Loss?", "Shows your income minus expenses = profit or loss for the period."),
-            ("Debtors Age?", "Who owes you money and for how long (30/60/90+ days)."),
-            ("VAT report?", "Go to SARS → VAT201 for your VAT return."),
-            ("Trial Balance?", "Shows all your account balances - must balance (debits = credits)."),
+            ("Profit & Loss?", "Wys jou inkomste minus uitgawes = wins of verlies vir die periode."),
+            ("Debtors Age?", "Wie skuld jou geld en hoe lank al (30/60/90+ dae)."),
+            ("VAT report?", "Gaan na SARS → VAT201 vir jou VAT aangifte."),
+            ("Trial Balance?", "Wys al jou rekeninge se balanse - moet in balans wees (debits = credits)."),
         ]
     },
     "recurring-invoices": {
-        "title": "Recurring Invoices",
+        "title": "Recurring Invoices / Herhalende Fakture",
         "tips": [
-            ("What is this?", "Invoices that are automatically created every month/week - perfect for rent, services, retainers."),
-            ("How to set up?", "Click '+ New Recurring' → choose customer, items, frequency (monthly/weekly), start date."),
-            ("Stop recurring?", "Open the recurring invoice → 'Deactivate'. No new invoices will be created."),
+            ("Wat is dit?", "Fakture wat automaties elke maand/week gemaak word - perfek vir huur, dienste, retainers."),
+            ("Hoe stel ek op?", "Klik '+ New Recurring' → kies kliënt, items, frequency (maandeliks/weekliks), begin datum."),
+            ("Stop recurring?", "Open die recurring invoice → 'Deactivate'. Geen nuwe invoices word meer gemaak."),
         ]
     },
     "subscriptions": {
-        "title": "Subscriptions / Recurring Expenses",
+        "title": "Subscriptions / Herhalende Uitgawes",
         "tips": [
-            ("What is this?", "Your business's fixed monthly expenses: insurance, software, rent, phone, internet, trackers, etc."),
-            ("How to add?", "Click '+ Add Subscription' → name, amount, category, frequency."),
-            ("Categories?", "Insurance, Software, Telecom, Rent, Maintenance, Licenses, Security, etc. Helps with tax."),
-            ("Auto expense?", "Subscriptions can automatically be booked as an expense each month."),
+            ("Wat is dit?", "Jou besigheid se vaste maandelikse uitgawes: versekering, software, huur, telefoon, internet, ens."),
+            ("Hoe laai ek op?", "Klik '+ Add Subscription' → naam, bedrag, kategorie, frequency."),
+            ("Kategorieë?", "Versekering, Software, Telekommunikasie, Huur, Onderhoud, Lisensies, ens. Help met belasting."),
+            ("Auto expense?", "Subscriptions kan automaties elke maand as expense geboek word."),
         ]
     },
     "rentals": {
-        "title": "Rentals / Property Management",
+        "title": "Rentals / Huur & Eiendomme",
         "tips": [
-            ("What is this?", "Manage tenants, properties, and municipal accounts. Automatic rent invoicing."),
-            ("New tenant?", "Click '+ New Rental' → property, tenant, amount, deposit."),
-            ("Municipal?", "Add municipal costs → they get invoiced through to the tenant."),
+            ("Wat is dit?", "Bestuur huurders, eiendomme, en munisipale rekeninge. Automatiese huur fakture."),
+            ("Nuwe huurder?", "Klik '+ New Rental' → eiendom, huurder, bedrag, deposito."),
+            ("Munisipal?", "Voeg munisipale kostes by → dit word aan die huurder deur gefaktureer."),
         ]
     },
     "banking": {
-        "title": "Banking",
+        "title": "Banking / Bank",
         "tips": [
-            ("Bank import?", "Upload your bank statement CSV → ClickAI matches transactions automatically."),
-            ("Reconcile?", "Match bank transactions with invoices/expenses. Green ✓ = matched."),
-            ("Unmatched?", "Items without a match → create an expense or payment."),
+            ("Bank import?", "Laai jou bankstaat CSV op → ClickAI match transaksies automaties."),
+            ("Reconcile?", "Match bank transaksies met invoices/expenses. Groen ✓ = gematched."),
+            ("Ongematch?", "Items sonder match → maak 'n expense of payment aan."),
         ]
     },
     "scan": {
         "title": "Document Scanner",
         "tips": [
-            ("How to scan?", "Click the camera button → take photo of receipt/invoice → AI reads it automatically."),
-            ("What can I scan?", "Supplier invoices, receipts, expenses, bank statements, payslips."),
-            ("Scan-to-email?", "Set up your printer to email to your scan inbox. Go to Settings → Scan Inbox."),
-            ("Not accurate?", "Always review the AI result. Fix errors before you save."),
+            ("Hoe scan ek?", "Klik die kamera knoppie → neem foto van slip/invoice → Jacqo (AI) lees dit automaties."),
+            ("Wat kan ek scan?", "Supplier invoices, kassabonne, expenses, bankstate, payslips."),
+            ("Scan-to-email?", "Stel jou printer op om na jou scan inbox te email. Gaan na Settings → Scan Inbox."),
+            ("Nie akkuraat?", "Review altyd die AI se resultaat. Verander foute voor jy save."),
         ]
     },
     "settings": {
-        "title": "Settings",
+        "title": "Settings / Instellings",
         "tips": [
-            ("Logo?", "Upload your logo here - it appears on invoices, quotes, and statements."),
-            ("Email setup?", "SMTP settings for Gmail: smtp.gmail.com, port 587, use an App Password (not your normal password)."),
-            ("Users?", "Add team members with different roles: Owner, Admin, Manager, Cashier, Viewer."),
-            ("VAT?", "Set your VAT number and registration status here."),
+            ("Logo?", "Upload jou logo hier - dit verskyn op invoices, quotes, en statements."),
+            ("Email setup?", "SMTP instellings vir Gmail: smtp.gmail.com, port 587, gebruik 'n App Password (nie jou gewone password)."),
+            ("Users?", "Voeg span lede by met verskillende roles: Owner, Admin, Manager, Cashier, Viewer."),
+            ("VAT?", "Stel jou VAT nommer en registrasie status in."),
         ]
     },
     "collections": {
-        "title": "Collections",
+        "title": "Collections / Invorderings",
         "tips": [
-            ("What is this?", "Manage overdue invoices - see who owes, how long, and send reminders."),
-            ("Send reminder?", "Click 'Send Reminder' next to the customer's name."),
-            ("Priority?", "Red = 90+ days, this needs attention ASAP."),
+            ("Wat is dit?", "Bestuur ooragstallige invoices - sien wie skuld, hoe lank, en stuur herinnerings."),
+            ("Stuur herinnering?", "Klik 'Send Reminder' langs die kliënt se naam."),
+            ("Prioriteit?", "Rooi = 90+ dae, dit moet ASAP aandag kry."),
         ]
     },
     "sars": {
         "title": "SARS Submissions",
         "tips": [
-            ("VAT201?", "Monthly/bi-monthly VAT return. Click 'Generate' → review → submit on eFiling."),
-            ("EMP201?", "Monthly employer declaration: PAYE + UIF + SDL. Generate → submit."),
-            ("EMP501?", "Annual employee tax reconciliation. Generate → submit with IRP5s."),
+            ("VAT201?", "Maandelikse/twee-maandelikse VAT aangifte. Klik 'Generate' → review → submit op eFiling."),
+            ("EMP201?", "Maandelikse werkgewer aangifte: PAYE + UIF + SDL. Generate → submit."),
+            ("EMP501?", "Jaarlikse recon van werknemers belasting. Generate → submit met IRP5's."),
         ]
     },
     "pulse": {
-        "title": "Pulse",
+        "title": "Pulse / Hartklop",
         "tips": [
-            ("What is Pulse?", "Your business health at a glance - reminders, tasks, alerts, forecasts."),
-            ("Reminders?", "Tell Zane: 'Remind me Friday to call Botha' - it shows up here."),
-            ("Notes?", "Tell Zane: 'Note: Johan wants 500 bolts next month' - stored here."),
+            ("Wat is Pulse?", "Jou besigheid se gesondheid op een plek - reminders, tasks, alerts, forecasts."),
+            ("Reminders?", "Sê vir Zane: 'Remind me Friday to call Botha' - dit verskyn hier."),
+            ("Notes?", "Sê vir Zane: 'Note: Johan wil 500 bolts volgende maand' - gestoor hier."),
         ]
     },
     "grv": {
-        "title": "Goods Received (GRV)",
+        "title": "GRV / Goedere Ontvang",
         "tips": [
-            ("What is GRV?", "Goods Received Voucher - proof that you received goods from a supplier."),
-            ("From PO?", "Open a Purchase Order → 'Receive Goods' → stock is automatically added."),
-            ("Without PO?", "Click '+ New GRV' → choose supplier, add items."),
+            ("Wat is GRV?", "Goods Received Voucher - bewys dat jy goedere van 'n supplier ontvang het."),
+            ("Van PO af?", "Open 'n Purchase Order → 'Receive Goods' → stock word automaties bygetel."),
+            ("Sonder PO?", "Klik '+ New GRV' → kies supplier, voeg items by."),
         ]
     },
     "purchases": {
         "title": "Purchase Orders",
         "tips": [
-            ("New PO?", "Click '+ New Purchase Order' → choose supplier → add items → save or email."),
-            ("Email to supplier?", "Open PO → 'Email to Supplier'. They get a professional PDF."),
-            ("Receive goods?", "Open PO → 'Receive Goods' to create a GRV and book stock in."),
+            ("Nuwe PO?", "Klik '+ New Purchase Order' → kies supplier → voeg items by → save of email."),
+            ("Email aan supplier?", "Open PO → 'Email to Supplier'. Hulle kry 'n professionele PDF."),
+            ("Ontvang goedere?", "Open PO → 'Receive Goods' om 'n GRV te maak en stock in te boek."),
         ]
     },
     "supplier-invoices": {
-        "title": "Supplier Invoices",
+        "title": "Supplier Invoices / Verskaffer Fakture",
         "tips": [
-            ("What is this?", "Invoices from your suppliers - what YOU owe. Different from expenses: these are on account."),
-            ("New supplier invoice?", "Scan it with 📸 or tell Zane: 'Record supplier invoice from ABC for R5000'."),
-            ("Pay?", "Click 'Pay' next to the invoice → choose payment method."),
+            ("Wat is dit?", "Fakture van jou suppliers - wat JY skuld. Verskil van expenses: hierdie is op rekening."),
+            ("Nuwe supplier invoice?", "Scan dit met 📸 of sê vir Zane: 'Record supplier invoice from ABC for R5000'."),
+            ("Betaal?", "Klik 'Pay' langs die invoice → kies betaalmetode."),
         ]
     },
 }
@@ -32227,7 +32227,6 @@ def report_tb():
                 <option value="af">Afrikaans</option>
             </select>
             <button class="btn btn-primary" onclick="analyzeWithZane()" id="analyzeBtn">Analyze with Zane</button>
-            <button class="btn btn-secondary" onclick="downloadTBcsv()">📥 Download CSV</button>
             <button class="btn btn-secondary" onclick="window.print();">Print</button>
             <a href="/import" class="btn btn-secondary">Import TB</a>
             <label class="btn btn-secondary" style="cursor:pointer;margin:0;">
@@ -32238,7 +32237,7 @@ def report_tb():
         </div>
     </div>
     
-    {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Warning:</strong> There are <strong>{len(opening_entries)}</strong> opening balance entries for <strong>{len(tb_accounts)}</strong> accounts. If you imported multiple times, click "Clear OB" and import again.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
+    {f'<div class="card" style="background:rgba(239,68,68,0.1);border:1px solid #ef4444;padding:15px;margin-bottom:15px;"><strong>⚠️ Waarskuwing:</strong> Daar is <strong>{len(opening_entries)}</strong> opening balance entries vir <strong>{len(tb_accounts)}</strong> accounts. As jy meerdere kere geïmporteer het, klik "Clear OB" en import weer.</div>' if opening_entries and len(opening_entries) > len(tb_accounts) + 5 else ''}
     
     <div class="card" style="padding:30px;">
         <!-- HEADER -->
@@ -32300,38 +32299,6 @@ def report_tb():
     const totalDebit = {total_debit};
     const totalCredit = {total_credit};
     const isBalanced = {"true" if is_balanced else "false"};
-    
-    function downloadTBcsv() {{
-        const tbData = {tb_data_json};
-        if (!tbData || tbData.length === 0) {{ alert('No trial balance data to download'); return; }}
-        
-        // Standard TB CSV format that any accounting software can read
-        let csv = 'Account Code,Account Name,Account Type,Debit,Credit\\n';
-        let totDr = 0, totCr = 0;
-        
-        tbData.forEach(row => {{
-            const code = (row.code || '').replace(/"/g, '""');
-            const name = (row.name || '').replace(/"/g, '""');
-            const type = '';
-            const dr = row.debit > 0 ? row.debit.toFixed(2) : '';
-            const cr = row.credit > 0 ? row.credit.toFixed(2) : '';
-            csv += `"${{code}}","${{name}}","${{type}}",${{dr}},${{cr}}\\n`;
-            totDr += row.debit || 0;
-            totCr += row.credit || 0;
-        }});
-        
-        csv += `,,TOTAL,${{totDr.toFixed(2)}},${{totCr.toFixed(2)}}\\n`;
-        
-        const blob = new Blob([csv], {{ type: 'text/csv;charset=utf-8;' }});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const bizName = document.title.split(' - ')[1] || 'Business';
-        const date = new Date().toISOString().split('T')[0];
-        a.download = `Trial_Balance_${{bizName.replace(/[^a-zA-Z0-9]/g, '_')}}_${{date}}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-    }}
     
     async function analyzeWithZane() {{
         const btn = document.getElementById('analyzeBtn');
@@ -32415,10 +32382,7 @@ def report_tb():
                     total_debit: uploadData.total_debit,
                     total_credit: uploadData.total_credit,
                     is_balanced: uploadData.is_balanced,
-                    lang: lang,
-                    source_file: file.name,
-                    company_name: uploadData.company_name || '',
-                    tb_control_profit: uploadData.tb_control_profit || null
+                    lang: lang
                 }})
             }});
             
@@ -32508,10 +32472,6 @@ def report_tb():
             alert('❌ Error: ' + err.message);
         }}
     }}
-    // Auto-analyze if redirected from import page
-    if (window.location.search.includes('auto_analyze=1')) {{
-        setTimeout(() => analyzeWithZane(), 500);
-    }}
     </script>
     '''
     
@@ -32568,19 +32528,7 @@ def api_tb_analyze():
     try:
         data = request.get_json()
         accounts = data.get("accounts", [])
-        lang = data.get("lang", "en")
-        
-        # If a source file was uploaded (external TB), note it in the report
-        source_file = data.get("source_file", "")
-        company_name = data.get("company_name", "")
-        
-        # If uploaded file, show source info in report title
-        if source_file and not company_name:
-            report_company = f"{biz_name} (from: {source_file})"
-        elif company_name:
-            report_company = company_name
-        else:
-            report_company = biz_name
+        lang = data.get("lang", "en")  # Default to English
         
         logger.info(f"[TB ANALYZE] Language selected: {lang}")
         
@@ -32868,277 +32816,78 @@ def api_tb_analyze():
         
         logger.info(f"[TB ANALYZE] Python calculated: Dr={total_debit:.2f} Cr={total_credit:.2f} Diff={difference:.2f}")
         
-        # Step 2: Categorize accounts - USE CATEGORY COLUMN IF AVAILABLE
-        # This is critical: different accounting packages use different code schemes
-        # Sage Pastel: 1000=Sales, 2000=COS, 3000-4000=Expenses, 5000=Equity, 6000+=Assets
-        # Standard:    1000=Assets, 2000=Assets, 3000=Liabilities, 4000=Equity, 5000=Income, 6000+=Expenses
-        # So we CANNOT rely on codes - we must use the Category column
-        
-        has_categories = any(a.get("category") for a in accounts)
-        logger.info(f"[TB ANALYZE] Category column available: {has_categories}")
-        
-        if has_categories:
-            # ═══════════════════════════════════════════════════════════════
-            # CATEGORY-BASED CLASSIFICATION (reliable, works for ALL systems)
-            # ═══════════════════════════════════════════════════════════════
-            logger.info("[TB ANALYZE] Using CATEGORY column for classification")
+        # Step 2: Categorize accounts by code and name patterns
+        def match_account(acc, codes=None, keywords=None, column="debit"):
+            """Match account by code prefix or name keywords"""
+            code = str(acc.get("code", "")).strip()
+            name = str(acc.get("name", "")).lower()
+            val = float(acc.get(column, 0) or 0)
             
-            def cat_sum(acc_list, categories, column="debit"):
-                """Sum accounts matching category list"""
-                total = 0
-                for a in acc_list:
-                    cat = str(a.get("category", "")).lower().strip()
-                    for c in categories:
-                        if c in cat:
-                            total += float(a.get(column, 0) or 0)
-                            break
-                return total
-            
-            def cat_net(acc_list, categories):
-                """Net value (debit - credit) for matching categories"""
-                total = 0
-                for a in acc_list:
-                    cat = str(a.get("category", "")).lower().strip()
-                    for c in categories:
-                        if c in cat:
-                            dr = float(a.get("debit", 0) or 0)
-                            cr = float(a.get("credit", 0) or 0)
-                            total += dr - cr
-                            break
-                return total
-            
-            def name_match(acc, keywords, column="debit"):
-                """Match account by name keywords"""
-                name = str(acc.get("name", "")).lower()
-                val = float(acc.get(column, 0) or 0)
+            if codes:
+                for c in codes:
+                    if code.startswith(c):
+                        return val
+            if keywords:
                 for kw in keywords:
                     if kw in name:
                         return val
-                return 0
-            
-            # INCOME (Credit balances - sales, other income)
-            sales = cat_sum(accounts, ["sales", "revenue", "turnover", "omset"], "credit")
-            sales_returns = cat_sum(accounts, ["sales return", "return"], "debit")
-            cos = cat_sum(accounts, ["cost of sale", "cost of goods", "koste van verkope", "cogs"], "debit")
-            other_income = cat_sum(accounts, ["other income", "ander inkomste", "interest received"], "credit")
-            
-            # EXPENSES (Debit balances)
-            # Get all expense accounts individually for the breakdown
-            expense_accounts = [a for a in accounts if any(kw in str(a.get("category", "")).lower() for kw in ["expense", "uitgawe", "operating"])]
-            
-            salaries = sum(name_match(a, ["salary", "salaries", "wage", "payroll", "salar"]) for a in expense_accounts)
-            rent = sum(name_match(a, ["rent"]) for a in expense_accounts)
-            electricity = sum(name_match(a, ["electric", "water", "eskom", "power", "elektris"]) for a in expense_accounts)
-            water = 0  # Often combined with electricity
-            telephone = sum(name_match(a, ["telephone", "internet", "cell", "mobile", "telkom", "telef"]) for a in expense_accounts)
-            insurance = sum(name_match(a, ["insurance", "verseker"]) for a in expense_accounts)
-            bank_charges = sum(name_match(a, ["bank charge", "bank fee", "bankkoste"]) for a in expense_accounts)
-            fuel = sum(name_match(a, ["fuel", "petrol", "diesel", "transport", "brandstof"]) for a in expense_accounts)
-            repairs = sum(name_match(a, ["repair", "maintenance", "onderhoud"]) for a in expense_accounts)
-            office = sum(name_match(a, ["office", "stationery", "supplies", "kantoor"]) for a in expense_accounts)
-            advertising = sum(name_match(a, ["advertising", "marketing", "promotion", "advertens"]) for a in expense_accounts)
-            professional = sum(name_match(a, ["professional", "accounting", "legal", "audit", "rekenmeest"]) for a in expense_accounts)
-            depreciation = sum(name_match(a, ["depreciation", "waardevermindering"]) for a in expense_accounts)
-            bad_debts = sum(name_match(a, ["bad debt", "doubtful", "slegte skuld"]) for a in expense_accounts)
-            interest_paid = sum(name_match(a, ["interest paid", "interest expense", "finance charge", "rente betaal"]) for a in expense_accounts)
-            
-            # Total expenses from category (more accurate than summing named items)
-            total_expenses_from_cat = cat_net(accounts, ["expense", "uitgawe", "operating"])
-            # Handle credit balance expenses (recoveries) - net them out
-            if total_expenses_from_cat < 0:
-                total_expenses_from_cat = 0
-            
-            # Sundry = total expenses minus named ones
-            named_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid
-            sundry_exp = max(0, total_expenses_from_cat - named_expenses)
-            
-            # BALANCE SHEET from categories
-            # Current Assets
-            bank = 0
-            cash = 0
-            debtors = 0
-            stock = 0
-            prepaid = 0
-            vat_input = 0
-            other_current = 0
-            
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                name = str(a.get("name", "")).lower()
-                dr = float(a.get("debit", 0) or 0)
-                cr = float(a.get("credit", 0) or 0)
-                net = dr - cr
-                
-                if "current asset" in cat and "non-current" not in cat or "bedryfsbate" in cat and "nie-bedryfs" not in cat:
-                    if any(kw in name for kw in ["bank", "fnb", "standard", "absa", "nedbank", "capitec", "investec"]):
-                        bank += net
-                    elif any(kw in name for kw in ["cash", "petty", "kontant"]):
-                        cash += net
-                    elif any(kw in name for kw in ["debtor", "receivable", "debiteur"]):
-                        debtors += net
-                    elif any(kw in name for kw in ["stock", "inventory", "voorraad", "goods", "finished"]):
-                        stock += net
-                    elif any(kw in name for kw in ["prepaid", "prepayment", "vooruitbetaal"]):
-                        prepaid += net
-                    elif any(kw in name for kw in ["vat input", "input vat", "btw inset"]):
-                        vat_input += net
-                    else:
-                        other_current += net
-                
-                elif "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
-                    pass  # Handled below
-                
-                elif "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
-                    pass  # Handled below
-                
-            # Fixed Assets
-            fixed_assets_cost = 0
-            accum_depr = 0
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                name = str(a.get("name", "")).lower()
-                dr = float(a.get("debit", 0) or 0)
-                cr = float(a.get("credit", 0) or 0)
-                
-                if "fixed asset" in cat or "non-current asset" in cat or "vaste bate" in cat or "nie-bedryfs" in cat:
-                    if any(kw in name for kw in ["accumulated", "acc dep", "accum", "opgehoopte"]):
-                        accum_depr += cr
-                    else:
-                        fixed_assets_cost += dr
-            
-            # Liabilities
-            creditors = 0
-            vat_output = 0
-            paye = 0
-            uif = 0
-            other_liabilities = 0
-            loans = 0
-            
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                name = str(a.get("name", "")).lower()
-                dr = float(a.get("debit", 0) or 0)
-                cr = float(a.get("credit", 0) or 0)
-                net_cr = cr - dr  # Liabilities are credit balances
-                
-                if "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
-                    if any(kw in name for kw in ["creditor", "payable", "trade payable", "krediteur"]):
-                        creditors += net_cr
-                    elif any(kw in name for kw in ["vat output", "output vat", "vat payable", "btw uitset", "vat control", "vat / tax"]):
-                        vat_output += net_cr
-                    elif "paye" in name or "pay as you earn" in name:
-                        paye += net_cr
-                    elif "uif" in name or "unemployment" in name:
-                        uif += net_cr
-                    else:
-                        other_liabilities += net_cr
-                
-                elif "long term" in cat or "non-current liabilit" in cat or "langtermyn" in cat or "nie-bedryfs" in cat:
-                    loans += net_cr
-            
-            # Equity
-            capital = 0
-            retained = 0
-            drawings = 0
-            reserves = 0
-            
-            for a in accounts:
-                cat = str(a.get("category", "")).lower()
-                name = str(a.get("name", "")).lower()
-                dr = float(a.get("debit", 0) or 0)
-                cr = float(a.get("credit", 0) or 0)
-                
-                if "equity" in cat or "ekwiteit" in cat or "owner" in cat or "eienaar" in cat:
-                    if any(kw in name for kw in ["retained", "opgehoopte", "accumulated profit"]):
-                        retained += cr - dr
-                    elif any(kw in name for kw in ["drawing", "onttrekking"]):
-                        drawings += dr
-                    elif any(kw in name for kw in ["reserve"]):
-                        reserves += cr - dr
-                    else:
-                        capital += cr - dr
-            
-            # Use category-based total for expenses (more accurate)
-            total_expenses = total_expenses_from_cat if total_expenses_from_cat > 0 else named_expenses
-            
-        else:
-            # ═══════════════════════════════════════════════════════════════
-            # CODE-BASED CLASSIFICATION (fallback for files without Category)
-            # Assumes STANDARD chart: 1=Assets, 2=Assets, 3=Liab, 4=Equity, 5=Income, 6+=Expenses
-            # ═══════════════════════════════════════════════════════════════
-            logger.info("[TB ANALYZE] No category column - using CODE-BASED classification (standard chart)")
-            
-            def match_account(acc, codes=None, keywords=None, column="debit"):
-                """Match account by code prefix or name keywords"""
-                code = str(acc.get("code", "")).strip()
-                name = str(acc.get("name", "")).lower()
-                val = float(acc.get(column, 0) or 0)
-                
-                if codes:
-                    for c in codes:
-                        if code.startswith(c):
-                            return val
-                if keywords:
-                    for kw in keywords:
-                        if kw in name:
-                            return val
-                return 0
-            
-            # ASSETS (Debit balances)
-            bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
-            cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
-            debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
-            stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
-            prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
-            vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
-            other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
-            
-            fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
-            accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
-            
-            # LIABILITIES (Credit balances)
-            creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
-            vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
-            paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
-            uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
-            loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
-            other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
-            
-            # EQUITY (Credit balances)
-            capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
-            retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
-            drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)
-            reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
-            
-            # REVENUE (Credit balances)
-            sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
-            for a in accounts:
-                if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
-                    sales -= float(a.get("credit", 0) or 0)
-            
-            sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)
-            cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
-            other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
-            
-            # EXPENSES (Debit balances)
-            salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
-            rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
-            electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
-            water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
-            telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
-            insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
-            bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
-            fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
-            repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
-            office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
-            advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
-            professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
-            depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
-            bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
-            interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
-            sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
-            
-            total_expenses = salaries + rent + electricity + water + telephone + insurance + bank_charges + fuel + repairs + office + advertising + professional + depreciation + bad_debts + interest_paid + sundry_exp
+            return 0
+        
+        # ASSETS (Debit balances)
+        bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
+        cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
+        debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
+        stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
+        prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
+        vat_input = sum(match_account(a, ["1500", "16"], ["vat input", "input vat", "input tax"]) for a in accounts)
+        other_current = sum(match_account(a, ["17", "18", "19"], []) for a in accounts)
+        
+        fixed_assets_cost = sum(match_account(a, ["2"], ["fixed asset", "equipment", "vehicle", "furniture", "machinery", "property", "building"]) for a in accounts)
+        accum_depr = sum(match_account(a, ["20", "21", "22", "23"], ["accumulated", "acc dep", "accum"], "credit") for a in accounts)
+        
+        # LIABILITIES (Credit balances)
+        creditors = sum(match_account(a, ["3000", "30"], ["creditor", "payable", "trade payable", "supplier"], "credit") for a in accounts)
+        vat_output = sum(match_account(a, ["3100", "31"], ["vat output", "output vat", "output tax"], "credit") for a in accounts)
+        paye = sum(match_account(a, ["3200", "32"], ["paye", "pay as you earn"], "credit") for a in accounts)
+        uif = sum(match_account(a, ["3300", "33"], ["uif", "unemployment"], "credit") for a in accounts)
+        loans = sum(match_account(a, ["3400", "34", "35", "36", "37", "38"], ["loan", "mortgage", "credit card", "overdraft"], "credit") for a in accounts)
+        other_liabilities = sum(match_account(a, ["39"], [], "credit") for a in accounts)
+        
+        # EQUITY (Credit balances)
+        capital = sum(match_account(a, ["4000", "40"], ["capital", "share capital", "owner"], "credit") for a in accounts)
+        retained = sum(match_account(a, ["4100", "41"], ["retained", "accumulated profit"], "credit") for a in accounts)
+        drawings = sum(match_account(a, ["4200", "42"], ["drawing", "distribution"]) for a in accounts)  # Debit
+        reserves = sum(match_account(a, ["43", "44", "45"], ["reserve"], "credit") for a in accounts)
+        
+        # REVENUE (Credit balances)
+        sales = sum(match_account(a, ["5000", "50"], ["sales", "revenue", "turnover", "income"], "credit") for a in accounts)
+        # Exclude returns from sales
+        for a in accounts:
+            if "return" in str(a.get("name", "")).lower() and str(a.get("code", "")).startswith("5"):
+                sales -= float(a.get("credit", 0) or 0)
+        
+        sales_returns = sum(match_account(a, ["52"], ["return", "refund"]) for a in accounts)  # Debit
+        cos = sum(match_account(a, ["5100", "51"], ["cost of sales", "cost of goods", "cogs", "purchases"]) for a in accounts)
+        other_income = sum(match_account(a, ["8"], ["interest received", "discount received", "other income", "sundry income"], "credit") for a in accounts)
+        
+        # EXPENSES (Debit balances)
+        salaries = sum(match_account(a, ["6000", "60"], ["salary", "salaries", "wage", "payroll"]) for a in accounts)
+        rent = sum(match_account(a, ["6100", "61"], ["rent"]) for a in accounts)
+        electricity = sum(match_account(a, ["6200", "62"], ["electric", "eskom", "power"]) for a in accounts)
+        water = sum(match_account(a, ["6300", "63"], ["water", "rates", "municipal"]) for a in accounts)
+        telephone = sum(match_account(a, ["6400", "64"], ["telephone", "internet", "cell", "mobile", "telkom", "vodacom", "mtn"]) for a in accounts)
+        insurance = sum(match_account(a, ["6500", "65"], ["insurance"]) for a in accounts)
+        bank_charges = sum(match_account(a, ["6600", "66"], ["bank charge", "bank fee"]) for a in accounts)
+        fuel = sum(match_account(a, ["6700", "67"], ["fuel", "petrol", "diesel", "transport"]) for a in accounts)
+        repairs = sum(match_account(a, ["6800", "68"], ["repair", "maintenance"]) for a in accounts)
+        office = sum(match_account(a, ["6900", "69"], ["office", "stationery", "supplies"]) for a in accounts)
+        advertising = sum(match_account(a, ["7000", "70"], ["advertising", "marketing", "promotion"]) for a in accounts)
+        professional = sum(match_account(a, ["7100", "71"], ["professional", "accounting", "legal", "audit"]) for a in accounts)
+        depreciation = sum(match_account(a, ["7200", "72"], ["depreciation"]) for a in accounts)
+        bad_debts = sum(match_account(a, ["7300", "73"], ["bad debt", "doubtful"]) for a in accounts)
+        interest_paid = sum(match_account(a, ["7400", "74"], ["interest paid", "interest expense", "finance charge"]) for a in accounts)
+        sundry_exp = sum(match_account(a, ["7500", "75", "76", "77", "78", "79"], ["sundry", "other expense", "miscellaneous"]) for a in accounts)
+        
         # Step 3: Calculate totals
         current_assets = bank + cash + debtors + stock + prepaid + vat_input + other_current
         fixed_assets_net = fixed_assets_cost - accum_depr
@@ -33181,59 +32930,6 @@ def api_tb_analyze():
         logger.info(f"[TB ANALYZE] P&L: Sales={net_sales:.2f}, COS={cos:.2f}, GP={gross_profit:.2f}, Exp={total_expenses:.2f}, NP={net_profit:.2f}")
         
         # ═══════════════════════════════════════════════════════════════════════
-        # VALIDATION: Compare our calculation to TB's own control figure
-        # ═══════════════════════════════════════════════════════════════════════
-        tb_control_profit = data.get("tb_control_profit")
-        validation_ok = True
-        validation_warning = ""
-        
-        if tb_control_profit is not None:
-            try:
-                control = float(tb_control_profit)
-                diff = abs(net_profit - control)
-                pct_diff = (diff / abs(control) * 100) if control != 0 else 0
-                
-                logger.info(f"[TB VALIDATE] Our net profit: R{net_profit:,.2f} | TB control: R{control:,.2f} | Diff: R{diff:,.2f} ({pct_diff:.1f}%)")
-                
-                if diff < 1.0:
-                    # Perfect match
-                    logger.info("[TB VALIDATE] ✅ PERFECT MATCH - our calculation matches TB control figure")
-                    validation_warning = ""
-                elif pct_diff < 5:
-                    # Close enough - rounding differences
-                    logger.info(f"[TB VALIDATE] ✅ Close match - {pct_diff:.1f}% difference (likely rounding)")
-                    validation_warning = ""
-                else:
-                    # Significant difference - WARN
-                    validation_ok = False
-                    logger.warning(f"[TB VALIDATE] ⚠️ MISMATCH - {pct_diff:.1f}% difference!")
-                    if lang == "af":
-                        validation_warning = f'''
-                        <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
-                            <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WAARSKUWING: Syfers Klop Nie</h3>
-                            <p style="margin:5px 0;">Ons berekening van netto wins (<strong>R {net_profit:,.2f}</strong>) verskil van die proefbalans se eie syfer (<strong>R {control:,.2f}</strong>) met <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
-                            <p style="margin:5px 0;color:var(--text-muted);">Dit kan beteken dat sommige rekeninge verkeerd geklassifiseer is. Kontroleer die data voor u op hierdie report staatmaak.</p>
-                        </div>'''
-                    else:
-                        validation_warning = f'''
-                        <div style="background:rgba(239,68,68,0.15);border:2px solid #ef4444;border-radius:10px;padding:20px;margin:15px 0;">
-                            <h3 style="color:#ef4444;margin:0 0 10px 0;">⚠️ WARNING: Numbers Don't Match</h3>
-                            <p style="margin:5px 0;">Our calculated net profit (<strong>R {net_profit:,.2f}</strong>) differs from the trial balance's own figure (<strong>R {control:,.2f}</strong>) by <strong>R {diff:,.2f}</strong> ({pct_diff:.1f}%).</p>
-                            <p style="margin:5px 0;color:var(--text-muted);">This may indicate some accounts were incorrectly classified. Please verify the data before relying on this report.</p>
-                        </div>'''
-            except (ValueError, TypeError) as e:
-                logger.warning(f"[TB VALIDATE] Could not parse control figure: {e}")
-        
-        # Build confidence indicator
-        if has_categories:
-            if validation_ok:
-                confidence_html = '<div style="background:rgba(16,185,129,0.15);border:1px solid #10b981;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">✅ <strong>High Confidence</strong> - Category column detected, control figure matches. Data classification verified.</div>'
-            else:
-                confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Review Required</strong> - Category column detected but control figure mismatch. Some accounts may be misclassified.</div>'
-        else:
-            confidence_html = '<div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:8px;padding:10px 15px;margin:10px 0;font-size:13px;">⚠️ <strong>Medium Confidence</strong> - No category column found. Accounts classified by code patterns. Please verify the numbers.</div>'
-        
-        # ═══════════════════════════════════════════════════════════════════════
         # BUILD REPORT - PYTHON GENERATES ALL NUMBERS IN HTML
         # ═══════════════════════════════════════════════════════════════════════
         
@@ -33265,10 +32961,7 @@ def api_tb_analyze():
         # Using language labels (L) for bilingual support
         report_html = f"""
 <h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:10px;">📊 {L["report_title"]}</h2>
-<p><strong>{L["company"]}:</strong> {safe_string(report_company)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
-
-{validation_warning}
-{confidence_html}
+<p><strong>{L["company"]}:</strong> {safe_string(biz_name)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
 
 <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
 
@@ -33475,7 +33168,7 @@ def api_tb_analyze():
         accounts_text += f"{L['acc_code']:<10} {L['acc_name']:<40} {L['debit']:>15} {L['credit']:>15}\n"
         accounts_text += "-" * 80 + "\n"
         
-        # Group accounts by CATEGORY (not by code - codes differ per accounting system!)
+        # Group accounts by category for better analysis
         asset_accounts = []
         liability_accounts = []
         equity_accounts = []
@@ -33486,42 +33179,24 @@ def api_tb_analyze():
         for acc in accounts:
             code = str(acc.get("code", "")).strip()
             name = str(acc.get("name", "")).strip()
-            cat = str(acc.get("category", "")).lower()
             dr = float(acc.get("debit", 0) or 0)
             cr = float(acc.get("credit", 0) or 0)
             
             line = f"{code:<10} {name[:40]:<40} R{dr:>13,.2f} R{cr:>13,.2f}"
             
-            # Classify by CATEGORY first, fallback to code
-            if cat:
-                if any(kw in cat for kw in ["sales", "revenue", "other income", "income", "omset", "inkomste"]):
-                    income_accounts.append(line)
-                elif any(kw in cat for kw in ["cost of sale", "cogs", "koste van verkope"]):
-                    expense_accounts.append(line)  # COS goes with expenses for display
-                elif any(kw in cat for kw in ["expense", "uitgawe", "operating"]):
-                    expense_accounts.append(line)
-                elif any(kw in cat for kw in ["current asset", "non-current asset", "fixed asset", "bate"]):
-                    asset_accounts.append(line)
-                elif any(kw in cat for kw in ["current liabilit", "non-current liabilit", "long term", "laste"]):
-                    liability_accounts.append(line)
-                elif any(kw in cat for kw in ["equity", "owner", "ekwiteit", "eienaar"]):
-                    equity_accounts.append(line)
-                else:
-                    unclassified.append(line)
+            # Classify by code
+            if code.startswith(("1", "2")):
+                asset_accounts.append(line)
+            elif code.startswith("3"):
+                liability_accounts.append(line)
+            elif code.startswith("4"):
+                equity_accounts.append(line)
+            elif code.startswith("5"):
+                income_accounts.append(line)
+            elif code.startswith(("6", "7", "8", "9")):
+                expense_accounts.append(line)
             else:
-                # Fallback to code-based (standard chart only)
-                if code.startswith(("1", "2")):
-                    asset_accounts.append(line)
-                elif code.startswith("3"):
-                    liability_accounts.append(line)
-                elif code.startswith("4"):
-                    equity_accounts.append(line)
-                elif code.startswith("5"):
-                    income_accounts.append(line)
-                elif code.startswith(("6", "7", "8", "9")):
-                    expense_accounts.append(line)
-                else:
-                    unclassified.append(line)
+                unclassified.append(line)
         
         accounts_text += f"\n📊 {L['assets_codes']}\n"
         accounts_text += "\n".join(asset_accounts) if asset_accounts else f"  {L['no_asset_acc']}\n"
@@ -33550,7 +33225,7 @@ def api_tb_analyze():
             # Afrikaans prompt
             insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
 
-BESIGHEID: {safe_string(report_company)}
+BESIGHEID: {safe_string(biz_name)}
 INDUSTRIE: {industry}
 DATUM: {today()}
 
@@ -33593,31 +33268,18 @@ SARS:
 
 JOU OPDRAG - SKRYF 'N VOLLEDIGE CA(SA) ANALISE VERSLAG IN AFRIKAANS
 
-KRITIEKE INSTRUKSIES:
-- Die rekeninge is REEDS KORREK geklassifiseer in die regte kategorieë (Bates, Laste, Ekwiteit, Inkomste, Uitgawes) deur die bronsstelsel se eie kategorisering
-- MOENIE rekeningkodes bevraagteken of herklassifiseer nie. Verskillende stelsels gebruik verskillende nommering (Sage Pastel gebruik 1xxx vir Verkope, standaard gebruik 5xxx). Die kategorieë hier bo is KORREK.
-- MOENIE sê rekeninge is "verkeerd geklassifiseer" of in die "verkeerde afdeling" gebaseer op hulle kodenommers nie
-- MOENIE bedrog-aantygings maak sonder duidelike bewyse nie
-- Gebruik die PYTHON-BEREKENDE syfers as bron van waarheid - moenie herbereken of weerspreek nie
-- As Python sê Netto Wins is positief, IS die besigheid winsgewend. Moenie anders sê nie.
-
 **1. UITVOERENDE OPSOMMING**
-[2-3 sinne: Algehele gesondheid gebaseer op PYTHON-BEREKENDE verhoudings en winssyfers]
+[2-3 sinne: Algehele gesondheid van die besigheid. Is dit 'n "pass" of "fail"?]
 
 **2. REKENING-VIR-REKENING ANALISE**
 Gaan deur ELKE rekening kategorie en noem:
-- Watter rekeninge lyk normaal vir die industrie
-- Watter BEDRAE lyk ongewoon of kommerwekkend
+- Watter rekeninge lyk normaal
+- Watter rekeninge lyk VREEMD of BEKOMMEREND
 - Watter rekeninge ONTBREEK wat daar behoort te wees
-- MOENIE rekeningKODES kritiseer nie - fokus op BEDRAE en SALDO'S
+- Enige klassifikasie probleme
 
 **3. ROOI VLAE EN RISIKOS**
-Lys werklike bekommernisse gebaseer op die SYFERS:
-- Likwiditeitsprobleme?
-- Winsgewendheidskwessies?
-- Ongewone saldo's?
-- Ontbrekende voorsiening of toevallings?
-- MOENIE die rekeningnommeringstelsel as probleem vlag nie
+Lys ELKE probleem wat jy sien, met spesifieke rekening verwysings.
 
 **4. SARS NAKOMING**
 - BTW posisie en betaaldatums
@@ -33631,15 +33293,13 @@ Lys 3-5 vrae wat jy sou vra.
 
 REËLS:
 - Verwys na SPESIFIEKE rekeninge by naam en kode
-- Wees SPESIFIEK oor bedrae en persentasies
-- Skryf soos 'n regte CA(SA) wat omgee
-- Gebruik die PRESIESE syfers wat Python bereken het
-- MOET NOOIT sê die rekeningplan is "fout" of "verkeerd geklassifiseer" nie"""
+- Wees SPESIFIEK, nie generies nie
+- Skryf soos 'n regte CA(SA) wat omgee"""
         else:
             # English prompt (default)
             insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
 
-BUSINESS: {safe_string(report_company)}
+BUSINESS: {safe_string(biz_name)}
 INDUSTRY: {industry}
 DATE: {today()}
 
@@ -33682,31 +33342,23 @@ SARS (South African Revenue Service):
 
 YOUR TASK - WRITE A COMPLETE CA(SA) ANALYSIS REPORT IN ENGLISH
 
-CRITICAL INSTRUCTIONS:
-- The accounts have been PRE-CLASSIFIED into the correct categories (Assets, Liabilities, Equity, Income, Expenses) using the source system's own categorization
-- DO NOT question or reclassify account codes. Different accounting systems use different numbering (Sage Pastel uses 1xxx for Sales, standard uses 5xxx). The categories shown above are CORRECT.
-- DO NOT suggest accounts are "misclassified" or in the "wrong section" based on their code numbers
-- DO NOT make fraud allegations without clear evidence of actual fraud
-- Use the PYTHON-CALCULATED numbers as the source of truth - do not recalculate or contradict them
-- If Python says Net Profit is positive, the business IS profitable. Do not say otherwise.
-
 **1. EXECUTIVE SUMMARY**
-[2-3 sentences: Overall health based on the PYTHON-CALCULATED ratios and profit figures]
+[2-3 sentences: Overall health of the business. Is this a "pass" or "fail"?]
 
 **2. ACCOUNT-BY-ACCOUNT ANALYSIS**
 Go through EACH account category and note:
-- Which accounts look normal for the industry
-- Which AMOUNTS look unusual or concerning (e.g., very high expenses, credit balances on expense accounts)
-- Which accounts are MISSING that should be there (depreciation, bad debts, etc)
-- DO NOT criticize account CODES - focus on AMOUNTS and BALANCES
+- Which accounts look normal
+- Which accounts look UNUSUAL or CONCERNING (e.g., negative balances, unusual amounts)
+- Which accounts are MISSING that should be there
+- Any classification issues (wrong codes)
 
 **3. RED FLAGS AND RISKS**
-List genuine concerns based on the NUMBERS:
-- Liquidity problems (current ratio, quick ratio)?
-- Profitability issues (margins)?
-- Unusual balances (credit balances on expenses, large intercompany loans)?
-- Missing provisions or accruals?
-- DO NOT flag the account numbering system as a problem
+List EVERY problem you see, with specific account references:
+- TB not balancing? Where could the error be?
+- Liquidity problems?
+- Profitability issues?
+- Unusual transactions?
+- Possible errors or fraud risks?
 
 **4. SARS COMPLIANCE**
 - VAT: Is the position correct? When must it be paid?
@@ -33714,17 +33366,21 @@ List genuine concerns based on the NUMBERS:
 - Any missing tax accounts?
 
 **5. SPECIFIC RECOMMENDATIONS**
-Give AT LEAST 5 concrete actions with priority (URGENT / IMPORTANT / MONITOR)
+Give AT LEAST 5 concrete actions, each with:
+- The specific account or area
+- What needs to be done
+- Why it's important
+- Priority (URGENT / IMPORTANT / MONITOR)
 
 **6. QUESTIONS FOR THE CLIENT**
-List 3-5 questions you would ask the business owner.
+List 3-5 questions you would ask the business owner to better understand.
 
 RULES:
 - Refer to SPECIFIC accounts by name and code
-- Do NOT be generic - be SPECIFIC about amounts and percentages
-- Write like a real CA(SA) who cares
-- Use the EXACT figures that Python calculated - do not make up new numbers
-- NEVER say the chart of accounts is "wrong" or "misclassified" - different systems use different codes"""
+- Do NOT be generic - be SPECIFIC
+- If something looks wrong, say it directly
+- Write like a real CA(SA) who cares, not like a robot
+- Use the EXACT figures that Python calculated - do not make up new numbers"""
 
         insights_html = ""
         try:
@@ -33819,78 +33475,16 @@ def api_tb_upload_analyze():
         
         try:
             if filename.endswith('.csv'):
+                # Try different encodings
                 content = file.read()
-                df = None
-                
-                # Strip BOM if present
-                if content[:3] == b'\xef\xbb\xbf':
-                    content = content[3:]
-                
-                # Decode content to text first
-                text = None
-                for enc in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                for encoding in ['utf-8', 'latin-1', 'cp1252']:
                     try:
-                        text = content.decode(enc)
+                        df = pd.read_csv(io.BytesIO(content), encoding=encoding)
                         break
                     except:
                         continue
-                
-                if not text:
-                    return jsonify({"success": False, "error": "Kon nie die CSV lees nie - encoding probleem."})
-                
-                # Clean up: remove Excel hints and find real header row
-                lines = [l.strip() for l in text.split('\n') if l.strip()]
-                
-                # Skip non-data rows at top (sep=, title rows)
-                header_row = 0
-                for i, line in enumerate(lines[:10]):
-                    stripped = line.strip().strip('"').strip()
-                    stripped_lower = stripped.lower()
-                    # Skip: sep=X lines
-                    if stripped_lower.startswith('sep='):
-                        header_row = i + 1
-                        continue
-                    # Skip: single-value title rows (no commas between values, just a title)
-                    # But NOT rows like "Name","Category","Debit","Credit" which are headers
-                    raw_no_quoted = line
-                    # Count commas outside quotes to check if it's a real CSV row
-                    in_quote = False
-                    comma_count = 0
-                    for ch in line:
-                        if ch == '"':
-                            in_quote = not in_quote
-                        elif ch == ',' and not in_quote:
-                            comma_count += 1
-                    if comma_count == 0:
-                        # Single value row = title, skip it
-                        header_row = i + 1
-                        continue
-                    # This has commas = real header or data row, stop
-                    break
-                
-                logger.info(f"[TB UPLOAD] Detected header at row {header_row}, skipping {header_row} rows")
-                
-                # Detect delimiter from header line
-                header_line = lines[header_row] if header_row < len(lines) else lines[0]
-                if ';' in header_line and header_line.count(';') > header_line.count(','):
-                    sep = ';'
-                elif '\t' in header_line:
-                    sep = '\t'
                 else:
-                    sep = ','
-                
-                # Rebuild clean text without skipped rows
-                clean_text = '\n'.join(lines[header_row:])
-                
-                try:
-                    df = pd.read_csv(io.StringIO(clean_text), sep=sep, on_bad_lines='skip', engine='python')
-                    logger.info(f"[TB UPLOAD] Read {len(df)} rows, {len(df.columns)} cols: {list(df.columns)}")
-                except Exception as e:
-                    logger.error(f"[TB UPLOAD] pandas read failed: {e}")
-                
-                if df is None or len(df.columns) <= 1:
-                    return jsonify({"success": False, "error": "Kon nie die CSV lees nie. Probeer om dit as Excel (.xlsx) te save en weer te upload."})
-                    
+                    return jsonify({"success": False, "error": "Could not read CSV file - encoding issue"})
             elif filename.endswith(('.xlsx', '.xls')):
                 df = pd.read_excel(file)
             else:
@@ -33901,259 +33495,86 @@ def api_tb_upload_analyze():
         
         logger.info(f"[TB UPLOAD] Read {len(df)} rows, columns: {list(df.columns)}")
         
-        # ═══════════════════════════════════════════════════════════
-        # SMART COLUMN DETECTION - tries hardcoded first, then AI
-        # Every accountant's TB looks different!
-        # ═══════════════════════════════════════════════════════════
+        # Try to identify columns (code, name/account, debit, credit)
         cols_lower = {c.lower().strip(): c for c in df.columns}
         
         # Find account code column
         code_col = None
-        for candidate in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'rekening kode', 
-                          'gl code', 'account_code', 'acc no', 'account no', 'account number',
-                          'rekeningnommer', 'gl no', 'no', 'number', 'acc', 'account #']:
+        for candidate in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'rekening kode', 'gl code', 'account_code']:
             if candidate in cols_lower:
                 code_col = cols_lower[candidate]
                 break
         
         # Find account name column
         name_col = None
-        for candidate in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 
-                          'rekening naam', 'acc name', 'account_name', 'rekeningnaam', 'omskrywing',
-                          'account description', 'ledger', 'ledger name', 'gl name', 'label',
-                          'type', 'account type']:
+        for candidate in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 'rekening naam', 'acc name', 'account_name']:
             if candidate in cols_lower:
                 name_col = cols_lower[candidate]
                 break
         
         # Find debit column
         debit_col = None
-        for candidate in ['debit', 'dr', 'debits', 'debit amount', 'debiet', 'debit balance',
-                          'debiet saldo', 'debit total', 'dr amount', 'dr balance']:
+        for candidate in ['debit', 'dr', 'debits', 'debit amount', 'debiet']:
             if candidate in cols_lower:
                 debit_col = cols_lower[candidate]
                 break
         
         # Find credit column
         credit_col = None
-        for candidate in ['credit', 'cr', 'credits', 'credit amount', 'krediet', 'credit balance',
-                          'krediet saldo', 'credit total', 'cr amount', 'cr balance']:
+        for candidate in ['credit', 'cr', 'credits', 'credit amount', 'krediet']:
             if candidate in cols_lower:
                 credit_col = cols_lower[candidate]
                 break
         
-        # Find single balance column (some TBs use one column with +/-)
-        balance_col = None
-        if not debit_col and not credit_col:
-            for candidate in ['balance', 'saldo', 'amount', 'bedrag', 'net balance', 'netto',
-                              'value', 'waarde', 'total', 'totaal', 'closing balance', 'closing',
-                              'sluitsaldo', 'net', 'movement', 'beweging']:
-                if candidate in cols_lower:
-                    balance_col = cols_lower[candidate]
-                    break
-        
-        # Find category/type column
-        category_col = None
-        for candidate in ['category', 'kategorie', 'type', 'account type', 'tipe', 'class',
-                          'group', 'groep', 'section', 'heading', 'opskrif']:
-            if candidate in cols_lower:
-                if cols_lower[candidate] != name_col:  # Don't use same col as name
-                    category_col = cols_lower[candidate]
-                    break
-        
-        # ═══════════════════════════════════════════════════════════
-        # AI FALLBACK - if we can't find columns, ask Claude
-        # ═══════════════════════════════════════════════════════════
-        ai_mapped = False
-        if not name_col or (not debit_col and not credit_col and not balance_col):
-            logger.info(f"[TB UPLOAD] Hardcoded mapping failed. Trying AI detection...")
-            try:
-                # Send sample to Claude for column detection
-                sample_rows = df.head(8).to_string()
-                col_list = list(df.columns)
-                
-                ai_prompt = f"""Analyze this trial balance / opening balance file and identify which columns map to what.
-
-COLUMNS: {col_list}
-
-SAMPLE DATA (first 8 rows):
-{sample_rows}
-
-Return ONLY valid JSON (no markdown, no explanation):
-{{"account_code": "exact column name or null", "account_name": "exact column name", "debit": "exact column name or null", "credit": "exact column name or null", "balance": "exact column name or null", "category": "exact column name or null"}}
-
-Rules:
-- account_name: The column with account descriptions (e.g. "Sales", "Bank", "Rent")
-- account_code: The column with account numbers/codes (e.g. "1000", "4000/000")
-- debit/credit: Separate columns for debit and credit amounts
-- balance: Single column with positive/negative amounts (use ONLY if no separate debit/credit)
-- category: Column showing account type/category (Asset, Liability, Income, Expense)
-- Use exact column names from the COLUMNS list above
-- Use null if column doesn't exist"""
-
-                client = _anthropic_client
-                ai_response = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=500,
-                    messages=[{"role": "user", "content": ai_prompt}]
-                )
-                
-                ai_text = ai_response.content[0].text.strip()
-                # Clean markdown if present
-                if '```' in ai_text:
-                    ai_text = ai_text.split('```')[1].replace('json', '').strip()
-                
-                ai_map = json.loads(ai_text)
-                logger.info(f"[TB UPLOAD] AI column mapping: {ai_map}")
-                
-                # Apply AI mapping
-                if ai_map.get("account_name") and ai_map["account_name"] in df.columns:
-                    name_col = ai_map["account_name"]
-                if ai_map.get("account_code") and ai_map["account_code"] in df.columns:
-                    code_col = ai_map["account_code"]
-                if ai_map.get("debit") and ai_map["debit"] in df.columns:
-                    debit_col = ai_map["debit"]
-                if ai_map.get("credit") and ai_map["credit"] in df.columns:
-                    credit_col = ai_map["credit"]
-                if ai_map.get("balance") and ai_map["balance"] in df.columns:
-                    balance_col = ai_map["balance"]
-                if ai_map.get("category") and ai_map["category"] in df.columns:
-                    category_col = ai_map["category"]
-                
-                ai_mapped = True
-                
-            except Exception as ai_err:
-                logger.error(f"[TB UPLOAD] AI detection failed: {ai_err}")
-        
         # Validate we found required columns
         if not name_col:
-            # Last resort: try first text column as name
+            # Try first text column as name
             for c in df.columns:
                 if df[c].dtype == 'object':
                     name_col = c
                     break
         
         if not name_col:
-            return jsonify({"success": False, "error": f"Kon nie rekening naam kolom vind nie. Kolomme in jou file: {list(df.columns)}"})
+            return jsonify({"success": False, "error": f"Could not identify account name column. Found: {list(df.columns)}"})
         
-        if not debit_col and not credit_col and not balance_col:
-            return jsonify({"success": False, "error": f"Kon nie debit/credit/balance kolomme vind nie. Kolomme in jou file: {list(df.columns)}"})
+        if not debit_col and not credit_col:
+            return jsonify({"success": False, "error": f"Could not identify debit/credit columns. Found: {list(df.columns)}"})
         
-        mapped_info = f"Code: {code_col}, Name: {name_col}, Debit: {debit_col}, Credit: {credit_col}, Balance: {balance_col}, Category: {category_col}"
-        logger.info(f"[TB UPLOAD] Mapped columns {'(AI)' if ai_mapped else '(hardcoded)'} - {mapped_info}")
+        logger.info(f"[TB UPLOAD] Mapped columns - Code: {code_col}, Name: {name_col}, Debit: {debit_col}, Credit: {credit_col}")
         
         # Build accounts list
         accounts = []
-        tb_control_profit = None  # Capture the TB's own net profit figure for validation
-        
         for idx, row in df.iterrows():
             name = str(row.get(name_col, '')).strip() if name_col else ''
-            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net']:
+            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal']:
                 continue
             
-            # Capture the TB's own Net Profit/Loss figure as a control check
-            if name.lower() in ['net profit/loss', 'net profit/loss after tax', 'net profit', 'netto wins',
-                                 'net profit/loss before tax', 'netto wins/verlies', 'netto wins na belasting']:
-                # This row has the TB's calculated profit - grab it for validation
-                dr = float(str(row.get(debit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if debit_col else 0
-                cr = float(str(row.get(credit_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip() or '0') if credit_col else 0
-                if cr > 0:
-                    tb_control_profit = cr  # Credit = profit
-                elif dr > 0:
-                    tb_control_profit = -dr  # Debit = loss
-                elif balance_col:
-                    bal = str(row.get(balance_col, '') or '0').replace('R','').replace('r','').replace(',','').replace(' ','').strip()
-                    try:
-                        tb_control_profit = float(bal)
-                    except:
-                        pass
-                logger.info(f"[TB UPLOAD] Found control profit figure: R {tb_control_profit:,.2f}" if tb_control_profit else "[TB UPLOAD] Could not parse control profit")
-                continue  # Don't include in accounts list
-            
-            code = str(row.get(code_col, '')).strip() if code_col else ''
-            if code.lower() in ['nan', 'none', '']:
-                code = ''
-            
-            # Smart split: "1000/000 : Sales" → code="1000/000", name="Sales"
-            # Also handles: "1000 - Sales", "1000: Sales", "ACC001 Sales"
-            if not code and ' : ' in name:
-                parts = name.split(' : ', 1)
-                code = parts[0].strip()
-                name = parts[1].strip()
-            elif not code and ' - ' in name and name[0].isdigit():
-                parts = name.split(' - ', 1)
-                code = parts[0].strip()
-                name = parts[1].strip()
-            elif not code and ': ' in name and name[0].isdigit():
-                parts = name.split(': ', 1)
-                code = parts[0].strip()
-                name = parts[1].strip()
-            
-            if not code:
+            code = str(row.get(code_col, '')).strip() if code_col else f"A{idx:04d}"
+            if code.lower() in ['nan', 'none']:
                 code = f"A{idx:04d}"
             
-            # Clean up _AND_ → & (Sage Pastel export quirk)
-            name = name.replace('_AND_', '&').replace(' _and_ ', ' & ')
-            
-            # Parse debit/credit values - handles R1,000.00, R 1 000.00, (1000), -1000
+            # Parse debit/credit values
             def parse_amount(val):
                 if pd.isna(val):
                     return 0.0
-                val = str(val).replace('R', '').replace('r', '').replace(',', '').replace(' ', '').strip()
-                # Handle bracket notation for negatives: (1000) = -1000
-                is_negative = False
-                if val.startswith('(') and val.endswith(')'):
-                    val = val[1:-1]
-                    is_negative = True
-                if val in ['', '-', 'nan', 'none', '0', '0.0', '0.00']:
+                val = str(val).replace('R', '').replace(',', '').replace(' ', '').strip()
+                if val in ['', '-', 'nan', 'none']:
                     return 0.0
                 try:
-                    result = float(val)
-                    return -result if is_negative else result
+                    return abs(float(val))
                 except:
                     return 0.0
             
-            debit = 0.0
-            credit = 0.0
-            
-            if debit_col and credit_col:
-                # Separate debit/credit columns
-                debit = abs(parse_amount(row.get(debit_col)))
-                credit = abs(parse_amount(row.get(credit_col)))
-            elif balance_col:
-                # Single balance column: positive = debit, negative = credit
-                bal = parse_amount(row.get(balance_col))
-                if bal > 0:
-                    debit = bal
-                elif bal < 0:
-                    credit = abs(bal)
-            elif debit_col:
-                # Only debit column
-                val = parse_amount(row.get(debit_col))
-                if val > 0:
-                    debit = val
-                else:
-                    credit = abs(val)
-            elif credit_col:
-                # Only credit column
-                val = parse_amount(row.get(credit_col))
-                if val > 0:
-                    credit = val
-                else:
-                    debit = abs(val)
+            debit = parse_amount(row.get(debit_col)) if debit_col else 0
+            credit = parse_amount(row.get(credit_col)) if credit_col else 0
             
             if debit > 0 or credit > 0:
-                acc = {
+                accounts.append({
                     "code": code,
                     "name": name,
                     "debit": debit,
                     "credit": credit
-                }
-                if category_col:
-                    cat = str(row.get(category_col, '')).strip()
-                    if cat and cat.lower() not in ['nan', 'none']:
-                        acc["category"] = cat
-                accounts.append(acc)
+                })
         
         if not accounts:
             return jsonify({"success": False, "error": "No valid account data found in file"})
@@ -34208,8 +33629,6 @@ Rules:
             "total_credit": total_credit,
             "is_balanced": is_balanced,
             "message": f"Parsed {len(accounts)} accounts from {file.filename}",
-            "source_file": file.filename,
-            "tb_control_profit": tb_control_profit,
             "redirect_analyze": True
         })
         
@@ -42742,16 +42161,8 @@ def smart_import_page():
         <div class="success-title">Import Complete!</div>
         <p style="color:var(--text-muted);font-size:16px;">Your data is now in ClickAI. Welcome aboard.</p>
         <div class="success-stats" id="successStats"></div>
-        <div id="successActions" style="margin-top:25px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+        <div style="margin-top:20px;">
             <a href="/" class="import-btn" style="text-decoration:none;">Go to Dashboard →</a>
-        </div>
-        <div id="reportPrompt" style="display:none;margin-top:20px;padding:20px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);border-radius:12px;">
-            <p style="font-size:15px;margin-bottom:12px;">📊 <strong>Generate a professional AI report from your imported data?</strong></p>
-            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-                <button onclick="goToReport()" class="btn btn-primary" style="padding:12px 24px;font-size:15px;">
-                    📊 Generate Report
-                </button>
-            </div>
         </div>
     </div>
     
@@ -43010,32 +42421,6 @@ def smart_import_page():
             }
         }
         document.getElementById('successStats').innerHTML = statsHtml;
-        
-        // Show report prompt based on what was imported
-        const dataType = importData ? importData.data_type : '';
-        if (dataType === 'opening_balances' || dataType === 'accounts' || dataType === 'trial_balance') {
-            document.getElementById('reportPrompt').style.display = 'block';
-            window._reportUrl = '/reports/tb';
-        } else if (dataType === 'customers') {
-            document.getElementById('reportPrompt').style.display = 'block';
-            window._reportUrl = '/reports/debtors';
-        } else if (dataType === 'suppliers') {
-            document.getElementById('reportPrompt').style.display = 'block';
-            window._reportUrl = '/reports/aging';
-        } else if (dataType === 'stock') {
-            document.getElementById('reportPrompt').style.display = 'block';
-            window._reportUrl = '/stock';
-        }
-    }
-    
-    function goToReport() {
-        const url = window._reportUrl || '/reports';
-        // For TB, auto-trigger the analysis
-        if (url === '/reports/tb') {
-            window.location.href = url + '?auto_analyze=1';
-        } else {
-            window.location.href = url;
-        }
     }
     
     function resetImport() {
