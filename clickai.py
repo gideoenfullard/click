@@ -42571,7 +42571,6 @@ def api_pos_sale():
             "subtotal": float(subtotal),
             "vat": float(vat),
             "total": float(total),
-            "created_by": safe_uuid(user.get("id", "")) if user else None,
             "created_at": now()
         }
         
