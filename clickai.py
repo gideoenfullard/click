@@ -32979,10 +32979,10 @@ def report_tb():
         .tb-table th, .tb-table td {{ border: 1px solid #ccc; padding: 8px !important; }}
     }}
     .analysis-section {{ background: linear-gradient(135deg, rgba(139,92,246,0.1), rgba(99,102,241,0.05)); border: 1px solid rgba(139,92,246,0.3); border-radius: 12px; padding: 25px; margin-top: 20px; }}
-    .analysis-content {{ white-space: pre-wrap; line-height: 1.7; font-size: 14px; }}
-    .analysis-content h2 {{ color: #8b5cf6; border-bottom: 2px solid #8b5cf6; padding-bottom: 10px; margin-top: 30px; font-size: 20px; }}
-    .analysis-content h3 {{ color: #10b981; margin-top: 25px; margin-bottom: 15px; font-size: 16px; }}
-    .analysis-content h4 {{ color: #6366f1; margin-top: 20px; font-size: 14px; }}
+    .analysis-content {{ line-height: 1.5; font-size: 14px; }}
+    .analysis-content h2 {{ color: #8b5cf6; border-bottom: 2px solid #8b5cf6; padding-bottom: 8px; margin-top: 20px; margin-bottom: 10px; font-size: 20px; }}
+    .analysis-content h3 {{ color: #10b981; margin-top: 15px; margin-bottom: 10px; font-size: 16px; }}
+    .analysis-content h4 {{ color: #6366f1; margin-top: 12px; margin-bottom: 8px; font-size: 14px; }}
     .analysis-content table {{ width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 13px; }}
     .analysis-content th, .analysis-content td {{ padding: 8px 12px; border: 1px solid rgba(255,255,255,0.1); text-align: left; }}
     .analysis-content th {{ background: rgba(139,92,246,0.2); }}
@@ -33000,6 +33000,10 @@ def report_tb():
             <button class="btn btn-secondary" onclick="downloadTBcsv()">📥 Download CSV</button>
             <button class="btn btn-secondary" onclick="window.print();">Print</button>
             <a href="/import" class="btn btn-secondary">Import TB</a>
+            <label class="btn btn-primary" style="cursor:pointer;margin:0;background:#10b981;">
+                📥 Replace TB
+                <input type="file" id="tbImportFile" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleTBImportSave(this)">
+            </label>
             <label class="btn btn-secondary" style="cursor:pointer;margin:0;">
                 📁 Upload CSV/Excel
                 <input type="file" id="tbFileUpload" accept=".csv,.xlsx,.xls" style="display:none;" onchange="handleTBUpload(this)">
@@ -33141,6 +33145,45 @@ def report_tb():
         
         btn.disabled = false;
         btn.innerHTML = 'Re-analyze';
+    }}
+    
+    async function handleTBImportSave(input) {{
+        const file = input.files[0];
+        if (!file) return;
+        
+        if (!confirm('This will REPLACE the current Trial Balance with the data from:\\n\\n' + file.name + '\\n\\nExisting opening balances will be cleared.\\nContinue?')) {{
+            input.value = '';
+            return;
+        }}
+        
+        // Show loading
+        const section = document.getElementById('analysisSection');
+        const content = document.getElementById('analysisContent');
+        section.style.display = 'block';
+        content.innerHTML = '<p style="color:var(--text-muted);">📥 Importing ' + file.name + ' and replacing Trial Balance...</p>';
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {{
+            const response = await fetch('/api/reports/tb/import-save', {{
+                method: 'POST',
+                body: formData
+            }});
+            
+            const data = await response.json();
+            
+            if (data.success) {{
+                content.innerHTML = '<p style="color:#10b981;">✅ ' + data.message + '</p><p>Page reloading in 2 seconds...</p>';
+                setTimeout(() => location.reload(), 2000);
+            }} else {{
+                content.innerHTML = '<p style="color:#ef4444;">❌ ' + (data.error || 'Import failed') + '</p>';
+            }}
+        }} catch (err) {{
+            content.innerHTML = '<p style="color:#ef4444;">Error: ' + err.message + '</p>';
+        }}
+        
+        input.value = '';
     }}
     
     async function handleTBUpload(input) {{
@@ -33323,6 +33366,240 @@ def api_tb_clear_ob():
         
     except Exception as e:
         logger.error(f"[TB CLEAR] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/reports/tb/import-save", methods=["POST"])
+@login_required
+def api_tb_import_save():
+    """Upload CSV/Excel TB and SAVE it as opening balances - REPLACES existing TB.
+    
+    Flow: Parse file → Clear old OB entries → Save new OB entries → Return success
+    Page reloads to show new TB data.
+    """
+    
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+    
+    try:
+        if 'file' not in request.files:
+            return jsonify({"success": False, "error": "No file uploaded"})
+        
+        file = request.files['file']
+        if not file.filename:
+            return jsonify({"success": False, "error": "No file selected"})
+        
+        filename = file.filename.lower()
+        logger.info(f"[TB IMPORT-SAVE] Processing {filename}")
+        
+        import pandas as pd
+        import io
+        
+        # ═══ Read file ═══
+        try:
+            if filename.endswith('.csv'):
+                content = file.read()
+                if content[:3] == b'\xef\xbb\xbf':
+                    content = content[3:]
+                
+                text = None
+                for enc in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        text = content.decode(enc)
+                        break
+                    except:
+                        continue
+                
+                if not text:
+                    return jsonify({"success": False, "error": "Could not read CSV - encoding issue"})
+                
+                lines = [l.strip() for l in text.split('\n') if l.strip()]
+                header_row = 0
+                for i, line in enumerate(lines[:10]):
+                    stripped = line.strip().strip('"').strip().lower()
+                    if stripped.startswith('sep='):
+                        header_row = i + 1
+                        continue
+                    in_quote = False
+                    comma_count = 0
+                    for ch in line:
+                        if ch == '"': in_quote = not in_quote
+                        elif ch == ',' and not in_quote: comma_count += 1
+                    if comma_count == 0:
+                        header_row = i + 1
+                        continue
+                    break
+                
+                header_line = lines[header_row] if header_row < len(lines) else lines[0]
+                if ';' in header_line and header_line.count(';') > header_line.count(','):
+                    sep = ';'
+                elif '\t' in header_line:
+                    sep = '\t'
+                else:
+                    sep = ','
+                
+                clean_text = '\n'.join(lines[header_row:])
+                df = pd.read_csv(io.StringIO(clean_text), sep=sep, on_bad_lines='skip', engine='python')
+                
+            elif filename.endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(file)
+            else:
+                return jsonify({"success": False, "error": "Unsupported file type. Use CSV or Excel."})
+        except Exception as read_err:
+            return jsonify({"success": False, "error": f"Could not read file: {str(read_err)}"})
+        
+        logger.info(f"[TB IMPORT-SAVE] Read {len(df)} rows, columns: {list(df.columns)}")
+        
+        # ═══ Column detection (same logic as upload-analyze) ═══
+        cols_lower = {c.lower().strip(): c for c in df.columns}
+        
+        code_col = None
+        for c in ['code', 'acc code', 'account code', 'acc_code', 'kode', 'gl code', 'account_code', 'acc no', 'account no', 'account number', 'gl no', 'no', 'number']:
+            if c in cols_lower: code_col = cols_lower[c]; break
+        
+        name_col = None
+        for c in ['name', 'account', 'account name', 'description', 'naam', 'rekening', 'rekening naam', 'acc name', 'account_name', 'omskrywing', 'account description', 'ledger', 'gl name', 'label']:
+            if c in cols_lower: name_col = cols_lower[c]; break
+        
+        debit_col = None
+        for c in ['debit', 'dr', 'debits', 'debit amount', 'debiet', 'debit balance', 'debiet saldo', 'dr amount']:
+            if c in cols_lower: debit_col = cols_lower[c]; break
+        
+        credit_col = None
+        for c in ['credit', 'cr', 'credits', 'credit amount', 'krediet', 'credit balance', 'krediet saldo', 'cr amount']:
+            if c in cols_lower: credit_col = cols_lower[c]; break
+        
+        balance_col = None
+        if not debit_col and not credit_col:
+            for c in ['balance', 'saldo', 'amount', 'bedrag', 'net balance', 'netto', 'value', 'total', 'totaal', 'closing balance', 'closing']:
+                if c in cols_lower: balance_col = cols_lower[c]; break
+        
+        # AI fallback if needed
+        if not name_col or (not debit_col and not credit_col and not balance_col):
+            try:
+                sample_rows = df.head(8).to_string()
+                col_list = list(df.columns)
+                ai_prompt = f"Analyze this trial balance file columns.\nCOLUMNS: {col_list}\nSAMPLE:\n{sample_rows}\nReturn ONLY JSON: {{\"account_code\": \"col or null\", \"account_name\": \"col\", \"debit\": \"col or null\", \"credit\": \"col or null\", \"balance\": \"col or null\"}}"
+                client = _anthropic_client
+                ai_resp = client.messages.create(model="claude-sonnet-4-5-20250929", max_tokens=300, messages=[{"role": "user", "content": ai_prompt}])
+                ai_text = ai_resp.content[0].text.strip()
+                if '```' in ai_text: ai_text = ai_text.split('```')[1].replace('json', '').strip()
+                ai_map = json.loads(ai_text)
+                if ai_map.get("account_name") and ai_map["account_name"] in df.columns: name_col = ai_map["account_name"]
+                if ai_map.get("account_code") and ai_map["account_code"] in df.columns: code_col = ai_map["account_code"]
+                if ai_map.get("debit") and ai_map["debit"] in df.columns: debit_col = ai_map["debit"]
+                if ai_map.get("credit") and ai_map["credit"] in df.columns: credit_col = ai_map["credit"]
+                if ai_map.get("balance") and ai_map["balance"] in df.columns: balance_col = ai_map["balance"]
+            except Exception as ai_err:
+                logger.warning(f"[TB IMPORT-SAVE] AI column detection failed: {ai_err}")
+        
+        if not name_col:
+            for c in df.columns:
+                if df[c].dtype == 'object': name_col = c; break
+        
+        if not name_col:
+            return jsonify({"success": False, "error": f"Could not find account name column. Columns: {list(df.columns)}"})
+        if not debit_col and not credit_col and not balance_col:
+            return jsonify({"success": False, "error": f"Could not find debit/credit/balance columns. Columns: {list(df.columns)}"})
+        
+        logger.info(f"[TB IMPORT-SAVE] Mapped: code={code_col}, name={name_col}, debit={debit_col}, credit={credit_col}, balance={balance_col}")
+        
+        # ═══ Parse amounts ═══
+        def parse_amount(val):
+            if pd.isna(val): return 0.0
+            val = str(val).replace('R', '').replace('r', '').replace(',', '').replace(' ', '').strip()
+            is_neg = val.startswith('(') and val.endswith(')')
+            if is_neg: val = val[1:-1]
+            if val in ['', '-', 'nan', 'none', '0', '0.0', '0.00']: return 0.0
+            try:
+                result = float(val)
+                return -result if is_neg else result
+            except: return 0.0
+        
+        # ═══ Build accounts ═══
+        accounts = []
+        for idx, row in df.iterrows():
+            name = str(row.get(name_col, '')).strip() if name_col else ''
+            if not name or name.lower() in ['nan', 'none', '', 'total', 'totals', 'totaal', 'grand total', 'netto', 'net', 'net profit/loss', 'net profit/loss after tax', 'net profit']:
+                continue
+            
+            code = str(row.get(code_col, '')).strip() if code_col else ''
+            if code.lower() in ['nan', 'none', '']: code = ''
+            
+            # Smart split: "1000/000 : Sales" → code, name
+            if not code and ' : ' in name:
+                parts = name.split(' : ', 1); code = parts[0].strip(); name = parts[1].strip()
+            elif not code and ' - ' in name and name[0].isdigit():
+                parts = name.split(' - ', 1); code = parts[0].strip(); name = parts[1].strip()
+            
+            if not code: code = f"A{idx:04d}"
+            name = name.replace('_AND_', '&')
+            
+            debit = 0.0
+            credit = 0.0
+            if debit_col and credit_col:
+                debit = abs(parse_amount(row.get(debit_col)))
+                credit = abs(parse_amount(row.get(credit_col)))
+            elif balance_col:
+                bal = parse_amount(row.get(balance_col))
+                if bal > 0: debit = bal
+                elif bal < 0: credit = abs(bal)
+            
+            if debit > 0 or credit > 0:
+                accounts.append({"code": code, "name": name, "debit": debit, "credit": credit})
+        
+        if not accounts:
+            return jsonify({"success": False, "error": "No valid accounts found in file"})
+        
+        # ═══ Clear existing OB entries ═══
+        journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
+        ob_entries = [je for je in journal_entries if je.get("reference") == "OB"]
+        deleted = 0
+        for ob in ob_entries:
+            try:
+                db.delete("journal_entries", ob.get("id"))
+                deleted += 1
+            except: pass
+        logger.info(f"[TB IMPORT-SAVE] Cleared {deleted} old OB entries")
+        
+        # ═══ Save new OB entries ═══
+        saved = 0
+        for acc in accounts:
+            entry = {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "date": today(),
+                "account": acc["name"],
+                "account_code": acc["code"],
+                "debit": acc["debit"],
+                "credit": acc["credit"],
+                "description": f"Opening Balance - {acc['name']}",
+                "reference": "OB",
+                "created_at": now()
+            }
+            success, _ = db.save("journal_entries", entry)
+            if success:
+                saved += 1
+        
+        logger.info(f"[TB IMPORT-SAVE] Saved {saved}/{len(accounts)} OB entries from {file.filename}")
+        
+        total_dr = sum(a["debit"] for a in accounts)
+        total_cr = sum(a["credit"] for a in accounts)
+        
+        return jsonify({
+            "success": True,
+            "message": f"TB imported: {saved} accounts saved. Debits: R{total_dr:,.2f}, Credits: R{total_cr:,.2f}",
+            "accounts_saved": saved,
+            "total_accounts": len(accounts)
+        })
+        
+    except Exception as e:
+        logger.error(f"[TB IMPORT-SAVE] Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)})
 
 
@@ -34559,8 +34836,10 @@ RULES:
                     insights_html = re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=re.MULTILINE)
                     insights_html = re.sub(r'^- (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=re.MULTILINE)
                     insights_html = re.sub(r'^• (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=re.MULTILINE)
-                    insights_html = insights_html.replace('\n\n', '<br><br>')
-                    insights_html = insights_html.replace('\n', '<br>')
+                    # Only convert double newlines to single <br>, skip newlines between HTML tags
+                    insights_html = re.sub(r'\n{3,}', '<br><br>', insights_html)  # 3+ newlines → double break
+                    insights_html = re.sub(r'\n\n', '<br>', insights_html)  # 2 newlines → single break
+                    insights_html = re.sub(r'(?<!>)\n(?!<)', ' ', insights_html)  # single newlines between text → space
                     logger.info(f"[TB ANALYZE] Sonnet analysis generated: {len(insights_html)} chars")
                 else:
                     logger.warning("[TB ANALYZE] AI returned empty response")
