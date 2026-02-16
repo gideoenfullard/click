@@ -1901,6 +1901,21 @@ def money(amount) -> str:
     except:
         return "R0.00"
 
+def extract_time(timestamp_str) -> str:
+    """Extract HH:MM from any timestamp format (Supabase, ISO, etc.)
+    Handles: 2026-02-16T18:57:32+00:00, 2026-02-16T18:57:32.123456+00:00, 
+             2026-02-16T18:57:32Z, 2026-02-16T18:57:32.388Z
+    """
+    try:
+        ts = str(timestamp_str or "")
+        if 'T' in ts:
+            time_part = ts.split('T')[1]  # Get everything after T
+            # Extract HH:MM from the start of time_part
+            return time_part[:5]  # "18:57" from "18:57:32+00:00"
+        return "-"
+    except:
+        return "-"
+
 def safe_string(s: Any, max_len: int = 1000) -> str:
     """Safe string conversion - escapes HTML and JS special chars"""
     if s is None:
@@ -12930,7 +12945,7 @@ class Context:
                     user_id = inv.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": str(inv.get("created_at", ""))[-8:-3] or "??:??",
+                        "time": extract_time(inv.get("created_at", "")) or "??:??",
                         "user": user_name,
                         "action": "Created invoice",
                         "detail": f"{inv.get('invoice_number', '')} for {inv.get('customer_name', '')} - R{float(inv.get('total', 0)):,.2f}",
@@ -12943,7 +12958,7 @@ class Context:
                     user_id = q.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": str(q.get("created_at", ""))[-8:-3] or "??:??",
+                        "time": extract_time(q.get("created_at", "")) or "??:??",
                         "user": user_name,
                         "action": "Created quote",
                         "detail": f"{q.get('quote_number', '')} for {q.get('customer_name', '')} - R{float(q.get('total', 0)):,.2f}",
@@ -12956,7 +12971,7 @@ class Context:
                     user_id = s.get("created_by", "")
                     user_name = user_names.get(user_id, "Unknown")
                     activity.append({
-                        "time": str(s.get("created_at", ""))[-8:-3] or "??:??",
+                        "time": extract_time(s.get("created_at", "")) or "??:??",
                         "user": user_name,
                         "action": "POS sale",
                         "detail": f"{s.get('payment_method', 'Cash')} - R{float(s.get('total', 0)):,.2f}",
@@ -30560,14 +30575,14 @@ def api_pulse_data():
             if p_date >= seven_days_ago:
                 who = user_names.get(p.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
-                activity_feed.append({"date": p_date, "time": str(p.get("created_at", ""))[-8:-3], "text": f'{p.get("customer_name", "Customer")} paid{who_tag}', "amount": float(p.get("amount", 0)), "icon": "&#10003;", "color": "#10b981"})
+                activity_feed.append({"date": p_date, "time": extract_time(p.get("created_at", "")), "text": f'{p.get("customer_name", "Customer")} paid{who_tag}', "amount": float(p.get("amount", 0)), "icon": "&#10003;", "color": "#10b981"})
         
         for inv in invoices:
             inv_date = str(inv.get("date", ""))[:10]
             if inv_date >= seven_days_ago and inv.get("status") != "paid":
                 who = user_names.get(inv.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
-                activity_feed.append({"date": inv_date, "time": str(inv.get("created_at", ""))[-8:-3], "text": f'Invoice {inv.get("invoice_number", "")} → {inv.get("customer_name", "")[:20]}{who_tag}', "amount": float(inv.get("total", 0)), "icon": "&#128196;", "color": "#f59e0b"})
+                activity_feed.append({"date": inv_date, "time": extract_time(inv.get("created_at", "")), "text": f'Invoice {inv.get("invoice_number", "")} → {inv.get("customer_name", "")[:20]}{who_tag}', "amount": float(inv.get("total", 0)), "icon": "&#128196;", "color": "#f59e0b"})
         
         for s in sales:
             s_date = str(s.get("date", ""))[:10]
@@ -30575,7 +30590,7 @@ def api_pulse_data():
                 who = user_names.get(s.get("created_by", ""), "")
                 who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
                 method = s.get("payment_method", "cash")
-                activity_feed.append({"date": s_date, "time": str(s.get("created_at", ""))[-8:-3], "text": f'POS Sale #{str(s.get("id", ""))[:6]} ({method}){who_tag}', "amount": float(s.get("total", 0)), "icon": "&#128176;", "color": "#10b981"})
+                activity_feed.append({"date": s_date, "time": extract_time(s.get("created_at", "")), "text": f'POS Sale #{str(s.get("id", ""))[:6]} ({method}){who_tag}', "amount": float(s.get("total", 0)), "icon": "&#128176;", "color": "#10b981"})
         
         activity_feed.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
         
@@ -41758,7 +41773,7 @@ def pos_history():
             "id": s.get("id"),
             "number": s.get("sale_number", "-"),
             "date": s.get("date", ""),
-            "time": s.get("created_at", "")[-8:-3] if s.get("created_at") else "-",
+            "time": extract_time(s.get("created_at", "")),
             "type": s.get("payment_method", "cash").upper(),
             "customer": s.get("customer_name", "Cash Sale"),
             "total": float(s.get("total", 0)),
@@ -41783,7 +41798,7 @@ def pos_history():
             "id": i.get("id"),
             "number": i.get("invoice_number", "-"),
             "date": i.get("date", ""),
-            "time": i.get("created_at", "")[-8:-3] if i.get("created_at") else "-",
+            "time": extract_time(i.get("created_at", "")),
             "type": "INVOICE",
             "customer": i.get("customer_name", "-"),
             "total": float(i.get("total", 0)),
@@ -41808,7 +41823,7 @@ def pos_history():
             "id": q.get("id"),
             "number": q.get("quote_number", "-"),
             "date": q.get("date", ""),
-            "time": q.get("created_at", "")[-8:-3] if q.get("created_at") else "-",
+            "time": extract_time(q.get("created_at", "")),
             "type": "QUOTE",
             "customer": q.get("customer_name", "-"),
             "total": float(q.get("total", 0)),
@@ -42317,7 +42332,7 @@ def view_sale(sale_id):
                 <h2 style="margin:0;color:#000;">{biz_name}</h2>
                 <p style="color:#666;margin:5px 0;">TAX INVOICE / SLIP</p>
                 <p style="margin:5px 0;"><strong>{sale.get("sale_number", "-")}</strong></p>
-                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {sale.get("created_at", "")[-8:-3] if sale.get("created_at") else ""}</p>
+                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {extract_time(sale.get("created_at", ""))}</p>
             </div>
             
             <div style="margin-bottom:15px;">
