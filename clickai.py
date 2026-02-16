@@ -866,8 +866,6 @@ TABLES = {
     "receipts": "receipts",
     "pos_sales": "pos_sales",
     "stock_movements": "stock_movements",
-    "goods_received": "goods_received",
-    "purchase_orders": "purchase_orders",
 }
 
 # Stock column mapping - maps display names to actual DB columns
@@ -1664,199 +1662,6 @@ def next_doc_number(records: list, field: str, prefix: str, pad: int = 5) -> str
         except (ValueError, TypeError):
             pass
     return f"{prefix}{max_num + 1:0{pad}d}"
-
-
-def smart_stock_code(description: str, existing_codes: set = None) -> str:
-    """Generate a smart, unique stock code from a product description.
-    
-    Examples:
-        'BOLT M10X110 HT'           → BLT-10-110-HT
-        'SAFETY BOOT DOT STC CHELSEA BROWN 9' → SFT-BT-CHEL-9
-        'GUMBOOT SHOVA WHITE/GREY 9' → GMB-SHOV-9
-        'CL ANKLE NSTC OUTBACK BLACK 8' → ANK-OUTB-BLK-8
-        'HOSE CLAMP GS36 44X70MM'   → HS-CL-GS36-44X70
-        'SILICONE CLEAR 260ML'      → SIL-CLR-260
-        'FLAT BAR 40X3 SS'          → FL-BR-40X3-SS
-    """
-    import re
-    if not description:
-        return "ITM-001"
-    
-    if existing_codes is None:
-        existing_codes = set()
-    
-    desc = description.upper().strip()
-    words = desc.split()
-    
-    # Product type codes - PRIMARY identifier
-    product_types = {
-        "BOLT": "BLT", "BOLTS": "BLT", "NUT": "NT", "NUTS": "NT",
-        "WASHER": "WS", "WASHERS": "WS", "SCREW": "SCR", "SCREWS": "SCR",
-        "STUD": "STD", "RIVET": "RVT", "BEARING": "BRG", "CIRCLIP": "CLP",
-        "SEAL": "SL", "ORING": "OR", "SET": "SET", "CAP": "CAP",
-        "PIPE": "PP", "TUBE": "TB", "BAR": "BR", "ANGLE": "AN",
-        "CHANNEL": "CHL", "BEAM": "BM", "SHEET": "SH", "PLATE": "PL",
-        "ELBOW": "EL", "TEE": "TE", "VALVE": "VL", "FLANGE": "FLG",
-        "REDUCER": "RED", "COUPLING": "CPL", "NIPPLE": "NIP", "PLUG": "PLG",
-        "BUSH": "BSH", "FITTING": "FIT", "CLAMP": "CL", "HOSE": "HS",
-        "CABLE": "CB", "CHAIN": "CH", "DISC": "DSC", "SANDPAPER": "SND",
-        "SILICONE": "SIL", "ADHESIVE": "ADH", "TAPE": "TP",
-    }
-    
-    # Footwear/PPE - need EXTRA detail (brand/style) because many variants per size
-    footwear_types = {
-        "BOOT": "BT", "BOOTS": "BT", "SHOE": "SH", "SHOES": "SH",
-        "GUMBOOT": "GMB", "GUMBOOTS": "GMB",
-        "SAFETY": "SFT", "ANKLE": "ANK", "OVERALL": "OVL", "OVERALLS": "OVL",
-        "JACKET": "JKT", "GLOVE": "GL", "GLOVES": "GL",
-        "CONTI": "CNT", "GOGGLE": "GGL", "GOGGLES": "GGL",
-        "HELMET": "HLM", "HARDHAT": "HH", "VEST": "VST",
-        "EARPLUG": "EP", "EARMUFF": "EM", "MASK": "MSK", "RESPIRATOR": "RSP",
-    }
-    
-    # Modifiers that should appear in code
-    modifier_map = {
-        "HT": "HT", "Z/P": "ZP", "S/S": "SS", "SS": "SS",
-        "GALV": "GV", "GALVANISED": "GV", "GALVANIZED": "GV",
-        "BLACK": "BLK", "WHITE": "WHT", "GREY": "GRY", "GRAY": "GRY",
-        "BROWN": "BRN", "RED": "RED", "BLUE": "BLU", "GREEN": "GRN",
-        "YELLOW": "YEL", "ORANGE": "ORG", "CLEAR": "CLR",
-        "CHROME": "CHR", "BRASS": "BRS", "COPPER": "CU", "NYLON": "NYL",
-        "PVC": "PVC", "HDPE": "HDPE", "MILD": "MS",
-    }
-    
-    # Colour words to skip when building brand/style parts
-    colours = {"BLACK", "WHITE", "GREY", "GRAY", "BROWN", "RED", "BLUE", "GREEN", 
-               "YELLOW", "ORANGE", "CLEAR", "CHROME"}
-    
-    # Skip words (noise)
-    skip_words = {"THE", "AND", "FOR", "WITH", "IN", "OF", "A", "AN", "PER", 
-                  "EACH", "PAIR", "SIZE", "NO", "NR", "NUMBER", "PACK",
-                  "STC", "NSTC", "DOT", "SABS", "CL"}
-    
-    # Extract sizes and dimensions
-    sizes = re.findall(r'(\d+(?:\.\d+)?)\s*[Xx]\s*(\d+(?:\.\d+)?)', desc)
-    plain_sizes = re.findall(r'(?<![Xx/\d])(\d+(?:\.\d+)?)(?:MM|ML|M|CM|KG|L)?(?![Xx/\d])', desc)
-    
-    # Find product type
-    product_code = ""
-    is_footwear = False
-    for w in words:
-        w_clean = w.strip(".,;:-/()")
-        if w_clean in footwear_types:
-            product_code = footwear_types[w_clean]
-            is_footwear = True
-            break
-        if w_clean in product_types:
-            product_code = product_types[w_clean]
-            break
-    
-    # For footwear, check if compound like "SAFETY BOOT" or "GUMBOOT"
-    if is_footwear:
-        # Build code: TYPE + BRAND/STYLE + SIZE
-        parts = []
-        
-        # Check for compound types: "SAFETY BOOT" → SFT-BT
-        compound_types = [
-            (["SAFETY", "BOOT"], "SFT-BT"), (["SAFETY", "BOOTS"], "SFT-BT"),
-            (["SAFETY", "SHOE"], "SFT-SH"), (["SAFETY", "SHOES"], "SFT-SH"),
-            (["ANKLE", "BOOT"], "ANK-BT"), (["ANKLE", "BOOTS"], "ANK-BT"),
-        ]
-        compound_found = False
-        for comp_words, comp_code in compound_types:
-            if all(cw in words or any(cw in w for w in words) for cw in comp_words):
-                parts.append(comp_code)
-                compound_found = True
-                break
-        
-        if not compound_found:
-            parts.append(product_code)
-        
-        # Add brand/style words (CHELSEA, SHOVA, INKUNZI, OUTBACK, UTECH etc)
-        type_words = set(k for k in {**footwear_types, **product_types})
-        brand_parts = []
-        for w in words:
-            w_clean = w.strip(".,;:-/()")
-            if (w_clean not in type_words and w_clean not in skip_words and 
-                w_clean not in colours and len(w_clean) > 1 and 
-                w_clean.isalpha() and not w_clean.isdigit()):
-                brand_parts.append(w_clean[:4])
-                if len(brand_parts) >= 2:
-                    break
-        if brand_parts:
-            parts.extend(brand_parts[:2])
-        
-        # Add colour if present
-        for w in words:
-            w_clean = w.strip(".,;:-/()")
-            if w_clean in modifier_map and w_clean in colours:
-                parts.append(modifier_map[w_clean])
-                break
-        
-        # Add size (last plain number is usually shoe size)
-        if plain_sizes:
-            parts.append(plain_sizes[-1])
-        
-        smart_code = "-".join(parts)
-    
-    elif product_code:
-        # Regular products: TYPE + DIMENSIONS + MODIFIERS
-        parts = [product_code]
-        
-        # Add dimension sizes (e.g. M10X110, 40X3)
-        if sizes:
-            for dim in sizes[:2]:
-                parts.append(f"{dim[0]}X{dim[1]}")
-        elif plain_sizes:
-            for s in plain_sizes[:2]:
-                parts.append(s)
-        
-        # Check for product sub-codes (GS36, M10, etc) - but NOT parts of dimensions
-        sub_codes = re.findall(r'([A-Z]{1,3}\d{1,4})', desc)
-        dim_numbers = set()
-        for dim in sizes:
-            dim_numbers.add(dim[0])
-            dim_numbers.add(dim[1])
-        for sc in sub_codes:
-            sc_num = re.sub(r'[A-Z]', '', sc)
-            if sc not in parts and len(sc) <= 5 and sc_num not in dim_numbers:
-                parts.insert(1, sc)
-                break
-        
-        # Add modifiers (HT, ZP, SS etc)
-        for w in words:
-            w_clean = w.strip(".,;:-/()")
-            if w_clean in modifier_map and modifier_map[w_clean] not in parts:
-                parts.append(modifier_map[w_clean])
-        
-        smart_code = "-".join(parts)
-    
-    else:
-        # Unknown product type - use first significant words + sizes
-        parts = []
-        for w in words:
-            w_clean = w.strip(".,;:-/()")
-            if w_clean in modifier_map:
-                parts.append(modifier_map[w_clean])
-            elif w_clean not in skip_words and len(w_clean) > 1 and w_clean.isalpha():
-                parts.append(w_clean[:3])
-            if len(parts) >= 3:
-                break
-        if plain_sizes:
-            parts.append(plain_sizes[0])
-        smart_code = "-".join(parts) if parts else desc[:8].replace(" ", "-")
-    
-    # Trim to max length
-    smart_code = smart_code[:20].upper().rstrip("-")
-    
-    # Ensure uniqueness
-    final_code = smart_code
-    counter = 1
-    while final_code.upper() in {c.upper() for c in existing_codes}:
-        final_code = f"{smart_code}-{counter}"
-        counter += 1
-    
-    return final_code
 
 def is_valid_uuid(value) -> bool:
     """Check if a value is a valid UUID format"""
@@ -11597,8 +11402,19 @@ class Actions:
                                     logger.info(f"[EXPENSE] {li_desc} → {expense_category}: R{li_total:.2f}")
                                     continue  # Don't book to stock
                                 
-                                # Generate smart code for STOCK items using shared function
-                                smart_code = smart_stock_code(li_desc, set(stock_by_code.keys()))
+                                # Generate smart code for STOCK items
+                                product_code = ""
+                                for prod, code in product_types.items():
+                                    if prod in desc_upper:
+                                        product_code = code
+                                        break
+                                
+                                sizes = re.findall(r'M?(\d+(?:\.\d+)?)', desc_upper)
+                                if product_code:
+                                    smart_code = product_code + ("-" + "-".join(sizes[:2]) if sizes else "")
+                                else:
+                                    smart_code = desc_upper[:3] + ("-" + sizes[0] if sizes else "")
+                                smart_code = smart_code[:15].upper()
                                 
                                 # Try to match
                                 matched = stock_by_code.get(smart_code)
@@ -11632,6 +11448,10 @@ class Actions:
                                 else:
                                     # CREATE new stock item
                                     final_code = smart_code
+                                    counter = 1
+                                    while final_code in stock_by_code:
+                                        final_code = f"{smart_code}-{counter}"
+                                        counter += 1
                                     
                                     # Use RecordFactory.stock_item() for 'stock_items' table
                                     new_stock = RecordFactory.stock_item(
@@ -33233,8 +33053,39 @@ def api_po_receive(po_id):
                     
                     # AUTO-CREATE stock item if no match found
                     if not stock_item and item_desc:
-                        # Generate smart stock code using shared function
-                        final_code = smart_stock_code(item_desc, set(stock_by_code.keys()))
+                        # Generate smart stock code
+                        desc_upper = item_desc
+                        words = desc_upper.split()
+                        
+                        # Extract sizes (numbers with optional MM/M etc)
+                        import re
+                        sizes = re.findall(r'\d+[Xx/]\d+(?:\.\d+)?(?:MM)?|\d+(?:\.\d+)?(?:MM|M|CM|KG)?', desc_upper)
+                        sizes = [s.replace("MM", "") for s in sizes]
+                        
+                        # Build code from abbreviations + sizes
+                        parts = []
+                        for w in words:
+                            w_clean = w.strip(".,;:-")
+                            if w_clean in abbrevs:
+                                parts.append(abbrevs[w_clean])
+                            elif len(w_clean) > 2 and w_clean.isalpha() and w_clean not in ("THE", "AND", "FOR", "WITH"):
+                                parts.append(w_clean[:2])
+                        
+                        if parts:
+                            smart_code = "-".join(parts[:3])
+                        else:
+                            smart_code = desc_upper[:6].replace(" ", "-")
+                        
+                        if sizes:
+                            smart_code += "-" + "-".join(sizes[:2])
+                        smart_code = smart_code[:15].upper()
+                        
+                        # Make code unique
+                        final_code = smart_code
+                        counter = 1
+                        while final_code in stock_by_code:
+                            final_code = f"{smart_code}-{counter}"
+                            counter += 1
                         
                         # Get price from PO item if available
                         unit_price = float(items[idx].get("price", 0) or 0)
@@ -33337,44 +33188,27 @@ def api_po_receive(po_id):
             "created_at": now()
         }
         
-        grv_saved = False
-        grv_error = ""
         try:
-            success, result = db.save("goods_received", grv)
-            if success:
-                grv_saved = True
-                logger.info(f"[GRV] Created {grv_num} from {po.get('po_number')} - {len(received_items)} items")
-            else:
-                grv_error = str(result)
-                logger.error(f"[GRV] Save failed: {result}")
+            db.save("goods_received", grv)
+            logger.info(f"[GRV] Created {grv_num} from {po.get('po_number')} - {len(received_items)} items")
+            
+            # Log stock movements with GRV reference
+            for ri in received_items:
+                if ri.get("stock_id") and ri.get("booked_to_stock"):
+                    try:
+                        item_desc = ri.get("stock_name") or ri.get("stock_code") or ri.get("description", "")
+                        db.save("stock_movements", RecordFactory.stock_movement(
+                            business_id=biz_id, stock_id=ri["stock_id"], movement_type="in",
+                            quantity=ri["qty_received"], 
+                            reference=f"{grv_num} | {po.get('po_number', '')} | {safe_string(po.get('supplier_name', ''))}"
+                        ))
+                    except:
+                        pass
+                        
         except Exception as ge:
-            grv_error = str(ge)
-            logger.error(f"[GRV] Save exception: {ge}")
+            logger.error(f"[GRV] Save failed: {ge}")
         
-        # Log stock movements SEPARATELY - don't let GRV failure block this
-        movements_logged = 0
-        for ri in received_items:
-            if ri.get("stock_id") and ri.get("booked_to_stock"):
-                try:
-                    db.save("stock_movements", RecordFactory.stock_movement(
-                        business_id=biz_id, stock_id=ri["stock_id"], movement_type="in",
-                        quantity=ri["qty_received"], 
-                        reference=f"{grv_num} | {po.get('po_number', '')} | {safe_string(po.get('supplier_name', ''))}"
-                    ))
-                    movements_logged += 1
-                except Exception as me:
-                    logger.error(f"[GRV] Movement save failed for {ri.get('stock_code')}: {me}")
-        
-        logger.info(f"[GRV] {grv_num}: GRV saved={grv_saved}, movements={movements_logged}/{len(received_items)}")
-        
-        # Build status message - be honest about what happened
-        if grv_saved:
-            status_msg = f"GRV {grv_num} created! " + ("All items received. Stock updated." if all_received else f"{items_received} items received (partial delivery)")
-        else:
-            # GRV table might not exist - stock was still updated
-            status_msg = f"Stock updated ({items_received} items received). GRV document could not be saved - please check database table 'goods_received' exists."
-            if "Could not find" in grv_error:
-                status_msg += " Table needs to be created in Supabase."
+        status_msg = f"GRV {grv_num} created! " + ("All items received. Stock updated." if all_received else f"{items_received} items received (partial delivery)")
         
         return jsonify({"success": True, "message": status_msg, "all_received": all_received, "grv_id": grv_id, "grv_number": grv_num})
         
@@ -44403,8 +44237,27 @@ IMPORTANT: Only set true for actions the user EXPLICITLY asked for.
                     if not desc:
                         continue
                     
-                    code = smart_stock_code(desc, used_codes)
-                    used_codes.add(code.upper())
+                    words = desc.split()
+                    parts = []
+                    size = ""
+                    for w in words:
+                        if any(c.isdigit() for c in w):
+                            size = w.replace("MM", "")[:8]
+                        elif w in abbrevs:
+                            parts.append(abbrevs[w])
+                        elif len(w) > 2:
+                            parts.append(w[:2])
+                    
+                    code = "-".join(parts[:3]) if parts else desc[:8]
+                    if size:
+                        code += "-" + size
+                    
+                    base = code[:12]
+                    n = 1
+                    while code in used_codes:
+                        code = f"{base}-{n}"
+                        n += 1
+                    used_codes.add(code)
                     
                     row[code_idx] = code
                     codes_done += 1
@@ -58504,8 +58357,39 @@ def api_scan_save_supplier_invoice():
                     logger.info(f"[SCAN] Expense: {desc} → {expense_category}: R{line_total:.2f}")
                     continue  # Don't book to stock
                 
-                # Generate SMART CODE from description using shared function
-                smart_code = smart_stock_code(desc, set(stock_by_code.keys()))
+                # Generate SMART CODE from description (same logic as Zane)
+                product_code = ""
+                for prod, code in product_types.items():
+                    if prod in desc_upper:
+                        product_code = code
+                        break
+                
+                # Extract sizes/numbers
+                sizes = re.findall(r'M?(\d+(?:\.\d+)?(?:/\d+)?)', desc_upper)
+                
+                # Find modifiers
+                modifiers = []
+                if "S/S" in desc_upper or " SS " in desc_upper or desc_upper.startswith("SS "):
+                    modifiers.append("SS")
+                if " HT" in desc_upper or desc_upper.endswith("HT"):
+                    modifiers.append("HT")
+                if "Z/P" in desc_upper:
+                    modifiers.append("ZP")
+                
+                # Build smart code
+                if product_code:
+                    parts = [product_code]
+                    for s in sizes[:2]:
+                        parts.append(s.replace("/", "-"))
+                    parts.extend(modifiers)
+                    smart_code = "-".join(parts).strip("-").upper()[:15]
+                else:
+                    words = desc_upper.split()
+                    sig_word = next((w for w in words if len(w) > 2 and w.isalpha()), "")
+                    smart_code = sig_word[:3] if sig_word else "ITM"
+                    if sizes:
+                        smart_code += "-" + "-".join(sizes[:2])
+                    smart_code = smart_code[:15]
                 
                 # MATCH 1: Try exact smart code match
                 matched = stock_by_code.get(smart_code)
@@ -58579,8 +58463,12 @@ def api_scan_save_supplier_invoice():
                     # Create new stock item with smart code
                     stock_items_created += 1
                     
-                    # smart_stock_code already ensures uniqueness
+                    # Make code unique if it already exists
                     final_code = smart_code
+                    counter = 1
+                    while final_code in stock_by_code:
+                        final_code = f"{smart_code}-{counter}"
+                        counter += 1
                     
                     # Use RecordFactory.stock_item() for 'stock_items' table
                     new_stock = RecordFactory.stock_item(
