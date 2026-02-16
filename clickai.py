@@ -10,7 +10,7 @@
   
 ================================================================================
 
-VERSION: 2.0.267-STOCKFIX
+VERSION: 2.0.268-INTFIX
 CREATED: January 2026
 UPDATED: February 16, 2026
 
@@ -2299,12 +2299,14 @@ class DB:
         return item
     
     def update_stock(self, stock_id: str, updates: dict, biz_id: str = None):
-        """Update stock item - BULLETPROOF version with full logging.
-        Handles column name differences between tables.
-        stock_items uses 'quantity', stock table may use 'qty'.
+        """Update stock item - FIXED version.
         
-        IMPORTANT: Only sends qty fields if they were explicitly in updates.
-        This prevents wiping quantity when updating price/description/etc.
+        BUG FOUND: stock_items.quantity is INTEGER in Supabase.
+        Python sends 5.0 (float) → PostgreSQL rejects with:
+        'invalid input syntax for type integer: "5.0"'
+        
+        FIX: Convert qty to int before sending. Also only sends qty fields
+        if they were explicitly in updates (prevents wiping qty on price changes).
         """
         
         logger.info(f"[STOCK UPDATE] === START === stock_id={stock_id}, updates={updates}, biz_id={biz_id}")
@@ -2319,157 +2321,109 @@ class DB:
                 raw_qty = updates.get("qty")
             if raw_qty is None:
                 raw_qty = 0
-            new_qty = float(raw_qty)
-            logger.info(f"[STOCK UPDATE] Qty change requested: {new_qty}")
+            # Convert to int for INTEGER columns, but keep precision if fractional
+            float_qty = float(raw_qty)
+            # If it's a whole number (5.0, 10.0), send as int. Otherwise keep float for NUMERIC columns.
+            if float_qty == int(float_qty):
+                safe_qty = int(float_qty)
+            else:
+                safe_qty = float_qty
+            logger.info(f"[STOCK UPDATE] Qty: raw={raw_qty} → safe={safe_qty} (type={type(safe_qty).__name__})")
         
-        # === TRY 1: stock_items table with 'quantity' column ===
+        # Build field dict - only include qty if it was in updates
+        fields = {}
+        if has_qty:
+            fields["quantity"] = safe_qty
+        
+        # Pass through non-qty fields (selling_price, cost_price, description, etc.)
+        for k, v in updates.items():
+            if k not in ("qty", "quantity"):
+                fields[k] = v
+        
+        if not fields:
+            logger.warning(f"[STOCK UPDATE] No fields to update for {stock_id}")
+            return False
+        
+        # === TRY 1: stock_items table ===
         try:
-            fields = {}
-            if has_qty:
-                fields["quantity"] = new_qty
-            # Add non-qty fields
-            for k, v in updates.items():
-                if k not in ("qty", "quantity"):
-                    fields[k] = v
+            url = f"{self.url}/rest/v1/stock_items?id=eq.{stock_id}"
+            if biz_id:
+                url += f"&business_id=eq.{biz_id}"
             
-            if fields:
-                url = f"{self.url}/rest/v1/stock_items?id=eq.{stock_id}"
-                if biz_id:
-                    url += f"&business_id=eq.{biz_id}"
-                
-                headers = {
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}",
-                    "Content-Type": "application/json",
-                    "Prefer": "return=representation"
-                }
-                
-                logger.info(f"[STOCK UPDATE] TRY 1: PATCH stock_items → {fields}")
-                resp = requests.patch(url, headers=headers, json=fields, timeout=30)
-                logger.info(f"[STOCK UPDATE] TRY 1 response: status={resp.status_code}, body={resp.text[:300]}")
-                
-                if resp.status_code == 200:
-                    result = resp.json()
-                    if result and len(result) > 0:
-                        # Verify the value actually changed
-                        saved_qty = result[0].get("quantity")
-                        logger.info(f"[STOCK UPDATE] ✅ stock_items SUCCESS! quantity in DB is now: {saved_qty}")
-                        return True
-                    else:
-                        logger.warning(f"[STOCK UPDATE] TRY 1: 200 but empty response - item not in stock_items or RLS blocked")
-                elif resp.status_code == 204:
-                    logger.warning(f"[STOCK UPDATE] TRY 1: 204 No Content - ambiguous, trying next")
+            headers = {**self.headers, "Prefer": "return=representation"}
+            
+            logger.info(f"[STOCK UPDATE] TRY 1: PATCH stock_items → {fields}")
+            resp = requests.patch(url, headers=headers, json=fields, timeout=30)
+            logger.info(f"[STOCK UPDATE] TRY 1: status={resp.status_code}, body={resp.text[:300]}")
+            
+            if resp.status_code == 200:
+                result = resp.json()
+                if result and len(result) > 0:
+                    logger.info(f"[STOCK UPDATE] ✅ SUCCESS! quantity now = {result[0].get('quantity')}")
+                    return True
                 else:
-                    logger.warning(f"[STOCK UPDATE] TRY 1: status {resp.status_code} - {resp.text[:200]}")
+                    logger.warning(f"[STOCK UPDATE] TRY 1: 200 but empty - ID not found or biz_id mismatch")
+            elif resp.status_code == 400 and "22P02" in resp.text:
+                # STILL integer type error - force int
+                logger.warning(f"[STOCK UPDATE] Integer type error - forcing int conversion")
+                if has_qty:
+                    fields["quantity"] = int(float_qty)
+                resp2 = requests.patch(url, headers=headers, json=fields, timeout=30)
+                if resp2.status_code == 200:
+                    result = resp2.json()
+                    if result and len(result) > 0:
+                        logger.info(f"[STOCK UPDATE] ✅ SUCCESS after int() force! quantity now = {result[0].get('quantity')}")
+                        return True
         except Exception as e:
             logger.error(f"[STOCK UPDATE] TRY 1 exception: {e}")
         
-        # === TRY 2: stock table with 'qty' column ===
-        try:
-            fields = {}
-            if has_qty:
-                fields["qty"] = new_qty
-            for k, v in updates.items():
-                if k not in ("qty", "quantity"):
-                    fields[k] = v
-            
-            if fields:
-                url = f"{self.url}/rest/v1/stock?id=eq.{stock_id}"
-                if biz_id:
-                    url += f"&business_id=eq.{biz_id}"
-                
-                headers = {
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}",
-                    "Content-Type": "application/json",
-                    "Prefer": "return=representation"
-                }
-                
-                logger.info(f"[STOCK UPDATE] TRY 2: PATCH stock → {fields}")
-                resp = requests.patch(url, headers=headers, json=fields, timeout=30)
-                logger.info(f"[STOCK UPDATE] TRY 2 response: status={resp.status_code}, body={resp.text[:300]}")
-                
-                if resp.status_code == 200:
-                    result = resp.json()
-                    if result and len(result) > 0:
-                        saved_qty = result[0].get("qty") or result[0].get("quantity")
-                        logger.info(f"[STOCK UPDATE] ✅ stock (qty col) SUCCESS! qty in DB is now: {saved_qty}")
-                        return True
-                    else:
-                        logger.warning(f"[STOCK UPDATE] TRY 2: 200 but empty - item not in stock table or RLS blocked")
-                elif resp.status_code == 400 and "PGRST204" in resp.text:
-                    logger.warning(f"[STOCK UPDATE] TRY 2: 'qty' column not found in stock table, trying 'quantity'...")
-                else:
-                    logger.warning(f"[STOCK UPDATE] TRY 2: status {resp.status_code}")
-        except Exception as e:
-            logger.error(f"[STOCK UPDATE] TRY 2 exception: {e}")
-        
-        # === TRY 3: stock table with 'quantity' column ===
-        if has_qty:
+        # === TRY 2: stock_items WITHOUT biz_id filter (in case of mismatch) ===
+        if biz_id:
             try:
-                fields = {"quantity": new_qty}
-                for k, v in updates.items():
-                    if k not in ("qty", "quantity"):
-                        fields[k] = v
+                url = f"{self.url}/rest/v1/stock_items?id=eq.{stock_id}"
+                headers = {**self.headers, "Prefer": "return=representation"}
                 
-                url = f"{self.url}/rest/v1/stock?id=eq.{stock_id}"
-                if biz_id:
-                    url += f"&business_id=eq.{biz_id}"
+                # Force int for safety
+                safe_fields = dict(fields)
+                if has_qty:
+                    safe_fields["quantity"] = int(float_qty)
                 
-                headers = {
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}",
-                    "Content-Type": "application/json",
-                    "Prefer": "return=representation"
-                }
-                
-                logger.info(f"[STOCK UPDATE] TRY 3: PATCH stock → {fields}")
-                resp = requests.patch(url, headers=headers, json=fields, timeout=30)
-                logger.info(f"[STOCK UPDATE] TRY 3 response: status={resp.status_code}, body={resp.text[:300]}")
+                logger.info(f"[STOCK UPDATE] TRY 2: PATCH stock_items (no biz_id) → {safe_fields}")
+                resp = requests.patch(url, headers=headers, json=safe_fields, timeout=30)
+                logger.info(f"[STOCK UPDATE] TRY 2: status={resp.status_code}, body={resp.text[:300]}")
                 
                 if resp.status_code == 200:
                     result = resp.json()
                     if result and len(result) > 0:
-                        saved_qty = result[0].get("quantity") or result[0].get("qty")
-                        logger.info(f"[STOCK UPDATE] ✅ stock (quantity col) SUCCESS! qty in DB is now: {saved_qty}")
+                        logger.info(f"[STOCK UPDATE] ✅ TRY 2 SUCCESS (no biz_id filter)! biz_id mismatch was the problem")
                         return True
             except Exception as e:
-                logger.error(f"[STOCK UPDATE] TRY 3 exception: {e}")
+                logger.error(f"[STOCK UPDATE] TRY 2 exception: {e}")
         
-        # === TRY 4: LAST RESORT - try without business_id filter ===
+        # === TRY 3: legacy 'stock' table with 'qty' column ===
         try:
-            fields = {}
+            legacy_fields = dict(fields)
             if has_qty:
-                fields["quantity"] = new_qty
-            for k, v in updates.items():
-                if k not in ("qty", "quantity"):
-                    fields[k] = v
+                legacy_fields.pop("quantity", None)
+                legacy_fields["qty"] = int(float_qty)
             
-            if fields:
-                # Try stock_items WITHOUT business_id filter
-                url = f"{self.url}/rest/v1/stock_items?id=eq.{stock_id}"
-                headers = {
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}",
-                    "Content-Type": "application/json",
-                    "Prefer": "return=representation"
-                }
-                
-                logger.info(f"[STOCK UPDATE] TRY 4 (no biz_id filter): PATCH stock_items → {fields}")
-                resp = requests.patch(url, headers=headers, json=fields, timeout=30)
-                logger.info(f"[STOCK UPDATE] TRY 4 response: status={resp.status_code}, body={resp.text[:300]}")
-                
-                if resp.status_code == 200:
-                    result = resp.json()
-                    if result and len(result) > 0:
-                        logger.info(f"[STOCK UPDATE] ✅ TRY 4 SUCCESS (no biz_id filter)! This means business_id mismatch was the problem!")
-                        return True
-                    else:
-                        logger.error(f"[STOCK UPDATE] TRY 4 also empty - stock_id {stock_id} not found in ANY table")
+            url = f"{self.url}/rest/v1/stock?id=eq.{stock_id}"
+            if biz_id:
+                url += f"&business_id=eq.{biz_id}"
+            headers = {**self.headers, "Prefer": "return=representation"}
+            
+            logger.info(f"[STOCK UPDATE] TRY 3: PATCH stock (legacy) → {legacy_fields}")
+            resp = requests.patch(url, headers=headers, json=legacy_fields, timeout=30)
+            
+            if resp.status_code == 200:
+                result = resp.json()
+                if result and len(result) > 0:
+                    logger.info(f"[STOCK UPDATE] ✅ TRY 3 SUCCESS (legacy stock table)")
+                    return True
         except Exception as e:
-            logger.error(f"[STOCK UPDATE] TRY 4 exception: {e}")
+            logger.error(f"[STOCK UPDATE] TRY 3 exception: {e}")
         
-        logger.error(f"[STOCK UPDATE] ❌ ALL ATTEMPTS FAILED for stock_id={stock_id}, biz_id={biz_id}")
+        logger.error(f"[STOCK UPDATE] ❌ ALL ATTEMPTS FAILED for stock_id={stock_id}")
         return False
     
     def save_stock(self, record: dict):
@@ -19738,9 +19692,9 @@ def health():
 def api_version():
     """Return current version - use to verify deployments"""
     return jsonify({
-        "version": "2.0.267-STOCKFIX",
+        "version": "2.0.268-INTFIX",
         "updated": "2026-02-16",
-        "features": ["AJAX Pulse", "Pulse cache", "Whisper STT", "OpenAI TTS", "Voice Mode", "Mobile nav", "STOCK FIX - update_stock rewritten"]
+        "features": ["STOCK FIX: float→int for quantity column", "Full stock update logging"]
     })
 
 @app.route("/api/health")
@@ -19872,216 +19826,6 @@ def api_stock_debug():
         "stock_legacy_sample": [{"id": s.get("id","")[:8], "code": s.get("code"), "desc": s.get("description","")[:30]} for s in stock_legacy[:5]],
         "biz_id": biz_id
     })
-
-
-@app.route("/api/stock/diagnose")
-@login_required
-def api_stock_diagnose():
-    """
-    FULL STOCK DIAGNOSTIC - Tests the ENTIRE chain:
-    1. Which table has data?
-    2. Can we READ a stock item?
-    3. Can we WRITE to it? (adds +1 then subtracts -1)
-    4. Does the value actually change in DB?
-    5. Does stock_movements table exist?
-    
-    Hit this URL in your browser: /api/stock/diagnose
-    """
-    import requests as req
-    
-    results = {
-        "version": "2.0.267-STOCKFIX",
-        "steps": [],
-        "conclusion": ""
-    }
-    
-    def step(name, status, detail=""):
-        results["steps"].append({"step": name, "status": status, "detail": detail})
-        logger.info(f"[DIAGNOSE] {status} {name}: {detail}")
-    
-    try:
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        
-        if not biz_id:
-            step("Business", "FAIL", "No business_id - not logged in?")
-            results["conclusion"] = "NOT LOGGED IN - no business_id found"
-            return jsonify(results)
-        
-        step("Business", "OK", f"biz_id = {biz_id}")
-        
-        # === STEP 1: Check which tables have data ===
-        stock_items = db.get("stock_items", {"business_id": biz_id}) or []
-        stock_legacy = db.get("stock", {"business_id": biz_id}) or []
-        
-        step("Tables", "OK", f"stock_items: {len(stock_items)} rows, stock (legacy): {len(stock_legacy)} rows")
-        
-        if not stock_items and not stock_legacy:
-            step("Stock data", "FAIL", "BOTH tables are empty - no stock to test")
-            results["conclusion"] = "NO STOCK DATA in either table"
-            return jsonify(results)
-        
-        # === STEP 2: Pick a test item ===
-        # Prefer stock_items, but use legacy if that's where data is
-        test_source = "stock_items"
-        test_item = None
-        if stock_items:
-            test_item = stock_items[0]
-            test_source = "stock_items"
-        elif stock_legacy:
-            test_item = stock_legacy[0]
-            test_source = "stock"
-        
-        test_id = test_item.get("id")
-        test_code = test_item.get("code", "?")
-        
-        # Read qty - check ALL possible column names
-        qty_val = test_item.get("quantity")
-        qty_col_used = "quantity"
-        if qty_val is None:
-            qty_val = test_item.get("qty")
-            qty_col_used = "qty"
-        if qty_val is None:
-            qty_val = 0
-            qty_col_used = "MISSING"
-        
-        step("Test item", "OK", f"Table: {test_source}, ID: {test_id}, Code: {test_code}, Qty: {qty_val} (from column '{qty_col_used}')")
-        
-        # === STEP 3: Check which qty columns exist via raw Supabase ===
-        headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "return=representation"
-        }
-        
-        # Check if table has 'quantity' column
-        col_test_url = f"{SUPABASE_URL}/rest/v1/{test_source}?select=id,quantity&limit=1"
-        col_resp = req.get(col_test_url, headers=headers, timeout=10)
-        has_quantity_col = col_resp.status_code == 200
-        
-        col_test_url2 = f"{SUPABASE_URL}/rest/v1/{test_source}?select=id,qty&limit=1"
-        col_resp2 = req.get(col_test_url2, headers=headers, timeout=10)
-        has_qty_col = col_resp2.status_code == 200
-        
-        step("Columns", "OK" if (has_quantity_col or has_qty_col) else "FAIL",
-             f"{test_source} has 'quantity': {has_quantity_col}, has 'qty': {has_qty_col}")
-        
-        if not has_quantity_col and not has_qty_col:
-            results["conclusion"] = f"CRITICAL: {test_source} table has NEITHER 'quantity' NOR 'qty' column!"
-            return jsonify(results)
-        
-        # Determine which column to use
-        write_col = "quantity" if has_quantity_col else "qty"
-        
-        # === STEP 4: Direct raw PATCH test ===
-        original_qty = float(qty_val)
-        test_qty = original_qty + 1  # Add 1 for test
-        
-        patch_url = f"{SUPABASE_URL}/rest/v1/{test_source}?id=eq.{test_id}"
-        patch_data = {write_col: test_qty}
-        
-        step("PATCH test (no biz_id)", "...", f"URL: {patch_url}, Data: {patch_data}")
-        
-        patch_resp = req.patch(patch_url, headers=headers, json=patch_data, timeout=15)
-        patch_body = patch_resp.text[:500]
-        
-        if patch_resp.status_code == 200:
-            patch_result = patch_resp.json()
-            if patch_result and len(patch_result) > 0:
-                new_val = patch_result[0].get(write_col)
-                step("PATCH (no biz_id)", "OK", f"Updated! {write_col} is now: {new_val}")
-                
-                # Revert immediately
-                revert_data = {write_col: original_qty}
-                req.patch(patch_url, headers=headers, json=revert_data, timeout=15)
-                step("Revert", "OK", f"Reverted back to {original_qty}")
-                
-                # Now test WITH business_id filter
-                patch_url_biz = f"{SUPABASE_URL}/rest/v1/{test_source}?id=eq.{test_id}&business_id=eq.{biz_id}"
-                patch_resp_biz = req.patch(patch_url_biz, headers=headers, json={write_col: test_qty}, timeout=15)
-                
-                if patch_resp_biz.status_code == 200:
-                    biz_result = patch_resp_biz.json()
-                    if biz_result and len(biz_result) > 0:
-                        step("PATCH (with biz_id)", "OK", "Works WITH business_id filter too")
-                        # Revert
-                        req.patch(patch_url_biz, headers=headers, json={write_col: original_qty}, timeout=15)
-                    else:
-                        step("PATCH (with biz_id)", "FAIL", 
-                             f"EMPTY response with biz_id filter! Item's business_id might not match. "
-                             f"Item business_id: {test_item.get('business_id')}, Session biz_id: {biz_id}")
-                        
-                        # Revert via URL without biz_id
-                        req.patch(patch_url, headers=headers, json={write_col: original_qty}, timeout=15)
-                        
-                        results["conclusion"] = (
-                            f"BUSINESS_ID MISMATCH! Stock item's business_id ({test_item.get('business_id')}) "
-                            f"does not match session business_id ({biz_id}). "
-                            f"Update works without biz_id filter but FAILS with it."
-                        )
-                        return jsonify(results)
-                else:
-                    step("PATCH (with biz_id)", "FAIL", f"Status {patch_resp_biz.status_code}: {patch_resp_biz.text[:200]}")
-                    req.patch(patch_url, headers=headers, json={write_col: original_qty}, timeout=15)
-            else:
-                step("PATCH (no biz_id)", "FAIL", f"200 but EMPTY body - ID not found in {test_source}! Body: {patch_body}")
-                
-                # Check: does the item exist at ALL?
-                check_url = f"{SUPABASE_URL}/rest/v1/{test_source}?id=eq.{test_id}&select=id"
-                check_resp = req.get(check_url, headers=headers, timeout=10)
-                exists = len(check_resp.json()) > 0 if check_resp.status_code == 200 else False
-                step("Existence check", "OK" if exists else "FAIL", 
-                     f"ID {test_id} exists in {test_source}: {exists}")
-                
-                if not exists:
-                    results["conclusion"] = f"Stock item ID {test_id} does NOT EXIST in {test_source} table!"
-        else:
-            step("PATCH (no biz_id)", "FAIL", f"HTTP {patch_resp.status_code}: {patch_body}")
-            
-            if "PGRST204" in patch_body:
-                results["conclusion"] = f"Column '{write_col}' does NOT EXIST in {test_source} table!"
-            elif patch_resp.status_code == 404:
-                results["conclusion"] = f"Table '{test_source}' not found in Supabase!"
-            else:
-                results["conclusion"] = f"Supabase PATCH failed with status {patch_resp.status_code}"
-            return jsonify(results)
-        
-        # === STEP 5: Check stock_movements table ===
-        try:
-            mv_url = f"{SUPABASE_URL}/rest/v1/stock_movements?select=id&limit=1"
-            mv_resp = req.get(mv_url, headers=headers, timeout=10)
-            if mv_resp.status_code == 200:
-                step("stock_movements table", "OK", "Table exists and accessible")
-            else:
-                step("stock_movements table", "FAIL", f"Status {mv_resp.status_code}: {mv_resp.text[:200]}")
-        except Exception as e:
-            step("stock_movements table", "FAIL", f"Exception: {e}")
-        
-        # === STEP 6: Check key ===
-        key_prefix = SUPABASE_KEY[:20] + "..." if SUPABASE_KEY else "EMPTY!"
-        is_service_key = "service_role" in (SUPABASE_KEY or "")
-        step("Supabase key", "OK" if SUPABASE_KEY else "FAIL", 
-             f"Key starts with: {key_prefix}, Is service_role: {is_service_key}")
-        
-        # === CONCLUSION ===
-        if not results.get("conclusion"):
-            all_ok = all(s["status"] == "OK" for s in results["steps"] if s["status"] != "...")
-            if all_ok:
-                results["conclusion"] = (
-                    "ALL TESTS PASSED! Stock updates should be working. "
-                    "If qty still doesn't change after a POS sale, check Fly.io logs for [STOCK UPDATE] and [POS DEBUG] entries. "
-                    "The deployed version should show 2.0.267-STOCKFIX."
-                )
-            else:
-                failed = [s for s in results["steps"] if s["status"] == "FAIL"]
-                results["conclusion"] = f"ISSUES FOUND: {', '.join(s['step'] for s in failed)}"
-    
-    except Exception as e:
-        step("CRASH", "FAIL", str(e))
-        results["conclusion"] = f"Diagnostic crashed: {e}"
-    
-    return jsonify(results)
 
 @app.route("/api/stock-dedup", methods=["POST"])
 @login_required
@@ -23802,6 +23546,16 @@ def invoice_view(invoice_id):
     if invoice.get("customer_id"):
         customer = db.get_one("customers", invoice.get("customer_id"))
     
+    # Fallback: search by name if ID didn't find a customer
+    if not customer and invoice.get("customer_name") and invoice.get("customer_name") != "Cash":
+        all_customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
+        inv_name = invoice.get("customer_name", "").lower().strip()
+        for c in all_customers:
+            if c.get("name", "").lower().strip() == inv_name:
+                customer = c
+                logger.info(f"[INVOICE VIEW] Found customer by name match: {c.get('name')}")
+                break
+    
     # Parse items - handle both JSON string and list
     raw_items = invoice.get("items", [])
     if isinstance(raw_items, str):
@@ -23854,8 +23608,8 @@ def invoice_view(invoice_id):
     
     biz_name = business.get("name", "Business") if business else "Business"
     
-    # Show credit note button only for non-credited invoices
-    cn_btn = "" if status in ("credited", "paid") else f'<a href="/invoice/{invoice_id}/credit-note" class="btn btn-secondary">Credit Note</a>'
+    # Show credit note button - only hide if already fully credited
+    cn_btn = "" if status == "credited" else f'<a href="/invoice/{invoice_id}/credit-note" class="btn btn-secondary">Credit Note</a>'
     
     # Delivery note button - hide if already delivered or paid
     dn_btn = "" if status in ("delivered", "paid", "credited") else f'<a href="/invoice/{invoice_id}/create-delivery-note" class="btn btn-secondary">Delivery Note</a>'
@@ -38627,7 +38381,7 @@ def pos_page():
     # JSON data for searchable dropdown
     import json
     customer_list = [{"id": "", "name": "Cash Sale"}] + [{"id": "NEW", "name": "+ Add New"}]
-    customer_list += [{"id": c.get("id"), "name": c.get("name", "")} for c in sorted(customers, key=lambda x: (x.get("name") or "").lower())]
+    customer_list += [{"id": c.get("id"), "name": c.get("name", ""), "address": c.get("address", ""), "phone": c.get("phone", "") or c.get("cell", ""), "vat_number": c.get("vat_number", ""), "email": c.get("email", "")} for c in sorted(customers, key=lambda x: (x.get("name") or "").lower())]
     supplier_list = [{"id": "", "name": "Select Supplier"}] + [{"id": "NEW", "name": "+ Add New"}]
     supplier_list += [{"id": s.get("id"), "name": s.get("name", "")} for s in sorted(suppliers, key=lambda x: (x.get("name") or "").lower())]
     customer_json = json.dumps(customer_list).replace("'", "&#39;")
@@ -39697,13 +39451,31 @@ def pos_page():
     
     // Get current customer (even if supplier is selected)
     function getCurrentCustomer() {
+        let id = '';
+        let name = '';
         if (currentEntityType === 'customer') {
-            return {
-                id: document.getElementById('entityValue').value,
-                name: document.getElementById('entitySearch').value
-            };
+            id = document.getElementById('entityValue').value;
+            name = document.getElementById('entitySearch').value;
+        } else {
+            id = lastCustomerId;
+            name = lastCustomerName;
         }
-        return { id: lastCustomerId, name: lastCustomerName };
+        // Look up full customer details from data
+        let address = '', phone = '', vat_number = '', email = '';
+        if (id) {
+            try {
+                const customers = JSON.parse(document.getElementById('customerData').value.replace(/&#39;/g, "'"));
+                const found = customers.find(c => c.id === id);
+                if (found) {
+                    address = found.address || '';
+                    phone = found.phone || '';
+                    vat_number = found.vat_number || '';
+                    email = found.email || '';
+                    if (!name) name = found.name || '';
+                }
+            } catch(e) {}
+        }
+        return { id, name, address, phone, vat_number, email };
     }
     
     // Get current supplier (even if customer is selected)
@@ -40062,8 +39834,8 @@ def pos_page():
             const data = await response.json();
             
             if (data.success) {
-                // Show print dialog based on settings - pass cash info for cash sales
-                showPrintDialog(data.sale_number, data.sale_id, method, customerName, items, subtotal, vat, grandTotal, cashReceived, changeGiven);
+                // Show print dialog based on settings - pass cash info and customer details
+                showPrintDialog(data.sale_number, data.sale_id, method, customer, items, subtotal, vat, grandTotal, cashReceived, changeGiven);
                 clearCart();
                 // posLocked will be reset on page reload after print
             } else {
@@ -41471,8 +41243,14 @@ def pos_page():
         }
     }
     
-    function showPrintDialog(saleNum, saleId, method, customerName, items, subtotal, vat, total, cashReceived = 0, changeGiven = 0) {
+    function showPrintDialog(saleNum, saleId, method, customerObj, items, subtotal, vat, total, cashReceived = 0, changeGiven = 0) {
         loadPosSettings();
+        
+        // Handle both old string format and new object format
+        const customerName = (typeof customerObj === 'string') ? customerObj : (customerObj.name || 'Cash Sale');
+        const customerAddress = (typeof customerObj === 'object') ? (customerObj.address || '') : '';
+        const customerPhone = (typeof customerObj === 'object') ? (customerObj.phone || '') : '';
+        const customerVat = (typeof customerObj === 'object') ? (customerObj.vat_number || '') : '';
         
         lastSaleData = { saleNum, saleId, method, customerName, items, subtotal, vat, total, cashReceived, changeGiven };
         
@@ -41518,6 +41296,9 @@ def pos_page():
             <div style="margin-bottom:15px;font-size:18px;">
                 <span style="background:#333;color:white;padding:6px 12px;border-radius:3px;font-size:18px;">${methodLabel}</span>
                 <span style="margin-left:12px;font-size:18px;">${customerName || 'Cash Sale'}</span>
+                ${customerAddress ? '<div style="font-size:14px;color:#666;margin-top:6px;margin-left:4px;">' + customerAddress.replace(/\\n/g, '<br>') + '</div>' : ''}
+                ${customerPhone ? '<div style="font-size:14px;color:#666;margin-left:4px;">Tel: ' + customerPhone + '</div>' : ''}
+                ${customerVat ? '<div style="font-size:14px;color:#666;margin-left:4px;font-weight:bold;">VAT: ' + customerVat + '</div>' : ''}
             </div>
             
             <table style="width:100%;border-collapse:collapse;margin-bottom:15px;">
