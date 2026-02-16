@@ -1885,12 +1885,11 @@ def safe_uuid(value):
     return value if is_valid_uuid(value) else None
 
 def now() -> str:
-    """Current timestamp in ISO 8601 format for Supabase - SA timezone (UTC+2)"""
-    sa_time = datetime.utcnow() + timedelta(hours=2)
-    return sa_time.isoformat() + 'Z'
+    """Current timestamp in ISO 8601 format for Supabase - always UTC"""
+    return datetime.utcnow().isoformat() + 'Z'
 
 def today() -> str:
-    """Current date in SA timezone"""
+    """Current date in SA timezone (UTC+2)"""
     sa_time = datetime.utcnow() + timedelta(hours=2)
     return sa_time.strftime("%Y-%m-%d")
 
@@ -1902,16 +1901,20 @@ def money(amount) -> str:
         return "R0.00"
 
 def extract_time(timestamp_str) -> str:
-    """Extract HH:MM from any timestamp format (Supabase, ISO, etc.)
+    """Extract HH:MM from any timestamp format, converted to SA time (UTC+2)
     Handles: 2026-02-16T18:57:32+00:00, 2026-02-16T18:57:32.123456+00:00, 
              2026-02-16T18:57:32Z, 2026-02-16T18:57:32.388Z
     """
     try:
         ts = str(timestamp_str or "")
         if 'T' in ts:
-            time_part = ts.split('T')[1]  # Get everything after T
-            # Extract HH:MM from the start of time_part
-            return time_part[:5]  # "18:57" from "18:57:32+00:00"
+            time_part = ts.split('T')[1]
+            hh = int(time_part[:2])
+            mm = time_part[3:5]
+            # If timestamp is UTC (ends with Z or +00:00), add 2 hours for SA
+            if 'Z' in ts or '+00:00' in ts:
+                hh = (hh + 2) % 24
+            return f"{hh:02d}:{mm}"
         return "-"
     except:
         return "-"
@@ -41752,6 +41755,15 @@ def pos_history():
     grand_total = cash_total + card_total + account_total + invoice_total
     transaction_count = len(sales) + len(invoices) + len(quotes)
     
+    # === EXPECTED CASH FOR Z-READ (always TODAY regardless of date filter) ===
+    # Cash in drawer = POS cash sales + cash-paid invoices (for today only)
+    today_str = today()
+    today_cash_sales = sum(float(s.get("total", 0)) for s in all_sales 
+                          if s.get("payment_method") == "cash" and (s.get("date") or "") == today_str)
+    today_cash_invoices = sum(float(i.get("total", 0)) for i in all_invoices 
+                             if i.get("payment_method") in ("cash",) and (i.get("date") or "") == today_str)
+    expected_cash_drawer = today_cash_sales + today_cash_invoices
+    
     # Build transaction rows
     rows = ""
     
@@ -42024,7 +42036,7 @@ def pos_history():
                     </tr>
                     <tr style="font-size:14px;">
                         <td style="padding:4px 8px;">Expected Cash:</td>
-                        <td style="text-align:right;padding:4px 8px;" id="cashExpected">{money(cash_total)}</td>
+                        <td style="text-align:right;padding:4px 8px;" id="cashExpected">{money(expected_cash_drawer)}</td>
                     </tr>
                     <tr id="diffRow" style="font-size:16px;font-weight:bold;">
                         <td style="padding:4px 8px;">DIFFERENCE:</td>
@@ -42127,7 +42139,7 @@ def pos_history():
         document.getElementById('xreadModal').style.display = 'flex';
     }}
     
-    const expectedCash = {float(cash_total)};
+    const expectedCash = {float(expected_cash_drawer)};
     
     function calcCashUp() {{
         let counted = 0;
@@ -42234,7 +42246,7 @@ def pos_history():
         html += '<hr style="border:1px dashed #000;margin:10px 0;">';
         html += '<table style="width:100%;border-collapse:collapse;">';
         html += '<tr style="font-weight:bold;"><td>Counted:</td><td style="text-align:right;">' + counted + '</td></tr>';
-        html += '<tr><td>Expected:</td><td style="text-align:right;">{money(cash_total)}</td></tr>';
+        html += '<tr><td>Expected:</td><td style="text-align:right;">{money(expected_cash_drawer)}</td></tr>';
         html += '<tr style="font-weight:bold;font-size:16px;"><td>Difference:</td><td style="text-align:right;">' + diff + '</td></tr>';
         html += '</table>';
         html += '<div style="text-align:center;margin:10px 0;font-weight:bold;">' + status + '</div>';
@@ -42552,14 +42564,14 @@ def api_pos_sale():
             "business_id": biz_id,
             "sale_number": sale_num,
             "date": today(),
-            "customer_id": customer_id or None,
+            "customer_id": safe_uuid(customer_id),
             "customer_name": customer_name,
             "payment_method": payment_method,
             "items": json.dumps(items),
             "subtotal": float(subtotal),
             "vat": float(vat),
             "total": float(total),
-            "created_by": user.get("id") if user else None,  # Track who made the sale
+            "created_by": safe_uuid(user.get("id", "")) if user else None,
             "created_at": now()
         }
         
@@ -42567,7 +42579,7 @@ def api_pos_sale():
         
         if not success:
             logger.error(f"[POS] Sale save failed: {err}")
-            return jsonify({"success": False, "error": "Failed to save sale"})
+            return jsonify({"success": False, "error": f"Failed to save sale: {str(err)[:200]}"})
         
         # === GL ENTRIES ===
         
@@ -58920,10 +58932,19 @@ def create_credit_note(invoice_id):
     if not invoice:
         return redirect("/invoices")
     
-    try:
-        inv_items = json.loads(invoice.get("items", "[]"))
-    except:
+    # Handle items - Supabase may return as list or JSON string
+    raw_items = invoice.get("items", "[]")
+    if isinstance(raw_items, list):
+        inv_items = raw_items
+    elif isinstance(raw_items, str):
+        try:
+            inv_items = json.loads(raw_items)
+        except:
+            inv_items = []
+    else:
         inv_items = []
+    
+    logger.info(f"[CREDIT NOTE] Invoice {invoice.get('invoice_number')}: {len(inv_items)} items loaded, type={type(raw_items).__name__}")
     
     if request.method == "POST":
         reason = request.form.get("reason", "")
