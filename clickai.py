@@ -45870,21 +45870,18 @@ def api_smart_import_batch():
                         status = "skipped"
                         error_msg = "Skip row"
                     else:
+                        # bills table columns: id, business_id, supplier_id, supplier_name, number, date, due_date, total, balance, status, created_at
                         record = {
                             "id": generate_id(),
                             "business_id": biz_id,
+                            "supplier_id": "",
                             "supplier_name": supplier_name,
-                            "supplier_code": supplier_code,
-                            "invoice_number": supplier_inv or doc_no,
-                            "sage_doc_no": doc_no,
+                            "number": supplier_inv or doc_no,
                             "date": date_val,
                             "due_date": due_date_val,
-                            "amount_excl": float(row.get("exclusive", 0) or row.get("Exclusive", 0) or 0),
-                            "vat_amount": float(row.get("vat", 0) or row.get("VAT", 0) or row.get("Tax", 0) or 0),
-                            "amount_incl": total or outstanding,
-                            "amount_outstanding": outstanding,
+                            "total": total or outstanding,
+                            "balance": outstanding,
                             "status": inv_status,
-                            "source": "sage_import",
                             "created_at": now()
                         }
                         existing_supplier = db.get("suppliers", {"business_id": biz_id, "name": supplier_name})
@@ -45947,21 +45944,21 @@ def api_smart_import_batch():
                         status = "skipped"
                         error_msg = "Skip row"
                     else:
+                        # invoices table columns: id, business_id, invoice_number, date, due_date, customer_id, customer_name, items, subtotal, vat, total, status, notes, created_at
                         record = {
                             "id": generate_id(),
                             "business_id": biz_id,
-                            "customer_name": customer_name,
-                            "customer_code": customer_code,
                             "invoice_number": doc_no,
-                            "customer_ref": cust_ref,
                             "date": date_val,
                             "due_date": due_date_val,
-                            "amount_excl": float(row.get("exclusive", 0) or row.get("Exclusive", 0) or 0),
-                            "vat_amount": float(row.get("vat", 0) or row.get("VAT", 0) or 0),
-                            "amount_incl": total or outstanding,
-                            "amount_outstanding": outstanding,
+                            "customer_id": "",
+                            "customer_name": customer_name,
+                            "items": [],
+                            "subtotal": total or outstanding,
+                            "vat": 0,
+                            "total": total or outstanding,
                             "status": inv_status,
-                            "source": "sage_import",
+                            "notes": f"Sage import - Ref: {cust_ref}" if cust_ref else "Sage import",
                             "created_at": now()
                         }
                         existing_customer = db.get("customers", {"business_id": biz_id, "name": customer_name})
