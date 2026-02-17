@@ -46436,6 +46436,604 @@ def api_smart_import_execute():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SAGE BULK MIGRATION - One-click multi-file import from Sage
+# Drop ALL your Sage CSV exports at once → auto-detect → preview → import
+# Uses existing /api/smart-import/batch endpoint for actual DB writes
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/sage-migrate")
+@login_required
+def sage_migrate_page():
+    """Sage One-Click Migration - upload all CSVs at once"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_name = business.get("name", "your business") if business else "your business"
+
+    content = '''
+    <style>
+        .sm-drop{border:3px dashed var(--border);border-radius:20px;padding:50px 30px;text-align:center;cursor:pointer;transition:all .3s;background:linear-gradient(135deg,rgba(16,185,129,.03),rgba(34,197,94,.02))}
+        .sm-drop:hover,.sm-drop.drag-over{border-color:var(--green);background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(34,197,94,.05));transform:scale(1.005)}
+        .sm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:20px 0}
+        .sm-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;transition:all .3s}
+        .sm-card.loaded{border-color:var(--green);background:rgba(16,185,129,.05)}
+        .sm-card .icon{font-size:28px;margin-bottom:6px}
+        .sm-card .count{font-size:24px;font-weight:700;color:var(--green)}
+        .sm-card .label{font-size:12px;color:var(--text-muted);margin-top:2px}
+        .sm-card .sub{font-size:11px;color:var(--text-muted)}
+        .sm-fin{background:linear-gradient(135deg,rgba(16,185,129,.08),rgba(34,197,94,.05));border:1px solid rgba(16,185,129,.2);border-radius:12px;padding:20px;margin:15px 0}
+        .sm-fin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:15px}
+        .sm-fin-item .val{font-size:20px;font-weight:700;color:var(--green)}
+        .sm-fin-item .lbl{font-size:11px;color:var(--text-muted)}
+        .sm-table{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}
+        .sm-table th{text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-muted);font-weight:600}
+        .sm-table td{padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+        .sm-detail{background:var(--card);border:1px solid var(--border);border-radius:12px;margin:10px 0;overflow:hidden}
+        .sm-detail-head{padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.02)}
+        .sm-detail-head:hover{background:rgba(255,255,255,.04)}
+        .sm-detail-body{padding:16px;display:none;overflow-x:auto}
+        .sm-detail.open .sm-detail-body{display:block}
+        .sm-badge{display:inline-block;padding:2px 10px;border-radius:10px;background:rgba(16,185,129,.15);color:var(--green);font-size:12px;font-weight:600}
+        .sm-progress{background:var(--border);border-radius:10px;overflow:hidden;height:14px;margin:15px 0}
+        .sm-progress-bar{height:100%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:10px;transition:width .3s;width:0%}
+        .sm-log{max-height:300px;overflow-y:auto;font-size:12px;padding:10px;background:rgba(0,0,0,.2);border-radius:8px;margin:10px 0}
+        .sm-log-line{padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+        .sm-log-ok{color:#10b981} .sm-log-warn{color:#f59e0b} .sm-log-err{color:#ef4444}
+        .sm-mode{display:flex;gap:12px;margin:15px 0}
+        .sm-mode-btn{flex:1;padding:12px;border-radius:8px;cursor:pointer;border:1px solid var(--border);background:transparent;text-align:left;transition:all .2s;color:var(--text)}
+        .sm-mode-btn.active{border-color:var(--green);background:rgba(16,185,129,.08)}
+        .sm-mode-btn h4{margin:0 0 4px 0;font-size:14px} .sm-mode-btn p{margin:0;font-size:12px;color:var(--text-muted)}
+    </style>
+
+    <!-- STEP 1: Upload -->
+    <div id="smUpload">
+        <div class="card" style="background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(34,197,94,.06));text-align:center;padding:25px;margin-bottom:20px">
+            <h2 style="margin:0 0 8px 0">🚀 Sage → ClickAI Migrasie</h2>
+            <p style="color:var(--text-muted);margin:0;font-size:14px">Upload al jou Sage CSV exports gelyk — ons doen die res</p>
+        </div>
+        <div class="sm-drop" id="smDrop" onclick="document.getElementById('smFiles').click()">
+            <div style="font-size:56px;margin-bottom:12px">📂</div>
+            <div style="font-size:18px;font-weight:600;margin-bottom:6px">Drop jou Sage CSV files hier</div>
+            <div style="color:var(--text-muted);font-size:14px">of klik om te browse — upload alles gelyk</div>
+            <input type="file" id="smFiles" multiple accept=".csv" style="display:none" onchange="smHandleFiles(this.files)">
+        </div>
+        <div style="margin-top:15px;padding:15px;background:var(--card);border:1px solid var(--border);border-radius:12px">
+            <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:10px">📋 Ondersteunde Sage Exports:</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px" id="smFileTypes">
+                <div id="smType_accounts">📊 Accounts (Chart of Accounts)</div>
+                <div id="smType_customers">👥 Customers</div>
+                <div id="smType_suppliers">🏭 Suppliers</div>
+                <div id="smType_items">📦 Items / Stock</div>
+                <div id="smType_customer_invoices">🧾 Customer Invoices</div>
+                <div id="smType_supplier_invoices">📋 Supplier Invoices</div>
+                <div id="smType_customer_transactions">💳 Customer Transactions</div>
+                <div id="smType_item_categories">🏷️ Item Categories</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 2: Preview -->
+    <div id="smPreview" style="display:none">
+        <div class="card" style="background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(34,197,94,.06));padding:20px;margin-bottom:15px">
+            <h2 style="margin:0 0 5px 0">✅ Sage Data Geanaliseer</h2>
+            <p style="color:var(--text-muted);margin:0;font-size:14px" id="smPreviewSub"></p>
+        </div>
+
+        <div class="sm-mode">
+            <div class="sm-mode-btn active" id="smModeFresh" onclick="smSetMode('fresh')">
+                <h4>🆕 Vars Besigheid</h4><p>Begin skoon — import alles</p>
+            </div>
+            <div class="sm-mode-btn" id="smModeExisting" onclick="smSetMode('existing')">
+                <h4>🔄 Bestaande Data</h4><p>Match & update — oorskryf duplikate</p>
+            </div>
+        </div>
+
+        <div class="sm-grid" id="smCards"></div>
+        <div id="smFinancials"></div>
+        <div id="smDetails"></div>
+
+        <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap">
+            <button class="btn btn-secondary" onclick="document.getElementById('smFiles2').click()">+ Meer files
+                <input type="file" id="smFiles2" multiple accept=".csv" style="display:none" onchange="smHandleFiles(this.files)">
+            </button>
+            <button class="btn btn-secondary" onclick="smDownloadJSON()">📥 Download JSON</button>
+            <button class="btn btn-primary" style="margin-left:auto;padding:12px 30px;font-size:15px" onclick="smExecute()">🚀 Begin Migrasie</button>
+        </div>
+    </div>
+
+    <!-- STEP 3: Importing -->
+    <div id="smImporting" style="display:none">
+        <div class="card" style="text-align:center;padding:40px">
+            <div style="font-size:48px;margin-bottom:15px">⚡</div>
+            <h2 id="smImportTitle">Migrasie in proses...</h2>
+            <p style="color:var(--text-muted)" id="smImportStatus">Voorbereiding...</p>
+            <div class="sm-progress"><div class="sm-progress-bar" id="smProgressBar"></div></div>
+            <div id="smImportLog" class="sm-log"></div>
+        </div>
+    </div>
+
+    <!-- STEP 4: Done -->
+    <div id="smDone" style="display:none">
+        <div class="card" style="text-align:center;padding:40px;background:linear-gradient(135deg,rgba(16,185,129,.1),rgba(34,197,94,.05));border-color:rgba(16,185,129,.3)">
+            <div style="font-size:56px;margin-bottom:12px">✅</div>
+            <h2 style="color:var(--green)">Migrasie Suksesvol!</h2>
+            <p style="color:var(--text-muted)" id="smDoneSummary"></p>
+        </div>
+        <div class="sm-grid" id="smDoneCards" style="margin-top:15px"></div>
+        <div style="text-align:center;margin-top:20px">
+            <a href="/dashboard" class="btn btn-primary" style="text-decoration:none">📊 Gaan na Dashboard</a>
+        </div>
+    </div>
+
+    <script>
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SAGE BULK MIGRATION - Client-side CSV Parser & Orchestrator
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    const SM = {
+        parsed: {},      // { type: { label, icon, data: [...], file: "..." } }
+        mode: "fresh",   // fresh or existing
+        stats: {}
+    };
+
+    // ── CSV Parser ───────────────────────────────────────────────────────────
+    function smParseCSV(text) {
+        const lines = [];
+        let cur = "", inQ = false;
+        for (let i = 0; i < text.length; i++) {
+            const c = text[i];
+            if (c === '"') { inQ = !inQ; cur += c; }
+            else if ((c === '\\n' || c === '\\r') && !inQ) {
+                if (cur.trim()) lines.push(cur);
+                cur = "";
+                if (c === '\\r' && text[i+1] === '\\n') i++;
+            } else cur += c;
+        }
+        if (cur.trim()) lines.push(cur);
+
+        return lines.map(line => {
+            const fields = []; let f = "", q = false;
+            for (let i = 0; i < line.length; i++) {
+                const c = line[i];
+                if (c === '"') { if (q && line[i+1] === '"') { f += '"'; i++; } else q = !q; }
+                else if (c === ',' && !q) { fields.push(f.trim()); f = ""; }
+                else f += c;
+            }
+            fields.push(f.trim());
+            return fields;
+        });
+    }
+
+    // ── Sage Format Detection ────────────────────────────────────────────────
+    function smDetectType(headers, filename) {
+        const h = headers.join("|");
+        const fn = (filename || "").toLowerCase();
+
+        // Accounts: Name,Category,Description,Opening Balance,Opening Balance Date,Active,Default VAT Type
+        if (h.includes("Name") && h.includes("Category") && h.includes("Opening Balance") && h.includes("Default VAT Type") && !h.includes("Contact Name"))
+            return "accounts";
+
+        // Customers: has Contact Name + Telephone + Sales Rep
+        if (h.includes("Name") && h.includes("Contact Name") && h.includes("Telephone Number") && h.includes("Sales Rep"))
+            return "customers";
+
+        // Suppliers: has Contact Name + Telephone but NO Sales Rep
+        if (h.includes("Name") && h.includes("Contact Name") && h.includes("Telephone Number") && !h.includes("Sales Rep"))
+            return fn.includes("supplier") ? "suppliers" : "suppliers";
+
+        // Disambiguation: if it has Contact Name but ambiguous, use filename
+        if (h.includes("Name") && h.includes("Contact Name") && h.includes("Opening Balance")) {
+            if (fn.includes("supplier")) return "suppliers";
+            if (fn.includes("customer")) return "customers";
+        }
+
+        // Items: Code, Description, Category, Cost, Quantity
+        if (h.includes("Code") && h.includes("Description") && (h.includes("Cost") || h.includes("Price list")))
+            return "items";
+
+        // Customer Invoices Report: Document No., Customer, Total Selling
+        if (h.includes("Document No.") && h.includes("Customer") && h.includes("Total Selling"))
+            return "customer_invoices";
+
+        // Supplier Invoice Export: Supplier Name, Document Number, Amount Due
+        if (h.includes("Supplier Name") && h.includes("Document Number") && h.includes("Amount Due"))
+            return "supplier_invoices";
+
+        // Customer Transactions: grouped format with Transaction Type, Debit, Credit
+        if (h.includes("Transaction Type") && h.includes("Debit") && h.includes("Credit"))
+            return "customer_transactions";
+
+        // Item Categories: single column "Category"
+        if (headers.length === 1 && headers[0] === "Category")
+            return "item_categories";
+
+        return null;
+    }
+
+    // ── Sage Row Mappers ─────────────────────────────────────────────────────
+    function smSplitCode(name) {
+        if (!name) return { code: "", name: "" };
+        const parts = name.split(" : ");
+        if (parts.length > 1) return { code: parts[0].trim(), name: parts.slice(1).join(" : ").trim() };
+        return { code: "", name: name.trim() };
+    }
+
+    const SM_MAPPERS = {
+        accounts: (h, row) => {
+            const r = {}; h.forEach((k,i) => r[k] = row[i] || "");
+            const split = smSplitCode(r["Name"]);
+            const catMap = {"Sales":"income","Other Income":"income","Cost of Sales":"expense","Expenses":"expense","Current Assets":"asset","Non-Current Assets":"asset","Current Liabilities":"liability","Non-Current Liabilities":"liability","Owners Equity":"equity"};
+            return {
+                account_code: split.code, account_name: split.name,
+                account_type: catMap[r["Category"]] || "expense",
+                category: r["Category"] || "",
+                opening_balance: parseFloat(r["Opening Balance"]||"0"),
+                debit: parseFloat(r["Opening Balance"]||"0") > 0 ? parseFloat(r["Opening Balance"]||"0") : 0,
+                credit: parseFloat(r["Opening Balance"]||"0") < 0 ? Math.abs(parseFloat(r["Opening Balance"]||"0")) : 0,
+                description: r["Description"] || "",
+                is_active: r["Active"] === "True"
+            };
+        },
+
+        customers: (h, row) => {
+            const r = {}; h.forEach((k,i) => r[k] = row[i] || "");
+            const split = smSplitCode(r["Name"]);
+            const addr = [r["Postal Address Line 1"],r["Postal Address Line 2"],r["Postal Address Line 3"],r["Postal Address Line 4"],r["Postal Address Postal Code"]].filter(Boolean).join(", ");
+            return {
+                code: split.code, name: split.name,
+                contact_name: r["Contact Name"]||"", phone: r["Telephone Number"]||"",
+                cell: r["Cell Number"]||"", email: (r["Email Address"]||"").split(";")[0],
+                address: addr, vat_number: r["VAT Reference"]||"",
+                balance: parseFloat(r["Opening Balance"]||"0"),
+                credit_limit: parseFloat(r["Credit Limit"]||"0"),
+                active: r["Active"] === "True",
+                sales_rep: r["Sales Rep"]||"", category: r["Category"]||""
+            };
+        },
+
+        suppliers: (h, row) => {
+            const r = {}; h.forEach((k,i) => r[k] = row[i] || "");
+            const split = smSplitCode(r["Name"]);
+            const addr = [r["Postal Address Line 1"],r["Postal Address Line 2"],r["Postal Address Line 3"],r["Postal Address Line 4"],r["Postal Address Postal Code"]].filter(Boolean).join(", ");
+            return {
+                code: split.code, name: split.name,
+                contact_name: r["Contact Name"]||"", phone: r["Telephone Number"]||"",
+                cell: r["Cell Number"]||"", email: (r["Email Address"]||"").split(";")[0],
+                address: addr, vat_number: r["VAT Reference"]||"",
+                balance: parseFloat(r["Opening Balance"]||"0"),
+                active: r["Active"] === "True", category: r["Category"]||""
+            };
+        },
+
+        items: (h, row) => {
+            const r = {}; h.forEach((k,i) => r[k] = row[i] || "");
+            return {
+                code: r["Code"]||"", description: r["Description"]||"",
+                category: (r["Category"]||"").replace(/_AND_/g, "&"),
+                unit: r["Unit"]||"each",
+                selling_price: parseFloat(r["Price list 1 - Exclusive"]||r["Price Excl."]||"0"),
+                selling_price_incl: parseFloat(r["Price list 1 - Inclusive"]||r["Price Incl."]||"0"),
+                cost_price: parseFloat(r["Cost"]||r["Avg Cost"]||r["Last Cost"]||"0"),
+                qty: parseFloat(r["Quantity"]||r["Qty On Hand"]||"0"),
+                active: r["Active"] === "True"
+            };
+        },
+
+        customer_invoices: (h, row) => {
+            const r = {}; h.forEach((k,i) => r[k] = row[i] || "");
+            const split = smSplitCode(r["Customer"]);
+            return {
+                date: r["Date"]||"", document_no: r["Document No."]||"",
+                customer_code: split.code, customer_name: split.name,
+                customer_ref: r["Customer Ref."]||"",
+                exclusive: parseFloat(r["Exclusive"]||"0"),
+                vat: parseFloat(r["VAT"]||"0"),
+                total: parseFloat(r["Total Selling"]||"0"),
+                outstanding: parseFloat(r["Total Outstanding"]||"0"),
+                due_date: r["Due Date"]||"", sales_rep: r["Sales Rep"]||""
+            };
+        },
+
+        supplier_invoices: (h, row) => {
+            const r = {}; h.forEach((k,i) => r[k] = row[i] || "");
+            const split = smSplitCode(r["Supplier Name"]);
+            return {
+                supplier_code: split.code, supplier_name: split.name, supplier: r["Supplier Name"]||"",
+                document_no: r["Document Number"]||"", supplier_inv_no: r["Invoice Number"]||"",
+                date: r["Date"]||"", due_date: r["Due Date"]||"",
+                total: parseFloat(r["Total"]||"0"),
+                outstanding: parseFloat(r["Amount Due"]||"0"),
+                status: r["Status"]||""
+            };
+        },
+
+        item_categories: (h, row) => {
+            const r = {}; h.forEach((k,i) => r[k] = row[i] || "");
+            return { name: (r["Category"]||"").replace(/_AND_/g, "&") };
+        },
+
+        customer_transactions: null  // Special grouped format
+    };
+
+    const SM_META = {
+        accounts: { label: "Chart of Accounts", icon: "📊" },
+        customers: { label: "Kliënte", icon: "👥" },
+        suppliers: { label: "Suppliers", icon: "🏭" },
+        items: { label: "Stock / Items", icon: "📦" },
+        customer_invoices: { label: "Kliënt Invoices", icon: "🧾" },
+        supplier_invoices: { label: "Supplier Invoices", icon: "📋" },
+        customer_transactions: { label: "Kliënt Transaksies", icon: "💳" },
+        item_categories: { label: "Item Kategorieë", icon: "🏷️" }
+    };
+
+    // ── Parse Customer Transactions (grouped format) ─────────────────────────
+    function smParseCustomerTransactions(rows) {
+        const txns = []; let curCust = "";
+        for (const row of rows) {
+            if (!row || row.length < 2) continue;
+            if (row[0] === "sep=," || (row[0]||"").includes("Date")) continue;
+            if ((row[0]||"").includes(" : ") && !row[1] && !row[2]) {
+                curCust = (row[0]||"").split(" : ")[0].trim();
+                continue;
+            }
+            if ((row[0]||"").includes("Opening Balance") || (row[0]||"").includes("Closing Balance") || (row[0]||"").includes("Movement for")) continue;
+            if (curCust && (row[0]||"").match(/\\d{2}\\/\\d{2}\\/\\d{4}/)) {
+                txns.push({
+                    customer_code: curCust, date: row[0]||"",
+                    reference: row[1]||"", type: row[2]||"",
+                    description: row[3]||"",
+                    debit: parseFloat(row[4]||"0"), credit: parseFloat(row[5]||"0"),
+                    balance: parseFloat(row[6]||"0")
+                });
+            }
+        }
+        return txns;
+    }
+
+    // ── Handle File Upload ───────────────────────────────────────────────────
+    async function smHandleFiles(fileList) {
+        for (const file of fileList) {
+            if (!file.name.toLowerCase().endsWith(".csv")) continue;
+            const text = await file.text();
+            const rows = smParseCSV(text);
+            if (rows.length < 2) continue;
+
+            let hIdx = 0;
+            if (rows[0] && rows[0][0] === "sep=,") hIdx = 1;
+            // Skip single-value title rows
+            while (hIdx < rows.length && rows[hIdx].length <= 1 && !rows[hIdx][0].includes(",")) hIdx++;
+            if (hIdx >= rows.length) continue;
+
+            const headers = rows[hIdx];
+            const type = smDetectType(headers, file.name);
+            if (!type) { console.warn("Unrecognized:", file.name, headers.slice(0,5)); continue; }
+
+            const meta = SM_META[type];
+            if (type === "customer_transactions") {
+                SM.parsed[type] = { label: meta.label, icon: meta.icon, data: smParseCustomerTransactions(rows), file: file.name };
+            } else {
+                const mapper = SM_MAPPERS[type];
+                if (!mapper) continue;
+                const data = [];
+                for (let i = hIdx + 1; i < rows.length; i++) {
+                    if (rows[i].length < 2) continue;
+                    try {
+                        const mapped = mapper(headers, rows[i]);
+                        if (mapped && (mapped.name || mapped.code || mapped.description || mapped.account_name || mapped.document_no || mapped.supplier_code || mapped.customer_code))
+                            data.push(mapped);
+                    } catch(e) { console.warn("Parse error row", i, e); }
+                }
+                SM.parsed[type] = { label: meta.label, icon: meta.icon, data, file: file.name };
+            }
+            // Mark file type as loaded
+            const el = document.getElementById("smType_" + type);
+            if (el) el.innerHTML = meta.icon + " " + meta.label + " <span style='color:var(--green)'>✓ " + file.name + "</span>";
+        }
+
+        if (Object.keys(SM.parsed).length > 0) smShowPreview();
+    }
+
+    // Drag & drop
+    const drop = document.getElementById("smDrop");
+    if (drop) {
+        drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("drag-over"); });
+        drop.addEventListener("dragleave", () => drop.classList.remove("drag-over"));
+        drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("drag-over"); smHandleFiles(e.dataTransfer.files); });
+    }
+
+    // ── Format helpers ───────────────────────────────────────────────────────
+    function smZAR(n) { return "R" + Math.abs(n||0).toLocaleString("en-ZA",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+    // ── Show Preview ─────────────────────────────────────────────────────────
+    function smShowPreview() {
+        document.getElementById("smUpload").style.display = "none";
+        document.getElementById("smPreview").style.display = "block";
+
+        const types = Object.keys(SM.parsed);
+        document.getElementById("smPreviewSub").textContent = types.length + " Sage exports herken — " + types.map(t => SM.parsed[t].data.length).reduce((a,b)=>a+b,0).toLocaleString() + " rekords totaal";
+
+        // Stats
+        const s = SM.stats = {};
+        if (SM.parsed.accounts) { s.accounts = SM.parsed.accounts.data.length; s.accounts_bal = SM.parsed.accounts.data.filter(a=>a.opening_balance).length; }
+        if (SM.parsed.customers) { s.customers = SM.parsed.customers.data.length; s.cust_active = SM.parsed.customers.data.filter(c=>c.active).length; s.debtors = SM.parsed.customers.data.reduce((sum,c)=>sum+Math.max(0,c.balance||0),0); }
+        if (SM.parsed.suppliers) { s.suppliers = SM.parsed.suppliers.data.length; s.supp_active = SM.parsed.suppliers.data.filter(su=>su.active).length; s.creditors = SM.parsed.suppliers.data.reduce((sum,su)=>sum+Math.max(0,su.balance||0),0); }
+        if (SM.parsed.items) { s.items = SM.parsed.items.data.length; s.items_qty = SM.parsed.items.data.filter(i=>(i.qty||0)>0).length; s.items_price = SM.parsed.items.data.filter(i=>(i.selling_price||0)>0).length; s.stock_val = SM.parsed.items.data.reduce((sum,i)=>sum+(i.cost_price||0)*(i.qty||0),0); }
+        if (SM.parsed.customer_invoices) { s.invoices = SM.parsed.customer_invoices.data.length; s.inv_total = SM.parsed.customer_invoices.data.reduce((sum,i)=>sum+Math.abs(i.total||0),0); }
+        if (SM.parsed.supplier_invoices) { s.supp_inv = SM.parsed.supplier_invoices.data.length; s.supp_inv_unpaid = SM.parsed.supplier_invoices.data.filter(i=>i.status==="Unpaid").length; }
+        if (SM.parsed.customer_transactions) s.txns = SM.parsed.customer_transactions.data.length;
+
+        // Cards
+        const cards = [
+            { key:"accounts", icon:"📊", label:"Rekeninge", val:s.accounts, sub:(s.accounts_bal||0)+" met balanse" },
+            { key:"customers", icon:"👥", label:"Kliënte", val:s.customers, sub:(s.cust_active||0)+" aktief" },
+            { key:"suppliers", icon:"🏭", label:"Suppliers", val:s.suppliers, sub:(s.supp_active||0)+" aktief" },
+            { key:"items", icon:"📦", label:"Stock Items", val:s.items, sub:(s.items_qty||0)+" met voorraad" },
+            { key:"customer_invoices", icon:"🧾", label:"Invoices", val:s.invoices, sub:s.inv_total?smZAR(s.inv_total):"—" },
+            { key:"supplier_invoices", icon:"📋", label:"Supp. Inv.", val:s.supp_inv, sub:(s.supp_inv_unpaid||0)+" onbetaal" },
+            { key:"customer_transactions", icon:"💳", label:"Transaksies", val:s.txns, sub:"debiet/krediet" }
+        ].filter(c => c.val);
+
+        document.getElementById("smCards").innerHTML = cards.map(c =>
+            `<div class="sm-card loaded"><div class="icon">${c.icon}</div><div class="count">${(c.val||0).toLocaleString()}</div><div class="label">${c.label}</div><div class="sub">${c.sub}</div></div>`
+        ).join("");
+
+        // Financials
+        let finHTML = "";
+        if (s.debtors > 0 || s.creditors > 0 || s.stock_val > 0) {
+            finHTML = '<div class="sm-fin"><div style="font-size:13px;font-weight:600;color:var(--green);margin-bottom:12px">💰 Finansiële Opsomming</div><div class="sm-fin-grid">';
+            if (s.debtors > 0) finHTML += '<div class="sm-fin-item"><div class="val">' + smZAR(s.debtors) + '</div><div class="lbl">Totale Debiteure</div></div>';
+            if (s.creditors > 0) finHTML += '<div class="sm-fin-item"><div class="val">' + smZAR(s.creditors) + '</div><div class="lbl">Totale Krediteure</div></div>';
+            if (s.stock_val > 0) finHTML += '<div class="sm-fin-item"><div class="val">' + smZAR(s.stock_val) + '</div><div class="lbl">Voorraad Waarde</div></div>';
+            finHTML += '</div></div>';
+        }
+        document.getElementById("smFinancials").innerHTML = finHTML;
+
+        // Detail sections with preview tables
+        let detHTML = "";
+        for (const [type, info] of Object.entries(SM.parsed)) {
+            if (!info.data.length) continue;
+            const preview = info.data.slice(0, 5);
+            const keys = Object.keys(preview[0] || {}).slice(0, 8);
+            detHTML += '<div class="sm-detail" onclick="this.classList.toggle(\'open\')">';
+            detHTML += '<div class="sm-detail-head"><span style="font-size:18px">' + info.icon + '</span><span style="font-weight:600;font-size:14px">' + info.label + '</span><span class="sm-badge">' + info.data.length.toLocaleString() + '</span><span style="margin-left:auto;color:var(--text-muted);font-size:11px">' + info.file + '</span><span style="margin-left:8px;color:var(--text-muted)">▾</span></div>';
+            detHTML += '<div class="sm-detail-body" onclick="event.stopPropagation()"><table class="sm-table"><thead><tr>';
+            keys.forEach(k => detHTML += '<th>' + k + '</th>');
+            detHTML += '</tr></thead><tbody>';
+            preview.forEach(row => {
+                detHTML += '<tr>';
+                keys.forEach(k => {
+                    let v = row[k];
+                    if (typeof v === "number") v = v % 1 ? v.toFixed(2) : v;
+                    detHTML += '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (v ?? "") + '</td>';
+                });
+                detHTML += '</tr>';
+            });
+            detHTML += '</tbody></table><div style="font-size:11px;color:var(--text-muted);margin-top:6px">Eerste 5 van ' + info.data.length.toLocaleString() + '</div></div></div>';
+        }
+        document.getElementById("smDetails").innerHTML = detHTML;
+    }
+
+    function smSetMode(mode) {
+        SM.mode = mode;
+        document.getElementById("smModeFresh").classList.toggle("active", mode === "fresh");
+        document.getElementById("smModeExisting").classList.toggle("active", mode === "existing");
+    }
+
+    // ── Download JSON ────────────────────────────────────────────────────────
+    function smDownloadJSON() {
+        const data = { version: "1.0", source: "sage", mode: SM.mode, generated: new Date().toISOString() };
+        for (const [type, info] of Object.entries(SM.parsed)) data[type] = info.data;
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = "sage_migration_" + new Date().toISOString().slice(0,10) + ".json"; a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    // ── Execute Migration ────────────────────────────────────────────────────
+    async function smExecute() {
+        document.getElementById("smPreview").style.display = "none";
+        document.getElementById("smImporting").style.display = "block";
+
+        const log = document.getElementById("smImportLog");
+        const bar = document.getElementById("smProgressBar");
+        const status = document.getElementById("smImportStatus");
+        const replaceMode = SM.mode === "fresh";
+
+        function addLog(msg, cls) {
+            log.innerHTML += '<div class="sm-log-line ' + (cls||"") + '">' + new Date().toLocaleTimeString() + ' — ' + msg + '</div>';
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Import order matters: accounts first, then contacts, then stock, then transactions
+        const importOrder = [
+            { type: "accounts", dataType: "chart_of_accounts", label: "Chart of Accounts" },
+            { type: "customers", dataType: "customers", label: "Kliënte" },
+            { type: "suppliers", dataType: "suppliers", label: "Suppliers" },
+            { type: "items", dataType: "stock", label: "Stock Items" },
+            { type: "customer_invoices", dataType: "customer_invoices", label: "Kliënt Invoices" },
+            { type: "supplier_invoices", dataType: "supplier_invoices", label: "Supplier Invoices" }
+        ];
+
+        const totalSets = importOrder.filter(o => SM.parsed[o.type]).length;
+        let completedSets = 0;
+        const results = {};
+
+        for (const step of importOrder) {
+            if (!SM.parsed[step.type]) continue;
+            const data = SM.parsed[step.type].data;
+            if (!data.length) continue;
+
+            status.textContent = step.label + ": " + data.length.toLocaleString() + " rekords...";
+            addLog("⏳ " + step.label + " — " + data.length.toLocaleString() + " rekords...");
+
+            // Batch in chunks of 100 to avoid timeouts
+            const chunkSize = 100;
+            let imported = 0, updated = 0, errors = 0;
+
+            for (let i = 0; i < data.length; i += chunkSize) {
+                const chunk = data.slice(i, i + chunkSize);
+                try {
+                    const resp = await fetch("/api/smart-import/batch", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            data_type: step.dataType,
+                            records: chunk,
+                            replace: replaceMode && i === 0  // Only clear on first chunk
+                        })
+                    });
+                    const result = await resp.json();
+                    if (result.success) {
+                        imported += result.new_records || 0;
+                        updated += result.updated_records || 0;
+                    } else {
+                        errors += chunk.length;
+                        addLog("⚠️ " + step.label + " batch fout: " + (result.error || "Onbekend"), "sm-log-warn");
+                    }
+                } catch(e) {
+                    errors += chunk.length;
+                    addLog("❌ " + step.label + " netwerk fout: " + e.message, "sm-log-err");
+                }
+
+                // Update progress
+                const chunkProgress = Math.min(i + chunkSize, data.length) / data.length;
+                const overallProgress = (completedSets + chunkProgress) / totalSets * 100;
+                bar.style.width = overallProgress + "%";
+            }
+
+            completedSets++;
+            results[step.label] = { imported, updated, errors, total: data.length };
+            const msg = "✅ " + step.label + ": " + imported + " nuut" + (updated ? ", " + updated + " opgedateer" : "") + (errors ? ", " + errors + " foute" : "");
+            addLog(msg, errors ? "sm-log-warn" : "sm-log-ok");
+        }
+
+        bar.style.width = "100%";
+        status.textContent = "Migrasie voltooi!";
+        document.getElementById("smImportTitle").textContent = "✅ Migrasie Voltooi!";
+
+        // Show done after 1 second
+        setTimeout(() => {
+            document.getElementById("smImporting").style.display = "none";
+            document.getElementById("smDone").style.display = "block";
+
+            let summary = [];
+            for (const [label, r] of Object.entries(results)) {
+                summary.push(label + ": " + r.imported + " ingevoer" + (r.updated ? ", " + r.updated + " opgedateer" : ""));
+            }
+            document.getElementById("smDoneSummary").textContent = summary.join(" | ");
+
+            document.getElementById("smDoneCards").innerHTML = Object.entries(results).map(([label, r]) =>
+                '<div class="sm-card loaded"><div class="count">' + (r.imported + r.updated) + '</div><div class="label">' + label + '</div>' +
+                (r.errors ? '<div class="sub" style="color:#ef4444">' + r.errors + ' foute</div>' : '') + '</div>'
+            ).join("");
+        }, 1000);
+    }
+    </script>
+    '''
+
+    return render_page("Sage Migration", content, user, active_page="sage-migrate")
+
+
 # 
 # DIRECT MIGRATION CONNECTORS - Sage, Xero, QuickBooks (LEGACY - kept for OAuth flows)
 # Pull data directly from competitor systems - zero stress for users
