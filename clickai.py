@@ -31930,7 +31930,7 @@ def report_creditors_aging():
     biz_id = business.get("id") if business else None
     
     # Get supplier invoices/purchases
-    purchases = db.get("purchases", {"business_id": biz_id}) if biz_id else []
+    purchases = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
     outstanding = [p for p in purchases if p.get("status") != "paid"]
     
     suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
@@ -31942,13 +31942,17 @@ def report_creditors_aging():
     
     for p in outstanding:
         supp_id = p.get("supplier_id")
-        if not supp_id:
+        supp_name = p.get("supplier_name", "Unknown")
+        
+        # Use supplier_name as key if no supplier_id
+        key = supp_id or supp_name
+        if not key or key == "Unknown":
             continue
         
-        if supp_id not in aging_data:
-            supp = supplier_map.get(supp_id, {})
-            aging_data[supp_id] = {
-                "name": supp.get("name", "Unknown"),
+        if key not in aging_data:
+            supp = supplier_map.get(supp_id, {}) if supp_id else {}
+            aging_data[key] = {
+                "name": supp.get("name") or supp_name,
                 "current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0
             }
         
@@ -31961,17 +31965,17 @@ def report_creditors_aging():
         amount = float(p.get("total", 0))
         
         if days_old <= 30:
-            aging_data[supp_id]["current"] += amount
+            aging_data[key]["current"] += amount
         elif days_old <= 60:
-            aging_data[supp_id]["d30"] += amount
+            aging_data[key]["d30"] += amount
         elif days_old <= 90:
-            aging_data[supp_id]["d60"] += amount
+            aging_data[key]["d60"] += amount
         elif days_old <= 120:
-            aging_data[supp_id]["d90"] += amount
+            aging_data[key]["d90"] += amount
         else:
-            aging_data[supp_id]["d120"] += amount
+            aging_data[key]["d120"] += amount
         
-        aging_data[supp_id]["total"] += amount
+        aging_data[key]["total"] += amount
     
     sorted_aging = sorted(aging_data.values(), key=lambda x: x["total"], reverse=True)
     
@@ -36185,8 +36189,8 @@ def report_vat():
                 </tr>
                 <tr>
                     <td style="padding-left:20px;">15. Other goods/services - Supplier invoices</td>
-                    <td style="text-align:right;">{money(supplier_excl)}</td>
-                    <td style="text-align:right;">{money(supplier_vat)}</td>
+                    <td style="text-align:right;">{money(si_excl)}</td>
+                    <td style="text-align:right;">{money(si_vat)}</td>
                 </tr>
                 <tr>
                     <td style="padding-left:20px;">15a. Other goods/services - Expenses</td>
