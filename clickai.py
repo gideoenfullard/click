@@ -45883,7 +45883,9 @@ def api_smart_import_batch():
                                 code=code,
                                 **extra_kwargs
                             )
-                            success, resp = db.save("customers", record)
+                            result = db.save("customers", record)
+                            success = result[0] if isinstance(result, tuple) else result
+                            resp = result[1] if isinstance(result, tuple) else ""
                             if success:
                                 status = "imported"
                             else:
@@ -45921,7 +45923,9 @@ def api_smart_import_batch():
                                 code=code,
                                 **extra_kwargs
                             )
-                            success, resp = db.save("suppliers", record)
+                            result = db.save("suppliers", record)
+                            success = result[0] if isinstance(result, tuple) else result
+                            resp = result[1] if isinstance(result, tuple) else ""
                             if success:
                                 status = "imported"
                             else:
@@ -45942,7 +45946,9 @@ def api_smart_import_batch():
                             description=name or code,
                             **extra_kwargs
                         )
-                        success, resp = db.save_stock(record)
+                        result = db.save_stock(record)
+                        success = result[0] if isinstance(result, tuple) else result
+                        resp = result[1] if isinstance(result, tuple) else ""
                         if success:
                             status = "imported"
                         else:
@@ -45987,7 +45993,9 @@ def api_smart_import_batch():
                                 "is_active": True,
                                 "created_at": now()
                             }
-                            success, resp = db.save("chart_of_accounts", record)
+                            result = db.save("chart_of_accounts", record)
+                            success = result[0] if isinstance(result, tuple) else result
+                            resp = result[1] if isinstance(result, tuple) else ""
                             if success:
                                 status = "imported"
                             else:
@@ -46063,7 +46071,9 @@ def api_smart_import_batch():
                             status=inv_status,
                             notes=f"Sage import - Ref: {cust_ref}" if cust_ref else "Sage import"
                         )
-                        success, resp = db.save("supplier_invoices", record)
+                        result = db.save("supplier_invoices", record)
+                        success = result[0] if isinstance(result, tuple) else result
+                        resp = result[1] if isinstance(result, tuple) else ""
                         if success:
                             status = "imported"
                         else:
@@ -46156,7 +46166,9 @@ def api_smart_import_batch():
                             status=inv_status,
                             notes=f"Sage import - Ref: {cust_ref}" if cust_ref else "Sage import"
                         )
-                        success, resp = db.save("invoices", record)
+                        result = db.save("invoices", record)
+                        success = result[0] if isinstance(result, tuple) else result
+                        resp = result[1] if isinstance(result, tuple) else ""
                         if success:
                             status = "imported"
                         else:
@@ -46177,7 +46189,9 @@ def api_smart_import_batch():
                         "credit": float(row.get("credit", 0) or 0),
                         "created_at": now()
                     }
-                    success, resp = db.save("gl_transactions", record)
+                    result = db.save("gl_transactions", record)
+                    success = result[0] if isinstance(result, tuple) else result
+                    resp = result[1] if isinstance(result, tuple) else ""
                     if success:
                         status = "imported"
                     else:
