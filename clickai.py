@@ -44871,11 +44871,13 @@ def smart_import_page():
     
     <script>
     async function runDedup(execute) {
-        const targetDiv = document.getElementById('dedupStandalone').style.display !== 'none' ? 'dedupStandalone' : 'dedupResult';
-        const div = document.getElementById(targetDiv);
-        document.getElementById('dedupStandalone').style.display = 'block';
-        if (document.getElementById('dedupResult')) document.getElementById('dedupResult').style.display = 'block';
+        const standalone = document.getElementById('dedupStandalone');
+        const result = document.getElementById('dedupResult');
+        standalone.style.display = 'block';
+        if (result) result.style.display = 'block';
+        const div = standalone;
         div.innerHTML = '<p style="text-align:center;">⏳ Scanning all tables...</p>';
+        if (result) result.innerHTML = div.innerHTML;
         
         try {
             const resp = await fetch('/api/dedup/scan', {
@@ -44914,8 +44916,10 @@ def smart_import_page():
             html += '</div>';
             
             div.innerHTML = html;
+            if (result) result.innerHTML = html;
         } catch(e) {
             div.innerHTML = '<p style="color:var(--red);">Error: ' + e.message + '</p>';
+            if (result) result.innerHTML = div.innerHTML;
         }
     }
     
