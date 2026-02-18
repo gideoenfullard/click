@@ -20424,8 +20424,15 @@ def customer_view(customer_id):
     # YTD Stats - current financial year
     import datetime
     now_dt = datetime.datetime.now()
-    # SA financial year typically starts March, but use Jan for simplicity
-    ytd_start = f"{now_dt.year}-01-01"
+    # SA financial year: March to February
+    if now_dt.month >= 3:
+        fy_year = now_dt.year
+        ytd_start = f"{now_dt.year}-03-01"
+    else:
+        fy_year = now_dt.year - 1
+        ytd_start = f"{now_dt.year - 1}-03-01"
+    fy_label = f"Mar {fy_year} - Feb {fy_year + 1}"
+    
     ytd_invoices = [inv for inv in invoices if (inv.get("date") or "") >= ytd_start]
     ytd_invoiced = sum(float(inv.get("total", 0)) for inv in ytd_invoices)
     ytd_paid_receipts = [r for r in receipts if (r.get("date") or "") >= ytd_start]
@@ -20434,12 +20441,12 @@ def customer_view(customer_id):
     ytd_sales = sum(float(s.get("total", 0)) for s in ytd_sales_list)
     ytd_revenue = ytd_invoiced + ytd_sales
     
-    # Previous year for comparison
-    prev_start = f"{now_dt.year - 1}-01-01"
-    prev_end = f"{now_dt.year - 1}-12-31"
-    prev_invoices = [inv for inv in invoices if prev_start <= (inv.get("date") or "") <= prev_end]
+    # Previous financial year for comparison
+    prev_fy_start = f"{fy_year - 1}-03-01"
+    prev_fy_end = f"{fy_year}-02-28"
+    prev_invoices = [inv for inv in invoices if prev_fy_start <= (inv.get("date") or "") <= prev_fy_end]
     prev_invoiced = sum(float(inv.get("total", 0)) for inv in prev_invoices)
-    prev_sales_list = [s for s in sales if prev_start <= (s.get("date") or "") <= prev_end]
+    prev_sales_list = [s for s in sales if prev_fy_start <= (s.get("date") or "") <= prev_fy_end]
     prev_revenue = prev_invoiced + sum(float(s.get("total", 0)) for s in prev_sales_list)
     
     # Growth indicator
@@ -20447,9 +20454,9 @@ def customer_view(customer_id):
     if prev_revenue > 0 and can_see_balances:
         pct = ((ytd_revenue - prev_revenue) / prev_revenue) * 100
         if pct > 0:
-            ytd_growth = f'<span style="color:var(--green);font-size:12px;">▲ {pct:.0f}% vs {now_dt.year - 1}</span>'
+            ytd_growth = f'<span style="color:var(--green);font-size:12px;">▲ {pct:.0f}% vs prev FY</span>'
         elif pct < 0:
-            ytd_growth = f'<span style="color:var(--red);font-size:12px;">▼ {abs(pct):.0f}% vs {now_dt.year - 1}</span>'
+            ytd_growth = f'<span style="color:var(--red);font-size:12px;">▼ {abs(pct):.0f}% vs prev FY</span>'
     
     # Build sales HTML
     sales_html = ""
@@ -20602,7 +20609,8 @@ def customer_view(customer_id):
     <div class="stats-grid">
         <div class="stat-card" style="border:2px solid var(--green);background:rgba(16,185,129,0.08);">
             <div class="stat-value" style="color:var(--green);">{money(ytd_revenue) if can_see_balances else "---"}</div>
-            <div class="stat-label">YTD Revenue ({now_dt.year})</div>
+            <div class="stat-label">YTD Revenue</div>
+            <div style="font-size:10px;color:var(--text-muted);">{fy_label}</div>
             {ytd_growth}
         </div>
         <div class="stat-card">
@@ -26383,7 +26391,14 @@ def supplier_view(supplier_id):
     # YTD Stats - spending at this supplier
     import datetime
     now_dt = datetime.datetime.now()
-    ytd_start = f"{now_dt.year}-01-01"
+    # SA financial year: March to February
+    if now_dt.month >= 3:
+        fy_year = now_dt.year
+        ytd_start = f"{now_dt.year}-03-01"
+    else:
+        fy_year = now_dt.year - 1
+        ytd_start = f"{now_dt.year - 1}-03-01"
+    fy_label = f"Mar {fy_year} - Feb {fy_year + 1}"
     
     # Combine expenses + supplier_invoices for full picture
     ytd_expenses = [e for e in expenses if (e.get("date") or "") >= ytd_start]
@@ -26392,21 +26407,21 @@ def supplier_view(supplier_id):
     ytd_si_total = sum(float(si.get("total", 0)) for si in ytd_si)
     ytd_spend = ytd_exp_total + ytd_si_total
     
-    # Previous year comparison
-    prev_start = f"{now_dt.year - 1}-01-01"
-    prev_end = f"{now_dt.year - 1}-12-31"
-    prev_expenses = [e for e in expenses if prev_start <= (e.get("date") or "") <= prev_end]
+    # Previous financial year comparison
+    prev_fy_start = f"{fy_year - 1}-03-01"
+    prev_fy_end = f"{fy_year}-02-28"
+    prev_expenses = [e for e in expenses if prev_fy_start <= (e.get("date") or "") <= prev_fy_end]
     prev_exp_total = sum(float(e.get("total", e.get("amount", 0))) for e in prev_expenses)
-    prev_si = [si for si in supplier_invoices if prev_start <= (si.get("date") or "") <= prev_end]
+    prev_si = [si for si in supplier_invoices if prev_fy_start <= (si.get("date") or "") <= prev_fy_end]
     prev_spend = prev_exp_total + sum(float(si.get("total", 0)) for si in prev_si)
     
     ytd_growth = ""
     if prev_spend > 0 and can_see_balances:
         pct = ((ytd_spend - prev_spend) / prev_spend) * 100
         if pct > 0:
-            ytd_growth = f'<span style="color:var(--red);font-size:12px;">▲ {pct:.0f}% vs {now_dt.year - 1}</span>'
+            ytd_growth = f'<span style="color:var(--red);font-size:12px;">▲ {pct:.0f}% vs prev FY</span>'
         elif pct < 0:
-            ytd_growth = f'<span style="color:var(--green);font-size:12px;">▼ {abs(pct):.0f}% vs {now_dt.year - 1}</span>'
+            ytd_growth = f'<span style="color:var(--green);font-size:12px;">▼ {abs(pct):.0f}% vs prev FY</span>'
     
     expenses_html = ""
     if can_see_balances:
@@ -26481,7 +26496,8 @@ def supplier_view(supplier_id):
     <div class="stats-grid">
         <div class="stat-card" style="border:2px solid var(--orange);background:rgba(249,115,22,0.08);">
             <div class="stat-value" style="color:var(--orange);">{money(ytd_spend)}</div>
-            <div class="stat-label">YTD Spend ({now_dt.year})</div>
+            <div class="stat-label">YTD Spend</div>
+            <div style="font-size:10px;color:var(--text-muted);">{fy_label}</div>
             {ytd_growth}
         </div>
         <div class="stat-card">
