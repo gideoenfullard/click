@@ -32721,19 +32721,23 @@ def report_gl():
         return render_page("General Ledger", f"<div class='card'><h3>Error loading GL</h3><pre style='color:var(--red);font-size:12px;white-space:pre-wrap;'>{safe_string(str(e))}\n\n{safe_string(tb[-500:])}</pre></div>", user, "reports")
 
 def _report_gl_inner(user, biz_id):
-    """GL built from chart_of_accounts (Sage import) + live ClickAI transactions"""
+    """GL built from chart_of_accounts (Sage import) OR journal_entries OB OR live ClickAI transactions"""
     
     # 1. Get chart of accounts (the real Sage data)
     coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
     coa = sorted(coa, key=lambda x: x.get("account_code", "") or "")
     
-    # 2. Get live transactions for fallback
+    # 2. Get imported opening balances from journal_entries (TB import)
+    journal_entries = db.get("journal_entries", {"business_id": biz_id}) or []
+    opening_entries = [je for je in journal_entries if je.get("reference") == "OB"]
+    
+    # 3. Get live transactions for fallback
     invoices = db.get("invoices", {"business_id": biz_id}) or []
     expenses = db.get("expenses", {"business_id": biz_id}) or []
     sales = db.get("sales", {"business_id": biz_id}) or []
     supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
     
-    # 3. Build GL
+    # 4. Build GL - Priority: chart_of_accounts > journal_entries OB > synthetic
     accounts_html = ""
     total_debit_all = 0
     total_credit_all = 0
@@ -32787,6 +32791,104 @@ def _report_gl_inner(user, biz_id):
                 </summary>
                 <div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">
                     Opening Balance: {money(opening)} | Category: {safe_string(category)}
+                </div>
+            </details>
+            '''
+    elif opening_entries:
+        # Use imported TB opening balances from journal_entries
+        gl_ob_accounts = {}  # code -> {name, debit, credit}
+        for oe in opening_entries:
+            acc_name = oe.get("account", "Unknown")
+            acc_code = oe.get("account_code", "") or oe.get("code", "")
+            debit = float(oe.get("debit", 0) or 0)
+            credit = float(oe.get("credit", 0) or 0)
+            
+            if not acc_code:
+                acc_code = f"9{len(gl_ob_accounts):03d}"
+            
+            if acc_code not in gl_ob_accounts:
+                gl_ob_accounts[acc_code] = {"name": acc_name, "debit": 0, "credit": 0}
+            gl_ob_accounts[acc_code]["debit"] += debit
+            gl_ob_accounts[acc_code]["credit"] += credit
+        
+        # Also add live ClickAI transactions on top of opening balances
+        # Sales from invoices
+        inv_sales = sum(float(inv.get("subtotal", 0)) for inv in invoices if inv.get("status") != "credited")
+        inv_vat = sum(float(inv.get("vat", 0)) for inv in invoices if inv.get("status") != "credited")
+        inv_totals = sum(float(inv.get("total", 0)) for inv in invoices if inv.get("status") != "credited")
+        
+        # POS sales
+        pos_sales = sum(float(s.get("subtotal", 0)) for s in sales)
+        pos_vat = sum(float(s.get("vat", 0)) for s in sales)
+        pos_totals = sum(float(s.get("total", 0)) for s in sales)
+        
+        # Purchases from supplier invoices
+        purch_totals = sum(float(si.get("total", 0)) for si in supplier_invoices)
+        purch_vat = sum(float(si.get("vat", 0)) for si in supplier_invoices)
+        purch_net = purch_totals - purch_vat
+        
+        # Expenses
+        exp_total = sum(float(e.get("amount", 0)) for e in expenses)
+        
+        # Add live transaction totals to matching GL accounts
+        live_additions = {}
+        if inv_sales + pos_sales > 0:
+            live_additions["Sales"] = {"credit": inv_sales + pos_sales}
+        if inv_vat + pos_vat > 0:
+            live_additions["VAT Output"] = {"credit": inv_vat + pos_vat}
+        if purch_net > 0:
+            live_additions["Purchases"] = {"debit": purch_net}
+        if purch_vat > 0:
+            live_additions["VAT Input"] = {"debit": purch_vat}
+        if exp_total > 0:
+            live_additions["Operating Expenses"] = {"debit": exp_total}
+        
+        # Try to match live additions to existing OB accounts by name
+        for live_name, amounts in live_additions.items():
+            matched = False
+            for code, acc in gl_ob_accounts.items():
+                if live_name.lower() in acc["name"].lower():
+                    acc["debit"] += amounts.get("debit", 0)
+                    acc["credit"] += amounts.get("credit", 0)
+                    matched = True
+                    break
+            if not matched:
+                # Add as new account
+                new_code = f"L{len(gl_ob_accounts):03d}"
+                gl_ob_accounts[new_code] = {
+                    "name": f"{live_name} (Live)",
+                    "debit": amounts.get("debit", 0),
+                    "credit": amounts.get("credit", 0)
+                }
+        
+        for code in sorted(gl_ob_accounts.keys()):
+            acc = gl_ob_accounts[code]
+            debit = acc["debit"]
+            credit = acc["credit"]
+            name = acc["name"]
+            
+            if debit == 0 and credit == 0:
+                continue
+            
+            total_debit_all += debit
+            total_credit_all += credit
+            
+            debit_display = money(debit) if debit else "-"
+            credit_display = money(credit) if credit else "-"
+            debit_color = "var(--green)" if debit else "var(--text-muted)"
+            credit_color = "var(--red)" if credit else "var(--text-muted)"
+            
+            accounts_html += f'''
+            <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
+                <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
+                    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
+                        <span><strong>{safe_string(code)}</strong> - {safe_string(name)}</span>
+                        <span style="text-align:right;color:{debit_color};">{debit_display}</span>
+                        <span style="text-align:right;color:{credit_color};">{credit_display}</span>
+                    </div>
+                </summary>
+                <div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">
+                    Source: Imported Opening Balance
                 </div>
             </details>
             '''
@@ -32882,7 +32984,7 @@ def _report_gl_inner(user, biz_id):
     diff = abs(total_debit_all - total_credit_all)
     balance_note = f'<span style="color:var(--green);">✅ Balanced</span>' if diff < 0.02 else f'<span style="color:var(--orange);">Difference: {money(diff)}</span>'
     
-    source_label = "Chart of Accounts (Sage)" if coa else "Built from transactions"
+    source_label = "Chart of Accounts (Sage)" if coa else ("Imported Trial Balance + Live Transactions" if opening_entries else "Built from transactions")
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
