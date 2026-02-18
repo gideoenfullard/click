@@ -32717,235 +32717,168 @@ def report_gl():
         return render_page("General Ledger", f"<div class='card'><h3>Error loading GL</h3><pre style='color:var(--red);font-size:12px;white-space:pre-wrap;'>{safe_string(str(e))}\n\n{safe_string(tb[-500:])}</pre></div>", user, "reports")
 
 def _report_gl_inner(user, biz_id):
+    """GL built from chart_of_accounts (Sage import) + live ClickAI transactions"""
     
-    # Get all transaction data
-    try:
-        invoices = db.get("invoices", {"business_id": biz_id}) or []
-        expenses = db.get("expenses", {"business_id": biz_id}) or []
-        sales = db.get("sales", {"business_id": biz_id}) or []
-        supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
-    except Exception as e:
-        logger.error(f"GL data fetch error: {e}")
-        invoices = expenses = sales = supplier_invoices = []
+    # 1. Get chart of accounts (the real Sage data)
+    coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+    coa = sorted(coa, key=lambda x: x.get("account_code", "") or "")
     
-    # Build GL entries from actual transactions
-    gl_accounts = {
-        "1000": {"name": "Bank", "type": "asset", "entries": []},
-        "1100": {"name": "Petty Cash", "type": "asset", "entries": []},
-        "1200": {"name": "Debtors Control", "type": "asset", "entries": []},
-        "1400": {"name": "VAT Input", "type": "asset", "entries": []},
-        "2000": {"name": "Creditors Control", "type": "liability", "entries": []},
-        "2100": {"name": "VAT Output", "type": "liability", "entries": []},
-        "4000": {"name": "Sales", "type": "income", "entries": []},
-        "5100": {"name": "Purchases", "type": "expense", "entries": []},
-        "6000": {"name": "Operating Expenses", "type": "expense", "entries": []},
-    }
+    # 2. Get live transactions for fallback
+    invoices = db.get("invoices", {"business_id": biz_id}) or []
+    expenses = db.get("expenses", {"business_id": biz_id}) or []
+    sales = db.get("sales", {"business_id": biz_id}) or []
+    supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
     
-    # Process invoices
-    for inv in invoices:
-        inv_num = inv.get("invoice_number", "-")
-        customer = inv.get("customer_name", "Customer")
-        date = inv.get("date", "-")
-        total = float(inv.get("total", 0))
-        subtotal = float(inv.get("subtotal", 0))
-        vat = float(inv.get("vat", 0))
-        status = inv.get("status", "outstanding")
-        payment = inv.get("payment_method") or "account"
-        
-        if status == "credited":
-            continue
-        
-        # Sales entry
-        gl_accounts["4000"]["entries"].append({
-            "date": date, "description": f"Invoice {inv_num} - {customer}", "ref": inv_num,
-            "debit": 0, "credit": subtotal
-        })
-        
-        # VAT Output
-        if vat > 0:
-            gl_accounts["2100"]["entries"].append({
-                "date": date, "description": f"VAT on {inv_num}", "ref": inv_num,
-                "debit": 0, "credit": vat
-            })
-        
-        # Debit side depends on payment method
-        if payment == "account" and status == "outstanding":
-            gl_accounts["1200"]["entries"].append({
-                "date": date, "description": f"Invoice {inv_num} - {customer}", "ref": inv_num,
-                "debit": total, "credit": 0
-            })
-        elif status == "paid":
-            if payment == "cash":
-                gl_accounts["1100"]["entries"].append({
-                    "date": date, "description": f"Payment {inv_num} - {customer} (Cash)", "ref": inv_num,
-                    "debit": total, "credit": 0
-                })
-            else:
-                gl_accounts["1000"]["entries"].append({
-                    "date": date, "description": f"Payment {inv_num} - {customer} ({payment.upper()})", "ref": inv_num,
-                    "debit": total, "credit": 0
-                })
-    
-    # Process expenses
-    for exp in expenses:
-        date = exp.get("date", "-")
-        desc = exp.get("description", "Expense")
-        amount = float(exp.get("amount", 0))
-        category = exp.get("category", "General")
-        
-        gl_accounts["6000"]["entries"].append({
-            "date": date, "description": f"{category}: {desc[:30]}", "ref": f"EXP",
-            "debit": amount, "credit": 0
-        })
-        gl_accounts["1000"]["entries"].append({
-            "date": date, "description": f"Paid: {desc[:30]}", "ref": f"EXP",
-            "debit": 0, "credit": amount
-        })
-    
-    # Process supplier invoices
-    for si in supplier_invoices:
-        date = si.get("date", "-")
-        supplier = si.get("supplier_name", "Supplier")
-        total = float(si.get("total", 0))
-        vat = float(si.get("vat", 0))
-        
-        gl_accounts["5100"]["entries"].append({
-            "date": date, "description": f"Purchase - {supplier}", "ref": "PINV",
-            "debit": total - vat, "credit": 0
-        })
-        if vat > 0:
-            gl_accounts["1400"]["entries"].append({
-                "date": date, "description": f"VAT on purchase - {supplier}", "ref": "PINV",
-                "debit": vat, "credit": 0
-            })
-        gl_accounts["2000"]["entries"].append({
-            "date": date, "description": f"Owing - {supplier}", "ref": "PINV",
-            "debit": 0, "credit": total
-        })
-    
-    # Process POS sales
-    for sale in sales:
-        date = sale.get("date", "-")
-        total = float(sale.get("total", 0))
-        subtotal = float(sale.get("subtotal", 0))
-        vat = float(sale.get("vat", 0))
-        customer = sale.get("customer_name", "Cash")
-        payment = sale.get("payment_method", "cash")
-        
-        # Sales revenue (ex VAT)
-        gl_accounts["4000"]["entries"].append({
-            "date": date, "description": f"POS Sale - {customer}", "ref": "POS",
-            "debit": 0, "credit": subtotal
-        })
-        
-        # VAT Output
-        if vat > 0:
-            gl_accounts["2100"]["entries"].append({
-                "date": date, "description": f"VAT on POS - {customer}", "ref": "POS",
-                "debit": 0, "credit": vat
-            })
-        
-        # Debit side depends on payment method
-        if payment == "cash":
-            gl_accounts["1100"]["entries"].append({
-                "date": date, "description": f"POS Sale - {customer} (Cash)", "ref": "POS",
-                "debit": total, "credit": 0
-            })
-        elif payment == "card":
-            gl_accounts["1000"]["entries"].append({
-                "date": date, "description": f"POS Sale - {customer} (Card)", "ref": "POS",
-                "debit": total, "credit": 0
-            })
-        else:  # account
-            gl_accounts["1200"]["entries"].append({
-                "date": date, "description": f"POS Sale - {customer} (Account)", "ref": "POS",
-                "debit": total, "credit": 0
-            })
-    
-    # Build accordion HTML
+    # 3. Build GL
     accounts_html = ""
-    for code in sorted(gl_accounts.keys()):
-        acc = gl_accounts[code]
-        entries = sorted(acc["entries"], key=lambda x: x.get("date", ""), reverse=True)
-        
-        # Calculate balance
-        total_debit = sum(e.get("debit", 0) for e in entries)
-        total_credit = sum(e.get("credit", 0) for e in entries)
-        
-        if acc["type"] in ("asset", "expense"):
-            balance = total_debit - total_credit
-        else:
-            balance = total_credit - total_debit
-        
-        # Skip empty accounts
-        if not entries:
-            continue
-        
-        trans_rows = ""
-        for e in entries:
-            trans_rows += f'''
-            <tr>
-                <td>{e.get("date", "-")}</td>
-                <td>{safe_string(e.get("description", "-"))}</td>
-                <td>{e.get("ref", "-")}</td>
-                <td style="text-align:right;color:var(--green);">{money(e["debit"]) if e.get("debit") else "-"}</td>
-                <td style="text-align:right;color:var(--red);">{money(e["credit"]) if e.get("credit") else "-"}</td>
-            </tr>
-            '''
-        
-        accounts_html += f'''
-        <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
-            <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
-                <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                    <span><strong>{code}</strong> - {acc["name"]} ({len(entries)})</span>
-                    <span style="text-align:right;color:var(--green);">{money(total_debit)}</span>
-                    <span style="text-align:right;color:var(--red);">{money(total_credit)}</span>
+    total_debit_all = 0
+    total_credit_all = 0
+    
+    if coa:
+        # Use imported chart of accounts with real balances
+        for acc in coa:
+            if not acc.get("is_active", True):
+                continue
+            
+            code = acc.get("account_code", "")
+            name = acc.get("account_name", "Unknown")
+            category = acc.get("category", "")
+            debit = float(acc.get("debit", 0) or 0)
+            credit = float(acc.get("credit", 0) or 0)
+            opening = float(acc.get("opening_balance", 0) or 0)
+            
+            if debit > 0 or credit > 0:
+                balance_debit = debit
+                balance_credit = credit
+            elif opening != 0:
+                acct_type = (category or "").lower()
+                if any(t in acct_type for t in ("asset", "expense", "cost of sale", "other expense")):
+                    balance_debit = abs(opening)
+                    balance_credit = 0
+                elif opening > 0:
+                    balance_debit = opening
+                    balance_credit = 0
+                else:
+                    balance_debit = 0
+                    balance_credit = abs(opening)
+            else:
+                continue
+            
+            total_debit_all += balance_debit
+            total_credit_all += balance_credit
+            
+            debit_display = money(balance_debit) if balance_debit else "-"
+            credit_display = money(balance_credit) if balance_credit else "-"
+            debit_color = "var(--green)" if balance_debit else "var(--text-muted)"
+            credit_color = "var(--red)" if balance_credit else "var(--text-muted)"
+            
+            accounts_html += f'''
+            <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
+                <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
+                    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
+                        <span><strong>{safe_string(code)}</strong> - {safe_string(name)} <span style="color:var(--text-muted);font-size:11px;">({safe_string(category)})</span></span>
+                        <span style="text-align:right;color:{debit_color};">{debit_display}</span>
+                        <span style="text-align:right;color:{credit_color};">{credit_display}</span>
+                    </div>
+                </summary>
+                <div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">
+                    Opening Balance: {money(opening)} | Category: {safe_string(category)}
                 </div>
-            </summary>
-            <div style="padding:0 10px 8px 10px;">
-                <table class="table" style="font-size:11px;">
-                    <thead>
-                        <tr>
-                            <th style="padding:4px;">Date</th>
-                            <th style="padding:4px;">Description</th>
-                            <th style="padding:4px;">Ref</th>
-                            <th style="padding:4px;text-align:right;">Debit</th>
-                            <th style="padding:4px;text-align:right;">Credit</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {trans_rows}
-                    </tbody>
-                    <tfoot style="font-weight:bold;background:rgba(255,255,255,0.05);">
-                        <tr>
-                            <td colspan="3" style="padding:4px;">Total</td>
-                            <td style="padding:4px;text-align:right;color:var(--green);">{money(total_debit)}</td>
-                            <td style="padding:4px;text-align:right;color:var(--red);">{money(total_credit)}</td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-        </details>
-        '''
+            </details>
+            '''
+    else:
+        # Fallback: build synthetic GL from transactions
+        gl_accounts = {
+            "1000": {"name": "Bank", "type": "asset", "entries": []},
+            "1200": {"name": "Debtors Control", "type": "asset", "entries": []},
+            "2000": {"name": "Creditors Control", "type": "liability", "entries": []},
+            "2100": {"name": "VAT Output", "type": "liability", "entries": []},
+            "1400": {"name": "VAT Input", "type": "asset", "entries": []},
+            "4000": {"name": "Sales", "type": "income", "entries": []},
+            "5100": {"name": "Purchases", "type": "expense", "entries": []},
+            "6000": {"name": "Operating Expenses", "type": "expense", "entries": []},
+        }
+        
+        for inv in invoices:
+            inv_num = inv.get("invoice_number", "-")
+            customer = inv.get("customer_name", "Customer")
+            date = inv.get("date", "-")
+            total = float(inv.get("total", 0))
+            subtotal = float(inv.get("subtotal", 0))
+            vat = float(inv.get("vat", 0))
+            status = inv.get("status", "outstanding")
+            payment = inv.get("payment_method") or "account"
+            if status == "credited": continue
+            gl_accounts["4000"]["entries"].append({"date": date, "description": f"Invoice {inv_num} - {customer}", "ref": inv_num, "debit": 0, "credit": subtotal})
+            if vat > 0:
+                gl_accounts["2100"]["entries"].append({"date": date, "description": f"VAT on {inv_num}", "ref": inv_num, "debit": 0, "credit": vat})
+            if payment == "account" and status == "outstanding":
+                gl_accounts["1200"]["entries"].append({"date": date, "description": f"Invoice {inv_num} - {customer}", "ref": inv_num, "debit": total, "credit": 0})
+            elif status == "paid":
+                gl_accounts["1000"]["entries"].append({"date": date, "description": f"Payment {inv_num} - {customer} ({payment.upper()})", "ref": inv_num, "debit": total, "credit": 0})
+        
+        for exp in expenses:
+            amount = float(exp.get("amount", 0))
+            desc = exp.get("description", "Expense")
+            date = exp.get("date", "-")
+            gl_accounts["6000"]["entries"].append({"date": date, "description": f"{exp.get('category', '')}: {desc[:30]}", "ref": "EXP", "debit": amount, "credit": 0})
+            gl_accounts["1000"]["entries"].append({"date": date, "description": f"Paid: {desc[:30]}", "ref": "EXP", "debit": 0, "credit": amount})
+        
+        for si in supplier_invoices:
+            total = float(si.get("total", 0))
+            vat = float(si.get("vat", 0))
+            date = si.get("date", "-")
+            supplier = si.get("supplier_name", "Supplier")
+            gl_accounts["5100"]["entries"].append({"date": date, "description": f"Purchase - {supplier}", "ref": "PINV", "debit": total - vat, "credit": 0})
+            if vat > 0:
+                gl_accounts["1400"]["entries"].append({"date": date, "description": f"VAT - {supplier}", "ref": "PINV", "debit": vat, "credit": 0})
+            gl_accounts["2000"]["entries"].append({"date": date, "description": f"Owing - {supplier}", "ref": "PINV", "debit": 0, "credit": total})
+        
+        for sale in sales:
+            total = float(sale.get("total", 0))
+            subtotal = float(sale.get("subtotal", 0))
+            vat = float(sale.get("vat", 0))
+            date = sale.get("date", "-")
+            customer = sale.get("customer_name", "Cash")
+            payment = sale.get("payment_method") or "cash"
+            gl_accounts["4000"]["entries"].append({"date": date, "description": f"POS - {customer}", "ref": "POS", "debit": 0, "credit": subtotal})
+            if vat > 0:
+                gl_accounts["2100"]["entries"].append({"date": date, "description": f"VAT POS - {customer}", "ref": "POS", "debit": 0, "credit": vat})
+            gl_accounts["1000"]["entries"].append({"date": date, "description": f"POS - {customer} ({payment.upper()})", "ref": "POS", "debit": total, "credit": 0})
+        
+        for code in sorted(gl_accounts.keys()):
+            acc = gl_accounts[code]
+            entries = sorted(acc["entries"], key=lambda x: x.get("date", ""), reverse=True)
+            td = sum(e.get("debit", 0) for e in entries)
+            tc = sum(e.get("credit", 0) for e in entries)
+            if not entries: continue
+            total_debit_all += td
+            total_credit_all += tc
+            trans_rows = ""
+            for e in entries:
+                trans_rows += f'<tr><td>{e.get("date","-")}</td><td>{safe_string(e.get("description","-"))}</td><td>{e.get("ref","-")}</td><td style="text-align:right;color:var(--green);">{money(e["debit"]) if e.get("debit") else "-"}</td><td style="text-align:right;color:var(--red);">{money(e["credit"]) if e.get("credit") else "-"}</td></tr>'
+            accounts_html += f'''
+            <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
+                <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
+                    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
+                        <span><strong>{code}</strong> - {acc["name"]} ({len(entries)})</span>
+                        <span style="text-align:right;color:var(--green);">{money(td)}</span>
+                        <span style="text-align:right;color:var(--red);">{money(tc)}</span>
+                    </div>
+                </summary>
+                <div style="padding:0 10px 8px 10px;">
+                    <table class="table" style="font-size:11px;"><thead><tr><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{trans_rows}</tbody></table>
+                </div>
+            </details>
+            '''
     
     if not accounts_html:
-        accounts_html = '''
-        <div class="card" style="text-align:center;padding:40px;">
-            <p style="color:var(--text-muted);margin-bottom:20px;">No transactions yet</p>
-            <p>Create invoices, expenses, or sales to see GL entries here.</p>
-        </div>
-        '''
+        accounts_html = '<div class="card" style="text-align:center;padding:40px;"><p>No accounts found. Import your Chart of Accounts or create transactions.</p></div>'
     
-    # Add header row for columns - STICKY
-    header_row = '''
-    <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
-        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;font-weight:bold;">
-            <span>Account</span>
-            <span style="text-align:right;color:var(--green);">Debit</span>
-            <span style="text-align:right;color:var(--red);">Credit</span>
-        </div>
-    </div>
-    '''
+    diff = abs(total_debit_all - total_credit_all)
+    balance_note = f'<span style="color:var(--green);">✅ Balanced</span>' if diff < 0.02 else f'<span style="color:var(--orange);">Difference: {money(diff)}</span>'
+    
+    source_label = "Chart of Accounts (Sage)" if coa else "Built from transactions"
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
@@ -32953,11 +32886,26 @@ def _report_gl_inner(user, biz_id):
         <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
     </div>
     
-    <h2 style="margin-bottom:8px;">📒 General Ledger</h2>
-    <p style="color:var(--text-muted);margin-bottom:15px;font-size:13px;">Click on an account to see transactions</p>
+    <h2 style="margin-bottom:4px;">📒 General Ledger</h2>
+    <p style="color:var(--text-muted);margin-bottom:15px;font-size:13px;">{source_label} — Click on an account to see details</p>
     
-    {header_row}
+    <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;font-weight:bold;">
+            <span>Account</span>
+            <span style="text-align:right;color:var(--green);">Debit</span>
+            <span style="text-align:right;color:var(--red);">Credit</span>
+        </div>
+    </div>
+    
     {accounts_html}
+    
+    <div style="padding:10px 12px;background:var(--card);border-radius:6px;margin-top:8px;border:2px solid var(--border);">
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:14px;font-weight:bold;">
+            <span>TOTALS {balance_note}</span>
+            <span style="text-align:right;color:var(--green);">{money(total_debit_all)}</span>
+            <span style="text-align:right;color:var(--red);">{money(total_credit_all)}</span>
+        </div>
+    </div>
     '''
     
     return render_page("General Ledger", content, user, "reports")
