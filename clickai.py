@@ -32718,18 +32718,12 @@ def report_gl():
 
 def _report_gl_inner(user, biz_id):
     
-    # Get all transaction data (limit to recent for performance)
+    # Get all transaction data
     try:
         invoices = db.get("invoices", {"business_id": biz_id}) or []
         expenses = db.get("expenses", {"business_id": biz_id}) or []
         sales = db.get("sales", {"business_id": biz_id}) or []
         supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
-        
-        # Limit to most recent 500 per type to prevent timeout
-        invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)[:500]
-        expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)[:500]
-        sales = sorted(sales, key=lambda x: x.get("date", ""), reverse=True)[:500]
-        supplier_invoices = sorted(supplier_invoices, key=lambda x: x.get("date", ""), reverse=True)[:500]
     except Exception as e:
         logger.error(f"GL data fetch error: {e}")
         invoices = expenses = sales = supplier_invoices = []
@@ -32888,7 +32882,7 @@ def _report_gl_inner(user, biz_id):
             continue
         
         trans_rows = ""
-        for e in entries[:30]:  # Limit to 30 entries
+        for e in entries:
             trans_rows += f'''
             <tr>
                 <td>{e.get("date", "-")}</td>
