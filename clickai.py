@@ -26119,6 +26119,7 @@ def suppliers_page():
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
         <h2 style="margin:0;">Suppliers (<span id="supplierCount">{total_suppliers}</span>)</h2>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <a href="/supplier-invoices" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">📋 Supplier Invoices</a>
             <input type="text" id="supplierSearch" placeholder="🔍 Search name, code, phone..." 
                 oninput="filterSuppliers()" 
                 style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:250px;">
@@ -26323,6 +26324,11 @@ def supplier_view(supplier_id):
     expenses = [e for e in all_expenses if e.get("supplier_id") == supplier_id]
     expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)
     
+    # Get supplier invoices (imported from Sage etc)
+    all_supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id and can_see_balances else []
+    supplier_invoices = [si for si in all_supplier_invoices if si.get("supplier_id") == supplier_id]
+    supplier_invoices = sorted(supplier_invoices, key=lambda x: x.get("date", ""), reverse=True)
+    
     # Get payments to supplier (only if can see balances)
     all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id and can_see_balances else []
     payments = [p for p in all_payments if p.get("supplier_id") == supplier_id]
@@ -26351,6 +26357,21 @@ def supplier_view(supplier_id):
                 <td>{safe_string(e.get("description", "-"))[:40]}</td>
                 <td>{money(e.get("total", e.get("amount", 0)))}</td>
                 <td style="color:{status_color};">{status}</td>
+            </tr>
+            '''
+    
+    supplier_inv_html = ""
+    if can_see_balances:
+        for si in supplier_invoices[:50]:
+            si_status = si.get("status", "outstanding")
+            si_color = "var(--green)" if si_status == "paid" else "var(--orange)"
+            supplier_inv_html += f'''
+            <tr>
+                <td>{safe_string(si.get("invoice_number", "-"))}</td>
+                <td>{si.get("date", "-")}</td>
+                <td>{si.get("due_date", "-")}</td>
+                <td>{money(si.get("total", 0))}</td>
+                <td style="color:{si_color};">{si_status}</td>
             </tr>
             '''
     
@@ -26538,6 +26559,21 @@ def supplier_view(supplier_id):
                 </tbody>
             </table>
         </div>
+    </div>
+    
+    ''' + (f'''
+    <div class="card" style="margin-top:20px;">
+        <h3 style="margin-bottom:15px;">Invoices ({len(supplier_invoices)})</h3>
+        <table class="table">
+            <thead>
+                <tr><th>Invoice #</th><th>Date</th><th>Due Date</th><th>Amount</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                {supplier_inv_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted);'>No invoices</td></tr>"}
+            </tbody>
+        </table>
+    </div>
+    ''' if can_see_balances else '') + '''
     </div>
     
     <!-- Scanned Documents Section -->
