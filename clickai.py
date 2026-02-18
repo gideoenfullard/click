@@ -32707,6 +32707,17 @@ def report_gl():
     if not biz_id:
         return render_page("General Ledger", "<div class='card'><p>No business selected</p></div>", user, "reports")
     
+    try:
+        return _report_gl_inner(user, biz_id)
+    except Exception as e:
+        logger.error(f"[GL REPORT] Crash: {e}")
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"[GL REPORT] Traceback: {tb}")
+        return render_page("General Ledger", f"<div class='card'><h3>Error loading GL</h3><pre style='color:var(--red);font-size:12px;white-space:pre-wrap;'>{safe_string(str(e))}\n\n{safe_string(tb[-500:])}</pre></div>", user, "reports")
+
+def _report_gl_inner(user, biz_id):
+    
     # Get all transaction data (limit to recent for performance)
     try:
         invoices = db.get("invoices", {"business_id": biz_id}) or []
@@ -32745,7 +32756,7 @@ def report_gl():
         subtotal = float(inv.get("subtotal", 0))
         vat = float(inv.get("vat", 0))
         status = inv.get("status", "outstanding")
-        payment = inv.get("payment_method", "account")
+        payment = inv.get("payment_method") or "account"
         
         if status == "credited":
             continue
