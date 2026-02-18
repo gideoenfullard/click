@@ -16478,7 +16478,7 @@ body {
     border: 2px solid rgba(255,255,255,0.3);
     border-top-color: white;
     border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+    animation: spin 0.4s linear infinite;
     vertical-align: middle;
     margin-right: 6px;
 }
@@ -17022,6 +17022,69 @@ select.form-input optgroup {
         position: static !important;
     }
 }
+
+/* ═══ Sage-style Progress Bar ═══ */
+#clickProgress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 0%;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent, #6c5ce7), #00cec9, var(--accent, #6c5ce7));
+    background-size: 200% 100%;
+    z-index: 99999;
+    transition: none;
+    pointer-events: none;
+    opacity: 0;
+    box-shadow: 0 0 8px rgba(108, 92, 231, 0.6);
+}
+#clickProgress.active {
+    opacity: 1;
+    animation: progressShimmer 1.5s linear infinite;
+}
+#clickProgress.phase1 {
+    width: 70%;
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#clickProgress.phase2 {
+    width: 88%;
+    transition: width 1.8s cubic-bezier(0.1, 0, 0.3, 1);
+}
+#clickProgress.phase3 {
+    width: 94%;
+    transition: width 3s ease-out;
+}
+#clickProgress.done {
+    width: 100%;
+    transition: width 0.15s ease-out;
+}
+#clickProgress.fade {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+@keyframes progressShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Page entering - content fades in fast */
+.page-entering .container {
+    animation: fadeSlideIn 0.18s ease-out both;
+}
+@keyframes fadeSlideIn {
+    from { opacity: 0.3; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* When navigating away - subtle dim */
+body.navigating .main-scroll {
+    opacity: 0.6;
+    transition: opacity 0.12s ease;
+    pointer-events: none;
+}
+body.navigating .spinner-nav {
+    display: inline-block !important;
+}
 </style>
 """
 
@@ -17466,7 +17529,8 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     <title>{title} - Click AI</title>
     {CSS}
 </head>
-<body data-business-id="{biz_id}">
+<body data-business-id="{biz_id}" class="page-entering">
+    <div id="clickProgress"></div>
     <header class="header">
         <div class="header-top">
             <div class="logo" onclick="toggleZaneChat()">Click AI</div>
@@ -17732,6 +17796,112 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     <!-- ClickDB Local Cache -->
     <script>
     {CLICKDB_JS}
+    </script>
+    
+    <!-- Sage-style instant navigation -->
+    <script>
+    (function() {{
+        const bar = document.getElementById('clickProgress');
+        if (!bar) return;
+        
+        // === PAGE ARRIVAL: complete the progress bar ===
+        bar.classList.add('active');
+        bar.style.width = '70%';
+        // Force reflow
+        bar.offsetWidth;
+        bar.classList.add('phase1');
+        
+        requestAnimationFrame(function() {{
+            setTimeout(function() {{
+                bar.classList.remove('phase1');
+                bar.classList.add('done');
+                setTimeout(function() {{
+                    bar.classList.add('fade');
+                    setTimeout(function() {{
+                        bar.classList.remove('active', 'done', 'fade', 'phase1', 'phase2', 'phase3');
+                        bar.style.width = '0%';
+                        // Remove entering animation class
+                        document.body.classList.remove('page-entering');
+                    }}, 300);
+                }}, 150);
+            }}, 100);
+        }});
+        
+        // === NAVIGATION: intercept clicks ===
+        let isNavigating = false;
+        
+        function startProgress() {{
+            if (isNavigating) return;
+            isNavigating = true;
+            
+            // Dim current page content
+            document.body.classList.add('navigating');
+            
+            // Reset and start progress bar
+            bar.classList.remove('done', 'fade', 'phase1', 'phase2', 'phase3');
+            bar.style.width = '0%';
+            bar.offsetWidth; // force reflow
+            bar.classList.add('active');
+            
+            // Phase 1: shoot to 70% fast
+            requestAnimationFrame(function() {{
+                bar.classList.add('phase1');
+                
+                // Phase 2: slow crawl to 88%
+                setTimeout(function() {{
+                    bar.classList.remove('phase1');
+                    bar.classList.add('phase2');
+                    
+                    // Phase 3: even slower to 94%
+                    setTimeout(function() {{
+                        bar.classList.remove('phase2');
+                        bar.classList.add('phase3');
+                    }}, 1800);
+                }}, 350);
+            }});
+        }}
+        
+        // Intercept all internal link clicks
+        document.addEventListener('click', function(e) {{
+            const link = e.target.closest('a[href]');
+            if (!link) return;
+            
+            const href = link.getAttribute('href');
+            if (!href) return;
+            
+            // Skip: external links, anchors, javascript:, downloads, new tabs
+            if (href.startsWith('http') || href.startsWith('#') || href.startsWith('javascript:') ||
+                href.startsWith('mailto:') || href.startsWith('tel:') ||
+                link.hasAttribute('download') || link.target === '_blank' ||
+                e.ctrlKey || e.metaKey || e.shiftKey) return;
+            
+            startProgress();
+        }});
+        
+        // Intercept form submissions
+        document.addEventListener('submit', function(e) {{
+            startProgress();
+        }});
+        
+        // Intercept programmatic navigation (window.location assignments)
+        const origLocation = Object.getOwnPropertyDescriptor(window, 'location') || 
+                              Object.getOwnPropertyDescriptor(Window.prototype, 'location');
+        
+        // Patch onclick handlers that use window.location
+        const origSetAttribute = Element.prototype.setAttribute;
+        
+        // Also catch onclick="window.location=..." by watching before unload
+        window.addEventListener('beforeunload', function() {{
+            startProgress();
+        }});
+        
+        // If page takes too long, ensure bar doesn't get stuck
+        setTimeout(function() {{
+            if (isNavigating) {{
+                bar.classList.add('done');
+            }}
+        }}, 8000);
+    }})();
     </script>
 </body>
 </html>'''
