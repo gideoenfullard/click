@@ -45860,8 +45860,13 @@ def api_smart_import_batch():
                             # Update existing record
                             exist_id = existing[0].get("id") if isinstance(existing, list) else existing.get("id")
                             code = str(row.get("account_code", row.get("code", ""))).strip()
-                            exclude_fields = {'name', 'account_code', 'code', 'business_id', 'id'}
-                            updates = {k: v for k, v in row.items() if k not in exclude_fields and v}
+                            # Only include fields that exist in the customers table
+                            allowed_fields = {'name', 'code', 'phone', 'cell', 'fax', 'email', 'website',
+                                              'address', 'vat_number', 'balance', 'credit_limit', 'active',
+                                              'category', 'contact_name', 'price_list', 'sales_rep',
+                                              'discount_percentage', 'vat_type', 'payment_terms', 'notes'}
+                            exclude_fields = {'account_code', 'business_id', 'id'}
+                            updates = {k: v for k, v in row.items() if k in allowed_fields and v}
                             updates["name"] = name
                             if code: updates["code"] = code
                             success, resp = db.update("customers", exist_id, updates)
@@ -45894,8 +45899,12 @@ def api_smart_import_batch():
                         if existing:
                             exist_id = existing[0].get("id") if isinstance(existing, list) else existing.get("id")
                             code = str(row.get("account_code", row.get("code", ""))).strip()
-                            exclude_fields = {'name', 'account_code', 'code', 'business_id', 'id'}
-                            updates = {k: v for k, v in row.items() if k not in exclude_fields and v}
+                            # Only include fields that exist in the suppliers table
+                            allowed_fields = {'name', 'code', 'phone', 'cell', 'fax', 'email', 'website',
+                                              'address', 'vat_number', 'balance', 'credit_limit', 'active',
+                                              'category', 'contact_name', 'discount_percentage', 'vat_type',
+                                              'payment_terms', 'notes'}
+                            updates = {k: v for k, v in row.items() if k in allowed_fields and v}
                             updates["name"] = name
                             if code: updates["code"] = code
                             success, resp = db.update("suppliers", exist_id, updates)
