@@ -17033,34 +17033,13 @@ select.form-input optgroup {
     background: linear-gradient(90deg, var(--accent, #6c5ce7), #00cec9, var(--accent, #6c5ce7));
     background-size: 200% 100%;
     z-index: 99999;
-    transition: none;
     pointer-events: none;
     opacity: 0;
-    box-shadow: 0 0 8px rgba(108, 92, 231, 0.6);
+    box-shadow: 0 0 10px rgba(108, 92, 231, 0.6), 0 0 4px rgba(0, 206, 201, 0.4);
 }
 #clickProgress.active {
     opacity: 1;
-    animation: progressShimmer 1.5s linear infinite;
-}
-#clickProgress.phase1 {
-    width: 70%;
-    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-#clickProgress.phase2 {
-    width: 88%;
-    transition: width 1.8s cubic-bezier(0.1, 0, 0.3, 1);
-}
-#clickProgress.phase3 {
-    width: 94%;
-    transition: width 3s ease-out;
-}
-#clickProgress.done {
-    width: 100%;
-    transition: width 0.15s ease-out;
-}
-#clickProgress.fade {
-    opacity: 0;
-    transition: opacity 0.3s ease;
+    animation: progressShimmer 1.2s linear infinite;
 }
 @keyframes progressShimmer {
     0% { background-position: 200% 0; }
@@ -17805,27 +17784,24 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         if (!bar) return;
         
         // === PAGE ARRIVAL: complete the progress bar ===
-        bar.classList.add('active');
+        // Start at 70% (as if we were loading)
         bar.style.width = '70%';
-        // Force reflow
-        bar.offsetWidth;
-        bar.classList.add('phase1');
+        bar.classList.add('active');
+        bar.offsetWidth; // force reflow
         
-        requestAnimationFrame(function() {{
+        // Animate to 100%
+        bar.style.transition = 'width 0.2s ease-out';
+        bar.style.width = '100%';
+        
+        setTimeout(function() {{
+            bar.style.transition = 'opacity 0.3s ease';
+            bar.style.opacity = '0';
             setTimeout(function() {{
-                bar.classList.remove('phase1');
-                bar.classList.add('done');
-                setTimeout(function() {{
-                    bar.classList.add('fade');
-                    setTimeout(function() {{
-                        bar.classList.remove('active', 'done', 'fade', 'phase1', 'phase2', 'phase3');
-                        bar.style.width = '0%';
-                        // Remove entering animation class
-                        document.body.classList.remove('page-entering');
-                    }}, 300);
-                }}, 150);
-            }}, 100);
-        }});
+                bar.classList.remove('active');
+                bar.style.cssText = '';  // full reset
+                document.body.classList.remove('page-entering');
+            }}, 300);
+        }}, 250);
         
         // === NAVIGATION: intercept clicks ===
         let isNavigating = false;
@@ -17834,31 +17810,29 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             if (isNavigating) return;
             isNavigating = true;
             
-            // Dim current page content
+            // Dim current page content instantly
             document.body.classList.add('navigating');
             
-            // Reset and start progress bar
-            bar.classList.remove('done', 'fade', 'phase1', 'phase2', 'phase3');
-            bar.style.width = '0%';
-            bar.offsetWidth; // force reflow
+            // Reset bar
+            bar.style.cssText = 'width:0%;opacity:1;';
             bar.classList.add('active');
+            bar.offsetWidth; // force reflow
             
-            // Phase 1: shoot to 70% fast
-            requestAnimationFrame(function() {{
-                bar.classList.add('phase1');
+            // Phase 1: shoot to 70% fast (300ms)
+            bar.style.transition = 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+            bar.style.width = '70%';
+            
+            // Phase 2: slow crawl to 88% (1.5s)
+            setTimeout(function() {{
+                bar.style.transition = 'width 1.8s cubic-bezier(0.1, 0, 0.3, 1)';
+                bar.style.width = '88%';
                 
-                // Phase 2: slow crawl to 88%
+                // Phase 3: even slower to 94%
                 setTimeout(function() {{
-                    bar.classList.remove('phase1');
-                    bar.classList.add('phase2');
-                    
-                    // Phase 3: even slower to 94%
-                    setTimeout(function() {{
-                        bar.classList.remove('phase2');
-                        bar.classList.add('phase3');
-                    }}, 1800);
-                }}, 350);
-            }});
+                    bar.style.transition = 'width 3s ease-out';
+                    bar.style.width = '94%';
+                }}, 1800);
+            }}, 350);
         }}
         
         // Intercept all internal link clicks
@@ -17879,28 +17853,14 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         }});
         
         // Intercept form submissions
-        document.addEventListener('submit', function(e) {{
+        document.addEventListener('submit', function() {{
             startProgress();
         }});
         
-        // Intercept programmatic navigation (window.location assignments)
-        const origLocation = Object.getOwnPropertyDescriptor(window, 'location') || 
-                              Object.getOwnPropertyDescriptor(Window.prototype, 'location');
-        
-        // Patch onclick handlers that use window.location
-        const origSetAttribute = Element.prototype.setAttribute;
-        
-        // Also catch onclick="window.location=..." by watching before unload
+        // Catch onclick="window.location=..." navigation
         window.addEventListener('beforeunload', function() {{
             startProgress();
         }});
-        
-        // If page takes too long, ensure bar doesn't get stuck
-        setTimeout(function() {{
-            if (isNavigating) {{
-                bar.classList.add('done');
-            }}
-        }}, 8000);
     }})();
     </script>
 </body>
