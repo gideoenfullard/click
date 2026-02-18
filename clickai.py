@@ -44844,6 +44844,7 @@ def smart_import_page():
         <div class="success-stats" id="successStats"></div>
         <div id="successActions" style="margin-top:25px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
             <a href="/" class="import-btn" style="text-decoration:none;">Go to Dashboard →</a>
+            <button onclick="runDedup(false)" class="btn btn-secondary" style="padding:14px 28px;font-size:15px;">🧹 Scan for Duplicates</button>
         </div>
         <div id="reportPrompt" style="display:none;margin-top:20px;padding:20px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);border-radius:12px;">
             <p style="font-size:15px;margin-bottom:12px;">📊 <strong>Generate a professional AI report from your imported data?</strong></p>
@@ -44853,9 +44854,71 @@ def smart_import_page():
                 </button>
             </div>
         </div>
+        <div id="dedupResult" style="display:none;margin-top:20px;"></div>
+    </div>
+    
+    <!-- DEDUP TOOL (also accessible standalone) -->
+    <div class="card" style="margin-top:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <h3 style="margin:0;">🧹 Duplicate Cleaner</h3>
+                <p style="color:var(--text-muted);font-size:13px;margin:5px 0 0 0;">Scan all tables for duplicate records and clean up in one click</p>
+            </div>
+            <button onclick="runDedup(false)" class="btn btn-secondary" id="dedupBtn">Scan for Duplicates</button>
+        </div>
+        <div id="dedupStandalone" style="margin-top:15px;display:none;"></div>
     </div>
     
     <script>
+    async function runDedup(execute) {
+        const targetDiv = document.getElementById('dedupStandalone').style.display !== 'none' ? 'dedupStandalone' : 'dedupResult';
+        const div = document.getElementById(targetDiv);
+        document.getElementById('dedupStandalone').style.display = 'block';
+        if (document.getElementById('dedupResult')) document.getElementById('dedupResult').style.display = 'block';
+        div.innerHTML = '<p style="text-align:center;">⏳ Scanning all tables...</p>';
+        
+        try {
+            const resp = await fetch('/api/dedup/scan', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({execute: execute})
+            });
+            const data = await resp.json();
+            
+            if (!data.success) {
+                div.innerHTML = '<p style="color:var(--red);">Error: ' + data.error + '</p>';
+                return;
+            }
+            
+            let html = '<table class="table" style="font-size:13px;"><thead><tr><th>Table</th><th>Records</th><th>Duplicates</th>' + (execute ? '<th>Deleted</th>' : '') + '</tr></thead><tbody>';
+            const labels = {'customers':'Customers','suppliers':'Suppliers','stock_items':'Stock','invoices':'Customer Invoices','supplier_invoices':'Supplier Invoices','chart_of_accounts':'Chart of Accounts','gl_transactions':'GL Transactions','journal_entries':'Journal Entries'};
+            
+            for (const [key, r] of Object.entries(data.results)) {
+                const color = r.dupes > 0 ? 'var(--orange)' : 'var(--green)';
+                html += '<tr><td>' + (labels[key] || key) + '</td><td>' + r.total + '</td><td style="color:' + color + ';font-weight:600;">' + r.dupes + '</td>';
+                if (execute) html += '<td style="color:var(--green);">' + r.deleted + '</td>';
+                html += '</tr>';
+            }
+            html += '</tbody></table>';
+            
+            html += '<div style="text-align:center;margin-top:15px;padding:15px;background:rgba(16,185,129,0.05);border-radius:8px;">';
+            if (execute) {
+                html += '<p style="font-size:18px;font-weight:600;color:var(--green);">✅ Deleted ' + data.total_deleted + ' duplicates</p>';
+            } else if (data.total_dupes > 0) {
+                html += '<p style="font-size:16px;margin-bottom:12px;"><strong>' + data.total_dupes + ' duplicates</strong> found across all tables</p>';
+                html += '<p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">The oldest record is kept, newer duplicates are deleted</p>';
+                html += '<button onclick="if(confirm(\'Delete ' + data.total_dupes + ' duplicates? This keeps the oldest record of each.\')){runDedup(true)}" class="btn btn-primary" style="padding:12px 30px;background:linear-gradient(135deg,#ef4444,#dc2626);">🗑️ Delete ' + data.total_dupes + ' Duplicates</button>';
+            } else {
+                html += '<p style="font-size:16px;color:var(--green);font-weight:600;">✅ No duplicates found — your data is clean!</p>';
+            }
+            html += '</div>';
+            
+            div.innerHTML = html;
+        } catch(e) {
+            div.innerHTML = '<p style="color:var(--red);">Error: ' + e.message + '</p>';
+        }
+    }
+    </script>
     let analysisResult = null;
     let importData = null;  // Store the actual data to import
     let uploadedFileName = '';
@@ -46743,6 +46806,106 @@ def api_smart_import_execute():
 # ═══════════════════════════════════════════════════════════════════════════════
 # END SMART IMPORT MODULE
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEDUP ENGINE - Remove duplicates across all tables
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/dedup/scan", methods=["POST"])
+@login_required
+def api_dedup_scan():
+    """Scan all tables for duplicates - returns counts without deleting"""
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business selected"})
+    
+    try:
+        data = request.get_json() or {}
+        execute = data.get("execute", False)
+        
+        tables_config = {
+            "customers": {"key_fields": ["name"], "table": "customers"},
+            "suppliers": {"key_fields": ["name"], "table": "suppliers"},
+            "stock_items": {"key_fields": ["description"], "fallback": ["code"], "table": "stock_items"},
+            "invoices": {"key_fields": ["invoice_number"], "table": "invoices"},
+            "supplier_invoices": {"key_fields": ["invoice_number", "supplier_name"], "table": "supplier_invoices"},
+            "chart_of_accounts": {"key_fields": ["account_code"], "fallback": ["account_name"], "table": "chart_of_accounts"},
+            "gl_transactions": {"key_fields": ["date", "account_code", "reference", "debit", "credit"], "table": "gl_transactions"},
+            "journal_entries": {"key_fields": ["date", "account_code", "reference", "debit", "credit"], "table": "journal_entries"},
+        }
+        
+        results = {}
+        total_dupes = 0
+        total_deleted = 0
+        
+        for label, config in tables_config.items():
+            table = config["table"]
+            try:
+                records = db.get(table, {"business_id": biz_id}) or []
+            except:
+                results[label] = {"total": 0, "dupes": 0, "deleted": 0}
+                continue
+            
+            if not records:
+                results[label] = {"total": 0, "dupes": 0, "deleted": 0}
+                continue
+            
+            # Build dedup key
+            def make_key(r, fields, fallback=None):
+                parts = []
+                for f in fields:
+                    val = str(r.get(f, "") or "").lower().strip()
+                    parts.append(val)
+                key = "|".join(parts)
+                if not key.replace("|", ""):
+                    if fallback:
+                        parts2 = []
+                        for f in fallback:
+                            val = str(r.get(f, "") or "").lower().strip()
+                            parts2.append(val)
+                        key = "|".join(parts2)
+                return key if key.replace("|", "") else None
+            
+            # Sort oldest first - keep oldest
+            sorted_recs = sorted(records, key=lambda x: x.get("created_at", "") or "")
+            seen = {}
+            dupes = []
+            
+            for r in sorted_recs:
+                key = make_key(r, config["key_fields"], config.get("fallback"))
+                if not key:
+                    continue
+                if key in seen:
+                    dupes.append(r)
+                else:
+                    seen[key] = r
+            
+            deleted = 0
+            if execute and dupes:
+                for dup in dupes:
+                    try:
+                        db.delete(table, dup.get("id"))
+                        deleted += 1
+                    except:
+                        pass
+            
+            results[label] = {"total": len(records), "dupes": len(dupes), "deleted": deleted}
+            total_dupes += len(dupes)
+            total_deleted += deleted
+        
+        return jsonify({
+            "success": True,
+            "results": results,
+            "total_dupes": total_dupes,
+            "total_deleted": total_deleted,
+            "executed": execute
+        })
+    except Exception as e:
+        logger.error(f"[DEDUP] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
 
 
 # 
