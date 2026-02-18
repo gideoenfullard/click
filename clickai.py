@@ -17023,27 +17023,51 @@ select.form-input optgroup {
     }
 }
 
-/* ═══ Sage-style Progress Bar ═══ */
+/* ═══ Sage-style "Please Wait" Progress Modal ═══ */
 #clickProgress {
+    display: none;
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 0%;
-    height: 3px;
-    background: linear-gradient(90deg, var(--accent, #6c5ce7), #00cec9, var(--accent, #6c5ce7));
-    background-size: 200% 100%;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.25);
     z-index: 99999;
-    pointer-events: none;
-    opacity: 0;
-    box-shadow: 0 0 10px rgba(108, 92, 231, 0.6), 0 0 4px rgba(0, 206, 201, 0.4);
+    justify-content: center;
+    align-items: center;
 }
 #clickProgress.active {
-    opacity: 1;
-    animation: progressShimmer 1.2s linear infinite;
+    display: flex;
 }
-@keyframes progressShimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+#clickProgress .progress-modal {
+    background: var(--card, #12122a);
+    border: 1px solid var(--border, #2a2a4a);
+    border-radius: 10px;
+    padding: 20px 32px;
+    min-width: 240px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    text-align: center;
+}
+#clickProgress .progress-label {
+    color: var(--text-muted, #aaa);
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+#clickProgress .progress-track {
+    width: 100%;
+    height: 6px;
+    background: var(--bg, #0a0a1a);
+    border-radius: 3px;
+    overflow: hidden;
+}
+#clickProgress .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent, #6c5ce7), #00cec9);
+    border-radius: 3px;
+    animation: sageProgress 0.6s ease-in-out infinite;
+}
+@keyframes sageProgress {
+    0%   { width: 0%;   margin-left: 0; }
+    50%  { width: 70%; margin-left: 0; }
+    100% { width: 0%;  margin-left: 100%; }
 }
 
 /* Page entering - content fades in fast */
@@ -17509,7 +17533,12 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     {CSS}
 </head>
 <body data-business-id="{biz_id}" class="page-entering">
-    <div id="clickProgress"></div>
+    <div id="clickProgress">
+        <div class="progress-modal">
+            <div class="progress-label">Please Wait...</div>
+            <div class="progress-track"><div class="progress-fill"></div></div>
+        </div>
+    </div>
     <header class="header">
         <div class="header-top">
             <div class="logo" onclick="toggleZaneChat()">Click AI</div>
@@ -17780,59 +17809,21 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     <!-- Sage-style instant navigation -->
     <script>
     (function() {{
-        const bar = document.getElementById('clickProgress');
-        if (!bar) return;
+        const modal = document.getElementById('clickProgress');
+        if (!modal) return;
         
-        // === PAGE ARRIVAL: complete the progress bar ===
-        // Start at 70% (as if we were loading)
-        bar.style.width = '70%';
-        bar.classList.add('active');
-        bar.offsetWidth; // force reflow
+        // === PAGE ARRIVAL: hide progress if it was showing ===
+        modal.classList.remove('active');
+        document.body.classList.remove('page-entering');
         
-        // Animate to 100%
-        bar.style.transition = 'width 0.2s ease-out';
-        bar.style.width = '100%';
-        
-        setTimeout(function() {{
-            bar.style.transition = 'opacity 0.3s ease';
-            bar.style.opacity = '0';
-            setTimeout(function() {{
-                bar.classList.remove('active');
-                bar.style.cssText = '';  // full reset
-                document.body.classList.remove('page-entering');
-            }}, 300);
-        }}, 250);
-        
-        // === NAVIGATION: intercept clicks ===
+        // === NAVIGATION: show modal on click ===
         let isNavigating = false;
         
-        function startProgress() {{
+        function showProgress() {{
             if (isNavigating) return;
             isNavigating = true;
-            
-            // Dim current page content instantly
             document.body.classList.add('navigating');
-            
-            // Reset bar
-            bar.style.cssText = 'width:0%;opacity:1;';
-            bar.classList.add('active');
-            bar.offsetWidth; // force reflow
-            
-            // Phase 1: shoot to 70% fast (300ms)
-            bar.style.transition = 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
-            bar.style.width = '70%';
-            
-            // Phase 2: slow crawl to 88% (1.5s)
-            setTimeout(function() {{
-                bar.style.transition = 'width 1.8s cubic-bezier(0.1, 0, 0.3, 1)';
-                bar.style.width = '88%';
-                
-                // Phase 3: even slower to 94%
-                setTimeout(function() {{
-                    bar.style.transition = 'width 3s ease-out';
-                    bar.style.width = '94%';
-                }}, 1800);
-            }}, 350);
+            modal.classList.add('active');
         }}
         
         // Intercept all internal link clicks
@@ -17843,23 +17834,23 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             const href = link.getAttribute('href');
             if (!href) return;
             
-            // Skip: external links, anchors, javascript:, downloads, new tabs
+            // Skip: external, anchors, javascript, downloads, new tabs
             if (href.startsWith('http') || href.startsWith('#') || href.startsWith('javascript:') ||
                 href.startsWith('mailto:') || href.startsWith('tel:') ||
                 link.hasAttribute('download') || link.target === '_blank' ||
                 e.ctrlKey || e.metaKey || e.shiftKey) return;
             
-            startProgress();
+            showProgress();
         }});
         
         // Intercept form submissions
         document.addEventListener('submit', function() {{
-            startProgress();
+            showProgress();
         }});
         
         // Catch onclick="window.location=..." navigation
         window.addEventListener('beforeunload', function() {{
-            startProgress();
+            showProgress();
         }});
     }})();
     </script>
