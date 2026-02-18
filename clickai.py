@@ -46894,12 +46894,11 @@ def api_dedup_scan():
             
             deleted = 0
             if execute and dupes:
-                for dup in dupes:
-                    try:
-                        db.delete(table, dup.get("id"))
-                        deleted += 1
-                    except:
-                        pass
+                dup_ids = [d.get("id") for d in dupes if d.get("id")]
+                if dup_ids:
+                    success_count, fail_count = db.delete_many(table, dup_ids, biz_id)
+                    deleted = success_count
+                    logger.info(f"[DEDUP] {table}: deleted {deleted}/{len(dup_ids)} duplicates")
             
             results[label] = {"total": len(records), "dupes": len(dupes), "deleted": deleted}
             total_dupes += len(dupes)
