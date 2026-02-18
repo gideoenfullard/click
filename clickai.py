@@ -44870,6 +44870,11 @@ def smart_import_page():
     </div>
     
     <script>
+    function dedupConfirmDelete(count) {
+        if (confirm('Delete ' + count + ' duplicates? This keeps the oldest record of each.')) {
+            runDedup(true);
+        }
+    }
     async function runDedup(execute) {
         const standalone = document.getElementById('dedupStandalone');
         const result = document.getElementById('dedupResult');
@@ -44909,7 +44914,7 @@ def smart_import_page():
             } else if (data.total_dupes > 0) {
                 html += '<p style="font-size:16px;margin-bottom:12px;"><strong>' + data.total_dupes + ' duplicates</strong> found across all tables</p>';
                 html += '<p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">The oldest record is kept, newer duplicates are deleted</p>';
-                html += '<button onclick="if(confirm(\'Delete ' + data.total_dupes + ' duplicates? This keeps the oldest record of each.\')){runDedup(true)}" class="btn btn-primary" style="padding:12px 30px;background:linear-gradient(135deg,#ef4444,#dc2626);">🗑️ Delete ' + data.total_dupes + ' Duplicates</button>';
+                html += '<button onclick="dedupConfirmDelete(' + data.total_dupes + ')" class="btn btn-primary" style="padding:12px 30px;background:linear-gradient(135deg,#ef4444,#dc2626);">🗑️ Delete ' + data.total_dupes + ' Duplicates</button>';
             } else {
                 html += '<p style="font-size:16px;color:var(--green);font-weight:600;">✅ No duplicates found — your data is clean!</p>';
             }
