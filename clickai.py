@@ -32707,12 +32707,18 @@ def report_gl():
     if not biz_id:
         return render_page("General Ledger", "<div class='card'><p>No business selected</p></div>", user, "reports")
     
-    # Get all transaction data
+    # Get all transaction data (limit to recent for performance)
     try:
         invoices = db.get("invoices", {"business_id": biz_id}) or []
         expenses = db.get("expenses", {"business_id": biz_id}) or []
         sales = db.get("sales", {"business_id": biz_id}) or []
         supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) or []
+        
+        # Limit to most recent 500 per type to prevent timeout
+        invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)[:500]
+        expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)[:500]
+        sales = sorted(sales, key=lambda x: x.get("date", ""), reverse=True)[:500]
+        supplier_invoices = sorted(supplier_invoices, key=lambda x: x.get("date", ""), reverse=True)[:500]
     except Exception as e:
         logger.error(f"GL data fetch error: {e}")
         invoices = expenses = sales = supplier_invoices = []
@@ -36110,8 +36116,22 @@ def report_vat():
     supplier_invoices = [si for si in supplier_invoices if start_date <= si.get("date", "") < end_date]
     
     # OUTPUT VAT (what you owe SARS)
-    invoice_sales_excl = sum(float(inv.get("subtotal", 0)) for inv in invoices)
-    invoice_vat = sum(float(inv.get("vat", 0)) for inv in invoices)
+    # For imported invoices where vat=0, back-calculate from total (assume VAT inclusive)
+    invoice_sales_excl = 0
+    invoice_vat = 0
+    for inv in invoices:
+        subtotal = float(inv.get("subtotal", 0))
+        vat = float(inv.get("vat", 0))
+        total = float(inv.get("total", 0))
+        if vat > 0:
+            invoice_sales_excl += subtotal
+            invoice_vat += vat
+        elif total > 0:
+            # Back-calculate: total is VAT inclusive
+            calc_excl = total / 1.15
+            calc_vat = total - calc_excl
+            invoice_sales_excl += calc_excl
+            invoice_vat += calc_vat
     
     pos_sales_excl = sum(float(s.get("subtotal", 0)) for s in sales)
     pos_vat = sum(float(s.get("vat", 0)) for s in sales)
@@ -36120,14 +36140,27 @@ def report_vat():
     total_output_vat = invoice_vat + pos_vat
     
     # INPUT VAT (what you can claim back)
-    expense_excl = sum(float(e.get("amount", 0)) / 1.15 for e in expenses)  # Assuming VAT inclusive
+    expense_excl = sum(float(e.get("amount", 0)) / 1.15 for e in expenses)
     expense_vat = sum(float(e.get("amount", 0)) * 0.15 / 1.15 for e in expenses)
     
-    supplier_excl = sum(float(si.get("subtotal", 0)) for si in supplier_invoices)
-    supplier_vat = sum(float(si.get("vat", 0)) for si in supplier_invoices)
+    # Supplier invoices - also back-calculate if vat=0
+    si_excl = 0
+    si_vat = 0
+    for si in supplier_invoices:
+        vat = float(si.get("vat", 0))
+        total = float(si.get("total", 0))
+        subtotal = float(si.get("subtotal", 0))
+        if vat > 0:
+            si_excl += subtotal or (total - vat)
+            si_vat += vat
+        elif total > 0:
+            calc_excl = total / 1.15
+            calc_vat = total - calc_excl
+            si_excl += calc_excl
+            si_vat += calc_vat
     
-    total_purchases_excl = expense_excl + supplier_excl
-    total_input_vat = expense_vat + supplier_vat
+    total_purchases_excl = expense_excl + si_excl
+    total_input_vat = expense_vat + si_vat
     
     # NET VAT
     vat_payable = total_output_vat - total_input_vat
@@ -44929,7 +44962,7 @@ def smart_import_page():
                 html += '<p style="font-size:18px;font-weight:600;color:var(--green);">✅ Deleted ' + data.total_deleted + ' duplicates</p>';
             } else if (data.total_dupes > 0) {
                 html += '<p style="font-size:16px;margin-bottom:12px;"><strong>' + data.total_dupes + ' duplicates</strong> found across all tables</p>';
-                html += '<p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">The oldest record is kept, newer duplicates are deleted</p>';
+                html += '<p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">The newest record is kept, older duplicates are deleted</p>';
                 html += '<button onclick="dedupConfirmDelete(' + data.total_dupes + ')" class="btn btn-primary" style="padding:12px 30px;background:linear-gradient(135deg,#ef4444,#dc2626);">🗑️ Delete ' + data.total_dupes + ' Duplicates</button>';
             } else {
                 html += '<p style="font-size:16px;color:var(--green);font-weight:600;">✅ No duplicates found — your data is clean!</p>';
@@ -45414,10 +45447,15 @@ def api_smart_import_analyse():
                 elif h_clean == 'category': col_map[str(i)] = 'category'
                 elif h_clean == 'unit': col_map[str(i)] = 'unit'
                 elif 'price excl' in h_clean or (h_clean.startswith('price list') and 'exclusive' in h_clean):
-                    if 'selling_price' not in col_map.values():
+                    # Prefer "default" price list over numbered ones
+                    if 'default' in h_clean:
+                        col_map[str(i)] = 'selling_price'  # Override any previous
+                    elif 'selling_price' not in col_map.values():
                         col_map[str(i)] = 'selling_price'
                 elif 'price incl' in h_clean or (h_clean.startswith('price list') and 'inclusive' in h_clean):
-                    if 'selling_price_incl' not in col_map.values():
+                    if 'default' in h_clean:
+                        col_map[str(i)] = 'selling_price_incl'
+                    elif 'selling_price_incl' not in col_map.values():
                         col_map[str(i)] = 'selling_price_incl'
                 elif h_clean == 'cost' or 'avg cost' in h_clean or 'average cost' in h_clean: col_map[str(i)] = 'cost_price'
                 elif 'last cost' in h_clean: col_map[str(i)] = 'last_cost'
@@ -46250,6 +46288,10 @@ def api_smart_import_batch():
                         if existing_supplier:
                             sup_id = existing_supplier[0].get("id") if isinstance(existing_supplier, list) else existing_supplier.get("id")
                         
+                        # Back-calculate VAT from inclusive total (Sage doesn't give separate VAT)
+                        si_subtotal = (total or outstanding) / 1.15
+                        si_vat = (total or outstanding) - si_subtotal
+                        
                         record = RecordFactory.supplier_invoice(
                             business_id=biz_id,
                             supplier_id=sup_id,
@@ -46257,8 +46299,8 @@ def api_smart_import_batch():
                             invoice_number=supplier_inv or doc_no,
                             date=date_val or now()[:10],
                             due_date=due_date_val,
-                            subtotal=total or outstanding,
-                            vat=0,
+                            subtotal=round(si_subtotal, 2),
+                            vat=round(si_vat, 2),
                             total=total or outstanding,
                             status=inv_status,
                             notes=f"Sage import - Ref: {cust_ref}" if cust_ref else "Sage import"
@@ -46894,8 +46936,8 @@ def api_dedup_scan():
                         key = "|".join(parts2)
                 return key if key.replace("|", "") else None
             
-            # Sort oldest first - keep oldest
-            sorted_recs = sorted(records, key=lambda x: x.get("created_at", "") or "")
+            # Sort newest first - keep newest (most recently imported = most accurate)
+            sorted_recs = sorted(records, key=lambda x: x.get("created_at", "") or "", reverse=True)
             seen = {}
             dupes = []
             
