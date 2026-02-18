@@ -44918,7 +44918,7 @@ def smart_import_page():
             div.innerHTML = '<p style="color:var(--red);">Error: ' + e.message + '</p>';
         }
     }
-    </script>
+    
     let analysisResult = null;
     let importData = null;  // Store the actual data to import
     let uploadedFileName = '';
