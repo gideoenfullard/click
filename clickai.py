@@ -44390,6 +44390,22 @@ def smart_import_page():
                         </div>
                     </div>
                     
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;">
+                        <div style="position:absolute;top:-10px;left:15px;background:var(--green);color:white;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;">7</div>
+                        <h4 style="margin:5px 0 8px 0;padding-left:25px;">Export Customer Transactions (opsioneel)</h4>
+                        <div style="font-size:13px;color:var(--text-muted);line-height:1.7;">
+                            In Sage: <strong>Reporting</strong> → <strong>Customer Transactions</strong> → Set period → Export CSV<br>
+                            <em>Debiet/krediet bewegings per kliënt — handig vir volle geskiedenis</em>
+                        </div>
+                        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <label class="btn btn-secondary" style="font-size:12px;padding:6px 12px;cursor:pointer;margin:0;">
+                                📄 Upload Customer Transactions
+                                <input type="file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="quickUpload(this, 'transactions')">
+                            </label>
+                            <span class="sage-status" id="status-transactions" style="font-size:12px;display:flex;align-items:center;gap:4px;"></span>
+                        </div>
+                    </div>
+                    
                 </div>
                 
                 <!-- IMPORT ALL BUTTON -->
@@ -44554,7 +44570,7 @@ def smart_import_page():
         }
         
         // Use the existing smart-import flow for each file
-        const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance', 'supplier_invoices', 'customer_invoices'];
+        const importOrder = ['customers', 'suppliers', 'stock', 'employees', 'trial_balance', 'supplier_invoices', 'customer_invoices', 'transactions'];
         const sorted = importOrder.filter(t => types.includes(t));
         
         // Hide sage guide, show processing
@@ -45157,7 +45173,41 @@ def api_smart_import_analyse():
         # Sage ONE Customer Tax Invoice EXPORT (list view): Customer Name,Document Number,Customer Ref.,Date,Due Date,Total,Amount Due,Printed,Status
         is_sageone_customer_invoices = ('Customer Name' in header_line and 'Document Number' in header_line and 'Amount Due' in header_line and 'Supplier Name' not in header_line)
         
-        if is_sage_stock:
+        # Sage Customer Transactions Report (grouped format): "Customer Date","Reference","Transaction Type","Description","Debit","Credit","Balance"
+        is_sage_customer_transactions = ('Transaction Type' in header_line and 'Debit' in header_line and 'Credit' in header_line and 'Balance' in header_line)
+        
+        # Sage Accounts Export (Chart of Accounts): "Name","Category","Description","Opening Balance","Opening Balance Date","Active","Default VAT Type"
+        is_sage_accounts = ('"Name"' in header_line and '"Category"' in header_line and '"Default VAT Type"' in header_line and '"Contact Name"' not in header_line)
+        
+        if is_sage_accounts:
+            # ═══ SAGE CHART OF ACCOUNTS EXPORT ═══
+            logger.info(f"[SMART-IMPORT] Detected Sage Accounts Export format")
+            import csv as csv_mod
+            parsed_headers = list(csv_mod.reader([header_line]))[0]
+            col_map = {}
+            for i, h in enumerate(parsed_headers):
+                h_clean = h.strip().lower()
+                if h_clean == 'name': col_map[str(i)] = 'account_name'
+                elif h_clean == 'category': col_map[str(i)] = 'category'
+                elif h_clean == 'description': col_map[str(i)] = 'description'
+                elif 'opening balance' == h_clean: col_map[str(i)] = 'balance'
+                elif h_clean == 'active': col_map[str(i)] = 'active'
+                elif 'default vat type' in h_clean: col_map[str(i)] = 'vat_type'
+            
+            result = {
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "chart_of_accounts",
+                "data_type_label": "Chart of Accounts",
+                "header_row": header_line_idx,
+                "data_start_row": header_line_idx + 1,
+                "name_column": 0,
+                "column_mapping": col_map,
+                "sage_preamble_rows": sage_preamble_rows
+            }
+        
+        elif is_sage_stock:
             # ═══ SAGE STOCK / ITEM EXPORT ═══
             logger.info(f"[SMART-IMPORT] Detected Sage ItemExport format")
             
@@ -45170,11 +45220,16 @@ def api_smart_import_analyse():
                 if h_clean == 'code': col_map[str(i)] = 'code'
                 elif h_clean == 'description': col_map[str(i)] = 'description'
                 elif h_clean == 'category': col_map[str(i)] = 'category'
-                elif 'price excl' in h_clean: col_map[str(i)] = 'selling_price'
-                elif 'price incl' in h_clean: col_map[str(i)] = 'selling_price_incl'
-                elif 'avg cost' in h_clean or 'average cost' in h_clean: col_map[str(i)] = 'cost_price'
+                elif h_clean == 'unit': col_map[str(i)] = 'unit'
+                elif 'price excl' in h_clean or (h_clean.startswith('price list') and 'exclusive' in h_clean):
+                    if 'selling_price' not in col_map.values():
+                        col_map[str(i)] = 'selling_price'
+                elif 'price incl' in h_clean or (h_clean.startswith('price list') and 'inclusive' in h_clean):
+                    if 'selling_price_incl' not in col_map.values():
+                        col_map[str(i)] = 'selling_price_incl'
+                elif h_clean == 'cost' or 'avg cost' in h_clean or 'average cost' in h_clean: col_map[str(i)] = 'cost_price'
                 elif 'last cost' in h_clean: col_map[str(i)] = 'last_cost'
-                elif 'qty on hand' in h_clean or 'quantity' in h_clean: col_map[str(i)] = 'qty'
+                elif h_clean == 'quantity' or 'qty on hand' in h_clean: col_map[str(i)] = 'qty'
                 elif h_clean == 'active': col_map[str(i)] = 'active'
             
             result = {
@@ -45240,8 +45295,25 @@ def api_smart_import_analyse():
             }
         
         elif is_sage_customer_invoices:
-            # ═══ SAGE CUSTOMER INVOICES / SALES INVOICES (old Reports format) ═══
+            # ═══ SAGE CUSTOMER INVOICES / SALES INVOICES (Reports format) ═══
             logger.info(f"[SMART-IMPORT] Detected Sage Customer/Sales Invoices Report format")
+            import csv as csv_mod
+            parsed_headers = list(csv_mod.reader([header_line]))[0]
+            col_map = {}
+            for i, h in enumerate(parsed_headers):
+                h_clean = h.strip().lower()
+                if h_clean == 'date': col_map[str(i)] = 'date'
+                elif 'document no' in h_clean: col_map[str(i)] = 'document_no'
+                elif 'customer ref' in h_clean or 'customer inv' in h_clean: col_map[str(i)] = 'customer_ref'
+                elif h_clean == 'customer': col_map[str(i)] = 'customer'
+                elif 'sales rep' in h_clean: col_map[str(i)] = 'sales_rep'
+                elif 'due date' in h_clean: col_map[str(i)] = 'due_date'
+                elif 'ant' in h_clean and 'pmt' in h_clean: col_map[str(i)] = 'anticipated_payment'
+                elif h_clean == 'exclusive': col_map[str(i)] = 'exclusive'
+                elif h_clean == 'vat': col_map[str(i)] = 'vat'
+                elif 'total selling' in h_clean: col_map[str(i)] = 'total'
+                elif 'total outstanding' in h_clean: col_map[str(i)] = 'outstanding'
+            
             result = {
                 "success": True,
                 "source_hint": "Sage Business Cloud",
@@ -45250,19 +45322,8 @@ def api_smart_import_analyse():
                 "data_type_label": "Customer Invoices (Sales)",
                 "header_row": header_line_idx,
                 "data_start_row": header_line_idx + 1,
-                "name_column": 3,
-                "column_mapping": {
-                    "0": "date",
-                    "1": "document_no",
-                    "2": "customer_inv_no",
-                    "3": "customer",
-                    "4": "due_date",
-                    "5": "anticipated_payment",
-                    "6": "exclusive",
-                    "7": "vat",
-                    "8": "total",
-                    "9": "outstanding"
-                },
+                "name_column": next((int(k) for k, v in col_map.items() if v == 'customer'), 3),
+                "column_mapping": col_map,
                 "sage_preamble_rows": sage_preamble_rows
             }
         
@@ -45329,6 +45390,81 @@ def api_smart_import_analyse():
                 "column_mapping": col_map,
                 "sage_preamble_rows": sage_preamble_rows
             }
+        
+        elif is_sage_customer_transactions:
+            # ═══ SAGE CUSTOMER TRANSACTIONS REPORT (grouped format) ═══
+            # Special format: customer header rows, then transaction rows grouped by customer
+            logger.info(f"[SMART-IMPORT] Detected Sage Customer Transactions Report (grouped format)")
+            import csv as csv_mod
+            
+            # Custom parse - this isn't a standard CSV, it's grouped by customer
+            all_data = []
+            preview_data = []
+            current_customer = ""
+            current_code = ""
+            
+            for i, line in enumerate(lines):
+                if i <= header_line_idx or not line.strip():
+                    continue
+                try:
+                    cols = next(csv_mod.reader([line]))
+                except:
+                    continue
+                
+                if len(cols) < 2:
+                    continue
+                
+                first = (cols[0] or "").strip()
+                
+                # Customer header row: "CODE : NAME",,,,,,,
+                if " : " in first and not cols[1].strip() and not cols[2].strip():
+                    parts = first.split(" : ", 1)
+                    current_code = parts[0].strip()
+                    current_customer = parts[1].strip() if len(parts) > 1 else first
+                    continue
+                
+                # Skip summary rows
+                if "opening balance" in first.lower() or "closing balance" in first.lower() or "movement for" in first.lower():
+                    continue
+                
+                # Transaction row: date, reference, type, description, debit, credit, balance
+                if current_customer and re.match(r'\d{2}/\d{2}/\d{4}', first):
+                    try:
+                        debit = float(str(cols[4] or "0").replace(",", "").strip() or "0")
+                    except:
+                        debit = 0
+                    try:
+                        credit = float(str(cols[5] or "0").replace(",", "").strip() or "0")
+                    except:
+                        credit = 0
+                    
+                    row_data = {
+                        "date": first,
+                        "reference": (cols[1] or "").strip(),
+                        "account_name": current_customer,
+                        "account_code": current_code,
+                        "description": (cols[3] or "").strip(),
+                        "debit": debit,
+                        "credit": credit
+                    }
+                    all_data.append(row_data)
+                    if len(preview_data) < 5:
+                        preview_data.append(row_data)
+            
+            if not all_data:
+                return jsonify({"success": False, "error": "No transaction data found in file"})
+            
+            return jsonify({
+                "success": True,
+                "source_hint": "Sage Business Cloud",
+                "confidence": 1.0,
+                "data_type": "transactions",
+                "data_type_label": "Customer Transactions",
+                "columns": ["date", "reference", "account_name", "description", "debit", "credit"],
+                "all_data": all_data,
+                "preview": preview_data,
+                "count": len(all_data)
+            })
         
         elif is_sage_customers or is_sage_suppliers:
             # HARDCODED SAGE PASTEL MAPPING - 100% reliable
@@ -45591,6 +45727,13 @@ Return ONLY the JSON, nothing else."""
                     }
                     row_data['account_type'] = cat_map.get(cat, 'expense')
                     
+                    # If we have 'balance' but not 'debit'/'credit' (Accounts.csv vs Trial Balance)
+                    if row_data.get('balance') is not None and not row_data.get('debit') and not row_data.get('credit'):
+                        bal = float(row_data.get('balance', 0) or 0)
+                        row_data['opening_balance'] = bal
+                        row_data['debit'] = bal if bal > 0 else 0
+                        row_data['credit'] = abs(bal) if bal < 0 else 0
+                    
                     # Skip "System Account" summary rows (keep only "Account Balance" detail rows)
                     source = str(row_data.get('source', '')).strip()
                     if source == 'System Account':
@@ -45633,6 +45776,28 @@ Return ONLY the JSON, nothing else."""
 # ═══════════════════════════════════════════════════════════════════════════════
 # BATCH IMPORT - Receives data directly from frontend (no cache needed)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def _fix_sage_date(val):
+    """Convert Sage DD/MM/YYYY → YYYY-MM-DD for Supabase. Also handles DD-MM-YYYY, YYYY/MM/DD."""
+    if not val or not isinstance(val, str):
+        return val
+    val = val.strip()
+    if not val:
+        return val
+    # Already ISO format
+    if re.match(r'^\d{4}-\d{2}-\d{2}', val):
+        return val[:10]
+    # DD/MM/YYYY or DD-MM-YYYY
+    m = re.match(r'^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$', val)
+    if m:
+        d, mo, y = m.groups()
+        return f"{y}-{mo.zfill(2)}-{d.zfill(2)}"
+    # YYYY/MM/DD
+    m2 = re.match(r'^(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})$', val)
+    if m2:
+        y, mo, d = m2.groups()
+        return f"{y}-{mo.zfill(2)}-{d.zfill(2)}"
+    return val
 
 @app.route("/api/smart-import/batch", methods=["POST"])
 @login_required
@@ -45863,8 +46028,8 @@ def api_smart_import_batch():
                     else:
                         inv_status = "outstanding" if outstanding > 0 else "paid"
                     
-                    date_val = str(row.get("date", "") or row.get("Date", "")).strip()
-                    due_date_val = str(row.get("due_date", "") or row.get("Due Date", "") or row.get("due date", "")).strip()
+                    date_val = _fix_sage_date(str(row.get("date", "") or row.get("Date", "")).strip())
+                    due_date_val = _fix_sage_date(str(row.get("due_date", "") or row.get("Due Date", "") or row.get("due date", "")).strip())
                     
                     if not supplier_name or supplier_name.lower().startswith("grand total"):
                         status = "skipped"
@@ -45937,8 +46102,8 @@ def api_smart_import_batch():
                     else:
                         inv_status = "outstanding" if outstanding > 0 else "paid"
                     
-                    date_val = str(row.get("date", "") or row.get("Date", "")).strip()
-                    due_date_val = str(row.get("due_date", "") or row.get("Due Date", "")).strip()
+                    date_val = _fix_sage_date(str(row.get("date", "") or row.get("Date", "")).strip())
+                    due_date_val = _fix_sage_date(str(row.get("due_date", "") or row.get("Due Date", "")).strip())
                     
                     if not customer_name or customer_name.lower().startswith("grand total"):
                         status = "skipped"
@@ -45977,7 +46142,7 @@ def api_smart_import_batch():
                     record = {
                         "id": generate_id(),
                         "business_id": biz_id,
-                        "date": str(row.get("date", "")).strip(),
+                        "date": _fix_sage_date(str(row.get("date", "")).strip()),
                         "account_code": str(row.get("account_code", "")).strip(),
                         "account_name": str(row.get("account_name", "")).strip(),
                         "reference": str(row.get("reference", "")).strip(),
@@ -46434,37 +46599,6 @@ def api_smart_import_execute():
 # ═══════════════════════════════════════════════════════════════════════════════
 # END SMART IMPORT MODULE
 # ═══════════════════════════════════════════════════════════════════════════════
-
-
-@app.route("/sage-migrate")
-@login_required
-def sage_migrate_page():
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_name = business.get("name", "your business") if business else "your business"
-    content = "<div class=\"card\" style=\"text-align:center;padding:40px;\"><h2>Sage Migration</h2><p>Upload jou Sage CSV files</p>"
-    content += "<div id=\"smDrop\" style=\"border:3px dashed var(--border);border-radius:16px;padding:50px;margin:20px 0;cursor:pointer;\" onclick=\"document.getElementById('smF').click()\">"
-    content += "<div style=\"font-size:48px;margin-bottom:10px;\">📂</div>"
-    content += "<div style=\"font-size:16px;font-weight:600;\">Drop Sage CSVs hier of klik om te browse</div>"
-    content += "<input type=\"file\" id=\"smF\" multiple accept=\".csv\" style=\"display:none\" onchange=\"smLoad(this.files)\">"
-    content += "</div><div id=\"smOut\"></div>"
-    content += "<script>"
-    content += "var smData={};"
-    content += "function smParse(t){var r=[],c='',q=false;for(var i=0;i<t.length;i++){var ch=t[i];if(ch=='\"'){q=!q;c+=ch}else if((ch=='\\n'||ch=='\\r')&&!q){if(c.trim())r.push(c);c='';if(ch=='\\r'&&t[i+1]=='\\n')i++}else c+=ch}if(c.trim())r.push(c);return r.map(function(l){var f=[],s='',q2=false;for(var j=0;j<l.length;j++){var x=l[j];if(x=='\"'){if(q2&&l[j+1]=='\"'){s+='\"';j++}else q2=!q2}else if(x==','&&!q2){f.push(s.trim());s=''}else s+=x}f.push(s.trim());return f})}"
-    content += "function smDetect(h,fn){var j=h.join('|');if(j.indexOf('Default VAT Type')>-1&&j.indexOf('Contact Name')<0)return'accounts';if(j.indexOf('Contact Name')>-1&&j.indexOf('Sales Rep')>-1)return'customers';if(j.indexOf('Contact Name')>-1&&j.indexOf('Sales Rep')<0)return'suppliers';if(j.indexOf('Code')>-1&&j.indexOf('Description')>-1&&(j.indexOf('Cost')>-1||j.indexOf('Price list')>-1))return'items';if(j.indexOf('Document No.')>-1&&j.indexOf('Customer')>-1&&j.indexOf('Total Selling')>-1)return'customer_invoices';if(j.indexOf('Supplier Name')>-1&&j.indexOf('Amount Due')>-1)return'supplier_invoices';return null}"
-    content += "async function smLoad(files){var out=document.getElementById('smOut');out.innerHTML='<p>Lees files...</p>';var results=[];for(var f of files){if(!f.name.endsWith('.csv'))continue;var txt=await f.text();var rows=smParse(txt);if(rows.length<2)continue;var hi=0;if(rows[0]&&rows[0][0]=='sep=,')hi=1;var hdr=rows[hi];var typ=smDetect(hdr,f.name);if(!typ){results.push('<div style=\"padding:8px;color:#f59e0b\">⚠️ '+f.name+' - nie herken nie</div>');continue}var count=rows.length-hi-1;smData[typ]={headers:hdr,rows:rows.slice(hi+1),file:f.name,count:count};results.push('<div style=\"padding:8px;color:#10b981\">✅ '+f.name+' → <b>'+typ+'</b> ('+count+' rekords)</div>')}out.innerHTML='<h3>Resultate:</h3>'+results.join('');"
-    content += "if(Object.keys(smData).length>0){out.innerHTML+='<div style=\"margin-top:20px\"><button class=\"btn btn-primary\" style=\"padding:12px 30px;font-size:15px\" onclick=\"smRun()\">🚀 Begin Migrasie</button></div>'}}"
-    content += "async function smRun(){var out=document.getElementById('smOut');var order=[['accounts','chart_of_accounts'],['customers','customers'],['suppliers','suppliers'],['items','stock'],['customer_invoices','customer_invoices'],['supplier_invoices','supplier_invoices']];var log='';for(var step of order){var key=step[0],dtype=step[1];if(!smData[key])continue;var d=smData[key];log+='<div>⏳ '+key+': '+d.count+' rekords...</div>';out.innerHTML='<h3>Migrasie:</h3>'+log;var records=[];var hdr=d.headers;for(var row of d.rows){if(row.length<2)continue;var obj={};for(var i=0;i<hdr.length;i++){obj[hdr[i]]=row[i]||''}var mapped=smMap(dtype,obj);if(mapped)records.push(mapped)}var chunk=100;var imported=0;for(var i=0;i<records.length;i+=chunk){var batch=records.slice(i,i+chunk);try{var resp=await fetch('/api/smart-import/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data_type:dtype,records:batch,replace:i==0})});var r=await resp.json();if(r.success)imported+=(r.new_records||0)+(r.updated_records||0)}catch(e){log+='<div style=\"color:#ef4444\">❌ '+key+' fout: '+e.message+'</div>'}}log=log.replace('⏳ '+key,'✅ '+key+' ('+imported+' ingevoer)')}out.innerHTML='<h3 style=\"color:#10b981\">✅ Migrasie Voltooi!</h3>'+log+'<div style=\"margin-top:15px\"><a href=\"/dashboard\" class=\"btn btn-primary\">Dashboard →</a></div>'}"
-    content += "function smSplit(n){if(!n)return{c:'',n:''};var p=n.split(' : ');if(p.length>1)return{c:p[0].trim(),n:p.slice(1).join(' : ').trim()};return{c:'',n:n.trim()}}"
-    content += "function smMap(t,r){var s,a;if(t=='chart_of_accounts'){s=smSplit(r['Name']||'');var cm={'Sales':'income','Other Income':'income','Cost of Sales':'expense','Expenses':'expense','Current Assets':'asset','Non-Current Assets':'asset','Current Liabilities':'liability','Non-Current Liabilities':'liability','Owners Equity':'equity'};var ob=parseFloat(r['Opening Balance']||'0');return{account_code:s.c,account_name:s.n,account_type:cm[r['Category']]||'expense',category:r['Category']||'',opening_balance:ob,debit:ob>0?ob:0,credit:ob<0?Math.abs(ob):0}}"
-    content += "if(t=='customers'){s=smSplit(r['Name']||'');a=[r['Postal Address Line 1'],r['Postal Address Line 2'],r['Postal Address Line 3'],r['Postal Address Line 4']].filter(Boolean).join(', ');return{code:s.c,name:s.n,contact_name:r['Contact Name']||'',phone:r['Telephone Number']||'',cell:r['Cell Number']||'',email:(r['Email Address']||'').split(';')[0],address:a,vat_number:r['VAT Reference']||'',balance:parseFloat(r['Opening Balance']||'0'),credit_limit:parseFloat(r['Credit Limit']||'0')}}"
-    content += "if(t=='suppliers'){s=smSplit(r['Name']||'');a=[r['Postal Address Line 1'],r['Postal Address Line 2'],r['Postal Address Line 3'],r['Postal Address Line 4']].filter(Boolean).join(', ');return{code:s.c,name:s.n,contact_name:r['Contact Name']||'',phone:r['Telephone Number']||'',cell:r['Cell Number']||'',email:(r['Email Address']||'').split(';')[0],address:a,vat_number:r['VAT Reference']||'',balance:parseFloat(r['Opening Balance']||'0')}}"
-    content += "if(t=='stock'){return{code:r['Code']||'',description:r['Description']||'',category:(r['Category']||'').replace(/_AND_/g,'&'),selling_price:parseFloat(r['Price list 1 - Exclusive']||r['Price Excl.']||'0'),cost_price:parseFloat(r['Cost']||r['Avg Cost']||'0'),qty:parseFloat(r['Quantity']||r['Qty On Hand']||'0')}}"
-    content += "if(t=='customer_invoices'){s=smSplit(r['Customer']||'');return{date:r['Date']||'',document_no:r['Document No.']||'',customer:r['Customer']||'',exclusive:parseFloat(r['Exclusive']||'0'),vat:parseFloat(r['VAT']||'0'),total:parseFloat(r['Total Selling']||'0'),outstanding:parseFloat(r['Total Outstanding']||'0')}}"
-    content += "if(t=='supplier_invoices'){return{supplier:r['Supplier Name']||'',document_no:r['Document Number']||'',supplier_inv_no:r['Invoice Number']||'',date:r['Date']||'',due_date:r['Due Date']||'',total:parseFloat(r['Total']||'0'),outstanding:parseFloat(r['Amount Due']||'0'),status:r['Status']||''}}"
-    content += "return null}"
-    content += "</script></div>"
-    return render_page("Sage Migration", content, user, "sage-migrate")
 
 
 # 
