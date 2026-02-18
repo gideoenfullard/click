@@ -45869,9 +45869,9 @@ def api_smart_import_batch():
                             updates = {k: v for k, v in row.items() if k in allowed_fields and v}
                             updates["name"] = name
                             if code: updates["code"] = code
-                            success, resp = db.update("customers", exist_id, updates)
+                            success = db.update("customers", exist_id, updates)
                             status = "updated" if success else "error"
-                            if not success: error_msg = str(resp)[:50]
+                            if not success: error_msg = "Update failed"
                         else:
                             # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
                             code = str(row.get("account_code", row.get("code", ""))).strip()
@@ -45907,9 +45907,9 @@ def api_smart_import_batch():
                             updates = {k: v for k, v in row.items() if k in allowed_fields and v}
                             updates["name"] = name
                             if code: updates["code"] = code
-                            success, resp = db.update("suppliers", exist_id, updates)
+                            success = db.update("suppliers", exist_id, updates)
                             status = "updated" if success else "error"
-                            if not success: error_msg = str(resp)[:50]
+                            if not success: error_msg = "Update failed"
                         else:
                             # Pass ALL row data to RecordFactory - exclude fields we pass explicitly
                             code = str(row.get("account_code", row.get("code", ""))).strip()
@@ -46044,25 +46044,26 @@ def api_smart_import_batch():
                         status = "skipped"
                         error_msg = "Skip row"
                     else:
-                        # bills table columns: id, business_id, supplier_id, supplier_name, number, date, due_date, total, balance, status, created_at
-                        record = {
-                            "id": generate_id(),
-                            "business_id": biz_id,
-                            "supplier_id": "",
-                            "supplier_name": supplier_name,
-                            "number": supplier_inv or doc_no,
-                            "date": date_val,
-                            "due_date": due_date_val,
-                            "total": total or outstanding,
-                            "balance": outstanding,
-                            "status": inv_status,
-                            "created_at": now()
-                        }
+                        # Look up supplier
                         existing_supplier = db.get("suppliers", {"business_id": biz_id, "name": supplier_name})
+                        sup_id = ""
                         if existing_supplier:
-                            record["supplier_id"] = existing_supplier[0].get("id") if isinstance(existing_supplier, list) else existing_supplier.get("id")
+                            sup_id = existing_supplier[0].get("id") if isinstance(existing_supplier, list) else existing_supplier.get("id")
                         
-                        success, resp = db.save("bills", record)
+                        record = RecordFactory.supplier_invoice(
+                            business_id=biz_id,
+                            supplier_id=sup_id,
+                            supplier_name=supplier_name,
+                            invoice_number=supplier_inv or doc_no,
+                            date=date_val or now()[:10],
+                            due_date=due_date_val,
+                            subtotal=total or outstanding,
+                            vat=0,
+                            total=total or outstanding,
+                            status=inv_status,
+                            notes=f"Sage import - Ref: {cust_ref}" if cust_ref else "Sage import"
+                        )
+                        success, resp = db.save("supplier_invoices", record)
                         if success:
                             status = "imported"
                         else:
@@ -46118,27 +46119,43 @@ def api_smart_import_batch():
                         status = "skipped"
                         error_msg = "Skip row"
                     else:
-                        # invoices table columns: id, business_id, invoice_number, date, due_date, customer_id, customer_name, items, subtotal, vat, total, status, notes, created_at
-                        record = {
-                            "id": generate_id(),
-                            "business_id": biz_id,
-                            "invoice_number": doc_no,
-                            "date": date_val,
-                            "due_date": due_date_val,
-                            "customer_id": "",
-                            "customer_name": customer_name,
-                            "items": [],
-                            "subtotal": total or outstanding,
-                            "vat": 0,
-                            "total": total or outstanding,
-                            "status": inv_status,
-                            "notes": f"Sage import - Ref: {cust_ref}" if cust_ref else "Sage import",
-                            "created_at": now()
-                        }
+                        # Look up customer
                         existing_customer = db.get("customers", {"business_id": biz_id, "name": customer_name})
+                        cust_id = ""
                         if existing_customer:
-                            record["customer_id"] = existing_customer[0].get("id") if isinstance(existing_customer, list) else existing_customer.get("id")
+                            cust_id = existing_customer[0].get("id") if isinstance(existing_customer, list) else existing_customer.get("id")
                         
+                        # Use exclusive (subtotal) and vat from Sage if available
+                        exclusive = 0
+                        for ex_key in ["exclusive", "subtotal", "Exclusive"]:
+                            val = row.get(ex_key, None)
+                            if val is not None:
+                                try: exclusive = float(str(val).replace('R', '').replace('r', '').replace(',', '').replace(' ', '').strip() or '0')
+                                except: exclusive = 0
+                                break
+                        
+                        vat_amt = 0
+                        for vat_key in ["vat", "VAT", "tax"]:
+                            val = row.get(vat_key, None)
+                            if val is not None:
+                                try: vat_amt = float(str(val).replace('R', '').replace('r', '').replace(',', '').replace(' ', '').strip() or '0')
+                                except: vat_amt = 0
+                                break
+                        
+                        record = RecordFactory.invoice(
+                            business_id=biz_id,
+                            customer_id=cust_id,
+                            customer_name=customer_name,
+                            items=[],
+                            invoice_number=doc_no,
+                            date=date_val or now()[:10],
+                            due_date=due_date_val,
+                            subtotal=exclusive or total or outstanding,
+                            vat=vat_amt,
+                            total=total or outstanding,
+                            status=inv_status,
+                            notes=f"Sage import - Ref: {cust_ref}" if cust_ref else "Sage import"
+                        )
                         success, resp = db.save("invoices", record)
                         if success:
                             status = "imported"
