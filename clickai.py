@@ -13984,13 +13984,27 @@ class ReportEngine:
         
         # Report-specific analysis prompts - AI NEVER calculates, only explains pre-calculated numbers
         analysis_prompts = {
-            "management": "Review the PRE-CALCULATED metrics below. This is a YEAR-TO-DATE management statement showing cumulative performance from financial year start to current date. Cover: YTD revenue vs expenses, profitability trend, balance sheet health, cash position, debtors/creditors status, and key risks. USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers.",
-            "kpi": "Review the PRE-CALCULATED KPIs below. Explain what each metric means: are debtor days healthy? Is stock turn good? How does gross margin look? USE ONLY THE NUMBERS PROVIDED - do not calculate anything yourself.",
-            "sales": "Review the sales data below. Identify: top customers by value, any concerning patterns, and opportunities. USE ONLY THE NUMBERS PROVIDED - do not calculate totals or percentages yourself.",
-            "debtor": "Review the debtor data below. Identify: which customers owe the most, who might be risky, and who to follow up with first. USE ONLY THE NUMBERS PROVIDED - do not calculate aging or totals yourself.",
-            "stock": "Review the stock data below. Identify: low stock items, slow movers, and items that need attention. USE ONLY THE NUMBERS PROVIDED - do not calculate stock values or turns yourself.",
-            "forecast": "Review the cash flow data below. The system has calculated expected inflows and outflows. Explain what this means and flag any concerns. USE ONLY THE NUMBERS PROVIDED - do not calculate forecasts yourself.",
-            "custom": f"Review the data to answer: {custom_request or 'general business overview'}. USE ONLY THE NUMBERS PROVIDED - do not calculate anything yourself."
+            "management": """Review the PRE-CALCULATED metrics below. This is a YEAR-TO-DATE management statement showing cumulative performance from financial year start to current date.
+
+You MUST cover ALL of the following in thorough detail:
+1. FINANCIAL PERFORMANCE: YTD revenue, cost of sales, gross profit margin analysis, net profit/loss, comparison to industry norms
+2. BALANCE SHEET HEALTH: Total assets vs liabilities, current ratio, quick ratio, solvency position
+3. CASH POSITION: Bank balances, cash flow indicators, working capital adequacy
+4. DEBTORS/RECEIVABLES: Total outstanding, debtor days, top 5 debtors by amount with names, aging analysis, concentration risk, collection concerns
+5. CREDITORS/PAYABLES: Total owed, creditor days, top creditors, payment capacity given cash position
+6. INVENTORY/STOCK: Stock value, stock turnover rate, days inventory outstanding, slow-moving stock concerns, negative stock items
+7. PAYROLL & COMPLIANCE: Payroll costs, SARS compliance status (PAYE, UIF, SDL), employee cost ratio
+8. KEY RISKS: List every material risk identified with severity (CRITICAL/HIGH/MEDIUM)
+9. OPPORTUNITIES: Revenue growth, cost reduction, cash flow improvement opportunities
+10. ACTION ITEMS: Specific, prioritized actions the owner must take immediately
+
+USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers. Be specific — use actual account names, customer names, amounts. A generic report is useless.""",
+            "kpi": "Review the PRE-CALCULATED KPIs below. Explain what each metric means in detail: are debtor days healthy? Is stock turn good? How does gross margin compare to industry (30% for hardware/industrial)? How does the current ratio look? What are the trends? USE ONLY THE NUMBERS PROVIDED.",
+            "sales": "Review the sales data below. Provide detailed analysis: top 10 customers by value with names and amounts, customer concentration risk, sales trends, payment method breakdown, average transaction value, and opportunities for growth. USE ONLY THE NUMBERS PROVIDED.",
+            "debtor": "Review the debtor data below in thorough detail. List ALL debtors with amounts and days outstanding. Identify: high-risk accounts, concentration risk, contra accounts, recommended collection actions for each major debtor, bad debt provisions needed, and total cash at risk. USE ONLY THE NUMBERS PROVIDED.",
+            "stock": "Review the stock data below thoroughly. Identify: total value, turnover rate, slow-moving items (no sales in 90+ days), negative stock items, overstocked items, items below reorder point, and specific recommendations. USE ONLY THE NUMBERS PROVIDED.",
+            "forecast": "Review the cash flow data below. Project next 30 days based on current trends: expected collections, expected payments, payroll obligations, VAT/SARS due dates, and projected bank balance week by week. USE ONLY THE NUMBERS PROVIDED.",
+            "custom": f"Review the data to answer in thorough detail: {custom_request or 'general business overview'}. USE ONLY THE NUMBERS PROVIDED."
         }
         
         prompt = analysis_prompts.get(report_type, analysis_prompts["management"])
@@ -14069,7 +14083,7 @@ Analyze and return findings in the specified format."""
             client = _anthropic_client
             response = client.messages.create(
                 model=cls.MODEL_OPUS,
-                max_tokens=2000,
+                max_tokens=6000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
@@ -14106,7 +14120,8 @@ Analyze and return findings in the specified format."""
         
         report_title = titles.get(report_type, "BUSINESS REPORT")
         
-        system_prompt = f"""You are writing a professional management report for a business owner.
+        system_prompt = f"""You are writing a comprehensive, professional management report for a business owner who may present this to investors.
+This report must be THOROUGH and COMPLETE — cover every finding from the analysis. Do NOT summarize or skip details.
 
 REPORT HEADER:
 {report_title}
@@ -14114,51 +14129,41 @@ REPORT HEADER:
 {report_date}
 
 WRITING STYLE:
-- Professional but approachable
-- Clear and direct
-- NO emojis
-- NO casual language ("hey", "awesome", "great job")
-- NO excessive enthusiasm
-- Use proper headings and structure
-- Include specific numbers and names from the analysis
-- End with clear action items
+- Write like a senior CA(SA) preparing a report for a board meeting or investor presentation
+- Professional, authoritative, specific
+- NO emojis, NO casual language
+- Include ALL specific numbers, customer names, account names from the analysis
+- Every claim must reference a specific figure
+- Do NOT be vague — "debtor days are high" is bad, "debtor days of 1,018 against industry standard of 30-45 days" is good
 
-FORMAT:
-Output the report as clean HTML using these tags:
-- <h2> for main section headings (EXECUTIVE SUMMARY, KEY FINDINGS, etc.)
-- <h3> for sub-headings
-- <p> for paragraphs
+FORMAT — OUTPUT CLEAN HTML ONLY (no markdown, no ## or **):
+- <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:8px;margin-top:30px;"> for main section headings
+- <h3 style="color:#8b5cf6;margin-top:20px;"> for sub-headings
+- <p style="margin:8px 0;line-height:1.7;"> for paragraphs
 - <strong> for emphasis
-- <ul><li> for bullet points
-- <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">...</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">...</td></tr></table> for any data tables
-- <div style="background:rgba(239,68,68,0.1);border-left:4px solid #ef4444;padding:12px 15px;border-radius:6px;margin:10px 0;"> for warnings/concerns
-- <div style="background:rgba(16,185,129,0.1);border-left:4px solid #10b981;padding:12px 15px;border-radius:6px;margin:10px 0;"> for positive highlights
-- <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:20px 0;"> between sections
+- <ul style="margin:8px 0 8px 20px;"><li style="margin:4px 0;"> for bullet points
+- <table style="width:100%;border-collapse:collapse;margin:15px 0;">
+    <tr><th style="text-align:left;padding:10px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">Header</th></tr>
+    <tr><td style="padding:10px;border-bottom:1px solid rgba(255,255,255,0.08);">Value</td></tr>
+  </table> for data tables
+- <div style="background:rgba(239,68,68,0.1);border-left:4px solid #ef4444;padding:15px;border-radius:6px;margin:12px 0;"> for CRITICAL warnings
+- <div style="background:rgba(245,158,11,0.1);border-left:4px solid #f59e0b;padding:15px;border-radius:6px;margin:12px 0;"> for CAUTION items  
+- <div style="background:rgba(16,185,129,0.1);border-left:4px solid #10b981;padding:15px;border-radius:6px;margin:12px 0;"> for POSITIVE highlights
+- <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:25px 0;"> between major sections
 
-Do NOT use markdown (no ## or ** or ---). Output ONLY valid HTML.
-Do NOT wrap in <html><body> tags - just the content.
+REQUIRED SECTIONS — you MUST include ALL of these:
 
-Use these sections (adapt based on content):
+1. EXECUTIVE SUMMARY — 3-4 sentences capturing the overall picture
+2. FINANCIAL PERFORMANCE — Revenue, margins, profit/loss with exact figures
+3. BALANCE SHEET POSITION — Assets, liabilities, equity, ratios
+4. DEBTORS & RECEIVABLES — Table of top debtors, aging, collection issues (use warning boxes for critical accounts)
+5. CREDITORS & PAYABLES — What is owed and to whom
+6. INVENTORY POSITION — Stock value, turnover, concerns
+7. PAYROLL & COMPLIANCE — SARS status, employee costs
+8. CRITICAL RISKS — Each risk in its own warning box with severity
+9. RECOMMENDATIONS — Numbered, prioritized action items with timeframes (IMMEDIATE / 7 DAYS / 30 DAYS)
 
-EXECUTIVE SUMMARY
-[2-3 sentence overview of business health]
-
-KEY FINDINGS
-[Bullet points of main discoveries]
-
-AREAS OF CONCERN
-[Any warnings or risks that need attention]
-
-OPPORTUNITIES
-[Potential improvements or actions]
-
-RECOMMENDATIONS
-[Specific action items with priority]
-
-METRICS SUMMARY
-[Key numbers in a clear format]
-
-Keep the report concise but complete. A busy owner should be able to read it in 2-3 minutes."""
+This report should be 800-1500 words. A busy owner should understand the full picture in one read."""
 
         user_prompt = f"""Based on this analysis, write a professional {report_title} for {biz_name}.
 
@@ -14171,7 +14176,7 @@ Write the report now. Be specific, professional, and actionable."""
             client = _anthropic_client
             response = client.messages.create(
                 model=cls.MODEL_PRESENTER,
-                max_tokens=2000,
+                max_tokens=6000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
@@ -35214,10 +35219,17 @@ Give AT LEAST 5 concrete actions with priority (URGENT / IMPORTANT / MONITOR)
 List 3-5 questions you would ask the business owner.
 
 FORMAT INSTRUCTIONS:
-- Output CLEAN HTML only (no markdown). Use <h2>, <h3> for headings.
+- Output CLEAN HTML only. NEVER USE MARKDOWN. No ##, no **, no ---, no * bullets.
+- Use <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;"> for main section headings
+- Use <h3 style="color:#8b5cf6;margin-top:18px;"> for sub-headings
+- Use <p> for all paragraph text
+- Use <strong> for emphasis (not **)
+- Use <ul><li> for bullet lists (not - or *)
 - For tables use: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Column</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Value</td></tr></table>
 - For colored indicators use: <span style="color:#ef4444;">✗ Bad</span> or <span style="color:#10b981;">✓ Good</span> or <span style="color:#f59e0b;">⚠ Warning</span>
-- For section boxes use: <div style="padding:15px;background:rgba(99,102,241,0.1);border-radius:8px;margin:10px 0;">content</div>
+- For WARNING boxes use: <div style="padding:15px;background:rgba(239,68,68,0.1);border-left:4px solid #ef4444;border-radius:6px;margin:12px 0;">warning content</div>
+- For POSITIVE boxes use: <div style="padding:15px;background:rgba(16,185,129,0.1);border-left:4px solid #10b981;border-radius:6px;margin:12px 0;">positive content</div>
+- For INFO boxes use: <div style="padding:15px;background:rgba(99,102,241,0.1);border-left:4px solid #6366f1;border-radius:6px;margin:12px 0;">info content</div>
 - EVERY table cell MUST have content - never leave cells empty
 - Complete ALL sections fully - do not stop halfway through a section
 
@@ -35233,7 +35245,7 @@ RULES:
             if ANTHROPIC_API_KEY:
                 client = _anthropic_client
                 message = client.messages.create(
-                    model="claude-sonnet-4-6",
+                    model="claude-opus-4-6",
                     max_tokens=8000,
                     messages=[{"role": "user", "content": insights_prompt}]
                 )
@@ -35245,15 +35257,24 @@ RULES:
                         logger.warning(f"[TB ANALYZE] Report was TRUNCATED (hit max_tokens limit)")
                         insights_html += '<div style="margin-top:20px;padding:12px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:8px;color:#f59e0b;font-size:13px;">⚠️ Report was truncated due to length. The analysis above covers the main findings.</div>'
                     
-                    # Basic markdown to HTML
-                    insights_html = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
-                    insights_html = re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=re.MULTILINE)
-                    insights_html = re.sub(r'^- (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=re.MULTILINE)
-                    insights_html = re.sub(r'^• (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=re.MULTILINE)
-                    # Only convert double newlines to single <br>, skip newlines between HTML tags
-                    insights_html = re.sub(r'\n{3,}', '<br><br>', insights_html)  # 3+ newlines → double break
-                    insights_html = re.sub(r'\n\n', '<br>', insights_html)  # 2 newlines → single break
-                    insights_html = re.sub(r'(?<!>)\n(?!<)', ' ', insights_html)  # single newlines between text → space
+                    # Comprehensive markdown to HTML fallback
+                    import re as _re
+                    # Headings first (order matters - ### before ## before #)
+                    insights_html = _re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin:18px 0 8px 0;font-size:16px;">\1</h3>', insights_html, flags=_re.MULTILINE)
+                    insights_html = _re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin:25px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
+                    insights_html = _re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;margin:25px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
+                    # Bold text
+                    insights_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
+                    # Numbered lists and bullets
+                    insights_html = _re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=_re.MULTILINE)
+                    insights_html = _re.sub(r'^- (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=_re.MULTILINE)
+                    insights_html = _re.sub(r'^• (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=_re.MULTILINE)
+                    # Horizontal rules
+                    insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', insights_html, flags=_re.MULTILINE)
+                    # Newline handling
+                    insights_html = _re.sub(r'\n{3,}', '<br><br>', insights_html)
+                    insights_html = _re.sub(r'\n\n', '<br>', insights_html)
+                    insights_html = _re.sub(r'(?<!>)\n(?!<)', ' ', insights_html)
                     logger.info(f"[TB ANALYZE] Sonnet analysis generated: {len(insights_html)} chars")
                 else:
                     logger.warning("[TB ANALYZE] AI returned empty response")
@@ -35913,7 +35934,7 @@ FORMAT RULES - OUTPUT CLEAN HTML:
             return jsonify({"success": False, "error": "AI not configured"})
         
         message = _anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-opus-4-6",
             max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
