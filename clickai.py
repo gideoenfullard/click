@@ -19136,6 +19136,17 @@ def api_ai():
         user_id = user.get("id", "")
         biz_id = business.get("id", "") if business else ""
         
+        # Clear chat command
+        if command.strip().lower() in ["clear", "reset", "clear chat", "nuwe chat", "begin oor"]:
+            chat_key = f"zane_chat_{biz_id}" if biz_id else "zane_chat"
+            session.pop(chat_key, None)
+            if biz_id and user_id:
+                try:
+                    ZaneMemory.clear(biz_id, user_id)
+                except:
+                    pass
+            return jsonify({"response": "✅ Chat geskoon. Vra my enigiets!", "actions_taken": [], "data": {}, "suggestions": []})
+        
         # ═══════════════════════════════════════════════════════════
         # PERSISTENT MEMORY - Load from DB, merge with session
         # ═══════════════════════════════════════════════════════════
@@ -19150,7 +19161,16 @@ def api_ai():
                 session[chat_key] = session_history
                 logger.info(f"[ZANE] Restored {len(db_history)} messages from DB memory")
         
-        chat_history = session_history
+        # Filter out stale/lazy responses from history before passing to AI
+        bad_phrases = ["soos hierbo", "as shown above", "gelewer soos", "oorsig gelewer", "already provided", "hierbo"]
+        clean_history = []
+        for msg in session_history:
+            content = msg.get("content", "")
+            if msg.get("role") == "assistant" and any(p in content.lower() for p in bad_phrases):
+                continue  # Skip lazy AI responses
+            clean_history.append(msg)
+        
+        chat_history = clean_history
         
         # Get context
         context = Context.get_full_context(user, business)
