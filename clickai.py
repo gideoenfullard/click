@@ -13915,8 +13915,8 @@ class ReportEngine:
     This produces reports that are both intelligent AND readable.
     """
     
-    MODEL_OPUS = "claude-opus-4-6"    # Deep thinking - Opus 4.6 (latest)
-    MODEL_PRESENTER = "claude-haiku-4-5-20251001"  # Haiku 4.5 - fast presenter, Opus does the thinking
+    MODEL_OPUS = "claude-sonnet-4-6"    # All reports now use Sonnet 4.6 - fast and accurate
+    MODEL_PRESENTER = "claude-sonnet-4-6"  # Same model for consistency
     
     @classmethod
     def generate(cls, report_type: str, context: dict, custom_request: str = None) -> dict:
@@ -14083,7 +14083,7 @@ Analyze and return findings in the specified format."""
             client = _anthropic_client
             response = client.messages.create(
                 model=cls.MODEL_OPUS,
-                max_tokens=3000,
+                max_tokens=6000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
@@ -14146,9 +14146,9 @@ FORMAT — OUTPUT CLEAN HTML ONLY (no markdown, no ## or **):
     <tr><th style="text-align:left;padding:10px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">Header</th></tr>
     <tr><td style="padding:10px;border-bottom:1px solid rgba(255,255,255,0.08);">Value</td></tr>
   </table> for data tables
-- <div style="background:rgba(239,68,68,0.1);border-left:4px solid #ef4444;padding:15px;border-radius:6px;margin:12px 0;"> for CRITICAL warnings
-- <div style="background:rgba(245,158,11,0.1);border-left:4px solid #f59e0b;padding:15px;border-radius:6px;margin:12px 0;"> for CAUTION items  
-- <div style="background:rgba(16,185,129,0.1);border-left:4px solid #10b981;padding:15px;border-radius:6px;margin:12px 0;"> for POSITIVE highlights
+- <div style="background:rgba(239,68,68,0.15);border-left:4px solid #ef4444;padding:15px;border-radius:6px;margin:12px 0;color:#fca5a5;"> for CRITICAL warnings
+- <div style="background:rgba(245,158,11,0.15);border-left:4px solid #f59e0b;padding:15px;border-radius:6px;margin:12px 0;color:#fcd34d;"> for CAUTION items  
+- <div style="background:rgba(16,185,129,0.15);border-left:4px solid #10b981;padding:15px;border-radius:6px;margin:12px 0;color:#6ee7b7;"> for POSITIVE highlights
 - <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:25px 0;"> between major sections
 
 REQUIRED SECTIONS — you MUST include ALL of these:
@@ -35443,9 +35443,10 @@ FORMAT INSTRUCTIONS:
 - Use <ul><li> for bullet lists (not - or *)
 - For tables use: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Column</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Value</td></tr></table>
 - For colored indicators use: <span style="color:#ef4444;">✗ Bad</span> or <span style="color:#10b981;">✓ Good</span> or <span style="color:#f59e0b;">⚠ Warning</span>
-- For WARNING boxes use: <div style="padding:15px;background:rgba(239,68,68,0.1);border-left:4px solid #ef4444;border-radius:6px;margin:12px 0;">warning content</div>
-- For POSITIVE boxes use: <div style="padding:15px;background:rgba(16,185,129,0.1);border-left:4px solid #10b981;border-radius:6px;margin:12px 0;">positive content</div>
-- For INFO boxes use: <div style="padding:15px;background:rgba(99,102,241,0.1);border-left:4px solid #6366f1;border-radius:6px;margin:12px 0;">info content</div>
+- For WARNING boxes use: <div style="padding:15px;background:rgba(239,68,68,0.15);border-left:4px solid #ef4444;border-radius:6px;margin:12px 0;color:#fca5a5;">warning content</div>
+- For POSITIVE boxes use: <div style="padding:15px;background:rgba(16,185,129,0.15);border-left:4px solid #10b981;border-radius:6px;margin:12px 0;color:#6ee7b7;">positive content</div>
+- For INFO boxes use: <div style="padding:15px;background:rgba(99,102,241,0.15);border-left:4px solid #6366f1;border-radius:6px;margin:12px 0;color:#a5b4fc;">info content</div>
+- For CAUTION boxes use: <div style="padding:15px;background:rgba(245,158,11,0.15);border-left:4px solid #f59e0b;border-radius:6px;margin:12px 0;color:#fcd34d;">caution content</div>
 - EVERY table cell MUST have content - never leave cells empty
 - Complete ALL sections fully - do not stop halfway through a section
 
@@ -35462,7 +35463,7 @@ RULES:
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-sonnet-4-6",
-                    max_tokens=4000,
+                    max_tokens=8000,
                     messages=[{"role": "user", "content": insights_prompt}]
                 )
                 if message.content and message.content[0].text:
@@ -36139,9 +36140,11 @@ FORMAT RULES - OUTPUT CLEAN HTML:
 - Use <p> for paragraphs
 - Use <strong> for emphasis
 - Use <table> with inline styles for any data tables
-- Use <div style="background:rgba(239,68,68,0.1);border-left:3px solid #ef4444;padding:10px;margin:10px 0;"> for warnings/red flags
+- Use <div style="background:rgba(239,68,68,0.15);border-left:3px solid #ef4444;padding:12px;margin:10px 0;color:#fca5a5;border-radius:6px;"> for warnings/red flags
+- Use <div style="background:rgba(16,185,129,0.15);border-left:3px solid #10b981;padding:12px;margin:10px 0;color:#6ee7b7;border-radius:6px;"> for positive items
+- Use <div style="background:rgba(245,158,11,0.15);border-left:3px solid #f59e0b;padding:12px;margin:10px 0;color:#fcd34d;border-radius:6px;"> for caution items
 - Use <div style="background:rgba(16,185,129,0.1);border-left:3px solid #10b981;padding:10px;margin:10px 0;"> for positive items
-- Use <div style="background:rgba(245,158,11,0.1);border-left:3px solid #f59e0b;padding:10px;margin:10px 0;"> for caution items
+
 - DO NOT use markdown (no ##, no **, no ---, no bullet points with -)
 - Use <ul><li> for lists
 - Make it visually professional and easy to scan"""
@@ -36151,7 +36154,7 @@ FORMAT RULES - OUTPUT CLEAN HTML:
         
         message = _anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=4000,
+            max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
         )
