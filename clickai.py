@@ -13950,6 +13950,19 @@ class ReportEngine:
                 return {"success": False, "error": "Report generation failed. Please try again."}
             
             logger.info(f"[REPORT] Report generated successfully")
+            
+            # Fallback: convert any remaining markdown to HTML (in case AI mixed formats)
+            if report and ("##" in report or "**" in report or "\n- " in report):
+                import re
+                report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
+                report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
+                report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
+                report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
+                report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
+                report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
+                report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
+                report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
+            
             return {"success": True, "report": report}
             
         except Exception as e:
@@ -14111,6 +14124,20 @@ WRITING STYLE:
 - End with clear action items
 
 FORMAT:
+Output the report as clean HTML using these tags:
+- <h2> for main section headings (EXECUTIVE SUMMARY, KEY FINDINGS, etc.)
+- <h3> for sub-headings
+- <p> for paragraphs
+- <strong> for emphasis
+- <ul><li> for bullet points
+- <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">...</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">...</td></tr></table> for any data tables
+- <div style="background:rgba(239,68,68,0.1);border-left:4px solid #ef4444;padding:12px 15px;border-radius:6px;margin:10px 0;"> for warnings/concerns
+- <div style="background:rgba(16,185,129,0.1);border-left:4px solid #10b981;padding:12px 15px;border-radius:6px;margin:10px 0;"> for positive highlights
+- <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:20px 0;"> between sections
+
+Do NOT use markdown (no ## or ** or ---). Output ONLY valid HTML.
+Do NOT wrap in <html><body> tags - just the content.
+
 Use these sections (adapt based on content):
 
 EXECUTIVE SUMMARY
