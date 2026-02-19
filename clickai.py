@@ -17961,6 +17961,236 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         }});
     }})();
     </script>
+    
+    <!-- Global Smart Search - works on ALL pages with filterTable -->
+    <script>
+    function filterTable(inputId, tableId) {{
+        const raw = document.getElementById(inputId).value;
+        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
+        
+        if (!raw.trim()) {{
+            rows.forEach(r => r.style.display = '');
+            return;
+        }}
+        
+        // Normalize search: lowercase, collapse spaces, normalize dimensions  
+        let q = raw.toLowerCase().trim();
+        q = q.replace(/\\s*[xX]\\s*/g, 'x');  // "10 x 12" → "10x12"
+        q = q.replace(/\\s+/g, ' ');
+        
+        // Split into search terms for multi-word matching
+        const terms = q.split(/\\s+/).filter(t => t.length > 0);
+        
+        let visibleCount = 0;
+        rows.forEach(r => {{
+            let text = r.textContent.toLowerCase();
+            text = text.replace(/\\s*[xX]\\s*/g, 'x');
+            text = text.replace(/\\s+/g, ' ');
+            
+            // ALL terms must match (AND logic) — order doesn't matter
+            const match = terms.every(term => text.includes(term));
+            r.style.display = match ? '' : 'none';
+            if (match) visibleCount++;
+        }});
+        
+        // Show "no results" if nothing found
+        if (visibleCount === 0) {{
+            const tbody = document.getElementById(tableId).querySelector('tbody');
+            const existing = tbody.querySelector('.no-search-results');
+            if (!existing) {{
+                const tr = document.createElement('tr');
+                tr.className = 'no-search-results';
+                tr.innerHTML = '<td colspan="20" style="text-align:center;color:var(--text-muted);padding:20px;">No results for "' + raw + '"</td>';
+                tbody.appendChild(tr);
+            }}
+        }} else {{
+            const existing = document.getElementById(tableId).querySelector('.no-search-results');
+            if (existing) existing.remove();
+        }}
+    }}
+    </script>
+    
+    <!-- Smart Stock Picker — replaces <datalist> with intelligent dropdown -->
+    <style>
+    .ssp-wrap {{ position: relative; }}
+    .ssp-dropdown {{
+        display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 999;
+        background: var(--card, #1e1e2e); border: 1px solid var(--border, #333); border-radius: 6px;
+        max-height: 280px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }}
+    .ssp-dropdown.show {{ display: block; }}
+    .ssp-item {{
+        padding: 8px 12px; cursor: pointer; font-size: 13px;
+        display: flex; justify-content: space-between; align-items: center;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }}
+    .ssp-item:hover, .ssp-item.active {{ background: rgba(99,102,241,0.2); }}
+    .ssp-item .ssp-code {{ color: #8b5cf6; font-weight: 600; margin-right: 8px; font-size: 12px; }}
+    .ssp-item .ssp-desc {{ flex: 1; color: var(--text, #e0e0e0); }}
+    .ssp-item .ssp-price {{ color: #10b981; font-weight: 600; font-size: 12px; white-space: nowrap; margin-left: 10px; }}
+    .ssp-item .ssp-qty {{ color: var(--text-muted, #888); font-size: 11px; margin-left: 6px; }}
+    .ssp-empty {{ padding: 15px; text-align: center; color: var(--text-muted, #888); font-size: 13px; }}
+    .ssp-item.ssp-new {{ color: #10b981; font-weight: 600; border-top: 1px solid rgba(255,255,255,0.1); }}
+    </style>
+    <script>
+    // SmartStockPicker — auto-upgrades input[list="stockList"] fields
+    (function() {{
+        function initSmartPickers() {{
+            const datalist = document.getElementById('stockList');
+            if (!datalist) return;
+            
+            // Build stock data array from datalist options
+            const stockData = [];
+            datalist.querySelectorAll('option').forEach(opt => {{
+                const val = opt.value || '';
+                const price = parseFloat(opt.dataset.price) || 0;
+                const stockId = opt.dataset.stockid || '';
+                const desc = opt.dataset.desc || val;
+                const qty = parseFloat(opt.dataset.qty) || 0;
+                const code = val.includes(' - ') ? val.split(' - ')[0].trim() : '';
+                const searchText = val.toLowerCase().replace(/\\s*[xX]\\s*/g, 'x');
+                stockData.push({{ val, price, stockId, desc, qty, code, searchText }});
+            }});
+            
+            // Upgrade each input with list="stockList"
+            document.querySelectorAll('input[list="stockList"]').forEach(input => upgradeInput(input, stockData));
+            
+            // Watch for dynamically added rows (addRow)
+            const observer = new MutationObserver(mutations => {{
+                mutations.forEach(m => {{
+                    m.addedNodes.forEach(node => {{
+                        if (node.nodeType === 1) {{
+                            const inputs = node.querySelectorAll ? node.querySelectorAll('input[list="stockList"]') : [];
+                            inputs.forEach(inp => upgradeInput(inp, stockData));
+                        }}
+                    }});
+                }});
+            }});
+            const tbody = document.getElementById('itemRows');
+            if (tbody) observer.observe(tbody, {{ childList: true, subtree: true }});
+        }}
+        
+        function upgradeInput(input, stockData) {{
+            if (input.dataset.sspDone) return;
+            input.dataset.sspDone = '1';
+            input.removeAttribute('list'); // Remove datalist binding
+            input.setAttribute('autocomplete', 'off');
+            input.placeholder = '🔍 Type code or description...';
+            
+            // Wrap in relative container
+            const wrap = document.createElement('div');
+            wrap.className = 'ssp-wrap';
+            input.parentNode.insertBefore(wrap, input);
+            wrap.appendChild(input);
+            
+            // Create dropdown
+            const dd = document.createElement('div');
+            dd.className = 'ssp-dropdown';
+            wrap.appendChild(dd);
+            
+            let activeIdx = -1;
+            
+            function render(query) {{
+                let q = query.toLowerCase().trim().replace(/\\s*[xX]\\s*/g, 'x');
+                const terms = q.split(/\\s+/).filter(t => t.length > 0);
+                
+                let matches = stockData.filter(s => {{
+                    if (!terms.length) return true;
+                    return terms.every(t => s.searchText.includes(t));
+                }});
+                
+                // Limit to 20 results for performance
+                matches = matches.slice(0, 20);
+                activeIdx = -1;
+                
+                if (matches.length === 0 && terms.length > 0) {{
+                    dd.innerHTML = '<div class="ssp-empty">No stock found — type a custom description</div>';
+                    dd.classList.add('show');
+                    return;
+                }}
+                
+                dd.innerHTML = matches.map((s, i) => `
+                    <div class="ssp-item" data-idx="${{i}}" data-val="${{s.val}}" data-price="${{s.price}}" data-stockid="${{s.stockId}}" data-desc="${{s.desc}}">
+                        ${{s.code ? '<span class="ssp-code">' + s.code + '</span>' : ''}}
+                        <span class="ssp-desc">${{s.desc}}</span>
+                        ${{s.price ? '<span class="ssp-price">R' + s.price.toFixed(2) + '</span>' : ''}}
+                        ${{s.qty !== undefined ? '<span class="ssp-qty">(' + s.qty + ')</span>' : ''}}
+                    </div>
+                `).join('');
+                
+                dd.classList.add('show');
+            }}
+            
+            function selectItem(el) {{
+                const val = el.dataset.val;
+                const price = el.dataset.price;
+                const stockId = el.dataset.stockid;
+                
+                input.value = val;
+                dd.classList.remove('show');
+                
+                // Fill in price and stock_id
+                const row = input.closest('tr');
+                if (row) {{
+                    const priceInput = row.querySelector('input[name="item_price[]"]');
+                    const stockIdInput = row.querySelector('input[name="item_stock_id[]"]');
+                    if (priceInput && price) {{ priceInput.value = price; calcRow(priceInput); }}
+                    if (stockIdInput) stockIdInput.value = stockId || '';
+                }}
+            }}
+            
+            // Events
+            input.addEventListener('input', function() {{
+                render(this.value);
+            }});
+            
+            input.addEventListener('focus', function() {{
+                if (this.value.length === 0) render('');
+            }});
+            
+            input.addEventListener('keydown', function(e) {{
+                const items = dd.querySelectorAll('.ssp-item');
+                if (!items.length) return;
+                
+                if (e.key === 'ArrowDown') {{
+                    e.preventDefault();
+                    activeIdx = Math.min(activeIdx + 1, items.length - 1);
+                    items.forEach((it, i) => it.classList.toggle('active', i === activeIdx));
+                    items[activeIdx]?.scrollIntoView({{ block: 'nearest' }});
+                }} else if (e.key === 'ArrowUp') {{
+                    e.preventDefault();
+                    activeIdx = Math.max(activeIdx - 1, 0);
+                    items.forEach((it, i) => it.classList.toggle('active', i === activeIdx));
+                    items[activeIdx]?.scrollIntoView({{ block: 'nearest' }});
+                }} else if (e.key === 'Enter' && activeIdx >= 0) {{
+                    e.preventDefault();
+                    selectItem(items[activeIdx]);
+                }} else if (e.key === 'Escape') {{
+                    dd.classList.remove('show');
+                }} else if (e.key === 'Tab' && activeIdx >= 0) {{
+                    selectItem(items[activeIdx]);
+                }}
+            }});
+            
+            dd.addEventListener('click', function(e) {{
+                const item = e.target.closest('.ssp-item');
+                if (item) selectItem(item);
+            }});
+            
+            // Close on click outside
+            document.addEventListener('click', function(e) {{
+                if (!wrap.contains(e.target)) dd.classList.remove('show');
+            }});
+        }}
+        
+        // Init on page load + after dynamic content
+        if (document.readyState === 'loading') {{
+            document.addEventListener('DOMContentLoaded', initSmartPickers);
+        }} else {{
+            initSmartPickers();
+        }}
+    }})();
+    </script>
 </body>
 </html>'''
 
@@ -20562,19 +20792,23 @@ def customers_page():
     
     // Filter customers
     function filterCustomers() {{
-        const search = document.getElementById('customerSearch').value.toLowerCase();
+        const raw = document.getElementById('customerSearch').value;
         const balanceFilter = document.getElementById('balanceFilter').value;
         const rows = document.querySelectorAll('.customer-row');
         let visible = 0;
         
+        let search = raw.toLowerCase().trim();
+        search = search.replace(/\\s*[xX]\\s*/g, 'x');
+        const terms = search.split(/\\s+/).filter(t => t.length > 0);
+        
         rows.forEach(row => {{
-            const searchText = row.dataset.search || '';
+            let searchText = (row.dataset.search || '').replace(/\\s*[xX]\\s*/g, 'x');
             const balance = parseFloat(row.dataset.balance) || 0;
             
             let show = true;
             
-            // Text search
-            if (search && !searchText.includes(search)) {{
+            // Multi-term search (AND logic)
+            if (terms.length > 0 && !terms.every(t => searchText.includes(t))) {{
                 show = false;
             }}
             
@@ -21433,10 +21667,16 @@ def stock_page():
     
     // Filter (client-side, instant)
     function filterStock() {
-        const search = document.getElementById('stockSearch').value.toLowerCase().trim();
+        const raw = document.getElementById('stockSearch').value;
         const cat = document.getElementById('categoryFilter').value.toLowerCase();
+        
+        let search = raw.toLowerCase().trim();
+        search = search.replace(/\s*[xX]\s*/g, 'x');  // "10 x 12" → "10x12"
+        const terms = search.split(/\s+/).filter(t => t.length > 0);
+        
         document.querySelectorAll('.stock-row').forEach(row => {
-            const matchSearch = !search || row.dataset.search.includes(search);
+            let data = (row.dataset.search || '').replace(/\s*[xX]\s*/g, 'x');
+            const matchSearch = terms.length === 0 || terms.every(t => data.includes(t));
             const matchCat = !cat || row.dataset.cat === cat;
             row.style.display = (matchSearch && matchCat) ? '' : 'none';
         });
@@ -23472,12 +23712,6 @@ def invoices_page():
         </table>
     </div>
     <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
     }}
     </script>
     '''
@@ -27071,12 +27305,6 @@ def quotes_page():
         </table>
     </div>
     <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
     }}
     </script>
     '''
@@ -27979,12 +28207,6 @@ def delivery_notes_list():
         </table>
     </div>
     <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
     }}
     </script>
     '''
@@ -28540,12 +28762,6 @@ def expenses_page():
         </div>
     </div>
     <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
     }}
     </script>
     '''
@@ -36702,12 +36918,6 @@ def purchases_page():
         </div>
     </div>
     <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
     }}
     </script>
     '''
@@ -36875,9 +37085,9 @@ def purchase_new():
                 <tbody id="itemsBody">
                     <tr>
                         <td>
-                            <select name="item_stock_id[]" class="form-input" onchange="populateFromStock(this)" style="font-size: 13px;">
-                                {stock_options}
-                            </select>
+                            <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="🔍 Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)" style="font-size:13px;">
+                            <input type="hidden" name="item_stock_id[]" value="">
+                            <div class="ssp-dropdown po-stock-dd"></div>
                         </td>
                         <td><input type="text" name="item_desc[]" class="form-input" placeholder="Description" required></td>
                         <td><input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()"></td>
@@ -36922,7 +37132,63 @@ def purchase_new():
     </div>
     
     <script>
-    const stockOptions = `{stock_options}`;
+    // PO Stock data for smart search
+    const poStockData = {json.dumps([{"id": s.get("id",""), "code": safe_string(s.get("code","")), "desc": safe_string(s.get("description","")), "price": float(s.get("cost_price",0) or 0)} for s in stock])};
+    
+    function poStockSearch(input) {{
+        const wrap = input.closest('td');
+        let dd = wrap.querySelector('.po-stock-dd');
+        if (!dd) {{
+            dd = document.createElement('div');
+            dd.className = 'ssp-dropdown po-stock-dd';
+            wrap.style.position = 'relative';
+            wrap.appendChild(dd);
+        }}
+        
+        let q = input.value.toLowerCase().trim().replace(/\\s*[xX]\\s*/g, 'x');
+        const terms = q.split(/\\s+/).filter(t => t.length > 0);
+        
+        let matches = poStockData.filter(s => {{
+            if (!terms.length) return true;
+            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\\s*[xX]\\s*/g, 'x');
+            return terms.every(t => text.includes(t));
+        }}).slice(0, 20);
+        
+        if (matches.length === 0 && terms.length > 0) {{
+            dd.innerHTML = '<div class="ssp-empty">No stock found</div>';
+        }} else {{
+            dd.innerHTML = matches.map(s => `
+                <div class="ssp-item" onclick="poSelectStock(this, '${{s.id}}', '${{s.code}}', '${{s.desc.replace(/'/g, "\\\\'")}}'', ${{s.price}})">
+                    ${{s.code ? '<span class="ssp-code">' + s.code + '</span>' : ''}}
+                    <span class="ssp-desc">${{s.desc}}</span>
+                    ${{s.price ? '<span class="ssp-price">R' + s.price.toFixed(2) + '</span>' : ''}}
+                </div>
+            `).join('');
+        }}
+        dd.classList.add('show');
+    }}
+    
+    function poSelectStock(el, stockId, code, desc, price) {{
+        const row = el.closest('tr');
+        const searchInput = row.querySelector('input[name="item_stock_search[]"]');
+        const idInput = row.querySelector('input[name="item_stock_id[]"]');
+        const descInput = row.querySelector('input[name="item_desc[]"]');
+        const priceInput = row.querySelector('input[name="item_price[]"]');
+        
+        if (searchInput) searchInput.value = code ? code + ' - ' + desc : desc;
+        if (idInput) idInput.value = stockId;
+        if (descInput) descInput.value = desc;
+        if (priceInput) {{ priceInput.value = price; calculateTotals(); }}
+        
+        el.closest('.ssp-dropdown').classList.remove('show');
+    }}
+    
+    // Close PO dropdowns on click outside
+    document.addEventListener('click', function(e) {{
+        if (!e.target.closest('.po-stock-search') && !e.target.closest('.po-stock-dd')) {{
+            document.querySelectorAll('.po-stock-dd').forEach(d => d.classList.remove('show'));
+        }}
+    }});
     
     function updateSupplierEmail() {{
         const select = document.getElementById('supplierSelect');
@@ -36931,27 +37197,14 @@ def purchase_new():
         document.getElementById('supplierEmail').value = email;
     }}
     
-    function populateFromStock(select) {{
-        const row = select.closest('tr');
-        const option = select.options[select.selectedIndex];
-        const price = option.dataset.price || 0;
-        
-        if (option.value) {{
-            const text = option.text.split(' - ');
-            row.querySelector('input[name="item_desc[]"]').value = text.slice(1).join(' - ') || text[0];
-            row.querySelector('input[name="item_price[]"]').value = price;
-            calculateTotals();
-        }}
-    }}
-    
     function addRow() {{
         const tbody = document.getElementById('itemsBody');
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>
-                <select name="item_stock_id[]" class="form-input" onchange="populateFromStock(this)" style="font-size: 13px;">
-                    ${{stockOptions}}
-                </select>
+            <td style="position:relative;">
+                <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="🔍 Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)" style="font-size:13px;">
+                <input type="hidden" name="item_stock_id[]" value="">
+                <div class="ssp-dropdown po-stock-dd"></div>
             </td>
             <td><input type="text" name="item_desc[]" class="form-input" placeholder="Description"></td>
             <td><input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()"></td>
@@ -38024,12 +38277,6 @@ def supplier_invoices_page():
     </div>
     
     <script>
-    function filterTable(inputId, tableId) {{
-        const q = document.getElementById(inputId).value.toLowerCase();
-        const rows = document.getElementById(tableId).querySelectorAll('tbody tr');
-        rows.forEach(r => {{
-            r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-        }});
     }}
     function paySupplier(invNum) {{
         document.getElementById('aiInput').value = 'Pay supplier invoice ' + invNum;
@@ -40844,6 +41091,12 @@ def pos_page():
     
     async function createPO() {
         if (posLocked) { console.log('[POS] Transaction in progress'); return; }
+        
+        // ALWAYS switch to supplier mode first — GRV/PO needs a supplier, not customer
+        if (currentEntityType !== 'supplier') {
+            toggleEntity('supplier');
+        }
+        
         const supplier = getCurrentSupplier();
         const supplierId = supplier.id;
         const supplierName = supplier.name || '';
@@ -42742,6 +42995,10 @@ def pos_history():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
+    # Staff/cashier roles only see TODAY - no previous Z-reads or history
+    user_role = get_user_role()
+    is_staff_pos = user_role in ("staff", "cashier", "pos_only", "sales", "waiter")
+    
     # Get filter params - support date range
     date_from = request.args.get("from", "")
     date_to = request.args.get("to", "")
@@ -42749,8 +43006,13 @@ def pos_history():
     show_type = request.args.get("type", "all")
     search_q = request.args.get("q", "").strip().lower()
     
-    # Determine date range
-    if single_date:
+    # STAFF OVERRIDE: Force today only — no access to previous days
+    if is_staff_pos:
+        date_from = today()
+        date_to = today()
+        single_date = ""
+    # Determine date range (managers/owners)
+    elif single_date:
         # Single date mode (backward compatible, used for Z-Read cash-up)
         date_from = single_date
         date_to = single_date
@@ -42944,9 +43206,9 @@ def pos_history():
             <input type="text" id="searchBox" value="{search_q}" placeholder="🔍 Search customer, slip #, item..." 
                    style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);flex:1;min-width:200px;"
                    onkeydown="if(event.key==='Enter')applyFilters()">
-            <input type="date" id="dateFrom" value="{date_from}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            {"" if is_staff_pos else f'''<input type="date" id="dateFrom" value="{date_from}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
             <span style="color:var(--text-muted);">to</span>
-            <input type="date" id="dateTo" value="{date_to}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            <input type="date" id="dateTo" value="{date_to}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">'''}
             <select id="typeFilter" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 <option value="all" {"selected" if show_type == "all" else ""}>All Types</option>
                 <option value="cash" {"selected" if show_type == "cash" else ""}>Cash</option>
@@ -43000,8 +43262,7 @@ def pos_history():
                 <span style="color:var(--text-muted);margin-left:10px;">{transaction_count} transactions</span>
             </div>
             <div style="display:flex;gap:10px;">
-                <button onclick="printXRead()" class="btn btn-secondary">X-Read</button>
-                <button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>
+                {"" if is_staff_pos else '<button onclick="printXRead()" class="btn btn-secondary">X-Read</button><button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>'}
             </div>
         </div>
         
