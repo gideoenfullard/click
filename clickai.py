@@ -22532,9 +22532,11 @@ def fulltech_tools():
         
         document.getElementById('recalcResult').innerHTML = '<div style="text-align:center;padding:20px;">⏳ Analysing stock...</div>';
         
+        try {{
         const res = await fetch('/api/fulltech/preview-recalc?' + new URLSearchParams({{ 
             rkg_small: rkgSmall, rkg_medium: rkgMedium, rkg_large: rkgLarge, rkg_xl: rkgXL, markup 
         }}));
+        if (!res.ok) throw new Error('Server error: ' + res.status);
         const data = await res.json();
         
         pendingUpdates = data.updated || [];
@@ -22571,6 +22573,9 @@ def fulltech_tools():
         }}
         
         document.getElementById('recalcResult').innerHTML = html;
+        }} catch(err) {{
+            document.getElementById('recalcResult').innerHTML = '<div style="text-align:center;padding:20px;color:#ef4444;">❌ Error: ' + err.message + '<br><br><button onclick="previewRecalc()" class="btn btn-primary">Try Again</button></div>';
+        }}
     }}
     
     async function applyRecalc() {{
@@ -22631,7 +22636,7 @@ def api_fulltech_preview_recalc():
     markup = float(request.args.get("markup", 1.3))
     
     # Get all stock
-    stock = db.get_stock(biz_id) or []
+    stock = db.get_all_stock(biz_id) or []
     
     result = fulltech_addon.bulk_recalc_bolt_prices(stock, rkg_tiers, markup)
     return jsonify(result)
