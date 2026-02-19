@@ -7798,12 +7798,12 @@ def call_zane_with_tools(system_prompt, user_message, tool_handler, chat_history
                     "tools": ZANE_TOOLS,
                     "messages": messages
                 },
-                timeout=60
+                timeout=90
             )
             
             if response.status_code != 200:
-                logger.error(f"[ZANE-TOOLS] API error {response.status_code}: {response.text[:300]}")
-                return None
+                logger.error(f"[ZANE-TOOLS] API error {response.status_code}: {response.text[:500]}")
+                return f"Ek het 'n tegniese probleem ondervind (kode {response.status_code}). Probeer asseblief weer."
             
             data = response.json()
             stop_reason = data.get("stop_reason")
@@ -8055,10 +8055,18 @@ Once you have a customer, you can invoice! 📝"""
         # Create tool handler connected to this business's data
         tool_handler = ZaneToolHandler(db_instance=db, business_id=context.get("business_id"), user_id=context.get("user_id", ""))
         
-        logger.info(f"[BRAIN] Using TOOL-BASED mode for query")
+        logger.info(f"[BRAIN] Using TOOL-BASED mode for: {user_message[:80]}")
         
-        # Get chat history from context
-        chat_history = context.get("chat_history", [])
+        # Get chat history from context — keep minimal to save tokens
+        raw_history = context.get("chat_history", [])
+        chat_history = []
+        skip_phrases = ["soos hierbo", "as shown above", "gelewer soos", "already provided", "oorsig gelewer"]
+        for msg in raw_history[-6:]:  # Only last 3 exchanges
+            content = msg.get("content", "")
+            # Skip assistant messages that were lazy one-liners
+            if msg.get("role") == "assistant" and len(content) < 60 and any(p in content.lower() for p in skip_phrases):
+                continue
+            chat_history.append(msg)
         
         # Call Zane with tools - he fetches what he needs
         ai_response = call_zane_with_tools(
@@ -8070,7 +8078,20 @@ Once you have a customer, you can invoice! 📝"""
             api_key=ANTHROPIC_API_KEY
         )
         
-        if not ai_response:
+        if not ai_response or len(ai_response.strip()) < 5:
+            # First call failed — retry WITHOUT chat history (clean slate)
+            logger.warning(f"[BRAIN] AI returned empty/short, retrying without history...")
+            ai_response = call_zane_with_tools(
+                system_prompt=system_prompt,
+                user_message=user_message,
+                tool_handler=tool_handler,
+                chat_history=[],
+                model=cls.MODEL_SONNET,
+                api_key=ANTHROPIC_API_KEY
+            )
+        
+        if not ai_response or len(ai_response.strip()) < 5:
+            logger.error(f"[BRAIN] AI failed twice — using fallback")
             return cls._fallback_response(user_message, context)
         
         # Parse and execute (SAME as before - no change)
@@ -10083,7 +10104,7 @@ Would you like me to save your WhatsApp settings? Just provide the phone number 
             }
         
         return {
-            "response": f"I heard: \"{message}\"\n\nI'm having trouble connecting to my brain right now. Try:\n Who owes me money?\n Invoice [customer] R[amount]\n Add customer [name]",
+            "response": "Ek het 'n probleem gehad om jou vraag te verwerk. Probeer weer — vra iets spesifiek soos 'wie skuld my geld' of 'hoe lyk my sales vandag'.",
             "actions_taken": [],
             "data": {},
             "suggestions": []
