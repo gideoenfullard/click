@@ -35326,6 +35326,7 @@ FORMAT INSTRUCTIONS:
 - For CAUTION boxes use: <div style="padding:15px;background:rgba(245,158,11,0.15);border-left:4px solid #f59e0b;border-radius:6px;margin:12px 0;color:#fcd34d;">caution content</div>
 - EVERY table cell MUST have content - never leave cells empty
 - Complete ALL sections fully - do not stop halfway through a section
+- IMPORTANT: You MUST complete the entire report. Do not leave any section unfinished. If running long, be more concise in later sections rather than stopping mid-sentence.
 
 RULES:
 - Refer to SPECIFIC accounts by name and code
@@ -35340,7 +35341,7 @@ RULES:
                 client = _anthropic_client
                 message = client.messages.create(
                     model="claude-sonnet-4-6",
-                    max_tokens=8000,
+                    max_tokens=12000,
                     messages=[{"role": "user", "content": insights_prompt}]
                 )
                 if message.content and message.content[0].text:
@@ -36031,7 +36032,7 @@ FORMAT RULES - OUTPUT CLEAN HTML:
         
         message = _anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=8000,
+            max_tokens=12000,
             system=system_prompt,
             messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
         )
