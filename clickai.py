@@ -17569,7 +17569,15 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
             body: JSON.stringify({{business_id: bizId}})
-        }}).then(() => location.reload());
+        }}).then(() => {{
+            // Clear local cache for old business data
+            if (window.ClickDB && ClickDB.db) {{
+                ['stock_items', 'customers', 'suppliers', 'invoices', 'quotes'].forEach(t => {{
+                    try {{ ClickDB.clear(t); }} catch(e) {{}}
+                }});
+            }}
+            window.location.href = '/';
+        }});
     }}
     
     // Mobile swipe navigation
@@ -66752,6 +66760,10 @@ def api_switch_business():
         
         if business_id:
             session["business_id"] = business_id
+            # Update business_name in session
+            biz = db.get_one("businesses", business_id)
+            if biz:
+                session["business_name"] = biz.get("name", "Business")
             # Clear cache so next request loads new business
             Auth.clear_cache()
             return jsonify({"success": True})
