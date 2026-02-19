@@ -2300,56 +2300,70 @@ class DB:
     
     def get_business_users(self, business_id: str) -> list:
         """Get all users linked to a business via team_members + owner.
-        Returns user records with 'name' field resolved from metadata."""
+        Returns user records with 'name' field resolved from metadata.
+        Falls back to empty list on any error."""
         if not business_id:
             return []
         
-        users = []
-        seen_ids = set()
-        
-        # 1. Get business owner
-        biz = self.get_one("businesses", business_id)
-        if biz and biz.get("user_id"):
-            owner = self.get_one("users", biz["user_id"])
-            if owner:
-                # Resolve name from raw_user_meta_data if needed
-                if not owner.get("name") and owner.get("raw_user_meta_data"):
-                    try:
-                        meta = json.loads(owner["raw_user_meta_data"]) if isinstance(owner["raw_user_meta_data"], str) else owner["raw_user_meta_data"]
-                        owner["name"] = meta.get("full_name", owner.get("email", "Owner"))
-                    except:
-                        pass
-                owner["role"] = "owner"
-                users.append(owner)
-                seen_ids.add(owner.get("id"))
-        
-        # 2. Get team members
-        members = self.get("team_members", {"business_id": business_id}) or []
-        for tm in members:
-            uid = tm.get("user_id")
-            if uid and uid not in seen_ids:
-                user = self.get_one("users", uid)
-                if user:
-                    if not user.get("name") and user.get("raw_user_meta_data"):
-                        try:
-                            meta = json.loads(user["raw_user_meta_data"]) if isinstance(user["raw_user_meta_data"], str) else user["raw_user_meta_data"]
-                            user["name"] = meta.get("full_name", user.get("email", "Staff"))
-                        except:
-                            pass
-                    user["role"] = tm.get("role", "staff")
-                    users.append(user)
-                    seen_ids.add(uid)
-            elif not uid and tm.get("email"):
-                # Invited but not yet registered - add placeholder
-                users.append({
-                    "id": tm.get("id", ""),
-                    "name": tm.get("name", tm.get("email", "Invited")),
-                    "email": tm.get("email"),
-                    "role": tm.get("role", "staff"),
-                    "status": tm.get("status", "pending")
-                })
-        
-        return users
+        try:
+            users = []
+            seen_ids = set()
+            
+            # 1. Get business owner
+            try:
+                biz = self.get_one("businesses", business_id)
+                if biz and biz.get("user_id"):
+                    owner = self.get_one("users", biz["user_id"])
+                    if owner:
+                        if not owner.get("name") and owner.get("raw_user_meta_data"):
+                            try:
+                                meta = json.loads(owner["raw_user_meta_data"]) if isinstance(owner["raw_user_meta_data"], str) else owner["raw_user_meta_data"]
+                                owner["name"] = meta.get("full_name", owner.get("email", "Owner"))
+                            except:
+                                pass
+                        owner["role"] = "owner"
+                        users.append(owner)
+                        seen_ids.add(owner.get("id"))
+            except Exception as e:
+                logger.warning(f"[DB] get_business_users owner lookup failed: {e}")
+            
+            # 2. Get team members
+            try:
+                members = self.get("team_members", {"business_id": business_id}) or []
+            except:
+                members = []
+            
+            for tm in members:
+                try:
+                    uid = tm.get("user_id")
+                    if uid and uid not in seen_ids:
+                        user = self.get_one("users", uid)
+                        if user:
+                            if not user.get("name") and user.get("raw_user_meta_data"):
+                                try:
+                                    meta = json.loads(user["raw_user_meta_data"]) if isinstance(user["raw_user_meta_data"], str) else user["raw_user_meta_data"]
+                                    user["name"] = meta.get("full_name", user.get("email", "Staff"))
+                                except:
+                                    pass
+                            user["role"] = tm.get("role", "staff")
+                            users.append(user)
+                            seen_ids.add(uid)
+                    elif not uid and tm.get("email"):
+                        users.append({
+                            "id": tm.get("id", ""),
+                            "name": tm.get("name", tm.get("email", "Invited")),
+                            "email": tm.get("email"),
+                            "role": tm.get("role", "staff"),
+                            "status": tm.get("status", "pending")
+                        })
+                except Exception as e:
+                    logger.warning(f"[DB] get_business_users member lookup failed: {e}")
+                    continue
+            
+            return users
+        except Exception as e:
+            logger.error(f"[DB] get_business_users error: {e}")
+            return []
     
     def update_stock(self, stock_id: str, updates: dict, biz_id: str = None):
         """Update stock item - FIXED version.
@@ -39080,7 +39094,10 @@ def pos_page():
     pos_settings_json = json.dumps(pos_settings).replace("'", "&#39;")
     
     # Get team members for cashier selector
-    cashier_list = db.get_business_users(biz_id)
+    try:
+        cashier_list = db.get_business_users(biz_id)
+    except:
+        cashier_list = []
     current_user_id = user.get("id", "") if user else ""
     current_user_name = user.get("name", user.get("email", "Me")) if user else "Me"
     # Extract first name
@@ -39089,12 +39106,13 @@ def pos_page():
     
     cashier_buttons = ""
     for cu in cashier_list:
-        cu_id = cu.get("id", "")
-        cu_name = cu.get("name", cu.get("email", "?"))
-        if cu_name and " " in cu_name:
-            cu_name = cu_name.split()[0]  # First name only
+        cu_id = cu.get("id") or ""
+        cu_name = str(cu.get("name") or cu.get("email") or "Staff").replace("'", "").replace('"', "").replace("&", "")
+        if " " in cu_name:
+            cu_name = cu_name.split()[0]
+        cu_name = cu_name[:12]
         is_active = "active" if cu_id == current_user_id else ""
-        cashier_buttons += f'<button class="cashier-btn {is_active}" data-uid="{cu_id}" onclick="switchCashier(this, &apos;{cu_id}&apos;, &apos;{cu_name}&apos;)">{cu_name[:12]}</button>'
+        cashier_buttons += f'<button class="cashier-btn {is_active}" data-uid="{cu_id}" onclick="switchCashier(this, &apos;{cu_id}&apos;, &apos;{cu_name}&apos;)">{cu_name}</button>'
     
     pos_css = '''
     <style>
@@ -43545,6 +43563,13 @@ def api_pos_sale():
         }
         
         success, err = db.save("sales", sale)
+        
+        # If created_by column doesn't exist, retry without it
+        if not success and "created_by" in str(err):
+            logger.warning(f"[POS] created_by column missing, retrying without it")
+            sale.pop("created_by", None)
+            sale["notes"] = f"Cashier: {data.get('cashier_name', '')}"
+            success, err = db.save("sales", sale)
         
         if not success:
             logger.error(f"[POS] Sale save failed: {err}")
