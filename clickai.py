@@ -13933,20 +13933,13 @@ class ReportEngine:
         """
         
         try:
-            # Step 1: OPUS analyzes the data
-            logger.info(f"[REPORT] Step 1: Opus analyzing {report_type} report...")
-            analysis = cls._opus_analyze(report_type, context, custom_request)
+            # SINGLE Sonnet call — analyze AND present in one go
+            logger.info(f"[REPORT] Generating {report_type} report with Sonnet 4.6...")
             
-            if not analysis:
-                logger.error("[REPORT] Opus analysis failed")
-                return {"success": False, "error": "Analysis failed. Please try again."}
-            
-            # Step 2: HAIKU presents the findings professionally
-            logger.info(f"[REPORT] Step 2: Haiku presenting findings...")
-            report = cls._sonnet_present(report_type, analysis, context)
+            report = cls._generate_single(report_type, context, custom_request)
             
             if not report:
-                logger.error("[REPORT] Haiku presentation failed")
+                logger.error("[REPORT] Report generation failed")
                 return {"success": False, "error": "Report generation failed. Please try again."}
             
             logger.info(f"[REPORT] Report generated successfully")
@@ -13970,144 +13963,17 @@ class ReportEngine:
             return {"success": False, "error": f"An error occurred: {str(e)}"}
     
     @classmethod
-    def _opus_analyze(cls, report_type: str, context: dict, custom_request: str = None) -> Optional[str]:
-        """
-        Step 1: Opus does deep analysis of business data.
-        Returns structured findings (not pretty, just smart).
-        """
+    def _generate_single(cls, report_type: str, context: dict, custom_request: str = None) -> Optional[str]:
+        """Single Sonnet call — analyze data AND write professional report in one step."""
         
         if not ANTHROPIC_API_KEY:
             return None
         
-        # Build data summary for Opus
+        # Build data summary
         data_summary = cls._build_data_summary(context)
-        
-        # Report-specific analysis prompts - AI NEVER calculates, only explains pre-calculated numbers
-        analysis_prompts = {
-            "management": """Review the PRE-CALCULATED metrics below. This is a YEAR-TO-DATE management statement showing cumulative performance from financial year start to current date.
-
-You MUST cover ALL of the following in thorough detail:
-1. FINANCIAL PERFORMANCE: YTD revenue, cost of sales, gross profit margin analysis, net profit/loss, comparison to industry norms
-2. BALANCE SHEET HEALTH: Total assets vs liabilities, current ratio, quick ratio, solvency position
-3. CASH POSITION: Bank balances, cash flow indicators, working capital adequacy
-4. DEBTORS/RECEIVABLES: Total outstanding, debtor days, top 5 debtors by amount with names, aging analysis, concentration risk, collection concerns
-5. CREDITORS/PAYABLES: Total owed, creditor days, top creditors, payment capacity given cash position
-6. INVENTORY/STOCK: Stock value, stock turnover rate, days inventory outstanding, slow-moving stock concerns, negative stock items
-7. PAYROLL & COMPLIANCE: Payroll costs, SARS compliance status (PAYE, UIF, SDL), employee cost ratio
-8. KEY RISKS: List every material risk identified with severity (CRITICAL/HIGH/MEDIUM)
-9. OPPORTUNITIES: Revenue growth, cost reduction, cash flow improvement opportunities
-10. ACTION ITEMS: Specific, prioritized actions the owner must take immediately
-
-USE ONLY THE NUMBERS PROVIDED - do not invent or calculate new numbers. Be specific — use actual account names, customer names, amounts. A generic report is useless.""",
-            "kpi": "Review the PRE-CALCULATED KPIs below. Explain what each metric means in detail: are debtor days healthy? Is stock turn good? How does gross margin compare to industry (30% for hardware/industrial)? How does the current ratio look? What are the trends? USE ONLY THE NUMBERS PROVIDED.",
-            "sales": "Review the sales data below. Provide detailed analysis: top 10 customers by value with names and amounts, customer concentration risk, sales trends, payment method breakdown, average transaction value, and opportunities for growth. USE ONLY THE NUMBERS PROVIDED.",
-            "debtor": "Review the debtor data below in thorough detail. List ALL debtors with amounts and days outstanding. Identify: high-risk accounts, concentration risk, contra accounts, recommended collection actions for each major debtor, bad debt provisions needed, and total cash at risk. USE ONLY THE NUMBERS PROVIDED.",
-            "stock": "Review the stock data below thoroughly. Identify: total value, turnover rate, slow-moving items (no sales in 90+ days), negative stock items, overstocked items, items below reorder point, and specific recommendations. USE ONLY THE NUMBERS PROVIDED.",
-            "forecast": "Review the cash flow data below. Project next 30 days based on current trends: expected collections, expected payments, payroll obligations, VAT/SARS due dates, and projected bank balance week by week. USE ONLY THE NUMBERS PROVIDED.",
-            "custom": f"Review the data to answer in thorough detail: {custom_request or 'general business overview'}. USE ONLY THE NUMBERS PROVIDED."
-        }
-        
-        prompt = analysis_prompts.get(report_type, analysis_prompts["management"])
-        
-        system_prompt = """You are a SENIOR CHARTERED ACCOUNTANT AND FINANCIAL ADVISOR reviewing a South African small business.
-
-You have deep expertise in:
-- SA tax law and SARS compliance
-- Cash flow management for SMEs
-- Industry benchmarking (hardware, retail, hospitality, property)
-- Risk assessment and early warning indicators
-- Growth strategy for owner-managed businesses
-
-YOUR JOB: INTERPRET the pre-calculated numbers and provide R5,000/hour consultant-level insight.
-Not generic advice. SPECIFIC insights based on THIS business's actual numbers.
-
-═══════════════════════════════════════════════════════════════
-ABSOLUTE RULE - DO NOT CALCULATE ANYTHING. EVER.
-═══════════════════════════════════════════════════════════════
-- ALL numbers below are PRE-CALCULATED by Python (100% accurate)
-- DO NOT add, subtract, multiply, divide, or calculate percentages
-- DO NOT compute ratios, totals, averages, or any arithmetic
-- DO NOT estimate or derive numbers not explicitly provided
-- ONLY quote the EXACT numbers given — they are already correct
-- If a metric is missing, say "not available" — DO NOT calculate it
-- If you need a % or ratio that isn't provided, say "not calculated"
-The system calculates. You INTERPRET. This is non-negotiable.
-═══════════════════════════════════════════════════════════════
-
-ANALYSIS APPROACH (using ONLY provided numbers):
-1. LOOK at the pre-calculated numbers — what story do they tell?
-2. COMPARE provided metrics to healthy benchmarks (debtor days <45, gross margin >25%)
-3. IDENTIFY the 2-3 things needing IMMEDIATE attention
-4. SPOT patterns the owner might miss (customer concentration, seasonal trends)
-5. Give ACTIONABLE recommendations using the actual names and amounts in the data
-   e.g. "Follow up with ABC Engineering on their R45,000 outstanding balance"
-
-ADDITIONAL INSIGHT (no calculations needed):
-- Flag SARS compliance risks (late VAT, PAYE, provisional tax deadlines)
-- Consider SA economic context (interest rates, load shedding, inflation)
-- Be HONEST — if the business is bleeding cash, say so directly
-
-OUTPUT FORMAT:
-EXECUTIVE SUMMARY:
-[2-3 sentences using ONLY provided numbers]
-
-KEY FINDINGS:
-- [Finding quoting exact numbers from data + what it means]
-- [etc - aim for 5-7 findings]
-
-RED FLAGS:
-- [Urgent issue with specific numbers/names from data]
-- [etc]
-
-OPPORTUNITIES:
-- [Specific opportunity referencing actual data]
-- [etc]
-
-ACTION PLAN (Next 30 days):
-1. [Most urgent — specific name, amount, action]
-2. [Second priority]
-3. [etc - max 5 actions]
-
-KEY METRICS (quote EXACTLY from data):
-- [Metric]: [Exact value from data] → [Your expert interpretation]
-- [etc]"""
-
-        user_prompt = f"""{prompt}
-
-BUSINESS DATA:
-{data_summary}
-
-Analyze and return findings in the specified format."""
-
-        try:
-            client = _anthropic_client
-            response = client.messages.create(
-                model=cls.MODEL_OPUS,
-                max_tokens=6000,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
-            )
-            
-            return response.content[0].text
-                
-        except Exception as e:
-            logger.error(f"[REPORT] Opus exception: {e}")
-            return None
-    
-    @classmethod
-    def _sonnet_present(cls, report_type: str, analysis: str, context: dict) -> Optional[str]:
-        """
-        Step 2: Sonnet takes Opus's deep analysis and writes a professional report.
-        Professional, clear, actionable - the kind of report a CA firm would deliver.
-        """
-        
-        if not ANTHROPIC_API_KEY:
-            return None
-        
         biz_name = context.get("business_name", "Business")
         report_date = today()
         
-        # Report titles
         titles = {
             "management": "MANAGEMENT REPORT",
             "kpi": "KEY PERFORMANCE INDICATORS",
@@ -14117,66 +13983,77 @@ Analyze and return findings in the specified format."""
             "forecast": "CASH FLOW FORECAST",
             "custom": "ANALYSIS REPORT"
         }
-        
         report_title = titles.get(report_type, "BUSINESS REPORT")
         
-        system_prompt = f"""You are writing a comprehensive, professional management report for a business owner who may present this to investors.
-This report must be THOROUGH and COMPLETE — cover every finding from the analysis. Do NOT summarize or skip details.
+        # Report-specific focus areas
+        focus_prompts = {
+            "management": """Cover ALL of these in thorough detail:
+1. EXECUTIVE SUMMARY — 3-4 sentences capturing the overall picture
+2. FINANCIAL PERFORMANCE — YTD revenue, cost of sales, gross profit margin, net profit/loss, comparison to industry norms
+3. BALANCE SHEET POSITION — Total assets vs liabilities, current ratio, solvency
+4. DEBTORS & RECEIVABLES — Table of top 5+ debtors by amount with names, debtor days, aging, concentration risk, collection concerns
+5. CREDITORS & PAYABLES — Total owed, top creditors, payment capacity
+6. INVENTORY/STOCK — Stock value, turnover rate, negative stock items, slow movers
+7. PAYROLL & COMPLIANCE — SARS status (PAYE, UIF, SDL), employee cost ratio
+8. CRITICAL RISKS — Each risk in its own warning box with severity
+9. RECOMMENDATIONS — Numbered, prioritized action items (IMMEDIATE / 7 DAYS / 30 DAYS)""",
+            "kpi": "Explain each KPI in detail: debtor days, stock turn, gross margin vs industry (30% for hardware), current ratio, trends. Include benchmark comparisons.",
+            "sales": "Top 10 customers by value with names and amounts, customer concentration risk, sales trends, payment method breakdown, average transaction value, growth opportunities.",
+            "debtor": "List ALL debtors with amounts and days outstanding. Identify high-risk accounts, concentration risk, contra accounts, collection actions for each major debtor, bad debt provisions.",
+            "stock": "Total value, turnover rate, slow-moving items (no sales 90+ days), negative stock items, overstocked items, items below reorder point, specific recommendations.",
+            "forecast": "Project next 30 days: expected collections, expected payments, payroll obligations, VAT/SARS due dates, projected bank balance week by week.",
+            "custom": f"Answer in thorough detail: {custom_request or 'general business overview'}"
+        }
+        
+        focus = focus_prompts.get(report_type, focus_prompts["management"])
+        
+        system_prompt = f"""You are a SENIOR CA(SA) writing a professional {report_title} for {biz_name} as at {report_date}.
+This report may be presented to investors or board members. It must be THOROUGH, SPECIFIC, and COMPLETE.
 
-REPORT HEADER:
-{report_title}
-{biz_name}
-{report_date}
+═══════════════════════════════════════════════════════════════
+ABSOLUTE RULE — DO NOT CALCULATE ANYTHING. EVER.
+═══════════════════════════════════════════════════════════════
+- ALL numbers are PRE-CALCULATED by Python (100% accurate)
+- DO NOT add, subtract, multiply, divide, or compute anything
+- ONLY quote the EXACT numbers given
+- If a metric is missing, say "not available" — DO NOT calculate it
+═══════════════════════════════════════════════════════════════
 
 WRITING STYLE:
-- Write like a senior CA(SA) preparing a report for a board meeting or investor presentation
-- Professional, authoritative, specific
+- Professional, authoritative, specific — like a R5,000/hour consultant
 - NO emojis, NO casual language
-- Include ALL specific numbers, customer names, account names from the analysis
+- Include ALL specific numbers, customer names, account names from the data
 - Every claim must reference a specific figure
-- Do NOT be vague — "debtor days are high" is bad, "debtor days of 1,018 against industry standard of 30-45 days" is good
+- "debtor days are high" is BAD — "debtor days of 36 against industry standard of 30-45 days" is GOOD
 
 FORMAT — OUTPUT CLEAN HTML ONLY (no markdown, no ## or **):
-- <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:8px;margin-top:30px;"> for main section headings
+- <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:8px;margin-top:30px;"> for section headings
 - <h3 style="color:#8b5cf6;margin-top:20px;"> for sub-headings
 - <p style="margin:8px 0;line-height:1.7;"> for paragraphs
 - <strong> for emphasis
-- <ul style="margin:8px 0 8px 20px;"><li style="margin:4px 0;"> for bullet points
-- <table style="width:100%;border-collapse:collapse;margin:15px 0;">
-    <tr><th style="text-align:left;padding:10px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">Header</th></tr>
-    <tr><td style="padding:10px;border-bottom:1px solid rgba(255,255,255,0.08);">Value</td></tr>
-  </table> for data tables
+- <ul style="margin:8px 0 8px 20px;"><li style="margin:4px 0;"> for lists
+- <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:10px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">Header</th></tr><tr><td style="padding:10px;border-bottom:1px solid rgba(255,255,255,0.08);">Value</td></tr></table>
 - <div style="background:rgba(239,68,68,0.15);border-left:4px solid #ef4444;padding:15px;border-radius:6px;margin:12px 0;color:#fca5a5;"> for CRITICAL warnings
-- <div style="background:rgba(245,158,11,0.15);border-left:4px solid #f59e0b;padding:15px;border-radius:6px;margin:12px 0;color:#fcd34d;"> for CAUTION items  
+- <div style="background:rgba(245,158,11,0.15);border-left:4px solid #f59e0b;padding:15px;border-radius:6px;margin:12px 0;color:#fcd34d;"> for CAUTION items
 - <div style="background:rgba(16,185,129,0.15);border-left:4px solid #10b981;padding:15px;border-radius:6px;margin:12px 0;color:#6ee7b7;"> for POSITIVE highlights
-- <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:25px 0;"> between major sections
+- <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:25px 0;"> between sections
 
-REQUIRED SECTIONS — you MUST include ALL of these:
+Report should be 800-1500 words. Complete ALL sections fully."""
 
-1. EXECUTIVE SUMMARY — 3-4 sentences capturing the overall picture
-2. FINANCIAL PERFORMANCE — Revenue, margins, profit/loss with exact figures
-3. BALANCE SHEET POSITION — Assets, liabilities, equity, ratios
-4. DEBTORS & RECEIVABLES — Table of top debtors, aging, collection issues (use warning boxes for critical accounts)
-5. CREDITORS & PAYABLES — What is owed and to whom
-6. INVENTORY POSITION — Stock value, turnover, concerns
-7. PAYROLL & COMPLIANCE — SARS status, employee costs
-8. CRITICAL RISKS — Each risk in its own warning box with severity
-9. RECOMMENDATIONS — Numbered, prioritized action items with timeframes (IMMEDIATE / 7 DAYS / 30 DAYS)
+        user_prompt = f"""{focus}
 
-This report should be 800-1500 words. A busy owner should understand the full picture in one read."""
+USE ONLY THE NUMBERS PROVIDED — do not invent or calculate new numbers.
 
-        user_prompt = f"""Based on this analysis, write a professional {report_title} for {biz_name}.
+BUSINESS DATA:
+{data_summary}
 
-ANALYSIS FROM SENIOR ANALYST:
-{analysis}
-
-Write the report now. Be specific, professional, and actionable."""
+Write the full {report_title} now."""
 
         try:
             client = _anthropic_client
             response = client.messages.create(
-                model=cls.MODEL_PRESENTER,
-                max_tokens=6000,
+                model="claude-sonnet-4-6",
+                max_tokens=8000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
@@ -14184,7 +14061,7 @@ Write the report now. Be specific, professional, and actionable."""
             return response.content[0].text
                 
         except Exception as e:
-            logger.error(f"[REPORT] Haiku exception: {e}")
+            logger.error(f"[REPORT] Sonnet exception: {e}")
             return None
     
     @classmethod
