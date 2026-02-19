@@ -1440,7 +1440,7 @@ TAKE YOUR TIME. ACCURACY > SPEED. Read every number, every word carefully!"""
             ]
             
             response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-sonnet-4-6",
                 max_tokens=2500,
                 messages=[{"role": "user", "content": message_content}]
             )
@@ -7766,7 +7766,7 @@ Settings: /settings (business info, VAT, users, preferences)
 
 
 def call_zane_with_tools(system_prompt, user_message, tool_handler, chat_history=None,
-                         model="claude-sonnet-4-5-20250929", api_key="", max_turns=8):
+                         model="claude-sonnet-4-6", api_key="", max_turns=8):
     """Call Zane with tool loop. Returns final text response."""
     messages = []
     if chat_history:
@@ -7845,7 +7845,7 @@ class Brain:
     Zane understands intent, gathers context, executes actions, responds.
     """
     
-    MODEL_SONNET = "claude-sonnet-4-5-20250929"    # All Zane queries - Sonnet 4.5 (latest)
+    MODEL_SONNET = "claude-sonnet-4-6"    # All Zane queries - Sonnet 4.6 (latest)
     MAX_TOKENS = 3500
     
     @classmethod
@@ -19401,7 +19401,7 @@ def api_zane_analyze_file():
             
             client = _anthropic_client
             message = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-sonnet-4-6",
                 max_tokens=4000,
                 messages=[{
                     "role": "user",
@@ -25696,7 +25696,7 @@ Return valid JSON only, no other text."""
         try:
             client = _anthropic_client
             response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-sonnet-4-6",
                 max_tokens=500,
                 messages=[{
                     "role": "user",
@@ -26248,7 +26248,7 @@ Extract the recurring amount. Return valid JSON only."""
         try:
             client = _anthropic_client
             response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-sonnet-4-6",
                 max_tokens=500,
                 messages=[{
                     "role": "user",
@@ -33871,7 +33871,7 @@ def api_tb_import_save():
                 col_list = list(df.columns)
                 ai_prompt = f"Analyze this trial balance file columns.\nCOLUMNS: {col_list}\nSAMPLE:\n{sample_rows}\nReturn ONLY JSON: {{\"account_code\": \"col or null\", \"account_name\": \"col\", \"debit\": \"col or null\", \"credit\": \"col or null\", \"balance\": \"col or null\"}}"
                 client = _anthropic_client
-                ai_resp = client.messages.create(model="claude-sonnet-4-5-20250929", max_tokens=300, messages=[{"role": "user", "content": ai_prompt}])
+                ai_resp = client.messages.create(model="claude-sonnet-4-6", max_tokens=300, messages=[{"role": "user", "content": ai_prompt}])
                 ai_text = ai_resp.content[0].text.strip()
                 if '```' in ai_text: ai_text = ai_text.split('```')[1].replace('json', '').strip()
                 ai_map = json.loads(ai_text)
@@ -35206,7 +35206,7 @@ RULES:
             if ANTHROPIC_API_KEY:
                 client = _anthropic_client
                 message = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
+                    model="claude-sonnet-4-6",
                     max_tokens=8000,
                     messages=[{"role": "user", "content": insights_prompt}]
                 )
@@ -35476,7 +35476,7 @@ Rules:
 
                 client = _anthropic_client
                 ai_response = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
+                    model="claude-sonnet-4-6",
                     max_tokens=500,
                     messages=[{"role": "user", "content": ai_prompt}]
                 )
@@ -35886,7 +35886,7 @@ FORMAT RULES - OUTPUT CLEAN HTML:
             return jsonify({"success": False, "error": "AI not configured"})
         
         message = _anthropic_client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-sonnet-4-6",
             max_tokens=8000,
             system=system_prompt,
             messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
@@ -46162,7 +46162,7 @@ Return ONLY the JSON, nothing else."""
             client = _anthropic_client
             
             response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-sonnet-4-6",
                 max_tokens=1000,
                 messages=[{"role": "user", "content": opus_prompt}]
             )
@@ -49075,7 +49075,7 @@ ONLY return the JSON object, nothing else."""
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": "claude-sonnet-4-5-20250929",
+                        "model": "claude-sonnet-4-6",
                         "max_tokens": 500,
                         "messages": [{"role": "user", "content": ai_map_prompt}]
                     },
@@ -49482,7 +49482,7 @@ Rules:
 
                 client = _anthropic_client
                 response = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
+                    model="claude-sonnet-4-6",
                     max_tokens=500,
                     messages=[{"role": "user", "content": ai_prompt}]
                 )
@@ -50425,7 +50425,7 @@ IMPORTANT: Only set true for actions the user EXPLICITLY asked for.
                     "anthropic-version": "2023-06-01"
                 },
                 json={
-                    "model": "claude-sonnet-4-5-20250929",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 300,
                     "messages": [{"role": "user", "content": understand_prompt}]
                 },
@@ -57374,7 +57374,7 @@ IMPORTANT:
 - DO NOT add any hours or overtime fields - just in/out times"""
 
         message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-sonnet-4-6",
             max_tokens=4000,
             messages=[
                 {
@@ -62449,7 +62449,7 @@ If ANY number is not visible on the document, set it to 0. Python handles all ma
                     logger.info(f"[SCAN] Sending bank statement {part_name} half ({len(part_data)/1024:.0f}KB)")
                     
                     part_message = client.messages.create(
-                        model="claude-sonnet-4-5-20250929",
+                        model="claude-sonnet-4-6",
                         max_tokens=6000,
                         messages=[{
                             "role": "user",
@@ -62498,7 +62498,7 @@ If ANY number is not visible on the document, set it to 0. Python handles all ma
                 logger.warning(f"[SCAN] Split failed ({split_err}), falling back to single image")
                 # Fallback to single image
                 message = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
+                    model="claude-sonnet-4-6",
                     max_tokens=6000,
                     messages=[{
                         "role": "user",
@@ -62515,7 +62515,7 @@ If ANY number is not visible on the document, set it to 0. Python handles all ma
                 extracted["ai_source"] = "Claude Sonnet"
         else:
             message = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-sonnet-4-6",
                 max_tokens=4000,
                 messages=[{
                     "role": "user",
@@ -62581,7 +62581,7 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                 
                 try:
                     retry_message = client.messages.create(
-                        model="claude-sonnet-4-5-20250929",
+                        model="claude-sonnet-4-6",
                         max_tokens=4000,
                         messages=[{
                             "role": "user",
@@ -65452,7 +65452,7 @@ BUTTON COLORS to mention:
 Keep explanations SHORT (1-2 sentences max). Always end with reassurance!"""
 
         response = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-sonnet-4-6",
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -65870,7 +65870,7 @@ def api_smart_scan():
         client = _anthropic_client
         
         message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-sonnet-4-6",
             max_tokens=2000,
             messages=[{
                 "role": "user",
