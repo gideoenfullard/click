@@ -2298,6 +2298,59 @@ class DB:
             item = self.get_one("stock", stock_id)
         return item
     
+    def get_business_users(self, business_id: str) -> list:
+        """Get all users linked to a business via team_members + owner.
+        Returns user records with 'name' field resolved from metadata."""
+        if not business_id:
+            return []
+        
+        users = []
+        seen_ids = set()
+        
+        # 1. Get business owner
+        biz = self.get_one("businesses", business_id)
+        if biz and biz.get("user_id"):
+            owner = self.get_one("users", biz["user_id"])
+            if owner:
+                # Resolve name from raw_user_meta_data if needed
+                if not owner.get("name") and owner.get("raw_user_meta_data"):
+                    try:
+                        meta = json.loads(owner["raw_user_meta_data"]) if isinstance(owner["raw_user_meta_data"], str) else owner["raw_user_meta_data"]
+                        owner["name"] = meta.get("full_name", owner.get("email", "Owner"))
+                    except:
+                        pass
+                owner["role"] = "owner"
+                users.append(owner)
+                seen_ids.add(owner.get("id"))
+        
+        # 2. Get team members
+        members = self.get("team_members", {"business_id": business_id}) or []
+        for tm in members:
+            uid = tm.get("user_id")
+            if uid and uid not in seen_ids:
+                user = self.get_one("users", uid)
+                if user:
+                    if not user.get("name") and user.get("raw_user_meta_data"):
+                        try:
+                            meta = json.loads(user["raw_user_meta_data"]) if isinstance(user["raw_user_meta_data"], str) else user["raw_user_meta_data"]
+                            user["name"] = meta.get("full_name", user.get("email", "Staff"))
+                        except:
+                            pass
+                    user["role"] = tm.get("role", "staff")
+                    users.append(user)
+                    seen_ids.add(uid)
+            elif not uid and tm.get("email"):
+                # Invited but not yet registered - add placeholder
+                users.append({
+                    "id": tm.get("id", ""),
+                    "name": tm.get("name", tm.get("email", "Invited")),
+                    "email": tm.get("email"),
+                    "role": tm.get("role", "staff"),
+                    "status": tm.get("status", "pending")
+                })
+        
+        return users
+    
     def update_stock(self, stock_id: str, updates: dict, biz_id: str = None):
         """Update stock item - FIXED version.
         
@@ -13106,7 +13159,7 @@ class Context:
             today_str = today()
             
             # Get user names
-            users = db.get("users", {"business_id": biz_id}) or []
+            users = db.get_business_users(biz_id) or []
             user_names = {u.get("id"): u.get("name", u.get("email", "Unknown")[:20]) for u in users}
             
             activity = []
@@ -13165,7 +13218,7 @@ class Context:
             audit = db.get("audit_log", {"business_id": biz_id}) or []
             
             # Get user names
-            users = db.get("users", {"business_id": biz_id}) or []
+            users = db.get_business_users(biz_id) or []
             user_names = {u.get("id"): u.get("name", u.get("email", "Unknown")[:20]) for u in users}
             
             # Sort by timestamp descending
@@ -13448,7 +13501,7 @@ class DailyBriefing:
             f_pos = pool.submit(db.get, "purchase_orders", {"business_id": business_id})
             f_customers = pool.submit(db.get, "customers", {"business_id": business_id})
             f_stock = pool.submit(db.get_all_stock, business_id)
-            f_users = pool.submit(db.get, "users", {"business_id": business_id})
+            f_users = pool.submit(db.get_business_users, business_id)
         
         sales = f_sales.result(timeout=20) or []
         invoices = f_invoices.result(timeout=20) or []
@@ -13664,7 +13717,7 @@ class DailyBriefing:
             else:
                 # Get team members to name who did nothing
                 try:
-                    team_users = db.get("users", {"business_id": business_id}) or []
+                    team_users = db.get_business_users(business_id) or []
                     staff_names = [u.get("name", u.get("email", "?")) for u in team_users if u.get("role") not in ("owner",) and u.get("name")]
                 except:
                     staff_names = []
@@ -13706,7 +13759,7 @@ class DailyBriefing:
         
         # Find idle staff - people in the users table with no activity
         try:
-            all_users = db.get("users", {"business_id": business_id}) or []
+            all_users = db.get_business_users(business_id) or []
             for u in all_users:
                 uname = u.get("name", "")
                 role = u.get("role", "")
@@ -30760,7 +30813,7 @@ def api_pulse_data():
             f_quotes = pool.submit(db.get, "quotes", {"business_id": biz_id})
             f_suppliers = pool.submit(db.get, "suppliers", {"business_id": biz_id})
             f_stock = pool.submit(db.get_all_stock, biz_id)
-            f_users = pool.submit(db.get, "users", {"business_id": biz_id})
+            f_users = pool.submit(db.get_business_users, biz_id)
         
         invoices = f_invoices.result(timeout=20) or []
         sales = f_sales.result(timeout=20) or []
