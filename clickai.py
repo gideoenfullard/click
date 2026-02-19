@@ -39079,6 +39079,23 @@ def pos_page():
     }
     pos_settings_json = json.dumps(pos_settings).replace("'", "&#39;")
     
+    # Get team members for cashier selector
+    cashier_list = db.get_business_users(biz_id)
+    current_user_id = user.get("id", "") if user else ""
+    current_user_name = user.get("name", user.get("email", "Me")) if user else "Me"
+    # Extract first name
+    if current_user_name and " " in current_user_name:
+        current_user_name = current_user_name.split()[0]
+    
+    cashier_buttons = ""
+    for cu in cashier_list:
+        cu_id = cu.get("id", "")
+        cu_name = cu.get("name", cu.get("email", "?"))
+        if cu_name and " " in cu_name:
+            cu_name = cu_name.split()[0]  # First name only
+        is_active = "active" if cu_id == current_user_id else ""
+        cashier_buttons += f'<button class="cashier-btn {is_active}" data-uid="{cu_id}" onclick="switchCashier(this, &apos;{cu_id}&apos;, &apos;{cu_name}&apos;)">{cu_name[:12]}</button>'
+    
     pos_css = '''
     <style>
     :root {
@@ -39094,6 +39111,43 @@ def pos_page():
     body {
         background: var(--pos-bg);
         overflow: hidden;
+    }
+    
+    /* ═══ CASHIER BAR ═══ */
+    .cashier-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 20px;
+        background: rgba(20, 20, 40, 0.9);
+        border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+    }
+    .cashier-bar label {
+        color: var(--text-muted, #888);
+        font-size: 12px;
+        font-weight: bold;
+        white-space: nowrap;
+    }
+    .cashier-btn {
+        padding: 6px 14px;
+        border-radius: 20px;
+        border: 1px solid rgba(255,255,255,0.15);
+        background: rgba(255,255,255,0.05);
+        color: #aaa;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .cashier-btn:hover {
+        background: rgba(99, 102, 241, 0.2);
+        color: white;
+    }
+    .cashier-btn.active {
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        color: white;
+        border-color: #8b5cf6;
+        font-weight: bold;
+        box-shadow: 0 0 12px rgba(99, 102, 241, 0.4);
     }
     
     /* ═══ MAIN LAYOUT ═══ */
@@ -39790,6 +39844,10 @@ def pos_page():
     '''
     
     pos_html = f'''
+    <div class="cashier-bar">
+        <label>👤 Kassier:</label>
+        {cashier_buttons}
+    </div>
     <div class="pos-container">
         <!-- Stock List Panel -->
         <div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
@@ -39874,6 +39932,24 @@ def pos_page():
     <script>
     let cart = [];
     let selectedRowIndex = -1;
+    let currentCashierId = null;
+    let currentCashierName = null;
+    
+    // Initialize cashier from active button
+    (function() {
+        const activeBtn = document.querySelector('.cashier-btn.active');
+        if (activeBtn) {
+            currentCashierId = activeBtn.dataset.uid;
+            currentCashierName = activeBtn.textContent.trim();
+        }
+    })();
+    
+    function switchCashier(btn, uid, name) {
+        document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentCashierId = uid;
+        currentCashierName = name;
+    }
     
     function addToCart(id, code, desc, price, stock) {
         if (stock <= 0) {
@@ -40506,7 +40582,9 @@ def pos_page():
                     payment_method: method,
                     subtotal: subtotal,
                     vat: vat,
-                    total: grandTotal
+                    total: grandTotal,
+                    cashier_id: currentCashierId,
+                    cashier_name: currentCashierName
                 })
             });
             
@@ -40577,7 +40655,9 @@ def pos_page():
                     customer_name: customerName,
                     subtotal: subtotal,
                     vat: vat,
-                    total: grandTotal
+                    total: grandTotal,
+                    cashier_id: currentCashierId,
+                    cashier_name: currentCashierName
                 })
             });
             
@@ -40671,7 +40751,9 @@ def pos_page():
                     customer_name: customerName,
                     subtotal: subtotal,
                     vat: vat,
-                    total: grandTotal
+                    total: grandTotal,
+                    cashier_id: currentCashierId,
+                    cashier_name: currentCashierName
                 })
             });
             
@@ -41970,6 +42052,7 @@ def pos_page():
                 ${posSettings.vat_number ? '<div style="font-size:18px;color:#666;">VAT: ' + posSettings.vat_number + '</div>' : ''}
                 <div style="margin-top:10px;font-size:22px;font-weight:bold;">${saleNum}</div>
                 <div style="font-size:18px;color:#666;">${date} ${time}</div>
+                ${currentCashierName ? '<div style="font-size:16px;color:#666;margin-top:4px;">Cashier: ' + currentCashierName + '</div>' : ''}
             </div>
             
             <div style="margin-bottom:15px;font-size:18px;">
@@ -43426,6 +43509,7 @@ def api_pos_sale():
         customer_id = data.get("customer_id", "")
         customer_name = data.get("customer_name", "Cash")
         payment_method = data.get("payment_method", "cash")
+        cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
         
         if not items:
             return jsonify({"success": False, "error": "No items in cart"})
@@ -43456,6 +43540,7 @@ def api_pos_sale():
             "subtotal": float(subtotal),
             "vat": float(vat),
             "total": float(total),
+            "created_by": cashier_id,
             "created_at": now()
         }
         
@@ -43579,6 +43664,7 @@ def api_pos_quote():
         items = data.get("items", [])
         customer_id = data.get("customer_id", "")
         customer_name = data.get("customer_name", "")
+        cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
         
         # DEBUG LOG
         logger.info(f"[POS QUOTE] Received customer_id: '{customer_id}' name: '{customer_name}'")
@@ -43622,7 +43708,7 @@ def api_pos_quote():
             vat=float(vat),
             total=float(total),
             status="draft",
-            created_by=user.get("id") if user else None
+            created_by=cashier_id
         )
         quote_id = quote["id"]
         
@@ -43919,6 +44005,7 @@ def api_pos_invoice():
         items = data.get("items", [])
         customer_id = data.get("customer_id", "")
         customer_name = data.get("customer_name", "")
+        cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
         
         if not items:
             return jsonify({"success": False, "error": "No items in cart"})
@@ -43958,7 +44045,7 @@ def api_pos_invoice():
             total=float(total),
             status="outstanding",
             payment_method="account",
-            created_by=user.get("id", "") if user else ""
+            created_by=cashier_id
         )
         invoice_id = invoice["id"]
         
