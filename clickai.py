@@ -43191,6 +43191,16 @@ def pos_history():
     else:
         date_desc = f"{date_from} to {date_to}"
     
+    # Build date filter HTML (staff can't see date controls)
+    if is_staff_pos:
+        date_filter_html = ""
+        zread_buttons_html = ""
+    else:
+        date_filter_html = f'''<input type="date" id="dateFrom" value="{date_from}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+            <span style="color:var(--text-muted);">to</span>
+            <input type="date" id="dateTo" value="{date_to}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">'''
+        zread_buttons_html = '<button onclick="printXRead()" class="btn btn-secondary">X-Read</button><button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>'
+    
     content = f'''
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px;margin-bottom:20px;">
@@ -43206,9 +43216,7 @@ def pos_history():
             <input type="text" id="searchBox" value="{search_q}" placeholder="🔍 Search customer, slip #, item..." 
                    style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);flex:1;min-width:200px;"
                    onkeydown="if(event.key==='Enter')applyFilters()">
-            {"" if is_staff_pos else f'''<input type="date" id="dateFrom" value="{date_from}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-            <span style="color:var(--text-muted);">to</span>
-            <input type="date" id="dateTo" value="{date_to}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">'''}
+            {date_filter_html}
             <select id="typeFilter" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 <option value="all" {"selected" if show_type == "all" else ""}>All Types</option>
                 <option value="cash" {"selected" if show_type == "cash" else ""}>Cash</option>
@@ -43262,7 +43270,7 @@ def pos_history():
                 <span style="color:var(--text-muted);margin-left:10px;">{transaction_count} transactions</span>
             </div>
             <div style="display:flex;gap:10px;">
-                {"" if is_staff_pos else '<button onclick="printXRead()" class="btn btn-secondary">X-Read</button><button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>'}
+                {zread_buttons_html}
             </div>
         </div>
         
