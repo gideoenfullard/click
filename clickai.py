@@ -14083,7 +14083,7 @@ Analyze and return findings in the specified format."""
             client = _anthropic_client
             response = client.messages.create(
                 model=cls.MODEL_OPUS,
-                max_tokens=6000,
+                max_tokens=3000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
@@ -35461,8 +35461,8 @@ RULES:
             if ANTHROPIC_API_KEY:
                 client = _anthropic_client
                 message = client.messages.create(
-                    model="claude-opus-4-6",
-                    max_tokens=8000,
+                    model="claude-sonnet-4-6",
+                    max_tokens=4000,
                     messages=[{"role": "user", "content": insights_prompt}]
                 )
                 if message.content and message.content[0].text:
@@ -36150,8 +36150,8 @@ FORMAT RULES - OUTPUT CLEAN HTML:
             return jsonify({"success": False, "error": "AI not configured"})
         
         message = _anthropic_client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=8000,
+            model="claude-sonnet-4-6",
+            max_tokens=4000,
             system=system_prompt,
             messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
         )
