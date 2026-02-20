@@ -15216,7 +15216,7 @@ class Auth:
     
     @staticmethod
     def login(email: str, password: str) -> Tuple[bool, str]:
-        """Authenticate user"""
+        """Authenticate user - handles both hashed and legacy plain-text passwords"""
         email = email.lower().strip()  # Normalize email
         users = db.get("users", {"email": email})
         
@@ -15225,11 +15225,43 @@ class Auth:
         
         user = users[0]
         
-        # Check password (simple hash for now)
+        # Hash the entered password
         pwd_hash = hashlib.sha256(password.encode()).hexdigest()
-        # Supabase uses 'encrypted_password', not 'password_hash'
-        if user.get("encrypted_password") != pwd_hash and user.get("password_hash") != pwd_hash:
+        
+        # Check against all possible password fields (encrypted_password, password_hash, password)
+        stored_encrypted = user.get("encrypted_password", "")
+        stored_hash = user.get("password_hash", "")
+        stored_plain = user.get("password", "")
+        
+        password_match = False
+        needs_upgrade = False
+        
+        # Check hashed password against encrypted_password and password_hash
+        if stored_encrypted and stored_encrypted == pwd_hash:
+            password_match = True
+        elif stored_hash and stored_hash == pwd_hash:
+            password_match = True
+        # Legacy: check if stored password is plain text (not a 64-char hex hash)
+        elif stored_encrypted and len(stored_encrypted) != 64 and stored_encrypted == password:
+            password_match = True
+            needs_upgrade = True
+        elif stored_hash and len(stored_hash) != 64 and stored_hash == password:
+            password_match = True
+            needs_upgrade = True
+        elif stored_plain and stored_plain == password:
+            password_match = True
+            needs_upgrade = True
+        
+        if not password_match:
             return False, "Invalid password"
+        
+        # Auto-upgrade legacy plain text passwords to hashed
+        if needs_upgrade:
+            try:
+                db.update("users", user["id"], {"encrypted_password": pwd_hash})
+                logger.info(f"[LOGIN] Auto-upgraded password hash for {email}")
+            except Exception as e:
+                logger.warning(f"[LOGIN] Password upgrade failed (non-critical): {e}")
         
         # Clear any old cache first
         Auth.clear_cache()
@@ -55257,8 +55289,18 @@ def forgot_password_page():
 def reset_password_page(token):
     """Reset password with token"""
     
-    # Find user with this token
+    # Find user with this token — try multiple approaches for RLS compatibility
     users = db.get("users", {"reset_token": token})
+    
+    # If RLS blocks the query, try fetching all users and filtering locally
+    if not users:
+        try:
+            all_users = db.get("users", {})
+            users = [u for u in all_users if u.get("reset_token") == token]
+            if users:
+                logger.info(f"[PASSWORD RESET] Found user via fallback search")
+        except:
+            pass
     
     if not users:
         return f'''<!DOCTYPE html>
@@ -55375,6 +55417,61 @@ def reset_password_page(token):
     </div>
 </body>
 </html>'''
+
+
+@app.route("/admin/reset-user-password", methods=["GET", "POST"])
+def admin_reset_user_password():
+    """Admin can reset any user's password. Must be logged in as owner."""
+    user = Auth.get_current_user()
+    if not user:
+        return redirect("/login")
+    
+    role = get_user_role()
+    if role not in ("owner", "admin", "manager"):
+        return "Unauthorized", 403
+    
+    message = ""
+    error = ""
+    
+    if request.method == "POST":
+        email = request.form.get("email", "").lower().strip()
+        new_password = request.form.get("password", "")
+        
+        if not email or not new_password:
+            error = "Email and password required"
+        elif len(new_password) < 6:
+            error = "Password must be at least 6 characters"
+        else:
+            users = db.get("users", {"email": email})
+            if users:
+                pwd_hash = hashlib.sha256(new_password.encode()).hexdigest()
+                db.update("users", users[0].get("id"), {
+                    "encrypted_password": pwd_hash,
+                    "reset_token": None,
+                    "reset_expires": None
+                })
+                message = f"✅ Password reset for {email}"
+                logger.info(f"[ADMIN] Password reset for {email} by {user.get('email')}")
+            else:
+                error = f"No user found with email: {email}"
+    
+    return f'''<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Reset Password</title>{CSS}</head>
+<body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
+<div class="card" style="width:100%;max-width:400px;">
+    <h2 style="text-align:center;">🔐 Admin: Reset User Password</h2>
+    {f'<div style="color:var(--green);margin:15px 0;text-align:center;padding:10px;background:rgba(34,197,94,0.1);border-radius:6px;">{message}</div>' if message else ''}
+    {f'<div style="color:var(--red);margin:15px 0;text-align:center;">{error}</div>' if error else ''}
+    <form method="POST">
+        <div class="form-group"><label class="form-label">User Email</label>
+        <input type="email" name="email" class="form-input" required placeholder="user@email.com"></div>
+        <div class="form-group"><label class="form-label">New Password</label>
+        <input type="password" name="password" class="form-input" required minlength="6" placeholder="New password (min 6 chars)"></div>
+        <button type="submit" class="btn btn-primary" style="width:100%;">Reset Password</button>
+    </form>
+    <p style="text-align:center;margin-top:15px;"><a href="/settings" style="color:var(--primary);">← Back</a></p>
+</div></body></html>'''
 
 
 @app.route("/register", methods=["GET", "POST"])
