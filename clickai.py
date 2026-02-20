@@ -52763,8 +52763,8 @@ def banking_page():
         // Show thinking state
         actionCell.innerHTML = `
             <div style="padding:8px;text-align:center;">
-                <div style="color:var(--primary);font-size:13px;font-weight:600;">🤖 Zane analiseer...</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${{clarificationAnswer ? 'Verwerk jou antwoord...' : 'Kyk na transaksie patroon'}}</div>
+                <div style="color:var(--primary);font-size:13px;font-weight:600;">Zane is looking...</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${{clarificationAnswer ? 'Processing your answer...' : 'Checking transaction...'}}</div>
             </div>`;
         
         try {{
@@ -52846,7 +52846,7 @@ def banking_page():
                 
             }} else {{
                 // Zane couldn't decide — show all categories
-                showAllCategories(txnId, description, data.all_categories, data.reason || 'Ek is nie seker nie — kies asseblief self.');
+                showAllCategories(txnId, description, data.all_categories, data.reason || 'Not sure — please pick from the list.');
             }}
             
         }} catch (err) {{
@@ -53675,7 +53675,7 @@ Fuel: warn no VAT claim. Never use "General Expenses".
 {"Pick the exact category from their answer." if user_answer else ""}
 
 JSON only:
-Know it: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]","confidence":"hoog","vat_warning":""}}
+Know it: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]","confidence":"high","vat_warning":""}}
 Not sure: {{"needs_clarification":true,"question":"[direct question]","options":[{{"label":"Option","value":"val"}}],"confidence":"medium","reason":""}}"""
 
         # Haiku — fast, cheap, smart enough for category matching
@@ -53702,7 +53702,7 @@ Not sure: {{"needs_clarification":true,"question":"[direct question]","options":
         ai_text = resp.json().get("content", [{}])[0].get("text", "")
         
         # Try to parse as JSON first (new format)
-        suggestion = extract_json_from_text(ai_text) if 'extract_json_from_text' in dir() else None
+        suggestion = extract_json_from_text(ai_text)
         
         if suggestion and suggestion.get("needs_clarification"):
             # Zane needs to ask a question
@@ -53713,7 +53713,7 @@ Not sure: {{"needs_clarification":true,"question":"[direct question]","options":
                 "question": suggestion.get("question", ""),
                 "options": suggestion.get("options", []),
                 "reason": suggestion.get("reason", ""),
-                "confidence": {"hoog": 0.9, "medium": 0.7, "laag": 0.4}.get(str(suggestion.get("confidence", "medium")), 0.7),
+                "confidence": {"hoog": 0.9, "high": 0.9, "medium": 0.7, "laag": 0.4, "low": 0.4}.get(str(suggestion.get("confidence", "medium")), 0.7),
                 "source": "ai",
                 "all_categories": all_category_names
             })
@@ -53732,11 +53732,11 @@ Not sure: {{"needs_clarification":true,"question":"[direct question]","options":
             
             for line in ai_text.strip().split("\n"):
                 line = line.strip()
-                if line.upper().startswith("KATEGORIE:"):
+                if line.upper().startswith("CATEGORY:"):
                     category = line.split(":", 1)[1].strip()
-                elif line.upper().startswith("REDE:"):
+                elif line.upper().startswith("REASON:"):
                     reason = line.split(":", 1)[1].strip()
-                elif line.upper().startswith("VERTROUE:"):
+                elif line.upper().startswith("CONFIDENCE:"):
                     confidence = line.split(":", 1)[1].strip().lower()
         
         # Validate category against available list
@@ -53755,14 +53755,14 @@ Not sure: {{"needs_clarification":true,"question":"[direct question]","options":
                     valid = True
                     break
         
-        conf_score = {"hoog": 0.9, "medium": 0.7, "laag": 0.4}.get(confidence, 0.7)
+        conf_score = {"hoog": 0.9, "high": 0.9, "medium": 0.7, "laag": 0.4, "low": 0.4}.get(confidence, 0.7)
         
         logger.info(f"[BANK ZANE] '{description[:30]}' → {category} ({confidence})")
         
         return jsonify({
             "success": True,
             "category": category if valid else "",
-            "reason": reason or f"Ek is nie seker waarheen hierdie transaksie gaan nie.",
+            "reason": reason or "Not sure about this one — pick from the dropdown and I'll learn for next time.",
             "confidence": conf_score,
             "source": "ai",
             "needs_clarification": False,
@@ -65745,10 +65745,16 @@ def api_scan_suggest_category():
         # Ask Claude for smart action recommendation
         client = _anthropic_client
         
+        # Get business name so AI knows if supplier = own business
+        business = Auth.get_current_business()
+        biz_name = business.get("name", "") if business else ""
+        
         # Build comprehensive category knowledge for Zane
         all_categories = IndustryKnowledge.build_category_list_for_ai()
         
-        prompt = f"""You are Zane, a bookkeeper. Look at this invoice and tell the user where to book it. Respond in English. Be direct — no filler, no emojis, no introductions.
+        prompt = f"""You are Zane, a bookkeeper for {biz_name}. Look at this invoice and tell the user where to book it. Respond in English. Be direct — no filler, no emojis, no introductions.
+
+{"IMPORTANT: The supplier '" + supplier_name + "' is the user's OWN business. This is their own stock/inventory for resale. Book as Stock Purchase." if biz_name and supplier_name and (biz_name.lower() in supplier_name.lower() or supplier_name.lower() in biz_name.lower()) else ""}
 
 Supplier: {supplier_name}, Invoice: {invoice_number}, Amount: R{total}, Items: {items_desc or "not specified"}
 {"User answered your question: " + user_answer if user_answer else ""}
