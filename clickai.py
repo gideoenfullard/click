@@ -13817,266 +13817,6 @@ class IndustryKnowledge:
         profile = cls.get_profile(industry)
         return profile.get("expense_categories", ["General Expenses"])
     
-    # ═══════════════════════════════════════════════════════════════════
-    # COMPREHENSIVE BOOKING CATEGORIES — Income, Expenses & Special
-    # Full sub-divisions for accurate bank recon & inbox booking
-    # Mapped to standard SA Chart of Accounts (6000-series expenses)
-    # ═══════════════════════════════════════════════════════════════════
-    
-    BOOKING_CATEGORIES = {
-        "income": {
-            "label": "💰 INKOMSTE / INCOME",
-            "items": [
-                # 4000-series
-                ("Sales Revenue", "4000"),
-                ("Sales — Cash", "4000"),
-                ("Sales — Card / EFT", "4000"),
-                ("Service Income", "4100"),
-                ("Rental Income", "4200"),
-                ("Recovery Income — Municipal", "4300"),
-                ("Recovery Income — Utilities", "4300"),
-                ("Interest Received", "4400"),
-                ("Discount Received", "4500"),
-                ("Commission Received", "4600"),
-                ("Insurance Payout", "4700"),
-                ("Bad Debt Recovered", "4800"),
-                ("Sundry Income", "4900"),
-            ]
-        },
-        "cost_of_sales": {
-            "label": "📦 KOSTE VAN VERKOPE / COST OF SALES",
-            "items": [
-                ("Stock Purchases — General", "5000"),
-                ("Stock Purchases — Steel", "5000"),
-                ("Stock Purchases — Hardware", "5000"),
-                ("Stock Purchases — Fittings", "5000"),
-                ("Stock Purchases — Paint", "5000"),
-                ("Stock Purchases — Electrical", "5000"),
-                ("Stock Purchases — Plumbing", "5000"),
-                ("Stock Purchases — Tools", "5000"),
-                ("Stock Purchases — Food", "5000"),
-                ("Stock Purchases — Beverages", "5000"),
-                ("Direct Labour", "5100"),
-                ("Subcontractors", "5150"),
-                ("Freight & Delivery Costs", "5200"),
-                ("Cutting & Processing", "5300"),
-                ("Packaging Materials", "5400"),
-            ]
-        },
-        "premises": {
-            "label": "🏢 PERSEEL / PREMISES",
-            "items": [
-                ("Rent — Business Premises", "6100"),
-                ("Rates & Taxes — Municipal", "6220"),
-                ("Rates & Taxes — Property", "6220"),
-                ("Water & Sewage", "6210"),
-                ("Refuse Removal", "6230"),
-                ("Electricity", "6200"),
-                ("Gas", "6240"),
-                ("Security", "6250"),
-                ("Garden & Maintenance", "6260"),
-                ("Cleaning — Premises", "6270"),
-            ]
-        },
-        "salaries": {
-            "label": "👥 SALARISSE / SALARIES & WAGES",
-            "items": [
-                ("Salaries & Wages", "6000"),
-                ("Bonus / 13th Cheque", "6001"),
-                ("Commission Paid", "6002"),
-                ("Overtime", "6003"),
-                ("UIF Expense (Employer)", "6010"),
-                ("SDL Expense", "6020"),
-                ("Staff Welfare", "6030"),
-                ("Recruitment Costs", "6040"),
-            ]
-        },
-        "motor_vehicle": {
-            "label": "🚗 VOERTUIG / MOTOR VEHICLE",
-            "items": [
-                ("Fuel — Business Vehicle", "6510"),
-                ("Fuel — Equipment (Mower, Generator, etc.)", "6515"),
-                ("Vehicle Licence & Registration", "6520"),
-                ("Vehicle Insurance", "6530"),
-                ("Vehicle Repairs & Service", "6540"),
-                ("Vehicle Lease / Installment", "6550"),
-                ("Tolls & Parking", "6560"),
-                ("Vehicle Tracking (Netstar, Tracker)", "6570"),
-            ]
-        },
-        "communication": {
-            "label": "📱 KOMMUNIKASIE / COMMUNICATION",
-            "items": [
-                ("Telephone — Landline", "6300"),
-                ("Telephone — Cellphone", "6300"),
-                ("Internet / WiFi", "6310"),
-                ("Postage & Courier", "6320"),
-                ("DSTV / Streaming", "6330"),
-            ]
-        },
-        "office_admin": {
-            "label": "🗃️ KANTOOR / OFFICE & ADMIN",
-            "items": [
-                ("Stationery & Printing", "6700"),
-                ("Office Supplies", "6700"),
-                ("Computer Consumables (Ink, Paper)", "6710"),
-                ("Refreshments / Tea & Coffee", "6720"),
-                ("Cleaning Supplies", "6730"),
-                ("Protective Clothing & PPE", "6740"),
-                ("Small Tools & Equipment (<R7000)", "6750"),
-            ]
-        },
-        "marketing": {
-            "label": "📢 BEMARKING / MARKETING",
-            "items": [
-                ("Advertising — Online / Social Media", "6800"),
-                ("Advertising — Print / Flyers", "6800"),
-                ("Signage & Branding", "6810"),
-                ("Website Costs", "6820"),
-                ("Sponsorships", "6830"),
-                ("Promotions & Giveaways", "6840"),
-            ]
-        },
-        "professional": {
-            "label": "⚖️ PROFESSIONELE FOOIE / PROFESSIONAL FEES",
-            "items": [
-                ("Accounting Fees", "6900"),
-                ("Audit Fees", "6901"),
-                ("Legal Fees", "6902"),
-                ("Consulting Fees", "6903"),
-                ("IT Support / Managed Services", "6904"),
-                ("Commission Paid — Agent / Broker", "6905"),
-            ]
-        },
-        "insurance": {
-            "label": "🛡️ VERSEKERING / INSURANCE",
-            "items": [
-                ("Insurance — Business / Contents", "6400"),
-                ("Insurance — Vehicle", "6401"),
-                ("Insurance — Equipment", "6402"),
-                ("Insurance — Liability / Public", "6403"),
-                ("Insurance — Life / Key Person", "6404"),
-                ("Insurance — Workman's Comp", "6405"),
-            ]
-        },
-        "repairs": {
-            "label": "🔧 HERSTELWERK / REPAIRS & MAINTENANCE",
-            "items": [
-                ("Repairs — Building / Premises", "6600"),
-                ("Repairs — Equipment / Machinery", "6610"),
-                ("Repairs — Vehicle", "6540"),
-                ("Maintenance Contract", "6620"),
-                ("Forklift Expenses", "6630"),
-            ]
-        },
-        "it_software": {
-            "label": "💻 IT & SAGTEWARE / IT & SOFTWARE",
-            "items": [
-                ("Software Subscription (Monthly)", "6850"),
-                ("Cloud / Hosting", "6851"),
-                ("Hardware Purchase (<R7000)", "6852"),
-                ("Domain & Email", "6853"),
-                ("ClickAI Subscription", "6854"),
-            ]
-        },
-        "financial": {
-            "label": "🏦 FINANSIEEL / FINANCIAL",
-            "items": [
-                ("Bank Charges", "6910"),
-                ("Card Machine Fees", "6911"),
-                ("Interest Paid — Overdraft", "6920"),
-                ("Interest Paid — Loan", "6921"),
-                ("Interest Paid — Vehicle Finance", "6922"),
-                ("Bad Debts Written Off", "6950"),
-                ("Collection Costs", "6951"),
-                ("Depreciation", "6960"),
-            ]
-        },
-        "travel": {
-            "label": "✈️ REIS / TRAVEL & ACCOMMODATION",
-            "items": [
-                ("Travel — Local", "6980"),
-                ("Travel — International", "6981"),
-                ("Accommodation", "6982"),
-                ("Meals — Business Travel", "6983"),
-                ("Conference & Events", "6984"),
-            ]
-        },
-        "other_expense": {
-            "label": "📎 ANDER / OTHER EXPENSES",
-            "items": [
-                ("Entertainment", "6970"),
-                ("Training & Development", "6985"),
-                ("Licence Fees (Liquor, Trade, etc.)", "6990"),
-                ("Membership & Subscriptions", "6991"),
-                ("Donations", "6992"),
-                ("Fines & Penalties", "6993"),
-                ("Linen & Laundry", "6994"),
-                ("Toiletries & Amenities", "6995"),
-                ("Booking Commission (Airbnb, etc.)", "6996"),
-                ("Kitchen Equipment", "6997"),
-                ("Sundry Expenses", "6999"),
-            ]
-        },
-        "special": {
-            "label": "⚡ SPESIAAL / SPECIAL TRANSACTIONS",
-            "items": [
-                ("Customer Payment", ""),
-                ("POS Deposit", ""),
-                ("Owner Drawings", "3200"),
-                ("Owner Contribution / Capital", "3000"),
-                ("Loan Received", "2300"),
-                ("Loan Repayment", "2300"),
-                ("Transfer Between Accounts", ""),
-                ("VAT Payment to SARS", "2100"),
-                ("PAYE / UIF / SDL Payment", "2200"),
-                ("Provisional Tax Payment", ""),
-                ("Refund Given", ""),
-                ("Refund Received", ""),
-                ("Deposit Paid (Held)", "1400"),
-                ("Deposit Received (Held)", "2400"),
-                ("Ignore / Not Business Related", ""),
-            ]
-        }
-    }
-    
-    @classmethod
-    def get_booking_categories_flat(cls, business_id: str = None) -> list:
-        """Get flat list of ALL booking categories (for validation/matching)"""
-        cats = []
-        for group in cls.BOOKING_CATEGORIES.values():
-            for item in group["items"]:
-                cats.append(item[0])
-        return cats
-    
-    @classmethod
-    def get_booking_categories_grouped(cls, business_id: str = None) -> dict:
-        """Get grouped categories with optgroup labels for <select> dropdowns"""
-        return cls.BOOKING_CATEGORIES
-    
-    @classmethod
-    def build_category_options_html(cls, business_id: str = None) -> str:
-        """Build <optgroup> HTML for category dropdown"""
-        html = '<option value="">— Kies kategorie / Choose category —</option>'
-        for group_key, group in cls.BOOKING_CATEGORIES.items():
-            html += f'<optgroup label="{group["label"]}">'
-            for item_name, gl_code in group["items"]:
-                gl_hint = f" [{gl_code}]" if gl_code else ""
-                html += f'<option value="{item_name}">{item_name}{gl_hint}</option>'
-            html += '</optgroup>'
-        return html
-    
-    @classmethod
-    def build_category_list_for_ai(cls) -> str:
-        """Build formatted category list for AI prompts"""
-        lines = []
-        for group_key, group in cls.BOOKING_CATEGORIES.items():
-            lines.append(f"\n{group['label']}:")
-            for item_name, gl_code in group["items"]:
-                gl_hint = f" (GL {gl_code})" if gl_code else ""
-                lines.append(f"  - {item_name}{gl_hint}")
-        return "\n".join(lines)
-
     @classmethod
     def get_terminology(cls, business_id: str) -> dict:
         """Get industry-specific terminology"""
@@ -14690,58 +14430,35 @@ class BankLearning:
                     "times_seen": pattern.get("times_seen", 1)
                 }
         
-        # Common patterns (built-in knowledge — uses comprehensive categories)
+        # Common patterns (built-in knowledge)
         common = {
-            "ENGEN": "Fuel — Business Vehicle",
-            "SASOL": "Fuel — Business Vehicle",
-            "SHELL": "Fuel — Business Vehicle",
-            "BP ": "Fuel — Business Vehicle",
-            "CALTEX": "Fuel — Business Vehicle",
-            "TOTAL GARAGE": "Fuel — Business Vehicle",
-            "MAKRO": "Stock Purchases — General",
-            "PICK N PAY": "Stock Purchases — General",
-            "PNP ": "Stock Purchases — General",
-            "CHECKERS": "Stock Purchases — General",
-            "WOOLWORTHS": "Stock Purchases — General",
-            "SPAR ": "Stock Purchases — General",
-            "TELKOM": "Telephone — Landline",
-            "VODACOM": "Telephone — Cellphone",
-            "MTN ": "Telephone — Cellphone",
-            "RAIN ": "Internet / WiFi",
-            "AFRIHOST": "Internet / WiFi",
+            "ENGEN": "Fuel",
+            "SASOL": "Fuel",
+            "SHELL": "Fuel",
+            "BP ": "Fuel",
+            "CALTEX": "Fuel",
+            "MAKRO": "Stock Purchases",
+            "PICK N PAY": "Stock Purchases",
+            "PNP ": "Stock Purchases",
+            "CHECKERS": "Stock Purchases",
+            "WOOLWORTHS": "Stock Purchases",
+            "SPAR ": "Stock Purchases",
+            "TELKOM": "Telephone",
+            "VODACOM": "Telephone",
+            "MTN ": "Telephone",
             "ESKOM": "Electricity",
-            "CITY OF": "Rates & Taxes — Municipal",
-            "MUNICIPALITY": "Rates & Taxes — Municipal",
-            "MUNISIPAL": "Rates & Taxes — Municipal",
-            "SARS": "VAT Payment to SARS",
-            "SALARIES": "Salaries & Wages",
-            "WAGES": "Salaries & Wages",
-            "RENT": "Rent — Business Premises",
-            "INSURANCE": "Insurance — Business / Contents",
-            "SANTAM": "Insurance — Business / Contents",
-            "OUTSURANCE": "Insurance — Business / Contents",
-            "DISCOVERY": "Insurance — Life / Key Person",
+            "CITY OF": "Municipal",
+            "MUNICIPALITY": "Municipal",
+            "SARS": "Tax Payment",
+            "SALARIES": "Salaries",
+            "WAGES": "Wages",
+            "RENT": "Rent",
+            "INSURANCE": "Insurance",
+            "SANTAM": "Insurance",
+            "OUTSURANCE": "Insurance",
             "BANK CHARGES": "Bank Charges",
             "SERVICE FEE": "Bank Charges",
-            "MONTHLY FEE": "Bank Charges",
-            "CASH DEPOSIT FEE": "Bank Charges",
-            "TAKEALOT": "Office Supplies",
-            "MULTICHOICE": "DSTV / Streaming",
-            "DSTV": "DSTV / Streaming",
-            "NETSTAR": "Vehicle Tracking (Netstar, Tracker)",
-            "TRACKER": "Vehicle Tracking (Netstar, Tracker)",
-            "GOOGLE": "Software Subscription (Monthly)",
-            "MICROSOFT": "Software Subscription (Monthly)",
-            "ADOBE": "Software Subscription (Monthly)",
-            "ZAPPER": "Card Machine Fees",
-            "YOCO": "Card Machine Fees",
-            "IKHOKHA": "Card Machine Fees",
-            "ADT": "Security",
-            "FIDELITY": "Security",
-            "CHUBB": "Security",
-            "WES BANK": "Vehicle Lease / Installment",
-            "WESBANK": "Vehicle Lease / Installment",
-            "MFC ": "Vehicle Lease / Installment",
+            "MONTHLY FEE": "Bank Charges"
         }
         
         for keyword, category in common.items():
@@ -14779,6 +14496,242 @@ class BankLearning:
         
         logger.info(f"[BANK LEARN] Auto-categorized {auto_count}/{len(transactions)} transactions")
         return categorized
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # COMPREHENSIVE BOOKING CATEGORIES — Backend AI knowledge only
+    # Zane uses these to make smart decisions. Users NEVER see this list.
+    # ═══════════════════════════════════════════════════════════════════════
+    
+    BOOKING_CATEGORIES = {
+        "income": {
+            "label": "Income / Inkomste",
+            "items": [
+                ("Sales — Cash", "4000"),
+                ("Sales — Credit", "4001"),
+                ("Sales — Card Machine", "4002"),
+                ("Sales — Online / EFT", "4003"),
+                ("Service Revenue", "4100"),
+                ("Rental Income", "4200"),
+                ("Commission Received", "4300"),
+                ("Interest Received", "4400"),
+                ("Sundry Income", "4900"),
+                ("Customer Payment", "1000"),
+                ("POS Deposit", "1000"),
+            ]
+        },
+        "cost_of_sales": {
+            "label": "Cost of Sales / Koste van Verkope",
+            "items": [
+                ("Stock Purchases — General", "5000"),
+                ("Stock Purchases — Steel", "5001"),
+                ("Stock Purchases — Hardware", "5002"),
+                ("Stock Purchases — Paint", "5003"),
+                ("Stock Purchases — Electrical", "5004"),
+                ("Stock Purchases — Plumbing", "5005"),
+                ("Stock Purchases — Food & Beverage", "5010"),
+                ("Stock Purchases — Liquor", "5011"),
+                ("Stock Purchases — Cleaning Supplies", "5012"),
+                ("Delivery / Freight Costs", "5100"),
+                ("Import Duties / Customs", "5200"),
+                ("Packaging Materials", "5300"),
+                ("Direct Labour", "5400"),
+            ]
+        },
+        "premises": {
+            "label": "Premises / Perseel",
+            "items": [
+                ("Rent — Business Premises", "6100"),
+                ("Rates & Taxes — Municipal", "6110"),
+                ("Rates & Taxes — Property", "6111"),
+                ("Electricity", "6120"),
+                ("Water", "6121"),
+                ("Repairs & Maintenance — Building", "6130"),
+                ("Cleaning & Hygiene", "6140"),
+                ("Garden & Grounds Maintenance", "6141"),
+                ("Security", "6150"),
+                ("Pest Control", "6151"),
+                ("Waste Removal / Refuse", "6152"),
+            ]
+        },
+        "salaries": {
+            "label": "Salaries & Wages / Salarisse",
+            "items": [
+                ("Salaries — Management", "6200"),
+                ("Wages — Staff", "6201"),
+                ("Wages — Casual / Temp", "6202"),
+                ("PAYE / UIF / SDL Payment", "6210"),
+                ("Provident Fund Contribution", "6220"),
+                ("Staff Welfare & Training", "6230"),
+                ("Recruitment Costs", "6240"),
+                ("Protective Clothing / Uniforms", "6250"),
+            ]
+        },
+        "motor_vehicle": {
+            "label": "Motor Vehicle / Voertuig",
+            "items": [
+                ("Fuel — Business Vehicle", "6510"),
+                ("Fuel — Equipment (Mower, Generator, etc.)", "6515"),
+                ("Vehicle Repairs & Service", "6520"),
+                ("Vehicle Insurance", "6530"),
+                ("Vehicle Licence & Registration", "6540"),
+                ("Tolls & Parking", "6550"),
+                ("Vehicle Lease / Finance", "6560"),
+                ("Tyres", "6570"),
+            ]
+        },
+        "admin": {
+            "label": "Admin & Office / Administrasie",
+            "items": [
+                ("Stationery & Printing", "6600"),
+                ("Postage & Courier", "6610"),
+                ("Telephone — Landline", "6620"),
+                ("Cellphone / Mobile", "6621"),
+                ("Internet / WiFi", "6622"),
+                ("DSTV / Streaming", "6623"),
+                ("Software Subscription (Monthly)", "6630"),
+                ("Computer Equipment & Repairs", "6640"),
+                ("Office Supplies", "6650"),
+            ]
+        },
+        "professional": {
+            "label": "Professional Fees / Professionele Fooie",
+            "items": [
+                ("Accounting Fees", "6700"),
+                ("Audit Fees", "6701"),
+                ("Legal Fees", "6710"),
+                ("Consulting Fees", "6720"),
+                ("Bookkeeping Fees", "6730"),
+                ("Tax Advisory Fees", "6740"),
+            ]
+        },
+        "insurance": {
+            "label": "Insurance / Versekering",
+            "items": [
+                ("Insurance — Business / Contents", "6800"),
+                ("Insurance — Vehicle", "6801"),
+                ("Insurance — Public Liability", "6802"),
+                ("Insurance — Goods in Transit", "6803"),
+                ("Insurance — Life / Key Person", "6810"),
+            ]
+        },
+        "marketing": {
+            "label": "Marketing & Advertising",
+            "items": [
+                ("Advertising — Print", "6900"),
+                ("Advertising — Online / Social Media", "6901"),
+                ("Signage & Branding", "6910"),
+                ("Promotional Materials", "6920"),
+                ("Website Costs", "6930"),
+                ("Sponsorships & Donations", "6940"),
+            ]
+        },
+        "finance": {
+            "label": "Finance Costs / Finansieringskoste",
+            "items": [
+                ("Bank Charges", "7100"),
+                ("Card Machine Fees", "7110"),
+                ("Interest Paid — Overdraft", "7120"),
+                ("Interest Paid — Loan", "7121"),
+                ("Interest Paid — Vehicle Finance", "7122"),
+                ("Merchant / Payment Gateway Fees", "7130"),
+            ]
+        },
+        "tax_compliance": {
+            "label": "Tax & Compliance / Belasting",
+            "items": [
+                ("VAT Payment to SARS", "9100"),
+                ("Provisional Tax Payment", "9200"),
+                ("Penalties & Fines — SARS", "9210"),
+                ("Licence Fees — Business / Trade", "9300"),
+                ("Compliance & Permits", "9310"),
+            ]
+        },
+        "entertainment": {
+            "label": "Entertainment & Travel",
+            "items": [
+                ("Entertainment", "7200"),
+                ("Travel — Local", "7210"),
+                ("Travel — International", "7211"),
+                ("Accommodation", "7220"),
+                ("Meals — Business", "7230"),
+                ("Gifts — Clients", "7240"),
+            ]
+        },
+        "subscriptions": {
+            "label": "Subscriptions / Lidmaatskappe",
+            "items": [
+                ("Membership & Subscriptions", "7300"),
+                ("Trade Association Fees", "7310"),
+                ("Professional Body Membership", "7320"),
+                ("Newspapers & Magazines", "7330"),
+            ]
+        },
+        "repairs_general": {
+            "label": "Repairs & Maintenance — General",
+            "items": [
+                ("Repairs — Equipment / Machinery", "7400"),
+                ("Repairs — Plumbing", "7410"),
+                ("Repairs — Electrical", "7420"),
+                ("Maintenance Contracts", "7430"),
+                ("Small Tools & Consumables", "7440"),
+            ]
+        },
+        "owner": {
+            "label": "Owner / Eienaar",
+            "items": [
+                ("Owner Drawings", "3100"),
+                ("Owner Capital Introduced", "3000"),
+                ("Loan Repayment", "2200"),
+                ("Loan", "2200"),
+                ("Transfer Between Accounts", "1000"),
+            ]
+        },
+        "other": {
+            "label": "Other / Ander",
+            "items": [
+                ("Depreciation", "7500"),
+                ("Bad Debts Written Off", "7600"),
+                ("Provision for Bad Debts", "7610"),
+                ("Sundry Expenses", "7900"),
+                ("General Expenses", "7999"),
+                ("Refund", "4900"),
+                ("Ignore", ""),
+            ]
+        }
+    }
+    
+    @classmethod
+    def build_category_list_for_ai(cls):
+        """Build comprehensive category list for AI prompts — Zane uses this to pick the right category"""
+        lines = []
+        for group_key, group in cls.BOOKING_CATEGORIES.items():
+            lines.append(f"\n### {group['label']}:")
+            for cat_name, gl_code in group["items"]:
+                lines.append(f"  - {cat_name} (GL {gl_code})")
+        return "\n".join(lines)
+    
+    @classmethod
+    def get_gl_code(cls, category_name):
+        """Look up GL code for a category name — used when saving transactions"""
+        for group in cls.BOOKING_CATEGORIES.values():
+            for cat_name, gl_code in group["items"]:
+                if cat_name.lower() == category_name.lower():
+                    return gl_code
+        # Partial match fallback
+        for group in cls.BOOKING_CATEGORIES.values():
+            for cat_name, gl_code in group["items"]:
+                if category_name.lower() in cat_name.lower() or cat_name.lower() in category_name.lower():
+                    return gl_code
+        return "7999"  # General Expenses fallback
+    
+    @classmethod
+    def get_all_category_names(cls):
+        """Get flat list of all category names"""
+        names = []
+        for group in cls.BOOKING_CATEGORIES.values():
+            for cat_name, _ in group["items"]:
+                names.append(cat_name)
+        return names
     
     @staticmethod
     def get_learning_stats(business_id: str) -> dict:
@@ -52515,13 +52468,15 @@ def banking_page():
     needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category")]
     already_done = [t for t in all_transactions if t.get("matched") and t.get("manually_reviewed")]
     
-    # Get COMPREHENSIVE booking categories (grouped with optgroups)
-    category_options_html = IndustryKnowledge.build_category_options_html(biz_id)
-    # Also keep flat list for JS fallback
-    all_flat_categories = IndustryKnowledge.get_booking_categories_flat(biz_id)
-    # Legacy flat list for backward compat
+    # Get expense categories
     expense_categories = IndustryKnowledge.get_expense_categories(biz_id) if biz_id else ["General Expenses"]
-    extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan Repayment", "Loan Received", "Refund Given", "Refund Received", "Transfer Between Accounts", "Ignore / Not Business Related"]
+    category_options = "".join([f'<option value="{c}">{c}</option>' for c in expense_categories])
+    
+    # Add common categories
+    extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan", "Refund", "Transfer", "Ignore"]
+    for cat in extra_cats:
+        if cat not in expense_categories:
+            category_options += f'<option value="{cat}">{cat}</option>'
     
     # Stats
     total_count = len(all_transactions)
@@ -52575,7 +52530,8 @@ def banking_page():
             <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
                 <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:7px 14px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;font-weight:600;">🤖 Vra Zane</button>
                 <select class="form-input" style="width:120px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{safe_desc}')">
-                    {category_options_html}
+                    <option value="">Manual...</option>
+                    {category_options}
                 </select>
             </div>
             '''
@@ -52733,11 +52689,10 @@ def banking_page():
     
     <!-- TIPS -->
     <div class="card" style="margin-top:20px;background:linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05));">
-        <h4 style="margin-top:0;">💡 Hoe Zane Leer / How Zane Learns</h4>
+        <h4 style="margin-top:0;">💡 How Zane Learns</h4>
         <p style="color:var(--text-muted);margin:0;">
-            Elke keer as jy 'n transaksie kategoriseer, onthou Zane die patroon. Volgende keer as hy "TELKOM" sien, weet hy dis Telephone — Landline.<br>
-            <strong>Nuut:</strong> 80+ gedetailleerde kategorieë met sub-afdelings — van Fuel (Voertuig vs Toerusting) tot Rates & Taxes, Insurance sub-tipes, en meer. 
-            Tik in die soekboks om vinnig die regte kategorie te kry! 🔍
+            Every time you categorize a transaction, Zane remembers the pattern. Next time he sees "TELKOM", he'll know it's Telephone. 
+            The more you teach him, the faster reconciliation becomes!
         </p>
     </div>
     
@@ -52800,7 +52755,7 @@ def banking_page():
     // ASK ZANE - Collaborative bank transaction allocation
     // Uses dedicated lightweight AI endpoint (not full Zane brain)
     // ═══════════════════════════════════════════════════════════
-    async function askZaneBank(txnId, description, debit, credit, date) {{
+    async function askZaneBank(txnId, description, debit, credit, date, clarificationAnswer) {{
         const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
         const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
         if (!actionCell) return;
@@ -52809,23 +52764,56 @@ def banking_page():
         actionCell.innerHTML = `
             <div style="padding:8px;text-align:center;">
                 <div style="color:var(--primary);font-size:13px;font-weight:600;">🤖 Zane analiseer...</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Kyk na transaksie patroon</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${{clarificationAnswer ? 'Verwerk jou antwoord...' : 'Kyk na transaksie patroon'}}</div>
             </div>`;
         
         try {{
+            const payload = {{ description, debit, credit, date }};
+            if (clarificationAnswer) payload.clarification_answer = clarificationAnswer;
+            
             const response = await fetch('/api/banking/zane-suggest', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{ description, debit, credit, date }})
+                body: JSON.stringify(payload)
             }});
             
             const data = await response.json();
             
+            // Handle clarification needed — Zane asks a smart question
+            if (data.success && data.needs_clarification) {{
+                let optionsHtml = '';
+                if (data.options) {{
+                    data.options.forEach(opt => {{
+                        const safeDesc = description.replace(/'/g, "\\\\'");
+                        optionsHtml += `
+                            <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}', '${{opt.value}}')"
+                                    style="padding:8px 14px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;margin:3px;">
+                                ${{opt.label}}
+                            </button>`;
+                    }});
+                }}
+                
+                actionCell.innerHTML = `
+                    <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">
+                            🤖 ${{data.reason || ''}}
+                        </div>
+                        <div style="font-size:14px;font-weight:600;color:#8b5cf6;margin-bottom:10px;">
+                            🤔 ${{data.question}}
+                        </div>
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                            ${{optionsHtml}}
+                        </div>
+                    </div>`;
+                return;
+            }}
+            
             if (data.success && data.category) {{
-                // Zane has a suggestion — show it with accept/reject
+                // Zane has a confident answer
                 const confColor = data.confidence >= 0.85 ? 'var(--green)' : data.confidence >= 0.6 ? 'var(--yellow)' : 'var(--red)';
                 const confText = data.confidence >= 0.85 ? '🟢 Hoë vertroue' : data.confidence >= 0.6 ? '🟡 Medium vertroue' : '🔴 Lae vertroue';
                 const learnedBadge = data.source === 'learned' ? '<span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;margin-left:5px;">Geleer ✓</span>' : '';
+                const vatWarning = data.vat_warning ? `<div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:6px 8px;border-radius:4px;font-size:11px;color:#000;margin-top:8px;">⚠️ ${{data.vat_warning}}</div>` : '';
                 
                 actionCell.innerHTML = `
                     <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
@@ -52839,7 +52827,8 @@ def banking_page():
                         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">
                             ${{data.reason}}
                         </div>
-                        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        ${{vatWarning}}
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
                             <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{description.replace(/'/g, "\\\\'")}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
                                 ✓ Ja, Allocate
@@ -52863,7 +52852,7 @@ def banking_page():
         }} catch (err) {{
             actionCell.innerHTML = `
                 <div style="color:var(--red);font-size:12px;margin-bottom:5px;">⚠️ Kon nie analiseer nie</div>
-                <button onclick="askZaneBank('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}',${{debit}},${{credit}},'${{date}}')" 
+                <button onclick="askZaneBank('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
                         style="padding:4px 10px;font-size:11px;background:var(--primary);border:none;color:white;border-radius:4px;cursor:pointer;">
                     🔄 Probeer weer
                 </button>
@@ -52881,26 +52870,18 @@ def banking_page():
         if (!cats && row.dataset.categories) {{
             try {{ cats = JSON.parse(row.dataset.categories); }} catch(e) {{}}
         }}
+        if (!cats || !cats.length) {{
+            cats = `{','.join(expense_categories + extra_cats)}`.split(',').map(c => c.trim());
+        }}
         
         const safeDesc = description.replace(/'/g, "\\\\'");
-        
-        // Build options: if API gave flat list, use it; otherwise use comprehensive grouped dropdown
-        let optionsHtml;
-        if (cats && cats.length) {{
-            optionsHtml = cats.map(c => `<option value="${{c}}">${{c}}</option>`).join('');
-        }} else {{
-            optionsHtml = window._comprehensiveCategoryOptions || '';
-        }}
+        const optionsHtml = cats.map(c => `<option value="${{c}}">${{c}}</option>`).join('');
         
         actionCell.innerHTML = `
             <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
                 ${{message ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">🤖 ${{message}}</div>` : ''}}
-                <input type="text" id="catSearch_${{txnId}}" class="form-input" 
-                       placeholder="🔍 Soek / Search..." 
-                       oninput="filterCatOptions(this, 'manualCat_${{txnId}}')"
-                       style="width:100%;padding:8px;font-size:13px;margin-bottom:5px;">
-                <select id="manualCat_${{txnId}}" class="form-input" style="width:100%;padding:8px;font-size:12px;margin-bottom:8px;" size="8">
-                    <option value="">— Kies kategorie / Choose —</option>
+                <select id="manualCat_${{txnId}}" class="form-input" style="width:100%;padding:8px;font-size:13px;margin-bottom:8px;">
+                    <option value="">— Kies kategorie —</option>
                     ${{optionsHtml}}
                 </select>
                 <div style="display:flex;gap:6px;">
@@ -52949,47 +52930,6 @@ def banking_page():
     function updateCounts() {{
         // Simple reload after a few categorizations
         // Could be smarter but this works
-    }}
-    
-    // ═══════════════════════════════════════════════════════════
-    // COMPREHENSIVE CATEGORY SEARCH — Filter categories as you type
-    // ═══════════════════════════════════════════════════════════
-    window._comprehensiveCategoryOptions = `{IndustryKnowledge.build_category_options_html(biz_id)}`;
-    
-    function filterCatOptions(input, selectId) {{
-        const search = input.value.toLowerCase();
-        const select = document.getElementById(selectId);
-        if (!select) return;
-        
-        // Show all if empty search
-        const options = select.querySelectorAll('option');
-        const optgroups = select.querySelectorAll('optgroup');
-        
-        if (!search) {{
-            options.forEach(o => o.style.display = '');
-            optgroups.forEach(g => g.style.display = '');
-            return;
-        }}
-        
-        // Hide non-matching options, show matching ones
-        optgroups.forEach(g => {{
-            let hasVisible = false;
-            g.querySelectorAll('option').forEach(o => {{
-                if (o.textContent.toLowerCase().includes(search) || o.value.toLowerCase().includes(search)) {{
-                    o.style.display = '';
-                    hasVisible = true;
-                }} else {{
-                    o.style.display = 'none';
-                }}
-            }});
-            g.style.display = hasVisible ? '' : 'none';
-        }});
-        
-        // Also check top-level options
-        select.querySelectorAll(':scope > option').forEach(o => {{
-            if (o.value === '') {{ o.style.display = ''; return; }}
-            o.style.display = o.textContent.toLowerCase().includes(search) ? '' : 'none';
-        }});
     }}
     
     async function uploadStatement(file) {{
@@ -53586,23 +53526,57 @@ def api_banking_categorize():
         credit = float(txn.get("credit", 0))
         amount = float(txn.get("amount", 0))
         
+        # Get GL code from comprehensive lookup
+        gl_code = IndustryKnowledge.get_gl_code(category)
+        
+        # SARS: No VAT claim on fuel or entertainment
+        no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
+        is_no_vat = any(nv in category.lower() for nv in no_vat_cats)
+        
         # Determine if money out (expense) or money in (payment/deposit)
         if debit > 0 or amount < 0:
+            expense_amount = debit if debit > 0 else abs(amount)
             # Money out - could be expense or other
-            if category not in ["Customer Payment", "POS Deposit", "Transfer", "Ignore", "Owner Drawings", "Loan"]:
-                # Create expense record
+            if category not in ["Customer Payment", "POS Deposit", "Transfer Between Accounts", "Ignore", "Owner Drawings", "Loan", "Loan Repayment"]:
+                # Create expense record with specific category + GL code
                 expense = RecordFactory.expense(
                     business_id=biz_id,
                     description=description,
-                    amount=debit if debit > 0 else abs(amount),
+                    amount=expense_amount,
                     date=txn.get("date", today()),
                     category=category,
+                    category_code=gl_code,
                     reference=f"Bank: {txn_id[:8]}"
                 )
                 db.save("expenses", expense)
-                logger.info(f"[BANK] Created expense: {category} R{debit or abs(amount)}")
+                
+                # Create journal entry with proper GL code
+                vat_amount = round(expense_amount * 15 / 115, 2) if not is_no_vat else 0
+                net_amount = round(expense_amount - vat_amount, 2)
+                
+                journal_entries = [
+                    {"account_code": gl_code, "debit": net_amount, "credit": 0},
+                ]
+                if vat_amount > 0:
+                    journal_entries.append({"account_code": "1400", "debit": vat_amount, "credit": 0})
+                journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(expense_amount, 2)})
+                
+                create_journal_entry(biz_id, txn.get("date", today()), description[:50], f"BNK-{txn_id[:8]}", journal_entries)
+                logger.info(f"[BANK] Created expense: {category} GL={gl_code} R{expense_amount}")
+            
+            elif category == "Owner Drawings":
+                create_journal_entry(biz_id, txn.get("date", today()), description[:50], f"BNK-{txn_id[:8]}", [
+                    {"account_code": "3100", "debit": round(expense_amount, 2), "credit": 0},
+                    {"account_code": "1000", "debit": 0, "credit": round(expense_amount, 2)},
+                ])
+            elif category == "Loan Repayment":
+                create_journal_entry(biz_id, txn.get("date", today()), description[:50], f"BNK-{txn_id[:8]}", [
+                    {"account_code": "2200", "debit": round(expense_amount, 2), "credit": 0},
+                    {"account_code": "1000", "debit": 0, "credit": round(expense_amount, 2)},
+                ])
         
         elif credit > 0 or amount > 0:
+            income_amount = credit if credit > 0 else amount
             # Money in - could be customer payment
             if category == "Customer Payment" and txn.get("match_reference"):
                 # Try to mark invoice as paid
@@ -53614,9 +53588,16 @@ def api_banking_categorize():
                         inv = invoices[0]
                         inv["status"] = "paid"
                         inv["paid_date"] = txn.get("date", today())
-                        inv["paid_amount"] = credit if credit > 0 else amount
+                        inv["paid_amount"] = income_amount
                         db.save("invoices", inv)
                         logger.info(f"[BANK] Marked {inv_num} as paid")
+            
+            # Create journal entry for income
+            if category not in ["Transfer Between Accounts", "Ignore"]:
+                create_journal_entry(biz_id, txn.get("date", today()), description[:50], f"BNK-{txn_id[:8]}", [
+                    {"account_code": "1000", "debit": round(income_amount, 2), "credit": 0},
+                    {"account_code": gl_code, "debit": 0, "credit": round(income_amount, 2)},
+                ])
         
         return jsonify({"success": True, "message": f"Categorized as {category}"})
         
@@ -53630,8 +53611,8 @@ def api_banking_categorize():
 def api_banking_zane_suggest():
     """
     Zane analyzes a bank transaction and suggests allocation.
-    Lightweight AI call — NOT the full Zane brain.
-    Returns: suggested category, reason, confidence, and all available categories.
+    NOW WITH CLARIFICATION — Zane asks smart follow-up questions when needed!
+    Returns: suggested category, reason, confidence, clarification if needed.
     """
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
@@ -53646,28 +53627,25 @@ def api_banking_zane_suggest():
         debit = float(data.get("debit", 0))
         credit = float(data.get("credit", 0))
         date = data.get("date", "")
+        user_answer = data.get("clarification_answer", "")
         
         if not description:
             return jsonify({"success": False, "error": "No description"})
         
-        # Get ALL comprehensive booking categories for this business
-        all_categories = IndustryKnowledge.get_booking_categories_flat(biz_id)
-        ai_category_list = IndustryKnowledge.build_category_list_for_ai()
-        
-        # Also keep legacy expense categories for backward compat
-        expense_categories = IndustryKnowledge.get_expense_categories(biz_id)
-        extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan Repayment", "Loan Received", "Refund Given", "Refund Received", "Transfer Between Accounts", "VAT Payment to SARS", "PAYE / UIF / SDL Payment", "Ignore / Not Business Related"]
+        # Get all available categories — comprehensive list
+        all_category_names = IndustryKnowledge.get_all_category_names()
         
         # Check if BankLearning already has a high-confidence match
         existing = BankLearning.suggest_category(biz_id, description)
-        if existing and existing.get("confidence", 0) >= 0.85:
+        if existing and existing.get("confidence", 0) >= 0.85 and not user_answer:
             return jsonify({
                 "success": True,
                 "category": existing.get("category", ""),
                 "reason": f"Ek het hierdie tipe transaksie al {existing.get('times_seen', 1)}x gesien — dit is altyd as {existing.get('category')} geallocate.",
                 "confidence": existing.get("confidence", 0.85),
                 "source": "learned",
-                "all_categories": all_categories
+                "needs_clarification": False,
+                "all_categories": all_category_names
             })
         
         # Get recent learned patterns for context
@@ -53677,41 +53655,88 @@ def api_banking_zane_suggest():
             recent = sorted(patterns, key=lambda p: p.get("times_seen", 0), reverse=True)[:10]
             pattern_examples = "\n".join([f"- {p.get('original_description', p.get('pattern', ''))} → {p.get('category', '')}" for p in recent])
         
-        # Build focused AI prompt
+        # Build focused AI prompt with comprehensive categories
         direction = "BETALING UIT (Uitgawe/Expense)" if debit > 0 else "GELD IN (Inkomste/Payment)"
         amount = debit if debit > 0 else credit
+        all_categories_for_ai = IndustryKnowledge.build_category_list_for_ai()
         
-        prompt = f"""You are Zane, a qualified South African bookkeeper (BCom Hons). 
-Analyze this bank transaction and suggest the BEST category.
+        prompt = f"""You are Zane, a QUALIFIED South African bookkeeper (BCom Hons). 
+Analyze this bank transaction and suggest the BEST specific category.
 
 BUSINESS: {biz_name}
 TRANSACTION: "{description}"
 DATE: {date}
 DIRECTION: {direction}
 AMOUNT: R{amount:,.2f}
+{"USER ANSWERED YOUR QUESTION: " + user_answer if user_answer else ""}
 
-COMPREHENSIVE BOOKING CATEGORIES (pick the MOST SPECIFIC match):
-{ai_category_list}
+YOUR COMPLETE CATEGORY KNOWLEDGE (pick MOST SPECIFIC):
+{all_categories_for_ai}
 
 {f"PREVIOUS PATTERNS I LEARNED FROM THIS BUSINESS:{chr(10)}{pattern_examples}" if pattern_examples else ""}
 
-RULES:
-1. Pick the SINGLE best, most SPECIFIC category from the list above
-2. If money IN from a customer paying → "Customer Payment"
-3. If transfer between own accounts → "Transfer Between Accounts"  
-4. If owner withdrawing money → "Owner Drawings"
-5. Rates/taxes from municipality → "Rates & Taxes — Municipal"
-6. Property rates → "Rates & Taxes — Property"
-7. Fuel for vehicles → "Fuel — Business Vehicle"
-8. Fuel for equipment like lawnmower/generator → "Fuel — Equipment (Mower, Generator, etc.)"
-9. SARS payments: VAT → "VAT Payment to SARS", PAYE/UIF → "PAYE / UIF / SDL Payment"
-10. Always pick the MOST SPECIFIC sub-category, not a general one
-11. If unsure, say so honestly
+═══ SMART DETECTION RULES ═══
+PAYMENTS OUT (debit):
+- Engen/Shell/BP/Caltex/Sasol → "Fuel — Business Vehicle" (WARN: no VAT claim!)
+- Eskom/City Power → "Electricity"
+- Municipality/rates → "Rates & Taxes — Municipal"
+- Vodacom/MTN/Cell C → "Cellphone / Mobile"
+- Telkom → "Telephone — Landline"
+- Rain/Afrihost/Vumatel → "Internet / WiFi"
+- DSTV/Multichoice → "DSTV / Streaming"
+- Santam/Outsurance/Discovery → "Insurance — Business / Contents"
+- ADT/Fidelity → "Security"
+- SARS → "VAT Payment to SARS" or "PAYE / UIF / SDL Payment"
+- Bank fees/service charges → "Bank Charges"
+- Yoco/iKhokha → "Card Machine Fees"
+- Salary/wages → "Wages — Staff"
+- Drawings/own transfer → "Owner Drawings"
+- Loan repayment → "Loan Repayment"
 
-Respond in this EXACT format (Afrikaans):
-KATEGORIE: [exact category name from list]
-REDE: [one sentence explanation in Afrikaans why this is the right category]
-VERTROUE: [hoog/medium/laag]"""
+PAYMENTS IN (credit):
+- Customer names / invoice refs → "Customer Payment"
+- POS/card terminal deposits → "POS Deposit"
+- Interest received → "Interest Received"
+- Rental/huur → "Rental Income"
+- Refund → "Refund"
+
+═══ WHEN TO ASK (AMBIGUOUS ONLY) ═══
+Most transactions are CLEAR from the description. Only ask when genuinely uncertain.
+Example: "TRANSFER TO OWN ACC" → could be "Transfer Between Accounts" or "Owner Drawings" — ASK!
+Example: "HARDWARE STORE" with debit → could be "Stock Purchases" or "Repairs & Maintenance — Building" — ASK!
+
+{"Use the user's answer '" + user_answer + "' to pick the EXACT specific category." if user_answer else ""}
+
+Respond in this EXACT JSON format:
+
+If CLEAR (most transactions):
+{{
+    "needs_clarification": false,
+    "category": "Fuel — Business Vehicle",
+    "reason": "Engen garage — brandstof vir besigheidsvoertuig. Let op: geen BTW eis op brandstof!",
+    "confidence": "hoog",
+    "vat_warning": "SARS: Geen BTW eis op brandstof"
+}}
+
+If AMBIGUOUS (ask smart follow-up with 2-4 specific options):
+{{
+    "needs_clarification": true,
+    "question": "Ek sien 'n betaling aan Builders Warehouse. Is dit vir...",
+    "options": [
+        {{"label": "🏪 Voorraad vir herverkoop", "value": "stock"}},
+        {{"label": "🏠 Herstelwerk aan gebou", "value": "building_repair"}},
+        {{"label": "🔧 Toerusting/gereedskap", "value": "equipment"}}
+    ],
+    "confidence": "medium",
+    "reason": "Kan voorraad, herstelwerk of toerusting wees"
+}}
+
+CRITICAL:
+1. "category" MUST be an EXACT name from the category list
+2. "reason" must be in Afrikaans, 1 sentence
+3. Be SPECIFIC — never use "General Expenses" if something specific fits
+4. confidence: "hoog" (>85%), "medium" (60-85%), "laag" (<60%)
+5. If 80%+ sure, DON'T ask — just pick the right category"""
 
         # Call Sonnet — lightweight, fast
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -53724,7 +53749,7 @@ VERTROUE: [hoog/medium/laag]"""
             },
             json={
                 "model": "claude-sonnet-4-20250514",
-                "max_tokens": 200,
+                "max_tokens": 400,
                 "messages": [{"role": "user", "content": prompt}]
             },
             timeout=15
@@ -53732,27 +53757,51 @@ VERTROUE: [hoog/medium/laag]"""
         
         if resp.status_code != 200:
             logger.error(f"[BANK ZANE] API error: {resp.status_code}")
-            return jsonify({"success": False, "error": "AI unavailable", "all_categories": all_categories})
+            return jsonify({"success": False, "error": "AI unavailable", "all_categories": all_category_names})
         
         ai_text = resp.json().get("content", [{}])[0].get("text", "")
         
-        # Parse response
-        category = ""
-        reason = ""
-        confidence = "medium"
+        # Try to parse as JSON first (new format)
+        suggestion = extract_json_from_text(ai_text) if 'extract_json_from_text' in dir() else None
         
-        for line in ai_text.strip().split("\n"):
-            line = line.strip()
-            if line.upper().startswith("KATEGORIE:"):
-                category = line.split(":", 1)[1].strip()
-            elif line.upper().startswith("REDE:"):
-                reason = line.split(":", 1)[1].strip()
-            elif line.upper().startswith("VERTROUE:"):
-                confidence = line.split(":", 1)[1].strip().lower()
+        if suggestion and suggestion.get("needs_clarification"):
+            # Zane needs to ask a question
+            logger.info(f"[BANK ZANE] Asking clarification for '{description[:30]}'")
+            return jsonify({
+                "success": True,
+                "needs_clarification": True,
+                "question": suggestion.get("question", ""),
+                "options": suggestion.get("options", []),
+                "reason": suggestion.get("reason", ""),
+                "confidence": {"hoog": 0.9, "medium": 0.7, "laag": 0.4}.get(str(suggestion.get("confidence", "medium")), 0.7),
+                "source": "ai",
+                "all_categories": all_category_names
+            })
+        
+        if suggestion and suggestion.get("category"):
+            category = suggestion["category"]
+            reason = suggestion.get("reason", "")
+            confidence = str(suggestion.get("confidence", "medium"))
+            vat_warning = suggestion.get("vat_warning", "")
+        else:
+            # Fallback: parse old text format
+            category = ""
+            reason = ""
+            confidence = "medium"
+            vat_warning = ""
+            
+            for line in ai_text.strip().split("\n"):
+                line = line.strip()
+                if line.upper().startswith("KATEGORIE:"):
+                    category = line.split(":", 1)[1].strip()
+                elif line.upper().startswith("REDE:"):
+                    reason = line.split(":", 1)[1].strip()
+                elif line.upper().startswith("VERTROUE:"):
+                    confidence = line.split(":", 1)[1].strip().lower()
         
         # Validate category against available list
         valid = False
-        for c in all_categories:
+        for c in all_category_names:
             if c.lower() == category.lower():
                 category = c  # Use exact casing
                 valid = True
@@ -53760,7 +53809,7 @@ VERTROUE: [hoog/medium/laag]"""
         
         if not valid and category:
             # Try partial match
-            for c in all_categories:
+            for c in all_category_names:
                 if category.lower() in c.lower() or c.lower() in category.lower():
                     category = c
                     valid = True
@@ -53776,14 +53825,15 @@ VERTROUE: [hoog/medium/laag]"""
             "reason": reason or f"Ek is nie seker waarheen hierdie transaksie gaan nie.",
             "confidence": conf_score,
             "source": "ai",
-            "all_categories": all_categories
+            "needs_clarification": False,
+            "vat_warning": vat_warning,
+            "all_categories": all_category_names
         })
         
     except Exception as e:
         logger.error(f"[BANK ZANE] Error: {e}")
-        # Still return categories so user can manually select
         try:
-            cats = IndustryKnowledge.get_booking_categories_flat(biz_id)
+            cats = IndustryKnowledge.get_all_category_names()
         except:
             cats = ["General Expenses"]
         return jsonify({"success": False, "error": str(e), "all_categories": cats})
@@ -63824,6 +63874,7 @@ def scan_inbox_page():
     <script>
     let currentItemId = null;
     let currentItemData = null;
+    let currentZaneCategory = '';  // Store Zane's AI-picked category
     let currentItemType = null;
     
     const inboxData = {json.dumps({item.get("id"): {"type": item.get("type", "other"), "data": item.get("data", "{}")} for item in inbox_items})};
@@ -64061,6 +64112,7 @@ def scan_inbox_page():
             container.innerHTML = html;
         }} else {{
             // Zane has a clear answer
+            currentZaneCategory = sugg.category || '';  // Store for processAs
             let actionColor = '#f59e0b'; // orange for expense
             if (sugg.action === 'expense_paid') actionColor = '#059669'; // green
             else if (sugg.action === 'supplier') actionColor = '#6366f1'; // blue
@@ -64105,11 +64157,6 @@ def scan_inbox_page():
             }}
             
             container.innerHTML = html;
-            
-            // Auto-select the suggested category in the comprehensive dropdown
-            if (sugg.category && !sugg.is_stock) {{
-                autoSelectInboxCategory(sugg.category);
-            }}
         }}
         
         document.getElementById('zaneSuggestion').style.display = 'block';
@@ -64313,26 +64360,6 @@ def scan_inbox_page():
                         <strong style="color:#8b5cf6;">Zane recommends:</strong>
                     </div>
                     <div id="zaneSuggestionContent" style="font-size:14px;"></div>
-                </div>
-            `;
-            
-            // Add COMPREHENSIVE expense category picker
-            formHtml += `
-                <div style="margin:20px 0;padding:15px;border-radius:12px;background:rgba(99,102,241,0.05);border:1px solid var(--border);">
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-                        <span style="font-size:20px;">📂</span>
-                        <strong>Expense Category / Uitgawe Kategorie</strong>
-                    </div>
-                    <input type="text" id="inboxCatSearch" class="form-input" 
-                           placeholder="🔍 Soek / Search category (bv. fuel, rates, insurance...)"
-                           oninput="filterInboxCategories()"
-                           style="width:100%;padding:10px;font-size:14px;margin-bottom:8px;border-radius:8px;">
-                    <select id="m_expense_category" class="form-input" style="width:100%;padding:10px;font-size:14px;" size="6">
-                        {IndustryKnowledge.build_category_options_html(biz_id)}
-                    </select>
-                    <div id="inboxCatHint" style="font-size:11px;color:var(--text-muted);margin-top:6px;">
-                        💡 Zane sal outomaties die beste kategorie voorstel — of kies self uit 133 opsies
-                    </div>
                 </div>
             `;
             
@@ -64707,9 +64734,6 @@ def scan_inbox_page():
             // Get payment method from selection (expenses are always paid)
             const payMethod = document.getElementById('selectedPayMethod')?.value || 'cash';
             
-            // Get selected expense category from comprehensive dropdown
-            const selectedCategory = document.getElementById('m_expense_category')?.value || '';
-            
             payload = {{
                 supplier_name: document.getElementById('m_supplier')?.value || 'Unknown',
                 supplier_phone: document.getElementById('m_phone')?.value || '',
@@ -64722,7 +64746,7 @@ def scan_inbox_page():
                 items: editedItems.length > 0 ? editedItems : (currentItemData.items || []),
                 paid: true,
                 payment_method: payMethod,
-                category: selectedCategory
+                category: currentZaneCategory || ''  // Zane's AI-picked specific category
             }};
             endpoint = saveType.includes('supplier') ? '/api/scan/save-supplier-invoice' : '/api/scan/save-expense';
             redirect = saveType.includes('supplier') ? '/supplier-invoices' : '/expenses';
@@ -64822,76 +64846,6 @@ def scan_inbox_page():
         }} catch(err) {{
             alert(' Error: ' + err.message);
         }}
-    }}
-    
-    // ═══════════════════════════════════════════════════════════
-    // INBOX CATEGORY SEARCH — Filter comprehensive categories
-    // ═══════════════════════════════════════════════════════════
-    function filterInboxCategories() {{
-        const search = (document.getElementById('inboxCatSearch')?.value || '').toLowerCase();
-        const select = document.getElementById('m_expense_category');
-        if (!select) return;
-        
-        const options = select.querySelectorAll('option');
-        const optgroups = select.querySelectorAll('optgroup');
-        
-        if (!search) {{
-            options.forEach(o => o.style.display = '');
-            optgroups.forEach(g => g.style.display = '');
-            return;
-        }}
-        
-        optgroups.forEach(g => {{
-            let hasVisible = false;
-            g.querySelectorAll('option').forEach(o => {{
-                if (o.textContent.toLowerCase().includes(search) || o.value.toLowerCase().includes(search)) {{
-                    o.style.display = '';
-                    hasVisible = true;
-                }} else {{
-                    o.style.display = 'none';
-                }}
-            }});
-            g.style.display = hasVisible ? '' : 'none';
-        }});
-        
-        select.querySelectorAll(':scope > option').forEach(o => {{
-            if (o.value === '') {{ o.style.display = ''; return; }}
-            o.style.display = o.textContent.toLowerCase().includes(search) ? '' : 'none';
-        }});
-    }}
-    
-    // Auto-select category in dropdown when Zane suggests
-    function autoSelectInboxCategory(categoryName) {{
-        const select = document.getElementById('m_expense_category');
-        if (!select || !categoryName) return;
-        
-        // Try exact match first
-        for (const opt of select.options) {{
-            if (opt.value === categoryName) {{
-                select.value = categoryName;
-                // Highlight the dropdown
-                select.style.border = '2px solid #8b5cf6';
-                select.style.background = 'rgba(139,92,246,0.1)';
-                const hint = document.getElementById('inboxCatHint');
-                if (hint) hint.innerHTML = `🤖 Zane het <strong>${{categoryName}}</strong> gekies — verander as nodig`;
-                return true;
-            }}
-        }}
-        
-        // Try partial match
-        for (const opt of select.options) {{
-            if (opt.value.toLowerCase().includes(categoryName.toLowerCase()) || 
-                categoryName.toLowerCase().includes(opt.value.toLowerCase())) {{
-                select.value = opt.value;
-                select.style.border = '2px solid #f59e0b';
-                select.style.background = 'rgba(245,158,11,0.1)';
-                const hint = document.getElementById('inboxCatHint');
-                if (hint) hint.innerHTML = `🤖 Zane het <strong>${{opt.value}}</strong> gekies (naaste match) — verander as nodig`;
-                return true;
-            }}
-        }}
-        
-        return false;
     }}
     
     async function deleteFromInbox() {{
@@ -65853,14 +65807,17 @@ def api_scan_suggest_category():
         # Ask Claude for smart action recommendation
         client = _anthropic_client
         
-        prompt = f"""You are Zane, a smart AI bookkeeper for South African small businesses.
+        # Build comprehensive category knowledge for Zane
+        all_categories = IndustryKnowledge.build_zane_brain()
+        
+        prompt = f"""You are Zane, a QUALIFIED South African bookkeeper (BCom Hons) with deep knowledge of GL codes and expense categories.
 
 LANGUAGE: Always respond in English. Keep it simple and friendly.
 
 PERSONALITY: You're helpful, confident but not arrogant. You guide users step by step. 
 Always end with reassurance like "Click [BUTTON], I'll handle the rest!" or "Just click [BUTTON] and I'll take care of everything!"
 
-A user just scanned a document. Your job is to tell them EXACTLY what to do.
+A user just scanned a document. Your job is to THINK for them — figure out the EXACT right category so they don't have to.
 
 SCANNED DOCUMENT:
 - Supplier: {supplier_name}
@@ -65869,85 +65826,120 @@ SCANNED DOCUMENT:
 - Items: {items_desc or "Not specified"}
 {"- User's answer to your question: " + user_answer if user_answer else ""}
 
-IMPORTANT: Some items are AMBIGUOUS - they could be STOCK or EXPENSE depending on the business:
+YOUR COMPLETE CATEGORY KNOWLEDGE (pick the MOST SPECIFIC one):
+{all_categories}
 
-AMBIGUOUS ITEMS (ASK USER):
-- Lubricants, oils (Fuchs, Engen oils) → Could be stock for resale OR expense for own vehicles
-- Paint, chemicals → Could be stock for resale OR expense for own use
-- Tools, equipment → Could be stock for resale OR asset/expense
-- Parts, spares → Could be stock for resale OR repairs expense
-- Cleaning supplies → Could be stock for resale OR consumables expense
+═══ SMART SUPPLIER DETECTION ═══
+Use the supplier name to auto-detect category:
+- Engen/Shell/BP/Caltex/Total/Sasol fuel → "Fuel — Business Vehicle" (warn: NO VAT claim on fuel!)
+- Eskom/City Power/Prepaid electricity → "Electricity"
+- Municipality/rates/water → Split: water="Water", rates="Rates & Taxes — Municipal"
+- Vodacom/MTN/Telkom/Cell C → "Cellphone / Mobile"
+- Rain/Afrihost/Vumatel → "Internet / WiFi"
+- DSTV/Multichoice/Netflix → "DSTV / Streaming"
+- Santam/Outsurance/Old Mutual insurance → "Insurance — Business / Contents"
+- ADT/Fidelity/Chubb → "Security"
+- Yoco/iKhokha/SnapScan → "Card Machine Fees"
+- ABSA/FNB/Nedbank/Standard Bank fees → "Bank Charges"
+- SARS payment → "VAT Payment to SARS" or "PAYE / UIF / SDL Payment"
+- Makro/Checkers/Pick n Pay/Spar (cleaning, consumables) → "Cleaning & Hygiene" or "Office Supplies"
 
-CLEAR ITEMS (DON'T ASK — use SPECIFIC category from list below):
-- Bank fees/statements → "Bank Charges"
-- Fuel for business vehicles → "Fuel — Business Vehicle" (warn: no VAT claim on fuel!)
-- Fuel for equipment like lawnmower/generator → "Fuel — Equipment (Mower, Generator, etc.)" (warn: no VAT claim!)
+═══ WHEN TO ASK QUESTIONS (BE SPECIFIC!) ═══
+ONLY ask when truly ambiguous. When you DO ask, give 2-4 SPECIFIC options:
+
+Example 1 - Oil/lubricants (Fuchs, Castrol):
+  Question: "This looks like oil/lubricants. What's it for?"
+  Options: ["Resale stock", "Delivery vehicle/bakkie", "Mower/generator/equipment", "Factory machinery"]
+  → resale → Stock Purchase
+  → vehicle → "Fuel — Business Vehicle" or "Vehicle Repairs & Service"
+  → mower/generator → "Fuel — Equipment (Mower, Generator, etc.)"
+  → machinery → "Repairs — Equipment / Machinery"
+
+Example 2 - Paint (Dulux, Plascon):
+  Question: "Is this paint for resale or for your own property?"
+  Options: ["Resale stock", "Own building/maintenance"]
+  → resale → Stock Purchase
+  → own use → "Repairs & Maintenance — Building"
+
+Example 3 - Parts/spares:
+  Question: "Are these parts for resale or for repairing your own equipment?"
+  Options: ["Resale stock", "Vehicle repairs", "Equipment/machinery repairs", "Building repairs"]
+  → resale → Stock Purchase
+  → vehicle → "Vehicle Repairs & Service"
+  → equipment → "Repairs — Equipment / Machinery"
+  → building → "Repairs & Maintenance — Building"
+
+═══ CLEAR ITEMS (NEVER ASK — YOU KNOW THE ANSWER!) ═══
+- Fuel/petrol/diesel → "Fuel — Business Vehicle" (WARN: SARS says no VAT input claim!)
+- Bank fees → "Bank Charges"
 - Electricity → "Electricity"
-- Water → "Water & Sewage"
-- Rates/taxes from municipality → "Rates & Taxes — Municipal"
-- Property rates → "Rates & Taxes — Property"
-- Refuse/garbage → "Refuse Removal"
-- Phone/internet → "Telephone — Cellphone" or "Internet / WiFi"
+- Water → "Water"
+- Phone bills → "Cellphone / Mobile" or "Telephone — Landline"
+- Internet → "Internet / WiFi"
 - Rent → "Rent — Business Premises"
-- Insurance → use specific: "Insurance — Business / Contents", "Insurance — Vehicle", "Insurance — Equipment", etc.
-- Professional services → "Accounting Fees", "Legal Fees", "Consulting Fees" etc.
-- SARS payments → "VAT Payment to SARS" or "PAYE / UIF / SDL Payment"
-- Vehicle finance → "Vehicle Lease / Installment"
-- Security (ADT, Fidelity) → "Security"
-- Software (Google, Microsoft) → "Software Subscription (Monthly)"
-- Card machines (Yoco, iKhokha) → "Card Machine Fees"
+- Insurance → "Insurance — Business / Contents"
+- Accounting/audit fees → "Accounting Fees" or "Audit Fees"
+- Legal fees → "Legal Fees"
+- Security company → "Security"
+- Stationery → "Stationery & Printing"
+- Courier/postnet → "Postage & Courier"
+- Software → "Software Subscription (Monthly)"
 
-COMPREHENSIVE CATEGORIES AVAILABLE (pick the MOST SPECIFIC one):
-{IndustryKnowledge.build_category_list_for_ai()}
-
-{"The user answered: '" + user_answer + "' - Now give them a FINAL answer based on this." if user_answer else ""}
+{"The user answered: '" + user_answer + "' — Now use this answer to pick the EXACT specific category from the list above." if user_answer else ""}
 
 Respond ONLY with JSON:
 
-If CLEAR (no question needed):
+If CLEAR (you KNOW the category — most items should be clear!):
 {{
     "needs_clarification": false,
     "action": "expense_paid",
     "action_label": "Expense (Paid)",
     "category": "Bank Charges",
     "confidence": 0.98,
-    "explanation": "This is a bank statement from ABSA with monthly fees and transaction charges. Click the GREEN 'Expense (Paid)' button, I'll handle the rest!",
+    "explanation": "ABSA monthly bank fees. Click the GREEN 'Expense (Paid)' button, I'll handle the rest!",
     "vat_warning": "",
     "is_stock": false
 }}
 
-If AMBIGUOUS (need to ask):
+If AMBIGUOUS (need to ask — give SPECIFIC options, max 4):
 {{
     "needs_clarification": true,
-    "question": "Is this oil for resale, or for your own vehicles/machines?",
+    "question": "This looks like oil from Fuchs. What's it for?",
     "options": [
-        {{"label": "For resale (stock)", "value": "resale"}},
-        {{"label": "For own use (expense)", "value": "own_use"}}
+        {{"label": "🏪 Resale stock", "value": "resale"}},
+        {{"label": "🚗 Delivery vehicle/bakkie", "value": "vehicle"}},
+        {{"label": "🔧 Mower/generator", "value": "equipment"}},
+        {{"label": "🏭 Factory machinery", "value": "machinery"}}
     ],
     "confidence": 0.6,
-    "explanation": "I see this is lubricants from Fuchs. Quick question so I can book it correctly:"
+    "explanation": "Quick question so I get the exact right category:"
 }}
 
-If user ANSWERED (give final recommendation):
+If user ANSWERED (pick the SPECIFIC category):
 {{
     "needs_clarification": false,
     "action": "expense",
     "action_label": "Book as Expense",
     "category": "Fuel — Equipment (Mower, Generator, etc.)",
     "confidence": 0.95,
-    "explanation": "Perfect! Since this is for your own equipment, I'll book it correctly. Click the ORANGE 'Book as Expense' button, I'll take care of the rest!",
-    "vat_warning": "No VAT claim on fuel — SARS Rule",
+    "explanation": "Got it! Booking as equipment fuel. Click the ORANGE 'Book as Expense' button!",
+    "vat_warning": "SARS: No VAT input claim allowed on fuel",
     "is_stock": false
 }}
 
 BUTTON COLORS to mention:
 - ORANGE = Book as Expense
-- GREEN = Expense (Paid)
+- GREEN = Expense (Paid)  
 - BLUE = Stock Purchase (Credit)
 - TEAL = Stock Purchase (Paid)
 
-IMPORTANT: Always use the EXACT category name from the comprehensive list above. Be as SPECIFIC as possible!
-Keep explanations SHORT (1-2 sentences max). Always end with reassurance!"""
+CRITICAL RULES:
+1. The "category" field MUST be an EXACT name from the category list above
+2. Be SPECIFIC — never use "General Expenses" if a specific category fits
+3. For fuel: ALWAYS warn about no VAT claim (SARS rule)
+4. Keep explanations SHORT (1-2 sentences). End with button instruction + reassurance
+5. If you're 80%+ sure, DON'T ask — just pick the right category
+6. Only ask when genuinely ambiguous (stock vs expense, or which type of expense)"""
 
         response = client.messages.create(
             model="claude-sonnet-4-6",
@@ -65993,7 +65985,7 @@ Keep explanations SHORT (1-2 sentences max). Always end with reassurance!"""
 @app.route("/api/scan/save-expense", methods=["POST"])
 @login_required
 def api_scan_save_expense():
-    """Save scanned data as expense - handles fuel no-VAT rule"""
+    """Save scanned data as expense — uses Zane's specific category + comprehensive GL codes"""
     
     try:
         data = request.get_json()
@@ -66003,54 +65995,56 @@ def api_scan_save_expense():
         if not biz_id:
             return jsonify({"success": False, "error": "No business selected"})
         
-        # Use category from scan if provided, otherwise detect from supplier name
+        # Use Zane's category if provided, otherwise smart-detect from supplier name
         category = data.get("category", "").strip()
         if not category:
             supplier_name = data.get("supplier_name", "").lower()
-            if any(x in supplier_name for x in ["engen", "shell", "bp", "caltex", "fuel", "petrol", "sasol"]):
+            # Smart supplier → specific category mapping
+            if any(x in supplier_name for x in ["engen", "shell", "bp", "caltex", "fuel", "petrol", "sasol", "total"]):
                 category = "Fuel — Business Vehicle"
-            elif any(x in supplier_name for x in ["eskom", "city power", "electric"]):
+            elif any(x in supplier_name for x in ["eskom", "city power", "electric", "prepaid electr"]):
                 category = "Electricity"
-            elif any(x in supplier_name for x in ["vodacom", "mtn", "telkom", "cell c"]):
-                category = "Telephone — Cellphone"
-            elif any(x in supplier_name for x in ["rain ", "afrihost", "rsaweb"]):
+            elif any(x in supplier_name for x in ["vodacom", "mtn", "cell c"]):
+                category = "Cellphone / Mobile"
+            elif any(x in supplier_name for x in ["telkom"]):
+                category = "Telephone — Landline"
+            elif any(x in supplier_name for x in ["rain", "afrihost", "vumatel", "fibre"]):
                 category = "Internet / WiFi"
-            elif any(x in supplier_name for x in ["pick n pay", "checkers", "spar", "woolworths", "food", "makro"]):
-                category = "Stock Purchases — General"
-            elif any(x in supplier_name for x in ["builders", "cashbuild", "hardware"]):
-                category = "Repairs & Maintenance"
-            elif any(x in supplier_name for x in ["santam", "outsurance", "discovery", "old mutual"]):
-                category = "Insurance — Business / Contents"
-            elif any(x in supplier_name for x in ["multichoice", "dstv"]):
+            elif any(x in supplier_name for x in ["multichoice", "dstv", "netflix", "showmax"]):
                 category = "DSTV / Streaming"
-            elif any(x in supplier_name for x in ["municipality", "city of", "munisipal"]):
-                category = "Rates & Taxes — Municipal"
-            elif any(x in supplier_name for x in ["adt", "fidelity", "chubb"]):
+            elif any(x in supplier_name for x in ["santam", "outsurance", "old mutual", "discovery insur", "hollard"]):
+                category = "Insurance — Business / Contents"
+            elif any(x in supplier_name for x in ["adt", "fidelity", "chubb", "armed response"]):
                 category = "Security"
-            elif any(x in supplier_name for x in ["yoco", "ikhokha", "zapper"]):
+            elif any(x in supplier_name for x in ["yoco", "ikhokha", "snapscan", "zapper"]):
                 category = "Card Machine Fees"
+            elif any(x in supplier_name for x in ["absa", "fnb", "nedbank", "standard bank", "capitec"]) and float(data.get("total", 0)) < 2000:
+                category = "Bank Charges"
+            elif any(x in supplier_name for x in ["municipality", "rates", "munisipal"]):
+                category = "Rates & Taxes — Municipal"
+            elif any(x in supplier_name for x in ["sars", "receiver of revenue"]):
+                category = "VAT Payment to SARS"
+            elif any(x in supplier_name for x in ["pick n pay", "checkers", "spar", "woolworths", "shoprite"]):
+                category = "Cleaning & Hygiene"
+            elif any(x in supplier_name for x in ["builders", "cashbuild"]):
+                category = "Repairs & Maintenance — Building"
             else:
-                category = "Sundry Expenses"
-        
-        # Build GL code lookup from comprehensive BOOKING_CATEGORIES
-        gl_lookup = {}
-        for group in IndustryKnowledge.BOOKING_CATEGORIES.values():
-            for cat_name, gl_code in group["items"]:
-                if gl_code:
-                    gl_lookup[cat_name] = gl_code
-        
-        # Get GL code for the selected category
-        expense_account = gl_lookup.get(category, "6999")  # Default to Sundry Expenses
+                category = "General Expenses"
         
         # SARS RULE: No VAT input claim on Fuel or Entertainment
         no_vat_categories = [
-            "Fuel — Business Vehicle", "Fuel — Equipment (Mower, Generator, etc.)",
-            "Entertainment", "Membership & Subscriptions"
+            "Fuel — Business Vehicle",
+            "Fuel — Equipment (Mower, Generator, etc.)",
+            "Entertainment",
+            "Meals — Business",
+            "Membership & Subscriptions",
         ]
         vat_amount = float(data.get("vat", 0))
-        vat_claimable = 0.0 if category in no_vat_categories else vat_amount
+        # Check if category matches any no-VAT category (partial match for safety)
+        is_no_vat = any(nv.lower() in category.lower() or category.lower() in nv.lower() for nv in no_vat_categories)
+        vat_claimable = 0.0 if is_no_vat else vat_amount
         
-        # Check if marked as paid (for future use - store in reference for now)
+        # Check if marked as paid
         is_paid = data.get("paid", False)
         
         exp_id = generate_id()
@@ -66062,6 +66056,10 @@ def api_scan_save_expense():
         
         total_amount = float(data.get("total", 0))
         payment_method = data.get("payment_method", "cash")
+        
+        # Get GL code from comprehensive lookup
+        expense_account = IndustryKnowledge.get_gl_code(category)
+        
         user = Auth.get_current_user()
         expense = RecordFactory.expense(
             business_id=biz_id,
@@ -66069,7 +66067,7 @@ def api_scan_save_expense():
             amount=total_amount,
             date=data.get("date", today()),
             category=category,
-            category_code=gl_lookup.get(category, "6999"),
+            category_code=expense_account,
             vat=vat_amount,
             net=total_amount - vat_amount,
             reference=data.get("invoice_number", ""),
@@ -66091,8 +66089,6 @@ def api_scan_save_expense():
         # Create journal entries for GL
         total_amount = float(data.get("total", 0))
         
-        # expense_account already set from gl_lookup above
-        
         # Journal entry: Debit Expense + VAT Input (if claimable), Credit Bank
         journal_entries = [
             {"account_code": expense_account, "debit": round(total_amount - vat_claimable, 2), "credit": 0},
@@ -66103,13 +66099,14 @@ def api_scan_save_expense():
         
         create_journal_entry(biz_id, data.get("date", today()), desc[:50], f"EXP-{exp_id[:8]}", journal_entries)
         
-        logger.info(f"[SCAN SAVE] Expense saved: {exp_id} for business {biz_id} - {desc[:50]}")
+        logger.info(f"[SCAN SAVE] Expense saved: {exp_id} cat={category} GL={expense_account} for {biz_id}")
         return jsonify({
             "success": True, 
             "id": exp_id, 
             "category": category, 
+            "gl_code": expense_account,
             "paid": is_paid,
-            "business_id": biz_id,  # Return for debugging
+            "business_id": biz_id,
             "amount": float(data.get("total", 0))
         })
         
