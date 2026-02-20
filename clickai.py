@@ -15280,21 +15280,32 @@ class Auth:
             if user_businesses:
                 business_id = user_businesses[0].get("id")
             else:
-                # Check if user is a team member of any business
-                # Accept ANY membership status - we'll fix status if needed
-                team_memberships = db.get("team_members", {"email": email})
-                logger.info(f"[LOGIN] Found {len(team_memberships)} team memberships for {email}")
+                # Check if user is a team member of any business — try by email AND user_id
+                team_memberships = db.get("team_members", {"email": email}) or []
                 
-                for tm in team_memberships:
-                    logger.info(f"[LOGIN] Team membership: biz={tm.get('business_id')}, status={tm.get('status')}, inv_status={tm.get('invitation_status')}")
+                # Also check by user_id (some records might not have email set)
+                team_by_uid = db.get("team_members", {"user_id": user["id"]}) or []
                 
-                if team_memberships:
+                # Merge unique memberships
+                seen_ids = set()
+                all_memberships = []
+                for tm in team_memberships + team_by_uid:
+                    tm_id = tm.get("id", "")
+                    if tm_id not in seen_ids:
+                        seen_ids.add(tm_id)
+                        all_memberships.append(tm)
+                
+                logger.info(f"[LOGIN] Found {len(all_memberships)} team memberships for {email} (by email: {len(team_memberships)}, by uid: {len(team_by_uid)})")
+                
+                for tm in all_memberships:
+                    logger.info(f"[LOGIN] Team membership: biz={tm.get('business_id')}, status={tm.get('status')}, role={tm.get('role')}")
+                
+                if all_memberships:
                     # Use first membership
-                    tm = team_memberships[0]
+                    tm = all_memberships[0]
                     business_id = tm.get("business_id")
                     
                     # FIX: If user can login, their membership should be active!
-                    # Update status to active if not already
                     if tm.get("status") != "active" or tm.get("invitation_status") != "accepted":
                         logger.info(f"[LOGIN] Fixing team membership status for {email}")
                         tm["status"] = "active"
@@ -15304,9 +15315,13 @@ class Auth:
                     
                     logger.info(f"[LOGIN] User {email} is team member, using business: {business_id}")
             
-            # Save as default for next time
+            # Save as default for next time — prevents this lookup every login
             if business_id:
-                db.update("users", user["id"], {"default_business_id": business_id})
+                try:
+                    db.update("users", user["id"], {"default_business_id": business_id})
+                    logger.info(f"[LOGIN] Saved default_business_id {business_id} for {email}")
+                except:
+                    pass
         
         session["business_id"] = business_id
         logger.info(f"[LOGIN] User {email} logged in, business_id: {business_id}")
