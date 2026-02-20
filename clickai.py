@@ -15251,8 +15251,19 @@ class Auth:
         elif stored_plain and stored_plain == password:
             password_match = True
             needs_upgrade = True
+        # Legacy plain text case-insensitive check (some passwords were created without case sensitivity)
+        elif stored_encrypted and len(stored_encrypted) != 64 and stored_encrypted.lower() == password.lower():
+            password_match = True
+            needs_upgrade = True
+        elif stored_hash and len(stored_hash) != 64 and stored_hash.lower() == password.lower():
+            password_match = True
+            needs_upgrade = True
+        elif stored_plain and stored_plain.lower() == password.lower():
+            password_match = True
+            needs_upgrade = True
         
         if not password_match:
+            logger.warning(f"[LOGIN] Failed for {email}: encrypted_len={len(stored_encrypted or '')}, hash_len={len(stored_hash or '')}, plain_len={len(stored_plain or '')}, entered_hash={pwd_hash[:8]}..., stored_enc={stored_encrypted[:8] if stored_encrypted else 'None'}...")
             return False, "Invalid password"
         
         # Auto-upgrade legacy plain text passwords to hashed
@@ -58386,18 +58397,45 @@ def team_page():
         location.reload();
     }}
     function copyInviteLink(link) {{
-        navigator.clipboard.writeText(link).then(() => {{
-            alert('✓ Invitation link copied! Share it with your team member via WhatsApp, Email, or SMS.');
-        }}).catch(() => {{
-            // Fallback for older browsers
+        // Copy to clipboard first
+        navigator.clipboard.writeText(link).catch(() => {{
             const textarea = document.createElement('textarea');
             textarea.value = link;
             document.body.appendChild(textarea);
             textarea.select();
             document.execCommand('copy');
             document.body.removeChild(textarea);
-            alert('✓ Invitation link copied! Share it with your team member via WhatsApp, Email, or SMS.');
         }});
+        
+        // Show share options modal
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+        modal.innerHTML = `
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:25px;max-width:400px;width:90%;text-align:center;">
+                <h3 style="margin:0 0 5px 0;">✓ Link Copied!</h3>
+                <p style="color:var(--text-muted);margin:0 0 20px 0;font-size:13px;">Choose how to share the invitation:</p>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    <a href="mailto:?subject=You're invited to join on ClickAI&body=Click this link to register and join the team:%0A%0A${{encodeURIComponent(link)}}" 
+                       style="display:block;padding:12px;background:#3b82f6;color:white;border-radius:8px;text-decoration:none;font-weight:bold;">
+                       📧 Send via Email
+                    </a>
+                    <a href="https://wa.me/?text=${{encodeURIComponent('You\\'re invited to join on ClickAI! Register here: ' + link)}}" target="_blank"
+                       style="display:block;padding:12px;background:#25d366;color:white;border-radius:8px;text-decoration:none;font-weight:bold;">
+                       💬 Send via WhatsApp
+                    </a>
+                    <a href="sms:?body=${{encodeURIComponent('You\\'re invited to join on ClickAI! Register here: ' + link)}}"
+                       style="display:block;padding:12px;background:#f59e0b;color:white;border-radius:8px;text-decoration:none;font-weight:bold;">
+                       📱 Send via SMS
+                    </a>
+                    <button onclick="this.closest('div').closest('div').closest('div').remove()" 
+                            style="padding:10px;background:var(--bg);border:1px solid var(--border);color:var(--text-muted);border-radius:8px;cursor:pointer;margin-top:5px;">
+                       Done
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {{ if(e.target === modal) modal.remove(); }});
     }}
     </script>
     '''
