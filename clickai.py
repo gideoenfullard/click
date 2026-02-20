@@ -13854,6 +13854,241 @@ class IndustryKnowledge:
         }
 
 
+    # COMPREHENSIVE BOOKING CATEGORIES — Backend AI knowledge only
+    # Zane uses these to make smart decisions. Users NEVER see this list.
+    # ═══════════════════════════════════════════════════════════════════════
+    
+    BOOKING_CATEGORIES = {
+        "income": {
+            "label": "Income / Inkomste",
+            "items": [
+                ("Sales — Cash", "4000"),
+                ("Sales — Credit", "4001"),
+                ("Sales — Card Machine", "4002"),
+                ("Sales — Online / EFT", "4003"),
+                ("Service Revenue", "4100"),
+                ("Rental Income", "4200"),
+                ("Commission Received", "4300"),
+                ("Interest Received", "4400"),
+                ("Sundry Income", "4900"),
+                ("Customer Payment", "1000"),
+                ("POS Deposit", "1000"),
+            ]
+        },
+        "cost_of_sales": {
+            "label": "Cost of Sales / Koste van Verkope",
+            "items": [
+                ("Stock Purchases — General", "5000"),
+                ("Stock Purchases — Steel", "5001"),
+                ("Stock Purchases — Hardware", "5002"),
+                ("Stock Purchases — Paint", "5003"),
+                ("Stock Purchases — Electrical", "5004"),
+                ("Stock Purchases — Plumbing", "5005"),
+                ("Stock Purchases — Food & Beverage", "5010"),
+                ("Stock Purchases — Liquor", "5011"),
+                ("Stock Purchases — Cleaning Supplies", "5012"),
+                ("Delivery / Freight Costs", "5100"),
+                ("Import Duties / Customs", "5200"),
+                ("Packaging Materials", "5300"),
+                ("Direct Labour", "5400"),
+            ]
+        },
+        "premises": {
+            "label": "Premises / Perseel",
+            "items": [
+                ("Rent — Business Premises", "6100"),
+                ("Rates & Taxes — Municipal", "6110"),
+                ("Rates & Taxes — Property", "6111"),
+                ("Electricity", "6120"),
+                ("Water", "6121"),
+                ("Repairs & Maintenance — Building", "6130"),
+                ("Cleaning & Hygiene", "6140"),
+                ("Garden & Grounds Maintenance", "6141"),
+                ("Security", "6150"),
+                ("Pest Control", "6151"),
+                ("Waste Removal / Refuse", "6152"),
+            ]
+        },
+        "salaries": {
+            "label": "Salaries & Wages / Salarisse",
+            "items": [
+                ("Salaries — Management", "6200"),
+                ("Wages — Staff", "6201"),
+                ("Wages — Casual / Temp", "6202"),
+                ("PAYE / UIF / SDL Payment", "6210"),
+                ("Provident Fund Contribution", "6220"),
+                ("Staff Welfare & Training", "6230"),
+                ("Recruitment Costs", "6240"),
+                ("Protective Clothing / Uniforms", "6250"),
+            ]
+        },
+        "motor_vehicle": {
+            "label": "Motor Vehicle / Voertuig",
+            "items": [
+                ("Fuel — Business Vehicle", "6510"),
+                ("Fuel — Equipment (Mower, Generator, etc.)", "6515"),
+                ("Vehicle Repairs & Service", "6520"),
+                ("Vehicle Insurance", "6530"),
+                ("Vehicle Licence & Registration", "6540"),
+                ("Tolls & Parking", "6550"),
+                ("Vehicle Lease / Finance", "6560"),
+                ("Tyres", "6570"),
+            ]
+        },
+        "admin": {
+            "label": "Admin & Office / Administrasie",
+            "items": [
+                ("Stationery & Printing", "6600"),
+                ("Postage & Courier", "6610"),
+                ("Telephone — Landline", "6620"),
+                ("Cellphone / Mobile", "6621"),
+                ("Internet / WiFi", "6622"),
+                ("DSTV / Streaming", "6623"),
+                ("Software Subscription (Monthly)", "6630"),
+                ("Computer Equipment & Repairs", "6640"),
+                ("Office Supplies", "6650"),
+            ]
+        },
+        "professional": {
+            "label": "Professional Fees / Professionele Fooie",
+            "items": [
+                ("Accounting Fees", "6700"),
+                ("Audit Fees", "6701"),
+                ("Legal Fees", "6710"),
+                ("Consulting Fees", "6720"),
+                ("Bookkeeping Fees", "6730"),
+                ("Tax Advisory Fees", "6740"),
+            ]
+        },
+        "insurance": {
+            "label": "Insurance / Versekering",
+            "items": [
+                ("Insurance — Business / Contents", "6800"),
+                ("Insurance — Vehicle", "6801"),
+                ("Insurance — Public Liability", "6802"),
+                ("Insurance — Goods in Transit", "6803"),
+                ("Insurance — Life / Key Person", "6810"),
+            ]
+        },
+        "marketing": {
+            "label": "Marketing & Advertising",
+            "items": [
+                ("Advertising — Print", "6900"),
+                ("Advertising — Online / Social Media", "6901"),
+                ("Signage & Branding", "6910"),
+                ("Promotional Materials", "6920"),
+                ("Website Costs", "6930"),
+                ("Sponsorships & Donations", "6940"),
+            ]
+        },
+        "finance": {
+            "label": "Finance Costs / Finansieringskoste",
+            "items": [
+                ("Bank Charges", "7100"),
+                ("Card Machine Fees", "7110"),
+                ("Interest Paid — Overdraft", "7120"),
+                ("Interest Paid — Loan", "7121"),
+                ("Interest Paid — Vehicle Finance", "7122"),
+                ("Merchant / Payment Gateway Fees", "7130"),
+            ]
+        },
+        "tax_compliance": {
+            "label": "Tax & Compliance / Belasting",
+            "items": [
+                ("VAT Payment to SARS", "9100"),
+                ("Provisional Tax Payment", "9200"),
+                ("Penalties & Fines — SARS", "9210"),
+                ("Licence Fees — Business / Trade", "9300"),
+                ("Compliance & Permits", "9310"),
+            ]
+        },
+        "entertainment": {
+            "label": "Entertainment & Travel",
+            "items": [
+                ("Entertainment", "7200"),
+                ("Travel — Local", "7210"),
+                ("Travel — International", "7211"),
+                ("Accommodation", "7220"),
+                ("Meals — Business", "7230"),
+                ("Gifts — Clients", "7240"),
+            ]
+        },
+        "subscriptions": {
+            "label": "Subscriptions / Lidmaatskappe",
+            "items": [
+                ("Membership & Subscriptions", "7300"),
+                ("Trade Association Fees", "7310"),
+                ("Professional Body Membership", "7320"),
+                ("Newspapers & Magazines", "7330"),
+            ]
+        },
+        "repairs_general": {
+            "label": "Repairs & Maintenance — General",
+            "items": [
+                ("Repairs — Equipment / Machinery", "7400"),
+                ("Repairs — Plumbing", "7410"),
+                ("Repairs — Electrical", "7420"),
+                ("Maintenance Contracts", "7430"),
+                ("Small Tools & Consumables", "7440"),
+            ]
+        },
+        "owner": {
+            "label": "Owner / Eienaar",
+            "items": [
+                ("Owner Drawings", "3100"),
+                ("Owner Capital Introduced", "3000"),
+                ("Loan Repayment", "2200"),
+                ("Loan", "2200"),
+                ("Transfer Between Accounts", "1000"),
+            ]
+        },
+        "other": {
+            "label": "Other / Ander",
+            "items": [
+                ("Depreciation", "7500"),
+                ("Bad Debts Written Off", "7600"),
+                ("Provision for Bad Debts", "7610"),
+                ("Sundry Expenses", "7900"),
+                ("General Expenses", "7999"),
+                ("Refund", "4900"),
+                ("Ignore", ""),
+            ]
+        }
+    }
+    
+    @classmethod
+    def build_category_list_for_ai(cls):
+        """Build comprehensive category list for AI prompts — Zane uses this to pick the right category"""
+        lines = []
+        for group_key, group in cls.BOOKING_CATEGORIES.items():
+            lines.append(f"\n### {group['label']}:")
+            for cat_name, gl_code in group["items"]:
+                lines.append(f"  - {cat_name} (GL {gl_code})")
+        return "\n".join(lines)
+    
+    @classmethod
+    def get_gl_code(cls, category_name):
+        """Look up GL code for a category name — used when saving transactions"""
+        for group in cls.BOOKING_CATEGORIES.values():
+            for cat_name, gl_code in group["items"]:
+                if cat_name.lower() == category_name.lower():
+                    return gl_code
+        # Partial match fallback
+        for group in cls.BOOKING_CATEGORIES.values():
+            for cat_name, gl_code in group["items"]:
+                if category_name.lower() in cat_name.lower() or cat_name.lower() in category_name.lower():
+                    return gl_code
+        return "7999"  # General Expenses fallback
+    
+    @classmethod
+    def get_all_category_names(cls):
+        """Get flat list of all category names"""
+        names = []
+        for group in cls.BOOKING_CATEGORIES.values():
+            for cat_name, _ in group["items"]:
+                names.append(cat_name)
+        return names
+    
 class ScannerMemory:
     """
     Learns from invoice scan corrections.
@@ -14498,241 +14733,6 @@ class BankLearning:
         return categorized
     
     # ═══════════════════════════════════════════════════════════════════════
-    # COMPREHENSIVE BOOKING CATEGORIES — Backend AI knowledge only
-    # Zane uses these to make smart decisions. Users NEVER see this list.
-    # ═══════════════════════════════════════════════════════════════════════
-    
-    BOOKING_CATEGORIES = {
-        "income": {
-            "label": "Income / Inkomste",
-            "items": [
-                ("Sales — Cash", "4000"),
-                ("Sales — Credit", "4001"),
-                ("Sales — Card Machine", "4002"),
-                ("Sales — Online / EFT", "4003"),
-                ("Service Revenue", "4100"),
-                ("Rental Income", "4200"),
-                ("Commission Received", "4300"),
-                ("Interest Received", "4400"),
-                ("Sundry Income", "4900"),
-                ("Customer Payment", "1000"),
-                ("POS Deposit", "1000"),
-            ]
-        },
-        "cost_of_sales": {
-            "label": "Cost of Sales / Koste van Verkope",
-            "items": [
-                ("Stock Purchases — General", "5000"),
-                ("Stock Purchases — Steel", "5001"),
-                ("Stock Purchases — Hardware", "5002"),
-                ("Stock Purchases — Paint", "5003"),
-                ("Stock Purchases — Electrical", "5004"),
-                ("Stock Purchases — Plumbing", "5005"),
-                ("Stock Purchases — Food & Beverage", "5010"),
-                ("Stock Purchases — Liquor", "5011"),
-                ("Stock Purchases — Cleaning Supplies", "5012"),
-                ("Delivery / Freight Costs", "5100"),
-                ("Import Duties / Customs", "5200"),
-                ("Packaging Materials", "5300"),
-                ("Direct Labour", "5400"),
-            ]
-        },
-        "premises": {
-            "label": "Premises / Perseel",
-            "items": [
-                ("Rent — Business Premises", "6100"),
-                ("Rates & Taxes — Municipal", "6110"),
-                ("Rates & Taxes — Property", "6111"),
-                ("Electricity", "6120"),
-                ("Water", "6121"),
-                ("Repairs & Maintenance — Building", "6130"),
-                ("Cleaning & Hygiene", "6140"),
-                ("Garden & Grounds Maintenance", "6141"),
-                ("Security", "6150"),
-                ("Pest Control", "6151"),
-                ("Waste Removal / Refuse", "6152"),
-            ]
-        },
-        "salaries": {
-            "label": "Salaries & Wages / Salarisse",
-            "items": [
-                ("Salaries — Management", "6200"),
-                ("Wages — Staff", "6201"),
-                ("Wages — Casual / Temp", "6202"),
-                ("PAYE / UIF / SDL Payment", "6210"),
-                ("Provident Fund Contribution", "6220"),
-                ("Staff Welfare & Training", "6230"),
-                ("Recruitment Costs", "6240"),
-                ("Protective Clothing / Uniforms", "6250"),
-            ]
-        },
-        "motor_vehicle": {
-            "label": "Motor Vehicle / Voertuig",
-            "items": [
-                ("Fuel — Business Vehicle", "6510"),
-                ("Fuel — Equipment (Mower, Generator, etc.)", "6515"),
-                ("Vehicle Repairs & Service", "6520"),
-                ("Vehicle Insurance", "6530"),
-                ("Vehicle Licence & Registration", "6540"),
-                ("Tolls & Parking", "6550"),
-                ("Vehicle Lease / Finance", "6560"),
-                ("Tyres", "6570"),
-            ]
-        },
-        "admin": {
-            "label": "Admin & Office / Administrasie",
-            "items": [
-                ("Stationery & Printing", "6600"),
-                ("Postage & Courier", "6610"),
-                ("Telephone — Landline", "6620"),
-                ("Cellphone / Mobile", "6621"),
-                ("Internet / WiFi", "6622"),
-                ("DSTV / Streaming", "6623"),
-                ("Software Subscription (Monthly)", "6630"),
-                ("Computer Equipment & Repairs", "6640"),
-                ("Office Supplies", "6650"),
-            ]
-        },
-        "professional": {
-            "label": "Professional Fees / Professionele Fooie",
-            "items": [
-                ("Accounting Fees", "6700"),
-                ("Audit Fees", "6701"),
-                ("Legal Fees", "6710"),
-                ("Consulting Fees", "6720"),
-                ("Bookkeeping Fees", "6730"),
-                ("Tax Advisory Fees", "6740"),
-            ]
-        },
-        "insurance": {
-            "label": "Insurance / Versekering",
-            "items": [
-                ("Insurance — Business / Contents", "6800"),
-                ("Insurance — Vehicle", "6801"),
-                ("Insurance — Public Liability", "6802"),
-                ("Insurance — Goods in Transit", "6803"),
-                ("Insurance — Life / Key Person", "6810"),
-            ]
-        },
-        "marketing": {
-            "label": "Marketing & Advertising",
-            "items": [
-                ("Advertising — Print", "6900"),
-                ("Advertising — Online / Social Media", "6901"),
-                ("Signage & Branding", "6910"),
-                ("Promotional Materials", "6920"),
-                ("Website Costs", "6930"),
-                ("Sponsorships & Donations", "6940"),
-            ]
-        },
-        "finance": {
-            "label": "Finance Costs / Finansieringskoste",
-            "items": [
-                ("Bank Charges", "7100"),
-                ("Card Machine Fees", "7110"),
-                ("Interest Paid — Overdraft", "7120"),
-                ("Interest Paid — Loan", "7121"),
-                ("Interest Paid — Vehicle Finance", "7122"),
-                ("Merchant / Payment Gateway Fees", "7130"),
-            ]
-        },
-        "tax_compliance": {
-            "label": "Tax & Compliance / Belasting",
-            "items": [
-                ("VAT Payment to SARS", "9100"),
-                ("Provisional Tax Payment", "9200"),
-                ("Penalties & Fines — SARS", "9210"),
-                ("Licence Fees — Business / Trade", "9300"),
-                ("Compliance & Permits", "9310"),
-            ]
-        },
-        "entertainment": {
-            "label": "Entertainment & Travel",
-            "items": [
-                ("Entertainment", "7200"),
-                ("Travel — Local", "7210"),
-                ("Travel — International", "7211"),
-                ("Accommodation", "7220"),
-                ("Meals — Business", "7230"),
-                ("Gifts — Clients", "7240"),
-            ]
-        },
-        "subscriptions": {
-            "label": "Subscriptions / Lidmaatskappe",
-            "items": [
-                ("Membership & Subscriptions", "7300"),
-                ("Trade Association Fees", "7310"),
-                ("Professional Body Membership", "7320"),
-                ("Newspapers & Magazines", "7330"),
-            ]
-        },
-        "repairs_general": {
-            "label": "Repairs & Maintenance — General",
-            "items": [
-                ("Repairs — Equipment / Machinery", "7400"),
-                ("Repairs — Plumbing", "7410"),
-                ("Repairs — Electrical", "7420"),
-                ("Maintenance Contracts", "7430"),
-                ("Small Tools & Consumables", "7440"),
-            ]
-        },
-        "owner": {
-            "label": "Owner / Eienaar",
-            "items": [
-                ("Owner Drawings", "3100"),
-                ("Owner Capital Introduced", "3000"),
-                ("Loan Repayment", "2200"),
-                ("Loan", "2200"),
-                ("Transfer Between Accounts", "1000"),
-            ]
-        },
-        "other": {
-            "label": "Other / Ander",
-            "items": [
-                ("Depreciation", "7500"),
-                ("Bad Debts Written Off", "7600"),
-                ("Provision for Bad Debts", "7610"),
-                ("Sundry Expenses", "7900"),
-                ("General Expenses", "7999"),
-                ("Refund", "4900"),
-                ("Ignore", ""),
-            ]
-        }
-    }
-    
-    @classmethod
-    def build_category_list_for_ai(cls):
-        """Build comprehensive category list for AI prompts — Zane uses this to pick the right category"""
-        lines = []
-        for group_key, group in cls.BOOKING_CATEGORIES.items():
-            lines.append(f"\n### {group['label']}:")
-            for cat_name, gl_code in group["items"]:
-                lines.append(f"  - {cat_name} (GL {gl_code})")
-        return "\n".join(lines)
-    
-    @classmethod
-    def get_gl_code(cls, category_name):
-        """Look up GL code for a category name — used when saving transactions"""
-        for group in cls.BOOKING_CATEGORIES.values():
-            for cat_name, gl_code in group["items"]:
-                if cat_name.lower() == category_name.lower():
-                    return gl_code
-        # Partial match fallback
-        for group in cls.BOOKING_CATEGORIES.values():
-            for cat_name, gl_code in group["items"]:
-                if category_name.lower() in cat_name.lower() or cat_name.lower() in category_name.lower():
-                    return gl_code
-        return "7999"  # General Expenses fallback
-    
-    @classmethod
-    def get_all_category_names(cls):
-        """Get flat list of all category names"""
-        names = []
-        for group in cls.BOOKING_CATEGORIES.values():
-            for cat_name, _ in group["items"]:
-                names.append(cat_name)
-        return names
-    
     @staticmethod
     def get_learning_stats(business_id: str) -> dict:
         """Get stats about learned patterns"""
@@ -53707,12 +53707,11 @@ Example: "HARDWARE STORE" with debit → could be "Stock Purchases" or "Repairs 
 
 {"Use the user's answer '" + user_answer + "' to pick the EXACT specific category." if user_answer else ""}
 
-═══ MULTI-STEP DRILLING (when first answer is still ambiguous) ═══
-If user answered your question but you STILL need more info:
-- "BUILDERS WAREHOUSE" → user says "own use" → ASK: "🏠 Building repairs, 🔧 Equipment repairs, 💡 Electrical?"
+═══ MULTI-STEP DRILLING ═══
+If user answered but you STILL need specifics:
+- "BUILDERS WAREHOUSE" → user says "own use" → ASK: "🏠 Building repairs, 🔧 Equipment, 💡 Electrical?"
 - "OIL/LUBRICANTS" → user says "own use" → ASK: "🚗 Vehicle, 🔧 Mower/generator, 🏭 Machinery?"
-- "TRANSFER" → user says "own account" → "Transfer Between Accounts" (done, no need to ask more)
-IMPORTANT: Never ask more than 2 questions total. Most transactions need 0 or 1 question.
+Never ask more than 2 questions total. Most need 0 or 1.
 
 Respond in this EXACT JSON format:
 
@@ -65894,33 +65893,15 @@ Example 3 - Parts/spares:
 
 {"The user answered: '" + user_answer + "' — Now use this answer to pick the EXACT specific category from the list above." if user_answer else ""}
 
-═══ MULTI-STEP DRILLING (when first answer still ambiguous) ═══
-Sometimes the first answer needs a follow-up to get the EXACT right category:
+═══ MULTI-STEP DRILLING (when first answer still needs specifics) ═══
+Sometimes the user's first answer needs ONE more follow-up for the exact category:
 
-Example: Workwear/conti suits
-  Step 1: "Is this for resale or for your own staff?" → user says "own staff"
-  Step 2 (DON'T ASK AGAIN — you have enough info!): → "Protective Clothing / Uniforms" (expense)
-
-Example: Fuel/diesel purchase
-  Step 1: Already CLEAR → "Fuel — Business Vehicle" (NEVER ask for fuel, it's always expense!)
-
-Example: Oil/lubricants → user says "own use"  
-  Step 2: "What's the oil for specifically?"
-  Options: ["🚗 Delivery vehicle/bakkie", "🔧 Lawnmower/weedeater", "⚡ Generator", "🏭 Factory machinery"]
-  → vehicle → "Vehicle Repairs & Service"
-  → lawnmower → "Fuel — Equipment (Mower, Generator, etc.)"
-  → generator → "Fuel — Equipment (Mower, Generator, etc.)"
-  → machinery → "Repairs — Equipment / Machinery"
-
-Example: Hardware items → user says "own use"
-  Step 2: "What are you repairing/maintaining?"
-  Options: ["🏠 Building/premises", "🚗 Vehicle", "🔧 Equipment/machinery", "💡 Electrical"]
-  → building → "Repairs & Maintenance — Building"
-  → vehicle → "Vehicle Repairs & Service"
-  → equipment → "Repairs — Equipment / Machinery"
-  → electrical → "Repairs — Electrical"
-
-IMPORTANT: Most answers need only 1 step! Only drill deeper if the first answer doesn't give enough info to pick a SPECIFIC category. Never ask more than 2 questions total.
+Example: Workwear/conti suits → user says "own staff" → DONE! → "Protective Clothing / Uniforms"
+Example: Fuel slip → NEVER ask! → "Fuel — Business Vehicle" + VAT warning
+Example: Oil/lubricants → user says "own use" → ASK: "🚗 Delivery vehicle? 🔧 Mower/weedeater? ⚡ Generator? 🏭 Machinery?"
+Example: Hardware items → user says "own use" → ASK: "🏠 Building repairs? 🚗 Vehicle? 🔧 Equipment? 💡 Electrical?"
+Example: Cleaning supplies → user says "own use" → DONE! → "Cleaning & Hygiene"
+RULE: Never ask more than 2 questions total. If you can figure it out, DON'T ask!
 
 Respond ONLY with JSON:
 
