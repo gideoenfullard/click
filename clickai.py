@@ -14606,7 +14606,7 @@ class BankLearning:
     
     @staticmethod
     def _normalize_description(description: str) -> str:
-        """Normalize transaction description for matching"""
+        """Normalize transaction description for matching — KEEP vendor name"""
         if not description:
             return ""
         
@@ -14614,18 +14614,19 @@ class BankLearning:
         norm = description.upper().strip()
         
         # Remove common variable parts (dates, reference numbers)
-        # Remove numbers that look like dates or refs
         norm = re.sub(r'\d{2}[/-]\d{2}[/-]\d{2,4}', '', norm)  # Dates
-        norm = re.sub(r'\d{6,}', '', norm)  # Long numbers (references)
+        norm = re.sub(r'\b\d{6,}\b', '', norm)  # Long numbers (references) — only standalone
         norm = re.sub(r'REF[:\s]*\w+', '', norm)  # References
         
         # Remove extra spaces
         norm = re.sub(r'\s+', ' ', norm).strip()
         
-        # Keep first meaningful part (usually the vendor name)
+        # Keep up to 5 words — vendor name is usually word 3-4
+        # "ACCOUNT PAYMENT EPR FULL003" → "ACCOUNT PAYMENT EPR FULL003" (keep all)
+        # "CREDIT CARD EFTPOS SETTLEMENT CR" → "CREDIT CARD EFTPOS SETTLEMENT CR" (keep all)
         parts = norm.split()
-        if len(parts) > 3:
-            norm = ' '.join(parts[:3])
+        if len(parts) > 5:
+            norm = ' '.join(parts[:5])
         
         return norm
     
@@ -14652,16 +14653,29 @@ class BankLearning:
                 "times_seen": pattern.get("times_seen", 1)
             }
         
-        # Partial match - check if normalized starts with known pattern
+        # Partial match — but STRICT: the unique/vendor part must match, not just generic prefixes
         all_patterns = db.get("bank_patterns", {"business_id": business_id}) or []
         
         for pattern in all_patterns:
             known = pattern.get("pattern", "")
-            if normalized.startswith(known) or known.startswith(normalized):
+            if not known:
+                continue
+            
+            # Both must have 3+ words to partial match (avoids "ACCOUNT PAYMENT" matching everything)
+            known_words = known.split()
+            norm_words = normalized.split()
+            if len(known_words) < 3 or len(norm_words) < 3:
+                continue
+            
+            # Check: at least 80% of words must match (order-independent)
+            common_words = set(known_words) & set(norm_words)
+            match_ratio = len(common_words) / max(len(known_words), len(norm_words))
+            
+            if match_ratio >= 0.8:
                 return {
                     "category": pattern.get("category"),
                     "account": pattern.get("account"),
-                    "confidence": pattern.get("confidence", 0.5) * 0.8,  # Lower confidence for partial
+                    "confidence": pattern.get("confidence", 0.5) * 0.8,
                     "times_seen": pattern.get("times_seen", 1)
                 }
         
@@ -52769,8 +52783,7 @@ def banking_page():
         // Show thinking state
         actionCell.innerHTML = `
             <div style="padding:8px;text-align:center;">
-                <div style="color:var(--primary);font-size:13px;font-weight:600;">Zane is looking...</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${{clarificationAnswer ? 'Processing your answer...' : 'Checking transaction...'}}</div>
+                <div style="color:var(--primary);font-size:13px;font-weight:600;">Zane is checking...</div>
             </div>`;
         
         try {{
@@ -52785,25 +52798,49 @@ def banking_page():
             
             const data = await response.json();
             
-            // Handle clarification needed — Zane asks a smart question
-            if (data.success && data.needs_clarification) {{
+            // Store categories globally
+            if (data.all_categories) window._allCategories = data.all_categories;
+            
+            // CASE 1: Zane doesn't know — ask the user what this is (text input)
+            if (data.success && data.needs_clarification && !data.options) {{
+                const safeDesc = description.replace(/'/g, "\\\\'");
+                actionCell.innerHTML = `
+                    <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:280px;">
+                        <div style="font-size:13px;color:#8b5cf6;font-weight:600;margin-bottom:8px;">
+                            ${{data.question || 'What is this payment for?'}}
+                        </div>
+                        <input type="text" id="zaneInput_${{txnId}}" placeholder="e.g. armed response, staff meals, diesel..." 
+                            style="width:100%;padding:10px 12px;border-radius:8px;border:2px solid rgba(139,92,246,0.3);background:var(--input-bg);color:var(--text);font-size:14px;box-sizing:border-box;margin-bottom:8px;"
+                            onkeypress="if(event.key==='Enter')submitZaneAnswer('${{txnId}}','${{safeDesc}}',${{debit}},${{credit}},'${{date}}')">
+                        <div style="display:flex;gap:6px;">
+                            <button onclick="submitZaneAnswer('${{txnId}}','${{safeDesc}}',${{debit}},${{credit}},'${{date}}')" 
+                                style="flex:1;padding:8px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">
+                                Go
+                            </button>
+                            <button onclick="showAllCategories('${{txnId}}','${{safeDesc}}',window._allCategories||[],'Pick the category:')" 
+                                style="padding:8px 12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px;">
+                                Pick manually
+                            </button>
+                        </div>
+                    </div>`;
+                setTimeout(() => document.getElementById('zaneInput_' + txnId)?.focus(), 100);
+                return;
+            }}
+            
+            // CASE 2: Zane asks with clickable options (e.g. stock vs expense)
+            if (data.success && data.needs_clarification && data.options) {{
                 let optionsHtml = '';
-                if (data.options) {{
-                    data.options.forEach(opt => {{
-                        const safeDesc = description.replace(/'/g, "\\\\'");
-                        optionsHtml += `
-                            <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}', '${{opt.value}}')"
-                                    style="padding:8px 14px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;margin:3px;">
-                                ${{opt.label}}
-                            </button>`;
-                    }});
-                }}
+                const safeDesc = description.replace(/'/g, "\\\\'");
+                data.options.forEach(opt => {{
+                    optionsHtml += `
+                        <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}', '${{opt.value}}')"
+                                style="padding:8px 14px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;margin:3px;">
+                            ${{opt.label}}
+                        </button>`;
+                }});
                 
                 actionCell.innerHTML = `
                     <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
-                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">
-                            ${{data.reason || ''}}
-                        </div>
                         <div style="font-size:14px;font-weight:600;color:#8b5cf6;margin-bottom:10px;">
                             ${{data.question}}
                         </div>
@@ -52814,57 +52851,44 @@ def banking_page():
                 return;
             }}
             
+            // CASE 3: Zane knows the answer — show confirm
             if (data.success && data.category) {{
-                // Zane has a confident answer
-                const confColor = data.confidence >= 0.85 ? 'var(--green)' : data.confidence >= 0.6 ? 'var(--yellow)' : 'var(--red)';
-                const confText = data.confidence >= 0.85 ? '🟢 High confidence' : data.confidence >= 0.6 ? '🟡 Medium confidence' : '🔴 Low confidence';
-                const learnedBadge = data.source === 'learned' ? '<span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;margin-left:5px;">Learned ✓</span>' : '';
-                const vatWarning = data.vat_warning ? `<div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:6px 8px;border-radius:4px;font-size:11px;color:#000;margin-top:8px;">⚠️ ${{data.vat_warning}}</div>` : '';
+                const confText = data.confidence >= 0.85 ? 'High confidence' : data.confidence >= 0.6 ? 'Medium' : 'Low';
+                const learnedBadge = data.source === 'learned' ? ' <span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;">Learned</span>' : '';
+                const vatWarning = data.vat_warning ? `<div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:6px 8px;border-radius:4px;font-size:11px;color:#000;margin-top:8px;">${{data.vat_warning}}</div>` : '';
                 
                 actionCell.innerHTML = `
                     <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
-                        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-                            <span style="font-size:11px;color:${{confColor}};">${{confText}}</span>
-                            ${{learnedBadge}}
-                        </div>
-                        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">
-                            ${{data.category}}
-                        </div>
-                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">
-                            ${{data.reason}}
-                        </div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">${{confText}}${{learnedBadge}}</div>
+                        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">${{data.category}}</div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">${{data.reason}}</div>
                         ${{vatWarning}}
                         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
                             <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{description.replace(/'/g, "\\\\'")}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
-                                ✓ Ja, Allocate
+                                Yes, Allocate
                             </button>
                             <button onclick="showAllCategories('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}')" 
                                     style="padding:7px 16px;font-size:12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;">
-                                ✎ Ander kategorie
+                                Different category
                             </button>
                         </div>
-                    </div>
-                `;
-                
-                // Store categories for this row
+                    </div>`;
                 row.dataset.categories = JSON.stringify(data.all_categories || []);
-                window._allCategories = data.all_categories || [];
-                
             }} else {{
-                // Zane couldn't decide — show all categories
                 showAllCategories(txnId, description, data.all_categories, data.reason || 'Not sure — please pick from the list.');
             }}
             
         }} catch (err) {{
-            actionCell.innerHTML = `
-                <div style="color:var(--red);font-size:12px;margin-bottom:5px;">⚠️ Kon nie analiseer nie</div>
-                <button onclick="askZaneBank('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
-                        style="padding:4px 10px;font-size:11px;background:var(--primary);border:none;color:white;border-radius:4px;cursor:pointer;">
-                    🔄 Probeer weer
-                </button>
-            `;
+            actionCell.innerHTML = `<div style="color:var(--red);font-size:12px;">Could not analyze — <a href="#" onclick="askZaneBank('${{txnId}}','${{description}}', ${{debit}}, ${{credit}}, '${{date}}');return false;" style="color:var(--primary);">try again</a></div>`;
         }}
+    }}
+    
+    function submitZaneAnswer(txnId, description, debit, credit, date) {{
+        const input = document.getElementById('zaneInput_' + txnId);
+        const answer = input ? input.value.trim() : '';
+        if (!answer) {{ input?.focus(); return; }}
+        askZaneBank(txnId, description, debit, credit, date, answer);
     }}
     
     function showAllCategories(txnId, description, categoriesFromApi, message) {{
@@ -53671,21 +53695,26 @@ def api_banking_zane_suggest():
 
 DIRECTION: {"MONEY IN — this is income/deposit/payment received" if credit > 0 else "MONEY OUT — this is an expense/payment made"}
 Transaction: "{description}", {date}, R{amount:,.2f}
-{"User answered your question: " + user_answer if user_answer else ""}
+{"THE USER SAYS THIS IS FOR: " + user_answer if user_answer else ""}
 
 Categories:
 {all_categories_for_ai}
 
 {f"Learned patterns from this business:{chr(10)}{pattern_examples}" if pattern_examples else ""}
 
-If you know, say it. If not sure, ask — 2-4 options. Always include "None of these — let me pick" as last option when asking.
-If you genuinely don't know, say "Not sure about this one — pick from the dropdown and I'll learn for next time."
+{"Map their answer to the exact right category. You know the categories, they know what it's for." if user_answer else ""}
+
+Three options:
+1. You KNOW (Telkom=Telephone, Engen=Fuel, bank fees, etc): just say it
+2. You know the type but need to clarify (stock vs expense): ask with 2-4 clickable options
+3. You DON'T KNOW what this payment is for: ask the user to describe it (NO options)
+
 Fuel: warn no VAT claim. Never use "General Expenses".
-{"Pick the exact category from their answer." if user_answer else ""}
 
 JSON only:
 Know it: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]","confidence":"high","vat_warning":""}}
-Not sure: {{"needs_clarification":true,"question":"[direct question]","options":[{{"label":"Option","value":"val"}},{{"label":"None of these — let me pick","value":"manual"}}],"confidence":"medium","reason":""}}"""
+Need to clarify stock/expense: {{"needs_clarification":true,"question":"[question]","options":[{{"label":"Option","value":"val"}}],"confidence":"medium","reason":""}}
+Don't know — ask user: {{"needs_clarification":true,"question":"What is this payment for?","confidence":"low","reason":""}}"""
 
         # Haiku — fast, cheap, smart enough for category matching
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
