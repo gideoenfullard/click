@@ -42418,13 +42418,17 @@ def pos_history():
         # Build searchable text from items
         items_text = " ".join([str(it.get("description", "")) for it in s_items]) if s_items else ""
         
+        # Default customer name based on payment method
+        pm = s.get("payment_method", "cash").lower()
+        default_name = {"cash": "Cash Sale", "card": "Card Sale", "account": "Account Sale"}.get(pm, "Sale")
+        
         transactions.append({
             "id": s.get("id"),
             "number": s.get("sale_number", "-"),
             "date": s.get("date", ""),
             "time": extract_time(s.get("created_at", "")),
-            "type": s.get("payment_method", "cash").upper(),
-            "customer": s.get("customer_name", "Cash Sale"),
+            "type": pm.upper(),
+            "customer": s.get("customer_name") or default_name,
             "total": float(s.get("total", 0)),
             "items": len(s_items) if s_items else 0,
             "items_text": items_text,
@@ -42993,7 +42997,7 @@ def view_sale(sale_id):
             
             <div style="margin-bottom:15px;">
                 <span style="background:{method_color};color:white;padding:4px 12px;border-radius:4px;font-size:12px;">{payment_method}</span>
-                <span style="margin-left:10px;color:#666;">{safe_string(sale.get("customer_name", "Cash Sale"))}</span>
+                <span style="margin-left:10px;color:#666;">{safe_string(sale.get("customer_name") or ({"CASH": "Cash Sale", "CARD": "Card Sale", "ACCOUNT": "Account Sale"}.get(payment_method, "Sale")))}</span>
             </div>
             
             <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
@@ -43183,8 +43187,10 @@ def api_pos_sale():
         data = request.get_json()
         items = data.get("items", [])
         customer_id = data.get("customer_id", "")
-        customer_name = data.get("customer_name", "Cash")
         payment_method = data.get("payment_method", "cash")
+        # Default customer name based on payment method (not always "Cash")
+        default_name = {"cash": "Cash Sale", "card": "Card Sale", "account": "Account Sale"}.get(payment_method, "Sale")
+        customer_name = data.get("customer_name") or default_name
         cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
         
         if not items:
