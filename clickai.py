@@ -64105,6 +64105,11 @@ def scan_inbox_page():
             }}
             
             container.innerHTML = html;
+            
+            // Auto-select the suggested category in the comprehensive dropdown
+            if (sugg.category && !sugg.is_stock) {{
+                autoSelectInboxCategory(sugg.category);
+            }}
         }}
         
         document.getElementById('zaneSuggestion').style.display = 'block';
@@ -64308,6 +64313,26 @@ def scan_inbox_page():
                         <strong style="color:#8b5cf6;">Zane recommends:</strong>
                     </div>
                     <div id="zaneSuggestionContent" style="font-size:14px;"></div>
+                </div>
+            `;
+            
+            // Add COMPREHENSIVE expense category picker
+            formHtml += `
+                <div style="margin:20px 0;padding:15px;border-radius:12px;background:rgba(99,102,241,0.05);border:1px solid var(--border);">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                        <span style="font-size:20px;">📂</span>
+                        <strong>Expense Category / Uitgawe Kategorie</strong>
+                    </div>
+                    <input type="text" id="inboxCatSearch" class="form-input" 
+                           placeholder="🔍 Soek / Search category (bv. fuel, rates, insurance...)"
+                           oninput="filterInboxCategories()"
+                           style="width:100%;padding:10px;font-size:14px;margin-bottom:8px;border-radius:8px;">
+                    <select id="m_expense_category" class="form-input" style="width:100%;padding:10px;font-size:14px;" size="6">
+                        {IndustryKnowledge.build_category_options_html(biz_id)}
+                    </select>
+                    <div id="inboxCatHint" style="font-size:11px;color:var(--text-muted);margin-top:6px;">
+                        💡 Zane sal outomaties die beste kategorie voorstel — of kies self uit 133 opsies
+                    </div>
                 </div>
             `;
             
@@ -64682,6 +64707,9 @@ def scan_inbox_page():
             // Get payment method from selection (expenses are always paid)
             const payMethod = document.getElementById('selectedPayMethod')?.value || 'cash';
             
+            // Get selected expense category from comprehensive dropdown
+            const selectedCategory = document.getElementById('m_expense_category')?.value || '';
+            
             payload = {{
                 supplier_name: document.getElementById('m_supplier')?.value || 'Unknown',
                 supplier_phone: document.getElementById('m_phone')?.value || '',
@@ -64693,7 +64721,8 @@ def scan_inbox_page():
                 total: parseFloat(document.getElementById('m_total')?.value || 0),
                 items: editedItems.length > 0 ? editedItems : (currentItemData.items || []),
                 paid: true,
-                payment_method: payMethod
+                payment_method: payMethod,
+                category: selectedCategory
             }};
             endpoint = saveType.includes('supplier') ? '/api/scan/save-supplier-invoice' : '/api/scan/save-expense';
             redirect = saveType.includes('supplier') ? '/supplier-invoices' : '/expenses';
@@ -64793,6 +64822,76 @@ def scan_inbox_page():
         }} catch(err) {{
             alert(' Error: ' + err.message);
         }}
+    }}
+    
+    // ═══════════════════════════════════════════════════════════
+    // INBOX CATEGORY SEARCH — Filter comprehensive categories
+    // ═══════════════════════════════════════════════════════════
+    function filterInboxCategories() {{
+        const search = (document.getElementById('inboxCatSearch')?.value || '').toLowerCase();
+        const select = document.getElementById('m_expense_category');
+        if (!select) return;
+        
+        const options = select.querySelectorAll('option');
+        const optgroups = select.querySelectorAll('optgroup');
+        
+        if (!search) {{
+            options.forEach(o => o.style.display = '');
+            optgroups.forEach(g => g.style.display = '');
+            return;
+        }}
+        
+        optgroups.forEach(g => {{
+            let hasVisible = false;
+            g.querySelectorAll('option').forEach(o => {{
+                if (o.textContent.toLowerCase().includes(search) || o.value.toLowerCase().includes(search)) {{
+                    o.style.display = '';
+                    hasVisible = true;
+                }} else {{
+                    o.style.display = 'none';
+                }}
+            }});
+            g.style.display = hasVisible ? '' : 'none';
+        }});
+        
+        select.querySelectorAll(':scope > option').forEach(o => {{
+            if (o.value === '') {{ o.style.display = ''; return; }}
+            o.style.display = o.textContent.toLowerCase().includes(search) ? '' : 'none';
+        }});
+    }}
+    
+    // Auto-select category in dropdown when Zane suggests
+    function autoSelectInboxCategory(categoryName) {{
+        const select = document.getElementById('m_expense_category');
+        if (!select || !categoryName) return;
+        
+        // Try exact match first
+        for (const opt of select.options) {{
+            if (opt.value === categoryName) {{
+                select.value = categoryName;
+                // Highlight the dropdown
+                select.style.border = '2px solid #8b5cf6';
+                select.style.background = 'rgba(139,92,246,0.1)';
+                const hint = document.getElementById('inboxCatHint');
+                if (hint) hint.innerHTML = `🤖 Zane het <strong>${{categoryName}}</strong> gekies — verander as nodig`;
+                return true;
+            }}
+        }}
+        
+        // Try partial match
+        for (const opt of select.options) {{
+            if (opt.value.toLowerCase().includes(categoryName.toLowerCase()) || 
+                categoryName.toLowerCase().includes(opt.value.toLowerCase())) {{
+                select.value = opt.value;
+                select.style.border = '2px solid #f59e0b';
+                select.style.background = 'rgba(245,158,11,0.1)';
+                const hint = document.getElementById('inboxCatHint');
+                if (hint) hint.innerHTML = `🤖 Zane het <strong>${{opt.value}}</strong> gekies (naaste match) — verander as nodig`;
+                return true;
+            }}
+        }}
+        
+        return false;
     }}
     
     async function deleteFromInbox() {{
@@ -65779,14 +65878,27 @@ AMBIGUOUS ITEMS (ASK USER):
 - Parts, spares → Could be stock for resale OR repairs expense
 - Cleaning supplies → Could be stock for resale OR consumables expense
 
-CLEAR ITEMS (DON'T ASK):
-- Bank fees/statements → ALWAYS expense (Bank Charges)
-- Fuel/petrol/diesel → ALWAYS expense (Fuel) - warn about no VAT claim
-- Electricity/water → ALWAYS expense (Utilities)
-- Phone/internet bills → ALWAYS expense (Telephone)
-- Rent payments → ALWAYS expense (Rent)
-- Insurance → ALWAYS expense (Insurance)
-- Professional services → ALWAYS expense (Professional Fees)
+CLEAR ITEMS (DON'T ASK — use SPECIFIC category from list below):
+- Bank fees/statements → "Bank Charges"
+- Fuel for business vehicles → "Fuel — Business Vehicle" (warn: no VAT claim on fuel!)
+- Fuel for equipment like lawnmower/generator → "Fuel — Equipment (Mower, Generator, etc.)" (warn: no VAT claim!)
+- Electricity → "Electricity"
+- Water → "Water & Sewage"
+- Rates/taxes from municipality → "Rates & Taxes — Municipal"
+- Property rates → "Rates & Taxes — Property"
+- Refuse/garbage → "Refuse Removal"
+- Phone/internet → "Telephone — Cellphone" or "Internet / WiFi"
+- Rent → "Rent — Business Premises"
+- Insurance → use specific: "Insurance — Business / Contents", "Insurance — Vehicle", "Insurance — Equipment", etc.
+- Professional services → "Accounting Fees", "Legal Fees", "Consulting Fees" etc.
+- SARS payments → "VAT Payment to SARS" or "PAYE / UIF / SDL Payment"
+- Vehicle finance → "Vehicle Lease / Installment"
+- Security (ADT, Fidelity) → "Security"
+- Software (Google, Microsoft) → "Software Subscription (Monthly)"
+- Card machines (Yoco, iKhokha) → "Card Machine Fees"
+
+COMPREHENSIVE CATEGORIES AVAILABLE (pick the MOST SPECIFIC one):
+{IndustryKnowledge.build_category_list_for_ai()}
 
 {"The user answered: '" + user_answer + "' - Now give them a FINAL answer based on this." if user_answer else ""}
 
@@ -65821,10 +65933,10 @@ If user ANSWERED (give final recommendation):
     "needs_clarification": false,
     "action": "expense",
     "action_label": "Book as Expense",
-    "category": "Vehicle Expenses",
+    "category": "Fuel — Equipment (Mower, Generator, etc.)",
     "confidence": 0.95,
-    "explanation": "Perfect! Since this is for your own vehicles, I'll book it as Vehicle Expenses. Click the ORANGE 'Book as Expense' button, I'll take care of the rest!",
-    "vat_warning": "",
+    "explanation": "Perfect! Since this is for your own equipment, I'll book it correctly. Click the ORANGE 'Book as Expense' button, I'll take care of the rest!",
+    "vat_warning": "No VAT claim on fuel — SARS Rule",
     "is_stock": false
 }}
 
@@ -65834,6 +65946,7 @@ BUTTON COLORS to mention:
 - BLUE = Stock Purchase (Credit)
 - TEAL = Stock Purchase (Paid)
 
+IMPORTANT: Always use the EXACT category name from the comprehensive list above. Be as SPECIFIC as possible!
 Keep explanations SHORT (1-2 sentences max). Always end with reassurance!"""
 
         response = client.messages.create(
@@ -65894,21 +66007,46 @@ def api_scan_save_expense():
         category = data.get("category", "").strip()
         if not category:
             supplier_name = data.get("supplier_name", "").lower()
-            if any(x in supplier_name for x in ["engen", "shell", "bp", "caltex", "fuel", "petrol"]):
-                category = "Fuel"
+            if any(x in supplier_name for x in ["engen", "shell", "bp", "caltex", "fuel", "petrol", "sasol"]):
+                category = "Fuel — Business Vehicle"
             elif any(x in supplier_name for x in ["eskom", "city power", "electric"]):
                 category = "Electricity"
             elif any(x in supplier_name for x in ["vodacom", "mtn", "telkom", "cell c"]):
-                category = "Telephone"
-            elif any(x in supplier_name for x in ["pick n pay", "checkers", "spar", "woolworths", "food"]):
-                category = "Consumables"
+                category = "Telephone — Cellphone"
+            elif any(x in supplier_name for x in ["rain ", "afrihost", "rsaweb"]):
+                category = "Internet / WiFi"
+            elif any(x in supplier_name for x in ["pick n pay", "checkers", "spar", "woolworths", "food", "makro"]):
+                category = "Stock Purchases — General"
             elif any(x in supplier_name for x in ["builders", "cashbuild", "hardware"]):
                 category = "Repairs & Maintenance"
+            elif any(x in supplier_name for x in ["santam", "outsurance", "discovery", "old mutual"]):
+                category = "Insurance — Business / Contents"
+            elif any(x in supplier_name for x in ["multichoice", "dstv"]):
+                category = "DSTV / Streaming"
+            elif any(x in supplier_name for x in ["municipality", "city of", "munisipal"]):
+                category = "Rates & Taxes — Municipal"
+            elif any(x in supplier_name for x in ["adt", "fidelity", "chubb"]):
+                category = "Security"
+            elif any(x in supplier_name for x in ["yoco", "ikhokha", "zapper"]):
+                category = "Card Machine Fees"
             else:
-                category = "General"
+                category = "Sundry Expenses"
+        
+        # Build GL code lookup from comprehensive BOOKING_CATEGORIES
+        gl_lookup = {}
+        for group in IndustryKnowledge.BOOKING_CATEGORIES.values():
+            for cat_name, gl_code in group["items"]:
+                if gl_code:
+                    gl_lookup[cat_name] = gl_code
+        
+        # Get GL code for the selected category
+        expense_account = gl_lookup.get(category, "6999")  # Default to Sundry Expenses
         
         # SARS RULE: No VAT input claim on Fuel or Entertainment
-        no_vat_categories = ["Fuel", "Entertainment", "Club Subscriptions"]
+        no_vat_categories = [
+            "Fuel — Business Vehicle", "Fuel — Equipment (Mower, Generator, etc.)",
+            "Entertainment", "Membership & Subscriptions"
+        ]
         vat_amount = float(data.get("vat", 0))
         vat_claimable = 0.0 if category in no_vat_categories else vat_amount
         
@@ -65931,7 +66069,7 @@ def api_scan_save_expense():
             amount=total_amount,
             date=data.get("date", today()),
             category=category,
-            category_code=category_accounts.get(category, "7000") if 'category_accounts' in dir() else "",
+            category_code=gl_lookup.get(category, "6999"),
             vat=vat_amount,
             net=total_amount - vat_amount,
             reference=data.get("invoice_number", ""),
@@ -65953,20 +66091,7 @@ def api_scan_save_expense():
         # Create journal entries for GL
         total_amount = float(data.get("total", 0))
         
-        # Map category to account code
-        category_accounts = {
-            "Fuel": "6500",
-            "Electricity": "6200", 
-            "Telephone": "6300",
-            "Repairs & Maintenance": "6600",
-            "Insurance": "6400",
-            "Rent": "6100",
-            "Bank Charges": "6700",
-            "Advertising": "6800",
-            "General": "7000",
-            "Consumables": "7000"
-        }
-        expense_account = category_accounts.get(category, "7000")  # Default to General Expenses
+        # expense_account already set from gl_lookup above
         
         # Journal entry: Debit Expense + VAT Input (if claimable), Credit Bank
         journal_entries = [
