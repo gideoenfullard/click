@@ -52280,22 +52280,24 @@ def banking_page():
                 suggestion_html += f'<div style="font-size:10px;color:var(--text-muted);">{match_ref}</div>'
         
         # Action buttons
+        txn_date = txn.get("date", "")
+        safe_desc = desc.replace("'", "\\'").replace('"', '&quot;')
         if show_approve and suggested_cat and confidence >= 0.6:
             action_html = f'''
-            <div style="display:flex;gap:5px;flex-wrap:wrap;">
-                <button onclick="approveMatch('{txn_id}', '{suggested_cat}')" class="btn" style="padding:4px 8px;font-size:11px;background:var(--green);border:none;color:white;">✓ Yes</button>
-                <select class="form-input" style="width:120px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{desc}')">
-                    <option value="">Other...</option>
-                    {category_options}
-                </select>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+                <button onclick="approveMatch('{txn_id}', '{suggested_cat}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--green);border:none;color:white;border-radius:6px;">✓ {suggested_cat}</button>
+                <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--primary);border:none;color:white;border-radius:6px;">🤖 Vra Zane</button>
             </div>
             '''
         else:
             action_html = f'''
-            <select class="form-input" style="width:140px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{desc}')">
-                <option value="">Select...</option>
-                {category_options}
-            </select>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+                <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:7px 14px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;font-weight:600;">🤖 Vra Zane</button>
+                <select class="form-input" style="width:120px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{safe_desc}')">
+                    <option value="">Manual...</option>
+                    {category_options}
+                </select>
+            </div>
             '''
         
         return f'''
@@ -52482,12 +52484,21 @@ def banking_page():
             const data = await response.json();
             
             if (data.success) {{
-                // Remove the row
+                // Show what it was allocated to before removing
                 const row = document.querySelector(`tr[data-id="${{id}}"]`);
                 if (row) {{
-                    row.style.background = 'rgba(16,185,129,0.2)';
-                    row.style.transition = 'all 0.3s';
-                    setTimeout(() => row.remove(), 300);
+                    // Replace the action column with the allocation result
+                    const cells = row.querySelectorAll('td');
+                    const lastCell = cells[cells.length - 1];
+                    lastCell.innerHTML = `<span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;">✓ ${{category}}</span>`;
+                    row.style.background = 'rgba(16,185,129,0.15)';
+                    row.style.transition = 'opacity 0.5s';
+                    
+                    // Fade out after 2 seconds so user can see where it went
+                    setTimeout(() => {{
+                        row.style.opacity = '0.4';
+                    }}, 2000);
+                    setTimeout(() => row.remove(), 3000);
                 }}
                 
                 // Update counts (simple decrement)
@@ -52502,6 +52513,119 @@ def banking_page():
     
     async function approveMatch(id, category) {{
         await categorizeTransaction(id, category, '');
+    }}
+    
+    // ═══════════════════════════════════════════════════════════
+    // ASK ZANE - Collaborative bank transaction allocation
+    // Uses dedicated lightweight AI endpoint (not full Zane brain)
+    // ═══════════════════════════════════════════════════════════
+    async function askZaneBank(txnId, description, debit, credit, date) {{
+        const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
+        const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
+        if (!actionCell) return;
+        
+        // Show thinking state
+        actionCell.innerHTML = `
+            <div style="padding:8px;text-align:center;">
+                <div style="color:var(--primary);font-size:13px;font-weight:600;">🤖 Zane analiseer...</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Kyk na transaksie patroon</div>
+            </div>`;
+        
+        try {{
+            const response = await fetch('/api/banking/zane-suggest', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{ description, debit, credit, date }})
+            }});
+            
+            const data = await response.json();
+            
+            if (data.success && data.category) {{
+                // Zane has a suggestion — show it with accept/reject
+                const confColor = data.confidence >= 0.85 ? 'var(--green)' : data.confidence >= 0.6 ? 'var(--yellow)' : 'var(--red)';
+                const confText = data.confidence >= 0.85 ? '🟢 Hoë vertroue' : data.confidence >= 0.6 ? '🟡 Medium vertroue' : '🔴 Lae vertroue';
+                const learnedBadge = data.source === 'learned' ? '<span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;margin-left:5px;">Geleer ✓</span>' : '';
+                
+                actionCell.innerHTML = `
+                    <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
+                        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                            <span style="font-size:11px;color:${{confColor}};">${{confText}}</span>
+                            ${{learnedBadge}}
+                        </div>
+                        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">
+                            📂 ${{data.category}}
+                        </div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">
+                            ${{data.reason}}
+                        </div>
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                            <button onclick="categorizeTransaction('${{txnId}}', '${{data.category}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                                    style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;">
+                                ✓ Ja, Allocate
+                            </button>
+                            <button onclick="showAllCategories('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}')" 
+                                    style="padding:7px 16px;font-size:12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;">
+                                ✎ Ander kategorie
+                            </button>
+                        </div>
+                    </div>
+                `;
+                
+                // Store categories for this row
+                row.dataset.categories = JSON.stringify(data.all_categories || []);
+                
+            }} else {{
+                // Zane couldn't decide — show all categories
+                showAllCategories(txnId, description, data.all_categories, data.reason || 'Ek is nie seker nie — kies asseblief self.');
+            }}
+            
+        }} catch (err) {{
+            actionCell.innerHTML = `
+                <div style="color:var(--red);font-size:12px;margin-bottom:5px;">⚠️ Kon nie analiseer nie</div>
+                <button onclick="askZaneBank('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}',${{debit}},${{credit}},'${{date}}')" 
+                        style="padding:4px 10px;font-size:11px;background:var(--primary);border:none;color:white;border-radius:4px;cursor:pointer;">
+                    🔄 Probeer weer
+                </button>
+            `;
+        }}
+    }}
+    
+    function showAllCategories(txnId, description, categoriesFromApi, message) {{
+        const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
+        const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
+        if (!actionCell) return;
+        
+        // Get categories from API response or from stored data
+        let cats = categoriesFromApi;
+        if (!cats && row.dataset.categories) {{
+            try {{ cats = JSON.parse(row.dataset.categories); }} catch(e) {{}}
+        }}
+        if (!cats || !cats.length) {{
+            cats = `{','.join(expense_categories + extra_cats)}`.split(',').map(c => c.trim());
+        }}
+        
+        const safeDesc = description.replace(/'/g, "\\\\'");
+        const optionsHtml = cats.map(c => `<option value="${{c}}">${{c}}</option>`).join('');
+        
+        actionCell.innerHTML = `
+            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
+                ${{message ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">🤖 ${{message}}</div>` : ''}}
+                <select id="manualCat_${{txnId}}" class="form-input" style="width:100%;padding:8px;font-size:13px;margin-bottom:8px;">
+                    <option value="">— Kies kategorie —</option>
+                    ${{optionsHtml}}
+                </select>
+                <div style="display:flex;gap:6px;">
+                    <button onclick="const sel=document.getElementById('manualCat_${{txnId}}'); if(sel.value) categorizeTransaction('${{txnId}}', sel.value, '${{safeDesc}}')" 
+                            style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;flex:1;">
+                        ✓ Allocate
+                    </button>
+                    <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', 0, 0, '')" 
+                            style="padding:7px 12px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;cursor:pointer;">
+                        🤖 Vra Zane
+                    </button>
+                </div>
+            </div>
+        `;
     }}
     
     async function bulkApprove() {{
@@ -53169,6 +53293,162 @@ def api_banking_categorize():
     except Exception as e:
         logger.error(f"[BANK] Categorize failed: {e}")
         return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/banking/zane-suggest", methods=["POST"])
+@login_required
+def api_banking_zane_suggest():
+    """
+    Zane analyzes a bank transaction and suggests allocation.
+    Lightweight AI call — NOT the full Zane brain.
+    Returns: suggested category, reason, confidence, and all available categories.
+    """
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    biz_name = business.get("name", "Business") if business else "Business"
+    
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    try:
+        data = request.get_json()
+        description = data.get("description", "")
+        debit = float(data.get("debit", 0))
+        credit = float(data.get("credit", 0))
+        date = data.get("date", "")
+        
+        if not description:
+            return jsonify({"success": False, "error": "No description"})
+        
+        # Get all available categories for this business
+        expense_categories = IndustryKnowledge.get_expense_categories(biz_id)
+        extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan Repayment", "Loan", "Refund", "Transfer Between Accounts", "Ignore"]
+        all_categories = expense_categories + extra_cats
+        
+        # Check if BankLearning already has a high-confidence match
+        existing = BankLearning.suggest_category(biz_id, description)
+        if existing and existing.get("confidence", 0) >= 0.85:
+            return jsonify({
+                "success": True,
+                "category": existing.get("category", ""),
+                "reason": f"Ek het hierdie tipe transaksie al {existing.get('times_seen', 1)}x gesien — dit is altyd as {existing.get('category')} geallocate.",
+                "confidence": existing.get("confidence", 0.85),
+                "source": "learned",
+                "all_categories": all_categories
+            })
+        
+        # Get recent learned patterns for context
+        patterns = db.get("bank_patterns", {"business_id": biz_id}) or []
+        pattern_examples = ""
+        if patterns:
+            recent = sorted(patterns, key=lambda p: p.get("times_seen", 0), reverse=True)[:10]
+            pattern_examples = "\n".join([f"- {p.get('original_description', p.get('pattern', ''))} → {p.get('category', '')}" for p in recent])
+        
+        # Build focused AI prompt
+        direction = "BETALING UIT (Uitgawe/Expense)" if debit > 0 else "GELD IN (Inkomste/Payment)"
+        amount = debit if debit > 0 else credit
+        
+        prompt = f"""You are Zane, a qualified South African bookkeeper (BCom Hons). 
+Analyze this bank transaction and suggest the BEST category.
+
+BUSINESS: {biz_name}
+TRANSACTION: "{description}"
+DATE: {date}
+DIRECTION: {direction}
+AMOUNT: R{amount:,.2f}
+
+AVAILABLE CATEGORIES:
+{chr(10).join([f'- {c}' for c in all_categories])}
+
+{f"PREVIOUS PATTERNS I LEARNED FROM THIS BUSINESS:{chr(10)}{pattern_examples}" if pattern_examples else ""}
+
+RULES:
+1. Pick the SINGLE best category from the list above
+2. If it's clearly a customer paying you → "Customer Payment"
+3. If it's a transfer between own accounts → "Transfer Between Accounts"  
+4. If it's owner withdrawing money → "Owner Drawings"
+5. For expenses, match to the most specific category available
+6. If unsure, say so honestly
+
+Respond in this EXACT format (Afrikaans):
+KATEGORIE: [exact category name from list]
+REDE: [one sentence explanation in Afrikaans why this is the right category]
+VERTROUE: [hoog/medium/laag]"""
+
+        # Call Sonnet — lightweight, fast
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            },
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 200,
+                "messages": [{"role": "user", "content": prompt}]
+            },
+            timeout=15
+        )
+        
+        if resp.status_code != 200:
+            logger.error(f"[BANK ZANE] API error: {resp.status_code}")
+            return jsonify({"success": False, "error": "AI unavailable", "all_categories": all_categories})
+        
+        ai_text = resp.json().get("content", [{}])[0].get("text", "")
+        
+        # Parse response
+        category = ""
+        reason = ""
+        confidence = "medium"
+        
+        for line in ai_text.strip().split("\n"):
+            line = line.strip()
+            if line.upper().startswith("KATEGORIE:"):
+                category = line.split(":", 1)[1].strip()
+            elif line.upper().startswith("REDE:"):
+                reason = line.split(":", 1)[1].strip()
+            elif line.upper().startswith("VERTROUE:"):
+                confidence = line.split(":", 1)[1].strip().lower()
+        
+        # Validate category against available list
+        valid = False
+        for c in all_categories:
+            if c.lower() == category.lower():
+                category = c  # Use exact casing
+                valid = True
+                break
+        
+        if not valid and category:
+            # Try partial match
+            for c in all_categories:
+                if category.lower() in c.lower() or c.lower() in category.lower():
+                    category = c
+                    valid = True
+                    break
+        
+        conf_score = {"hoog": 0.9, "medium": 0.7, "laag": 0.4}.get(confidence, 0.7)
+        
+        logger.info(f"[BANK ZANE] '{description[:30]}' → {category} ({confidence})")
+        
+        return jsonify({
+            "success": True,
+            "category": category if valid else "",
+            "reason": reason or f"Ek is nie seker waarheen hierdie transaksie gaan nie.",
+            "confidence": conf_score,
+            "source": "ai",
+            "all_categories": all_categories
+        })
+        
+    except Exception as e:
+        logger.error(f"[BANK ZANE] Error: {e}")
+        # Still return categories so user can manually select
+        try:
+            cats = IndustryKnowledge.get_expense_categories(biz_id) + ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan Repayment", "Loan", "Refund", "Transfer Between Accounts", "Ignore"]
+        except:
+            cats = ["General Expenses"]
+        return jsonify({"success": False, "error": str(e), "all_categories": cats})
 
 
 # 
