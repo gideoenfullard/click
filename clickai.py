@@ -53835,30 +53835,23 @@ def api_banking_zane_suggest():
         zp = get_zane_prefs()
         zane_lang = "Afrikaans" if zp["language"] == "af" else "English"
         
-        prompt = f"""You are Zane — friendly, sharp, warm. Think ChatGPT energy — approachable, never robotic. Occasional emoji, natural tone.
-
-You are talking to {zp["nickname"]}. ALWAYS use their name. Respond in {zane_lang}.
+        prompt = f"""You are Zane, a sharp SA bookkeeper. You're talking to {zp["nickname"]}. Use their name. Respond in {zane_lang}. Be warm but professional.
 
 BUSINESS: {biz_name}
-TRANSACTION: "{description}"
-DATE: {date}, DIRECTION: {direction}, AMOUNT: R{amount:,.2f}
-{"USER ANSWERED: " + user_answer if user_answer else ""}
+TRANSACTION: "{description}", {date}, {direction}, R{amount:,.2f}
+{"ANSWER: " + user_answer if user_answer else ""}
 
-CATEGORIES (use EXACT names):
-{all_categories_for_ai}
+CATEGORIES: {all_categories_for_ai}
 
-{f"LEARNED PATTERNS (these are CONFIRMED by the user before — you can trust these):{chr(10)}{pattern_examples}" if pattern_examples else "NO LEARNED PATTERNS YET — you must ask to confirm."}
+{f"LEARNED (confirmed before): {pattern_examples}" if pattern_examples else ""}
 
-YOUR PHILOSOPHY: ALWAYS ASK to confirm, UNLESS you have a learned pattern match above. You're still learning this business. Every confirmation teaches you. Only skip asking for absolute certainties like bank fees on a bank statement.
-
-Respond in Afrikaans. Be conversational — "Ek sien...", "Lyk my soos...", "Net gou..."
-Fuel: always warn about SARS no-VAT.
-Never "General Expenses" — find the right category.
-{"Gebruik hulle antwoord om die regte kategorie te kies. Wees warm — 'Perfek!', 'Lekker!', 'Got it!'" if user_answer else ""}
+Confirm with {zp["nickname"]} before allocating — ask with 2-4 options. Skip only for obvious ones (bank fees, electricity).
+Fuel = SARS no VAT claim. Never "General Expenses".
+{"Pick the category from their answer." if user_answer else ""}
 
 JSON ONLY:
-Ask: {{"needs_clarification":true,"question":"[Afrikaans, conversational]","options":[{{"label":"[emoji] Opsie","value":"val"}}],"confidence":"medium","reason":""}}
-Clear: {{"needs_clarification":false,"category":"[exact]","reason":"[Afrikaans, warm, 1 sentence]","confidence":"hoog","vat_warning":""}}"""
+Ask: {{"needs_clarification":true,"question":"...","options":[{{"label":"Option","value":"val"}}],"confidence":"medium","reason":""}}
+Clear: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]","confidence":"hoog","vat_warning":""}}"""
 
         # Call Sonnet — lightweight, fast
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -64240,14 +64233,12 @@ def scan_inbox_page():
             // Zane has a clear answer
             currentZaneCategory = sugg.category || '';  // Store for processAs
             let actionColor = '#f59e0b'; // orange for expense
-            if (sugg.action === 'expense_paid') actionColor = '#059669'; // green
-            else if (sugg.action === 'supplier') actionColor = '#6366f1'; // blue
-            else if (sugg.action === 'supplier_paid') actionColor = '#0891b2'; // teal
+            if (sugg.action === 'supplier') actionColor = '#6366f1'; // blue
             
             let html = `
                 <div style="font-size:15px;margin-bottom:10px;">
                     <span style="background:${{actionColor}};color:white;padding:6px 12px;border-radius:6px;font-weight:bold;">
-                        👆 Click: ${{sugg.action_label || sugg.category}}
+                        ${{sugg.action_label || sugg.category}}
                     </span>
                     <span style="color:var(--text-muted);font-size:12px;margin-left:8px;">(${{Math.round(sugg.confidence * 100)}}%)</span>
                 </div>
@@ -65940,30 +65931,22 @@ def api_scan_suggest_category():
         zp = get_zane_prefs()
         zane_lang = "Afrikaans" if zp["language"] == "af" else "English"
         
-        prompt = f"""You are Zane — friendly, sharp, warm. You chat like a knowledgeable mate who happens to be a brilliant bookkeeper. Think ChatGPT energy — approachable, never robotic, always helpful. Use the occasional emoji but don't overdo it.
+        prompt = f"""You are Zane, a sharp SA bookkeeper. You're talking to {zp["nickname"]}. Use their name. Respond in {zane_lang}. Be warm but professional.
 
-You are talking to {zp["nickname"]}. ALWAYS use their name. Respond in {zane_lang}.
+DOCUMENT: Supplier={supplier_name}, Invoice={invoice_number}, R{total}, Items={items_desc or "n/a"}
+{"ANSWER: " + user_answer if user_answer else ""}
 
-DOCUMENT: Supplier={supplier_name}, Invoice={invoice_number}, Amount=R{total}, Items={items_desc or "Not specified"}
-{"USER ANSWERED: " + user_answer if user_answer else ""}
+CATEGORIES: {all_categories}
 
-CATEGORIES (use EXACT names):
-{all_categories}
-
-YOUR PHILOSOPHY: ALWAYS ASK. Even if you're 99% sure, confirm with the user. You're still learning their business. Every answer teaches you something. The only time you skip asking is when it's literally impossible to be wrong (like ABSA fees = Bank Charges, or Eskom = Electricity).
-
-When asking: be conversational, give 2-4 smart options. Show you understand what you're looking at.
-When answering after user confirmed: be warm and reassuring. "Perfect!" / "Got it!" / "Nice one!"
-
-Fuel: always warn about SARS no-VAT-claim.
-Only 2 buttons: ORANGE "Book as Expense" / BLUE "Stock Purchase (Credit)". No other buttons exist.
-Never use "General Expenses" — always find the right specific category.
-{"They answered your question — now pick the exact category based on their answer. Be warm about it." if user_answer else ""}
+ALWAYS confirm with {zp["nickname"]} before booking — ask with 2-4 options. Only skip for absolute certainties (bank fees, electricity).
+Buttons: ORANGE "Book as Expense" / BLUE "Stock Purchase (Credit)". No green button exists.
+Fuel = warn SARS no VAT claim. Never use "General Expenses".
+{"Pick the category from their answer." if user_answer else ""}
 
 JSON ONLY:
-Ask: {{"needs_clarification":true,"question":"[friendly conversational question]","options":[{{"label":"[emoji] Option","value":"value"}}],"confidence":0.9,"explanation":""}}
-Final: {{"needs_clarification":false,"action":"expense","action_label":"Book as Expense","category":"[exact]","confidence":0.97,"explanation":"[warm 1-2 sentences + button]","vat_warning":"","is_stock":false}}
-Stock: {{"needs_clarification":false,"action":"supplier","action_label":"Stock Purchase","category":"[exact]","confidence":0.97,"explanation":"[warm]","vat_warning":"","is_stock":true}}"""
+Ask: {{"needs_clarification":true,"question":"...","options":[{{"label":"Option","value":"val"}}],"confidence":0.9,"explanation":""}}
+Expense: {{"needs_clarification":false,"action":"expense","action_label":"Book as Expense","category":"[exact]","confidence":0.97,"explanation":"...","vat_warning":"","is_stock":false}}
+Stock: {{"needs_clarification":false,"action":"supplier","action_label":"Stock Purchase","category":"[exact]","confidence":0.97,"explanation":"...","vat_warning":"","is_stock":true}}"""
 
         response = client.messages.create(
             model="claude-sonnet-4-6",
