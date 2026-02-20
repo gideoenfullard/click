@@ -19658,97 +19658,6 @@ def api_zane_onboard_complete():
         return jsonify({"success": False})
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# ZANE PREFERENCES — Name + Language so Zane knows who he's talking to
-# ═══════════════════════════════════════════════════════════════════════
-
-@app.route("/api/zane/preferences", methods=["GET"])
-@login_required
-def api_zane_preferences_get():
-    """Get Zane preferences for current user"""
-    user = Auth.get_current_user()
-    if not user:
-        return jsonify({"success": False})
-    
-    user_id = user.get("id", "")
-    prefs = db.get("zane_preferences", {"user_id": user_id})
-    
-    if prefs and len(prefs) > 0:
-        p = prefs[0]
-        return jsonify({
-            "success": True,
-            "has_preferences": True,
-            "nickname": p.get("nickname", ""),
-            "language": p.get("language", "en")
-        })
-    
-    return jsonify({
-        "success": True,
-        "has_preferences": False,
-        "nickname": "",
-        "language": "en"
-    })
-
-
-@app.route("/api/zane/preferences", methods=["POST"])
-@login_required
-def api_zane_preferences_save():
-    """Save Zane preferences — nickname + language"""
-    user = Auth.get_current_user()
-    if not user:
-        return jsonify({"success": False, "error": "Not logged in"})
-    
-    data = request.get_json()
-    nickname = data.get("nickname", "").strip()
-    language = data.get("language", "en").strip()
-    
-    if not nickname:
-        return jsonify({"success": False, "error": "Please tell me your name!"})
-    
-    user_id = user.get("id", "")
-    
-    # Check if exists
-    existing = db.get("zane_preferences", {"user_id": user_id})
-    
-    if existing and len(existing) > 0:
-        # Update
-        db.update("zane_preferences", existing[0]["id"], {
-            "nickname": nickname,
-            "language": language,
-            "updated_at": now()
-        })
-    else:
-        # Create
-        db.save("zane_preferences", {
-            "id": generate_id(),
-            "user_id": user_id,
-            "nickname": nickname,
-            "language": language,
-            "created_at": now()
-        })
-    
-    logger.info(f"[ZANE PREFS] Saved: {nickname}, lang={language}")
-    return jsonify({"success": True, "nickname": nickname, "language": language})
-
-
-def get_zane_prefs():
-    """Helper — get current user's Zane preferences (nickname + language)"""
-    try:
-        user = Auth.get_current_user()
-        if not user:
-            return {"nickname": "there", "language": "en"}
-        
-        prefs = db.get("zane_preferences", {"user_id": user.get("id", "")})
-        if prefs and len(prefs) > 0:
-            return {
-                "nickname": prefs[0].get("nickname", "there"),
-                "language": prefs[0].get("language", "en")
-            }
-        return {"nickname": user.get("name", "there"), "language": "en"}
-    except:
-        return {"nickname": "there", "language": "en"}
-
-
 @app.route("/api/report", methods=["POST"])
 @login_required
 def api_report():
@@ -20248,82 +20157,6 @@ def dashboard():
         '''
     
     content = f'''
-    <!-- Zane Welcome Modal — asks name + language on first visit -->
-    <div id="zaneWelcomeModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;display:none;align-items:center;justify-content:center;">
-        <div style="background:var(--card-bg);border:2px solid #8b5cf6;border-radius:16px;padding:35px;max-width:440px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(139,92,246,0.3);">
-            <div style="font-size:48px;margin-bottom:10px;">🧠</div>
-            <h2 style="color:#8b5cf6;margin:0 0 8px 0;">Hey! I'm Zane</h2>
-            <p style="color:var(--text);margin:0 0 24px 0;font-size:15px;">Your AI bookkeeper. Before we start, two quick things:</p>
-            
-            <div style="text-align:left;margin-bottom:20px;">
-                <label style="font-weight:600;color:var(--text);display:block;margin-bottom:6px;">What should I call you?</label>
-                <input id="zaneNickname" type="text" placeholder="e.g. Daphne, Johan, Boss..." 
-                    style="width:100%;padding:12px 16px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:var(--input-bg);color:var(--text);font-size:16px;box-sizing:border-box;"
-                    onkeypress="if(event.key==='Enter')saveZanePrefs()">
-            </div>
-            
-            <div style="text-align:left;margin-bottom:28px;">
-                <label style="font-weight:600;color:var(--text);display:block;margin-bottom:6px;">What language do you prefer?</label>
-                <div style="display:flex;gap:10px;">
-                    <button onclick="selectZaneLang('af')" id="langAf" style="flex:1;padding:14px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:var(--input-bg);color:var(--text);cursor:pointer;font-size:15px;font-weight:600;transition:all 0.2s;">
-                        🇿🇦 Afrikaans
-                    </button>
-                    <button onclick="selectZaneLang('en')" id="langEn" style="flex:1;padding:14px;border-radius:10px;border:2px solid rgba(139,92,246,0.3);background:var(--input-bg);color:var(--text);cursor:pointer;font-size:15px;font-weight:600;transition:all 0.2s;">
-                        🇬🇧 English
-                    </button>
-                </div>
-            </div>
-            
-            <button onclick="saveZanePrefs()" style="width:100%;padding:14px;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:white;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;">
-                Let's go! 🚀
-            </button>
-        </div>
-    </div>
-    
-    <script>
-    let selectedLang = 'af';
-    
-    function selectZaneLang(lang) {{
-        selectedLang = lang;
-        document.getElementById('langAf').style.border = lang === 'af' ? '2px solid #8b5cf6' : '2px solid rgba(139,92,246,0.3)';
-        document.getElementById('langAf').style.background = lang === 'af' ? 'rgba(139,92,246,0.15)' : 'var(--input-bg)';
-        document.getElementById('langEn').style.border = lang === 'en' ? '2px solid #8b5cf6' : '2px solid rgba(139,92,246,0.3)';
-        document.getElementById('langEn').style.background = lang === 'en' ? 'rgba(139,92,246,0.15)' : 'var(--input-bg)';
-    }}
-    
-    async function saveZanePrefs() {{
-        const nickname = document.getElementById('zaneNickname').value.trim();
-        if (!nickname) {{
-            document.getElementById('zaneNickname').style.border = '2px solid #ef4444';
-            document.getElementById('zaneNickname').focus();
-            return;
-        }}
-        
-        const resp = await fetch('/api/zane/preferences', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{ nickname, language: selectedLang }})
-        }});
-        
-        const data = await resp.json();
-        if (data.success) {{
-            document.getElementById('zaneWelcomeModal').style.display = 'none';
-        }}
-    }}
-    
-    // Check on page load
-    (async function() {{
-        try {{
-            const resp = await fetch('/api/zane/preferences');
-            const data = await resp.json();
-            if (data.success && !data.has_preferences) {{
-                document.getElementById('zaneWelcomeModal').style.display = 'flex';
-                selectZaneLang('af');  // Default to Afrikaans
-            }}
-        }} catch(e) {{ console.log('Prefs check failed:', e); }}
-    }})();
-    </script>
-    
     {getting_started_html}
     
     {low_stock_html}
@@ -52625,10 +52458,6 @@ def banking_page():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Get Zane's nickname for this user
-    zp = get_zane_prefs()
-    zane_nick = zp["nickname"]
-    
     # Get ALL transactions, not just unmatched
     all_transactions = db.get("bank_transactions", {"business_id": biz_id}) if biz_id else []
     all_transactions = sorted(all_transactions, key=lambda x: x.get("date", ""), reverse=True)
@@ -52891,17 +52720,17 @@ def banking_page():
             const data = await response.json();
             
             if (data.success) {{
-                // Show what it was allocated to with Zane's personal touch
+                // Show what it was allocated to before removing
                 const row = document.querySelector(`tr[data-id="${{id}}"]`);
                 if (row) {{
+                    // Replace the action column with the allocation result
                     const cells = row.querySelectorAll('td');
                     const lastCell = cells[cells.length - 1];
-                    const doneMessages = ['Lekker, {zane_nick}! ✓', 'Done, {zane_nick}! ✓', 'Sorted! ✓', 'Perfek! ✓', 'Easy one! ✓'];
-                    const msg = doneMessages[Math.floor(Math.random() * doneMessages.length)];
-                    lastCell.innerHTML = `<div style="text-align:center;"><span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;">${{msg}} ${{category}}</span></div>`;
+                    lastCell.innerHTML = `<span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;">✓ ${{category}}</span>`;
                     row.style.background = 'rgba(16,185,129,0.15)';
                     row.style.transition = 'opacity 0.5s';
                     
+                    // Fade out after 2 seconds so user can see where it went
                     setTimeout(() => {{
                         row.style.opacity = '0.4';
                     }}, 2000);
@@ -52934,8 +52763,8 @@ def banking_page():
         // Show thinking state
         actionCell.innerHTML = `
             <div style="padding:8px;text-align:center;">
-                <div style="color:var(--primary);font-size:13px;font-weight:600;">🤖 Zane kyk...</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${{clarificationAnswer ? 'Dankie {zane_nick}, ek verwerk...' : 'Een oomblik {zane_nick}...'}}</div>
+                <div style="color:var(--primary);font-size:13px;font-weight:600;">🤖 Zane analiseer...</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${{clarificationAnswer ? 'Verwerk jou antwoord...' : 'Kyk na transaksie patroon'}}</div>
             </div>`;
         
         try {{
@@ -53806,13 +53635,13 @@ def api_banking_zane_suggest():
         # Get all available categories — comprehensive list
         all_category_names = IndustryKnowledge.get_all_category_names()
         
-        # Check if BankLearning already has a high-confidence match (seen enough times to be sure)
+        # Check if BankLearning already has a high-confidence match
         existing = BankLearning.suggest_category(biz_id, description)
-        if existing and existing.get("confidence", 0) >= 0.92 and existing.get("times_seen", 0) >= 3 and not user_answer:
+        if existing and existing.get("confidence", 0) >= 0.85 and not user_answer:
             return jsonify({
                 "success": True,
                 "category": existing.get("category", ""),
-                "reason": f"Ek het hierdie tipe transaksie al {existing.get('times_seen', 1)}x gesien — dit is altyd as {existing.get('category')} geallocate.",
+                "reason": f"I've seen this type of transaction {existing.get('times_seen', 1)} times before — always {existing.get('category')}.",
                 "confidence": existing.get("confidence", 0.85),
                 "source": "learned",
                 "needs_clarification": False,
@@ -53827,33 +53656,29 @@ def api_banking_zane_suggest():
             pattern_examples = "\n".join([f"- {p.get('original_description', p.get('pattern', ''))} → {p.get('category', '')}" for p in recent])
         
         # Build focused AI prompt with comprehensive categories
-        direction = "BETALING UIT (Uitgawe/Expense)" if debit > 0 else "GELD IN (Inkomste/Payment)"
+        direction = "Payment out (expense)" if debit > 0 else "Payment in (income)"
         amount = debit if debit > 0 else credit
         all_categories_for_ai = IndustryKnowledge.build_category_list_for_ai()
         
-        # Get user's preferred name and language
-        zp = get_zane_prefs()
-        zane_lang = "Afrikaans" if zp["language"] == "af" else "English"
-        
-        prompt = f"""You are Zane, a sharp SA bookkeeper. You're talking to {zp["nickname"]}. Use their name. Respond in {zane_lang}. Be warm but professional.
+        prompt = f"""You are Zane, a bookkeeper. Look at this bank transaction and pick a category. Respond in English. Be direct — no filler, no emojis.
 
-BUSINESS: {biz_name}
-TRANSACTION: "{description}", {date}, {direction}, R{amount:,.2f}
-{"ANSWER: " + user_answer if user_answer else ""}
+Transaction: "{description}", {date}, {direction}, R{amount:,.2f}
+{"User answered your question: " + user_answer if user_answer else ""}
 
-CATEGORIES: {all_categories_for_ai}
+Categories:
+{all_categories_for_ai}
 
-{f"LEARNED (confirmed before): {pattern_examples}" if pattern_examples else ""}
+{f"Learned patterns from this business:{chr(10)}{pattern_examples}" if pattern_examples else ""}
 
-Confirm with {zp["nickname"]} before allocating — ask with 2-4 options. Skip only for obvious ones (bank fees, electricity).
-Fuel = SARS no VAT claim. Never "General Expenses".
-{"Pick the category from their answer." if user_answer else ""}
+If you know, say it. If not sure, ask — 2-4 options. If you genuinely don't know, say "Not sure about this one — pick from the dropdown and I'll learn for next time."
+Fuel: warn no VAT claim. Never use "General Expenses".
+{"Pick the exact category from their answer." if user_answer else ""}
 
-JSON ONLY:
-Ask: {{"needs_clarification":true,"question":"...","options":[{{"label":"Option","value":"val"}}],"confidence":"medium","reason":""}}
-Clear: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]","confidence":"hoog","vat_warning":""}}"""
+JSON only:
+Know it: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]","confidence":"hoog","vat_warning":""}}
+Not sure: {{"needs_clarification":true,"question":"[direct question]","options":[{{"label":"Option","value":"val"}}],"confidence":"medium","reason":""}}"""
 
-        # Call Sonnet — lightweight, fast
+        # Haiku — fast, cheap, smart enough for category matching
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         resp = requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -53863,8 +53688,8 @@ Clear: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]
                 "content-type": "application/json"
             },
             json={
-                "model": "claude-sonnet-4-20250514",
-                "max_tokens": 400,
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 300,
                 "messages": [{"role": "user", "content": prompt}]
             },
             timeout=15
@@ -63801,10 +63626,6 @@ def scan_inbox_page():
     biz_id = business.get("id") if business else None
     biz_name = business.get("name") if business else "None"
     
-    # Get Zane's nickname for this user
-    zp = get_zane_prefs()
-    zane_nick = zp["nickname"]
-    
     # Debug logging for session issues
     session_biz_id = session.get("business_id")
     user_default_biz = user.get("default_business_id") if user else None
@@ -64284,7 +64105,7 @@ def scan_inbox_page():
     
     async function answerZaneQuestion(answer) {{
         // Show loading
-        document.getElementById('zaneSuggestionContent').innerHTML = '<div style="text-align:center;padding:10px;">🤖 Een oomblik {zane_nick}...</div>';
+        document.getElementById('zaneSuggestionContent').innerHTML = '<div style="text-align:center;padding:10px;">Processing...</div>';
         
         try {{
             const extracted = currentItemData.extracted || {{}};
@@ -64474,7 +64295,7 @@ def scan_inbox_page():
                 <div id="zaneSuggestion" style="margin:20px 0;padding:15px;border-radius:12px;background:rgba(139,92,246,0.1);border:2px solid #8b5cf6;display:none;">
                     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
                         <span style="font-size:24px;">🧠</span>
-                        <strong style="color:#8b5cf6;">Zane says:</strong>
+                        <strong style="color:#8b5cf6;">Zane:</strong>
                     </div>
                     <div id="zaneSuggestionContent" style="font-size:14px;"></div>
                 </div>
@@ -65927,30 +65748,28 @@ def api_scan_suggest_category():
         # Build comprehensive category knowledge for Zane
         all_categories = IndustryKnowledge.build_category_list_for_ai()
         
-        # Get user's preferred name and language
-        zp = get_zane_prefs()
-        zane_lang = "Afrikaans" if zp["language"] == "af" else "English"
-        
-        prompt = f"""You are Zane, a sharp SA bookkeeper. You're talking to {zp["nickname"]}. Use their name. Respond in {zane_lang}. Be warm but professional.
+        prompt = f"""You are Zane, a bookkeeper. Look at this invoice and tell the user where to book it. Respond in English. Be direct — no filler, no emojis, no introductions.
 
-DOCUMENT: Supplier={supplier_name}, Invoice={invoice_number}, R{total}, Items={items_desc or "n/a"}
-{"ANSWER: " + user_answer if user_answer else ""}
+Supplier: {supplier_name}, Invoice: {invoice_number}, Amount: R{total}, Items: {items_desc or "not specified"}
+{"User answered your question: " + user_answer if user_answer else ""}
 
-CATEGORIES: {all_categories}
+Categories:
+{all_categories}
 
-ALWAYS confirm with {zp["nickname"]} before booking — ask with 2-4 options. Only skip for absolute certainties (bank fees, electricity).
-Buttons: ORANGE "Book as Expense" / BLUE "Stock Purchase (Credit)". No green button exists.
-Fuel = warn SARS no VAT claim. Never use "General Expenses".
-{"Pick the category from their answer." if user_answer else ""}
+If you know the answer, say it straight. "Telkom — Telephone. Click ORANGE." Done.
+If it could be stock or expense, ask — give 2-4 options to click. As many as makes sense.
+If you genuinely don't know, say so.
+Fuel: always warn no VAT claim. Two buttons exist: ORANGE "Book as Expense", BLUE "Stock Purchase (Credit)".
+{"Pick the exact category from their answer." if user_answer else ""}
 
-JSON ONLY:
-Ask: {{"needs_clarification":true,"question":"...","options":[{{"label":"Option","value":"val"}}],"confidence":0.9,"explanation":""}}
-Expense: {{"needs_clarification":false,"action":"expense","action_label":"Book as Expense","category":"[exact]","confidence":0.97,"explanation":"...","vat_warning":"","is_stock":false}}
-Stock: {{"needs_clarification":false,"action":"supplier","action_label":"Stock Purchase","category":"[exact]","confidence":0.97,"explanation":"...","vat_warning":"","is_stock":true}}"""
+JSON only:
+Know it: {{"needs_clarification":false,"action":"expense","action_label":"Book as Expense","category":"[exact]","confidence":0.95,"explanation":"[straight to the point]","vat_warning":"","is_stock":false}}
+Stock: {{"needs_clarification":false,"action":"supplier","action_label":"Stock Purchase","category":"[exact]","confidence":0.95,"explanation":"[straight]","vat_warning":"","is_stock":true}}
+Not sure: {{"needs_clarification":true,"question":"[direct question]","options":[{{"label":"Option","value":"val"}}],"confidence":0.6,"explanation":""}}"""
 
         response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=600,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
         
