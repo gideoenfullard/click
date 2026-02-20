@@ -52801,42 +52801,26 @@ def banking_page():
             // Store categories globally
             if (data.all_categories) window._allCategories = data.all_categories;
             
-            // CASE 1: Zane doesn't know — ask the user what this is (text input)
-            if (data.success && data.needs_clarification && !data.options) {{
-                const safeDesc = description.replace(/'/g, "\\\\'");
-                actionCell.innerHTML = `
-                    <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:280px;">
-                        <div style="font-size:13px;color:#8b5cf6;font-weight:600;margin-bottom:8px;">
-                            ${{data.question || 'What is this payment for?'}}
-                        </div>
-                        <input type="text" id="zaneInput_${{txnId}}" placeholder="e.g. armed response, staff meals, diesel..." 
-                            style="width:100%;padding:10px 12px;border-radius:8px;border:2px solid rgba(139,92,246,0.3);background:var(--input-bg);color:var(--text);font-size:14px;box-sizing:border-box;margin-bottom:8px;"
-                            onkeypress="if(event.key==='Enter')submitZaneAnswer('${{txnId}}','${{safeDesc}}',${{debit}},${{credit}},'${{date}}')">
-                        <div style="display:flex;gap:6px;">
-                            <button onclick="submitZaneAnswer('${{txnId}}','${{safeDesc}}',${{debit}},${{credit}},'${{date}}')" 
-                                style="flex:1;padding:8px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">
-                                Go
-                            </button>
-                            <button onclick="showAllCategories('${{txnId}}','${{safeDesc}}',window._allCategories||[],'Pick the category:')" 
-                                style="padding:8px 12px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px;">
-                                Pick manually
-                            </button>
-                        </div>
-                    </div>`;
-                setTimeout(() => document.getElementById('zaneInput_' + txnId)?.focus(), 100);
-                return;
-            }}
-            
-            // CASE 2: Zane asks with clickable options (e.g. stock vs expense)
+            // Zane asks with clickable plain-language options
             if (data.success && data.needs_clarification && data.options) {{
                 let optionsHtml = '';
                 const safeDesc = description.replace(/'/g, "\\\\'");
                 data.options.forEach(opt => {{
-                    optionsHtml += `
-                        <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}', '${{opt.value}}')"
-                                style="padding:8px 14px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;margin:3px;">
-                            ${{opt.label}}
-                        </button>`;
+                    if (opt.value === 'manual') {{
+                        // "None of these" -> show full dropdown
+                        optionsHtml += `
+                            <button onclick="showAllCategories('${{txnId}}','${{safeDesc}}',window._allCategories||[],'Pick the category:')"
+                                    style="padding:8px 14px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:12px;margin:3px;">
+                                ${{opt.label}}
+                            </button>`;
+                    }} else {{
+                        // Plain language option -> send back to Zane to map to GL category
+                        optionsHtml += `
+                            <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}', '${{opt.label}}')"
+                                    style="padding:8px 14px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;margin:3px;">
+                                ${{opt.label}}
+                            </button>`;
+                    }}
                 }});
                 
                 actionCell.innerHTML = `
@@ -52848,6 +52832,12 @@ def banking_page():
                             ${{optionsHtml}}
                         </div>
                     </div>`;
+                return;
+            }}
+            
+            // Safety: if clarification but no options came through, show dropdown
+            if (data.success && data.needs_clarification) {{
+                showAllCategories(txnId, description, data.all_categories || [], data.question || 'Pick the category:');
                 return;
             }}
             
@@ -52884,49 +52874,65 @@ def banking_page():
         }}
     }}
     
-    function submitZaneAnswer(txnId, description, debit, credit, date) {{
-        const input = document.getElementById('zaneInput_' + txnId);
-        const answer = input ? input.value.trim() : '';
-        if (!answer) {{ input?.focus(); return; }}
-        askZaneBank(txnId, description, debit, credit, date, answer);
-    }}
-    
-    function showAllCategories(txnId, description, categoriesFromApi, message) {{
+    function showSearchableCategories(txnId, description, cats, hint) {{
         const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
         const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
         if (!actionCell) return;
         
-        // Get categories from API response or from stored data
-        let cats = categoriesFromApi;
-        if (!cats && row.dataset.categories) {{
-            try {{ cats = JSON.parse(row.dataset.categories); }} catch(e) {{}}
-        }}
-        if (!cats || !cats.length) {{
-            cats = `{','.join(expense_categories + extra_cats)}`.split(',').map(c => c.trim());
-        }}
-        
+        if (!cats || !cats.length) cats = window._allCategories || [];
         const safeDesc = description.replace(/'/g, "\\\\'");
-        const optionsHtml = cats.map(c => `<option value="${{c}}">${{c}}</option>`).join('');
+        const uid = 'sc_' + txnId;
         
         actionCell.innerHTML = `
-            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
-                ${{message ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">🤖 ${{message}}</div>` : ''}}
-                <select id="manualCat_${{txnId}}" class="form-input" style="width:100%;padding:8px;font-size:13px;margin-bottom:8px;">
-                    <option value="">— Kies kategorie —</option>
-                    ${{optionsHtml}}
-                </select>
-                <div style="display:flex;gap:6px;">
-                    <button onclick="const sel=document.getElementById('manualCat_${{txnId}}'); if(sel.value) categorizeTransaction('${{txnId}}', sel.value, '${{safeDesc}}')" 
-                            style="padding:7px 16px;font-size:12px;background:var(--green);border:none;color:white;border-radius:6px;cursor:pointer;font-weight:600;flex:1;">
-                        ✓ Allocate
-                    </button>
-                    <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', 0, 0, '')" 
-                            style="padding:7px 12px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;cursor:pointer;">
-                        Ask Zane
-                    </button>
+            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:280px;max-width:350px;">
+                ${{hint ? `<div style="font-size:12px;color:#8b5cf6;margin-bottom:8px;line-height:1.4;">${{hint}}</div>` : ''}}
+                <input type="text" id="${{uid}}_search" placeholder="Type to search categories..." 
+                    style="width:100%;padding:8px 12px;border-radius:6px;border:2px solid rgba(139,92,246,0.3);background:var(--input-bg);color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:6px;"
+                    oninput="filterCats('${{uid}}')">
+                <div id="${{uid}}_list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;background:var(--card);">
                 </div>
-            </div>
-        `;
+            </div>`;
+        
+        // Populate list
+        const listEl = document.getElementById(uid + '_list');
+        window['_cats_' + uid] = cats;
+        renderCatList(uid, cats, txnId, safeDesc);
+        
+        setTimeout(() => document.getElementById(uid + '_search')?.focus(), 100);
+    }}
+    
+    function renderCatList(uid, cats, txnId, safeDesc) {{
+        const listEl = document.getElementById(uid + '_list');
+        if (!listEl) return;
+        listEl.innerHTML = cats.map(c => 
+            `<div onclick="categorizeTransaction('${{txnId}}', '${{c.replace(/'/g, "\\\\'")}}', '${{safeDesc}}')" 
+                  style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);color:var(--text);transition:background 0.15s;"
+                  onmouseover="this.style.background='rgba(139,92,246,0.15)'" 
+                  onmouseout="this.style.background='transparent'">${{c}}</div>`
+        ).join('');
+        if (!cats.length) listEl.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:12px;text-align:center;">No matching categories</div>';
+    }}
+    
+    function filterCats(uid) {{
+        const search = document.getElementById(uid + '_search')?.value.toLowerCase() || '';
+        const allCats = window['_cats_' + uid] || [];
+        const filtered = search ? allCats.filter(c => c.toLowerCase().includes(search)) : allCats;
+        const txnId = uid.replace('sc_', '');
+        const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
+        const desc = row?.querySelector('td:nth-child(2)')?.textContent?.trim() || '';
+        renderCatList(uid, filtered, txnId, desc.replace(/'/g, "\\\\'"));
+    }}
+    
+    function showAllCategories(txnId, description, categoriesFromApi, message) {{
+        let cats = categoriesFromApi;
+        if (!cats || !cats.length) {{
+            const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
+            if (row && row.dataset.categories) {{
+                try {{ cats = JSON.parse(row.dataset.categories); }} catch(e) {{}}
+            }}
+        }}
+        if (!cats || !cats.length) cats = window._allCategories || [];
+        showSearchableCategories(txnId, description, cats, message || '');
     }}
     
     async function bulkApprove() {{
@@ -53704,17 +53710,19 @@ Categories:
 
 {"Map their answer to the exact right category. You know the categories, they know what it's for." if user_answer else ""}
 
-Three options:
-1. You KNOW (Telkom=Telephone, Engen=Fuel, bank fees, etc): just say it
-2. You know the type but need to clarify (stock vs expense): ask with 2-4 clickable options
-3. You DON'T KNOW what this payment is for: ask the user to describe it (NO options)
+Two paths:
+1. You KNOW (Telkom=Telephone, Engen=Fuel, bank fees, etc): say it directly
+2. You DON'T KNOW: give 3-5 plain-language guesses of what this COULD be. Use simple words a non-accountant would understand. The user clicks one, then you map it to the right category.
 
+Example for "ACCOUNT PAYMENT CARTRACK": options could be "Vehicle tracking subscription", "Fleet management fee", "Refund from Cartrack"
+Example for "SERVICE AGREEMENT IRON TREE": options could be "IT/internet service", "Security service", "Equipment lease"
+
+ALWAYS include "None of these" as the last option.
 Fuel: warn no VAT claim. Never use "General Expenses".
 
 JSON only:
 Know it: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]","confidence":"high","vat_warning":""}}
-Need to clarify stock/expense: {{"needs_clarification":true,"question":"[question]","options":[{{"label":"Option","value":"val"}}],"confidence":"medium","reason":""}}
-Don't know — ask user: {{"needs_clarification":true,"question":"What is this payment for?","confidence":"low","reason":""}}"""
+Not sure: {{"needs_clarification":true,"question":"What is this payment for?","options":[{{"label":"[plain language guess]","value":"[short]"}},{{"label":"[plain language guess]","value":"[short]"}},{{"label":"None of these","value":"manual"}}],"confidence":"medium","reason":""}}"""
 
         # Haiku — fast, cheap, smart enough for category matching
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
