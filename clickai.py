@@ -52522,13 +52522,13 @@ def banking_page():
             action_html = f'''
             <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
                 <button onclick="approveMatch('{txn_id}', '{suggested_cat}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--green);border:none;color:white;border-radius:6px;">✓ {suggested_cat}</button>
-                <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--primary);border:none;color:white;border-radius:6px;">🤖 Vra Zane</button>
+                <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--primary);border:none;color:white;border-radius:6px;">Ask Zane</button>
             </div>
             '''
         else:
             action_html = f'''
             <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
-                <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:7px 14px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;font-weight:600;">🤖 Vra Zane</button>
+                <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:7px 14px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;font-weight:600;">Ask Zane</button>
                 <select class="form-input" style="width:120px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{safe_desc}')">
                     <option value="">Manual...</option>
                     {category_options}
@@ -52760,6 +52760,12 @@ def banking_page():
         const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
         if (!actionCell) return;
         
+        // User chose "let me pick" — show dropdown
+        if (clarificationAnswer === 'manual') {{
+            showAllCategories(txnId, description, window._allCategories || [], 'No problem — pick the category:');
+            return;
+        }}
+        
         // Show thinking state
         actionCell.innerHTML = `
             <div style="padding:8px;text-align:center;">
@@ -52796,10 +52802,10 @@ def banking_page():
                 actionCell.innerHTML = `
                     <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
                         <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">
-                            🤖 ${{data.reason || ''}}
+                            ${{data.reason || ''}}
                         </div>
                         <div style="font-size:14px;font-weight:600;color:#8b5cf6;margin-bottom:10px;">
-                            🤔 ${{data.question}}
+                            ${{data.question}}
                         </div>
                         <div style="display:flex;gap:4px;flex-wrap:wrap;">
                             ${{optionsHtml}}
@@ -52811,8 +52817,8 @@ def banking_page():
             if (data.success && data.category) {{
                 // Zane has a confident answer
                 const confColor = data.confidence >= 0.85 ? 'var(--green)' : data.confidence >= 0.6 ? 'var(--yellow)' : 'var(--red)';
-                const confText = data.confidence >= 0.85 ? '🟢 Hoë vertroue' : data.confidence >= 0.6 ? '🟡 Medium vertroue' : '🔴 Lae vertroue';
-                const learnedBadge = data.source === 'learned' ? '<span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;margin-left:5px;">Geleer ✓</span>' : '';
+                const confText = data.confidence >= 0.85 ? '🟢 High confidence' : data.confidence >= 0.6 ? '🟡 Medium confidence' : '🔴 Low confidence';
+                const learnedBadge = data.source === 'learned' ? '<span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;margin-left:5px;">Learned ✓</span>' : '';
                 const vatWarning = data.vat_warning ? `<div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:6px 8px;border-radius:4px;font-size:11px;color:#000;margin-top:8px;">⚠️ ${{data.vat_warning}}</div>` : '';
                 
                 actionCell.innerHTML = `
@@ -52822,7 +52828,7 @@ def banking_page():
                             ${{learnedBadge}}
                         </div>
                         <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">
-                            📂 ${{data.category}}
+                            ${{data.category}}
                         </div>
                         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">
                             ${{data.reason}}
@@ -52843,6 +52849,7 @@ def banking_page():
                 
                 // Store categories for this row
                 row.dataset.categories = JSON.stringify(data.all_categories || []);
+                window._allCategories = data.all_categories || [];
                 
             }} else {{
                 // Zane couldn't decide — show all categories
@@ -52891,7 +52898,7 @@ def banking_page():
                     </button>
                     <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', 0, 0, '')" 
                             style="padding:7px 12px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;cursor:pointer;">
-                        🤖 Vra Zane
+                        Ask Zane
                     </button>
                 </div>
             </div>
@@ -53660,9 +53667,10 @@ def api_banking_zane_suggest():
         amount = debit if debit > 0 else credit
         all_categories_for_ai = IndustryKnowledge.build_category_list_for_ai()
         
-        prompt = f"""You are Zane, a bookkeeper. Look at this bank transaction and pick a category. Respond in English. Be direct — no filler, no emojis.
+        prompt = f"""You are Zane, a bookkeeper. Pick a category for this bank transaction. Be direct — no filler, no emojis.
 
-Transaction: "{description}", {date}, {direction}, R{amount:,.2f}
+DIRECTION: {"MONEY IN — this is income/deposit/payment received" if credit > 0 else "MONEY OUT — this is an expense/payment made"}
+Transaction: "{description}", {date}, R{amount:,.2f}
 {"User answered your question: " + user_answer if user_answer else ""}
 
 Categories:
@@ -53670,13 +53678,14 @@ Categories:
 
 {f"Learned patterns from this business:{chr(10)}{pattern_examples}" if pattern_examples else ""}
 
-If you know, say it. If not sure, ask — 2-4 options. If you genuinely don't know, say "Not sure about this one — pick from the dropdown and I'll learn for next time."
+If you know, say it. If not sure, ask — 2-4 options. Always include "None of these — let me pick" as last option when asking.
+If you genuinely don't know, say "Not sure about this one — pick from the dropdown and I'll learn for next time."
 Fuel: warn no VAT claim. Never use "General Expenses".
 {"Pick the exact category from their answer." if user_answer else ""}
 
 JSON only:
 Know it: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]","confidence":"high","vat_warning":""}}
-Not sure: {{"needs_clarification":true,"question":"[direct question]","options":[{{"label":"Option","value":"val"}}],"confidence":"medium","reason":""}}"""
+Not sure: {{"needs_clarification":true,"question":"[direct question]","options":[{{"label":"Option","value":"val"}},{{"label":"None of these — let me pick","value":"manual"}}],"confidence":"medium","reason":""}}"""
 
         # Haiku — fast, cheap, smart enough for category matching
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -64030,7 +64039,7 @@ def scan_inbox_page():
                     ${{sugg.explanation || ''}}
                 </div>
                 <div style="font-size:15px;font-weight:bold;margin-bottom:12px;color:#8b5cf6;">
-                    🤔 ${{sugg.question}}
+                    ${{sugg.question}}
                 </div>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
             `;
@@ -64072,7 +64081,7 @@ def scan_inbox_page():
             if (sugg.category && !sugg.is_stock) {{
                 html += `
                     <div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">
-                        📁 Category: <strong>${{sugg.category}}</strong>
+                        Category: <strong>${{sugg.category}}</strong>
                     </div>
                 `;
             }}
