@@ -13817,6 +13817,266 @@ class IndustryKnowledge:
         profile = cls.get_profile(industry)
         return profile.get("expense_categories", ["General Expenses"])
     
+    # ═══════════════════════════════════════════════════════════════════
+    # COMPREHENSIVE BOOKING CATEGORIES — Income, Expenses & Special
+    # Full sub-divisions for accurate bank recon & inbox booking
+    # Mapped to standard SA Chart of Accounts (6000-series expenses)
+    # ═══════════════════════════════════════════════════════════════════
+    
+    BOOKING_CATEGORIES = {
+        "income": {
+            "label": "💰 INKOMSTE / INCOME",
+            "items": [
+                # 4000-series
+                ("Sales Revenue", "4000"),
+                ("Sales — Cash", "4000"),
+                ("Sales — Card / EFT", "4000"),
+                ("Service Income", "4100"),
+                ("Rental Income", "4200"),
+                ("Recovery Income — Municipal", "4300"),
+                ("Recovery Income — Utilities", "4300"),
+                ("Interest Received", "4400"),
+                ("Discount Received", "4500"),
+                ("Commission Received", "4600"),
+                ("Insurance Payout", "4700"),
+                ("Bad Debt Recovered", "4800"),
+                ("Sundry Income", "4900"),
+            ]
+        },
+        "cost_of_sales": {
+            "label": "📦 KOSTE VAN VERKOPE / COST OF SALES",
+            "items": [
+                ("Stock Purchases — General", "5000"),
+                ("Stock Purchases — Steel", "5000"),
+                ("Stock Purchases — Hardware", "5000"),
+                ("Stock Purchases — Fittings", "5000"),
+                ("Stock Purchases — Paint", "5000"),
+                ("Stock Purchases — Electrical", "5000"),
+                ("Stock Purchases — Plumbing", "5000"),
+                ("Stock Purchases — Tools", "5000"),
+                ("Stock Purchases — Food", "5000"),
+                ("Stock Purchases — Beverages", "5000"),
+                ("Direct Labour", "5100"),
+                ("Subcontractors", "5150"),
+                ("Freight & Delivery Costs", "5200"),
+                ("Cutting & Processing", "5300"),
+                ("Packaging Materials", "5400"),
+            ]
+        },
+        "premises": {
+            "label": "🏢 PERSEEL / PREMISES",
+            "items": [
+                ("Rent — Business Premises", "6100"),
+                ("Rates & Taxes — Municipal", "6220"),
+                ("Rates & Taxes — Property", "6220"),
+                ("Water & Sewage", "6210"),
+                ("Refuse Removal", "6230"),
+                ("Electricity", "6200"),
+                ("Gas", "6240"),
+                ("Security", "6250"),
+                ("Garden & Maintenance", "6260"),
+                ("Cleaning — Premises", "6270"),
+            ]
+        },
+        "salaries": {
+            "label": "👥 SALARISSE / SALARIES & WAGES",
+            "items": [
+                ("Salaries & Wages", "6000"),
+                ("Bonus / 13th Cheque", "6001"),
+                ("Commission Paid", "6002"),
+                ("Overtime", "6003"),
+                ("UIF Expense (Employer)", "6010"),
+                ("SDL Expense", "6020"),
+                ("Staff Welfare", "6030"),
+                ("Recruitment Costs", "6040"),
+            ]
+        },
+        "motor_vehicle": {
+            "label": "🚗 VOERTUIG / MOTOR VEHICLE",
+            "items": [
+                ("Fuel — Business Vehicle", "6510"),
+                ("Fuel — Equipment (Mower, Generator, etc.)", "6515"),
+                ("Vehicle Licence & Registration", "6520"),
+                ("Vehicle Insurance", "6530"),
+                ("Vehicle Repairs & Service", "6540"),
+                ("Vehicle Lease / Installment", "6550"),
+                ("Tolls & Parking", "6560"),
+                ("Vehicle Tracking (Netstar, Tracker)", "6570"),
+            ]
+        },
+        "communication": {
+            "label": "📱 KOMMUNIKASIE / COMMUNICATION",
+            "items": [
+                ("Telephone — Landline", "6300"),
+                ("Telephone — Cellphone", "6300"),
+                ("Internet / WiFi", "6310"),
+                ("Postage & Courier", "6320"),
+                ("DSTV / Streaming", "6330"),
+            ]
+        },
+        "office_admin": {
+            "label": "🗃️ KANTOOR / OFFICE & ADMIN",
+            "items": [
+                ("Stationery & Printing", "6700"),
+                ("Office Supplies", "6700"),
+                ("Computer Consumables (Ink, Paper)", "6710"),
+                ("Refreshments / Tea & Coffee", "6720"),
+                ("Cleaning Supplies", "6730"),
+                ("Protective Clothing & PPE", "6740"),
+                ("Small Tools & Equipment (<R7000)", "6750"),
+            ]
+        },
+        "marketing": {
+            "label": "📢 BEMARKING / MARKETING",
+            "items": [
+                ("Advertising — Online / Social Media", "6800"),
+                ("Advertising — Print / Flyers", "6800"),
+                ("Signage & Branding", "6810"),
+                ("Website Costs", "6820"),
+                ("Sponsorships", "6830"),
+                ("Promotions & Giveaways", "6840"),
+            ]
+        },
+        "professional": {
+            "label": "⚖️ PROFESSIONELE FOOIE / PROFESSIONAL FEES",
+            "items": [
+                ("Accounting Fees", "6900"),
+                ("Audit Fees", "6901"),
+                ("Legal Fees", "6902"),
+                ("Consulting Fees", "6903"),
+                ("IT Support / Managed Services", "6904"),
+                ("Commission Paid — Agent / Broker", "6905"),
+            ]
+        },
+        "insurance": {
+            "label": "🛡️ VERSEKERING / INSURANCE",
+            "items": [
+                ("Insurance — Business / Contents", "6400"),
+                ("Insurance — Vehicle", "6401"),
+                ("Insurance — Equipment", "6402"),
+                ("Insurance — Liability / Public", "6403"),
+                ("Insurance — Life / Key Person", "6404"),
+                ("Insurance — Workman's Comp", "6405"),
+            ]
+        },
+        "repairs": {
+            "label": "🔧 HERSTELWERK / REPAIRS & MAINTENANCE",
+            "items": [
+                ("Repairs — Building / Premises", "6600"),
+                ("Repairs — Equipment / Machinery", "6610"),
+                ("Repairs — Vehicle", "6540"),
+                ("Maintenance Contract", "6620"),
+                ("Forklift Expenses", "6630"),
+            ]
+        },
+        "it_software": {
+            "label": "💻 IT & SAGTEWARE / IT & SOFTWARE",
+            "items": [
+                ("Software Subscription (Monthly)", "6850"),
+                ("Cloud / Hosting", "6851"),
+                ("Hardware Purchase (<R7000)", "6852"),
+                ("Domain & Email", "6853"),
+                ("ClickAI Subscription", "6854"),
+            ]
+        },
+        "financial": {
+            "label": "🏦 FINANSIEEL / FINANCIAL",
+            "items": [
+                ("Bank Charges", "6910"),
+                ("Card Machine Fees", "6911"),
+                ("Interest Paid — Overdraft", "6920"),
+                ("Interest Paid — Loan", "6921"),
+                ("Interest Paid — Vehicle Finance", "6922"),
+                ("Bad Debts Written Off", "6950"),
+                ("Collection Costs", "6951"),
+                ("Depreciation", "6960"),
+            ]
+        },
+        "travel": {
+            "label": "✈️ REIS / TRAVEL & ACCOMMODATION",
+            "items": [
+                ("Travel — Local", "6980"),
+                ("Travel — International", "6981"),
+                ("Accommodation", "6982"),
+                ("Meals — Business Travel", "6983"),
+                ("Conference & Events", "6984"),
+            ]
+        },
+        "other_expense": {
+            "label": "📎 ANDER / OTHER EXPENSES",
+            "items": [
+                ("Entertainment", "6970"),
+                ("Training & Development", "6985"),
+                ("Licence Fees (Liquor, Trade, etc.)", "6990"),
+                ("Membership & Subscriptions", "6991"),
+                ("Donations", "6992"),
+                ("Fines & Penalties", "6993"),
+                ("Linen & Laundry", "6994"),
+                ("Toiletries & Amenities", "6995"),
+                ("Booking Commission (Airbnb, etc.)", "6996"),
+                ("Kitchen Equipment", "6997"),
+                ("Sundry Expenses", "6999"),
+            ]
+        },
+        "special": {
+            "label": "⚡ SPESIAAL / SPECIAL TRANSACTIONS",
+            "items": [
+                ("Customer Payment", ""),
+                ("POS Deposit", ""),
+                ("Owner Drawings", "3200"),
+                ("Owner Contribution / Capital", "3000"),
+                ("Loan Received", "2300"),
+                ("Loan Repayment", "2300"),
+                ("Transfer Between Accounts", ""),
+                ("VAT Payment to SARS", "2100"),
+                ("PAYE / UIF / SDL Payment", "2200"),
+                ("Provisional Tax Payment", ""),
+                ("Refund Given", ""),
+                ("Refund Received", ""),
+                ("Deposit Paid (Held)", "1400"),
+                ("Deposit Received (Held)", "2400"),
+                ("Ignore / Not Business Related", ""),
+            ]
+        }
+    }
+    
+    @classmethod
+    def get_booking_categories_flat(cls, business_id: str = None) -> list:
+        """Get flat list of ALL booking categories (for validation/matching)"""
+        cats = []
+        for group in cls.BOOKING_CATEGORIES.values():
+            for item in group["items"]:
+                cats.append(item[0])
+        return cats
+    
+    @classmethod
+    def get_booking_categories_grouped(cls, business_id: str = None) -> dict:
+        """Get grouped categories with optgroup labels for <select> dropdowns"""
+        return cls.BOOKING_CATEGORIES
+    
+    @classmethod
+    def build_category_options_html(cls, business_id: str = None) -> str:
+        """Build <optgroup> HTML for category dropdown"""
+        html = '<option value="">— Kies kategorie / Choose category —</option>'
+        for group_key, group in cls.BOOKING_CATEGORIES.items():
+            html += f'<optgroup label="{group["label"]}">'
+            for item_name, gl_code in group["items"]:
+                gl_hint = f" [{gl_code}]" if gl_code else ""
+                html += f'<option value="{item_name}">{item_name}{gl_hint}</option>'
+            html += '</optgroup>'
+        return html
+    
+    @classmethod
+    def build_category_list_for_ai(cls) -> str:
+        """Build formatted category list for AI prompts"""
+        lines = []
+        for group_key, group in cls.BOOKING_CATEGORIES.items():
+            lines.append(f"\n{group['label']}:")
+            for item_name, gl_code in group["items"]:
+                gl_hint = f" (GL {gl_code})" if gl_code else ""
+                lines.append(f"  - {item_name}{gl_hint}")
+        return "\n".join(lines)
+
     @classmethod
     def get_terminology(cls, business_id: str) -> dict:
         """Get industry-specific terminology"""
@@ -14430,35 +14690,58 @@ class BankLearning:
                     "times_seen": pattern.get("times_seen", 1)
                 }
         
-        # Common patterns (built-in knowledge)
+        # Common patterns (built-in knowledge — uses comprehensive categories)
         common = {
-            "ENGEN": "Fuel",
-            "SASOL": "Fuel",
-            "SHELL": "Fuel",
-            "BP ": "Fuel",
-            "CALTEX": "Fuel",
-            "MAKRO": "Stock Purchases",
-            "PICK N PAY": "Stock Purchases",
-            "PNP ": "Stock Purchases",
-            "CHECKERS": "Stock Purchases",
-            "WOOLWORTHS": "Stock Purchases",
-            "SPAR ": "Stock Purchases",
-            "TELKOM": "Telephone",
-            "VODACOM": "Telephone",
-            "MTN ": "Telephone",
+            "ENGEN": "Fuel — Business Vehicle",
+            "SASOL": "Fuel — Business Vehicle",
+            "SHELL": "Fuel — Business Vehicle",
+            "BP ": "Fuel — Business Vehicle",
+            "CALTEX": "Fuel — Business Vehicle",
+            "TOTAL GARAGE": "Fuel — Business Vehicle",
+            "MAKRO": "Stock Purchases — General",
+            "PICK N PAY": "Stock Purchases — General",
+            "PNP ": "Stock Purchases — General",
+            "CHECKERS": "Stock Purchases — General",
+            "WOOLWORTHS": "Stock Purchases — General",
+            "SPAR ": "Stock Purchases — General",
+            "TELKOM": "Telephone — Landline",
+            "VODACOM": "Telephone — Cellphone",
+            "MTN ": "Telephone — Cellphone",
+            "RAIN ": "Internet / WiFi",
+            "AFRIHOST": "Internet / WiFi",
             "ESKOM": "Electricity",
-            "CITY OF": "Municipal",
-            "MUNICIPALITY": "Municipal",
-            "SARS": "Tax Payment",
-            "SALARIES": "Salaries",
-            "WAGES": "Wages",
-            "RENT": "Rent",
-            "INSURANCE": "Insurance",
-            "SANTAM": "Insurance",
-            "OUTSURANCE": "Insurance",
+            "CITY OF": "Rates & Taxes — Municipal",
+            "MUNICIPALITY": "Rates & Taxes — Municipal",
+            "MUNISIPAL": "Rates & Taxes — Municipal",
+            "SARS": "VAT Payment to SARS",
+            "SALARIES": "Salaries & Wages",
+            "WAGES": "Salaries & Wages",
+            "RENT": "Rent — Business Premises",
+            "INSURANCE": "Insurance — Business / Contents",
+            "SANTAM": "Insurance — Business / Contents",
+            "OUTSURANCE": "Insurance — Business / Contents",
+            "DISCOVERY": "Insurance — Life / Key Person",
             "BANK CHARGES": "Bank Charges",
             "SERVICE FEE": "Bank Charges",
-            "MONTHLY FEE": "Bank Charges"
+            "MONTHLY FEE": "Bank Charges",
+            "CASH DEPOSIT FEE": "Bank Charges",
+            "TAKEALOT": "Office Supplies",
+            "MULTICHOICE": "DSTV / Streaming",
+            "DSTV": "DSTV / Streaming",
+            "NETSTAR": "Vehicle Tracking (Netstar, Tracker)",
+            "TRACKER": "Vehicle Tracking (Netstar, Tracker)",
+            "GOOGLE": "Software Subscription (Monthly)",
+            "MICROSOFT": "Software Subscription (Monthly)",
+            "ADOBE": "Software Subscription (Monthly)",
+            "ZAPPER": "Card Machine Fees",
+            "YOCO": "Card Machine Fees",
+            "IKHOKHA": "Card Machine Fees",
+            "ADT": "Security",
+            "FIDELITY": "Security",
+            "CHUBB": "Security",
+            "WES BANK": "Vehicle Lease / Installment",
+            "WESBANK": "Vehicle Lease / Installment",
+            "MFC ": "Vehicle Lease / Installment",
         }
         
         for keyword, category in common.items():
@@ -52232,15 +52515,13 @@ def banking_page():
     needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category")]
     already_done = [t for t in all_transactions if t.get("matched") and t.get("manually_reviewed")]
     
-    # Get expense categories
+    # Get COMPREHENSIVE booking categories (grouped with optgroups)
+    category_options_html = IndustryKnowledge.build_category_options_html(biz_id)
+    # Also keep flat list for JS fallback
+    all_flat_categories = IndustryKnowledge.get_booking_categories_flat(biz_id)
+    # Legacy flat list for backward compat
     expense_categories = IndustryKnowledge.get_expense_categories(biz_id) if biz_id else ["General Expenses"]
-    category_options = "".join([f'<option value="{c}">{c}</option>' for c in expense_categories])
-    
-    # Add common categories
-    extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan", "Refund", "Transfer", "Ignore"]
-    for cat in extra_cats:
-        if cat not in expense_categories:
-            category_options += f'<option value="{cat}">{cat}</option>'
+    extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan Repayment", "Loan Received", "Refund Given", "Refund Received", "Transfer Between Accounts", "Ignore / Not Business Related"]
     
     # Stats
     total_count = len(all_transactions)
@@ -52294,8 +52575,7 @@ def banking_page():
             <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
                 <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:7px 14px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;font-weight:600;">🤖 Vra Zane</button>
                 <select class="form-input" style="width:120px;padding:4px;font-size:11px;" onchange="categorizeTransaction('{txn_id}', this.value, '{safe_desc}')">
-                    <option value="">Manual...</option>
-                    {category_options}
+                    {category_options_html}
                 </select>
             </div>
             '''
@@ -52453,10 +52733,11 @@ def banking_page():
     
     <!-- TIPS -->
     <div class="card" style="margin-top:20px;background:linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.05));">
-        <h4 style="margin-top:0;">💡 How Zane Learns</h4>
+        <h4 style="margin-top:0;">💡 Hoe Zane Leer / How Zane Learns</h4>
         <p style="color:var(--text-muted);margin:0;">
-            Every time you categorize a transaction, Zane remembers the pattern. Next time he sees "TELKOM", he'll know it's Telephone. 
-            The more you teach him, the faster reconciliation becomes!
+            Elke keer as jy 'n transaksie kategoriseer, onthou Zane die patroon. Volgende keer as hy "TELKOM" sien, weet hy dis Telephone — Landline.<br>
+            <strong>Nuut:</strong> 80+ gedetailleerde kategorieë met sub-afdelings — van Fuel (Voertuig vs Toerusting) tot Rates & Taxes, Insurance sub-tipes, en meer. 
+            Tik in die soekboks om vinnig die regte kategorie te kry! 🔍
         </p>
     </div>
     
@@ -52600,18 +52881,26 @@ def banking_page():
         if (!cats && row.dataset.categories) {{
             try {{ cats = JSON.parse(row.dataset.categories); }} catch(e) {{}}
         }}
-        if (!cats || !cats.length) {{
-            cats = `{','.join(expense_categories + extra_cats)}`.split(',').map(c => c.trim());
-        }}
         
         const safeDesc = description.replace(/'/g, "\\\\'");
-        const optionsHtml = cats.map(c => `<option value="${{c}}">${{c}}</option>`).join('');
+        
+        // Build options: if API gave flat list, use it; otherwise use comprehensive grouped dropdown
+        let optionsHtml;
+        if (cats && cats.length) {{
+            optionsHtml = cats.map(c => `<option value="${{c}}">${{c}}</option>`).join('');
+        }} else {{
+            optionsHtml = window._comprehensiveCategoryOptions || '';
+        }}
         
         actionCell.innerHTML = `
             <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
                 ${{message ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">🤖 ${{message}}</div>` : ''}}
-                <select id="manualCat_${{txnId}}" class="form-input" style="width:100%;padding:8px;font-size:13px;margin-bottom:8px;">
-                    <option value="">— Kies kategorie —</option>
+                <input type="text" id="catSearch_${{txnId}}" class="form-input" 
+                       placeholder="🔍 Soek / Search..." 
+                       oninput="filterCatOptions(this, 'manualCat_${{txnId}}')"
+                       style="width:100%;padding:8px;font-size:13px;margin-bottom:5px;">
+                <select id="manualCat_${{txnId}}" class="form-input" style="width:100%;padding:8px;font-size:12px;margin-bottom:8px;" size="8">
+                    <option value="">— Kies kategorie / Choose —</option>
                     ${{optionsHtml}}
                 </select>
                 <div style="display:flex;gap:6px;">
@@ -52660,6 +52949,47 @@ def banking_page():
     function updateCounts() {{
         // Simple reload after a few categorizations
         // Could be smarter but this works
+    }}
+    
+    // ═══════════════════════════════════════════════════════════
+    // COMPREHENSIVE CATEGORY SEARCH — Filter categories as you type
+    // ═══════════════════════════════════════════════════════════
+    window._comprehensiveCategoryOptions = `{IndustryKnowledge.build_category_options_html(biz_id)}`;
+    
+    function filterCatOptions(input, selectId) {{
+        const search = input.value.toLowerCase();
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        
+        // Show all if empty search
+        const options = select.querySelectorAll('option');
+        const optgroups = select.querySelectorAll('optgroup');
+        
+        if (!search) {{
+            options.forEach(o => o.style.display = '');
+            optgroups.forEach(g => g.style.display = '');
+            return;
+        }}
+        
+        // Hide non-matching options, show matching ones
+        optgroups.forEach(g => {{
+            let hasVisible = false;
+            g.querySelectorAll('option').forEach(o => {{
+                if (o.textContent.toLowerCase().includes(search) || o.value.toLowerCase().includes(search)) {{
+                    o.style.display = '';
+                    hasVisible = true;
+                }} else {{
+                    o.style.display = 'none';
+                }}
+            }});
+            g.style.display = hasVisible ? '' : 'none';
+        }});
+        
+        // Also check top-level options
+        select.querySelectorAll(':scope > option').forEach(o => {{
+            if (o.value === '') {{ o.style.display = ''; return; }}
+            o.style.display = o.textContent.toLowerCase().includes(search) ? '' : 'none';
+        }});
     }}
     
     async function uploadStatement(file) {{
@@ -53320,10 +53650,13 @@ def api_banking_zane_suggest():
         if not description:
             return jsonify({"success": False, "error": "No description"})
         
-        # Get all available categories for this business
+        # Get ALL comprehensive booking categories for this business
+        all_categories = IndustryKnowledge.get_booking_categories_flat(biz_id)
+        ai_category_list = IndustryKnowledge.build_category_list_for_ai()
+        
+        # Also keep legacy expense categories for backward compat
         expense_categories = IndustryKnowledge.get_expense_categories(biz_id)
-        extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan Repayment", "Loan", "Refund", "Transfer Between Accounts", "Ignore"]
-        all_categories = expense_categories + extra_cats
+        extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan Repayment", "Loan Received", "Refund Given", "Refund Received", "Transfer Between Accounts", "VAT Payment to SARS", "PAYE / UIF / SDL Payment", "Ignore / Not Business Related"]
         
         # Check if BankLearning already has a high-confidence match
         existing = BankLearning.suggest_category(biz_id, description)
@@ -53357,18 +53690,23 @@ DATE: {date}
 DIRECTION: {direction}
 AMOUNT: R{amount:,.2f}
 
-AVAILABLE CATEGORIES:
-{chr(10).join([f'- {c}' for c in all_categories])}
+COMPREHENSIVE BOOKING CATEGORIES (pick the MOST SPECIFIC match):
+{ai_category_list}
 
 {f"PREVIOUS PATTERNS I LEARNED FROM THIS BUSINESS:{chr(10)}{pattern_examples}" if pattern_examples else ""}
 
 RULES:
-1. Pick the SINGLE best category from the list above
-2. If it's clearly a customer paying you → "Customer Payment"
-3. If it's a transfer between own accounts → "Transfer Between Accounts"  
-4. If it's owner withdrawing money → "Owner Drawings"
-5. For expenses, match to the most specific category available
-6. If unsure, say so honestly
+1. Pick the SINGLE best, most SPECIFIC category from the list above
+2. If money IN from a customer paying → "Customer Payment"
+3. If transfer between own accounts → "Transfer Between Accounts"  
+4. If owner withdrawing money → "Owner Drawings"
+5. Rates/taxes from municipality → "Rates & Taxes — Municipal"
+6. Property rates → "Rates & Taxes — Property"
+7. Fuel for vehicles → "Fuel — Business Vehicle"
+8. Fuel for equipment like lawnmower/generator → "Fuel — Equipment (Mower, Generator, etc.)"
+9. SARS payments: VAT → "VAT Payment to SARS", PAYE/UIF → "PAYE / UIF / SDL Payment"
+10. Always pick the MOST SPECIFIC sub-category, not a general one
+11. If unsure, say so honestly
 
 Respond in this EXACT format (Afrikaans):
 KATEGORIE: [exact category name from list]
@@ -53445,7 +53783,7 @@ VERTROUE: [hoog/medium/laag]"""
         logger.error(f"[BANK ZANE] Error: {e}")
         # Still return categories so user can manually select
         try:
-            cats = IndustryKnowledge.get_expense_categories(biz_id) + ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan Repayment", "Loan", "Refund", "Transfer Between Accounts", "Ignore"]
+            cats = IndustryKnowledge.get_booking_categories_flat(biz_id)
         except:
             cats = ["General Expenses"]
         return jsonify({"success": False, "error": str(e), "all_categories": cats})
