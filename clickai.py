@@ -2312,18 +2312,41 @@ class DB:
             # 1. Get business owner
             try:
                 biz = self.get_one("businesses", business_id)
+                owner = None
+                
+                # Try via business.user_id first
                 if biz and biz.get("user_id"):
                     owner = self.get_one("users", biz["user_id"])
-                    if owner:
-                        if not owner.get("name") and owner.get("raw_user_meta_data"):
+                
+                # Fallback: find user whose default_business_id matches
+                if not owner:
+                    potential_owners = self.get("users", {"default_business_id": business_id}) or []
+                    if potential_owners:
+                        owner = potential_owners[0]
+                        # Also fix the business record for next time
+                        if biz and not biz.get("user_id"):
                             try:
-                                meta = json.loads(owner["raw_user_meta_data"]) if isinstance(owner["raw_user_meta_data"], str) else owner["raw_user_meta_data"]
-                                owner["name"] = meta.get("full_name", owner.get("email", "Owner"))
+                                self.update("businesses", business_id, {"user_id": owner.get("id")})
                             except:
                                 pass
-                        owner["role"] = "owner"
-                        users.append(owner)
-                        seen_ids.add(owner.get("id"))
+                
+                if owner:
+                    # Resolve name from metadata if needed
+                    if not owner.get("name"):
+                        if owner.get("raw_user_meta_data"):
+                            try:
+                                meta = json.loads(owner["raw_user_meta_data"]) if isinstance(owner["raw_user_meta_data"], str) else owner["raw_user_meta_data"]
+                                owner["name"] = meta.get("full_name") or owner.get("email") or "Owner"
+                            except:
+                                owner["name"] = owner.get("email") or "Owner"
+                        else:
+                            owner["name"] = owner.get("email") or "Owner"
+                    owner["role"] = "owner"
+                    users.append(owner)
+                    seen_ids.add(owner.get("id"))
+                    logger.info(f"[DB] get_business_users found owner: {owner.get('name')}")
+                else:
+                    logger.warning(f"[DB] get_business_users: no owner found for business {business_id}")
             except Exception as e:
                 logger.warning(f"[DB] get_business_users owner lookup failed: {e}")
             
@@ -2339,12 +2362,15 @@ class DB:
                     if uid and uid not in seen_ids:
                         user = self.get_one("users", uid)
                         if user:
-                            if not user.get("name") and user.get("raw_user_meta_data"):
-                                try:
-                                    meta = json.loads(user["raw_user_meta_data"]) if isinstance(user["raw_user_meta_data"], str) else user["raw_user_meta_data"]
-                                    user["name"] = meta.get("full_name", user.get("email", "Staff"))
-                                except:
-                                    pass
+                            if not user.get("name"):
+                                if user.get("raw_user_meta_data"):
+                                    try:
+                                        meta = json.loads(user["raw_user_meta_data"]) if isinstance(user["raw_user_meta_data"], str) else user["raw_user_meta_data"]
+                                        user["name"] = meta.get("full_name") or user.get("email") or "Staff"
+                                    except:
+                                        user["name"] = user.get("email") or "Staff"
+                                else:
+                                    user["name"] = user.get("email") or "Staff"
                             user["role"] = tm.get("role", "staff")
                             users.append(user)
                             seen_ids.add(uid)
@@ -30975,7 +31001,8 @@ def api_pulse_data():
         suppliers = f_suppliers.result(timeout=20) or []
         stock = f_stock.result(timeout=20) or []
         team_users = f_users.result(timeout=20) or []
-        user_names = {u.get("id"): u.get("name", u.get("email", "Unknown")) for u in team_users}
+        user_names = {u.get("id"): (u.get("name") or u.get("email") or "Unknown") for u in team_users}
+        logger.info(f"[PULSE] Team users found: {len(team_users)} — names: {list(user_names.values())}")
         
         logger.info(f"[PULSE] DB loaded in {time.time()-_start:.1f}s (parallel)")
         
@@ -31061,7 +31088,7 @@ def api_pulse_data():
         # Make sure ALL team members appear (even if they did nothing)
         for u in team_users:
             uid = u.get("id", "")
-            if uid and u.get("role") not in ("owner",):  # Owner is the boss, skip
+            if uid:
                 _ensure_team(uid)
         
         # Gather quotes (today + yesterday)
@@ -31160,8 +31187,8 @@ def api_pulse_data():
         sorted_team = sorted(team_data.items(), key=lambda x: len(x[1]["today"]) + len(x[1]["yesterday"]), reverse=True)
         
         for uid, data in sorted_team:
-            name = data["name"]
-            if name == "unknown" or not name or name == "System":
+            name = data["name"] or uid[:8]
+            if name == "System":
                 continue
             
             today_actions = data["today"]
@@ -54028,21 +54055,19 @@ Categories:
 
 {f"Learned patterns from this business:{chr(10)}{pattern_examples}" if pattern_examples else ""}
 
-{"Map their answer to the exact right category. You know the categories, they know what it's for." if user_answer else ""}
-
 Two paths:
 1. You KNOW (Telkom=Telephone, Engen=Fuel, bank fees, etc): say it directly
-2. You DON'T KNOW: give 3-5 plain-language guesses of what this COULD be. Use simple words a non-accountant would understand. The user clicks one, then you map it to the right category.
+2. You DON'T KNOW: give 3-5 plain-language options. User clicks one, you map to the right category.
 
-Example for "ACCOUNT PAYMENT CARTRACK": options could be "Vehicle tracking subscription", "Fleet management fee", "Refund from Cartrack"
-Example for "SERVICE AGREEMENT IRON TREE": options could be "IT/internet service", "Security service", "Equipment lease"
+{"If their answer '" + user_answer + "' is specific enough to pick ONE exact category, give the final answer. If still ambiguous, drill deeper with more options. Example: user says 'Fuel' — ask 'Business vehicle, garden equipment, or generator?'" if user_answer else ""}
 
+Example: "ACCOUNT PAYMENT CARTRACK" options: "Vehicle tracking subscription", "Fleet management fee", "Refund from Cartrack"
 ALWAYS include "None of these" as the last option.
-Fuel: warn no VAT claim. Never use "General Expenses".
+Fuel: warn no VAT claim on own use. Never use "General Expenses".
 
-JSON only:
+JSON only — pick ONE:
 Know it: {{"needs_clarification":false,"category":"[exact]","reason":"[1 sentence]","confidence":"high","vat_warning":""}}
-Not sure: {{"needs_clarification":true,"question":"What is this payment for?","options":[{{"label":"[plain language guess]","value":"[short]"}},{{"label":"[plain language guess]","value":"[short]"}},{{"label":"None of these","value":"manual"}}],"confidence":"medium","reason":""}}"""
+Need more info: {{"needs_clarification":true,"question":"[plain question]","options":[{{"label":"[plain language]","value":"[short]"}},{{"label":"None of these","value":"manual"}}],"confidence":"medium","reason":""}}"""
 
         # Haiku — fast, cheap, smart enough for category matching
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -56541,14 +56566,16 @@ def register_page():
                 else:
                     # Normal registration - create new business
                     biz_id = generate_id()
+                    user_id = generate_id()
+                    
                     db.save("businesses", {
                         "id": biz_id,
                         "name": business_name,
+                        "user_id": user_id,
                         "created_at": now()
                     })
                     
                     # Create user
-                    user_id = generate_id()
                     pwd_hash = hashlib.sha256(password.encode()).hexdigest()
                     db.save("users", {
                         "id": user_id,
@@ -64404,15 +64431,25 @@ def scan_inbox_page():
             // Add option buttons
             if (sugg.options) {{
                 sugg.options.forEach((opt, i) => {{
-                    const btnColor = opt.value.includes('resale') || opt.value.includes('stock') ? '#6366f1' : '#f59e0b';
-                    html += `
-                        <button onclick="answerZaneQuestion('${{opt.value}}')" 
-                                style="padding:10px 16px;background:${{btnColor}};color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px;">
-                            ${{opt.label}}
-                        </button>
-                    `;
+                    if (opt.value === 'manual') {{
+                        html += `
+                            <button onclick="document.getElementById('zaneSuggestion').style.display='none'"
+                                    style="padding:10px 16px;background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:6px;cursor:pointer;font-size:14px;">
+                                ${{opt.label}}
+                            </button>
+                        `;
+                    }} else {{
+                        const btnColor = opt.label.toLowerCase().includes('stock') || opt.label.toLowerCase().includes('resale') ? '#6366f1' : '#f59e0b';
+                        html += `
+                            <button onclick="answerZaneQuestion('${{opt.label}}')"
+                                    style="padding:10px 16px;background:${{btnColor}};color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px;">
+                                ${{opt.label}}
+                            </button>
+                        `;
+                    }}
                 }});
             }}
+            
             
             html += '</div>';
             container.innerHTML = html;
@@ -66118,26 +66155,32 @@ def api_scan_suggest_category():
         # Build comprehensive category knowledge for Zane
         all_categories = IndustryKnowledge.build_category_list_for_ai()
         
-        prompt = f"""You are Zane, a bookkeeper for {biz_name}. Look at this invoice and tell the user where to book it. Respond in English. Be direct — no filler, no emojis, no introductions.
+        prompt = f"""You are Zane, a bookkeeper for {biz_name}. Look at this invoice and suggest where to book it. Respond in English. Be direct — no filler, no emojis.
 
-{"IMPORTANT: The supplier '" + supplier_name + "' is the user's OWN business. This is their own stock/inventory for resale. Book as Stock Purchase." if biz_name and supplier_name and (biz_name.lower() in supplier_name.lower() or supplier_name.lower() in biz_name.lower()) else ""}
+{"IMPORTANT: The supplier '" + supplier_name + "' is the user's OWN business. This is their own stock/inventory for resale." if biz_name and supplier_name and (biz_name.lower() in supplier_name.lower() or supplier_name.lower() in biz_name.lower()) else ""}
 
 Supplier: {supplier_name}, Invoice: {invoice_number}, Amount: R{total}, Items: {items_desc or "not specified"}
-{"User answered your question: " + user_answer if user_answer else ""}
+{"THE USER SAYS THIS IS FOR: " + user_answer if user_answer else ""}
 
 Categories:
 {all_categories}
 
-If you know the answer, say it straight. "Telkom — Telephone. Click ORANGE." Done.
-If it could be stock or expense, ask — give 2-4 options to click. As many as makes sense.
-If you genuinely don't know, say so.
-Fuel: always warn no VAT claim. Two buttons exist: ORANGE "Book as Expense", BLUE "Stock Purchase (Credit)".
-{"Pick the exact category from their answer." if user_answer else ""}
+ALWAYS give clickable options. Never decide alone. The user is not an accountant — use plain language they understand.
 
-JSON only:
-Know it: {{"needs_clarification":false,"action":"expense","action_label":"Book as Expense","category":"[exact]","confidence":0.95,"explanation":"[straight to the point]","vat_warning":"","is_stock":false}}
-Stock: {{"needs_clarification":false,"action":"supplier","action_label":"Stock Purchase","category":"[exact]","confidence":0.95,"explanation":"[straight]","vat_warning":"","is_stock":true}}
-Not sure: {{"needs_clarification":true,"question":"[direct question]","options":[{{"label":"Option","value":"val"}}],"confidence":0.6,"explanation":""}}"""
+{"Their answer might be enough to pick the exact category, OR you might need to drill deeper. Examples:" if user_answer else "Examples:"}
+- Fuel invoice: ask "Own use or for resale?" then if "Own use" ask "Business vehicle, garden equipment, or generator?" then book
+- PPE items: ask "Stock for resale or staff protective clothing?"
+- Building materials: ask "For repairs/maintenance or stock for resale?"
+
+{"If their answer '" + user_answer + "' is specific enough to pick ONE exact category, give the final answer. If still ambiguous, drill deeper with more options." if user_answer else ""}
+
+Fuel: warn no VAT claim on own use.
+Two action buttons: ORANGE "Book as Expense", BLUE "Stock Purchase (Credit)".
+For stock/resale: action="supplier", is_stock=true. For expenses: action="expense", is_stock=false.
+
+JSON only — pick ONE format:
+Need more info: {{"needs_clarification":true,"question":"[plain language question]","options":[{{"label":"[option]","value":"[short]"}},{{"label":"None of these","value":"manual"}}],"confidence":0.6,"explanation":""}}
+Got enough to book: {{"needs_clarification":false,"action":"expense|supplier","action_label":"Book as Expense|Stock Purchase","category":"[exact from list]","confidence":0.95,"explanation":"[1 sentence]","vat_warning":"","is_stock":false|true}}"""
 
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
