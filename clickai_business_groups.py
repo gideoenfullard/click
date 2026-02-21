@@ -121,7 +121,7 @@ class BusinessGroupManager:
             groups = db.get('business_groups', {'id': group_id, 'owner_id': owner_id})
             if not groups:
                 return {'success': False, 'error': 'Group not found or not owner'}
-            businesses = db.get('businesses', {'id': business_id, 'owner_id': owner_id})
+            businesses = db.get('businesses', {'id': business_id, 'user_id': owner_id})
             if not businesses:
                 return {'success': False, 'error': 'Business not found or not owner'}
             existing = db.get('business_group_members', {
@@ -540,5 +540,17 @@ def register_group_routes(app, db, login_required):
         owner_id = session.get('user_id')
         businesses = mgr.get_group_businesses(db, group_id, owner_id)
         return jsonify({'success': True, 'businesses': businesses})
+
+    @app.route('/api/business-groups/my-businesses', methods=['GET'])
+    @login_required
+    def api_my_businesses_for_groups():
+        """List all businesses owned by current user (for the add-to-group dropdown)."""
+        owner_id = session.get('user_id')
+        try:
+            businesses = db.get('businesses', {'user_id': owner_id})
+            result = [{'id': b.get('id'), 'name': b.get('name', 'Unknown')} for b in (businesses or [])]
+            return jsonify({'success': True, 'businesses': result})
+        except Exception as e:
+            return jsonify({'success': True, 'businesses': []})
 
     logger.info("[BIZ-GROUP] Routes registered successfully")

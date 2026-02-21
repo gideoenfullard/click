@@ -67351,13 +67351,13 @@ def settings_business_groups():
     let allBusinesses = [];
 
     // Load on page start
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
+        await loadMyBusinesses();
         loadGroups();
-        loadMyBusinesses();
     });
 
-    function loadMyBusinesses() {
-        // Get businesses from the business switcher dropdown
+    async function loadMyBusinesses() {
+        // Try from business switcher first
         const select = document.getElementById('businessSelect');
         if (select) {
             allBusinesses = [];
@@ -67367,6 +67367,14 @@ def settings_business_groups():
                 }
             }
         }
+        // Always also fetch from API (more reliable)
+        try {
+            const resp = await fetch('/api/business-groups/my-businesses');
+            const data = await resp.json();
+            if (data.success && data.businesses && data.businesses.length > 0) {
+                allBusinesses = data.businesses;
+            }
+        } catch(e) {}
     }
 
     async function loadGroups() {
