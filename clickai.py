@@ -77,6 +77,16 @@ try:
 except ImportError:
     KNOWLEDGE_BASE_LOADED = False
     logger = None  # will be set later
+try:
+    from clickai_pulse_knowledge import get_relevant_pulse_knowledge, format_pulse_knowledge
+    PULSE_KNOWLEDGE_LOADED = True
+except ImportError:
+    PULSE_KNOWLEDGE_LOADED = False
+try:
+    from clickai_business_groups import BusinessGroupManager, register_group_routes
+    BUSINESS_GROUPS_LOADED = True
+except ImportError:
+    BUSINESS_GROUPS_LOADED = False
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -7809,6 +7819,16 @@ Settings: /settings (business info, VAT, users, preferences)
                 logger.info(f"[ZANE-RAG] Injected {len(chunks)} knowledge chunks: {[c['title'] for c in chunks]}")
         except Exception as e:
             logger.error(f"[ZANE-RAG] Knowledge base error: {e}")
+
+    # === RAG: Inject Pulse Intelligence knowledge (business strategy/analysis) ===
+    if PULSE_KNOWLEDGE_LOADED and user_message:
+        try:
+            pulse_chunks = get_relevant_pulse_knowledge(user_message, max_chunks=2)
+            if pulse_chunks:
+                prompt += format_pulse_knowledge(pulse_chunks)
+                logger.info(f"[ZANE-PULSE] Injected {len(pulse_chunks)} pulse chunks: {[c['title'] for c in pulse_chunks]}")
+        except Exception as e:
+            logger.error(f"[ZANE-PULSE] Pulse knowledge error: {e}")
 
     return prompt
 
@@ -15941,6 +15961,13 @@ def login_required(f):
             return redirect("/login")
         return f(*args, **kwargs)
     return decorated
+
+# Register business group routes (separate module)
+try:
+    if BUSINESS_GROUPS_LOADED:
+        register_group_routes(app, db, login_required)
+except Exception as e:
+    logger.error(f"[BIZ-GROUP] Failed to register routes: {e}")
 
 
 def get_user_role():
