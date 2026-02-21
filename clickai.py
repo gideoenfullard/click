@@ -14771,6 +14771,299 @@ class BankLearning:
         }
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# INVOICE-TO-BANK MATCHING — The magic of ClickAI
+# Matches bank transactions to scanned invoices automatically
+# ═══════════════════════════════════════════════════════════════════════
+
+class InvoiceMatch:
+    """Match bank transactions to invoices/expenses already in the system"""
+    
+    @staticmethod
+    def find_match(business_id: str, description: str, amount: float, date: str, direction: str = "out") -> dict:
+        """
+        Try to match a bank transaction to an existing invoice or expense.
+        
+        Args:
+            business_id: The business ID
+            description: Bank transaction description (e.g. "ACCOUNT PAYMENT EPR FULL003")
+            amount: Transaction amount (always positive)
+            date: Transaction date (YYYY-MM-DD)
+            direction: "out" for debits (expenses), "in" for credits (income)
+            
+        Returns:
+            dict with match info or None
+        """
+        if not business_id or not description or amount <= 0:
+            return None
+        
+        desc_upper = description.upper()
+        
+        try:
+            if direction == "out":
+                # MONEY OUT — match against expenses and supplier invoices
+                match = InvoiceMatch._match_expense(business_id, desc_upper, amount, date)
+                if not match:
+                    match = InvoiceMatch._match_supplier_invoice(business_id, desc_upper, amount, date)
+                return match
+            else:
+                # MONEY IN — match against sales invoices (customer payments)
+                match = InvoiceMatch._match_customer_payment(business_id, desc_upper, amount, date)
+                return match
+        except Exception as e:
+            logger.error(f"[INVOICE MATCH] Error: {e}")
+            return None
+    
+    @staticmethod
+    def _extract_name_words(description: str) -> list:
+        """Extract meaningful words from bank description, ignoring generic banking terms"""
+        skip_words = {
+            "ACCOUNT", "PAYMENT", "CREDIT", "DEBIT", "TRANSFER", "CARD",
+            "EFTPOS", "SETTLEMENT", "SERVICE", "AGREEMENT", "MAGTAPE",
+            "ACB", "ELECTRONIC", "INTERNET", "BANKING", "FNB", "ABSA",
+            "NEDBANK", "STANDARD", "CAPITEC", "BRANCH", "BATCH", "REF",
+            "CR", "DR", "EPR", "EFT", "PMT", "PAY"
+        }
+        # Remove numbers
+        clean = re.sub(r'\d+', '', description)
+        words = [w.strip() for w in clean.split() if len(w.strip()) >= 3 and w.strip() not in skip_words]
+        return words
+    
+    @staticmethod
+    def _amount_matches(bank_amount: float, invoice_amount: float, tolerance: float = 0.02) -> bool:
+        """Check if amounts match within tolerance (default 2% for rounding)"""
+        if bank_amount == 0 or invoice_amount == 0:
+            return False
+        # Exact match
+        if abs(bank_amount - invoice_amount) < 0.01:
+            return True
+        # Percentage tolerance
+        diff = abs(bank_amount - invoice_amount) / max(bank_amount, invoice_amount)
+        return diff <= tolerance
+    
+    @staticmethod
+    def _date_within_range(date1: str, date2: str, days: int = 45) -> bool:
+        """Check if two dates are within N days of each other"""
+        try:
+            from datetime import datetime, timedelta
+            d1 = datetime.strptime(str(date1)[:10], "%Y-%m-%d")
+            d2 = datetime.strptime(str(date2)[:10], "%Y-%m-%d")
+            return abs((d1 - d2).days) <= days
+        except:
+            return True  # If dates can't be parsed, don't reject on date
+    
+    @staticmethod
+    def _name_in_description(supplier_name: str, bank_desc: str) -> float:
+        """Check how well a supplier name matches the bank description. Returns 0-1 score."""
+        if not supplier_name:
+            return 0
+        
+        supplier_upper = supplier_name.upper().strip()
+        
+        # Direct contains — strongest match
+        if supplier_upper in bank_desc:
+            return 1.0
+        
+        # Word-level matching — check if key supplier words appear
+        supplier_words = [w for w in supplier_upper.split() if len(w) >= 3]
+        if not supplier_words:
+            return 0
+        
+        bank_words = set(bank_desc.split())
+        matches = sum(1 for w in supplier_words if w in bank_words or any(w in bw for bw in bank_words))
+        
+        score = matches / len(supplier_words)
+        return score if score >= 0.5 else 0  # Need at least half the words
+    
+    @staticmethod
+    def _match_expense(business_id: str, bank_desc: str, amount: float, date: str) -> dict:
+        """Match against booked expenses"""
+        expenses = db.get("expenses", {"business_id": business_id}) or []
+        
+        best_match = None
+        best_score = 0
+        
+        for exp in expenses:
+            exp_amount = abs(float(exp.get("amount", 0) or exp.get("total", 0)))
+            exp_supplier = exp.get("supplier_name", "") or exp.get("supplier", "") or ""
+            exp_date = str(exp.get("date", ""))[:10]
+            exp_category = exp.get("category", "")
+            
+            # Must have amount match
+            if not InvoiceMatch._amount_matches(amount, exp_amount):
+                continue
+            
+            # Check supplier name
+            name_score = InvoiceMatch._name_in_description(exp_supplier, bank_desc)
+            if name_score == 0:
+                continue
+            
+            # Check date proximity
+            if not InvoiceMatch._date_within_range(date, exp_date):
+                continue
+            
+            # Calculate overall score
+            score = name_score * 0.6 + (0.4 if abs(amount - exp_amount) < 0.01 else 0.2)
+            
+            if score > best_score:
+                best_score = score
+                best_match = {
+                    "source": "expense",
+                    "source_id": exp.get("id"),
+                    "category": exp_category,
+                    "category_code": exp.get("category_code", ""),
+                    "supplier_name": exp_supplier,
+                    "invoice_amount": exp_amount,
+                    "invoice_date": exp_date,
+                    "reference": exp.get("reference", ""),
+                    "confidence": min(0.95, score),
+                    "reason": f"Matched to expense: {exp_supplier} R{exp_amount:.2f} ({exp_category})"
+                }
+        
+        return best_match if best_score >= 0.5 else None
+    
+    @staticmethod
+    def _match_supplier_invoice(business_id: str, bank_desc: str, amount: float, date: str) -> dict:
+        """Match against supplier invoices"""
+        invoices = db.get("supplier_invoices", {"business_id": business_id}) or []
+        
+        best_match = None
+        best_score = 0
+        
+        for inv in invoices:
+            inv_total = abs(float(inv.get("total", 0)))
+            inv_supplier = inv.get("supplier_name", "") or ""
+            inv_date = str(inv.get("date", ""))[:10]
+            inv_number = inv.get("invoice_number", "")
+            
+            # Must have amount match
+            if not InvoiceMatch._amount_matches(amount, inv_total):
+                continue
+            
+            # Check supplier name
+            name_score = InvoiceMatch._name_in_description(inv_supplier, bank_desc)
+            
+            # Also check if invoice number appears in bank description
+            inv_num_match = False
+            if inv_number and len(inv_number) >= 3:
+                inv_num_match = inv_number.upper() in bank_desc
+            
+            if name_score == 0 and not inv_num_match:
+                continue
+            
+            # Check date proximity
+            if not InvoiceMatch._date_within_range(date, inv_date):
+                continue
+            
+            # Score
+            score = max(name_score, 0.7 if inv_num_match else 0) * 0.6 + (0.4 if abs(amount - inv_total) < 0.01 else 0.2)
+            
+            if score > best_score:
+                best_score = score
+                best_match = {
+                    "source": "supplier_invoice",
+                    "source_id": inv.get("id"),
+                    "category": "Stock Purchases",  # Supplier invoices are typically stock
+                    "category_code": "5000",
+                    "supplier_name": inv_supplier,
+                    "invoice_amount": inv_total,
+                    "invoice_date": inv_date,
+                    "invoice_number": inv_number,
+                    "reference": inv_number,
+                    "confidence": min(0.95, score),
+                    "reason": f"Matched to invoice #{inv_number}: {inv_supplier} R{inv_total:.2f}"
+                }
+        
+        return best_match if best_score >= 0.5 else None
+    
+    @staticmethod
+    def _match_customer_payment(business_id: str, bank_desc: str, amount: float, date: str) -> dict:
+        """Match MONEY IN against outstanding sales invoices"""
+        invoices = db.get("invoices", {"business_id": business_id}) or []
+        
+        best_match = None
+        best_score = 0
+        
+        for inv in invoices:
+            inv_total = abs(float(inv.get("total", 0)))
+            customer_name = inv.get("customer_name", "") or ""
+            inv_date = str(inv.get("date", ""))[:10]
+            inv_number = inv.get("invoice_number", "")
+            
+            # Must have amount match
+            if not InvoiceMatch._amount_matches(amount, inv_total):
+                continue
+            
+            # Check customer name in bank description
+            name_score = InvoiceMatch._name_in_description(customer_name, bank_desc)
+            
+            # Check invoice number in description
+            inv_num_match = False
+            if inv_number and len(inv_number) >= 3:
+                inv_num_match = inv_number.upper() in bank_desc
+            
+            if name_score == 0 and not inv_num_match:
+                continue
+            
+            # Check date
+            if not InvoiceMatch._date_within_range(date, inv_date, days=60):
+                continue
+            
+            score = max(name_score, 0.7 if inv_num_match else 0) * 0.6 + (0.4 if abs(amount - inv_total) < 0.01 else 0.2)
+            
+            if score > best_score:
+                best_score = score
+                best_match = {
+                    "source": "customer_invoice",
+                    "source_id": inv.get("id"),
+                    "category": "Customer Payment",
+                    "category_code": "1000",
+                    "customer_name": customer_name,
+                    "invoice_amount": inv_total,
+                    "invoice_date": inv_date,
+                    "invoice_number": inv_number,
+                    "reference": inv_number,
+                    "confidence": min(0.95, score),
+                    "reason": f"Payment for invoice #{inv_number}: {customer_name} R{inv_total:.2f}"
+                }
+        
+        return best_match if best_score >= 0.5 else None
+    
+    @staticmethod
+    def match_all_transactions(business_id: str, transactions: list) -> list:
+        """Run invoice matching on all unmatched transactions"""
+        matched_count = 0
+        
+        for txn in transactions:
+            if txn.get("matched") or txn.get("invoice_matched"):
+                continue
+            
+            debit = float(txn.get("debit", 0))
+            credit = float(txn.get("credit", 0))
+            amount = debit if debit > 0 else credit
+            direction = "out" if debit > 0 else "in"
+            
+            match = InvoiceMatch.find_match(
+                business_id,
+                txn.get("description", ""),
+                amount,
+                txn.get("date", ""),
+                direction
+            )
+            
+            if match:
+                txn["invoice_matched"] = True
+                txn["invoice_match"] = match
+                txn["suggested_category"] = match["category"]
+                txn["suggestion_confidence"] = match["confidence"]
+                txn["match_reference"] = match.get("reason", "")
+                txn["match_type"] = "invoice"
+                matched_count += 1
+        
+        logger.info(f"[INVOICE MATCH] Matched {matched_count}/{len(transactions)} transactions to invoices")
+        return transactions
+
+
 # Combine all intelligence into one easy access point
 class BusinessIntelligence:
     """
@@ -52476,8 +52769,14 @@ def banking_page():
     all_transactions = db.get("bank_transactions", {"business_id": biz_id}) if biz_id else []
     all_transactions = sorted(all_transactions, key=lambda x: x.get("date", ""), reverse=True)
     
-    # Categorize transactions
-    auto_matched = [t for t in all_transactions if t.get("auto_matched") and not t.get("manually_reviewed")]
+    # ═══ INVOICE MATCHING — match bank transactions to scanned invoices ═══
+    if biz_id:
+        try:
+            InvoiceMatch.match_all_transactions(biz_id, all_transactions)
+        except Exception as e:
+            logger.error(f"[BANKING PAGE] Invoice matching error: {e}")
+    
+    auto_matched = [t for t in all_transactions if (t.get("auto_matched") or t.get("invoice_matched")) and not t.get("manually_reviewed")]
     suggested = [t for t in all_transactions if t.get("suggested_category") and not t.get("matched") and t.get("suggestion_confidence", 0) < 0.85]
     needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category")]
     already_done = [t for t in all_transactions if t.get("matched") and t.get("manually_reviewed")]
@@ -52519,16 +52818,19 @@ def banking_page():
         suggestion_html = ""
         if show_suggestion and suggested_cat:
             conf_pct = int(confidence * 100)
-            if confidence >= 0.85:
-                suggestion_html = f'<div style="font-size:11px;color:var(--green);margin-top:3px;">🤖 {suggested_cat} ({conf_pct}%)</div>'
+            if match_type == "invoice":
+                suggestion_html = f'<div style="font-size:11px;color:#22d3ee;margin-top:3px;">Invoice match: {suggested_cat}</div>'
+                if match_ref:
+                    suggestion_html += f'<div style="font-size:10px;color:var(--text-muted);">{match_ref}</div>'
+            elif confidence >= 0.85:
+                suggestion_html = f'<div style="font-size:11px;color:var(--green);margin-top:3px;">{suggested_cat} ({conf_pct}%)</div>'
             elif confidence >= 0.6:
-                suggestion_html = f'<div style="font-size:11px;color:var(--yellow);margin-top:3px;">🤖 {suggested_cat}? ({conf_pct}%)</div>'
+                suggestion_html = f'<div style="font-size:11px;color:var(--yellow);margin-top:3px;">{suggested_cat}? ({conf_pct}%)</div>'
             else:
-                suggestion_html = f'<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">🤖 Maybe {suggested_cat}?</div>'
+                suggestion_html = f'<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">Maybe {suggested_cat}?</div>'
             
-            if match_ref:
+            if match_ref and match_type != "invoice":
                 suggestion_html += f'<div style="font-size:10px;color:var(--text-muted);">{match_ref}</div>'
-        
         # Action buttons
         txn_date = txn.get("date", "")
         safe_desc = desc.replace("'", "\\'").replace('"', '&quot;')
@@ -52844,7 +53146,7 @@ def banking_page():
             // CASE 3: Zane knows the answer — show confirm
             if (data.success && data.category) {{
                 const confText = data.confidence >= 0.85 ? 'High confidence' : data.confidence >= 0.6 ? 'Medium' : 'Low';
-                const learnedBadge = data.source === 'learned' ? ' <span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;">Learned</span>' : '';
+                const learnedBadge = data.source === 'learned' ? ' <span style="background:var(--green);color:white;padding:2px 6px;border-radius:3px;font-size:10px;">Learned</span>' : data.source === 'invoice_match' ? ' <span style="background:#22d3ee;color:black;padding:2px 6px;border-radius:3px;font-size:10px;">Invoice Match</span>' : '';
                 const vatWarning = data.vat_warning ? `<div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:6px 8px;border-radius:4px;font-size:11px;color:#000;margin-top:8px;">${{data.vat_warning}}</div>` : '';
                 
                 actionCell.innerHTML = `
@@ -53684,6 +53986,24 @@ def api_banking_zane_suggest():
                 "needs_clarification": False,
                 "all_categories": all_category_names
             })
+        
+        # ═══ INVOICE MATCH — check if this transaction matches a scanned invoice ═══
+        if not user_answer:
+            amount = debit if debit > 0 else credit
+            direction = "out" if debit > 0 else "in"
+            inv_match = InvoiceMatch.find_match(biz_id, description, amount, date, direction)
+            if inv_match and inv_match.get("confidence", 0) >= 0.5:
+                return jsonify({
+                    "success": True,
+                    "category": inv_match.get("category", ""),
+                    "reason": inv_match.get("reason", "Matched to invoice"),
+                    "confidence": inv_match.get("confidence", 0.8),
+                    "source": "invoice_match",
+                    "needs_clarification": False,
+                    "vat_warning": "",
+                    "match_reference": inv_match.get("reference", ""),
+                    "all_categories": all_category_names
+                })
         
         # Get recent learned patterns for context
         patterns = db.get("bank_patterns", {"business_id": biz_id}) or []
