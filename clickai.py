@@ -71,6 +71,12 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from PIL import Image, ImageEnhance, ImageFilter
+try:
+    from clickai_knowledge_base import get_relevant_knowledge, format_knowledge_for_prompt
+    KNOWLEDGE_BASE_LOADED = True
+except ImportError:
+    KNOWLEDGE_BASE_LOADED = False
+    logger = None  # will be set later
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -7793,6 +7799,16 @@ Banking: /banking (bank reconciliation, transactions)
 Accounting: /accounting (journal entries, chart of accounts)
 Settings: /settings (business info, VAT, users, preferences)
 """
+
+    # === RAG: Inject relevant knowledge chunks (max 2) ===
+    if KNOWLEDGE_BASE_LOADED and user_message:
+        try:
+            chunks = get_relevant_knowledge(user_message, max_chunks=2)
+            if chunks:
+                prompt += format_knowledge_for_prompt(chunks)
+                logger.info(f"[ZANE-RAG] Injected {len(chunks)} knowledge chunks: {[c['title'] for c in chunks]}")
+        except Exception as e:
+            logger.error(f"[ZANE-RAG] Knowledge base error: {e}")
 
     return prompt
 
