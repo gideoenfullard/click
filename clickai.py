@@ -67207,9 +67207,444 @@ Address: {business.get("address")[:50] if business and business.get("address") e
             <button type="submit" class="btn btn-primary">💳 Save PayFast Settings</button>
         </form>
     </div>
+    
+    <div class="card">
+        <h2 style="margin-bottom:10px;">🏢 Business Groups</h2>
+        <p style="color:var(--text-muted);margin-bottom:15px;">Link multiple businesses to see cross-business insights, comparisons, and find opportunities.</p>
+        <a href="/settings/business-groups" class="btn btn-primary">Manage Business Groups →</a>
+    </div>
     '''
     
     return render_page("Settings", content, user, "settings")
+
+
+@app.route("/settings/business-groups")
+@login_required
+def settings_business_groups():
+    """Business Groups - Cross-business management"""
+    user = Auth.get_current_user()
+    
+    content = '''
+    <div class="card" style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <div>
+                <h2 style="margin:0;">🏢 Business Groups</h2>
+                <p style="color:var(--text-muted);margin:5px 0 0;">Link your businesses together for cross-business insights</p>
+            </div>
+            <button onclick="showCreateGroup()" class="btn btn-primary">+ New Group</button>
+        </div>
+
+        <!-- Create Group Form (hidden by default) -->
+        <div id="createGroupForm" style="display:none;background:var(--bg);padding:20px;border-radius:12px;border:1px solid var(--border);margin-bottom:20px;">
+            <h3 style="margin:0 0 15px;">Create New Group</h3>
+            <div style="display:flex;gap:10px;">
+                <input type="text" id="newGroupName" class="form-input" placeholder="e.g. My Businesses" style="flex:1;">
+                <button onclick="createGroup()" class="btn btn-primary">Create</button>
+                <button onclick="hideCreateGroup()" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Groups List -->
+        <div id="groupsList">
+            <div style="text-align:center;padding:40px;color:var(--text-muted);">
+                Loading...
+            </div>
+        </div>
+    </div>
+
+    <!-- Group Detail Modal -->
+    <div id="groupDetail" style="display:none;" class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <h2 id="groupDetailTitle" style="margin:0;">Group</h2>
+            <button onclick="hideGroupDetail()" class="btn btn-secondary">← Back</button>
+        </div>
+        
+        <!-- Add Business -->
+        <div style="background:var(--bg);padding:15px;border-radius:12px;border:1px solid var(--border);margin-bottom:20px;">
+            <h3 style="margin:0 0 10px;">Add Business to Group</h3>
+            <div style="display:flex;gap:10px;">
+                <select id="addBizSelect" class="form-input" style="flex:1;">
+                    <option value="">-- Select Business --</option>
+                </select>
+                <button onclick="addBizToGroup()" class="btn btn-primary">Add</button>
+            </div>
+        </div>
+
+        <!-- Businesses in Group -->
+        <div id="groupBusinesses" style="margin-bottom:20px;"></div>
+        
+        <!-- Cross-Business Overview -->
+        <div id="groupOverview" style="margin-bottom:20px;"></div>
+
+        <!-- Comparison Insights -->
+        <div id="groupInsights"></div>
+    </div>
+
+    <style>
+        .group-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .group-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-1px);
+        }
+        .biz-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+        }
+        .stat-box .stat-value {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: var(--text);
+        }
+        .stat-box .stat-label {
+            font-size: 0.85em;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        .insight-card {
+            background: var(--bg);
+            border-left: 4px solid var(--primary);
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 10px;
+        }
+        .insight-card.critical { border-left-color: #ef4444; }
+        .insight-card.warning { border-left-color: #f59e0b; }
+        .insight-card.info { border-left-color: #3b82f6; }
+        .biz-overview-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 10px;
+        }
+    </style>
+
+    <script>
+    let currentGroupId = null;
+    let allBusinesses = [];
+
+    // Load on page start
+    document.addEventListener('DOMContentLoaded', () => {
+        loadGroups();
+        loadMyBusinesses();
+    });
+
+    function loadMyBusinesses() {
+        // Get businesses from the business switcher dropdown
+        const select = document.getElementById('businessSelect');
+        if (select) {
+            allBusinesses = [];
+            for (let opt of select.options) {
+                if (opt.value) {
+                    allBusinesses.push({ id: opt.value, name: opt.text });
+                }
+            }
+        }
+    }
+
+    async function loadGroups() {
+        try {
+            const resp = await fetch('/api/business-groups');
+            const data = await resp.json();
+            
+            if (!data.success) {
+                document.getElementById('groupsList').innerHTML = '<p style="color:#ef4444;">Error loading groups</p>';
+                return;
+            }
+
+            if (data.groups.length === 0) {
+                document.getElementById('groupsList').innerHTML = `
+                    <div style="text-align:center;padding:40px;color:var(--text-muted);">
+                        <div style="font-size:3em;margin-bottom:10px;">🏢</div>
+                        <p>No business groups yet.</p>
+                        <p>Create a group to link your businesses and see cross-business insights.</p>
+                        <button onclick="showCreateGroup()" class="btn btn-primary" style="margin-top:15px;">+ Create First Group</button>
+                    </div>`;
+                return;
+            }
+
+            let html = '';
+            for (const group of data.groups) {
+                const count = group.business_count || 0;
+                html += `
+                    <div class="group-card" onclick="openGroup('${group.id}', '${group.name.replace(/'/g, "\\'")}')">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <h3 style="margin:0;">${group.name}</h3>
+                                <p style="color:var(--text-muted);margin:5px 0 0;">${count} business${count !== 1 ? 'es' : ''} linked</p>
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <span style="font-size:1.5em;">→</span>
+                                <button onclick="event.stopPropagation();deleteGroup('${group.id}','${group.name.replace(/'/g, "\\'")}')" 
+                                    class="btn btn-secondary" style="padding:6px 10px;font-size:12px;">🗑️</button>
+                            </div>
+                        </div>
+                    </div>`;
+            }
+            document.getElementById('groupsList').innerHTML = html;
+        } catch (e) {
+            document.getElementById('groupsList').innerHTML = '<p style="color:#ef4444;">Error: ' + e.message + '</p>';
+        }
+    }
+
+    function showCreateGroup() {
+        document.getElementById('createGroupForm').style.display = 'block';
+        document.getElementById('newGroupName').focus();
+    }
+
+    function hideCreateGroup() {
+        document.getElementById('createGroupForm').style.display = 'none';
+        document.getElementById('newGroupName').value = '';
+    }
+
+    async function createGroup() {
+        const name = document.getElementById('newGroupName').value.trim();
+        if (!name) return alert('Enter a group name');
+
+        const resp = await fetch('/api/business-groups', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ name })
+        });
+        const data = await resp.json();
+        
+        if (data.success) {
+            hideCreateGroup();
+            loadGroups();
+        } else {
+            alert('Error: ' + (data.error || 'Failed'));
+        }
+    }
+
+    async function deleteGroup(id, name) {
+        if (!confirm('Delete group "' + name + '"? This will unlink all businesses (businesses are NOT deleted).')) return;
+        
+        const resp = await fetch('/api/business-groups/' + id, { method: 'DELETE' });
+        const data = await resp.json();
+        
+        if (data.success) {
+            loadGroups();
+            document.getElementById('groupDetail').style.display = 'none';
+        } else {
+            alert('Error: ' + (data.error || 'Failed'));
+        }
+    }
+
+    async function openGroup(groupId, groupName) {
+        currentGroupId = groupId;
+        document.getElementById('groupDetailTitle').textContent = '📊 ' + groupName;
+        document.getElementById('groupDetail').style.display = 'block';
+        document.getElementById('groupsList').parentElement.querySelector('.card:first-child').style.display = 'none';
+        
+        // Populate add-business dropdown
+        await loadGroupBusinesses(groupId);
+        await loadGroupOverview(groupId);
+        await loadGroupInsights(groupId);
+    }
+
+    function hideGroupDetail() {
+        document.getElementById('groupDetail').style.display = 'none';
+        document.getElementById('groupsList').parentElement.querySelector('.card:first-child').style.display = 'block';
+        currentGroupId = null;
+    }
+
+    async function loadGroupBusinesses(groupId) {
+        const resp = await fetch('/api/business-groups/' + groupId + '/businesses');
+        const data = await resp.json();
+        
+        const inGroup = data.businesses || [];
+        const inGroupIds = inGroup.map(b => b.id);
+
+        // Update add dropdown — only show businesses NOT in the group
+        let opts = '<option value="">-- Select Business --</option>';
+        for (const biz of allBusinesses) {
+            if (!inGroupIds.includes(biz.id)) {
+                opts += '<option value="' + biz.id + '">' + biz.name + '</option>';
+            }
+        }
+        document.getElementById('addBizSelect').innerHTML = opts;
+
+        // Show businesses in group
+        if (inGroup.length === 0) {
+            document.getElementById('groupBusinesses').innerHTML = `
+                <p style="color:var(--text-muted);text-align:center;padding:20px;">
+                    No businesses linked yet. Add one above.
+                </p>`;
+            return;
+        }
+
+        let html = '<h3>Linked Businesses</h3>';
+        for (const biz of inGroup) {
+            const btype = biz.business_type || biz.industry || '';
+            html += `
+                <div class="biz-item">
+                    <div>
+                        <strong>${biz.name || 'Unknown'}</strong>
+                        ${btype ? '<span style="color:var(--text-muted);margin-left:8px;">' + btype + '</span>' : ''}
+                    </div>
+                    <button onclick="removeBiz('${biz.id}','${(biz.name||'').replace(/'/g, "\\'")}')" 
+                        class="btn btn-secondary" style="padding:5px 10px;font-size:12px;">Remove</button>
+                </div>`;
+        }
+        document.getElementById('groupBusinesses').innerHTML = html;
+    }
+
+    async function addBizToGroup() {
+        const bizId = document.getElementById('addBizSelect').value;
+        if (!bizId || !currentGroupId) return alert('Select a business');
+
+        const resp = await fetch('/api/business-groups/' + currentGroupId + '/add', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ business_id: bizId })
+        });
+        const data = await resp.json();
+        
+        if (data.success) {
+            await loadGroupBusinesses(currentGroupId);
+            await loadGroupOverview(currentGroupId);
+            await loadGroupInsights(currentGroupId);
+        } else {
+            alert('Error: ' + (data.error || 'Failed'));
+        }
+    }
+
+    async function removeBiz(bizId, bizName) {
+        if (!confirm('Remove "' + bizName + '" from this group?')) return;
+        
+        const resp = await fetch('/api/business-groups/' + currentGroupId + '/remove/' + bizId, {
+            method: 'DELETE'
+        });
+        const data = await resp.json();
+        
+        if (data.success) {
+            await loadGroupBusinesses(currentGroupId);
+            await loadGroupOverview(currentGroupId);
+            await loadGroupInsights(currentGroupId);
+        } else {
+            alert('Error: ' + (data.error || 'Failed'));
+        }
+    }
+
+    async function loadGroupOverview(groupId) {
+        document.getElementById('groupOverview').innerHTML = '<p style="color:var(--text-muted);">Loading overview...</p>';
+        
+        try {
+            const resp = await fetch('/api/business-groups/' + groupId + '/overview');
+            const data = await resp.json();
+            
+            if (!data.success || !data.businesses || data.businesses.length === 0) {
+                document.getElementById('groupOverview').innerHTML = '';
+                return;
+            }
+
+            const t = data.totals;
+            const fmt = (n) => 'R ' + (n || 0).toLocaleString('en-ZA', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+
+            let html = '<h3>📊 Group Overview</h3>';
+            
+            // Totals grid
+            html += '<div class="stat-grid">';
+            html += `<div class="stat-box"><div class="stat-value">${fmt(t.revenue_this_month)}</div><div class="stat-label">Revenue (this month)</div></div>`;
+            html += `<div class="stat-box"><div class="stat-value">${fmt(t.total_debtors)}</div><div class="stat-label">Total Debtors</div></div>`;
+            html += `<div class="stat-box"><div class="stat-value">${fmt(t.total_creditors)}</div><div class="stat-label">Total Creditors</div></div>`;
+            html += `<div class="stat-box"><div class="stat-value">${fmt(t.total_stock_value)}</div><div class="stat-label">Total Stock Value</div></div>`;
+            html += `<div class="stat-box"><div class="stat-value">${fmt(t.total_bank_balance)}</div><div class="stat-label">Combined Bank</div></div>`;
+            html += `<div class="stat-box"><div class="stat-value">${data.business_count}</div><div class="stat-label">Businesses</div></div>`;
+            html += '</div>';
+
+            // Per business breakdown
+            html += '<h3>Per Business</h3>';
+            for (const biz of data.businesses) {
+                const rev = biz.revenue_this_month || 0;
+                const totalRev = t.revenue_this_month || 1;
+                const pct = ((rev / totalRev) * 100).toFixed(0);
+                
+                html += `
+                    <div class="biz-overview-card">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                            <strong>${biz.name}</strong>
+                            <span style="color:var(--text-muted);">${pct}% of revenue</span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:0.85em;">
+                            <div>Revenue<br><strong>${fmt(biz.revenue_this_month)}</strong></div>
+                            <div>Debtors<br><strong>${fmt(biz.total_debtors)}</strong></div>
+                            <div>Creditors<br><strong>${fmt(biz.total_creditors)}</strong></div>
+                            <div>Stock<br><strong>${fmt(biz.total_stock_value)}</strong></div>
+                        </div>
+                        <div style="background:var(--border);border-radius:4px;height:6px;margin-top:10px;">
+                            <div style="background:var(--primary);border-radius:4px;height:6px;width:${pct}%;"></div>
+                        </div>
+                    </div>`;
+            }
+
+            document.getElementById('groupOverview').innerHTML = html;
+        } catch (e) {
+            document.getElementById('groupOverview').innerHTML = '<p style="color:#ef4444;">Error loading overview</p>';
+        }
+    }
+
+    async function loadGroupInsights(groupId) {
+        document.getElementById('groupInsights').innerHTML = '';
+        
+        try {
+            const resp = await fetch('/api/business-groups/' + groupId + '/comparison');
+            const data = await resp.json();
+            
+            if (!data.success || !data.insights || data.insights.length === 0) {
+                return;
+            }
+
+            let html = '<h3>💡 Cross-Business Insights</h3>';
+            for (const insight of data.insights) {
+                html += `
+                    <div class="insight-card ${insight.severity || 'info'}">
+                        <div style="display:flex;gap:8px;align-items:flex-start;">
+                            <span style="font-size:1.3em;">${insight.icon || '💡'}</span>
+                            <div>
+                                <strong>${insight.title}</strong>
+                                <p style="margin:4px 0 0;color:var(--text-muted);">${insight.message}</p>
+                            </div>
+                        </div>
+                    </div>`;
+            }
+
+            document.getElementById('groupInsights').innerHTML = html;
+        } catch (e) {
+            // Silently fail
+        }
+    }
+    </script>
+    '''
+    
+    return render_page("Business Groups", content, user, "settings")
 
 
 @app.route("/settings/invoice-template", methods=["GET", "POST"])
