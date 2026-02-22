@@ -34096,13 +34096,10 @@ def report_tb():
                     insightBox.innerHTML = '<p style="color:var(--text-muted);"><span class="loading-dots">Zane is analyzing</span>...</p>';
                     
                     // Async — don't await, let it load in background
-                    const _insightCtrl = new AbortController();
-                    setTimeout(() => _insightCtrl.abort(), 120000);  // 2 min timeout
                     fetch('/api/reports/tb/insights', {{
                         method: 'POST',
                         headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{lang: lang}}),
-                        signal: _insightCtrl.signal
+                        body: JSON.stringify({{lang: lang}})
                     }})
                     .then(r => r.json())
                     .then(idata => {{
@@ -34226,13 +34223,10 @@ def report_tb():
                 const insightBox = document.getElementById('aiInsightsContent');
                 if (insightBox) {{
                     insightBox.innerHTML = '<p style="color:var(--text-muted);">Zane is analyzing...</p>';
-                    const _ctrl2 = new AbortController();
-                    setTimeout(() => _ctrl2.abort(), 120000);
                     fetch('/api/reports/tb/insights', {{
                         method: 'POST',
                         headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{lang: lang}}),
-                        signal: _ctrl2.signal
+                        body: JSON.stringify({{lang: lang}})
                     }})
                     .then(r => r.json())
                     .then(idata => {{
@@ -35897,6 +35891,8 @@ RULES:
 @login_required
 def api_tb_insights():
     """Async AI insights for TB report - called after Python report is shown"""
+    import sys
+    print(f"[TB INSIGHTS] ====== ENDPOINT HIT ======", flush=True)
     
     business = Auth.get_current_business()
     biz_name = business.get("name", "Business") if business else "Business"
@@ -35904,6 +35900,7 @@ def api_tb_insights():
     try:
         _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
         _cached = Auth._mem.get(_tb_cache_key)
+        print(f"[TB INSIGHTS] Cache key={_tb_cache_key}, cached={'YES' if _cached else 'NO'}", flush=True)
         if not _cached or (time.time() - _cached.get("t", 0)) > 600:
             return jsonify({"success": False, "error": "No TB data found. Please re-analyze."})
         td = _cached["d"]
@@ -35998,25 +35995,34 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
         if not ANTHROPIC_API_KEY:
             return jsonify({"success": False, "error": "No API key"})
         
-        if not _anthropic_client:
-            return jsonify({"success": False, "error": "AI client not ready"})
-        
-        prompt_len = len(insights_prompt)
-        logger.info(f"[TB INSIGHTS] Starting AI analysis for {report_company} — prompt ~{prompt_len} chars")
-        _start = time.time()
+        import sys
+        print(f"[TB INSIGHTS] ====== ENTERING API CALL ======", flush=True)
+        print(f"[TB INSIGHTS] Company: {report_company}, prompt len: {len(insights_prompt)} chars", flush=True)
+        print(f"[TB INSIGHTS] Client exists: {_anthropic_client is not None}", flush=True)
         
         client = _anthropic_client
-        message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4000,
-            messages=[{"role": "user", "content": insights_prompt}]
-        )
+        if not client:
+            print("[TB INSIGHTS] CLIENT IS NONE - ABORTING", flush=True)
+            return jsonify({"success": False, "error": "AI client not initialized"})
         
-        elapsed = time.time() - _start
-        stop = message.stop_reason
-        in_tok = message.usage.input_tokens if message.usage else 0
-        out_tok = message.usage.output_tokens if message.usage else 0
-        logger.info(f"[TB INSIGHTS] Sonnet done in {elapsed:.1f}s — stop={stop}, {in_tok}in/{out_tok}out")
+        _t0 = time.time()
+        print(f"[TB INSIGHTS] Calling Sonnet NOW...", flush=True)
+        sys.stdout.flush()
+        
+        try:
+            message = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4000,
+                timeout=60.0,
+                messages=[{"role": "user", "content": insights_prompt}]
+            )
+        except Exception as api_err:
+            elapsed = time.time() - _t0
+            print(f"[TB INSIGHTS] API CALL FAILED after {elapsed:.1f}s: {api_err}", flush=True)
+            return jsonify({"success": False, "error": f"AI timeout after {elapsed:.0f}s"})
+        
+        elapsed = time.time() - _t0
+        print(f"[TB INSIGHTS] API returned in {elapsed:.1f}s, stop={message.stop_reason}", flush=True)
         
         if message.content and message.content[0].text:
             insights_html = message.content[0].text
@@ -36039,9 +36045,11 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
             return jsonify({"success": False, "error": "AI returned empty"})
             
     except Exception as e:
-        logger.error(f"[TB INSIGHTS] Failed: {e}")
+        import sys
+        print(f"[TB INSIGHTS] EXCEPTION: {e}", flush=True)
         import traceback
         traceback.print_exc()
+        sys.stdout.flush()
         return jsonify({"success": False, "error": str(e)[:200]})
 
 
