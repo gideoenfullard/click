@@ -4315,6 +4315,30 @@ ZANE_TOOLS = [
             },
             "required": ["memory_id"]
         }
+    },
+    {
+        "name": "get_group_overview",
+        "description": "Get cross-business overview when user has multiple linked businesses. Shows revenue, debtors, creditors, stock, bank balance for EACH business side by side. Use when asked: 'compare my businesses', 'watter besigheid doen die beste', 'cross-business', 'group overview', 'all my businesses', 'al my besighede', 'which business', 'overall performance', 'total revenue across'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_group_insights",
+        "description": "Get AI-generated cross-business insights and recommendations. Identifies: revenue concentration risk, debtor problems, overstock warnings, cash crunches, and opportunities between businesses. Use when asked: 'opportunities', 'geleenthede', 'what should I focus on', 'which business needs attention', 'risks across businesses', 'cross-business insights'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_group_analysis",
+        "description": "COMPREHENSIVE cross-business analysis combining overview data + insights + potential scoring. Use this when asked: 'analyze my businesses', 'analiseer my besighede', 'watter een het die meeste potensiaal', 'which has most potential', 'waar kort ek', 'where am I falling short', 'full business comparison', 'give me the full picture'. This is the GO-TO tool for deep multi-business analysis.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
     }
 ]
 
@@ -7463,6 +7487,194 @@ class ZaneToolHandler:
         else:
             return {"success": False, "error": "Could not delete memory"}
 
+    def _tool_get_group_overview(self, params: dict) -> dict:
+        """Get cross-business overview for all linked businesses."""
+        if not BUSINESS_GROUPS_LOADED:
+            return {"error": "Business groups not available"}
+        try:
+            user_id = self.user_id
+            groups = BusinessGroupManager.get_my_groups(db, user_id)
+            if not groups:
+                return {"error": "No business groups found. Link businesses in Settings → Business Groups first."}
+            # Use first group (most users will have 1 group)
+            group = groups[0]
+            overview = BusinessGroupManager.get_group_overview(db, group['id'], user_id)
+            if not overview.get('success'):
+                return {"error": overview.get('error', 'Could not load group overview')}
+            
+            result = {
+                "group_name": overview.get('group_name', 'My Businesses'),
+                "business_count": overview.get('business_count', 0),
+                "totals": overview.get('totals', {}),
+                "businesses": []
+            }
+            for biz in overview.get('businesses', []):
+                result["businesses"].append({
+                    "name": biz.get('name', 'Unknown'),
+                    "type": biz.get('business_type', '') or biz.get('industry', ''),
+                    "revenue_this_month": biz.get('revenue_this_month', 0),
+                    "total_debtors": biz.get('total_debtors', 0),
+                    "total_creditors": biz.get('total_creditors', 0),
+                    "total_stock_value": biz.get('total_stock_value', 0),
+                    "total_bank_balance": biz.get('total_bank_balance', 0),
+                })
+            logger.info(f"[ZANE-GROUP] Overview tool: {result['business_count']} businesses")
+            return result
+        except Exception as e:
+            logger.error(f"[ZANE-GROUP] Overview tool error: {e}")
+            return {"error": str(e)}
+
+    def _tool_get_group_insights(self, params: dict) -> dict:
+        """Get cross-business comparison insights and recommendations."""
+        if not BUSINESS_GROUPS_LOADED:
+            return {"error": "Business groups not available"}
+        try:
+            user_id = self.user_id
+            groups = BusinessGroupManager.get_my_groups(db, user_id)
+            if not groups:
+                return {"error": "No business groups found. Link businesses in Settings → Business Groups first."}
+            group = groups[0]
+            comparison = BusinessGroupManager.get_group_comparison(db, group['id'], user_id)
+            if not comparison.get('success'):
+                return {"error": "Could not generate insights"}
+            
+            result = {
+                "business_count": comparison.get('business_count', 0),
+                "totals": comparison.get('totals', {}),
+                "insights": comparison.get('insights', []),
+                "insight_count": len(comparison.get('insights', []))
+            }
+            logger.info(f"[ZANE-GROUP] Insights tool: {result['insight_count']} insights")
+            return result
+        except Exception as e:
+            logger.error(f"[ZANE-GROUP] Insights tool error: {e}")
+            return {"error": str(e)}
+
+    def _tool_get_group_analysis(self, params: dict) -> dict:
+        """Comprehensive cross-business analysis: overview + insights + potential scoring."""
+        if not BUSINESS_GROUPS_LOADED:
+            return {"error": "Business groups not available"}
+        try:
+            user_id = self.user_id
+            groups = BusinessGroupManager.get_my_groups(db, user_id)
+            if not groups:
+                return {"error": "No business groups found. Link businesses in Settings → Business Groups first."}
+            group = groups[0]
+            
+            # Get overview
+            overview = BusinessGroupManager.get_group_overview(db, group['id'], user_id)
+            if not overview.get('success'):
+                return {"error": overview.get('error', 'Could not load data')}
+            
+            # Get comparison insights
+            comparison = BusinessGroupManager.get_group_comparison(db, group['id'], user_id)
+            
+            # Build comprehensive analysis
+            analysis = {
+                "group_name": overview.get('group_name', 'My Businesses'),
+                "business_count": overview.get('business_count', 0),
+                "totals": overview.get('totals', {}),
+                "businesses": [],
+                "insights": comparison.get('insights', []) if comparison.get('success') else [],
+                "potential_ranking": [],
+            }
+            
+            # Score each business on potential (0-100)
+            for biz in overview.get('businesses', []):
+                biz_data = {
+                    "name": biz.get('name', 'Unknown'),
+                    "type": biz.get('business_type', '') or biz.get('industry', ''),
+                    "revenue_this_month": biz.get('revenue_this_month', 0),
+                    "total_debtors": biz.get('total_debtors', 0),
+                    "total_creditors": biz.get('total_creditors', 0),
+                    "total_stock_value": biz.get('total_stock_value', 0),
+                    "total_bank_balance": biz.get('total_bank_balance', 0),
+                }
+                
+                # Calculate potential score
+                rev = biz_data['revenue_this_month']
+                bank = biz_data['total_bank_balance']
+                debt = biz_data['total_debtors']
+                cred = biz_data['total_creditors']
+                stock = biz_data['total_stock_value']
+                
+                score = 50  # Base score
+                strengths = []
+                weaknesses = []
+                
+                # Revenue score (0-25 points)
+                if rev > 0:
+                    score += min(25, int(rev / 10000))  # +1 per R10k, max 25
+                    strengths.append(f"Active revenue: R{rev:,.0f}/month")
+                else:
+                    score -= 10
+                    weaknesses.append("No revenue this month")
+                
+                # Cash health (0-20 points)
+                if bank > 0 and cred > 0:
+                    ratio = bank / cred
+                    if ratio > 1.5:
+                        score += 20
+                        strengths.append(f"Strong cash: R{bank:,.0f} vs R{cred:,.0f} creditors")
+                    elif ratio > 0.8:
+                        score += 10
+                        strengths.append("Adequate cash position")
+                    else:
+                        score -= 15
+                        weaknesses.append(f"Cash crunch: R{bank:,.0f} vs R{cred:,.0f} creditors")
+                elif bank > 0:
+                    score += 15
+                    strengths.append(f"Cash in bank: R{bank:,.0f}, no creditor pressure")
+                
+                # Stock efficiency (-10 to +10)
+                if rev > 0 and stock > 0:
+                    months_on_hand = stock / rev
+                    if months_on_hand <= 3:
+                        score += 10
+                        strengths.append(f"Efficient stock: {months_on_hand:.1f} months on hand")
+                    elif months_on_hand > 6:
+                        score -= 10
+                        weaknesses.append(f"Overstock: R{stock:,.0f} = {months_on_hand:.1f} months of revenue")
+                
+                # Debtor management (-10 to +5)
+                if rev > 0 and debt > 0:
+                    debtor_days = (debt / rev) * 30
+                    if debtor_days <= 30:
+                        score += 5
+                        strengths.append("Good debtor collection")
+                    elif debtor_days > 60:
+                        score -= 10
+                        weaknesses.append(f"Slow collections: ~{debtor_days:.0f} debtor days")
+                
+                score = max(0, min(100, score))
+                
+                biz_data['potential_score'] = score
+                biz_data['strengths'] = strengths
+                biz_data['weaknesses'] = weaknesses
+                biz_data['verdict'] = (
+                    "High potential" if score >= 70 else
+                    "Good, needs attention" if score >= 50 else
+                    "Needs work" if score >= 30 else
+                    "At risk"
+                )
+                
+                analysis['businesses'].append(biz_data)
+                analysis['potential_ranking'].append({
+                    "name": biz_data['name'],
+                    "score": score,
+                    "verdict": biz_data['verdict']
+                })
+            
+            # Sort by potential
+            analysis['potential_ranking'].sort(key=lambda x: x['score'], reverse=True)
+            
+            logger.info(f"[ZANE-GROUP] Full analysis: {analysis['business_count']} businesses, "
+                        f"{len(analysis['insights'])} insights, ranking: {analysis['potential_ranking']}")
+            return analysis
+        except Exception as e:
+            logger.error(f"[ZANE-GROUP] Analysis tool error: {e}")
+            return {"error": str(e)}
+
 
 def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     """Build lean system prompt for tool-use Zane. ~2000 tokens, no data dumps."""
@@ -7829,6 +8041,53 @@ Settings: /settings (business info, VAT, users, preferences)
                 logger.info(f"[ZANE-PULSE] Injected {len(pulse_chunks)} pulse chunks: {[c['title'] for c in pulse_chunks]}")
         except Exception as e:
             logger.error(f"[ZANE-PULSE] Pulse knowledge error: {e}")
+
+    # === GROUP MODE: Inject cross-business context if user has linked businesses ===
+    if BUSINESS_GROUPS_LOADED:
+        try:
+            group_context = context.get("group_context", "")
+            if group_context:
+                prompt += group_context
+                prompt += """
+
+## HOW TO ANALYZE CROSS-BUSINESS DATA
+When the user asks about their businesses, do a COMPLETE analysis:
+
+1. **Revenue & Growth:** Which business generates the most? Which is growing/declining?
+2. **Cash Position:** Bank balance vs creditors — who's healthy, who's at risk?
+3. **Stock Efficiency:** Stock value vs monthly revenue — is money tied up in dead stock?
+4. **Debtor Risk:** Who owes money? Which business has collection problems?
+5. **Potential Score:** Rate each business's potential based on the data:
+   - High potential: Good revenue, manageable debtors, healthy cash
+   - Needs attention: High stock, slow collections, cash tight
+   - At risk: Cash below creditors, revenue declining
+
+6. **Cross-Business Opportunities:**
+   - Can one business supply another?
+   - Shared resources (staff, vehicles, space)?
+   - If one has excess cash, can it fund the other's growth?
+   - Seasonal balancing — when one is quiet, redirect resources to the busy one
+
+Always give SPECIFIC numbers and actionable recommendations, not vague advice.
+Respond in the same language the user uses (English or Afrikaans).
+"""
+                logger.info(f"[ZANE-GROUP] Injected group context into prompt")
+            elif context.get("has_groups"):
+                prompt += """
+
+## MULTI-BUSINESS OWNER
+This user owns multiple linked businesses. You have these tools:
+- **get_group_overview**: See ALL businesses side by side (revenue, debtors, stock, bank)
+- **get_group_insights**: Get cross-business risk alerts and opportunities
+
+ALWAYS use BOTH tools when the user asks about their businesses — overview for data, insights for recommendations.
+When asked "watter besigheid doen die beste" or "which has most potential" — call get_group_overview first, 
+then get_group_insights, then give a thorough analysis with specific numbers.
+Respond in the same language the user uses.
+"""
+                logger.info(f"[ZANE-GROUP] User has groups, tools available")
+        except Exception as e:
+            logger.error(f"[ZANE-GROUP] Group context error: {e}")
 
     return prompt
 
@@ -19909,6 +20168,41 @@ def api_ai():
         
         # Add user role for access control (from team_members or owner)
         context["user_role"] = get_user_role()
+        
+        # === GROUP MODE: Check if user has linked businesses ===
+        if BUSINESS_GROUPS_LOADED:
+            try:
+                groups = BusinessGroupManager.get_my_groups(db, user_id)
+                if groups:
+                    context["has_groups"] = True
+                    context["group_count"] = len(groups)
+                    context["group_id"] = groups[0].get("id", "")
+                    # Check if message is about cross-business topics — inject full context
+                    msg_lower = command.lower()
+                    group_triggers = [
+                        # English
+                        "group", "businesses", "compare", "cross-business", "overall",
+                        "all of them", "both", "potential", "perform", "focus",
+                        "which one", "which business", "strongest", "weakest", "better",
+                        "worse", "revenue across", "total revenue", "combined",
+                        "opportunities", "risks", "cash flow across", "struggling",
+                        "growing", "attention", "priority", "invest", "expand",
+                        "consolidate", "together", "portfolio", "my companies",
+                        "steel suppliers", "fulltech", "stainless",
+                        # Afrikaans
+                        "besighede", "vergelyk", "watter een", "albei", "potensiaal",
+                        "presteer", "fokus", "almal", "al my", "sterkste", "swakste",
+                        "beter", "slegter", "geleenthede", "risiko", "kontantvloei",
+                        "sukkel", "groei", "aandag", "prioriteit", "belê", "uitbrei",
+                        "saam", "portefeulje", "kort kom", "kortkom", "meeste",
+                    ]
+                    if any(t in msg_lower for t in group_triggers):
+                        group_ctx = BusinessGroupManager.build_group_context(db, groups[0]['id'], user_id)
+                        if group_ctx:
+                            context["group_context"] = group_ctx
+                            logger.info(f"[ZANE-GROUP] Injected full group context for: {command[:50]}")
+            except Exception as e:
+                logger.error(f"[ZANE-GROUP] Error checking groups: {e}")
         
         # Add chat history to context for Zane to see
         context["chat_history"] = chat_history[-16:]  # Last 8 exchanges (16 messages)

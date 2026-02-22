@@ -356,7 +356,10 @@ Investing R500 to keep them happy = massive ROI
 
     "cross_business_opportunities": {
         "keywords": ["cross business", "between businesses", "synergy", "opportunity", "expand",
-                     "convert", "space", "room", "b&b", "pub", "hardware", "rental", "multi business"],
+                     "convert", "space", "room", "b&b", "pub", "hardware", "rental", "multi business",
+                     "besighede", "albei", "both", "vergelyk", "compare", "saam", "together",
+                     "group", "portfolio", "potensiaal", "potential", "watter een", "which one",
+                     "fulltech", "steel suppliers", "stainless"],
         "title": "Cross-Business Strategic Opportunities",
         "content": """How to find opportunities ACROSS multiple businesses:
 
@@ -1870,6 +1873,64 @@ Renegotiate Kontrak B of let it expire."
 - Technology: GPS tracking, electronic check-in at sites
 - Government tenders (need BEE compliance)
 - Contract escalation clauses (annual CPI increase)"""
+    },
+
+    # ============================================================
+    # BUSINESS POTENTIAL ANALYSIS (GROUP MODE)
+    # ============================================================
+
+    "business_potential_analysis": {
+        "keywords": ["potential", "potensiaal", "strongest", "sterkste", "weakest", "swakste",
+                     "which business", "watter besigheid", "best performing", "worst performing",
+                     "focus", "fokus", "invest", "belê", "priority", "prioriteit",
+                     "kort kom", "falling short", "attention", "aandag", "groei", "growth",
+                     "meeste potensiaal", "most potential", "ranking", "score"],
+        "title": "Business Potential & Performance Analysis Framework",
+        "content": """How to evaluate and rank businesses in a portfolio:
+
+**Potential Scoring Framework (0-100):**
+Base score: 50 (neutral starting point)
+
+Revenue Health (+/- 25 points):
+- Active, growing revenue: +15 to +25
+- Stable but flat: +5
+- No revenue or declining: -10 to -20
+- Look at trend over 3-6 months, not just this month
+
+Cash Position (+/- 20 points):
+- Bank > 1.5x creditors: +20 (strong — can invest in growth)
+- Bank > creditors: +10 (adequate)
+- Bank < 50% of creditors: -15 (cash crunch — urgent attention needed)
+- No creditors, cash in bank: +15 (clean position)
+
+Stock Efficiency (+/- 10 points):
+- 2-3 months stock on hand: +10 (efficient)
+- 4-6 months: 0 (acceptable for hardware/steel)
+- 6+ months: -10 (dead capital, free it up)
+- For service businesses (B&B, pub): stock should be minimal
+
+Debtor Management (+/- 10 points):
+- Under 30 days: +5 (good collections)
+- 30-60 days: 0 (normal)
+- 60+ days: -10 (collection problem — money stuck with customers)
+
+**How to Recommend Focus:**
+1. Highest potential score = invest here, grow this one
+2. Lowest score with fixable problems = quick wins (collect debtors, reduce stock)
+3. Lowest score with structural problems = consider restructuring
+4. Look for TRENDS, not just snapshots — is the business improving or declining?
+
+**Red Flags That Need Immediate Attention:**
+- Bank balance below creditors (can't pay suppliers)
+- Revenue dropping month over month
+- Debtors growing faster than revenue (selling on credit, not collecting)
+- Stock increasing while revenue drops (buying but not selling)
+
+**Green Signals — Business Has Growth Potential:**
+- Revenue growing, cash positive
+- Low debtor days (customers pay quickly)
+- Healthy margins (compare revenue to cost of goods)
+- Clean creditor position (suppliers paid on time — can negotiate better terms)"""
     },
 
 }
