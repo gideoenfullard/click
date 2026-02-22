@@ -35498,9 +35498,9 @@ def api_tb_analyze():
 
 <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
 
-<div id="aiInsights" style="background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:15px;margin-top:20px;">
-<h3 style="color:#8b5cf6;margin-top:0;">🤖 {L["zane_insight"]}</h3>
-<div id="aiInsightsContent" style="min-height:100px;">
+<div id="aiInsights" style="background:linear-gradient(135deg, rgba(139,92,246,0.08) 0%, rgba(16,185,129,0.06) 100%);border:1px solid rgba(139,92,246,0.25);border-radius:12px;padding:20px 25px;margin-top:25px;">
+<h3 style="color:#8b5cf6;margin-top:0;margin-bottom:15px;font-size:18px;">🤖 {L["zane_insight"]}</h3>
+<div id="aiInsightsContent" style="min-height:100px;color:rgba(255,255,255,0.9);font-size:14px;line-height:1.7;">
 <p style="color:var(--text-muted);">{L["loading_insight"]}</p>
 </div>
 </div>
@@ -36061,16 +36061,43 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
             insights_html = message.content[0].text
             
             import re as _re
-            insights_html = _re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin:20px 0 8px 0;font-size:16px;">\1</h3>', insights_html, flags=_re.MULTILINE)
-            insights_html = _re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin:24px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
-            insights_html = _re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;margin:24px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
-            insights_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
-            insights_html = _re.sub(r'^\d+\. (.+)$', r'<div style="margin:6px 0 6px 15px;">→ \1</div>', insights_html, flags=_re.MULTILINE)
-            insights_html = _re.sub(r'^- (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=_re.MULTILINE)
-            insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', insights_html, flags=_re.MULTILINE)
+            # Strip any raw HTML tags Sonnet might have added
+            insights_html = _re.sub(r'</?html[^>]*>', '', insights_html)
+            insights_html = _re.sub(r'</?body[^>]*>', '', insights_html)
+            
+            # Headings — purple for main, green for sub
+            insights_html = _re.sub(r'^### (.+)$', r'<h3 style="color:#a78bfa;margin:22px 0 10px 0;font-size:15px;font-weight:600;">\1</h3>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^## (.+)$', r'<h3 style="color:#10b981;border-bottom:1px solid rgba(16,185,129,0.2);padding-bottom:6px;margin:26px 0 12px 0;font-size:16px;font-weight:600;">\1</h3>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid rgba(139,92,246,0.3);padding-bottom:8px;margin:28px 0 14px 0;font-size:18px;font-weight:700;">\1</h2>', insights_html, flags=_re.MULTILINE)
+            
+            # Bold text — accent purple
+            insights_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#a78bfa;">\1</strong>', insights_html)
+            
+            # Numbered items — with subtle left border
+            insights_html = _re.sub(r'^\d+\. (.+)$', r'<div style="margin:8px 0 8px 12px;padding:4px 0 4px 12px;border-left:2px solid rgba(139,92,246,0.3);">→ \1</div>', insights_html, flags=_re.MULTILINE)
+            
+            # Bullet items
+            insights_html = _re.sub(r'^- (.+)$', r'<div style="margin:6px 0 6px 12px;padding:2px 0;">• \1</div>', insights_html, flags=_re.MULTILINE)
+            
+            # Horizontal rules
+            insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:18px 0;">', insights_html, flags=_re.MULTILINE)
+            
+            # Paragraph spacing
             insights_html = _re.sub(r'\n{3,}', '<br><br>', insights_html)
             insights_html = _re.sub(r'\n\n', '<br><br>', insights_html)
             insights_html = _re.sub(r'(?<!>)\n(?!<)', '<br>', insights_html)
+            
+            # Wrap any Sonnet-generated tables in dark styling
+            insights_html = insights_html.replace('<table', '<table style="width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;" ')
+            insights_html = insights_html.replace('<th', '<th style="padding:8px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.15);color:#a78bfa;font-weight:600;" ')
+            insights_html = insights_html.replace('<td', '<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.06);" ')
+            
+            # Style the Zane sign-off if present
+            insights_html = _re.sub(
+                r'(Zane,?\s*CA\(SA\))',
+                r'<div style="margin-top:20px;padding-top:12px;border-top:1px solid rgba(139,92,246,0.2);color:#8b5cf6;font-weight:600;font-style:italic;">\1</div>',
+                insights_html
+            )
             
             logger.info(f"[TB INSIGHTS] AI analysis complete: {len(insights_html)} chars")
             return jsonify({"success": True, "insights": insights_html})
