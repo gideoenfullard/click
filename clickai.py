@@ -35891,8 +35891,6 @@ RULES:
 @login_required
 def api_tb_insights():
     """Async AI insights for TB report - called after Python report is shown"""
-    import sys
-    print(f"[TB INSIGHTS] ====== ENDPOINT HIT ======", flush=True)
     
     business = Auth.get_current_business()
     biz_name = business.get("name", "Business") if business else "Business"
@@ -35900,7 +35898,6 @@ def api_tb_insights():
     try:
         _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
         _cached = Auth._mem.get(_tb_cache_key)
-        print(f"[TB INSIGHTS] Cache key={_tb_cache_key}, cached={'YES' if _cached else 'NO'}", flush=True)
         if not _cached or (time.time() - _cached.get("t", 0)) > 600:
             return jsonify({"success": False, "error": "No TB data found. Please re-analyze."})
         td = _cached["d"]
@@ -35995,34 +35992,14 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
         if not ANTHROPIC_API_KEY:
             return jsonify({"success": False, "error": "No API key"})
         
-        import sys
-        print(f"[TB INSIGHTS] ====== ENTERING API CALL ======", flush=True)
-        print(f"[TB INSIGHTS] Company: {report_company}, prompt len: {len(insights_prompt)} chars", flush=True)
-        print(f"[TB INSIGHTS] Client exists: {_anthropic_client is not None}", flush=True)
+        logger.info(f"[TB INSIGHTS] Starting async AI analysis for {report_company}")
         
         client = _anthropic_client
-        if not client:
-            print("[TB INSIGHTS] CLIENT IS NONE - ABORTING", flush=True)
-            return jsonify({"success": False, "error": "AI client not initialized"})
-        
-        _t0 = time.time()
-        print(f"[TB INSIGHTS] Calling Sonnet NOW...", flush=True)
-        sys.stdout.flush()
-        
-        try:
-            message = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4000,
-                timeout=60.0,
-                messages=[{"role": "user", "content": insights_prompt}]
-            )
-        except Exception as api_err:
-            elapsed = time.time() - _t0
-            print(f"[TB INSIGHTS] API CALL FAILED after {elapsed:.1f}s: {api_err}", flush=True)
-            return jsonify({"success": False, "error": f"AI timeout after {elapsed:.0f}s"})
-        
-        elapsed = time.time() - _t0
-        print(f"[TB INSIGHTS] API returned in {elapsed:.1f}s, stop={message.stop_reason}", flush=True)
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4000,
+            messages=[{"role": "user", "content": insights_prompt}]
+        )
         
         if message.content and message.content[0].text:
             insights_html = message.content[0].text
@@ -36045,11 +36022,7 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
             return jsonify({"success": False, "error": "AI returned empty"})
             
     except Exception as e:
-        import sys
-        print(f"[TB INSIGHTS] EXCEPTION: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        sys.stdout.flush()
+        logger.warning(f"[TB INSIGHTS] Failed: {e}")
         return jsonify({"success": False, "error": str(e)[:200]})
 
 
@@ -39279,6 +39252,31 @@ def smart_reports_page():
                 const data = await response.json();
                 reportHtml = data.success ? (data.analysis || '') : ('Error: ' + (data.error || 'Failed'));
                 
+                // Fire async insights fetch (was MISSING — this is why insights never loaded)
+                if (data.success) {
+                    setTimeout(() => {
+                        const insightBox = document.getElementById('aiInsightsContent');
+                        if (insightBox) {
+                            insightBox.innerHTML = '<p style="color:var(--text-muted);">Zane is analyzing...</p>';
+                            fetch('/api/reports/tb/insights', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({lang: lang})
+                            })
+                            .then(r => r.json())
+                            .then(idata => {
+                                if (idata.success && idata.insights) {
+                                    insightBox.innerHTML = idata.insights;
+                                } else {
+                                    insightBox.innerHTML = '<p style="color:#f97316;">' + (idata.error || 'Insights unavailable') + '. Figures above are 100% accurate.</p>';
+                                }
+                            })
+                            .catch(() => {
+                                insightBox.innerHTML = '<p style="color:#f97316;">Insights timeout - figures above are 100% accurate.</p>';
+                            });
+                        }
+                    }, 100);
+                }
             } else {
                 // Other report types from TB data (management, kpi, etc.)
                 const response = await fetch('/api/reports/tb/smart-report', {
