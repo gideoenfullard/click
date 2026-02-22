@@ -13825,27 +13825,25 @@ Write the full {report_title} now."""
         payroll_pct = (annual_payroll / total_invoiced * 100) if total_invoiced > 0 else 0
         
         # Balance sheet approximation from available data
-        # Current Assets = Debtors + Stock + (bank not available from this context)
         current_assets_known = total_debtors + stock_value
-        # Current Liabilities = Creditors + next payroll
         current_liab_known = total_creditors + total_payroll
         
-        # Current Ratio (from known figures only)
+        # Current Ratio
         current_ratio = current_assets_known / current_liab_known if current_liab_known > 0 else 0
         
-        # Quick Ratio (current assets MINUS stock / current liabilities)
+        # Quick Ratio (minus stock)
         quick_ratio = (current_assets_known - stock_value) / current_liab_known if current_liab_known > 0 else 0
         
         # Revenue per employee
         employee_count = context.get('employee_count', 0)
         revenue_per_employee = total_invoiced / employee_count if employee_count > 0 else 0
         
-        # Debtors concentration - top debtor as % of total
+        # Debtors concentration
         customers_summary = context.get('customers_summary', [])
         top_debtor_pct = 0
         top_debtor_name = "N/A"
         if customers_summary and total_debtors > 0:
-            top = customers_summary[0]  # already sorted desc
+            top = customers_summary[0]
             top_bal = float(top.get('balance', 0) or 0)
             top_debtor_pct = (top_bal / total_debtors * 100) if total_debtors > 0 else 0
             top_debtor_name = top.get('name', 'Unknown')
@@ -34143,11 +34141,11 @@ def report_tb():
                 if (insightBox) {{
                     insightBox.innerHTML = '<p style="color:var(--text-muted);"><span class="loading-dots">Zane is analyzing</span>...</p>';
                     
-                    // Async — don't await, let it load in background
+                    // Pass insights_payload directly (no cache dependency)
                     fetch('/api/reports/tb/insights', {{
                         method: 'POST',
                         headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{lang: lang}})
+                        body: JSON.stringify({{lang: lang, insights_payload: data.insights_payload || null}})
                     }})
                     .then(r => r.json())
                     .then(idata => {{
@@ -34274,7 +34272,7 @@ def report_tb():
                     fetch('/api/reports/tb/insights', {{
                         method: 'POST',
                         headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{lang: lang}})
+                        body: JSON.stringify({{lang: lang, insights_payload: analyzeData.insights_payload || null}})
                     }})
                     .then(r => r.json())
                     .then(idata => {{
@@ -35877,52 +35875,50 @@ RULES:
         # Frontend will call insights endpoint separately
         # ═══════════════════════════════════════════════════════════
         
-        # Store the data for async insights endpoint using in-memory cache (NOT session - too large for cookies)
-        _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
-        Auth._mem[_tb_cache_key] = {
-            "d": {
-                'accounts_text': accounts_text[:15000],
-                'report_company': report_company,
-                'industry': industry,
-                'is_third_party': is_third_party,
-                'lang': lang,
-                'total_debit': total_debit,
-                'total_credit': total_credit,
-                'difference': difference,
-                'is_balanced': is_balanced,
-                'current_assets': current_assets,
-                'bank_cash': bank + cash,
-                'debtors': debtors,
-                'stock': stock,
-                'fixed_assets_net': fixed_assets_net,
-                'total_assets': total_assets,
-                'current_liabilities': current_liabilities,
-                'long_term_liabilities': long_term_liabilities,
-                'total_equity': total_equity,
-                'net_sales': net_sales,
-                'cos': cos,
-                'gross_profit': gross_profit,
-                'gp_margin': gp_margin,
-                'total_expenses': total_expenses,
-                'net_profit': net_profit,
-                'np_margin': np_margin,
-                'current_ratio': current_ratio,
-                'quick_ratio': quick_ratio,
-                'debt_equity': debt_equity,
-                'debtor_days': debtor_days,
-                'creditor_days': creditor_days,
-                'stock_days': stock_days,
-                'vat_position': vat_position,
-                'paye': paye,
-                'uif': uif,
-            },
-            "t": time.time()
+        # Store data for insights endpoint - BOTH in cache AND return to JS
+        _insights_payload = {
+            'accounts_text': accounts_text[:15000],
+            'report_company': report_company,
+            'industry': industry,
+            'is_third_party': is_third_party,
+            'lang': lang,
+            'total_debit': total_debit,
+            'total_credit': total_credit,
+            'difference': difference,
+            'is_balanced': is_balanced,
+            'current_assets': current_assets,
+            'bank_cash': bank + cash,
+            'debtors': debtors,
+            'stock': stock,
+            'fixed_assets_net': fixed_assets_net,
+            'total_assets': total_assets,
+            'current_liabilities': current_liabilities,
+            'long_term_liabilities': long_term_liabilities,
+            'total_equity': total_equity,
+            'net_sales': net_sales,
+            'cos': cos,
+            'gross_profit': gross_profit,
+            'gp_margin': gp_margin,
+            'total_expenses': total_expenses,
+            'net_profit': net_profit,
+            'np_margin': np_margin,
+            'current_ratio': current_ratio,
+            'quick_ratio': quick_ratio,
+            'debt_equity': debt_equity,
+            'debtor_days': debtor_days,
+            'creditor_days': creditor_days,
+            'stock_days': stock_days,
+            'vat_position': vat_position,
+            'paye': paye,
+            'uif': uif,
         }
-        logger.info(f"[TB ANALYZE] Returning Python report immediately, insights will load async")
         
-        # Placeholder stays in report_html — frontend will fill it async
+        # Also keep cache as fallback
+        _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
+        Auth._mem[_tb_cache_key] = {"d": _insights_payload, "t": time.time()}
+        logger.info(f"[TB ANALYZE] Returning Python report + insights payload")
         
-        return jsonify({"success": True, "analysis": report_html})
+        return jsonify({"success": True, "analysis": report_html, "insights_payload": _insights_payload})
         
     except Exception as e:
         logger.error(f"[TB ANALYZE] Error: {e}")
@@ -35944,11 +35940,19 @@ def api_tb_insights():
     biz_name = business.get("name", "Business") if business else "Business"
     
     try:
-        _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
-        _cached = Auth._mem.get(_tb_cache_key)
-        if not _cached or (time.time() - _cached.get("t", 0)) > 600:
-            return jsonify({"success": False, "error": "No TB data found. Please re-analyze."})
-        td = _cached["d"]
+        # Try POST body first (reliable, works with gunicorn multi-worker)
+        posted = request.get_json() or {}
+        if posted.get('insights_payload'):
+            td = posted['insights_payload']
+            logger.info(f"[TB INSIGHTS] Using data from POST body")
+        else:
+            # Fallback to cache (legacy)
+            _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
+            _cached = Auth._mem.get(_tb_cache_key)
+            if not _cached or (time.time() - _cached.get("t", 0)) > 600:
+                return jsonify({"success": False, "error": "No TB data found. Please re-analyze."})
+            td = _cached["d"]
+            logger.info(f"[TB INSIGHTS] Using data from cache")
         
         lang = td.get('lang', 'en')
         report_company = td.get('report_company', biz_name)
@@ -39300,31 +39304,11 @@ def smart_reports_page():
                 const data = await response.json();
                 reportHtml = data.success ? (data.analysis || '') : ('Error: ' + (data.error || 'Failed'));
                 
-                // Fire async insights fetch
-                if (data.success) {
-                    setTimeout(() => {
-                        const insightBox = document.getElementById('aiInsightsContent');
-                        if (insightBox) {
-                            insightBox.innerHTML = '<p style="color:var(--text-muted);">Zane is analyzing...</p>';
-                            fetch('/api/reports/tb/insights', {
-                                method: 'POST',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({lang: lang})
-                            })
-                            .then(r => r.json())
-                            .then(idata => {
-                                if (idata.success && idata.insights) {
-                                    insightBox.innerHTML = idata.insights;
-                                } else {
-                                    insightBox.innerHTML = '<p style="color:#f97316;">' + (idata.error || 'Insights unavailable') + '. Figures above are 100% accurate.</p>';
-                                }
-                            })
-                            .catch(() => {
-                                insightBox.innerHTML = '<p style="color:#f97316;">Insights timeout - figures above are 100% accurate.</p>';
-                            });
-                        }
-                    }, 100);
+                // Store payload for insights fetch after DOM update
+                if (data.success && data.insights_payload) {
+                    window._tbInsightsPayload = data.insights_payload;
                 }
+                
             } else {
                 // Other report types from TB data (management, kpi, etc.)
                 const response = await fetch('/api/reports/tb/smart-report', {
@@ -39351,6 +39335,34 @@ def smart_reports_page():
             document.getElementById('reportTitle').textContent = title + ' — ' + clientFileName;
             document.getElementById('reportContent').innerHTML = reportHtml;
             document.getElementById('reportOutput').scrollIntoView({behavior: 'smooth'});
+            
+            // Fire async insights fetch for TB analysis (after DOM has the placeholder)
+            if (window._tbInsightsPayload) {
+                const _payload = window._tbInsightsPayload;
+                window._tbInsightsPayload = null;
+                setTimeout(() => {
+                    const insightBox = document.getElementById('aiInsightsContent');
+                    if (insightBox) {
+                        insightBox.innerHTML = '<p style="color:var(--text-muted);">Zane is analyzing...</p>';
+                        fetch('/api/reports/tb/insights', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({lang: document.documentElement.lang || 'en', insights_payload: _payload})
+                        })
+                        .then(r => r.json())
+                        .then(idata => {
+                            if (idata.success && idata.insights) {
+                                insightBox.innerHTML = idata.insights;
+                            } else {
+                                insightBox.innerHTML = '<p style="color:#f97316;">' + (idata.error || 'Insights unavailable') + '. Figures above are 100% accurate.</p>';
+                            }
+                        })
+                        .catch(() => {
+                            insightBox.innerHTML = '<p style="color:#f97316;">Insights timeout - figures above are 100% accurate.</p>';
+                        });
+                    }
+                }, 100);
+            }
         } catch (e) {
             document.getElementById('reportLoading').style.display = 'none';
             alert('Error generating report: ' + e.message);
