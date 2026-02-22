@@ -36007,14 +36007,14 @@ PYTHON-BEREKENDE OPSOMMING (100% akkuraat):
 - Debiteure Dae: {debtor_days:.0f} | Krediteure Dae: {creditor_days:.0f} | Voorraad Dae: {stock_days:.0f}
 - BTW: R{abs(vat_position):,.2f} {'BETAALBAAR' if vat_position > 0 else 'TERUG'} | LBS+WVF: R{paye + uif:,.2f}
 
-SKRYF 'N BONDIGE CA(SA) ANALISE IN AFRIKAANS (max 800 woorde):
+SKRYF 'N VOLLEDIGE CA(SA) ANALISE IN AFRIKAANS (1200-1800 woorde):
 1. UITVOERENDE OPSOMMING (3-4 sinne)
 2. HOOFSAKE - Sterkpunte en Swakpunte (noem spesifieke rekeninge en bedrae)
 3. ROOI VLAE (net werklike probleme)
 4. TOP 5 AANBEVELINGS (konkreet, met prioriteit)
 5. VRAE VIR DIE KLIËNT (3-5 vrae)
 
-REËLS: Gebruik Python syfers. Moenie kodes bevraagteken nie. Skryf skoon HTML met <h3> vir opskrifte."""
+REËLS: Gebruik Python syfers. Moenie kodes bevraagteken nie. Skryf skoon HTML met <h3> vir opskrifte. Voltooi AL 5 afdelings VOLLEDIG. Eindig met: Zane, CA(SA)."""
         else:
             tp_note = f"\nThis is a THIRD-PARTY client TB, not {biz_name}'s data.\n" if is_third_party else ""
             insights_prompt = f"""You are Zane, senior CA(SA). Analyze this trial balance CONCISELY.
@@ -36032,14 +36032,14 @@ PYTHON-CALCULATED SUMMARY (100% accurate):
 - Debtor Days: {debtor_days:.0f} | Creditor Days: {creditor_days:.0f} | Stock Days: {stock_days:.0f}
 - VAT: R{abs(vat_position):,.2f} {'PAYABLE' if vat_position > 0 else 'REFUND'} | PAYE+UIF: R{paye + uif:,.2f}
 
-WRITE A CONCISE CA(SA) ANALYSIS (max 800 words):
+WRITE A COMPLETE CA(SA) ANALYSIS (1200-1800 words):
 1. EXECUTIVE SUMMARY (3-4 sentences)
 2. KEY FINDINGS - Strengths and Weaknesses (name specific accounts and amounts)
 3. RED FLAGS (only real problems)
 4. TOP 5 RECOMMENDATIONS (concrete, prioritized)
 5. QUESTIONS FOR THE CLIENT (3-5 questions)
 
-RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML with <h3> for headings."""
+RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML with <h3> for headings. Complete ALL 5 sections FULLY. End with sign-off: Zane, CA(SA)."""
         
         if not ANTHROPIC_API_KEY:
             return jsonify({"success": False, "error": "No API key"})
