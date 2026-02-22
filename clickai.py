@@ -856,7 +856,7 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 _anthropic_client = None
 if ANTHROPIC_API_KEY:
     try:
-        _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0)
+        _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=180.0)
     except:
         _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")  # For Whisper STT + TTS voice
@@ -34071,6 +34071,7 @@ def report_tb():
         section.style.display = 'block';
         
         try {{
+            // STEP 1: Get Python report INSTANTLY (no AI wait)
             const response = await fetch('/api/reports/tb/analyze', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
@@ -34088,6 +34089,31 @@ def report_tb():
             if (data.success) {{
                 content.innerHTML = data.analysis;
                 dateSpan.innerHTML = 'Analyzed: ' + new Date().toLocaleString();
+                
+                // STEP 2: Load Zane's AI insights in BACKGROUND
+                const insightBox = document.getElementById('aiInsightsContent');
+                if (insightBox) {{
+                    insightBox.innerHTML = '<p style="color:var(--text-muted);"><span class="loading-dots">Zane is analyzing</span>...</p>';
+                    
+                    // Async — don't await, let it load in background
+                    fetch('/api/reports/tb/insights', {{
+                        method: 'POST',
+                        headers: {{'Content-Type': 'application/json'}},
+                        body: JSON.stringify({{lang: lang}})
+                    }})
+                    .then(r => r.json())
+                    .then(idata => {{
+                        if (idata.success && idata.insights) {{
+                            insightBox.innerHTML = idata.insights;
+                        }} else {{
+                            const errMsg = idata.error || 'Could not load insights';
+                            insightBox.innerHTML = '<p style="color:#f97316;">' + errMsg + '. Die syfers hierbo is egter 100% akkuraat.</p>';
+                        }}
+                    }})
+                    .catch(err => {{
+                        insightBox.innerHTML = '<p style="color:#f97316;">Insights timeout - die syfers hierbo is 100% akkuraat.</p>';
+                    }});
+                }}
             }} else {{
                 content.innerHTML = '<p style="color:var(--red);">' + (data.error || 'Analysis failed') + '</p>';
             }}
@@ -34192,6 +34218,28 @@ def report_tb():
             if (analyzeData.success) {{
                 content.innerHTML = analyzeData.analysis;
                 dateSpan.innerHTML = 'Analyzed: ' + new Date().toLocaleString() + ' (from ' + file.name + ')';
+                
+                // Async load Zane's insights
+                const insightBox = document.getElementById('aiInsightsContent');
+                if (insightBox) {{
+                    insightBox.innerHTML = '<p style="color:var(--text-muted);">Zane is analyzing...</p>';
+                    fetch('/api/reports/tb/insights', {{
+                        method: 'POST',
+                        headers: {{'Content-Type': 'application/json'}},
+                        body: JSON.stringify({{lang: lang}})
+                    }})
+                    .then(r => r.json())
+                    .then(idata => {{
+                        if (idata.success && idata.insights) {{
+                            insightBox.innerHTML = idata.insights;
+                        }} else {{
+                            insightBox.innerHTML = '<p style="color:#f97316;">' + (idata.error || 'Insights unavailable') + '. Figures above are 100% accurate.</p>';
+                        }}
+                    }})
+                    .catch(() => {{
+                        insightBox.innerHTML = '<p style="color:#f97316;">Insights timeout - figures above are 100% accurate.</p>';
+                    }});
+                }}
             }} else {{
                 content.innerHTML = '<p style="color:var(--red);">' + (analyzeData.error || 'Analysis failed') + '</p>';
             }}
@@ -35775,78 +35823,56 @@ RULES:
 - Use the EXACT figures that Python calculated - do not make up new numbers
 - NEVER say the chart of accounts is "wrong" or "misclassified" - different systems use different codes"""
 
-        insights_html = ""
-        try:
-            if ANTHROPIC_API_KEY:
-                client = _anthropic_client
-                message = client.messages.create(
-                    model="claude-sonnet-4-6",
-                    max_tokens=12000,
-                    messages=[{"role": "user", "content": insights_prompt}]
-                )
-                if message.content and message.content[0].text:
-                    insights_html = message.content[0].text
-                    
-                    # Check if report was truncated
-                    if hasattr(message, 'stop_reason') and message.stop_reason == 'max_tokens':
-                        logger.warning(f"[TB ANALYZE] Report was TRUNCATED (hit max_tokens limit)")
-                        insights_html += '<div style="margin-top:20px;padding:12px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:8px;color:#f59e0b;font-size:13px;">⚠️ Report was truncated due to length. The analysis above covers the main findings.</div>'
-                    
-                    # Comprehensive markdown to HTML fallback
-                    import re as _re
-                    # Headings first (order matters - ### before ## before #)
-                    insights_html = _re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin:18px 0 8px 0;font-size:16px;">\1</h3>', insights_html, flags=_re.MULTILINE)
-                    insights_html = _re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin:25px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
-                    insights_html = _re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;margin:25px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
-                    # Bold text
-                    insights_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
-                    # Numbered lists and bullets
-                    insights_html = _re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=_re.MULTILINE)
-                    insights_html = _re.sub(r'^- (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=_re.MULTILINE)
-                    insights_html = _re.sub(r'^• (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=_re.MULTILINE)
-                    # Horizontal rules
-                    insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', insights_html, flags=_re.MULTILINE)
-                    # Newline handling
-                    insights_html = _re.sub(r'\n{3,}', '<br><br>', insights_html)
-                    insights_html = _re.sub(r'\n\n', '<br>', insights_html)
-                    insights_html = _re.sub(r'(?<!>)\n(?!<)', ' ', insights_html)
-                    logger.info(f"[TB ANALYZE] Sonnet analysis generated: {len(insights_html)} chars")
-                else:
-                    logger.warning("[TB ANALYZE] AI returned empty response")
-                    if lang == "af":
-                        insights_html = "<p style='color:#f97316;'>Zane het geen analise teruggegee nie. Die Python berekeninge hierbo is egter 100% akkuraat.</p>"
-                    else:
-                        insights_html = "<p style='color:#f97316;'>Zane returned no analysis. The Python calculations above are however 100% accurate.</p>"
-            else:
-                logger.warning("[TB ANALYZE] No ANTHROPIC_API_KEY - skipping AI analysis")
-                if lang == "af":
-                    insights_html = "<p style='color:#f97316;'>AI analise is nie beskikbaar nie (geen API sleutel). Die syfers hierbo is volledig en akkuraat.</p>"
-                else:
-                    insights_html = "<p style='color:#f97316;'>AI analysis not available (no API key). The figures above are complete and accurate.</p>"
-        except Exception as ai_err:
-            logger.warning(f"[TB ANALYZE] AI insights failed: {ai_err}")
-            if lang == "af":
-                insights_html = f"<p style='color:#f97316;'>AI analise het gefaal: {safe_string(str(ai_err)[:100])}. Die syfers hierbo is egter 100% akkuraat.</p>"
-            else:
-                insights_html = f"<p style='color:#f97316;'>AI analysis failed: {safe_string(str(ai_err)[:100])}. The figures above are however 100% accurate.</p>"
+        # ═══════════════════════════════════════════════════════════
+        # AI INSIGHTS — SKIPPED HERE, loaded async via /api/reports/tb/insights
+        # The placeholder in report_html stays as "Loading professional insight..."
+        # Frontend will call insights endpoint separately
+        # ═══════════════════════════════════════════════════════════
         
-        # Fallback if insights_html is still empty for any reason
-        if not insights_html:
-            logger.warning("[TB ANALYZE] insights_html was empty - using fallback")
-            if lang == "af":
-                insights_html = "<p style='color:#f97316;'>AI analise kon nie gelaai word nie. Die syfers hierbo is volledig en akkuraat.</p>"
-            else:
-                insights_html = "<p style='color:#f97316;'>AI analysis could not be loaded. The figures above are complete and accurate.</p>"
+        # Store the data for async insights endpoint using in-memory cache (NOT session - too large for cookies)
+        _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
+        Auth._mem[_tb_cache_key] = {
+            "d": {
+                'accounts_text': accounts_text[:15000],
+                'report_company': report_company,
+                'industry': industry,
+                'is_third_party': is_third_party,
+                'lang': lang,
+                'total_debit': total_debit,
+                'total_credit': total_credit,
+                'difference': difference,
+                'is_balanced': is_balanced,
+                'current_assets': current_assets,
+                'bank_cash': bank + cash,
+                'debtors': debtors,
+                'stock': stock,
+                'fixed_assets_net': fixed_assets_net,
+                'total_assets': total_assets,
+                'current_liabilities': current_liabilities,
+                'long_term_liabilities': long_term_liabilities,
+                'total_equity': total_equity,
+                'net_sales': net_sales,
+                'cos': cos,
+                'gross_profit': gross_profit,
+                'gp_margin': gp_margin,
+                'total_expenses': total_expenses,
+                'net_profit': net_profit,
+                'np_margin': np_margin,
+                'current_ratio': current_ratio,
+                'quick_ratio': quick_ratio,
+                'debt_equity': debt_equity,
+                'debtor_days': debtor_days,
+                'creditor_days': creditor_days,
+                'stock_days': stock_days,
+                'vat_position': vat_position,
+                'paye': paye,
+                'uif': uif,
+            },
+            "t": time.time()
+        }
+        logger.info(f"[TB ANALYZE] Returning Python report immediately, insights will load async")
         
-        # Replace placeholder with actual insights - handle both English and Afrikaans placeholders
-        report_html = report_html.replace(
-            '<p style="color:var(--text-muted);">Loading professional insight...</p>',
-            insights_html
-        )
-        report_html = report_html.replace(
-            '<p style="color:var(--text-muted);">Laai professionele insig...</p>',
-            insights_html
-        )
+        # Placeholder stays in report_html — frontend will fill it async
         
         return jsonify({"success": True, "analysis": report_html})
         
@@ -35855,6 +35881,149 @@ RULES:
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)})
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TB INSIGHTS - Async AI analysis (called AFTER report loads)
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.route("/api/reports/tb/insights", methods=["POST"])
+@login_required
+def api_tb_insights():
+    """Async AI insights for TB report - called after Python report is shown"""
+    
+    business = Auth.get_current_business()
+    biz_name = business.get("name", "Business") if business else "Business"
+    
+    try:
+        _tb_cache_key = f"tb_insights:{session.get('user_id', 'anon')}"
+        _cached = Auth._mem.get(_tb_cache_key)
+        if not _cached or (time.time() - _cached.get("t", 0)) > 600:
+            return jsonify({"success": False, "error": "No TB data found. Please re-analyze."})
+        td = _cached["d"]
+        
+        lang = td.get('lang', 'en')
+        report_company = td.get('report_company', biz_name)
+        industry = td.get('industry', 'general')
+        is_third_party = td.get('is_third_party', False)
+        accounts_text = td.get('accounts_text', '')
+        
+        total_debit = td.get('total_debit', 0)
+        total_credit = td.get('total_credit', 0)
+        difference = td.get('difference', 0)
+        is_balanced = td.get('is_balanced', True)
+        current_assets = td.get('current_assets', 0)
+        bank_cash = td.get('bank_cash', 0)
+        debtors = td.get('debtors', 0)
+        stock = td.get('stock', 0)
+        fixed_assets_net = td.get('fixed_assets_net', 0)
+        total_assets = td.get('total_assets', 0)
+        current_liabilities = td.get('current_liabilities', 0)
+        long_term_liabilities = td.get('long_term_liabilities', 0)
+        total_equity = td.get('total_equity', 0)
+        net_sales = td.get('net_sales', 0)
+        cos = td.get('cos', 0)
+        gross_profit = td.get('gross_profit', 0)
+        gp_margin = td.get('gp_margin', 0)
+        total_expenses = td.get('total_expenses', 0)
+        net_profit = td.get('net_profit', 0)
+        np_margin = td.get('np_margin', 0)
+        current_ratio = td.get('current_ratio', 0)
+        quick_ratio = td.get('quick_ratio', 0)
+        debt_equity = td.get('debt_equity', 0)
+        debtor_days = td.get('debtor_days', 0)
+        creditor_days = td.get('creditor_days', 0)
+        stock_days = td.get('stock_days', 0)
+        vat_position = td.get('vat_position', 0)
+        paye = td.get('paye', 0)
+        uif = td.get('uif', 0)
+        
+        if lang == "af":
+            tp_note = f"\nDit is 'n DERDE PARTY kliënt se TB, nie {biz_name} s'n nie.\n" if is_third_party else ""
+            insights_prompt = f"""Jy is Zane, senior CA(SA). Analiseer hierdie proefbalans BONDIG.
+
+BESIGHEID: {safe_string(report_company)} | INDUSTRIE: {industry}
+{tp_note}
+{accounts_text}
+
+PYTHON-BEREKENDE OPSOMMING (100% akkuraat):
+- Debits: R{total_debit:,.2f} | Kredits: R{total_credit:,.2f} | {'GEBALANSEER' if is_balanced else 'ONGEBALANSEER'}
+- Bates: R{total_assets:,.2f} (Bedryf R{current_assets:,.2f}, Vas R{fixed_assets_net:,.2f})
+- Laste: R{current_liabilities + long_term_liabilities:,.2f} | Ekwiteit: R{total_equity:,.2f}
+- Verkope: R{net_sales:,.2f} | Bruto Wins: R{gross_profit:,.2f} ({gp_margin}%) | Netto: R{net_profit:,.2f} ({np_margin}%)
+- Current Ratio: {current_ratio:.2f} | Quick: {quick_ratio:.2f} | Skuld/Ekwiteit: {debt_equity:.2f}
+- Debiteure Dae: {debtor_days:.0f} | Krediteure Dae: {creditor_days:.0f} | Voorraad Dae: {stock_days:.0f}
+- BTW: R{abs(vat_position):,.2f} {'BETAALBAAR' if vat_position > 0 else 'TERUG'} | LBS+WVF: R{paye + uif:,.2f}
+
+SKRYF 'N BONDIGE CA(SA) ANALISE IN AFRIKAANS (max 800 woorde):
+1. UITVOERENDE OPSOMMING (3-4 sinne)
+2. HOOFSAKE - Sterkpunte en Swakpunte (noem spesifieke rekeninge en bedrae)
+3. ROOI VLAE (net werklike probleme)
+4. TOP 5 AANBEVELINGS (konkreet, met prioriteit)
+5. VRAE VIR DIE KLIËNT (3-5 vrae)
+
+REËLS: Gebruik Python syfers. Moenie kodes bevraagteken nie. Skryf skoon HTML met <h3> vir opskrifte."""
+        else:
+            tp_note = f"\nThis is a THIRD-PARTY client TB, not {biz_name}'s data.\n" if is_third_party else ""
+            insights_prompt = f"""You are Zane, senior CA(SA). Analyze this trial balance CONCISELY.
+
+BUSINESS: {safe_string(report_company)} | INDUSTRY: {industry}
+{tp_note}
+{accounts_text}
+
+PYTHON-CALCULATED SUMMARY (100% accurate):
+- Debits: R{total_debit:,.2f} | Credits: R{total_credit:,.2f} | {'BALANCED' if is_balanced else 'UNBALANCED'}
+- Assets: R{total_assets:,.2f} (Current R{current_assets:,.2f}, Fixed R{fixed_assets_net:,.2f})
+- Liabilities: R{current_liabilities + long_term_liabilities:,.2f} | Equity: R{total_equity:,.2f}
+- Sales: R{net_sales:,.2f} | Gross Profit: R{gross_profit:,.2f} ({gp_margin}%) | Net: R{net_profit:,.2f} ({np_margin}%)
+- Current Ratio: {current_ratio:.2f} | Quick: {quick_ratio:.2f} | Debt/Equity: {debt_equity:.2f}
+- Debtor Days: {debtor_days:.0f} | Creditor Days: {creditor_days:.0f} | Stock Days: {stock_days:.0f}
+- VAT: R{abs(vat_position):,.2f} {'PAYABLE' if vat_position > 0 else 'REFUND'} | PAYE+UIF: R{paye + uif:,.2f}
+
+WRITE A CONCISE CA(SA) ANALYSIS (max 800 words):
+1. EXECUTIVE SUMMARY (3-4 sentences)
+2. KEY FINDINGS - Strengths and Weaknesses (name specific accounts and amounts)
+3. RED FLAGS (only real problems)
+4. TOP 5 RECOMMENDATIONS (concrete, prioritized)
+5. QUESTIONS FOR THE CLIENT (3-5 questions)
+
+RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML with <h3> for headings."""
+        
+        if not ANTHROPIC_API_KEY:
+            return jsonify({"success": False, "error": "No API key"})
+        
+        logger.info(f"[TB INSIGHTS] Starting async AI analysis for {report_company}")
+        
+        client = _anthropic_client
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4000,
+            messages=[{"role": "user", "content": insights_prompt}]
+        )
+        
+        if message.content and message.content[0].text:
+            insights_html = message.content[0].text
+            
+            import re as _re
+            insights_html = _re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin:18px 0 8px 0;font-size:16px;">\1</h3>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin:25px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;margin:25px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
+            insights_html = _re.sub(r'^\d+\. (.+)$', r'<div style="margin:5px 0 5px 15px;">→ \1</div>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^- (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'\n{3,}', '<br><br>', insights_html)
+            insights_html = _re.sub(r'\n\n', '<br>', insights_html)
+            insights_html = _re.sub(r'(?<!>)\n(?!<)', ' ', insights_html)
+            
+            logger.info(f"[TB INSIGHTS] AI analysis complete: {len(insights_html)} chars")
+            return jsonify({"success": True, "insights": insights_html})
+        else:
+            return jsonify({"success": False, "error": "AI returned empty"})
+            
+    except Exception as e:
+        logger.warning(f"[TB INSIGHTS] Failed: {e}")
+        return jsonify({"success": False, "error": str(e)[:200]})
 
 
 @app.route("/api/reports/tb/upload-analyze", methods=["POST"])
