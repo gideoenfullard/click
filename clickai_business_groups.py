@@ -121,8 +121,24 @@ class BusinessGroupManager:
             groups = db.get('business_groups', {'id': group_id, 'owner_id': owner_id})
             if not groups:
                 return {'success': False, 'error': 'Group not found or not owner'}
-            businesses = db.get('businesses', {'id': business_id, 'user_id': owner_id})
-            if not businesses:
+            # Check ownership: direct owner OR team member with owner/admin role
+            biz = db.get_one('businesses', business_id)
+            if not biz:
+                return {'success': False, 'error': 'Business not found'}
+            is_owner = (biz.get('user_id') == owner_id)
+            if not is_owner:
+                # Check team_members for this user
+                try:
+                    user_rec = db.get_one('users', owner_id)
+                    user_email = (user_rec.get('email', '') if user_rec else '').lower()
+                    if user_email:
+                        members = db.get('team_members', {'email': user_email, 'business_id': business_id})
+                        if members:
+                            role = (members[0].get('role', '') or '').lower()
+                            is_owner = role in ('owner', 'admin', '')
+                except Exception:
+                    pass
+            if not is_owner:
                 return {'success': False, 'error': 'Business not found or not owner'}
             existing = db.get('business_group_members', {
                 'group_id': group_id,
@@ -138,7 +154,7 @@ class BusinessGroupManager:
             }
             success, result = db.save('business_group_members', data)
             if success:
-                biz_name = businesses[0].get('name', business_id)
+                biz_name = biz.get('name', business_id)
                 logger.info(f"[BIZ-GROUP] Added '{biz_name}' to group {group_id}")
                 return {'success': True, 'business_name': biz_name}
             return {'success': False, 'error': 'Failed to add business'}
@@ -544,13 +560,41 @@ def register_group_routes(app, db, login_required):
     @app.route('/api/business-groups/my-businesses', methods=['GET'])
     @login_required
     def api_my_businesses_for_groups():
-        """List all businesses owned by current user (for the add-to-group dropdown)."""
+        """List all businesses the current user can access (owned + team member).
+        Uses same logic as the business switcher to ensure consistency."""
         owner_id = session.get('user_id')
         try:
-            businesses = db.get('businesses', {'user_id': owner_id})
-            result = [{'id': b.get('id'), 'name': b.get('name', 'Unknown')} for b in (businesses or [])]
+            seen_ids = set()
+            result = []
+
+            # 1. Owned businesses (user_id match)
+            owned = db.get('businesses', {'user_id': owner_id}) if owner_id else []
+            for b in (owned or []):
+                bid = b.get('id')
+                if bid and bid not in seen_ids:
+                    seen_ids.add(bid)
+                    result.append({'id': bid, 'name': b.get('name', 'Unknown')})
+
+            # 2. Get user email from DB, then check team_members
+            try:
+                user_rec = db.get_one('users', owner_id) if owner_id else None
+                user_email = (user_rec.get('email', '') if user_rec else '').lower()
+                if user_email:
+                    memberships = db.get('team_members', {'email': user_email})
+                    for tm in (memberships or []):
+                        mbid = tm.get('business_id')
+                        if mbid and mbid not in seen_ids:
+                            biz = db.get('businesses', {'id': mbid})
+                            if biz:
+                                seen_ids.add(mbid)
+                                result.append({'id': mbid, 'name': biz[0].get('name', 'Unknown')})
+            except Exception as e2:
+                logger.warning(f"[BIZ-GROUP] Team member lookup failed: {e2}")
+
+            logger.info(f"[BIZ-GROUP] my-businesses: found {len(result)} for user {owner_id}")
             return jsonify({'success': True, 'businesses': result})
         except Exception as e:
+            logger.error(f"[BIZ-GROUP] my-businesses error: {e}")
             return jsonify({'success': True, 'businesses': []})
 
     logger.info("[BIZ-GROUP] Routes registered successfully")

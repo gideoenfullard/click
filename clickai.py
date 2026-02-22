@@ -67366,15 +67366,22 @@ def settings_business_groups():
                     allBusinesses.push({ id: opt.value, name: opt.text });
                 }
             }
+            console.log('[BIZ-GROUP] From switcher:', allBusinesses.length, 'businesses');
+        } else {
+            console.log('[BIZ-GROUP] No businessSelect element found');
         }
         // Always also fetch from API (more reliable)
         try {
             const resp = await fetch('/api/business-groups/my-businesses');
             const data = await resp.json();
+            console.log('[BIZ-GROUP] API response:', JSON.stringify(data));
             if (data.success && data.businesses && data.businesses.length > 0) {
                 allBusinesses = data.businesses;
             }
-        } catch(e) {}
+        } catch(e) {
+            console.error('[BIZ-GROUP] API error:', e);
+        }
+        console.log('[BIZ-GROUP] Final allBusinesses:', allBusinesses.length, allBusinesses);
     }
 
     async function loadGroups() {
