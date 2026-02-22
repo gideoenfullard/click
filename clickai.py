@@ -67286,73 +67286,73 @@ def settings_business_groups():
     """Business Groups - Cross-business management"""
     user = Auth.get_current_user()
     
-    # === Fetch businesses server-side — MUST match what business switcher shows ===
+    # === Build business list SERVER-SIDE (same source as business switcher) ===
     import json as _json
     user_id = user.get("id", "") if user else ""
-    biz_list = []
+    biz_list = []  # [{id, name}, ...]
     
     try:
-        # METHOD 1: Use the SAME in-memory cache that render_page/business switcher uses
+        # STRATEGY: Read from the SAME cache render_page uses, or do full lookup
         _bc = Auth._mem.get(f"bizlist:{user_id}") if user_id else None
+        businesses_raw = []
+        
         if _bc and (time.time() - _bc.get("t", 0)) < 300:
-            businesses = _bc["d"]
-            logger.info(f"[BIZ-GROUP] Page: using cached bizlist, {len(businesses)} businesses")
+            businesses_raw = _bc["d"]
+            logger.info(f"[BIZ-GROUP] Using cached bizlist: {len(businesses_raw)}")
         else:
-            # METHOD 2: Full DB lookup (same as render_page + login combined)
-            businesses = []
+            # Full lookup — all 3 methods
             seen_ids = set()
             user_email = (user.get("email", "") or "").lower() if user else ""
             
-            # 2a. Owned businesses (businesses.user_id = users.id)
             owned = db.get("businesses", {"user_id": user_id}) if user_id else []
             for b in (owned or []):
                 bid = b.get("id")
                 if bid and bid not in seen_ids:
                     seen_ids.add(bid)
-                    businesses.append(b)
+                    businesses_raw.append(b)
             
-            # 2b. Team member by email
             if user_email:
                 try:
-                    tm_by_email = db.get("team_members", {"email": user_email}) or []
-                    for tm in tm_by_email:
+                    for tm in (db.get("team_members", {"email": user_email}) or []):
                         mbid = tm.get("business_id")
                         if mbid and mbid not in seen_ids:
                             biz = db.get_one("businesses", mbid)
                             if biz:
                                 seen_ids.add(mbid)
-                                businesses.append(biz)
+                                businesses_raw.append(biz)
                 except Exception:
                     pass
             
-            # 2c. Team member by user_id (login flow uses this too)
             if user_id:
                 try:
-                    tm_by_uid = db.get("team_members", {"user_id": user_id}) or []
-                    for tm in tm_by_uid:
+                    for tm in (db.get("team_members", {"user_id": user_id}) or []):
                         mbid = tm.get("business_id")
                         if mbid and mbid not in seen_ids:
                             biz = db.get_one("businesses", mbid)
                             if biz:
                                 seen_ids.add(mbid)
-                                businesses.append(biz)
+                                businesses_raw.append(biz)
                 except Exception:
                     pass
             
-            logger.info(f"[BIZ-GROUP] Page: fresh DB lookup, {len(businesses)} businesses for {user_id} / {user_email}")
+            logger.info(f"[BIZ-GROUP] Fresh lookup: {len(businesses_raw)} businesses for {user_id}")
         
-        # Build the JSON list
-        for b in businesses:
+        for b in businesses_raw:
             bid = b.get("id")
             bname = b.get("name") or b.get("business_name", "Unknown")
             if bid:
                 biz_list.append({"id": bid, "name": bname})
-        
     except Exception as e:
-        logger.error(f"[BIZ-GROUP] Server-side biz fetch error: {e}")
+        logger.error(f"[BIZ-GROUP] Biz fetch error: {e}")
+    
+    # Build <option> tags directly in Python
+    biz_options_html = '<option value="">-- Select Business --</option>'
+    for b in biz_list:
+        safe_name = (b["name"] or "").replace("'", "&#39;").replace('"', "&quot;")
+        biz_options_html += f'<option value="{b["id"]}">{safe_name}</option>'
     
     biz_json = _json.dumps(biz_list)
-    logger.info(f"[BIZ-GROUP] Page load final: {len(biz_list)} businesses: {[b['name'] for b in biz_list]}")
+    logger.info(f"[BIZ-GROUP] Page: {len(biz_list)} businesses: {[b['name'] for b in biz_list]}")
     
     content = '''
     <script>var SERVER_BUSINESSES = ''' + biz_json + ''';</script>
@@ -67395,7 +67395,7 @@ def settings_business_groups():
             <h3 style="margin:0 0 10px;">Add Business to Group</h3>
             <div style="display:flex;gap:10px;">
                 <select id="addBizSelect" class="form-input" style="flex:1;">
-                    <option value="">-- Select Business --</option>
+                    ''' + biz_options_html + '''
                 </select>
                 <button onclick="addBizToGroup()" class="btn btn-primary">Add</button>
             </div>
@@ -67488,38 +67488,19 @@ def settings_business_groups():
     });
 
     async function loadMyBusinesses() {
-        // PRIMARY: Use server-injected data (most reliable)
+        // Businesses already loaded server-side into SERVER_BUSINESSES and into the <select> options
         if (typeof SERVER_BUSINESSES !== 'undefined' && SERVER_BUSINESSES.length > 0) {
             allBusinesses = SERVER_BUSINESSES;
-            console.log('[BIZ-GROUP] Loaded from server:', allBusinesses.length, 'businesses', allBusinesses);
-            return;
-        }
-        // FALLBACK 1: Business switcher dropdown
-        const select = document.getElementById('businessSelect');
-        if (select) {
-            allBusinesses = [];
-            for (let opt of select.options) {
-                if (opt.value) {
-                    allBusinesses.push({ id: opt.value, name: opt.text });
+        } else {
+            // Fallback: read from business switcher in nav
+            const select = document.getElementById('businessSelect');
+            if (select) {
+                for (let opt of select.options) {
+                    if (opt.value) allBusinesses.push({ id: opt.value, name: opt.text });
                 }
             }
-            if (allBusinesses.length > 0) {
-                console.log('[BIZ-GROUP] Loaded from switcher:', allBusinesses.length);
-                return;
-            }
         }
-        // FALLBACK 2: API
-        try {
-            const resp = await fetch('/api/business-groups/my-businesses');
-            const data = await resp.json();
-            console.log('[BIZ-GROUP] API response:', JSON.stringify(data));
-            if (data.success && data.businesses && data.businesses.length > 0) {
-                allBusinesses = data.businesses;
-            }
-        } catch(e) {
-            console.error('[BIZ-GROUP] API error:', e);
-        }
-        console.log('[BIZ-GROUP] Final allBusinesses:', allBusinesses.length, allBusinesses);
+        console.log('[BIZ-GROUP] allBusinesses:', allBusinesses.length, allBusinesses);
     }
 
     async function loadGroups() {
@@ -67635,7 +67616,33 @@ def settings_business_groups():
         const inGroup = data.businesses || [];
         const inGroupIds = inGroup.map(b => b.id);
 
-        // Update add dropdown — only show businesses NOT in the group
+        // SAFETY: If allBusinesses is empty, recover from current <select> options or SERVER_BUSINESSES
+        if (allBusinesses.length === 0) {
+            // Try SERVER_BUSINESSES first
+            if (typeof SERVER_BUSINESSES !== 'undefined' && SERVER_BUSINESSES.length > 0) {
+                allBusinesses = SERVER_BUSINESSES;
+            } else {
+                // Read from the dropdown BEFORE we overwrite it
+                const sel = document.getElementById('addBizSelect');
+                if (sel) {
+                    for (let opt of sel.options) {
+                        if (opt.value) allBusinesses.push({ id: opt.value, name: opt.text });
+                    }
+                }
+                // Last resort: read from business switcher in nav
+                if (allBusinesses.length === 0) {
+                    const navSel = document.getElementById('businessSelect');
+                    if (navSel) {
+                        for (let opt of navSel.options) {
+                            if (opt.value) allBusinesses.push({ id: opt.value, name: opt.text });
+                        }
+                    }
+                }
+            }
+            console.log('[BIZ-GROUP] Recovered allBusinesses:', allBusinesses.length, allBusinesses);
+        }
+
+        // Update add dropdown — only show businesses NOT already in the group
         let opts = '<option value="">-- Select Business --</option>';
         for (const biz of allBusinesses) {
             if (!inGroupIds.includes(biz.id)) {
