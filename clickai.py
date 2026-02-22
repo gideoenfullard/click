@@ -13721,7 +13721,7 @@ class ReportEngine:
         
         focus = focus_prompts.get(report_type, focus_prompts["management"])
         
-        system_prompt = f"""You are a SENIOR CA(SA) writing a professional {report_title} for {biz_name} as at {report_date}.
+        system_prompt = f"""You are ClickAI's senior financial analyst writing a professional {report_title} for {biz_name} as at {report_date}.
 This report may be presented to investors or board members. It must be THOROUGH, SPECIFIC, and COMPLETE.
 
 ═══════════════════════════════════════════════════════════════
@@ -35365,7 +35365,7 @@ def api_tb_analyze():
         # Using language labels (L) for bilingual support
         report_html = f"""
 <h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:10px;">📊 {L["report_title"]}</h2>
-<p><strong>{L["company"]}:</strong> {safe_string(report_company)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane (CA(SA))</p>
+<p><strong>{L["company"]}:</strong> {safe_string(report_company)} | <strong>{L["date"]}:</strong> {today()} | <strong>{L["prepared_by"]}:</strong> Zane, ClickAI</p>
 
 {validation_warning}
 {confidence_html}
@@ -35655,8 +35655,8 @@ BELANGRIKE KONTEKS: Hierdie is 'n DERDE PARTY kliënt se proefbalans wat opgelaa
 Dit is NIE {biz_name} se eie data nie. MOENIE na {biz_name} verwys in jou analise nie.
 Analiseer dit as 'n onafhanklike kliënt se finansiële data.
 """
-            insights_prompt = f"""Jy is Zane, 'n senior CA(SA) met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
-Jou naam is net "Zane" - MOENIE 'n van gebruik nie. Teken reports as "Zane, CA(SA)" alleen.
+            insights_prompt = f"""Jy is Zane, ClickAI se senior finansiële analis met 20 jaar ondervinding. Jy ontvang nou 'n VOLLEDIGE proefbalans om te analiseer.
+Jou naam is net "Zane" - MOENIE 'n van gebruik nie. Teken reports as "Zane, ClickAI" alleen.
 
 BESIGHEID: {safe_string(report_company)}
 INDUSTRIE: {industry}
@@ -35700,7 +35700,7 @@ SARS:
 - BTW Posisie: R {abs(vat_position):,.2f} {'BETAALBAAR' if vat_position > 0 else 'TERUG'}
 - LBS + WVF: R {paye + uif:,.2f}
 
-JOU OPDRAG - SKRYF 'N VOLLEDIGE CA(SA) ANALISE VERSLAG IN AFRIKAANS
+JOU OPDRAG - SKRYF 'N VOLLEDIGE FINANSIËLE ANALISE VERSLAG IN AFRIKAANS
 
 KRITIEKE INSTRUKSIES:
 - Die rekeninge is REEDS KORREK geklassifiseer in die regte kategorieë (Bates, Laste, Ekwiteit, Inkomste, Uitgawes) deur die bronsstelsel se eie kategorisering
@@ -35740,6 +35740,7 @@ Lys 3-5 vrae wat jy sou vra.
 
 FORMAAT INSTRUKSIES:
 - Skryf SKOON HTML (geen markdown nie). Gebruik <h2>, <h3> vir opskrifte.
+- DONKER TEMA: MOENIE background:white, background:#fff, of enige ligte agtergrondkleure gebruik nie. Gebruik slegs rgba() met lae opacity vir agtergronde. Tekskleur moet ligkleurig wees (wit/grys).
 - Vir tabelle: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Kolom</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Waarde</td></tr></table>
 - Vir kleur indicators: <span style="color:#ef4444;">✗ Sleg</span> of <span style="color:#10b981;">✓ Goed</span> of <span style="color:#f59e0b;">⚠ Waarskuwing</span>
 - ELKE tabel sel MOET inhoud hê - moet NOOIT leë selle los nie
@@ -35748,7 +35749,7 @@ FORMAAT INSTRUKSIES:
 REËLS:
 - Verwys na SPESIFIEKE rekeninge by naam en kode
 - Wees SPESIFIEK oor bedrae en persentasies
-- Skryf soos 'n regte CA(SA) wat omgee
+- Skryf soos 'n regte finansiële analis wat omgee
 - Gebruik die PRESIESE syfers wat Python bereken het
 - MOET NOOIT sê die rekeningplan is "fout" of "verkeerd geklassifiseer" nie"""
         else:
@@ -35761,8 +35762,8 @@ This is NOT {biz_name}'s own data. Do NOT reference {biz_name} anywhere in your 
 Analyze this as an independent client's financial data. If you see references to other companies
 (e.g., loans from/to other entities), these are the CLIENT's intercompany relationships, not related to {biz_name}.
 """
-            insights_prompt = f"""You are Zane, a senior CA(SA) with 20 years of experience. You are analyzing a COMPLETE trial balance.
-Your name is simply "Zane" - do NOT use any surname. Sign reports as "Zane, CA(SA)" only.
+            insights_prompt = f"""You are Zane, ClickAI's senior financial analyst with 20 years of experience. You are analyzing a COMPLETE trial balance.
+Your name is simply "Zane" - do NOT use any surname. Sign reports as "Zane, ClickAI" only.
 
 BUSINESS: {safe_string(report_company)}
 INDUSTRY: {industry}
@@ -35806,7 +35807,7 @@ SARS (South African Revenue Service):
 - VAT Position: R {abs(vat_position):,.2f} {'PAYABLE' if vat_position > 0 else 'REFUNDABLE'}
 - PAYE + UIF: R {paye + uif:,.2f}
 
-YOUR TASK - WRITE A COMPLETE CA(SA) ANALYSIS REPORT IN ENGLISH
+YOUR TASK - WRITE A COMPLETE FINANCIAL ANALYSIS REPORT IN ENGLISH
 
 CRITICAL INSTRUCTIONS:
 - The accounts have been PRE-CLASSIFIED into the correct categories (Assets, Liabilities, Equity, Income, Expenses) using the source system's own categorization
@@ -35847,6 +35848,7 @@ List 3-5 questions you would ask the business owner.
 
 FORMAT INSTRUCTIONS:
 - Output CLEAN HTML only. NEVER USE MARKDOWN. No ##, no **, no ---, no * bullets.
+- DARK THEME: NEVER use background:white, background:#fff, or any light background colors. Only use rgba() with low opacity for backgrounds. Text color must be light (white/grey). All content renders on a dark navy background.
 - Use <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;"> for main section headings
 - Use <h3 style="color:#8b5cf6;margin-top:18px;"> for sub-headings
 - Use <p> for all paragraph text
@@ -35865,7 +35867,7 @@ FORMAT INSTRUCTIONS:
 RULES:
 - Refer to SPECIFIC accounts by name and code
 - Do NOT be generic - be SPECIFIC about amounts and percentages
-- Write like a real CA(SA) who cares
+- Write like a real financial analyst who cares
 - Use the EXACT figures that Python calculated - do not make up new numbers
 - NEVER say the chart of accounts is "wrong" or "misclassified" - different systems use different codes"""
 
@@ -35992,7 +35994,7 @@ def api_tb_insights():
         
         if lang == "af":
             tp_note = f"\nDit is 'n DERDE PARTY kliënt se TB, nie {biz_name} s'n nie.\n" if is_third_party else ""
-            insights_prompt = f"""Jy is Zane, senior CA(SA). Analiseer hierdie proefbalans BONDIG.
+            insights_prompt = f"""Jy is Zane, ClickAI. Analiseer hierdie proefbalans BONDIG.
 
 BESIGHEID: {safe_string(report_company)} | INDUSTRIE: {industry}
 {tp_note}
@@ -36007,17 +36009,17 @@ PYTHON-BEREKENDE OPSOMMING (100% akkuraat):
 - Debiteure Dae: {debtor_days:.0f} | Krediteure Dae: {creditor_days:.0f} | Voorraad Dae: {stock_days:.0f}
 - BTW: R{abs(vat_position):,.2f} {'BETAALBAAR' if vat_position > 0 else 'TERUG'} | LBS+WVF: R{paye + uif:,.2f}
 
-SKRYF 'N VOLLEDIGE CA(SA) ANALISE IN AFRIKAANS (1200-1800 woorde):
+SKRYF 'N VOLLEDIGE FINANSIËLE ANALISE IN AFRIKAANS (1200-1800 woorde):
 1. UITVOERENDE OPSOMMING (3-4 sinne)
 2. HOOFSAKE - Sterkpunte en Swakpunte (noem spesifieke rekeninge en bedrae)
 3. ROOI VLAE (net werklike probleme)
 4. TOP 5 AANBEVELINGS (konkreet, met prioriteit)
 5. VRAE VIR DIE KLIËNT (3-5 vrae)
 
-REËLS: Gebruik Python syfers. Moenie kodes bevraagteken nie. Skryf skoon HTML met <h3> vir opskrifte. Voltooi AL 5 afdelings VOLLEDIG. Eindig met: Zane, CA(SA)."""
+REËLS: Gebruik Python syfers. Moenie kodes bevraagteken nie. Skryf skoon HTML met <h3> vir opskrifte. Voltooi AL 5 afdelings VOLLEDIG. MOENIE style="background:white" of enige ligte agtergrondkleure gebruik nie — die UI het 'n donker tema. Eindig met: Zane, ClickAI."""
         else:
             tp_note = f"\nThis is a THIRD-PARTY client TB, not {biz_name}'s data.\n" if is_third_party else ""
-            insights_prompt = f"""You are Zane, senior CA(SA). Analyze this trial balance CONCISELY.
+            insights_prompt = f"""You are Zane, ClickAI. Analyze this trial balance CONCISELY.
 
 BUSINESS: {safe_string(report_company)} | INDUSTRY: {industry}
 {tp_note}
@@ -36032,14 +36034,14 @@ PYTHON-CALCULATED SUMMARY (100% accurate):
 - Debtor Days: {debtor_days:.0f} | Creditor Days: {creditor_days:.0f} | Stock Days: {stock_days:.0f}
 - VAT: R{abs(vat_position):,.2f} {'PAYABLE' if vat_position > 0 else 'REFUND'} | PAYE+UIF: R{paye + uif:,.2f}
 
-WRITE A COMPLETE CA(SA) ANALYSIS (1200-1800 words):
+WRITE A COMPLETE FINANCIAL ANALYSIS (1200-1800 words):
 1. EXECUTIVE SUMMARY (3-4 sentences)
 2. KEY FINDINGS - Strengths and Weaknesses (name specific accounts and amounts)
 3. RED FLAGS (only real problems)
 4. TOP 5 RECOMMENDATIONS (concrete, prioritized)
 5. QUESTIONS FOR THE CLIENT (3-5 questions)
 
-RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML with <h3> for headings. Complete ALL 5 sections FULLY. End with sign-off: Zane, CA(SA)."""
+RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML with <h3> for headings. Complete ALL 5 sections FULLY. Do NOT use style="background:white" or any light background colors — the UI uses a dark theme. End with sign-off: Zane, ClickAI."""
         
         if not ANTHROPIC_API_KEY:
             return jsonify({"success": False, "error": "No API key"})
@@ -36092,9 +36094,22 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
             insights_html = insights_html.replace('<th', '<th style="padding:8px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.15);color:#a78bfa;font-weight:600;" ')
             insights_html = insights_html.replace('<td', '<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.06);" ')
             
+            # CRITICAL: Strip ALL white/light backgrounds Sonnet may inject
+            insights_html = _re.sub(r'background[-\w]*:\s*#?(?:fff|ffffff|white|fafafa|f5f5f5|f8f8f8|f9f9f9|fef[0-9a-f]+|ffe[0-9a-f]+|fdf[0-9a-f]+)[^;"]*;?', '', insights_html, flags=_re.IGNORECASE)
+            insights_html = _re.sub(r'background[-\w]*:\s*rgb\(\s*2[45]\d\s*,\s*2[45]\d\s*,\s*2[45]\d\s*\)[^;"]*;?', '', insights_html, flags=_re.IGNORECASE)
+            insights_html = _re.sub(r'background[-\w]*:\s*white[^;"]*;?', '', insights_html, flags=_re.IGNORECASE)
+            
+            # Force text color on any divs/spans Sonnet creates
+            insights_html = _re.sub(r'color:\s*#?(?:000|000000|333|333333|222|444|555|666)[^;"]*;?', 'color:rgba(255,255,255,0.9);', insights_html, flags=_re.IGNORECASE)
+            insights_html = _re.sub(r'color:\s*black[^;"]*;?', 'color:rgba(255,255,255,0.9);', insights_html, flags=_re.IGNORECASE)
+            insights_html = _re.sub(r'color:\s*rgb\(\s*0\s*,\s*0\s*,\s*0\s*\)[^;"]*;?', 'color:rgba(255,255,255,0.9);', insights_html, flags=_re.IGNORECASE)
+            
+            # Strip border colors that are dark (they become invisible on dark bg)
+            insights_html = _re.sub(r'border[-\w]*:\s*\d+px\s+solid\s+#?(?:ccc|ddd|eee|e0e0e0|d0d0d0)[^;"]*;?', 'border:1px solid rgba(255,255,255,0.1);', insights_html, flags=_re.IGNORECASE)
+            
             # Style the Zane sign-off if present
             insights_html = _re.sub(
-                r'(Zane,?\s*CA\(SA\))',
+                r'(Zane,?\s*ClickAI)',
                 r'<div style="margin-top:20px;padding-top:12px;border-top:1px solid rgba(139,92,246,0.2);color:#8b5cf6;font-weight:600;font-style:italic;">\1</div>',
                 insights_html
             )
@@ -36700,8 +36715,8 @@ For each: meaning, benchmark, and action.""",
         
         prompt = report_prompts.get(report_type, report_prompts["management"])
         
-        system_prompt = f"""You are Zane, a senior CA(SA). You are writing a report for a CLIENT's uploaded trial balance.
-Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, CA(SA)" only.
+        system_prompt = f"""You are Zane, ClickAI's senior financial analyst. You are writing a report for a CLIENT's uploaded trial balance.
+Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, ClickAI" only.
 RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
 {"Write in Afrikaans." if lang == "af" else "Write in English."} Use R (Rand) for all amounts.
 
@@ -39139,7 +39154,7 @@ def smart_reports_page():
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('tb_analysis')">
                 <h4>TB Analysis</h4>
-                <p style="color:var(--text-muted);font-size:13px;">Full account-by-account CA(SA) review</p>
+                <p style="color:var(--text-muted);font-size:13px;">Full account-by-account financial review</p>
             </div>
             <div class="card report-btn" style="cursor:pointer" onclick="generateReport('kpi')">
                 <h4>KPI Dashboard</h4>
