@@ -13752,13 +13752,7 @@ FORMAT — OUTPUT CLEAN HTML ONLY (no markdown, no ## or **):
 - <div style="background:rgba(16,185,129,0.15);border-left:4px solid #10b981;padding:15px;border-radius:6px;margin:12px 0;color:#6ee7b7;"> for POSITIVE highlights
 - <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:25px 0;"> between sections
 
-CRITICAL RULES:
-- Do NOT repeat the raw data — ANALYZE and INTERPRET it
-- Do NOT list every debtor/creditor — focus on the TOP 5 and trends
-- Keep tables to the MOST IMPORTANT items only
-- Report should be 600-1000 words of INSIGHT, not data repetition
-- Start writing HTML immediately — no preamble, no thinking out loud
-- Complete ALL sections fully."""
+Report should be 800-1500 words. Complete ALL sections fully."""
 
         user_prompt = f"""{focus}
 
@@ -13771,41 +13765,17 @@ Write the full {report_title} now."""
 
         try:
             client = _anthropic_client
-            if not client:
-                logger.error("[REPORT] _anthropic_client is None!")
-                return None
-            
-            # Log prompt size to diagnose slow responses
-            prompt_len = len(system_prompt) + len(user_prompt)
-            logger.info(f"[REPORT] Calling Sonnet — prompt ~{prompt_len} chars, max_tokens=8000")
-            _start = time.time()
-            
             response = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=8000,
+                max_tokens=12000,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
             
-            elapsed = time.time() - _start
-            stop = response.stop_reason
-            in_tok = response.usage.input_tokens if response.usage else 0
-            out_tok = response.usage.output_tokens if response.usage else 0
-            logger.info(f"[REPORT] Sonnet done in {elapsed:.1f}s — stop={stop}, {in_tok}in/{out_tok}out")
-            
-            if stop == "max_tokens":
-                logger.warning(f"[REPORT] ⚠️ TRUNCATED! Output hit max_tokens ({out_tok} tokens used)")
-            
-            if response.content and response.content[0].text:
-                return response.content[0].text
-            else:
-                logger.error(f"[REPORT] Empty response from Sonnet! content={response.content}")
-                return None
+            return response.content[0].text
                 
         except Exception as e:
             logger.error(f"[REPORT] Sonnet exception: {e}")
-            import traceback
-            traceback.print_exc()
             return None
     
     @classmethod
@@ -13876,18 +13846,18 @@ Today's Sales: R{context.get('today_sales', 0):,.2f}
 === DEBTORS (Who owes us money) ===
 Total Owed to Us: R{context.get('total_debtors', 0):,.2f}
 Number of Debtors: {len(context.get('debtors', []))}
-Top Debtors (by amount): {json.dumps(context.get('customers_summary', [])[:20], default=str)}
+Debtors List: {json.dumps(context.get('customers_summary', []), default=str)}
 
 === CREDITORS (What we owe) ===
 Total We Owe: R{context.get('total_creditors', 0):,.2f}
 Number of Creditors: {len(context.get('creditors', []))}
-Top Creditors (by amount): {json.dumps(context.get('suppliers_summary', [])[:20], default=str)}
+Creditors List: {json.dumps(context.get('suppliers_summary', []), default=str)}
 
 === STOCK ===
 Total Items: {context.get('stock_count', 0)}
 Stock Value (at Cost): R{context.get('stock_value', 0):,.2f}
 Stock Value (at Retail): R{context.get('stock_retail_value', 0):,.2f}
-Low Stock Items: {json.dumps(context.get('low_stock', [])[:10], default=str)}
+Low Stock Items: {json.dumps(context.get('low_stock', []), default=str)}
 
 === PAYROLL ===
 Employees: {context.get('employee_count', 0)}
@@ -34126,10 +34096,13 @@ def report_tb():
                     insightBox.innerHTML = '<p style="color:var(--text-muted);"><span class="loading-dots">Zane is analyzing</span>...</p>';
                     
                     // Async — don't await, let it load in background
+                    const _insightCtrl = new AbortController();
+                    setTimeout(() => _insightCtrl.abort(), 120000);  // 2 min timeout
                     fetch('/api/reports/tb/insights', {{
                         method: 'POST',
                         headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{lang: lang}})
+                        body: JSON.stringify({{lang: lang}}),
+                        signal: _insightCtrl.signal
                     }})
                     .then(r => r.json())
                     .then(idata => {{
@@ -34253,10 +34226,13 @@ def report_tb():
                 const insightBox = document.getElementById('aiInsightsContent');
                 if (insightBox) {{
                     insightBox.innerHTML = '<p style="color:var(--text-muted);">Zane is analyzing...</p>';
+                    const _ctrl2 = new AbortController();
+                    setTimeout(() => _ctrl2.abort(), 120000);
                     fetch('/api/reports/tb/insights', {{
                         method: 'POST',
                         headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{lang: lang}})
+                        body: JSON.stringify({{lang: lang}}),
+                        signal: _ctrl2.signal
                     }})
                     .then(r => r.json())
                     .then(idata => {{
@@ -36022,14 +35998,25 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
         if not ANTHROPIC_API_KEY:
             return jsonify({"success": False, "error": "No API key"})
         
-        logger.info(f"[TB INSIGHTS] Starting async AI analysis for {report_company}")
+        if not _anthropic_client:
+            return jsonify({"success": False, "error": "AI client not ready"})
+        
+        prompt_len = len(insights_prompt)
+        logger.info(f"[TB INSIGHTS] Starting AI analysis for {report_company} — prompt ~{prompt_len} chars")
+        _start = time.time()
         
         client = _anthropic_client
         message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=3000,
+            model="claude-sonnet-4-6",
+            max_tokens=4000,
             messages=[{"role": "user", "content": insights_prompt}]
         )
+        
+        elapsed = time.time() - _start
+        stop = message.stop_reason
+        in_tok = message.usage.input_tokens if message.usage else 0
+        out_tok = message.usage.output_tokens if message.usage else 0
+        logger.info(f"[TB INSIGHTS] Sonnet done in {elapsed:.1f}s — stop={stop}, {in_tok}in/{out_tok}out")
         
         if message.content and message.content[0].text:
             insights_html = message.content[0].text
@@ -36052,7 +36039,9 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
             return jsonify({"success": False, "error": "AI returned empty"})
             
     except Exception as e:
-        logger.warning(f"[TB INSIGHTS] Failed: {e}")
+        logger.error(f"[TB INSIGHTS] Failed: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)[:200]})
 
 
@@ -36669,28 +36658,12 @@ FORMAT RULES - OUTPUT CLEAN HTML:
         if not ANTHROPIC_API_KEY:
             return jsonify({"success": False, "error": "AI not configured"})
         
-        if not _anthropic_client:
-            return jsonify({"success": False, "error": "AI client not initialized"})
-        
-        prompt_len = len(system_prompt) + len(data_for_ai) + len(prompt)
-        logger.info(f"[TB SMART REPORT] Calling Sonnet — prompt ~{prompt_len} chars")
-        _start = time.time()
-        
         message = _anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=8000,
+            max_tokens=12000,
             system=system_prompt,
             messages=[{"role": "user", "content": f"{data_for_ai}\n\n{prompt}"}]
         )
-        
-        elapsed = time.time() - _start
-        stop = message.stop_reason
-        in_tok = message.usage.input_tokens if message.usage else 0
-        out_tok = message.usage.output_tokens if message.usage else 0
-        logger.info(f"[TB SMART REPORT] Sonnet done in {elapsed:.1f}s — stop={stop}, {in_tok}in/{out_tok}out")
-        
-        if stop == "max_tokens":
-            logger.warning(f"[TB SMART REPORT] ⚠️ TRUNCATED at {out_tok} tokens!")
         
         report = message.content[0].text if message.content else ""
         
