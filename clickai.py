@@ -36049,7 +36049,7 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
         client = _anthropic_client
         message = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=8000,
+            max_tokens=12000,
             messages=[{"role": "user", "content": insights_prompt}]
         )
         
@@ -36061,16 +36061,16 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
             insights_html = message.content[0].text
             
             import re as _re
-            insights_html = _re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin:22px 0 10px 0;font-size:16px;">\1</h3>', insights_html, flags=_re.MULTILINE)
-            insights_html = _re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin:28px 0 14px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
-            insights_html = _re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;margin:28px 0 14px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin:20px 0 8px 0;font-size:16px;">\1</h3>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin:24px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;margin:24px 0 12px 0;">\1</h2>', insights_html, flags=_re.MULTILINE)
             insights_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#8b5cf6;">\1</strong>', insights_html)
-            insights_html = _re.sub(r'^\d+\. (.+)$', r'<div style="margin:10px 0 10px 15px;line-height:1.6;">→ \1</div>', insights_html, flags=_re.MULTILINE)
-            insights_html = _re.sub(r'^- (.+)$', r'<div style="margin:8px 0 8px 15px;line-height:1.6;">• \1</div>', insights_html, flags=_re.MULTILINE)
-            insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:18px 0;">', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^\d+\. (.+)$', r'<div style="margin:6px 0 6px 15px;">→ \1</div>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^- (.+)$', r'<div style="margin:5px 0 5px 15px;">• \1</div>', insights_html, flags=_re.MULTILINE)
+            insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', insights_html, flags=_re.MULTILINE)
             insights_html = _re.sub(r'\n{3,}', '<br><br>', insights_html)
             insights_html = _re.sub(r'\n\n', '<br><br>', insights_html)
-            insights_html = _re.sub(r'(?<!>)\n(?!<)', ' ', insights_html)
+            insights_html = _re.sub(r'(?<!>)\n(?!<)', '<br>', insights_html)
             
             logger.info(f"[TB INSIGHTS] AI analysis complete: {len(insights_html)} chars")
             return jsonify({"success": True, "insights": insights_html})
