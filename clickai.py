@@ -15969,6 +15969,68 @@ try:
 except Exception as e:
     logger.error(f"[BIZ-GROUP] Failed to register routes: {e}")
 
+# === DEBUG: Temporary endpoint to diagnose business group dropdown ===
+@app.route("/api/debug-businesses")
+@login_required
+def api_debug_businesses():
+    """DEBUG: Shows all ways we can find this user's businesses. Remove after fixing."""
+    user = Auth.get_current_user()
+    user_id = user.get("id", "") if user else "NO_USER"
+    user_email = (user.get("email", "") or "").lower() if user else ""
+    
+    debug = {
+        "user_id": user_id,
+        "user_email": user_email,
+        "session_business_id": session.get("business_id", ""),
+        "session_user_id": session.get("user_id", ""),
+    }
+    
+    # 1. Direct ownership
+    try:
+        owned = db.get("businesses", {"user_id": user_id}) if user_id else []
+        debug["owned_businesses"] = [{"id": b.get("id"), "name": b.get("name")} for b in (owned or [])]
+    except Exception as e:
+        debug["owned_error"] = str(e)
+    
+    # 2. Team members by email
+    try:
+        if user_email:
+            tm_email = db.get("team_members", {"email": user_email}) or []
+            debug["team_by_email"] = [{"business_id": t.get("business_id"), "role": t.get("role"), "status": t.get("status")} for t in tm_email]
+        else:
+            debug["team_by_email"] = "no_email"
+    except Exception as e:
+        debug["team_email_error"] = str(e)
+    
+    # 3. Team members by user_id
+    try:
+        tm_uid = db.get("team_members", {"user_id": user_id}) or []
+        debug["team_by_user_id"] = [{"business_id": t.get("business_id"), "role": t.get("role"), "status": t.get("status")} for t in tm_uid]
+    except Exception as e:
+        debug["team_uid_error"] = str(e)
+    
+    # 4. Auth._mem cache
+    try:
+        _bc = Auth._mem.get(f"bizlist:{user_id}")
+        if _bc:
+            debug["cached_bizlist"] = [{"id": b.get("id"), "name": b.get("name")} for b in _bc.get("d", [])]
+            debug["cache_age_seconds"] = int(time.time() - _bc.get("t", 0))
+        else:
+            debug["cached_bizlist"] = "NO_CACHE"
+    except Exception as e:
+        debug["cache_error"] = str(e)
+    
+    # 5. Current business from session
+    try:
+        biz_id = session.get("business_id")
+        if biz_id:
+            biz = db.get_one("businesses", biz_id)
+            debug["current_business"] = {"id": biz_id, "name": biz.get("name") if biz else "NOT_FOUND", "user_id_in_biz": biz.get("user_id") if biz else "N/A"}
+    except Exception as e:
+        debug["current_biz_error"] = str(e)
+    
+    return jsonify(debug)
+
 
 def get_user_role():
     """Get current user's role — in-memory cached (5 min)"""
@@ -67224,7 +67286,76 @@ def settings_business_groups():
     """Business Groups - Cross-business management"""
     user = Auth.get_current_user()
     
+    # === Fetch businesses server-side — MUST match what business switcher shows ===
+    import json as _json
+    user_id = user.get("id", "") if user else ""
+    biz_list = []
+    
+    try:
+        # METHOD 1: Use the SAME in-memory cache that render_page/business switcher uses
+        _bc = Auth._mem.get(f"bizlist:{user_id}") if user_id else None
+        if _bc and (time.time() - _bc.get("t", 0)) < 300:
+            businesses = _bc["d"]
+            logger.info(f"[BIZ-GROUP] Page: using cached bizlist, {len(businesses)} businesses")
+        else:
+            # METHOD 2: Full DB lookup (same as render_page + login combined)
+            businesses = []
+            seen_ids = set()
+            user_email = (user.get("email", "") or "").lower() if user else ""
+            
+            # 2a. Owned businesses (businesses.user_id = users.id)
+            owned = db.get("businesses", {"user_id": user_id}) if user_id else []
+            for b in (owned or []):
+                bid = b.get("id")
+                if bid and bid not in seen_ids:
+                    seen_ids.add(bid)
+                    businesses.append(b)
+            
+            # 2b. Team member by email
+            if user_email:
+                try:
+                    tm_by_email = db.get("team_members", {"email": user_email}) or []
+                    for tm in tm_by_email:
+                        mbid = tm.get("business_id")
+                        if mbid and mbid not in seen_ids:
+                            biz = db.get_one("businesses", mbid)
+                            if biz:
+                                seen_ids.add(mbid)
+                                businesses.append(biz)
+                except Exception:
+                    pass
+            
+            # 2c. Team member by user_id (login flow uses this too)
+            if user_id:
+                try:
+                    tm_by_uid = db.get("team_members", {"user_id": user_id}) or []
+                    for tm in tm_by_uid:
+                        mbid = tm.get("business_id")
+                        if mbid and mbid not in seen_ids:
+                            biz = db.get_one("businesses", mbid)
+                            if biz:
+                                seen_ids.add(mbid)
+                                businesses.append(biz)
+                except Exception:
+                    pass
+            
+            logger.info(f"[BIZ-GROUP] Page: fresh DB lookup, {len(businesses)} businesses for {user_id} / {user_email}")
+        
+        # Build the JSON list
+        for b in businesses:
+            bid = b.get("id")
+            bname = b.get("name") or b.get("business_name", "Unknown")
+            if bid:
+                biz_list.append({"id": bid, "name": bname})
+        
+    except Exception as e:
+        logger.error(f"[BIZ-GROUP] Server-side biz fetch error: {e}")
+    
+    biz_json = _json.dumps(biz_list)
+    logger.info(f"[BIZ-GROUP] Page load final: {len(biz_list)} businesses: {[b['name'] for b in biz_list]}")
+    
     content = '''
+    <script>var SERVER_BUSINESSES = ''' + biz_json + ''';</script>
     <div class="card" style="margin-bottom:20px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
             <div>
@@ -67357,7 +67488,13 @@ def settings_business_groups():
     });
 
     async function loadMyBusinesses() {
-        // Try from business switcher first
+        // PRIMARY: Use server-injected data (most reliable)
+        if (typeof SERVER_BUSINESSES !== 'undefined' && SERVER_BUSINESSES.length > 0) {
+            allBusinesses = SERVER_BUSINESSES;
+            console.log('[BIZ-GROUP] Loaded from server:', allBusinesses.length, 'businesses', allBusinesses);
+            return;
+        }
+        // FALLBACK 1: Business switcher dropdown
         const select = document.getElementById('businessSelect');
         if (select) {
             allBusinesses = [];
@@ -67366,11 +67503,12 @@ def settings_business_groups():
                     allBusinesses.push({ id: opt.value, name: opt.text });
                 }
             }
-            console.log('[BIZ-GROUP] From switcher:', allBusinesses.length, 'businesses');
-        } else {
-            console.log('[BIZ-GROUP] No businessSelect element found');
+            if (allBusinesses.length > 0) {
+                console.log('[BIZ-GROUP] Loaded from switcher:', allBusinesses.length);
+                return;
+            }
         }
-        // Always also fetch from API (more reliable)
+        // FALLBACK 2: API
         try {
             const resp = await fetch('/api/business-groups/my-businesses');
             const data = await resp.json();

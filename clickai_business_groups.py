@@ -116,30 +116,34 @@ class BusinessGroupManager:
 
     @staticmethod
     def add_business_to_group(db, group_id, business_id, owner_id):
-        """Add a business to a group. User must own both group and business."""
+        """Add a business to a group. User must have access to both group and business."""
         try:
             groups = db.get('business_groups', {'id': group_id, 'owner_id': owner_id})
             if not groups:
                 return {'success': False, 'error': 'Group not found or not owner'}
-            # Check ownership: direct owner OR team member with owner/admin role
+            # Check access: direct owner OR team member
             biz = db.get_one('businesses', business_id)
             if not biz:
                 return {'success': False, 'error': 'Business not found'}
-            is_owner = (biz.get('user_id') == owner_id)
-            if not is_owner:
-                # Check team_members for this user
+            has_access = (biz.get('user_id') == owner_id)
+            if not has_access:
                 try:
+                    # Check team_members by email
                     user_rec = db.get_one('users', owner_id)
                     user_email = (user_rec.get('email', '') if user_rec else '').lower()
                     if user_email:
                         members = db.get('team_members', {'email': user_email, 'business_id': business_id})
                         if members:
-                            role = (members[0].get('role', '') or '').lower()
-                            is_owner = role in ('owner', 'admin', '')
+                            has_access = True
+                    # Check team_members by user_id
+                    if not has_access:
+                        members2 = db.get('team_members', {'user_id': owner_id, 'business_id': business_id})
+                        if members2:
+                            has_access = True
                 except Exception:
                     pass
-            if not is_owner:
-                return {'success': False, 'error': 'Business not found or not owner'}
+            if not has_access:
+                return {'success': False, 'error': 'Business not found or no access'}
             existing = db.get('business_group_members', {
                 'group_id': group_id,
                 'business_id': business_id
@@ -575,7 +579,8 @@ def register_group_routes(app, db, login_required):
                     seen_ids.add(bid)
                     result.append({'id': bid, 'name': b.get('name', 'Unknown')})
 
-            # 2. Get user email from DB, then check team_members
+            # 2. Get user email from DB, then check team_members by email
+            user_email = ''
             try:
                 user_rec = db.get_one('users', owner_id) if owner_id else None
                 user_email = (user_rec.get('email', '') if user_rec else '').lower()
@@ -589,7 +594,20 @@ def register_group_routes(app, db, login_required):
                                 seen_ids.add(mbid)
                                 result.append({'id': mbid, 'name': biz[0].get('name', 'Unknown')})
             except Exception as e2:
-                logger.warning(f"[BIZ-GROUP] Team member lookup failed: {e2}")
+                logger.warning(f"[BIZ-GROUP] Team email lookup failed: {e2}")
+
+            # 3. Check team_members by user_id (some records use user_id instead of email)
+            try:
+                tm_by_uid = db.get('team_members', {'user_id': owner_id}) if owner_id else []
+                for tm in (tm_by_uid or []):
+                    mbid = tm.get('business_id')
+                    if mbid and mbid not in seen_ids:
+                        biz = db.get('businesses', {'id': mbid})
+                        if biz:
+                            seen_ids.add(mbid)
+                            result.append({'id': mbid, 'name': biz[0].get('name', 'Unknown')})
+            except Exception as e3:
+                logger.warning(f"[BIZ-GROUP] Team uid lookup failed: {e3}")
 
             logger.info(f"[BIZ-GROUP] my-businesses: found {len(result)} for user {owner_id}")
             return jsonify({'success': True, 'businesses': result})
