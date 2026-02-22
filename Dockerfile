@@ -20,4 +20,5 @@ COPY *.py .
 EXPOSE 8080
 
 # Run the app
-CMD ["python", "clickai.py"]
+CMD ["gunicorn", "-c", "gunicorn_config.py", "clickai:app"]
+

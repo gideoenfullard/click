@@ -73361,10 +73361,10 @@ class NightlyScheduler:
 # RUN
 # 
 
+# Start scheduler on import (works with BOTH gunicorn and direct python)
+NightlyScheduler.start()
 
 if __name__ == "__main__":
-    # Start the nightly scheduler when app loads
-    NightlyScheduler.start()
-
+    # Direct python run (local dev only - production uses gunicorn)
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
