@@ -35996,8 +35996,8 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
         
         client = _anthropic_client
         message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4000,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=3000,
             messages=[{"role": "user", "content": insights_prompt}]
         )
         
