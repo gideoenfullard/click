@@ -13807,70 +13807,118 @@ Write the full {report_title} now."""
         total_debtors = context.get('total_debtors', 0)
         debtor_days = (total_debtors / total_invoiced * 365) if total_invoiced > 0 else 0
         
+        # Creditor metrics
+        total_creditors = context.get('total_creditors', 0)
+        creditor_days = (total_creditors / cost_of_goods * 365) if cost_of_goods > 0 else 0
+        
         # Gross margin
         gross_margin_pct = ((total_invoiced - cost_of_goods) / total_invoiced * 100) if total_invoiced > 0 else 0
         
         # Net margin
         net_margin_pct = (net_profit / total_invoiced * 100) if total_invoiced > 0 else 0
         
+        # Expense ratio
+        expense_ratio = (total_expenses / total_invoiced * 100) if total_invoiced > 0 else 0
+        
+        # Payroll as % of revenue (annualise monthly payroll)
+        annual_payroll = total_payroll * 12
+        payroll_pct = (annual_payroll / total_invoiced * 100) if total_invoiced > 0 else 0
+        
+        # Balance sheet approximation from available data
+        # Current Assets = Debtors + Stock + (bank not available from this context)
+        current_assets_known = total_debtors + stock_value
+        # Current Liabilities = Creditors + next payroll
+        current_liab_known = total_creditors + total_payroll
+        
+        # Current Ratio (from known figures only)
+        current_ratio = current_assets_known / current_liab_known if current_liab_known > 0 else 0
+        
+        # Quick Ratio (current assets MINUS stock / current liabilities)
+        quick_ratio = (current_assets_known - stock_value) / current_liab_known if current_liab_known > 0 else 0
+        
+        # Revenue per employee
+        employee_count = context.get('employee_count', 0)
+        revenue_per_employee = total_invoiced / employee_count if employee_count > 0 else 0
+        
+        # Debtors concentration - top debtor as % of total
+        customers_summary = context.get('customers_summary', [])
+        top_debtor_pct = 0
+        top_debtor_name = "N/A"
+        if customers_summary and total_debtors > 0:
+            top = customers_summary[0]  # already sorted desc
+            top_bal = float(top.get('balance', 0) or 0)
+            top_debtor_pct = (top_bal / total_debtors * 100) if total_debtors > 0 else 0
+            top_debtor_name = top.get('name', 'Unknown')
+        
         summary = f"""
 ════════════════════════════════════════════════════════════════════════════════
-IMPORTANT: ALL NUMBERS BELOW ARE PRE-CALCULATED BY THE SYSTEM.
-DO NOT RECALCULATE OR CHANGE ANY OF THESE NUMBERS.
-JUST EXPLAIN WHAT THEY MEAN.
+IMPORTANT: ALL NUMBERS BELOW ARE PRE-CALCULATED BY PYTHON (100% ACCURATE).
+DO NOT RECALCULATE, ADD, SUBTRACT, MULTIPLY OR DIVIDE ANY NUMBERS.
+DO NOT INVENT NEW METRICS. IF IT IS NOT LISTED BELOW, SAY "not available".
+JUST EXPLAIN WHAT THE NUMBERS MEAN AND GIVE RECOMMENDATIONS.
 ════════════════════════════════════════════════════════════════════════════════
 
 BUSINESS: {context.get('business_name', 'Unknown')}
+TYPE: {context.get('business_type', 'General')}
 DATE: {today()}
 
-=== FINANCIAL OVERVIEW (PRE-CALCULATED) ===
-Total Invoiced: R{total_invoiced:,.2f}
-Total Expenses: R{total_expenses:,.2f}
+=== INCOME STATEMENT (PRE-CALCULATED) ===
+Total Invoiced (Revenue): R{total_invoiced:,.2f}
 Cost of Goods Sold: R{cost_of_goods:,.2f}
 Gross Profit: R{gross_profit:,.2f}
+Total Expenses: R{total_expenses:,.2f}
 Net Result: {profit_status}
 
-=== KEY METRICS (PRE-CALCULATED - DO NOT RECALCULATE) ===
+=== KEY RATIOS (PRE-CALCULATED — DO NOT RECALCULATE) ===
 Gross Margin: {gross_margin_pct:.1f}% (healthy: >30%)
 Net Margin: {net_margin_pct:.1f}% (healthy: >10%)
+Expense Ratio: {expense_ratio:.1f}% of revenue
 Debtor Days: {debtor_days:.0f} days (ideal: <45 days)
+Creditor Days: {creditor_days:.0f} days
 Stock Turnover: {stock_turnover:.1f}x per year (healthy: >4x)
 Days to Sell Stock: {days_to_sell:.0f} days
+Current Ratio: {current_ratio:.2f}:1 (healthy: >1.5:1) [based on debtors+stock vs creditors+payroll]
+Quick Ratio: {quick_ratio:.2f}:1 (healthy: >1.0:1) [debtors only vs creditors+payroll]
+Payroll % of Revenue: {payroll_pct:.1f}% (annualised, healthy: <30%)
+Revenue per Employee: R{revenue_per_employee:,.2f}
 
 === CASH POSITION ===
-Outstanding (Debtors owe us): R{context.get('total_outstanding', 0):,.2f}
+Outstanding Invoices (owed to us): R{context.get('total_outstanding', 0):,.2f}
 Already Paid: R{context.get('total_paid', 0):,.2f}
 POS Sales Total: R{context.get('total_sales', 0):,.2f}
 Today's Sales: R{context.get('today_sales', 0):,.2f}
 
 === DEBTORS (Who owes us money) ===
-Total Owed to Us: R{context.get('total_debtors', 0):,.2f}
+Total Owed to Us: R{total_debtors:,.2f}
 Number of Debtors: {len(context.get('debtors', []))}
-Debtors List: {json.dumps(context.get('customers_summary', []), default=str)}
+Top Debtor: {top_debtor_name} at {top_debtor_pct:.1f}% of total debtors
+Debtors (top 20): {json.dumps(customers_summary[:20], default=str)}
 
 === CREDITORS (What we owe) ===
-Total We Owe: R{context.get('total_creditors', 0):,.2f}
+Total We Owe: R{total_creditors:,.2f}
 Number of Creditors: {len(context.get('creditors', []))}
-Creditors List: {json.dumps(context.get('suppliers_summary', []), default=str)}
+Creditors (top 20): {json.dumps(context.get('suppliers_summary', [])[:20], default=str)}
 
 === STOCK ===
 Total Items: {context.get('stock_count', 0)}
-Stock Value (at Cost): R{context.get('stock_value', 0):,.2f}
+Stock Value (at Cost): R{stock_value:,.2f}
 Stock Value (at Retail): R{context.get('stock_retail_value', 0):,.2f}
-Low Stock Items: {json.dumps(context.get('low_stock', []), default=str)}
+Low Stock Items: {json.dumps(context.get('low_stock', [])[:10], default=str)}
 
 === PAYROLL ===
-Employees: {context.get('employee_count', 0)}
-Monthly Payroll Cost: R{context.get('total_payroll', 0):,.2f}
+Employees: {employee_count}
+Monthly Payroll Cost: R{total_payroll:,.2f}
+Annual Payroll Cost: R{annual_payroll:,.2f}
 
 === UPCOMING COMMITMENTS ===
-Payroll (due ~25th): R{context.get('total_payroll', 0):,.2f}
-Creditors (amounts owed): R{context.get('total_creditors', 0):,.2f}
-Total Commitments: R{context.get('total_payroll', 0) + context.get('total_creditors', 0):,.2f}
-Collectible from Debtors: R{context.get('total_debtors', 0):,.2f}
+Payroll (due ~25th): R{total_payroll:,.2f}
+Creditors (amounts owed): R{total_creditors:,.2f}
+Total Commitments: R{total_payroll + total_creditors:,.2f}
+Collectible from Debtors: R{total_debtors:,.2f}
 
 ════════════════════════════════════════════════════════════════════════════════
-REMINDER: All numbers above are FINAL. Do not calculate or change them.
+REMINDER: EVERY number above is FINAL. Do not calculate or derive new numbers.
+If you need a metric not listed above, say "Not available from current data."
 ════════════════════════════════════════════════════════════════════════════════
 """
         return summary
@@ -39252,7 +39300,7 @@ def smart_reports_page():
                 const data = await response.json();
                 reportHtml = data.success ? (data.analysis || '') : ('Error: ' + (data.error || 'Failed'));
                 
-                // Fire async insights fetch (was MISSING — this is why insights never loaded)
+                // Fire async insights fetch
                 if (data.success) {
                     setTimeout(() => {
                         const insightBox = document.getElementById('aiInsightsContent');
