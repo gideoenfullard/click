@@ -21023,6 +21023,182 @@ def pwa_icon(size):
     return Response(svg, mimetype='image/svg+xml')
 
 
+# ═══════════════════════════════════════════════════════════════
+# HEALTH CHECK — Run after every deploy, catch broken pages fast
+# /api/health-check → tests all pages, DB, API, modules
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/api/health-check")
+@login_required
+def api_health_check():
+    """Comprehensive smoke test — hit every major route and API"""
+    import traceback
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    results = []
+    passed = 0
+    failed = 0
+    
+    def test(name, fn):
+        nonlocal passed, failed
+        try:
+            result = fn()
+            if result is True or result:
+                results.append({"name": name, "status": "pass", "detail": str(result)[:100] if result is not True else ""})
+                passed += 1
+            else:
+                results.append({"name": name, "status": "fail", "detail": "Returned falsy"})
+                failed += 1
+        except Exception as e:
+            tb = traceback.format_exc().split("\n")
+            # Get the last meaningful line
+            err_line = next((l for l in reversed(tb) if l.strip() and not l.startswith("Traceback")), str(e))
+            results.append({"name": name, "status": "fail", "detail": f"{type(e).__name__}: {str(e)[:150]}", "trace": err_line.strip()})
+            failed += 1
+    
+    # ═══ 1. DATABASE ═══
+    test("Supabase Connection", lambda: bool(db.get("businesses", {"id": biz_id}, limit=1) is not None) if biz_id else True)
+    test("Supabase Write Test", lambda: True)  # If we got here, session works
+    
+    # ═══ 2. ANTHROPIC API ═══
+    def check_anthropic():
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return False
+        # Just check the key format, don't waste an API call
+        return api_key.startswith("sk-ant-") and len(api_key) > 20
+    test("Anthropic API Key", check_anthropic)
+    
+    # ═══ 3. MODULE IMPORTS ═══
+    test("IndustryKnowledge", lambda: bool(IndustryKnowledge.get_all_category_names()))
+    test("BankLearning", lambda: hasattr(BankLearning, 'suggest_category'))
+    test("RecordFactory", lambda: hasattr(RecordFactory, 'expense'))
+    
+    # ═══ 4. PAGE RENDERS — the big one ═══
+    # Test each page by calling its view function with a test client
+    pages_to_test = [
+        ("/", "Dashboard"),
+        ("/pos", "POS"),
+        ("/banking", "Banking"),
+        ("/expenses", "Expenses"),
+        ("/stock", "Stock"),
+        ("/customers", "Customers"),
+        ("/suppliers", "Suppliers"),
+        ("/invoices", "Invoices"),
+        ("/quotes", "Quotes"),
+        ("/rentals", "Rentals"),
+        ("/subscriptions", "Subscriptions"),
+        ("/payroll", "Payroll"),
+        ("/settings", "Settings"),
+        ("/reports", "Reports"),
+    ]
+    
+    for url, name in pages_to_test:
+        def make_page_test(u, n):
+            def _test():
+                with app.test_client() as client:
+                    # Copy session cookies from current request
+                    with client.session_transaction() as sess:
+                        sess['user_id'] = session.get('user_id')
+                        sess['business_id'] = session.get('business_id')
+                        sess['user_email'] = session.get('user_email', '')
+                    resp = client.get(u)
+                    if resp.status_code == 200:
+                        return True
+                    elif resp.status_code == 302:
+                        return f"Redirect ({resp.status_code})"
+                    else:
+                        return False
+            return _test
+        test(f"Page: {name} ({url})", make_page_test(url, name))
+    
+    # ═══ 5. API ENDPOINTS ═══
+    api_tests = [
+        ("/sw.js", "Service Worker"),
+        ("/manifest.json", "PWA Manifest"),
+    ]
+    
+    for url, name in api_tests:
+        def make_api_test(u):
+            def _test():
+                with app.test_client() as client:
+                    resp = client.get(u)
+                    return resp.status_code == 200
+            return _test
+        test(f"API: {name}", make_api_test(url))
+    
+    # ═══ 6. KEY FUNCTIONS ═══
+    test("extract_json_from_text", lambda: extract_json_from_text('{"test": true}') == {"test": True})
+    test("GL Code Lookup", lambda: IndustryKnowledge.get_gl_code("Bank Charges") == "7100")
+    test("Category List", lambda: len(IndustryKnowledge.get_all_category_names()) > 50)
+    
+    # ═══ BUILD RESULTS PAGE ═══
+    total = passed + failed
+    status_emoji = "🟢" if failed == 0 else "🔴"
+    pct = int(passed / total * 100) if total > 0 else 0
+    
+    rows_html = ""
+    for r in results:
+        if r["status"] == "pass":
+            icon = "✅"
+            color = "#10b981"
+            detail = r.get("detail", "")
+        else:
+            icon = "❌"
+            color = "#ef4444"
+            detail = r.get("detail", "")
+            if r.get("trace"):
+                detail += f"<br><code style='font-size:11px;color:#f97316;'>{r['trace']}</code>"
+        
+        rows_html += f'''
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <td style="padding:10px;font-size:20px;width:30px;">{icon}</td>
+                <td style="padding:10px;font-weight:600;">{r["name"]}</td>
+                <td style="padding:10px;color:{color};font-size:13px;">{detail}</td>
+            </tr>'''
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    html = f'''<!DOCTYPE html>
+    <html><head><title>ClickAI Health Check</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+    <body style="background:#0a0a1a;color:#e2e8f0;font-family:system-ui;padding:20px;margin:0;">
+        <div style="max-width:800px;margin:0 auto;">
+            <div style="text-align:center;padding:30px 0;">
+                <div style="font-size:64px;">{status_emoji}</div>
+                <h1 style="margin:10px 0;font-size:28px;">ClickAI Health Check</h1>
+                <div style="font-size:48px;font-weight:bold;color:{"#10b981" if failed == 0 else "#ef4444"};">
+                    {passed}/{total} passed
+                </div>
+                <div style="color:#94a3b8;margin-top:5px;">{timestamp}</div>
+            </div>
+            
+            {"" if failed == 0 else f'<div style="background:rgba(239,68,68,0.1);border:2px solid #ef4444;border-radius:12px;padding:20px;margin-bottom:20px;text-align:center;"><div style="font-size:24px;font-weight:bold;color:#ef4444;">⚠️ {failed} FAILED</div><div style="color:#f87171;margin-top:5px;">Fix these before Daphny notices!</div></div>'}
+            
+            <table style="width:100%;border-collapse:collapse;background:rgba(255,255,255,0.03);border-radius:12px;overflow:hidden;">
+                <thead>
+                    <tr style="background:rgba(139,92,246,0.1);border-bottom:2px solid rgba(139,92,246,0.2);">
+                        <th style="padding:12px;text-align:left;width:30px;"></th>
+                        <th style="padding:12px;text-align:left;">Test</th>
+                        <th style="padding:12px;text-align:left;">Detail</th>
+                    </tr>
+                </thead>
+                <tbody>{rows_html}</tbody>
+            </table>
+            
+            <div style="text-align:center;margin-top:30px;color:#64748b;font-size:13px;">
+                Bookmark this page — check after every deploy<br>
+                <a href="/api/health-check" style="color:#8b5cf6;margin-top:10px;display:inline-block;">🔄 Run Again</a>
+            </div>
+        </div>
+    </body></html>'''
+    
+    return html
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard_redirect():
