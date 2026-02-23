@@ -17936,6 +17936,8 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>{title} - Click AI</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#8b5cf6">
     {CSS}
 </head>
 <body data-business-id="{biz_id}" class="page-entering">
@@ -18497,6 +18499,14 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             initSmartPickers();
         }}
     }})();
+    </script>
+    <script>
+    // ═══ SERVICE WORKER REGISTRATION ═══
+    if ('serviceWorker' in navigator) {{
+        navigator.serviceWorker.register('/sw.js', {{scope: '/'}})
+            .then(reg => console.log('[SW] Registered:', reg.scope))
+            .catch(err => console.log('[SW] Registration failed (non-critical):', err));
+    }}
     </script>
 </body>
 </html>'''
@@ -20722,6 +20732,123 @@ def api_stock_dedup():
         "total_deleted": deleted_items + deleted_legacy,
         "remaining": final_count
     })
+
+
+# ═══════════════════════════════════════════════════════════════
+# PWA — SERVICE WORKER & MANIFEST (Offline POS Capability)
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/sw.js")
+def service_worker():
+    """Service Worker for offline POS capability"""
+    sw_js = """
+const CACHE_NAME = 'clickai-pos-v1';
+const OFFLINE_URLS = ['/pos'];
+
+// Install — cache POS page
+self.addEventListener('install', event => {
+    event.waitUntil(
+        caches.open(CACHE_NAME).then(cache => {
+            console.log('[SW] Caching POS page for offline use');
+            return cache.addAll(OFFLINE_URLS);
+        }).catch(err => console.log('[SW] Cache failed:', err))
+    );
+    self.skipWaiting();
+});
+
+// Activate — clean old caches
+self.addEventListener('activate', event => {
+    event.waitUntil(
+        caches.keys().then(keys => {
+            return Promise.all(
+                keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
+            );
+        })
+    );
+    self.clients.claim();
+});
+
+// Fetch — network first, cache fallback for POS page
+self.addEventListener('fetch', event => {
+    const url = new URL(event.request.url);
+    
+    // Only intercept same-origin navigation requests
+    if (url.origin !== location.origin) return;
+    
+    // For POS page — network first, cache fallback
+    if (url.pathname === '/pos') {
+        event.respondWith(
+            fetch(event.request).then(response => {
+                // Cache the fresh version
+                const clone = response.clone();
+                caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+                return response;
+            }).catch(() => {
+                console.log('[SW] Offline — serving cached POS page');
+                return caches.match(event.request).then(cached => {
+                    return cached || new Response(
+                        '<html><body style=\"background:#1a1a2e;color:white;text-align:center;padding:50px;font-family:Arial;\"><h1>Click AI - Offline</h1><p>POS page not cached yet. Connect to internet first, open POS, then offline will work.</p></body></html>',
+                        {headers: {'Content-Type': 'text/html'}}
+                    );
+                });
+            })
+        );
+        return;
+    }
+    
+    // For API calls — always network (offline queue handles failures in JS)
+    if (url.pathname.startsWith('/api/')) return;
+    
+    // For all other pages — network first, no cache fallback
+    // (we only cache POS for offline)
+});
+
+// Listen for sync events
+self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'CACHE_POS') {
+        caches.open(CACHE_NAME).then(cache => {
+            cache.add('/pos').then(() => console.log('[SW] POS page cache refreshed'));
+        });
+    }
+});
+"""
+    return Response(sw_js, mimetype='application/javascript',
+                    headers={'Service-Worker-Allowed': '/', 'Cache-Control': 'no-cache'})
+
+
+@app.route("/manifest.json")
+def manifest():
+    """PWA Manifest for installable app"""
+    manifest_data = {
+        "name": "Click AI — Business Management",
+        "short_name": "Click AI",
+        "description": "AI-Powered Business Management with Offline POS",
+        "start_url": "/pos",
+        "display": "standalone",
+        "background_color": "#1a1a2e",
+        "theme_color": "#8b5cf6",
+        "icons": [
+            {"src": "/api/icon/192", "sizes": "192x192", "type": "image/png"},
+            {"src": "/api/icon/512", "sizes": "512x512", "type": "image/png"}
+        ]
+    }
+    return jsonify(manifest_data)
+
+
+@app.route("/api/icon/<int:size>")
+def pwa_icon(size):
+    """Generate simple PWA icon dynamically"""
+    s = min(size, 512)
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{s}" height="{s}" viewBox="0 0 {s} {s}">
+        <rect width="{s}" height="{s}" rx="{s//8}" fill="#1a1a2e"/>
+        <text x="50%" y="48%" dominant-baseline="middle" text-anchor="middle" 
+              font-family="Arial,sans-serif" font-size="{s//3}" font-weight="bold" fill="#8b5cf6">Click</text>
+        <text x="50%" y="75%" dominant-baseline="middle" text-anchor="middle"
+              font-family="Arial,sans-serif" font-size="{s//5}" font-weight="bold" fill="#10b981">AI</text>
+    </svg>'''
+    # Return as SVG (works for PWA icons in most browsers)
+    return Response(svg, mimetype='image/svg+xml')
+
 
 @app.route("/dashboard")
 @login_required
@@ -41838,7 +41965,38 @@ def pos_page():
                 posLocked = false;
             }
         } catch (err) {
-            alert('Connection error');
+            // ═══ OFFLINE MODE: Queue sale locally instead of losing it ═══
+            if (!navigator.onLine || err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Network')) {
+                try {
+                    await queueOfflineSale({
+                        items: items,
+                        customer_id: customerId,
+                        customer_name: customerName,
+                        payment_method: method,
+                        subtotal: subtotal,
+                        vat: vat,
+                        total: grandTotal,
+                        cashier_id: currentCashierId,
+                        cashier_name: currentCashierName,
+                        offline_date: new Date().toISOString().slice(0,10),
+                        offline_time: new Date().toISOString()
+                    });
+                    
+                    const offlineNum = 'OFF' + Date.now().toString().slice(-6);
+                    alert('📴 OFFLINE SALE SAVED\\n\\n' +
+                          'Sale: ' + offlineNum + '\\n' +
+                          'Total: R' + grandTotal.toFixed(2) + '\\n' +
+                          'Method: ' + method.toUpperCase() + '\\n\\n' +
+                          'Saved locally. Will sync when internet returns.\\n\\n' +
+                          'Stock levels will update after sync.');
+                    clearCart();
+                    updateOfflineIndicator();
+                } catch (dbErr) {
+                    alert('OFFLINE SAVE FAILED\\n\\nCould not save sale locally.\\n\\nPlease write down:\\nTotal: R' + grandTotal.toFixed(2) + ' (' + method + ')');
+                }
+            } else {
+                alert('Connection error: ' + err.message);
+            }
             posLocked = false;
         }
     }
@@ -43850,6 +44008,154 @@ def pos_page():
             </div>
         </div>
     </div>
+    
+    <script>
+    // ═══════════════════════════════════════════════════════════
+    // OFFLINE POS — IndexedDB Queue & Auto-Sync
+    // Safe: If anything fails, POS works exactly as before
+    // ═══════════════════════════════════════════════════════════
+    (function() {
+        const DB_NAME = 'clickai_offline';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'pos_queue';
+        
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, DB_VERSION);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                    }
+                };
+                req.onsuccess = (e) => resolve(e.target.result);
+                req.onerror = (e) => reject(e.target.error);
+            });
+        }
+        
+        // Queue a sale for later sync
+        window.queueOfflineSale = async function(saleData) {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                saleData.queued_at = new Date().toISOString();
+                const req = tx.objectStore(STORE_NAME).add(saleData);
+                req.onsuccess = () => { console.log('[OFFLINE] Sale queued: R' + saleData.total); resolve(); };
+                req.onerror = () => reject(req.error);
+            });
+        };
+        
+        // Get all queued sales
+        async function getQueue() {
+            const db = await openDB();
+            return new Promise((resolve, reject) => {
+                const req = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => resolve([]);
+            });
+        }
+        
+        // Clear queue after sync
+        async function clearQueue() {
+            const db = await openDB();
+            return new Promise((resolve) => {
+                const req = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME).clear();
+                req.onsuccess = () => resolve();
+                req.onerror = () => resolve();
+            });
+        }
+        
+        // Sync offline sales to server
+        window.syncOfflineSales = async function() {
+            if (!navigator.onLine) { alert('Still offline — connect to internet first.'); return; }
+            
+            const queue = await getQueue();
+            if (queue.length === 0) { updateUI(); return; }
+            
+            const textEl = document.getElementById('offlineText');
+            if (textEl) textEl.textContent = '⏳ SYNCING ' + queue.length + '...';
+            
+            try {
+                const resp = await fetch('/api/pos/sync-offline', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ sales: queue })
+                });
+                const data = await resp.json();
+                
+                if (data.success) {
+                    await clearQueue();
+                    let msg = 'SYNC COMPLETE\\n\\n' + data.message;
+                    if (data.errors && data.errors.length) msg += '\\n\\nErrors:\\n' + data.errors.join('\\n');
+                    alert(msg);
+                    updateUI();
+                    if (data.synced > 0) location.reload();
+                } else {
+                    alert('Sync failed: ' + (data.error || 'Unknown'));
+                    updateUI();
+                }
+            } catch (err) {
+                alert('Sync failed: ' + err.message);
+                updateUI();
+            }
+        };
+        
+        // Update online/offline indicator
+        async function updateUI() {
+            const offlineEl = document.getElementById('offlineIndicator');
+            const onlineEl = document.getElementById('onlineIndicator');
+            const countEl = document.getElementById('offlineCount');
+            const textEl = document.getElementById('offlineText');
+            if (!offlineEl) return;
+            
+            try {
+                const queue = await getQueue();
+                const n = queue.length;
+                
+                if (!navigator.onLine) {
+                    // Offline
+                    offlineEl.style.display = 'inline-flex';
+                    offlineEl.style.alignItems = 'center';
+                    offlineEl.style.background = 'rgba(239,68,68,0.2)';
+                    offlineEl.style.color = '#fca5a5';
+                    if (onlineEl) onlineEl.style.display = 'none';
+                    textEl.textContent = '🔴 OFFLINE';
+                    if (n > 0) { countEl.style.display = 'inline'; countEl.textContent = n + ' queued'; }
+                    else { countEl.style.display = 'none'; }
+                } else if (n > 0) {
+                    // Online with pending sales — auto-sync
+                    offlineEl.style.display = 'inline-flex';
+                    offlineEl.style.alignItems = 'center';
+                    offlineEl.style.background = 'rgba(245,158,11,0.2)';
+                    offlineEl.style.color = '#fcd34d';
+                    if (onlineEl) onlineEl.style.display = 'none';
+                    textEl.textContent = '⚠️ SYNC';
+                    countEl.style.display = 'inline';
+                    countEl.textContent = n + ' pending';
+                    // Auto-sync after 2 seconds
+                    setTimeout(() => syncOfflineSales(), 2000);
+                } else {
+                    // Online, nothing pending
+                    offlineEl.style.display = 'none';
+                    if (onlineEl) { onlineEl.style.display = 'inline'; setTimeout(() => { onlineEl.style.display = 'none'; }, 3000); }
+                }
+            } catch (e) { console.log('[OFFLINE] UI update failed:', e); }
+        }
+        window.updateOfflineIndicator = updateUI;
+        
+        // Listen for connection changes
+        window.addEventListener('online', () => { console.log('[OFFLINE] Internet restored'); updateUI(); });
+        window.addEventListener('offline', () => { console.log('[OFFLINE] Internet lost'); updateUI(); });
+        
+        // Check on load
+        updateUI();
+        
+        // Cache POS page for offline via service worker
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({ type: 'CACHE_POS' });
+        }
+    })();
+    </script>
     '''
     
     return f'''<!DOCTYPE html>
@@ -43858,6 +44164,8 @@ def pos_page():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>POS - Click AI</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#8b5cf6">
     {CSS}
     {pos_css}
     <style>
@@ -43891,6 +44199,11 @@ def pos_page():
             <input type="hidden" id="customerData" value='{customer_json}'>
             <input type="hidden" id="posSettings" value='{pos_settings_json}'>
             <span class="pos-header-total" id="headerTotal">R0.00</span>
+            <span id="offlineIndicator" style="display:none;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;margin-left:8px;cursor:pointer;" onclick="syncOfflineSales()" title="Click to sync when online">
+                <span id="offlineText">🔴 OFFLINE</span>
+                <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;border-radius:3px;margin-left:4px;font-size:10px;"></span>
+            </span>
+            <span id="onlineIndicator" style="padding:2px 8px;border-radius:4px;font-size:10px;color:#10b981;display:none;">🟢 Online</span>
             <button class="pos-pay-btn cash" onclick="completeSale('cash')" id="btnCash" disabled><span class="key-hint">F1</span> CASH</button>
             <button class="pos-pay-btn card" onclick="completeSale('card')" id="btnCard" disabled><span class="key-hint">F2</span> CARD</button>
             <button class="pos-pay-btn account" onclick="completeSale('account')" id="btnAccount" disabled><span class="key-hint">F3</span> ACCOUNT</button>
@@ -43908,6 +44221,13 @@ def pos_page():
     
     {get_zane_chat()}
     {pos_js}
+    <script>
+    if ('serviceWorker' in navigator) {{
+        navigator.serviceWorker.register('/sw.js', {{scope: '/'}})
+            .then(r => console.log('[SW] POS registered'))
+            .catch(e => console.log('[SW] Non-critical:', e));
+    }}
+    </script>
 </body>
 </html>'''
 
@@ -44921,6 +45241,129 @@ def api_pos_sale():
     except Exception as e:
         logger.error(f"[POS] Sale error: {e}")
         return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/pos/sync-offline", methods=["POST"])
+@login_required
+def api_pos_sync_offline():
+    """Process queued offline POS sales — called when internet returns"""
+    try:
+        data = request.get_json() or {}
+        sales_queue = data.get("sales", [])
+        
+        if not sales_queue:
+            return jsonify({"success": True, "synced": 0, "message": "Nothing to sync"})
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        synced = 0
+        errors = []
+        
+        for queued_sale in sales_queue:
+            try:
+                items = queued_sale.get("items", [])
+                customer_id = queued_sale.get("customer_id", "")
+                payment_method = queued_sale.get("payment_method", "cash")
+                default_name = {"cash": "Cash Sale", "card": "Card Sale", "account": "Account Sale"}.get(payment_method, "Sale")
+                customer_name = queued_sale.get("customer_name") or default_name
+                cashier_id = queued_sale.get("cashier_id") or (user.get("id") if user else None)
+                
+                subtotal = Decimal(str(queued_sale.get("subtotal", 0)))
+                vat = Decimal(str(queued_sale.get("vat", 0)))
+                total = Decimal(str(queued_sale.get("total", 0)))
+                
+                # Use original date/time from when sale was made offline
+                sale_date = queued_sale.get("offline_date") or today()
+                sale_time = queued_sale.get("offline_time") or now()
+                
+                sale_id = generate_id()
+                sale_num = f"POS{int(time.time()) % 100000:05d}"
+                
+                sale = {
+                    "id": sale_id,
+                    "business_id": biz_id,
+                    "sale_number": sale_num,
+                    "date": sale_date,
+                    "customer_id": safe_uuid(customer_id),
+                    "customer_name": customer_name,
+                    "payment_method": payment_method,
+                    "items": json.dumps(items),
+                    "subtotal": float(subtotal),
+                    "vat": float(vat),
+                    "total": float(total),
+                    "created_by": cashier_id,
+                    "created_at": sale_time,
+                    "notes": f"OFFLINE SALE — synced {now()}"
+                }
+                
+                success, err = db.save("sales", sale)
+                if not success and "created_by" in str(err):
+                    sale.pop("created_by", None)
+                    sale["notes"] = f"OFFLINE SALE — Cashier: {queued_sale.get('cashier_name', '')} — synced {now()}"
+                    success, err = db.save("sales", sale)
+                
+                if not success:
+                    errors.append(f"Sale R{total}: {str(err)[:100]}")
+                    continue
+                
+                # GL entries
+                if payment_method == "cash":
+                    debit_account, debit_name = "1100", "Cash"
+                elif payment_method == "card":
+                    debit_account, debit_name = "1000", "Card"
+                else:
+                    debit_account, debit_name = "1200", "Account"
+                
+                create_journal_entry(
+                    biz_id, sale_date,
+                    f"OFFLINE POS Sale {sale_num} - {customer_name} ({debit_name})",
+                    sale_num,
+                    [
+                        {"account_code": debit_account, "debit": float(total), "credit": 0},
+                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
+                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
+                    ]
+                )
+                
+                # Update stock
+                for item in items:
+                    stock_id = item.get("stock_id")
+                    qty_sold = int(item.get("quantity", 0))
+                    if stock_id and qty_sold > 0:
+                        stock_item = db.get_one_stock(stock_id)
+                        if stock_item:
+                            current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
+                            new_qty = current_qty - qty_sold
+                            db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                
+                # Update customer balance for account sales
+                if payment_method == "account" and customer_id:
+                    try:
+                        cust = db.get_by_id("customers", customer_id)
+                        if cust:
+                            old_bal = float(cust.get("balance") or 0)
+                            db.update("customers", customer_id, {"balance": old_bal + float(total)})
+                    except Exception:
+                        pass
+                
+                synced += 1
+                logger.info(f"[POS OFFLINE SYNC] Sale {sale_num}: R{total:.2f} ({payment_method}) — originally {sale_date} {sale_time}")
+                
+            except Exception as e:
+                errors.append(f"Sale error: {str(e)[:100]}")
+        
+        msg = f"Synced {synced}/{len(sales_queue)} offline sales"
+        if errors:
+            msg += f" ({len(errors)} errors)"
+        
+        logger.info(f"[POS OFFLINE SYNC] {msg}")
+        return jsonify({"success": True, "synced": synced, "errors": errors, "message": msg})
+        
+    except Exception as e:
+        logger.error(f"[POS OFFLINE SYNC] Failed: {e}")
+        return jsonify({"success": False, "error": str(e)[:200]})
 
 
 @app.route("/api/pos/quote", methods=["POST"])
