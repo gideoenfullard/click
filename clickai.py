@@ -83,6 +83,11 @@ try:
 except ImportError:
     PULSE_KNOWLEDGE_LOADED = False
 try:
+    from clickai_banking_knowledge import get_relevant_banking_knowledge, format_banking_knowledge
+    BANKING_KNOWLEDGE_LOADED = True
+except ImportError:
+    BANKING_KNOWLEDGE_LOADED = False
+try:
     from clickai_business_groups import BusinessGroupManager, register_group_routes
     BUSINESS_GROUPS_LOADED = True
 except ImportError:
@@ -56418,6 +56423,26 @@ def api_banking_zane_suggest():
         # ═══ PRIORITY 3: KNOWN PATTERNS — obvious matches, still go through AI drill-down ═══
         if not user_answer:
             desc_upper = description.upper()
+            
+            # For EFTPOS: trust the CR/DR in the description, not the column
+            if "EFTPOS" in desc_upper or "SETTLEMENT" in desc_upper:
+                if "SETTLEMENT CR" in desc_upper or " CR " in desc_upper:
+                    logger.info(f"[BANK ZANE] EFTPOS CR: '{description[:40]}' → Sales — Card Machine")
+                    return jsonify({
+                        "success": True, "category": "Sales — Card Machine",
+                        "reason": "Card machine settlement — money received from card sales.",
+                        "confidence": 0.9, "source": "known_pattern",
+                        "needs_clarification": False, "all_categories": all_category_names
+                    })
+                elif "SETTLEMENT DR" in desc_upper or " DR " in desc_upper:
+                    logger.info(f"[BANK ZANE] EFTPOS DR: '{description[:40]}' → Card Machine Fees")
+                    return jsonify({
+                        "success": True, "category": "Card Machine Fees",
+                        "reason": "EFTPOS settlement fee charged by the bank.",
+                        "confidence": 0.9, "source": "known_pattern",
+                        "needs_clarification": False, "all_categories": all_category_names
+                    })
+            
             is_income = credit > 0
             
             # Map obvious descriptions to exact category names
@@ -56455,8 +56480,6 @@ def api_banking_zane_suggest():
             }
             
             KNOWN_INCOME = {
-                "EFTPOS": ("Sales — Card Machine", "Card machine settlement from the bank."),
-                "CREDIT CARD.*SETTLEMENT.*CR": ("Sales — Card Machine", "Card machine settlement — money received from card sales."),
                 "SPEEDPOINT": ("Sales — Card Machine", "Speedpoint card machine settlement."),
                 "YOCO": ("Sales — Card Machine", "Yoco card payment settlement."),
                 "IKHOKHA": ("Sales — Card Machine", "iKhokha card payment settlement."),
@@ -56485,15 +56508,6 @@ def api_banking_zane_suggest():
                             "confidence": 0.9, "source": "known_pattern",
                             "needs_clarification": False, "all_categories": all_category_names
                         })
-            
-            # EFTPOS DR (debit side of settlement) = bank fees
-            if "EFTPOS" in desc_upper and not is_income:
-                return jsonify({
-                    "success": True, "category": "Card Machine Fees",
-                    "reason": "EFTPOS settlement fee charged by the bank.",
-                    "confidence": 0.85, "source": "known_pattern",
-                    "needs_clarification": False, "all_categories": all_category_names
-                })
         
         # ═══ PRIORITY 4: AI (Haiku) — smart drill-down for everything else ═══
         # Get recent learned patterns for context
@@ -56508,7 +56522,19 @@ def api_banking_zane_suggest():
         amount = debit if debit > 0 else credit
         all_categories_for_ai = IndustryKnowledge.build_category_list_for_ai()
         
+        # Get SA-specific context for this transaction
+        banking_context = ""
+        if BANKING_KNOWLEDGE_LOADED:
+            try:
+                bk_chunks = get_relevant_banking_knowledge(description, max_chunks=1)
+                if bk_chunks:
+                    banking_context = format_banking_knowledge(bk_chunks)
+                    logger.info(f"[BANK ZANE] Knowledge hit for '{description[:30]}'")
+            except Exception:
+                pass
+        
         prompt = f"""You are Zane, a bookkeeper. Pick a category for this bank transaction. Be direct — no filler, no emojis.
+{banking_context}
 
 DIRECTION: {"MONEY IN — this is income/deposit/payment received" if credit > 0 else "MONEY OUT — this is an expense/payment made"}
 Transaction: "{description}", {date}, R{amount:,.2f}
