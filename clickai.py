@@ -56207,7 +56207,39 @@ def api_banking_zane_suggest():
         # Get all available categories — comprehensive list
         all_category_names = IndustryKnowledge.get_all_category_names()
         
-        # ═══ INSTANT KNOWN PATTERNS — no AI needed for obvious transactions ═══
+        # ═══ PRIORITY 1: SCANNED INVOICE MATCH — user already scanned this, trust it ═══
+        if not user_answer:
+            amount = debit if debit > 0 else credit
+            direction = "out" if debit > 0 else "in"
+            inv_match = InvoiceMatch.find_match(biz_id, description, amount, date, direction)
+            if inv_match and inv_match.get("confidence", 0) >= 0.5:
+                logger.info(f"[BANK ZANE] Invoice match: '{description[:30]}' → {inv_match.get('category', '')}")
+                return jsonify({
+                    "success": True,
+                    "category": inv_match.get("category", ""),
+                    "reason": inv_match.get("reason", "Matched to scanned invoice"),
+                    "confidence": inv_match.get("confidence", 0.8),
+                    "source": "invoice_match",
+                    "needs_clarification": False,
+                    "vat_warning": "",
+                    "match_reference": inv_match.get("reference", ""),
+                    "all_categories": all_category_names
+                })
+        
+        # ═══ PRIORITY 2: BANKLEARNING — user already categorized this type before ═══
+        existing = BankLearning.suggest_category(biz_id, description)
+        if existing and existing.get("confidence", 0) >= 0.85 and not user_answer:
+            return jsonify({
+                "success": True,
+                "category": existing.get("category", ""),
+                "reason": f"I've seen this type of transaction {existing.get('times_seen', 1)} times before — always {existing.get('category')}.",
+                "confidence": existing.get("confidence", 0.85),
+                "source": "learned",
+                "needs_clarification": False,
+                "all_categories": all_category_names
+            })
+        
+        # ═══ PRIORITY 3: KNOWN PATTERNS — obvious matches, still go through AI drill-down ═══
         if not user_answer:
             desc_upper = description.upper()
             is_income = credit > 0
@@ -56287,37 +56319,7 @@ def api_banking_zane_suggest():
                     "needs_clarification": False, "all_categories": all_category_names
                 })
         
-        # Check if BankLearning already has a high-confidence match
-        existing = BankLearning.suggest_category(biz_id, description)
-        if existing and existing.get("confidence", 0) >= 0.85 and not user_answer:
-            return jsonify({
-                "success": True,
-                "category": existing.get("category", ""),
-                "reason": f"I've seen this type of transaction {existing.get('times_seen', 1)} times before — always {existing.get('category')}.",
-                "confidence": existing.get("confidence", 0.85),
-                "source": "learned",
-                "needs_clarification": False,
-                "all_categories": all_category_names
-            })
-        
-        # ═══ INVOICE MATCH — check if this transaction matches a scanned invoice ═══
-        if not user_answer:
-            amount = debit if debit > 0 else credit
-            direction = "out" if debit > 0 else "in"
-            inv_match = InvoiceMatch.find_match(biz_id, description, amount, date, direction)
-            if inv_match and inv_match.get("confidence", 0) >= 0.5:
-                return jsonify({
-                    "success": True,
-                    "category": inv_match.get("category", ""),
-                    "reason": inv_match.get("reason", "Matched to invoice"),
-                    "confidence": inv_match.get("confidence", 0.8),
-                    "source": "invoice_match",
-                    "needs_clarification": False,
-                    "vat_warning": "",
-                    "match_reference": inv_match.get("reference", ""),
-                    "all_categories": all_category_names
-                })
-        
+        # ═══ PRIORITY 4: AI (Haiku) — smart drill-down for everything else ═══
         # Get recent learned patterns for context
         patterns = db.get("bank_patterns", {"business_id": biz_id}) or []
         pattern_examples = ""
