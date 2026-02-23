@@ -42674,12 +42674,9 @@ def pos_page():
                     });
                     
                     const offlineNum = 'OFF' + Date.now().toString().slice(-6);
-                    alert('📴 OFFLINE SALE SAVED\\n\\n' +
-                          'Sale: ' + offlineNum + '\\n' +
-                          'Total: R' + grandTotal.toFixed(2) + '\\n' +
-                          'Method: ' + method.toUpperCase() + '\\n\\n' +
-                          'Saved locally. Will sync when internet returns.\\n\\n' +
-                          'Stock levels will update after sync.');
+                    
+                    // ═══ STILL PRINT — LAN printer works without internet ═══
+                    showPrintDialog(offlineNum, '', method, customer, items, subtotal, vat, grandTotal, cashReceived, changeGiven);
                     clearCart();
                     updateOfflineIndicator();
                 } catch (dbErr) {
@@ -44166,6 +44163,7 @@ def pos_page():
                 ${posSettings.phone ? '<div style="font-size:18px;color:#666;">Tel: ' + posSettings.phone + '</div>' : ''}
                 ${posSettings.vat_number ? '<div style="font-size:18px;color:#666;">VAT: ' + posSettings.vat_number + '</div>' : ''}
                 <div style="margin-top:10px;font-size:22px;font-weight:bold;">${saleNum}</div>
+                ${saleNum.startsWith('OFF') ? '<div style="background:#dc2626;color:white;padding:4px 10px;border-radius:4px;font-size:14px;display:inline-block;margin-top:6px;">📴 OFFLINE — Will sync when internet returns</div>' : ''}
                 <div style="font-size:18px;color:#666;">${date} ${time}</div>
                 ${currentCashierName ? '<div style="font-size:16px;color:#666;margin-top:4px;">Cashier: ' + currentCashierName + '</div>' : ''}
             </div>
@@ -44232,9 +44230,6 @@ def pos_page():
     function doPrintSlip(format) {
         const slipContent = document.getElementById('slipContent').innerHTML;
         
-        // Create print window
-        const printWin = window.open('', '_blank', 'width=400,height=600');
-        
         const styles = format === 'thermal' ? `
             body { 
                 width: 72mm; 
@@ -44244,6 +44239,7 @@ def pos_page():
                 font-size: 16px;
             }
             @page { size: 80mm auto; margin: 0; }
+            @media print { body { width: 72mm; } }
         ` : `
             body { 
                 width: 210mm; 
@@ -44254,42 +44250,56 @@ def pos_page():
             @page { size: A4; margin: 20mm; }
         `;
         
-        printWin.document.write(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Slip</title>
-                <style>${styles}</style>
-            </head>
-            <body>${slipContent}</body>
-            </html>
-        `);
+        // Use hidden iframe instead of popup (popup blockers won't interfere)
+        let printFrame = document.getElementById('posPrintFrame');
+        if (!printFrame) {
+            printFrame = document.createElement('iframe');
+            printFrame.id = 'posPrintFrame';
+            printFrame.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:none;';
+            document.body.appendChild(printFrame);
+        }
         
-        printWin.document.close();
+        const doc = printFrame.contentDocument || printFrame.contentWindow.document;
+        doc.open();
+        doc.write(`<!DOCTYPE html><html><head><title>Slip</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
+        doc.close();
         
-        // Print after content loads
-        printWin.onload = function() {
-            printWin.print();
+        // Print after content renders
+        setTimeout(() => {
+            try {
+                printFrame.contentWindow.focus();
+                printFrame.contentWindow.print();
+            } catch(e) {
+                // Fallback: try window.open if iframe print fails
+                const printWin = window.open('', '_blank', 'width=400,height=600');
+                if (printWin) {
+                    printWin.document.write(`<!DOCTYPE html><html><head><title>Slip</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
+                    printWin.document.close();
+                    printWin.onload = function() { printWin.print(); setTimeout(() => printWin.close(), 500); };
+                } else {
+                    alert('Popup blocked — enable popups for this site, or set your thermal printer as default and press Ctrl+P');
+                }
+            }
             
-            // Handle duplicates - print 2nd copy automatically for store record
+            // Handle duplicates - print 2nd copy for store record
             if (posSettings.print_duplicates) {
                 setTimeout(() => {
-                    // Auto print 2nd copy (store copy) - no confirmation needed
-                    printWin.print();
+                    try {
+                        printFrame.contentWindow.focus();
+                        printFrame.contentWindow.print();
+                    } catch(e) {}
                     setTimeout(() => {
-                        printWin.close();
                         closePrintModal();
                         location.reload();
                     }, 500);
-                }, 1000);  // Wait 1 second between prints
+                }, 2000);  // Wait 2 seconds between prints
             } else {
                 setTimeout(() => {
-                    printWin.close();
                     closePrintModal();
                     location.reload();
                 }, 500);
             }
-        };
+        }, 300);
     }
     
     function closePrintModal() {
