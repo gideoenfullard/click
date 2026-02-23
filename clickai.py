@@ -53876,7 +53876,10 @@ def banking_page():
                 const vatWarning = data.vat_warning ? `<div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:6px 8px;border-radius:4px;font-size:11px;color:#000;margin-top:8px;">${{data.vat_warning}}</div>` : '';
                 
                 actionCell.innerHTML = `
-                    <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
+                    <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;position:relative;">
+                        <button onclick="resetAskZane('${{txnId}}', '${{description.replace(/'/g, "\\\\'")}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                                style="position:absolute;top:6px;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;line-height:1;" 
+                                title="Close">✕</button>
                         <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">${{confText}}${{learnedBadge}}</div>
                         <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">${{data.category}}</div>
                         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">${{data.reason}}</div>
@@ -53900,6 +53903,24 @@ def banking_page():
         }} catch (err) {{
             actionCell.innerHTML = `<div style="color:var(--red);font-size:12px;">Could not analyze — <a href="#" onclick="askZaneBank('${{txnId}}','${{description}}', ${{debit}}, ${{credit}}, '${{date}}');return false;" style="color:var(--primary);">try again</a></div>`;
         }}
+    }}
+    
+    // Reset Ask Zane popup back to original buttons
+    function resetAskZane(txnId, description, debit, credit, date) {{
+        const row = document.querySelector(`tr[data-id="${{txnId}}"]`);
+        const actionCell = row ? row.querySelectorAll('td')[row.querySelectorAll('td').length - 1] : null;
+        if (!actionCell) return;
+        
+        const safeDesc = description.replace(/'/g, "\\'");
+        const catOptions = (window._allCategories || []).map(c => `<option value="${{c}}">${{c}}</option>`).join('');
+        actionCell.innerHTML = `
+            <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+                <button onclick="askZaneBank('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}')" class="btn" style="padding:7px 14px;font-size:12px;background:var(--primary);border:none;color:white;border-radius:6px;font-weight:600;">Ask Zane</button>
+                <select class="form-input" style="width:120px;padding:4px;font-size:11px;" onchange="categorizeTransaction('${{txnId}}', this.value, '${{safeDesc}}')">
+                    <option value="">Manual...</option>
+                    ${{catOptions}}
+                </select>
+            </div>`;
     }}
     
     function showSearchableCategories(txnId, description, cats, hint) {{
