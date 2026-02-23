@@ -56207,6 +56207,86 @@ def api_banking_zane_suggest():
         # Get all available categories — comprehensive list
         all_category_names = IndustryKnowledge.get_all_category_names()
         
+        # ═══ INSTANT KNOWN PATTERNS — no AI needed for obvious transactions ═══
+        if not user_answer:
+            desc_upper = description.upper()
+            is_income = credit > 0
+            
+            # Map obvious descriptions to exact category names
+            KNOWN_EXPENSE = {
+                "TELKOM": ("Telephone — Landline", "Telkom is your landline provider."),
+                "VODACOM": ("Cellphone / Mobile", "Vodacom mobile account."),
+                "MTN": ("Cellphone / Mobile", "MTN mobile account."),
+                "CELL C": ("Cellphone / Mobile", "Cell C mobile account."),
+                "RAIN ": ("Internet / WiFi", "Rain internet/data provider."),
+                "ESKOM": ("Electricity", "Eskom electricity account."),
+                "PREPAID ELEC": ("Electricity", "Prepaid electricity purchase."),
+                "BANK CHARGES": ("Bank Charges", "Monthly bank service fees."),
+                "SERVICE FEE": ("Bank Charges", "Bank service fee."),
+                "MONTHLY FEE": ("Bank Charges", "Monthly bank fee."),
+                "CASH DEPOSIT FEE": ("Bank Charges", "Bank cash deposit fee."),
+                "SARS": ("VAT Payment to SARS", "SARS tax payment."),
+                "SANTAM": ("Insurance — Business / Contents", "Santam insurance premium."),
+                "OUTSURANCE": ("Insurance — Business / Contents", "OUTsurance premium."),
+                "DISCOVERY": ("Insurance — Life / Key Person", "Discovery insurance/medical."),
+                "ENGEN": ("Fuel — Business Vehicle", "Fuel purchase at Engen."),
+                "SASOL ": ("Fuel — Business Vehicle", "Fuel purchase at Sasol."),
+                "SHELL ": ("Fuel — Business Vehicle", "Fuel purchase at Shell."),
+                "BP ": ("Fuel — Business Vehicle", "Fuel purchase at BP."),
+                "CALTEX": ("Fuel — Business Vehicle", "Fuel purchase at Caltex."),
+                "TOTAL GARAGE": ("Fuel — Business Vehicle", "Fuel purchase."),
+                "TAKEALOT": ("Office Supplies", "Online purchase from Takealot."),
+                "MAKRO": ("Stock Purchases — General", "Makro bulk purchase."),
+                "BUILDERS": ("Stock Purchases — Hardware", "Builders Warehouse hardware."),
+                "CASHBUILD": ("Stock Purchases — Hardware", "Cashbuild building materials."),
+                "GAME ": ("Office Supplies", "Game store purchase."),
+                "DSTV": ("DSTV / Streaming", "DStv subscription."),
+                "MULTICHOICE": ("DSTV / Streaming", "MultiChoice subscription."),
+                "NETFLIX": ("DSTV / Streaming", "Netflix streaming subscription."),
+                "UBER": ("Travel — Local", "Uber transport."),
+            }
+            
+            KNOWN_INCOME = {
+                "EFTPOS": ("Sales — Card Machine", "Card machine settlement from the bank."),
+                "CREDIT CARD.*SETTLEMENT.*CR": ("Sales — Card Machine", "Card machine settlement — money received from card sales."),
+                "SPEEDPOINT": ("Sales — Card Machine", "Speedpoint card machine settlement."),
+                "YOCO": ("Sales — Card Machine", "Yoco card payment settlement."),
+                "IKHOKHA": ("Sales — Card Machine", "iKhokha card payment settlement."),
+                "POS DEP": ("POS Deposit", "Point of sale deposit."),
+            }
+            
+            # Check expense patterns (also catch credits/refunds from known expense providers)
+            for keyword, (cat, reason) in KNOWN_EXPENSE.items():
+                if keyword in desc_upper:
+                    if is_income:
+                        reason = f"Credit/refund from {keyword.strip()} — verify if this should be {cat}."
+                    logger.info(f"[BANK ZANE] Instant match: '{description[:30]}' → {cat}")
+                    return jsonify({
+                        "success": True, "category": cat, "reason": reason,
+                        "confidence": 0.85 if is_income else 0.9, "source": "known_pattern",
+                        "needs_clarification": False, "all_categories": all_category_names
+                    })
+            
+            # Check income patterns  
+            if is_income:
+                for keyword, (cat, reason) in KNOWN_INCOME.items():
+                    if re.search(keyword, desc_upper):
+                        logger.info(f"[BANK ZANE] Instant match: '{description[:30]}' → {cat}")
+                        return jsonify({
+                            "success": True, "category": cat, "reason": reason,
+                            "confidence": 0.9, "source": "known_pattern",
+                            "needs_clarification": False, "all_categories": all_category_names
+                        })
+            
+            # EFTPOS DR (debit side of settlement) = bank fees
+            if "EFTPOS" in desc_upper and not is_income:
+                return jsonify({
+                    "success": True, "category": "Card Machine Fees",
+                    "reason": "EFTPOS settlement fee charged by the bank.",
+                    "confidence": 0.85, "source": "known_pattern",
+                    "needs_clarification": False, "all_categories": all_category_names
+                })
+        
         # Check if BankLearning already has a high-confidence match
         existing = BankLearning.suggest_category(biz_id, description)
         if existing and existing.get("confidence", 0) >= 0.85 and not user_answer:
@@ -56293,10 +56373,11 @@ Need more info: {{"needs_clarification":true,"question":"[plain question]","opti
         )
         
         if resp.status_code != 200:
-            logger.error(f"[BANK ZANE] API error: {resp.status_code}")
+            logger.error(f"[BANK ZANE] API error: {resp.status_code} — {resp.text[:300]}")
             return jsonify({"success": False, "error": "AI unavailable", "all_categories": all_category_names})
         
         ai_text = resp.json().get("content", [{}])[0].get("text", "")
+        logger.info(f"[BANK ZANE] Raw AI response for '{description[:30]}': {ai_text[:200]}")
         
         # Try to parse as JSON first (new format)
         suggestion = extract_json_from_text(ai_text)
@@ -56336,21 +56417,42 @@ Need more info: {{"needs_clarification":true,"question":"[plain question]","opti
                 elif line.upper().startswith("CONFIDENCE:"):
                     confidence = line.split(":", 1)[1].strip().lower()
         
-        # Validate category against available list
+        # Validate category against available list — with SMART fuzzy matching
         valid = False
+        
+        # Try 1: Exact match
         for c in all_category_names:
             if c.lower() == category.lower():
-                category = c  # Use exact casing
+                category = c
                 valid = True
                 break
         
+        # Try 2: Partial/contains match
         if not valid and category:
-            # Try partial match
             for c in all_category_names:
                 if category.lower() in c.lower() or c.lower() in category.lower():
                     category = c
                     valid = True
                     break
+        
+        # Try 3: Word overlap match (e.g. "Telephone" matches "Telephone — Landline")
+        if not valid and category:
+            cat_words = set(category.lower().replace("—", "").replace("-", "").split())
+            best_match = None
+            best_overlap = 0
+            for c in all_category_names:
+                c_words = set(c.lower().replace("—", "").replace("-", "").split())
+                overlap = len(cat_words & c_words)
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_match = c
+            if best_match and best_overlap >= 1:
+                category = best_match
+                valid = True
+                logger.info(f"[BANK ZANE] Fuzzy matched '{suggestion.get('category', category)}' → {category}")
+        
+        if not valid:
+            logger.warning(f"[BANK ZANE] No valid category match for AI response: '{category}' from '{ai_text[:100]}'")
         
         conf_score = {"hoog": 0.9, "high": 0.9, "medium": 0.7, "laag": 0.4, "low": 0.4}.get(confidence, 0.7)
         
