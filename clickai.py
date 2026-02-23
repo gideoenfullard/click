@@ -20742,8 +20742,8 @@ def api_stock_dedup():
 def service_worker():
     """Service Worker for offline POS capability"""
     sw_js = """
-const CACHE_NAME = 'clickai-pos-v1';
-const OFFLINE_URLS = ['/pos'];
+const CACHE_NAME = 'clickai-pos-v2';
+const OFFLINE_URLS = ['/pos', '/expenses'];
 
 // Install — cache POS page
 self.addEventListener('install', event => {
@@ -20775,8 +20775,8 @@ self.addEventListener('fetch', event => {
     // Only intercept same-origin navigation requests
     if (url.origin !== location.origin) return;
     
-    // For POS page — network first, cache fallback
-    if (url.pathname === '/pos') {
+    // For POS and Expenses pages — network first, cache fallback
+    if (url.pathname === '/pos' || url.pathname === '/expenses') {
         event.respondWith(
             fetch(event.request).then(response => {
                 // Cache the fresh version
@@ -29224,7 +29224,10 @@ def expenses_page():
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <h3 class="card-title" style="margin:0;">Expenses</h3>
-            <a href="/scan" class="btn btn-primary">📸 Scan Receipt</a>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary" onclick="showQuickExpense()" style="font-size:13px;">+ Quick Add</button>
+                <a href="/scan" class="btn btn-secondary" style="font-size:13px;">📸 Scan</a>
+            </div>
         </div>
         <div style="margin-bottom:15px;">
             <input type="text" id="searchExpenses" placeholder="🔍 Search by supplier, description, category, amount..." oninput="filterTable('searchExpenses','expenseTable')" style="width:100%;padding:10px 15px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:14px;">
@@ -29250,12 +29253,380 @@ def expenses_page():
         </table>
         </div>
     </div>
+    
+    <!-- Quick Add Expense Modal -->
+    <div id="quickExpModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:25px;width:95%;max-width:450px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                <h3 style="margin:0;color:var(--primary);">+ Quick Expense</h3>
+                <button onclick="closeQuickExpense()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">✕</button>
+            </div>
+            <div id="expOfflineBanner" style="display:none;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#fca5a5;">
+                📴 Offline — expense will be saved locally and synced when internet returns
+            </div>
+            <div style="display:grid;gap:10px;">
+                <input type="text" id="expDescription" class="form-input" placeholder="Description (e.g. Diesel, Stationery)" style="width:100%;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <input type="number" id="expAmount" class="form-input" placeholder="Amount (incl VAT)" step="0.01" style="width:100%;">
+                    <input type="date" id="expDate" class="form-input" value="{today()}" style="width:100%;">
+                </div>
+                <input type="text" id="expSupplier" class="form-input" placeholder="Supplier (optional)" style="width:100%;">
+                <select id="expCategory" class="form-input" style="width:100%;">
+                    <option value="General Expenses">General Expenses</option>
+                    <option value="Fuel — Business Vehicle">Fuel — Business Vehicle</option>
+                    <option value="Electricity">Electricity</option>
+                    <option value="Telephone — Landline">Telephone</option>
+                    <option value="Internet / WiFi">Internet / WiFi</option>
+                    <option value="Cellphone / Mobile">Cellphone</option>
+                    <option value="Insurance — Business / Contents">Insurance</option>
+                    <option value="Cleaning & Hygiene">Cleaning</option>
+                    <option value="Repairs & Maintenance — Building">Repairs & Maintenance</option>
+                    <option value="Stationery & Office Supplies">Stationery</option>
+                    <option value="Advertising & Marketing">Advertising</option>
+                    <option value="Bank Charges">Bank Charges</option>
+                    <option value="Security">Security</option>
+                    <option value="Rates & Taxes — Municipal">Rates & Taxes</option>
+                    <option value="Staff — Refreshments & Welfare">Staff Welfare</option>
+                    <option value="Computer Software & IT">Computer / IT</option>
+                    <option value="Courier & Delivery">Courier / Delivery</option>
+                    <option value="Entertainment">Entertainment</option>
+                    <option value="Meals — Business">Meals</option>
+                </select>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:8px;justify-content:center;font-size:13px;">
+                        <input type="radio" name="expMethod" value="cash" checked> 💵 Cash
+                    </label>
+                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:8px;justify-content:center;font-size:13px;">
+                        <input type="radio" name="expMethod" value="card"> 💳 Card
+                    </label>
+                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:8px;justify-content:center;font-size:13px;">
+                        <input type="radio" name="expMethod" value="eft"> 🏦 EFT
+                    </label>
+                </div>
+                <div style="display:flex;gap:10px;margin-top:5px;">
+                    <button class="btn btn-secondary" onclick="closeQuickExpense()" style="flex:1;">Cancel</button>
+                    <button class="btn btn-primary" id="expSaveBtn" onclick="saveQuickExpense()" style="flex:1;">Save Expense</button>
+                </div>
+                <p id="expStatus" style="margin:5px 0 0 0;font-size:12px;display:none;text-align:center;"></p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Offline indicator for expenses page -->
+    <div id="expOfflineSync" style="display:none;position:fixed;bottom:20px;right:20px;background:rgba(245,158,11,0.9);color:#000;padding:12px 20px;border-radius:10px;font-weight:700;cursor:pointer;z-index:999;box-shadow:0 4px 20px rgba(0,0,0,0.3);" onclick="syncOfflineExpenses()">
+        ⚠️ <span id="expSyncCount">0</span> offline expenses — tap to sync
+    </div>
+    
     <script>
+    function showQuickExpense() {{
+        document.getElementById('quickExpModal').style.display = 'flex';
+        document.getElementById('expDescription').focus();
+        // Show offline banner if offline
+        document.getElementById('expOfflineBanner').style.display = navigator.onLine ? 'none' : 'block';
     }}
+    function closeQuickExpense() {{ document.getElementById('quickExpModal').style.display = 'none'; }}
+    
+    async function saveQuickExpense() {{
+        const desc = document.getElementById('expDescription').value.trim();
+        const amount = parseFloat(document.getElementById('expAmount').value);
+        const date = document.getElementById('expDate').value;
+        const supplier = document.getElementById('expSupplier').value.trim();
+        const category = document.getElementById('expCategory').value;
+        const method = document.querySelector('input[name="expMethod"]:checked').value;
+        const status = document.getElementById('expStatus');
+        const btn = document.getElementById('expSaveBtn');
+        
+        if (!desc) {{ status.style.display='block'; status.style.color='var(--red)'; status.textContent='Description required'; return; }}
+        if (!amount || amount <= 0) {{ status.style.display='block'; status.style.color='var(--red)'; status.textContent='Valid amount required'; return; }}
+        
+        btn.disabled = true; btn.textContent = 'Saving...';
+        
+        const payload = {{ description: desc, total: amount, date: date, supplier: supplier, category: category, payment_method: method }};
+        
+        try {{
+            const resp = await fetch('/api/expenses/quick-add', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify(payload)
+            }});
+            const data = await resp.json();
+            
+            if (data.success) {{
+                status.style.display='block'; status.style.color='var(--green)'; status.textContent='✓ ' + data.message;
+                setTimeout(() => location.reload(), 1000);
+            }} else {{
+                status.style.display='block'; status.style.color='var(--red)'; status.textContent='✗ ' + (data.error || 'Failed');
+                btn.disabled = false; btn.textContent = 'Save Expense';
+            }}
+        }} catch (err) {{
+            // OFFLINE: Queue locally
+            try {{
+                payload.offline_date = date;
+                payload.offline_time = new Date().toISOString();
+                await queueOfflineExpense(payload);
+                status.style.display='block'; status.style.color='var(--green)';
+                status.textContent='📴 Saved offline — will sync when internet returns';
+                updateExpOfflineUI();
+                setTimeout(() => closeQuickExpense(), 2000);
+            }} catch (dbErr) {{
+                status.style.display='block'; status.style.color='var(--red)';
+                status.textContent='Cannot save: ' + dbErr.message;
+            }}
+            btn.disabled = false; btn.textContent = 'Save Expense';
+        }}
+    }}
+    
+    // ═══ IndexedDB for offline expenses ═══
+    const EXP_DB = 'clickai_offline';
+    const EXP_STORE = 'expense_queue';
+    
+    function openExpDB() {{
+        return new Promise((resolve, reject) => {{
+            const req = indexedDB.open(EXP_DB, 2);  // Version 2 adds expense store
+            req.onupgradeneeded = (e) => {{
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains('pos_queue')) db.createObjectStore('pos_queue', {{ keyPath: 'id', autoIncrement: true }});
+                if (!db.objectStoreNames.contains(EXP_STORE)) db.createObjectStore(EXP_STORE, {{ keyPath: 'id', autoIncrement: true }});
+            }};
+            req.onsuccess = (e) => resolve(e.target.result);
+            req.onerror = (e) => reject(e.target.error);
+        }});
+    }}
+    
+    async function queueOfflineExpense(data) {{
+        const db = await openExpDB();
+        return new Promise((resolve, reject) => {{
+            const tx = db.transaction(EXP_STORE, 'readwrite');
+            data.queued_at = new Date().toISOString();
+            const req = tx.objectStore(EXP_STORE).add(data);
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        }});
+    }}
+    
+    async function getExpenseQueue() {{
+        try {{
+            const db = await openExpDB();
+            return new Promise((resolve) => {{
+                const tx = db.transaction(EXP_STORE, 'readonly');
+                const req = tx.objectStore(EXP_STORE).getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => resolve([]);
+            }});
+        }} catch (e) {{ return []; }}
+    }}
+    
+    async function clearExpenseQueue() {{
+        const db = await openExpDB();
+        return new Promise((resolve) => {{
+            const req = db.transaction(EXP_STORE, 'readwrite').objectStore(EXP_STORE).clear();
+            req.onsuccess = () => resolve();
+            req.onerror = () => resolve();
+        }});
+    }}
+    
+    async function syncOfflineExpenses() {{
+        if (!navigator.onLine) {{ alert('Still offline'); return; }}
+        const queue = await getExpenseQueue();
+        if (queue.length === 0) {{ updateExpOfflineUI(); return; }}
+        
+        try {{
+            const resp = await fetch('/api/expenses/sync-offline', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{ expenses: queue }})
+            }});
+            const data = await resp.json();
+            if (data.success) {{
+                await clearExpenseQueue();
+                alert('✅ ' + data.message);
+                location.reload();
+            }} else {{
+                alert('Sync failed: ' + (data.error || 'Unknown'));
+            }}
+        }} catch (err) {{ alert('Sync failed: ' + err.message); }}
+    }}
+    
+    async function updateExpOfflineUI() {{
+        const queue = await getExpenseQueue();
+        const el = document.getElementById('expOfflineSync');
+        if (queue.length > 0) {{
+            el.style.display = 'block';
+            document.getElementById('expSyncCount').textContent = queue.length;
+            if (navigator.onLine) setTimeout(() => syncOfflineExpenses(), 2000);
+        }} else {{
+            el.style.display = 'none';
+        }}
+    }}
+    
+    window.addEventListener('online', updateExpOfflineUI);
+    window.addEventListener('offline', updateExpOfflineUI);
+    updateExpOfflineUI();
     </script>
     '''
     
     return render_page("Expenses", content, user, "expenses")
+
+
+# ═══════════════════════════════════════════════════════════════
+# QUICK-ADD EXPENSE API + OFFLINE SYNC
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/api/expenses/quick-add", methods=["POST"])
+@login_required
+def api_expenses_quick_add():
+    """Quick-add expense from form — works with offline sync too"""
+    try:
+        data = request.get_json() or {}
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        user = Auth.get_current_user()
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"})
+        
+        description = (data.get("description") or "").strip()
+        total_amount = float(data.get("total") or data.get("amount") or 0)
+        category = (data.get("category") or "General Expenses").strip()
+        supplier = (data.get("supplier") or "").strip()
+        payment_method = (data.get("payment_method") or "cash").lower()
+        expense_date = data.get("date") or today()
+        
+        if total_amount <= 0:
+            return jsonify({"success": False, "error": "Amount must be greater than 0"})
+        if not description:
+            return jsonify({"success": False, "error": "Description required"})
+        
+        # Calculate VAT (included in total)
+        no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
+        is_no_vat = any(nv in category.lower() for nv in no_vat_cats)
+        
+        if is_no_vat:
+            vat_amount = 0.0
+            net_amount = total_amount
+        else:
+            vat_amount = round(total_amount * 0.15 / 1.15, 2)
+            net_amount = round(total_amount - vat_amount, 2)
+        
+        # GL code
+        expense_account = IndustryKnowledge.get_gl_code(category)
+        
+        desc = f"{supplier} - {description}".strip(" -") if supplier else description
+        is_offline = data.get("offline_date") is not None
+        if is_offline:
+            desc += " [OFFLINE]"
+        
+        expense = RecordFactory.expense(
+            business_id=biz_id,
+            description=desc,
+            amount=total_amount,
+            date=expense_date,
+            category=category,
+            category_code=expense_account,
+            vat=vat_amount,
+            net=net_amount,
+            supplier=supplier,
+            supplier_name=supplier,
+            payment_method=payment_method,
+            status="paid",
+            created_by=user.get("id") if user else None
+        )
+        
+        success, result = db.save("expenses", expense)
+        if not success:
+            return jsonify({"success": False, "error": f"Save failed: {str(result)[:100]}"})
+        
+        # GL entries
+        vat_claimable = 0.0 if is_no_vat else vat_amount
+        journal_entries = [
+            {"account_code": expense_account, "debit": round(total_amount - vat_claimable, 2), "credit": 0},
+        ]
+        if vat_claimable > 0:
+            journal_entries.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})
+        journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)})
+        
+        create_journal_entry(biz_id, expense_date, desc[:50], f"EXP-{expense['id'][:8]}", journal_entries)
+        
+        logger.info(f"[EXPENSE QUICK-ADD] {desc} R{total_amount:.2f} cat={category} GL={expense_account}{' (OFFLINE SYNC)' if is_offline else ''}")
+        return jsonify({"success": True, "id": expense["id"], "message": f"Expense R{total_amount:,.2f} saved"})
+        
+    except Exception as e:
+        logger.error(f"[EXPENSE QUICK-ADD] Error: {e}")
+        return jsonify({"success": False, "error": str(e)[:200]})
+
+
+@app.route("/api/expenses/sync-offline", methods=["POST"])
+@login_required
+def api_expenses_sync_offline():
+    """Sync offline-queued expenses"""
+    try:
+        data = request.get_json() or {}
+        expenses_queue = data.get("expenses", [])
+        
+        if not expenses_queue:
+            return jsonify({"success": True, "synced": 0, "message": "Nothing to sync"})
+        
+        synced = 0
+        errors = []
+        
+        for exp in expenses_queue:
+            try:
+                # Re-use the quick-add logic by calling internally
+                business = Auth.get_current_business()
+                biz_id = business.get("id") if business else None
+                user = Auth.get_current_user()
+                
+                description = (exp.get("description") or "").strip()
+                total_amount = float(exp.get("total") or exp.get("amount") or 0)
+                category = (exp.get("category") or "General Expenses").strip()
+                supplier = (exp.get("supplier") or "").strip()
+                payment_method = (exp.get("payment_method") or "cash").lower()
+                expense_date = exp.get("offline_date") or today()
+                
+                if total_amount <= 0 or not description:
+                    errors.append(f"Invalid expense: {description}")
+                    continue
+                
+                no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
+                is_no_vat = any(nv in category.lower() for nv in no_vat_cats)
+                vat_amount = 0.0 if is_no_vat else round(total_amount * 0.15 / 1.15, 2)
+                net_amount = round(total_amount - vat_amount, 2)
+                
+                expense_account = IndustryKnowledge.get_gl_code(category)
+                desc = f"{supplier} - {description}".strip(" -") if supplier else description
+                desc += " [OFFLINE]"
+                
+                expense_rec = RecordFactory.expense(
+                    business_id=biz_id, description=desc, amount=total_amount,
+                    date=expense_date, category=category, category_code=expense_account,
+                    vat=vat_amount, net=net_amount, supplier=supplier, supplier_name=supplier,
+                    payment_method=payment_method, status="paid",
+                    created_by=user.get("id") if user else None
+                )
+                
+                success, _ = db.save("expenses", expense_rec)
+                if not success:
+                    errors.append(f"Failed: {desc}")
+                    continue
+                
+                vat_claimable = 0.0 if is_no_vat else vat_amount
+                je = [{"account_code": expense_account, "debit": round(total_amount - vat_claimable, 2), "credit": 0}]
+                if vat_claimable > 0:
+                    je.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})
+                je.append({"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)})
+                create_journal_entry(biz_id, expense_date, desc[:50], f"EXP-{expense_rec['id'][:8]}", je)
+                
+                synced += 1
+                logger.info(f"[EXPENSE OFFLINE SYNC] {desc} R{total_amount:.2f}")
+                
+            except Exception as e:
+                errors.append(str(e)[:80])
+        
+        msg = f"Synced {synced}/{len(expenses_queue)} offline expenses"
+        return jsonify({"success": True, "synced": synced, "errors": errors, "message": msg})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)[:200]})
 
 
 @app.route("/payroll")
@@ -44016,7 +44387,7 @@ def pos_page():
     // ═══════════════════════════════════════════════════════════
     (function() {
         const DB_NAME = 'clickai_offline';
-        const DB_VERSION = 1;
+        const DB_VERSION = 2;
         const STORE_NAME = 'pos_queue';
         
         function openDB() {
@@ -44026,6 +44397,9 @@ def pos_page():
                     const db = e.target.result;
                     if (!db.objectStoreNames.contains(STORE_NAME)) {
                         db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                    }
+                    if (!db.objectStoreNames.contains('expense_queue')) {
+                        db.createObjectStore('expense_queue', { keyPath: 'id', autoIncrement: true });
                     }
                 };
                 req.onsuccess = (e) => resolve(e.target.result);
