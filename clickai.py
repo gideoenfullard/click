@@ -55322,8 +55322,11 @@ def banking_page():
                 }});
                 
                 actionCell.innerHTML = `
-                    <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;">
-                        <div style="font-size:14px;font-weight:600;color:#8b5cf6;margin-bottom:10px;">
+                    <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:260px;position:relative;">
+                        <button onclick="resetAskZane('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                                style="position:absolute;top:6px;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;line-height:1;" 
+                                title="Close">✕</button>
+                        <div style="font-size:14px;font-weight:600;color:#8b5cf6;margin-bottom:10px;padding-right:20px;">
                             ${{data.question}}
                         </div>
                         <div style="display:flex;gap:4px;flex-wrap:wrap;">
@@ -55371,7 +55374,11 @@ def banking_page():
             }}
             
         }} catch (err) {{
-            actionCell.innerHTML = `<div style="color:var(--red);font-size:12px;">Could not analyze — <a href="#" onclick="askZaneBank('${{txnId}}','${{description}}', ${{debit}}, ${{credit}}, '${{date}}');return false;" style="color:var(--primary);">try again</a></div>`;
+            const safeDesc = description.replace(/'/g, "\\'");
+            actionCell.innerHTML = `<div style="color:var(--red);font-size:12px;position:relative;padding-right:22px;">
+                <button onclick="resetAskZane('${{txnId}}', '${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}')" 
+                        style="position:absolute;top:-2px;right:0;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1;" title="Close">✕</button>
+                Could not analyze — <a href="#" onclick="askZaneBank('${{txnId}}','${{safeDesc}}', ${{debit}}, ${{credit}}, '${{date}}');return false;" style="color:var(--primary);">try again</a></div>`;
         }}
     }}
     
@@ -55402,9 +55409,18 @@ def banking_page():
         const safeDesc = description.replace(/'/g, "\\\\'");
         const uid = 'sc_' + txnId;
         
+        // Get debit/credit from the row for resetAskZane
+        const tds = row.querySelectorAll('td');
+        const debitText = tds[2]?.textContent?.replace(/[^0-9.]/g, '') || '0';
+        const creditText = tds[3]?.textContent?.replace(/[^0-9.]/g, '') || '0';
+        const dateText = tds[0]?.textContent?.trim() || '';
+        
         actionCell.innerHTML = `
-            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:280px;max-width:350px;">
-                ${{hint ? `<div style="font-size:12px;color:#8b5cf6;margin-bottom:8px;line-height:1.4;">${{hint}}</div>` : ''}}
+            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:280px;max-width:350px;position:relative;">
+                <button onclick="resetAskZane('${{txnId}}', '${{safeDesc}}', ${{debitText}}, ${{creditText}}, '${{dateText}}')" 
+                        style="position:absolute;top:6px;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;line-height:1;z-index:1;" 
+                        title="Close">✕</button>
+                ${{hint ? `<div style="font-size:12px;color:#8b5cf6;margin-bottom:8px;line-height:1.4;padding-right:20px;">${{hint}}</div>` : ''}}
                 <input type="text" id="${{uid}}_search" placeholder="Type to search categories..." 
                     style="width:100%;padding:8px 12px;border-radius:6px;border:2px solid rgba(139,92,246,0.3);background:var(--input-bg);color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:6px;"
                     oninput="filterCats('${{uid}}')">
