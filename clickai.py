@@ -17960,6 +17960,13 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     </header>
     
     <div class="main-scroll" id="mainScroll">
+        <div id="globalOfflineBanner" style="display:none;background:linear-gradient(135deg,rgba(239,68,68,0.15),rgba(245,158,11,0.15));border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px 18px;margin:10px 15px 0 15px;font-size:13px;color:var(--text);">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span>📴 <strong>Offline Mode</strong> — Data may be stale. Sales &amp; expenses will queue locally.</span>
+                <span id="globalSyncBtn" style="display:none;background:var(--primary);color:white;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;" onclick="masterSync()">⚡ SYNC ALL</span>
+            </div>
+            <div id="globalQueueInfo" style="margin-top:6px;font-size:11px;color:var(--text-muted);display:none;"></div>
+        </div>
         <main class="container">
             {content}
         </main>
@@ -18507,6 +18514,171 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             .then(reg => console.log('[SW] Registered:', reg.scope))
             .catch(err => console.log('[SW] Registration failed (non-critical):', err));
     }}
+    
+    // ═══ GLOBAL OFFLINE DETECTION & MASTER SYNC ═══
+    (function() {{
+        const DB_NAME = 'clickai_offline';
+        const DB_VER = 2;
+        
+        function openGlobalDB() {{
+            return new Promise((resolve, reject) => {{
+                const req = indexedDB.open(DB_NAME, DB_VER);
+                req.onupgradeneeded = (e) => {{
+                    const db = e.target.result;
+                    ['pos_queue','expense_queue','quote_queue','customer_queue'].forEach(s => {{
+                        if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, {{ keyPath: 'id', autoIncrement: true }});
+                    }});
+                }};
+                req.onsuccess = (e) => resolve(e.target.result);
+                req.onerror = (e) => reject(e.target.error);
+            }});
+        }}
+        
+        async function getQueueCounts() {{
+            try {{
+                const db = await openGlobalDB();
+                const counts = {{}};
+                const stores = ['pos_queue','expense_queue','quote_queue','customer_queue'];
+                for (const s of stores) {{
+                    if (db.objectStoreNames.contains(s)) {{
+                        const n = await new Promise(r => {{
+                            const req = db.transaction(s,'readonly').objectStore(s).count();
+                            req.onsuccess = () => r(req.result);
+                            req.onerror = () => r(0);
+                        }});
+                        counts[s] = n;
+                    }} else {{ counts[s] = 0; }}
+                }}
+                return counts;
+            }} catch(e) {{ return {{pos_queue:0,expense_queue:0,quote_queue:0,customer_queue:0}}; }}
+        }}
+        
+        async function updateGlobalBanner() {{
+            const banner = document.getElementById('globalOfflineBanner');
+            const syncBtn = document.getElementById('globalSyncBtn');
+            const queueInfo = document.getElementById('globalQueueInfo');
+            if (!banner) return;
+            
+            const counts = await getQueueCounts();
+            const total = counts.pos_queue + counts.expense_queue + counts.quote_queue + counts.customer_queue;
+            
+            if (!navigator.onLine) {{
+                banner.style.display = 'block';
+                syncBtn.style.display = 'none';
+                if (total > 0) {{
+                    queueInfo.style.display = 'block';
+                    let parts = [];
+                    if (counts.pos_queue) parts.push(counts.pos_queue + ' sales');
+                    if (counts.expense_queue) parts.push(counts.expense_queue + ' expenses');
+                    if (counts.quote_queue) parts.push(counts.quote_queue + ' quotes');
+                    if (counts.customer_queue) parts.push(counts.customer_queue + ' customers');
+                    queueInfo.textContent = '📋 Queued: ' + parts.join(', ');
+                }} else {{ queueInfo.style.display = 'none'; }}
+            }} else if (total > 0) {{
+                banner.style.display = 'block';
+                banner.style.background = 'linear-gradient(135deg,rgba(245,158,11,0.15),rgba(16,185,129,0.15))';
+                banner.style.borderColor = 'rgba(245,158,11,0.3)';
+                banner.querySelector('span').innerHTML = '🟢 <strong>Back Online</strong> — ' + total + ' items waiting to sync';
+                syncBtn.style.display = 'inline-block';
+                queueInfo.style.display = 'none';
+                // Auto-sync after 3 seconds
+                setTimeout(() => window.masterSync && window.masterSync(), 3000);
+            }} else {{
+                banner.style.display = 'none';
+            }}
+        }}
+        
+        window.masterSync = async function() {{
+            if (!navigator.onLine) {{ alert('Still offline'); return; }}
+            const counts = await getQueueCounts();
+            const total = counts.pos_queue + counts.expense_queue + counts.quote_queue + counts.customer_queue;
+            if (total === 0) {{ updateGlobalBanner(); return; }}
+            
+            const syncBtn = document.getElementById('globalSyncBtn');
+            if (syncBtn) syncBtn.textContent = '⏳ SYNCING...';
+            let synced = 0, errors = [];
+            
+            try {{
+                const db = await openGlobalDB();
+                
+                // Sync customers first (quotes/invoices may need them)
+                if (counts.customer_queue > 0) {{
+                    const items = await getAll(db, 'customer_queue');
+                    const r = await syncToServer('/api/customers/sync-offline', {{ customers: items }});
+                    if (r.success) {{ await clearStore(db, 'customer_queue'); synced += r.synced || items.length; }}
+                    else errors.push('Customers: ' + (r.error||'failed'));
+                }}
+                
+                // Sync POS sales
+                if (counts.pos_queue > 0) {{
+                    const items = await getAll(db, 'pos_queue');
+                    const r = await syncToServer('/api/pos/sync-offline', {{ sales: items }});
+                    if (r.success) {{ await clearStore(db, 'pos_queue'); synced += r.synced || items.length; }}
+                    else errors.push('POS: ' + (r.error||'failed'));
+                }}
+                
+                // Sync expenses
+                if (counts.expense_queue > 0) {{
+                    const items = await getAll(db, 'expense_queue');
+                    const r = await syncToServer('/api/expenses/sync-offline', {{ expenses: items }});
+                    if (r.success) {{ await clearStore(db, 'expense_queue'); synced += r.synced || items.length; }}
+                    else errors.push('Expenses: ' + (r.error||'failed'));
+                }}
+                
+                // Sync quotes
+                if (counts.quote_queue > 0) {{
+                    const items = await getAll(db, 'quote_queue');
+                    const r = await syncToServer('/api/quotes/sync-offline', {{ quotes: items }});
+                    if (r.success) {{ await clearStore(db, 'quote_queue'); synced += r.synced || items.length; }}
+                    else errors.push('Quotes: ' + (r.error||'failed'));
+                }}
+                
+                let msg = '✅ SYNC COMPLETE — ' + synced + ' items synced';
+                if (errors.length) msg += '\\n\\n⚠️ Issues:\\n' + errors.join('\\n');
+                alert(msg);
+                if (synced > 0) location.reload();
+                else updateGlobalBanner();
+                
+            }} catch(e) {{
+                alert('Sync error: ' + e.message);
+                updateGlobalBanner();
+            }}
+        }};
+        
+        async function getAll(db, store) {{
+            return new Promise(r => {{
+                const req = db.transaction(store,'readonly').objectStore(store).getAll();
+                req.onsuccess = () => r(req.result || []);
+                req.onerror = () => r([]);
+            }});
+        }}
+        async function clearStore(db, store) {{
+            return new Promise(r => {{
+                const req = db.transaction(store,'readwrite').objectStore(store).clear();
+                req.onsuccess = () => r(); req.onerror = () => r();
+            }});
+        }}
+        async function syncToServer(url, body) {{
+            const resp = await fetch(url, {{ method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(body) }});
+            return resp.json();
+        }}
+        
+        // Global queue helper for any page
+        window.queueOfflineItem = async function(storeName, data) {{
+            const db = await openGlobalDB();
+            return new Promise((resolve, reject) => {{
+                const tx = db.transaction(storeName, 'readwrite');
+                data.queued_at = new Date().toISOString();
+                const req = tx.objectStore(storeName).add(data);
+                req.onsuccess = () => {{ updateGlobalBanner(); resolve(); }};
+                req.onerror = () => reject(req.error);
+            }});
+        }};
+        
+        window.addEventListener('online', () => {{ console.log('[OFFLINE] Online'); updateGlobalBanner(); }});
+        window.addEventListener('offline', () => {{ console.log('[OFFLINE] Offline'); updateGlobalBanner(); }});
+        updateGlobalBanner();
+    }})();
     </script>
 </body>
 </html>'''
@@ -20743,7 +20915,7 @@ def service_worker():
     """Service Worker for offline POS capability"""
     sw_js = """
 const CACHE_NAME = 'clickai-pos-v2';
-const OFFLINE_URLS = ['/pos', '/expenses'];
+const OFFLINE_URLS = ['/pos', '/expenses', '/', '/stock', '/customers', '/suppliers', '/invoices', '/pos/history'];
 
 // Install — cache POS page
 self.addEventListener('install', event => {
@@ -20775,8 +20947,9 @@ self.addEventListener('fetch', event => {
     // Only intercept same-origin navigation requests
     if (url.origin !== location.origin) return;
     
-    // For POS and Expenses pages — network first, cache fallback
-    if (url.pathname === '/pos' || url.pathname === '/expenses') {
+    // For cached pages — network first, cache fallback
+    const cachedPaths = ['/pos', '/expenses', '/', '/stock', '/customers', '/suppliers', '/invoices', '/pos/history'];
+    if (cachedPaths.includes(url.pathname)) {
         event.respondWith(
             fetch(event.request).then(response => {
                 // Cache the fresh version
@@ -29382,11 +29555,12 @@ def expenses_page():
     
     function openExpDB() {{
         return new Promise((resolve, reject) => {{
-            const req = indexedDB.open(EXP_DB, 2);  // Version 2 adds expense store
+            const req = indexedDB.open(EXP_DB, 2);
             req.onupgradeneeded = (e) => {{
                 const db = e.target.result;
-                if (!db.objectStoreNames.contains('pos_queue')) db.createObjectStore('pos_queue', {{ keyPath: 'id', autoIncrement: true }});
-                if (!db.objectStoreNames.contains(EXP_STORE)) db.createObjectStore(EXP_STORE, {{ keyPath: 'id', autoIncrement: true }});
+                ['pos_queue','expense_queue','quote_queue','customer_queue'].forEach(s => {{
+                    if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, {{ keyPath: 'id', autoIncrement: true }});
+                }});
             }};
             req.onsuccess = (e) => resolve(e.target.result);
             req.onerror = (e) => reject(e.target.error);
@@ -29623,6 +29797,132 @@ def api_expenses_sync_offline():
                 errors.append(str(e)[:80])
         
         msg = f"Synced {synced}/{len(expenses_queue)} offline expenses"
+        return jsonify({"success": True, "synced": synced, "errors": errors, "message": msg})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)[:200]})
+
+
+@app.route("/api/quotes/sync-offline", methods=["POST"])
+@login_required
+def api_quotes_sync_offline():
+    """Sync offline-queued quotes"""
+    try:
+        data = request.get_json() or {}
+        quotes_queue = data.get("quotes", [])
+        
+        if not quotes_queue:
+            return jsonify({"success": True, "synced": 0, "message": "Nothing to sync"})
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        synced = 0
+        errors = []
+        
+        for q in quotes_queue:
+            try:
+                items = q.get("items", [])
+                customer_id = q.get("customer_id", "")
+                customer_name = q.get("customer_name", "Walk-in")
+                
+                subtotal = Decimal(str(q.get("subtotal", 0)))
+                vat = Decimal(str(q.get("vat", 0)))
+                total = Decimal(str(q.get("total", 0)))
+                
+                if subtotal == 0:
+                    subtotal = sum(Decimal(str(item.get("total", 0))) for item in items)
+                    vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+                    total = subtotal + vat
+                
+                quote_date = q.get("offline_date") or today()
+                
+                quote_id = generate_id()
+                quote_num = f"Q{int(time.time()) % 100000:05d}"
+                
+                quote = {
+                    "id": quote_id,
+                    "business_id": biz_id,
+                    "quote_number": quote_num,
+                    "date": quote_date,
+                    "valid_until": "",
+                    "customer_id": safe_uuid(customer_id) if customer_id else None,
+                    "customer_name": customer_name,
+                    "items": json.dumps(items),
+                    "subtotal": float(subtotal),
+                    "vat": float(vat),
+                    "total": float(total),
+                    "status": "draft",
+                    "notes": f"OFFLINE QUOTE — synced {now()}",
+                    "created_by": user.get("id") if user else None,
+                    "created_at": q.get("offline_time") or now()
+                }
+                
+                success, err = db.save("quotes", quote)
+                if not success:
+                    errors.append(f"Quote for {customer_name}: {str(err)[:80]}")
+                    continue
+                
+                synced += 1
+                logger.info(f"[QUOTE OFFLINE SYNC] {quote_num} for {customer_name} R{total:.2f}")
+                
+            except Exception as e:
+                errors.append(str(e)[:80])
+        
+        msg = f"Synced {synced}/{len(quotes_queue)} offline quotes"
+        return jsonify({"success": True, "synced": synced, "errors": errors, "message": msg})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)[:200]})
+
+
+@app.route("/api/customers/sync-offline", methods=["POST"])
+@login_required
+def api_customers_sync_offline():
+    """Sync offline-queued customers/suppliers"""
+    try:
+        data = request.get_json() or {}
+        queue = data.get("customers", [])
+        
+        if not queue:
+            return jsonify({"success": True, "synced": 0, "message": "Nothing to sync"})
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        synced = 0
+        errors = []
+        
+        for item in queue:
+            try:
+                name = (item.get("name") or "").strip()
+                entity_type = item.get("type", "customer")
+                
+                if not name:
+                    continue
+                
+                record = {
+                    "id": generate_id(),
+                    "business_id": biz_id,
+                    "name": name,
+                    "created_at": item.get("offline_date") or now(),
+                    "notes": f"Added offline — synced {now()}"
+                }
+                
+                table = "customers" if entity_type == "customer" else "suppliers"
+                success, err = db.save(table, record)
+                
+                if not success:
+                    errors.append(f"{name}: {str(err)[:80]}")
+                    continue
+                
+                synced += 1
+                logger.info(f"[{entity_type.upper()} OFFLINE SYNC] {name}")
+                
+            except Exception as e:
+                errors.append(str(e)[:80])
+        
+        msg = f"Synced {synced}/{len(queue)} offline customers/suppliers"
         return jsonify({"success": True, "synced": synced, "errors": errors, "message": msg})
         
     except Exception as e:
@@ -42060,7 +42360,27 @@ def pos_page():
                         alert('Failed: ' + (data.error || 'Unknown error'));
                     }
                 })
-                .catch(err => alert('Error: ' + err.message));
+                .catch(err => {
+                    // Offline: queue customer for later sync
+                    if (!navigator.onLine || err.message.includes('fetch') || err.message.includes('network')) {
+                        const tempId = 'OFFLINE_' + Date.now();
+                        if (window.queueOfflineItem) {
+                            window.queueOfflineItem('customer_queue', {
+                                name: newName.trim(), type: currentEntityType,
+                                offline_date: new Date().toISOString()
+                            }).then(() => {
+                                // Use temp ID locally so they can still make sales
+                                document.getElementById('entitySearch').value = newName.trim();
+                                document.getElementById('entityValue').value = '';
+                                const newItem = {id: '', name: newName.trim()};
+                                if (currentEntityType === 'customer') window.customerList.push(newItem);
+                                else window.supplierList.push(newItem);
+                                closeEntityDropdown(true);
+                                alert('📴 ' + newName.trim() + ' saved offline. Will sync when internet returns.');
+                            }).catch(() => alert('Could not save offline'));
+                        } else { alert('Error: ' + err.message); }
+                    } else { alert('Error: ' + err.message); }
+                });
             }
             return;
         }
@@ -42440,7 +42760,17 @@ def pos_page():
                 alert('Error: ' + (data.error || 'Quote failed'));
             }
         } catch (err) {
-            alert('Connection error');
+            if (!navigator.onLine || err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Network')) {
+                try {
+                    await (window.queueOfflineItem || queueOfflineSale)('quote_queue', {
+                        items: items, customer_id: customerId, customer_name: customerName,
+                        subtotal: subtotal, vat: vat, total: grandTotal,
+                        offline_date: new Date().toISOString().slice(0,10), offline_time: new Date().toISOString()
+                    });
+                    alert('📴 OFFLINE QUOTE SAVED\\n\\nFor: ' + (customerName || 'Walk-in') + '\\nTotal: R' + grandTotal.toFixed(2) + '\\n\\nWill sync when internet returns.');
+                    clearCart();
+                } catch(e) { alert('Could not save quote offline'); }
+            } else { alert('Connection error: ' + err.message); }
         }
     }
     
@@ -42538,7 +42868,7 @@ def pos_page():
                 posLocked = false;
             }
         } catch (err) {
-            alert('Connection error');
+            alert('Connection error — Invoices require internet for sequential numbering.');
             posLocked = false;
         }
     }
@@ -43704,7 +44034,19 @@ def pos_page():
                 alert('Error: ' + (data.error || 'Quote failed'));
             }
         } catch (err) {
-            alert('Connection error');
+            if (!navigator.onLine || err.message.includes('fetch') || err.message.includes('network') || err.message.includes('Network')) {
+                try {
+                    const subtotal = Math.round(total * 100) / 100;
+                    const vatAmt = Math.round(subtotal * 0.15 * 100) / 100;
+                    await (window.queueOfflineItem || queueOfflineSale)('quote_queue', {
+                        items: items, customer_id: customerId, customer_name: customerName,
+                        subtotal: subtotal, vat: vatAmt, total: Math.round((subtotal + vatAmt) * 100) / 100,
+                        offline_date: new Date().toISOString().slice(0,10), offline_time: new Date().toISOString()
+                    });
+                    alert('📴 OFFLINE QUOTE SAVED\\n\\nFor: ' + (customerName || 'Walk-in') + '\\nTotal: R' + total.toFixed(2) + '\\n\\nWill sync when internet returns.');
+                    clearCart();
+                } catch(e) { alert('Could not save quote offline'); }
+            } else { alert('Connection error: ' + err.message); }
         }
     }
     
@@ -44395,12 +44737,9 @@ def pos_page():
                 const req = indexedDB.open(DB_NAME, DB_VERSION);
                 req.onupgradeneeded = (e) => {
                     const db = e.target.result;
-                    if (!db.objectStoreNames.contains(STORE_NAME)) {
-                        db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
-                    }
-                    if (!db.objectStoreNames.contains('expense_queue')) {
-                        db.createObjectStore('expense_queue', { keyPath: 'id', autoIncrement: true });
-                    }
+                    ['pos_queue','expense_queue','quote_queue','customer_queue'].forEach(s => {
+                        if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: 'id', autoIncrement: true });
+                    });
                 };
                 req.onsuccess = (e) => resolve(e.target.result);
                 req.onerror = (e) => reject(e.target.error);
