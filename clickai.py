@@ -44403,7 +44403,7 @@ def pos_page():
                     if (btn) { btn.focus(); btn.style.outline = '3px solid yellow'; }
                 }, 150);
             } else {
-                location.reload();
+                if (navigator.onLine) { location.reload(); } else { clearCartAfterSale(); }
             }
         }
     }
@@ -44418,7 +44418,14 @@ def pos_page():
                 padding: 4mm; 
                 font-family: 'Courier New', monospace; 
                 font-size: 16px;
+                font-weight: bold;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+                color: #000;
             }
+            * { font-weight: bold !important; color: #000 !important; }
+            table { width: 100%; }
+            td { font-weight: bold !important; }
             @page { size: 80mm auto; margin: 0; }
             @media print { body { width: 72mm; } }
         ` : `
@@ -44471,13 +44478,13 @@ def pos_page():
                     } catch(e) {}
                     setTimeout(() => {
                         closePrintModal();
-                        location.reload();
+                        if (navigator.onLine) { location.reload(); } else { clearCartAfterSale(); }
                     }, 500);
                 }, 2000);  // Wait 2 seconds between prints
             } else {
                 setTimeout(() => {
                     closePrintModal();
-                    location.reload();
+                    if (navigator.onLine) { location.reload(); } else { clearCartAfterSale(); }
                 }, 500);
             }
         }, 300);
@@ -44485,6 +44492,20 @@ def pos_page():
     
     function closePrintModal() {
         document.getElementById('printSlipModal').style.display = 'none';
+    }
+    
+    function clearCartAfterSale() {
+        // Reset POS without reloading page (for offline use)
+        try {
+            posItems = [];
+            renderCart();
+            document.getElementById('cartCount').textContent = '0';
+            document.getElementById('cartTotal').textContent = 'R0.00';
+            // Clear customer selection
+            if (typeof selectCustomer === 'function') selectCustomer('', 'Cash Sale');
+        } catch(e) {
+            console.log('[OFFLINE] Cart clear:', e);
+        }
     }
     
     function showEmailSlipModal() {
@@ -44886,7 +44907,7 @@ def pos_page():
                     onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
                     onblur="this.style.outline='none';this.style.transform='scale(1)'"
                     style="flex:1;padding:18px;border-radius:8px;border:3px solid #3b82f6;background:#3b82f6;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;">📄 A4 [2]</button>
-                <button id="btnPrintSkip" tabindex="0" onclick="closePrintModal(); location.reload();" 
+                <button id="btnPrintSkip" tabindex="0" onclick="closePrintModal(); if(navigator.onLine){location.reload();}else{clearCartAfterSale();}" 
                     onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
                     onblur="this.style.outline='none';this.style.transform='scale(1)'"
                     style="flex:1;padding:18px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;transition:transform 0.1s;">✕ Skip [3]</button>
