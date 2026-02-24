@@ -88,6 +88,21 @@ try:
 except ImportError:
     BANKING_KNOWLEDGE_LOADED = False
 try:
+    from clickai_sars_knowledge import get_relevant_sars_knowledge, format_sars_knowledge
+    SARS_KNOWLEDGE_LOADED = True
+except ImportError:
+    SARS_KNOWLEDGE_LOADED = False
+try:
+    from clickai_industry_knowledge import get_relevant_industry_knowledge, format_industry_knowledge
+    INDUSTRY_KNOWLEDGE_LOADED = True
+except ImportError:
+    INDUSTRY_KNOWLEDGE_LOADED = False
+try:
+    from clickai_bookkeeping_knowledge import get_relevant_bookkeeping_knowledge, format_bookkeeping_knowledge
+    BOOKKEEPING_KNOWLEDGE_LOADED = True
+except ImportError:
+    BOOKKEEPING_KNOWLEDGE_LOADED = False
+try:
     from clickai_business_groups import BusinessGroupManager, register_group_routes
     BUSINESS_GROUPS_LOADED = True
 except ImportError:
