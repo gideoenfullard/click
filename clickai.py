@@ -6447,7 +6447,7 @@ class ZaneToolHandler:
             if name_filter and name_filter not in str(e.get("name", "")).lower():
                 continue
             results.append({"id": e.get("id"), "name": e.get("name", ""), "position": e.get("position", ""),
-                            "salary": float(e.get("salary", 0) or 0), "start_date": e.get("start_date", ""),
+                            "salary": float(e.get("basic_salary", 0) or e.get("salary", 0) or 0), "start_date": e.get("start_date", ""),
                             "id_number": e.get("id_number", ""), "tax_number": e.get("tax_number", "")})
         total_payroll = sum(e["salary"] for e in results)
         return {"employee_count": len(results), "total_monthly_payroll": total_payroll, "employees": results}
@@ -6749,7 +6749,7 @@ class ZaneToolHandler:
         }
         success, result = db.save("reminders", reminder)
         if success:
-            priority_emoji = {"high": "🔴", "normal": "🔔", "low": "🔵"}.get(reminder["priority"], "🔔")
+            priority_emoji = {"high": "[!]", "normal": "[-]", "low": "[.]"}.get(reminder["priority"], "[-]")
             return {
                 "success": True,
                 "message": f"Reminder created: {priority_emoji} {reminder['message']}",
@@ -6790,7 +6790,7 @@ class ZaneToolHandler:
         }
         success, result = db.save("todos", todo)
         if success:
-            priority_emoji = {"high": "🔴", "normal": "📋", "low": "🔵"}.get(todo["priority"], "📋")
+            priority_emoji = {"high": "[!]", "normal": "[-]", "low": "[.]"}.get(todo["priority"], "[-]")
             return {
                 "success": True,
                 "message": f"To-do added: {priority_emoji} {todo['task']}",
@@ -6869,7 +6869,7 @@ class ZaneToolHandler:
             if table:
                 try:
                     db.save(table, {"id": item_id, "business_id": self.biz_id, "status": "completed", "completed_at": now()})
-                    return {"success": True, "message": f"Marked as done! ✓"}
+                    return {"success": True, "message": f"Marked as done!"}
                 except Exception as e:
                     return {"success": False, "error": str(e)}
             return {"error": "Item not found"}
@@ -6883,7 +6883,7 @@ class ZaneToolHandler:
                     items = db.get(t, {"business_id": self.biz_id}) or []
                     if any(i.get("id") == item_id for i in items):
                         db.delete(t, item_id, self.biz_id)
-                        return {"success": True, "message": f"Deleted ✓"}
+                        return {"success": True, "message": f"Deleted."}
                 except:
                     continue
             return {"error": "Item not found"}
@@ -7281,56 +7281,56 @@ class ZaneToolHandler:
         
         # 1. Profitability
         if margin >= 25:
-            insights.append(f"✓ Healthy profit margin of {margin:.1f}%")
+            insights.append(f"GOOD: Healthy profit margin of {margin:.1f}%")
         elif margin >= 10:
             insights.append(f"○ Acceptable margin of {margin:.1f}% - room for improvement")
         elif margin > 0:
-            warnings.append(f"⚠ Low margin of {margin:.1f}% - review pricing or cut costs")
+            warnings.append(f"WARNING: Low margin of {margin:.1f}% - review pricing or cut costs")
             actions.append("Review your pricing - you might be selling too cheap")
         else:
-            warnings.append(f"⛔ Making a LOSS of R{abs(profit):,.0f}")
+            warnings.append(f"CRITICAL: Making a LOSS of R{abs(profit):,.0f}")
             actions.append("URGENT: Identify why you're losing money")
         
         # 2. Revenue trend
         if revenue_change > 20:
-            insights.append(f"✓ Revenue UP {revenue_change:.0f}% vs last month - great momentum!")
+            insights.append(f"GOOD: Revenue UP {revenue_change:.0f}% vs last month - great momentum!")
         elif revenue_change > 0:
             insights.append(f"○ Revenue up {revenue_change:.0f}% vs last month")
         elif revenue_change > -10:
             insights.append(f"○ Revenue flat vs last month")
         else:
-            warnings.append(f"⚠ Revenue DOWN {abs(revenue_change):.0f}% vs last month")
+            warnings.append(f"WARNING: Revenue DOWN {abs(revenue_change):.0f}% vs last month")
             actions.append("Investigate why sales are dropping")
         
         # 3. Debtors health
         if debtors_90_plus > 0:
-            warnings.append(f"⚠ R{debtors_90_plus:,.0f} is 90+ days overdue - high bad debt risk")
+            warnings.append(f"WARNING: R{debtors_90_plus:,.0f} is 90+ days overdue - high bad debt risk")
             # Get problem customer names
             problem_names = [d["name"] for d in debtors.get("problem_debtors", [])[:3]]
             if problem_names:
                 actions.append(f"Call these debtors TODAY: {', '.join(problem_names)}")
         elif total_debtors > income * 2:
-            warnings.append(f"⚠ Debtors (R{total_debtors:,.0f}) are high vs monthly sales")
+            warnings.append(f"WARNING: Debtors (R{total_debtors:,.0f}) are high vs monthly sales")
             actions.append("Tighten credit terms or improve collections")
         else:
-            insights.append(f"✓ Debtors under control (R{total_debtors:,.0f})")
+            insights.append(f"GOOD: Debtors under control (R{total_debtors:,.0f})")
         
         # 4. Creditors
         creditors_90_plus = creditors.get("aging_summary", {}).get("days_90_plus", 0)
         if creditors_90_plus > 0:
-            warnings.append(f"⚠ R{creditors_90_plus:,.0f} owed to suppliers is 90+ days - risk of COD or legal")
+            warnings.append(f"WARNING: R{creditors_90_plus:,.0f} owed to suppliers is 90+ days - risk of COD or legal")
             actions.append("Contact overdue suppliers to arrange payment plans")
         
         # 5. Cash flow indicator
         if total_debtors > total_creditors * 1.5:
             insights.append("○ You're owed more than you owe - but make sure debtors pay!")
         elif total_creditors > total_debtors * 1.5:
-            warnings.append("⚠ You owe more than you're owed - watch cash flow")
+            warnings.append("WARNING: You owe more than you're owed - watch cash flow")
         
         # 6. Expense trend
         exp_change = expenses.get("change_pct", 0)
         if exp_change > 30:
-            warnings.append(f"⚠ Expenses up {exp_change:.0f}% - {expenses.get('biggest_category', 'Unknown')} is biggest")
+            warnings.append(f"WARNING: Expenses up {exp_change:.0f}% - {expenses.get('biggest_category', 'Unknown')} is biggest")
             actions.append(f"Review {expenses.get('biggest_category', 'expenses')} - why the increase?")
         
         # === HEALTH SCORE (0-100) ===
@@ -7721,9 +7721,9 @@ def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
                 if top:
                     memory_lines = []
                     for m in top:
-                        cat_emoji = {"business_info": "🏢", "preference": "⭐", "decision": "✅", 
-                                     "person": "👤", "plan": "📋", "policy": "📏", 
-                                     "personal": "💭", "conversation": "💬"}.get(m.get("category", ""), "📝")
+                        cat_emoji = {"business_info": "", "preference": "", "decision": "", 
+                                     "person": "", "plan": "", "policy": "", 
+                                     "personal": "", "conversation": ""}.get(m.get("category", ""), "")
                         date = m.get("created_at", "")[:10]
                         memories_text += f"  {cat_emoji} [{date}] {m.get('fact', '')}\n"
                     memories_text = f"\n## YOUR MEMORIES (things you've learned about this user/business)\n{memories_text}"
@@ -7775,7 +7775,7 @@ for standard bookkeeping questions. You ARE the accountant they consult.
 - Honest about business performance - don't sugarcoat bad news
 - Proactive: spot problems before they become crises
 
-## ⚠️ GOLDEN RULES (NEVER BREAK THESE) ⚠️
+## GOLDEN RULES (NEVER BREAK THESE)
 
 ### RULE 1: NEVER ASK UNNECESSARY QUESTIONS
 When a user asks something, ANSWER IT. Don't ask clarifying questions unless genuinely impossible 
@@ -7825,7 +7825,7 @@ When in doubt about what the user wants:
 - Stock items: {stats['stock_count']} | Customers: {stats['customer_count']} | Suppliers: {stats['supplier_count']}
 - Total debtors: R{stats['total_debtors']:,.0f} | Total creditors: R{stats['total_creditors']:,.0f}
 - Today's sales: R{stats['today_sales']:,.0f} | Stock value (cost): R{stats['stock_value']:,.0f}
-⚠️ The stats above are a SUMMARY. When a user asks about the business, NEVER just refer to these stats.
+NOTE: The stats above are a SUMMARY. When a user asks about the business, NEVER just refer to these stats.
 ALWAYS call tools (get_financial_overview, get_sales_summary, get_debtors, get_creditors) to get FULL data and give a DETAILED answer.
 NEVER say "soos hierbo" or "as shown above" — the user CANNOT see your system prompt.
 {memories_text}
@@ -8353,7 +8353,7 @@ class Brain:
             is_afrikaans = any(w in msg_lower for w in ["hoekom", "wat", "kan", "nie", "faktuur", "kwotasie"])
             
             if is_afrikaans:
-                response = """🚨 **Probleem gevind:** Daar's geen stock in jou sisteem nie!
+                response = """ALERT: **Probleem gevind:** Daar's geen stock in jou sisteem nie!
 
 Jy kan nie invoices of quotes maak sonder stock items nie. 
 
@@ -8362,9 +8362,9 @@ Jy kan nie invoices of quotes maak sonder stock items nie.
 2. Of voeg stock handmatig by: /stock/new
 3. Of sê vir my: "Add stock item M10x50 bolt at R5.00"
 
-Sodra jy stock het, sal alles werk! 🔧"""
+Sodra jy stock het, sal alles werk!"""
             else:
-                response = """🚨 **Problem found:** There's no stock in your system!
+                response = """ALERT: **Problem found:** There's no stock in your system!
 
 You can't create invoices or quotes without stock items.
 
@@ -8373,7 +8373,7 @@ You can't create invoices or quotes without stock items.
 2. Or add stock manually: /stock/new  
 3. Or tell me: "Add stock item M10x50 bolt at R5.00"
 
-Once you have stock, everything will work! 🔧"""
+Once you have stock, everything will work!"""
             
             logger.info(f"[BRAIN] Pre-check caught: No stock, user asking about problems")
             return {
@@ -8388,7 +8388,7 @@ Once you have stock, everything will work! 🔧"""
             is_afrikaans = any(w in msg_lower for w in ["hoekom", "wat", "kan", "nie", "faktuur", "kwotasie"])
             
             if is_afrikaans:
-                response = f"""🚨 **Probleem gevind:** Daar's geen customers in jou sisteem nie!
+                response = f"""ALERT: **Probleem gevind:** Daar's geen customers in jou sisteem nie!
 
 Jy het {stock_count} stock items, maar jy kan nie invoices maak sonder customers nie.
 
@@ -8397,9 +8397,9 @@ Jy het {stock_count} stock items, maar jy kan nie invoices maak sonder customers
 2. Of import customers: /import
 3. Of in POS: druk F8 en kies "+ Add New"
 
-Sodra jy 'n customer het, kan jy invoice! 📝"""
+Sodra jy 'n customer het, kan jy invoice!"""
             else:
-                response = f"""🚨 **Problem found:** There's no customers in your system!
+                response = f"""ALERT: **Problem found:** There's no customers in your system!
 
 You have {stock_count} stock items, but you can't create invoices without customers.
 
@@ -8408,7 +8408,7 @@ You have {stock_count} stock items, but you can't create invoices without custom
 2. Or import customers: /import
 3. Or in POS: press F8 and select "+ Add New"
 
-Once you have a customer, you can invoice! 📝"""
+Once you have a customer, you can invoice!"""
             
             logger.info(f"[BRAIN] Pre-check caught: No customers, user asking about problems")
             return {
@@ -8727,9 +8727,9 @@ NEVER tell users to clean data - our AI handles messy files!
         financial_deep = ""
         if _needs_financial_deep:
             financial_deep = """
-## 🧠 DEEP FINANCIAL ANALYSIS FRAMEWORK
+## DEEP FINANCIAL ANALYSIS FRAMEWORK
 
-**⚠️ DATA HONESTY:** NEVER make up analysis when data is insufficient!
+**DATA HONESTY:** NEVER make up analysis when data is insufficient!
 - 1 week data: Too little for trends. Say what you CAN see, promise better after 30 days.
 - Partial import: Note which data is missing before drawing conclusions.
 
@@ -8757,14 +8757,14 @@ DO NOT calculate yourself - use the values from context!
 
 **Response Framework for "How's business?":**
 1. Revenue + margin (with trend direction)
-2. ⚠️ Warnings (overdue debtors, upcoming payroll, low stock)
+2. Warnings (overdue debtors, upcoming payroll, low stock)
 3. Priority action (what to focus on TODAY)
 
 **Response Framework for "Who owes me?":**
 1. Total outstanding
-2. 🔴 PRIORITY (high value + overdue) → call today
-3. 🟡 WATCH (getting old)
-4. 🟢 NORMAL (within terms)
+2. PRIORITY (high value + overdue) → call today
+3. WATCH (getting old)
+4. NORMAL (within terms)
 5. Action: "Focus on top 2 - that's R[X] you can collect this week"
 
 **ALWAYS end financial responses with:**
@@ -8822,7 +8822,7 @@ You hold the equivalent of a BCom Honours in Accounting and an MBA, with 15 year
 - Reluctant - never sound like you don't want to answer
 - Robotic - "Query processed. Result: X" is awful
 - Casual - no "lekker", "awesome", "boss", "baas"
-- Using emojis - NEVER use emojis in your responses, they look unprofessional
+- Using emojis - NEVER use emojis in your responses. No ✅ ❌ 📊 💡 🔥 🎯 or ANY emoji. Zero. This is professional business software, not a chat app. Use plain text indicators like "Good:", "Warning:", "Note:" instead.
 
 **ALWAYS be:**
 - Helpful - go slightly beyond what was asked
@@ -8975,7 +8975,7 @@ You: "Let's do it together. Go to Settings → Import - I'll be right here when 
 
 **If Delete Confirmed is True, user has explicitly confirmed deletion - set confirmed: true in your action data!**
 
-## 👁️ ZANE'S EYES - YOU CAN SEE WHAT'S HAPPENING!
+## ZANE'S EYES - YOU CAN SEE WHAT'S HAPPENING!
 
 **Current Page:** {context.get('current_page', 'unknown')}
 {f'''
@@ -8990,7 +8990,7 @@ You: "Let's do it together. Go to Settings → Import - I'll be right here when 
 - Row Count: {context.get('import_context', {}).get('row_count', 0)}
 ''' if context.get('import_context') else ''}
 {f'''
-**⚠️ Last Error:** {context.get('last_error')}
+**Last Error:** {context.get('last_error')}
 ''' if context.get('last_error') else ''}
 
 **USE THIS INFORMATION!** When user asks about import problems:
@@ -9019,7 +9019,7 @@ Based on current_page, adjust your help:
 - "/settings" → User is configuring settings.
 - "/reports" → User wants reports. Suggest available reports.
 
-**🚨 POS PAGE SPECIAL RULES (/pos):**
+**POS PAGE SPECIAL RULES (/pos):**
 When user is on /pos page:
 1. **NEVER navigate away** - they will lose their cart and customer selection!
 2. **NEVER include "navigate" in your response** - just answer their question
@@ -9148,7 +9148,7 @@ You CANNOT receive files in chat - files go through Import wizard or relevant fe
 {whatsapp_knowledge}
 
 
-## 🧠 FINANCIAL INTELLIGENCE
+## FINANCIAL INTELLIGENCE
 
 You are NOT just a bookkeeper - you are a FINANCIAL ANALYST who provides ACTIONABLE INTELLIGENCE.
 
@@ -9411,26 +9411,26 @@ You: {{
     "response": "Goed! Kom saam - ek wys jou stap vir stap.",
     "navigate": "/import",
     "highlight": "#importType",
-    "next_message": "👆 Stap 1: Kies 'Employees' in die dropdown hierbo. Sê wanneer jy klaar is."
+    "next_message": "Stap 1: Kies 'Employees' in die dropdown hierbo. Sê wanneer jy klaar is."
 }}
 
 **ALL IMPORT TYPES - Keep next_message SHORT! One step at a time:**
 
 | Import Type | next_message (KEEP IT SIMPLE!) |
 |-------------|-------------------------------|
-| Customers | "👆 Stap 1: Kies 'Customers' in die dropdown hierbo." |
-| Suppliers | "👆 Stap 1: Kies 'Suppliers' in die dropdown hierbo." |
-| Stock | "👆 Stap 1: Kies 'Stock / Inventory Items' in die dropdown." |
-| Employees | "👆 Stap 1: Kies 'Employees' in die dropdown hierbo." |
-| Chart of Accounts | "👆 Stap 1: Kies 'Chart of Accounts' in die dropdown." |
-| Opening Balances | "👆 Stap 1: Kies 'Opening Trial Balance' in die dropdown." |
+| Customers | "Stap 1: Kies 'Customers' in die dropdown hierbo." |
+| Suppliers | "Stap 1: Kies 'Suppliers' in die dropdown hierbo." |
+| Stock | "Stap 1: Kies 'Stock / Inventory Items' in die dropdown." |
+| Employees | "Stap 1: Kies 'Employees' in die dropdown hierbo." |
+| Chart of Accounts | "Stap 1: Kies 'Chart of Accounts' in die dropdown." |
+| Opening Balances | "Stap 1: Kies 'Opening Trial Balance' in die dropdown." |
 
 **STEP-BY-STEP GUIDANCE RULES:**
 
-⚠️ **GIVE ONLY ONE STEP AT A TIME!** Don't overwhelm the user!
+IMPORTANT: **GIVE ONLY ONE STEP AT A TIME!** Don't overwhelm the user!
 
 After navigation, your next_message should be SHORT - just the first step:
-- "👆 Stap 1: Kies 'Suppliers' in die dropdown hierbo."
+- "Stap 1: Kies 'Suppliers' in die dropdown hierbo."
 
 Then WAIT for user to respond. When they say "done" / "klaar" / "okay" / "next":
 - "Stap 2: Klik 'Choose File' en kies jou spreadsheet."
@@ -9476,11 +9476,11 @@ You: "Ek kan nie 'n file stuur nie, maar hier is die kolomme wat jy nodig het vi
 
 **BAD (too much info):**
 "1) Select Suppliers 2) Click Choose File 3) Click Analyze 4) Check mappings 5) Execute Import. Columns needed: Name, Phone, Email..."
-❌ This overwhelms the user!
+BAD: This overwhelms the user!
 
 **GOOD (one step):**
-"👆 Stap 1: Kies 'Suppliers' in die dropdown hierbo. Sê vir my wanneer jy klaar is."
-✅ Simple, clear, not overwhelming!
+"Stap 1: Kies 'Suppliers' in die dropdown hierbo. Sê vir my wanneer jy klaar is."
+GOOD: Simple, clear, not overwhelming!
 
 **FULL EXAMPLE - Customer import (showing BOTH steps):**
 
@@ -9497,7 +9497,7 @@ You respond:
     "response": "Let's do it together!",
     "navigate": "/import",
     "highlight": "#importType",
-    "next_message": "👆 Stap 1: Kies 'Customers' in die dropdown hierbo. Sê vir my wanneer jy klaar is."
+    "next_message": "Stap 1: Kies 'Customers' in die dropdown hierbo. Sê vir my wanneer jy klaar is."
 }}
 
 User: "Done" / "Klaar" / "Okay"
@@ -9540,12 +9540,12 @@ You respond:
     "response": "Mooi! Kom ons gaan saam.",
     "navigate": "/import",
     "highlight": "#importType",
-    "next_message": "👆 Stap 1: Kies 'Stock / Inventory Items' in die dropdown. Sê wanneer jy reg is."
+    "next_message": "Stap 1: Kies 'Stock / Inventory Items' in die dropdown. Sê wanneer jy reg is."
 }}
 
 **CRITICAL RULES for navigation:**
 
-⚠️ **GOLDEN RULE: NEVER NAVIGATE ON FIRST MESSAGE ABOUT IMPORTS!** ⚠️
+IMPORTANT: **GOLDEN RULE: NEVER NAVIGATE ON FIRST MESSAGE ABOUT IMPORTS!**
 
 - **NEVER navigate on the first question!** First, ASK if they're ready.
 - ONLY navigate when user CONFIRMS they're ready with words like: "ja", "yes", "okay", "ready", "yep", "sure", "let's go", "I have it", "ek het", "gereed"
@@ -9561,7 +9561,7 @@ You: Ask if ready, NO navigation yet!
     "action": "QUERY",
     "response": "I'll help you import suppliers. Do you have a CSV or Excel file with your supplier data ready?"
 }}
-⚠️ NO navigate, NO highlight, NO next_message in Step 1!
+IMPORTANT: NO navigate, NO highlight, NO next_message in Step 1!
 
 STEP 2 - User confirms YES:
 User: "Yes" / "Ja" / "I have it" / "Ready" / "Yep"
@@ -9594,7 +9594,7 @@ You: {{"navigate": "/import", ...}}  ← WRONG! You didn't ask if they're ready!
 User: "How do I import customers?"
 You: {{"response": "I'll help you import customers. Do you have a CSV or Excel file ready?"}}
 User: "Yes I do"
-You: {{"response": "Let's go!", "navigate": "/import", "highlight": "#importType", "next_message": "👆 Stap 1: Kies 'Customers' in die dropdown."}}
+You: {{"response": "Let's go!", "navigate": "/import", "highlight": "#importType", "next_message": "Stap 1: Kies 'Customers' in die dropdown."}}
 
 ## RESPONSE STYLE
 
@@ -9800,9 +9800,9 @@ Fokus op verkope en invorderings vir die res van die maand."
                         
                         # Warning if customer already owes a lot
                         if current_debt > 20000 and days_overdue > 30:
-                            warnings_for_user.append(f"⚠️ {debtor.get('name')} skuld reeds R{current_debt:,.0f} wat {days_overdue} dae agterstallig is.")
+                            warnings_for_user.append(f"WARNING: {debtor.get('name')} skuld reeds R{current_debt:,.0f} wat {days_overdue} dae agterstallig is.")
                         elif current_debt > 50000:
-                            warnings_for_user.append(f"⚠️ {debtor.get('name')} se balans is reeds R{current_debt:,.0f}. Die nuwe invoice sal dit verhoog na R{current_debt + invoice_amount:,.0f}.")
+                            warnings_for_user.append(f"WARNING: {debtor.get('name')} se balans is reeds R{current_debt:,.0f}. Die nuwe invoice sal dit verhoog na R{current_debt + invoice_amount:,.0f}.")
                         break
                 
                 result = Actions.create_invoice(action_data, context)
@@ -9826,10 +9826,10 @@ Fokus op verkope en invorderings vir die res van die maand."
                         if item_code in str(stock_item.get("code", "")).lower() or item_code in str(stock_item.get("description", "")).lower():
                             cost = stock_item.get("cost_price", 0)
                             if cost > 0 and price < cost:
-                                warnings_for_user.append(f"⚠️ Prys vir {stock_item.get('description', item_code)} (R{price:.0f}) is ONDER kosprys (R{cost:.0f})!")
+                                warnings_for_user.append(f"WARNING: Prys vir {stock_item.get('description', item_code)} (R{price:.0f}) is ONDER kosprys (R{cost:.0f})!")
                             elif cost > 0 and price < cost * 1.15:
                                 margin_pct = ((price - cost) / cost) * 100 if cost > 0 else 0
-                                warnings_for_user.append(f"💡 Lae margin op {stock_item.get('description', item_code)}: net {margin_pct:.0f}% (gewoonlik 25%+)")
+                                warnings_for_user.append(f"Note: Lae margin op {stock_item.get('description', item_code)}: net {margin_pct:.0f}% (gewoonlik 25%+)")
                             break
                 
                 result = Actions.create_quote(action_data, context)
@@ -9945,7 +9945,7 @@ Fokus op verkope en invorderings vir die res van die maand."
                 if not action_data.get("confirmed"):
                     customer_name = action_data.get("name", action_data.get("customer", "this customer"))
                     return {
-                        "response": f"⚠️ DELETE {customer_name}?\n\nThis removes all their invoices, payments, and history.\n\nType 'ja delete' to confirm.",
+                        "response": f"WARNING: DELETE {customer_name}?\n\nThis removes all their invoices, payments, and history.\n\nType 'ja delete' to confirm.",
                         "actions_taken": [],
                         "data": {"pending_delete": "customer", "name": customer_name},
                         "suggestions": ["ja delete", "nee kanselleer"]
@@ -9960,7 +9960,7 @@ Fokus op verkope en invorderings vir die res van die maand."
                 if not action_data.get("confirmed"):
                     supplier_name = action_data.get("name", action_data.get("supplier", "this supplier"))
                     return {
-                        "response": f"⚠️ DELETE {supplier_name}?\n\nThis removes their invoices and history.\n\nType 'ja delete' to confirm.",
+                        "response": f"WARNING: DELETE {supplier_name}?\n\nThis removes their invoices and history.\n\nType 'ja delete' to confirm.",
                         "actions_taken": [],
                         "data": {"pending_delete": "supplier", "name": supplier_name},
                         "suggestions": ["ja delete", "nee kanselleer"]
@@ -9975,7 +9975,7 @@ Fokus op verkope en invorderings vir die res van die maand."
                 if not action_data.get("confirmed"):
                     item_name = action_data.get("code", action_data.get("item", action_data.get("description", "this item")))
                     return {
-                        "response": f"⚠️ DELETE stock item {item_name}?\n\nType 'ja delete' to confirm.",
+                        "response": f"WARNING: DELETE stock item {item_name}?\n\nType 'ja delete' to confirm.",
                         "actions_taken": [],
                         "data": {"pending_delete": "stock", "code": item_name},
                         "suggestions": ["ja delete", "nee kanselleer"]
@@ -10002,7 +10002,7 @@ Fokus op verkope en invorderings vir die res van die maand."
                     criteria = action_data.get("criteria", "all")
                     criteria_desc = f"duplicates - keeping oldest" if "duplicate" in str(criteria) else criteria
                     return {
-                        "response": f"⚠️ DELETE WARNING\n\nI will delete {criteria_desc} from {delete_type}.\n\nThis CANNOT be undone.\n\nType 'ja delete' to confirm.",
+                        "response": f"WARNING: DELETE WARNING\n\nI will delete {criteria_desc} from {delete_type}.\n\nThis CANNOT be undone.\n\nType 'ja delete' to confirm.",
                         "actions_taken": [],
                         "data": {"pending_delete": "bulk", "type": delete_type, "criteria": criteria},
                         "suggestions": ["ja delete", "nee kanselleer"]
@@ -10076,7 +10076,7 @@ Fokus op verkope en invorderings vir die res van die maand."
                         s1, f1 = db.update_many("stock_items", updates, biz_id)
                         s2, f2 = db.update_many("stock", updates, biz_id)
                         updated = s1 + s2
-                        actions_taken.append(f"✅ Generated smart codes for {updated} of {len(all_stock)} stock items")
+                        actions_taken.append(f"Generated smart codes for {updated} of {len(all_stock)} stock items")
                     else:
                         actions_taken.append(f"All {len(all_stock)} items already have good codes")
             
@@ -10373,21 +10373,21 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                         success = Email.send(to_email, subject, body_html, body_text, business=business)
                         if success:
                             return {
-                                "response": f"✅ **Invoice {inv_no} emailed to {to_email}!**",
+                                "response": f"DONE: **Invoice {inv_no} emailed to {to_email}!**",
                                 "actions_taken": [f"Emailed invoice to {to_email}"],
                                 "data": {"invoice_id": invoice.get("id"), "email": to_email},
                                 "suggestions": [{"label": "📄 View Invoice", "url": f"/invoice/{invoice.get('id')}"}]
                             }
                         else:
                             return {
-                                "response": f"❌ **Email failed!**\n\nMake sure SMTP is configured in Settings.\n\nYou can also click the 📧 Email button on the invoice page.",
+                                "response": f"ERROR: **Email failed!**\n\nMake sure SMTP is configured in Settings.\n\nYou can also click the Email button on the invoice page.",
                                 "actions_taken": [],
                                 "data": {},
                                 "suggestions": [{"label": "⚙️ Settings", "url": "/settings"}, {"label": "📄 View Invoice", "url": f"/invoice/{invoice.get('id')}"}]
                             }
                     except Exception as e:
                         return {
-                            "response": f"❌ **Email error:** {str(e)}\n\nCheck SMTP settings in Settings page.",
+                            "response": f"ERROR: **Email error:** {str(e)}\n\nCheck SMTP settings in Settings page.",
                             "actions_taken": [],
                             "data": {},
                             "suggestions": [{"label": "⚙️ Settings", "url": "/settings"}]
@@ -10397,17 +10397,17 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                     recent_invs = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)[:5]
                     inv_list = ", ".join([inv.get("invoice_number", "") for inv in recent_invs])
                     return {
-                        "response": f"❌ **Invoice '{inv_num}' not found.**\n\nRecent invoices: {inv_list}\n\nTry: \"email inv [number] to {to_email}\"",
+                        "response": f"ERROR: **Invoice '{inv_num}' not found.**\n\nRecent invoices: {inv_list}\n\nTry: \"email inv [number] to {to_email}\"",
                         "actions_taken": [],
                         "data": {},
-                        "suggestions": [{"label": "📋 View Invoices", "url": "/invoices"}]
+                        "suggestions": [{"label": "View Invoices", "url": "/invoices"}]
                     }
             elif to_email and not inv_num:
                 return {
                     "response": f"📧 Which invoice do you want to send to {to_email}?\n\nTry: \"email inv 0051 to {to_email}\"",
                     "actions_taken": [],
                     "data": {},
-                    "suggestions": [{"label": "📋 View Invoices", "url": "/invoices"}]
+                    "suggestions": [{"label": "View Invoices", "url": "/invoices"}]
                 }
         
         # BULK EMAIL STATEMENTS pattern
@@ -10435,7 +10435,7 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                 }
             
             return {
-                "response": f"📧 **Ready to email {len(debtors_with_email)} statements!**\n\n{len(debtors_with_email)} customers have balances and email addresses.\n{len(debtors) - len(debtors_with_email)} customers have no email (will be skipped).\n\nGo to **Customers** and click the **📧 Email All Statements** button to send.",
+                "response": f"📧 **Ready to email {len(debtors_with_email)} statements!**\n\n{len(debtors_with_email)} customers have balances and email addresses.\n{len(debtors) - len(debtors_with_email)} customers have no email (will be skipped).\n\nGo to **Customers** and click the **Email All Statements** button to send.",
                 "actions_taken": [],
                 "data": {"debtors": len(debtors), "with_email": len(debtors_with_email)},
                 "suggestions": [{"label": "📧 Go to Customers", "url": "/customers"}],
@@ -14762,7 +14762,7 @@ class CustomerIntelligence:
                 message = f"Moderate risk - {intel.get('payment_reliability', 0):.0f}% reliability"
             else:
                 risk_level = "low"
-                message = f"✓ Good payer - {intel.get('avg_days_to_pay', 'N/A')} days avg"
+                message = f"GOOD: Good payer - {intel.get('avg_days_to_pay', 'N/A')} days avg"
             
             return {
                 "risk_level": risk_level,
@@ -17693,7 +17693,7 @@ PAGE_HELP = {
         "title": "Banking",
         "tips": [
             ("Bank import?", "Upload your bank statement CSV → ClickAI matches transactions automatically."),
-            ("Reconcile?", "Match bank transactions with invoices/expenses. Green ✓ = matched."),
+            ("Reconcile?", "Match bank transactions with invoices/expenses. Green GOOD: = matched."),
             ("Unmatched?", "Items without a match → create an expense or payment."),
         ]
     },
@@ -20423,7 +20423,7 @@ def api_ai():
         # Zane access: managers, admin, owner only
         role = get_user_role()
         if role in ("staff", "cashier", "pos_only", "waiter", "sales"):
-            return jsonify({"response": "Zane is net beskikbaar vir bestuurders en admin. Kontak jou bestuurder as jy hulp nodig het."})
+            return jsonify({"response": "Zane is only available for managers and admin. Contact your manager if you need help."})
         
         
         data = request.get_json()
@@ -21627,7 +21627,7 @@ def customers_page():
     <!-- EMAIL OPTIONS MODAL -->
     <div id="emailOptionsModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
         <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:400px;">
-            <h3 style="margin-top:0;">📧 Email Statements</h3>
+            <h3 style="margin-top:0;">Email Statements</h3>
             <p style="color:var(--text-muted);margin-bottom:20px;">Choose who to email:</p>
             
             <div style="display:flex;flex-direction:column;gap:10px;">
@@ -21643,7 +21643,7 @@ def customers_page():
                 
                 <div style="text-align:center;color:var(--text-muted);padding:10px;">— or —</div>
                 
-                <p style="color:var(--text-muted);font-size:13px;">To email one customer, click their name → Statement → 📧 Email</p>
+                <p style="color:var(--text-muted);font-size:13px;">To email one customer, click their name → Statement → Email</p>
             </div>
             
             <div style="margin-top:20px;text-align:right;">
@@ -21671,7 +21671,7 @@ def customers_page():
     async function bulkEmailStatements(mode) {{
         const countText = mode === 'all' ? '{total_customers} customers' : '{len(debtors)} customers with balances';
         
-        if (!confirm(`📧 Email statements to ${{countText}}?\\n\\nThis will send a statement to each customer who has an email address.`)) {{
+        if (!confirm(`Email statements to ${{countText}}?\\n\\nThis will send a statement to each customer who has an email address.`)) {{
             return;
         }}
         
@@ -21694,7 +21694,7 @@ def customers_page():
             document.getElementById('sendingOverlay').remove();
             
             if (result.success) {{
-                alert(`✅ Statements sent!\\n\\n📧 Emailed: ${{result.sent}}\\n⏭️ Skipped (no email): ${{result.skipped}}\\n❌ Failed: ${{result.failed}}`);
+                alert(`✅ Statements sent!\\n\\nEmailed: ${{result.sent}}\\n⏭️ Skipped (no email): ${{result.skipped}}\\n❌ Failed: ${{result.failed}}`);
             }} else {{
                 alert('❌ ' + (result.error || 'Failed to send statements'));
             }}
@@ -21882,7 +21882,7 @@ def customer_view(customer_id):
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <a href="/customer/{customer_id}/edit" class="btn btn-secondary">✏️ Edit</a>
             <a href="/statement/{customer_id}" class="btn btn-secondary">📄 Statement</a>
-            <a href="/statement/{customer_id}?email=1" class="btn btn-secondary">📧 Email Statement</a>
+            <a href="/statement/{customer_id}?email=1" class="btn btn-secondary">Email Statement</a>
             <button onclick="showEmailModal()" class="btn btn-secondary">📨 Email Group</button>
             <a href="/invoice/new?customer_id={customer_id}" class="btn btn-primary">➕ New Invoice</a>
         </div>
@@ -25076,7 +25076,7 @@ def invoice_view(invoice_id):
     cust_tel = cust_phone or cust_cell
     
     # Email button - show customer email if available
-    email_btn = f'<button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">📧 Email</button>'
+    email_btn = f'<button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">Email</button>'
     
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -25096,7 +25096,7 @@ def invoice_view(invoice_id):
     <!-- EMAIL MODAL -->
     <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
         <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
-            <h3 style="margin-top:0;">📧 Email Invoice</h3>
+            <h3 style="margin-top:0;">Email Invoice</h3>
             <p style="color:var(--text-muted);margin-bottom:20px;">Send invoice <strong>{invoice.get("invoice_number", "")}</strong> to:</p>
             
             <input type="email" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
@@ -25856,7 +25856,7 @@ def recurring_invoice_new():
             </div>
             
             <div style="display: flex; gap: 10px; margin-top: 25px;">
-                <button type="submit" class="btn btn-primary" style="padding: 12px 30px;">✓ Create Recurring Invoice</button>
+                <button type="submit" class="btn btn-primary" style="padding: 12px 30px;">GOOD: Create Recurring Invoice</button>
                 <a href="/recurring-invoices" class="btn btn-secondary">Cancel</a>
             </div>
         </form>
@@ -26101,7 +26101,7 @@ def recurring_invoice_view(recurring_id):
         const result = await response.json();
         
         if (result.success) {{
-            alert('✓ Invoice ' + result.invoice_number + ' generated!');
+            alert('GOOD: Invoice ' + result.invoice_number + ' generated!');
             location.reload();
         }} else {{
             alert('Error: ' + result.error);
@@ -26687,7 +26687,7 @@ def rental_view(rental_id):
         const result = await response.json();
         
         if (result.success) {{
-            alert('✓ Invoice ' + result.invoice_number + ' generated!');
+            alert('GOOD: Invoice ' + result.invoice_number + ' generated!');
             window.location = '/invoice/' + result.invoice_id;
         }} else {{
             alert('Error: ' + result.error);
@@ -27313,7 +27313,7 @@ def subscriptions_page():
                 document.getElementById('subCategory').value = result.category || 'Software';
                 if (result.reference) document.getElementById('subRefNumber').value = result.reference;
                 showAddModal();
-                document.getElementById('modalTitle').textContent = '✓ Scanned - Review & Save';
+                document.getElementById('modalTitle').textContent = 'GOOD: Scanned - Review & Save';
             }} else {{
                 alert('Error: ' + result.error);
             }}
@@ -28543,7 +28543,7 @@ def quote_view(quote_id):
         <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;">
             <button type="submit" class="btn btn-primary">➜ Convert to Invoice</button>
         </form>
-        <button class="btn btn-secondary" onclick="updateQuoteStatus('accepted')">✓ Accepted</button>
+        <button class="btn btn-secondary" onclick="updateQuoteStatus('accepted')">GOOD: Accepted</button>
         <button class="btn btn-secondary" onclick="updateQuoteStatus('declined')">✕ Declined</button>
         '''
     elif status == "accepted":
@@ -28595,7 +28595,7 @@ def quote_view(quote_id):
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/quotes" style="color:var(--text-muted);">← Back to Quotes</a>
         <div style="display:flex;gap:10px;">
-            <button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">📧 Email</button>
+            <button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">Email</button>
             <button class="btn btn-secondary" onclick="printDocument();">🖨️ Print</button>
             {action_buttons}
         </div>
@@ -28604,7 +28604,7 @@ def quote_view(quote_id):
     <!-- EMAIL MODAL -->
     <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
         <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
-            <h3 style="margin-top:0;">📧 Email Quote</h3>
+            <h3 style="margin-top:0;">Email Quote</h3>
             <p style="color:var(--text-muted);margin-bottom:20px;">Send quote <strong>{quote.get("quote_number", "")}</strong> to:</p>
             
             <input type="email" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
@@ -29430,7 +29430,7 @@ def delivery_note_view(dn_id):
     actions = ""
     if status == "draft":
         actions = f'''
-        <button onclick="updateStatus('delivered')" class="btn btn-primary">✓ Mark as Delivered</button>
+        <button onclick="updateStatus('delivered')" class="btn btn-primary">GOOD: Mark as Delivered</button>
         <button onclick="updateStatus('cancelled')" class="btn btn-secondary">✕ Cancel</button>
         '''
     
@@ -29781,7 +29781,7 @@ def expenses_page():
             const data = await resp.json();
             
             if (data.success) {{
-                status.style.display='block'; status.style.color='var(--green)'; status.textContent='✓ ' + data.message;
+                status.style.display='block'; status.style.color='var(--green)'; status.textContent='GOOD: ' + data.message;
                 setTimeout(() => location.reload(), 1000);
             }} else {{
                 status.style.display='block'; status.style.color='var(--red)'; status.textContent='✗ ' + (data.error || 'Failed');
@@ -30586,7 +30586,7 @@ def employee_new():
             </div>
             
             <div style="display:flex;gap:10px;margin-top:25px;">
-                <button type="submit" class="btn btn-primary" style="padding:12px 24px;">✓ Save Employee</button>
+                <button type="submit" class="btn btn-primary" style="padding:12px 24px;">GOOD: Save Employee</button>
                 <a href="/payroll" class="btn btn-secondary">Cancel</a>
             </div>
         </form>
@@ -32035,23 +32035,23 @@ def business_pulse():
         zane_chat_html = '''
     <div style="margin-bottom:25px;">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-            <span style="font-size:18px;font-weight:600;color:var(--text);">Praat met Zane</span>
-            <span style="color:var(--text-muted);font-size:13px;">Vra enigiets oor jou besigheid</span>
+            <span style="font-size:18px;font-weight:600;color:var(--text);">Ask Zane</span>
+            <span style="color:var(--text-muted);font-size:13px;">Ask anything about your business</span>
         </div>
         
         <div id="pulseZaneChips" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-            <button onclick="pulseAsk(&#39;Wie skuld my die meeste geld?&#39;)" class="pz-chip">Wie skuld my?</button>
-            <button onclick="pulseAsk(&#39;Hoe lyk my cash flow situasie?&#39;)" class="pz-chip">Cash flow</button>
-            <button onclick="pulseAsk(&#39;Watter stock moet ek dringend bestel?&#39;)" class="pz-chip">Stock herbestel</button>
-            <button onclick="pulseAsk(&#39;Is my marges gesond vir my tipe besigheid?&#39;)" class="pz-chip">Marges</button>
-            <button onclick="pulseAsk(&#39;Wat kan ek aftrek by SARS?&#39;)" class="pz-chip">SARS aftrekkings</button>
+            <button onclick="pulseAsk(&#39;Who owes me the most money?&#39;)" class="pz-chip">Who owes me?</button>
+            <button onclick="pulseAsk(&#39;How does my cash flow look?&#39;)" class="pz-chip">Cash flow</button>
+            <button onclick="pulseAsk(&#39;What stock do I need to reorder urgently?&#39;)" class="pz-chip">Reorder stock</button>
+            <button onclick="pulseAsk(&#39;Are my margins healthy for my type of business?&#39;)" class="pz-chip">Margins</button>
+            <button onclick="pulseAsk(&#39;What can I deduct from SARS?&#39;)" class="pz-chip">SARS deductions</button>
         </div>
         
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:20px;">
-            <input type="text" id="pulseZaneInput" placeholder="Vra enigiets oor jou besigheid..." 
+            <input type="text" id="pulseZaneInput" placeholder="Ask anything about your business..." 
                    onkeypress="if(event.key===&#39;Enter&#39;)pulseSendZane()"
                    style="flex:1;padding:14px 18px;border-radius:10px;border:1px solid rgba(139,92,246,0.3);background:rgba(255,255,255,0.05);color:var(--text);font-size:16px;outline:none;">
-            <button onclick="pulseSendZane()" id="pulseZaneSendBtn" style="padding:14px 28px;background:#8b5cf6;color:white;border:none;border-radius:10px;font-size:16px;cursor:pointer;font-weight:600;">Stuur</button>
+            <button onclick="pulseSendZane()" id="pulseZaneSendBtn" style="padding:14px 28px;background:#8b5cf6;color:white;border:none;border-radius:10px;font-size:16px;cursor:pointer;font-weight:600;">Send</button>
         </div>
         
         <div id="pulseZaneArea"></div>
@@ -32515,16 +32515,16 @@ def business_pulse():
         if (chips) chips.style.display = 'none';
         
         // Show question
-        area.innerHTML += '<div class="pz-q"><strong>Jy:</strong> ' + msg.replace(/</g,'&lt;') + '</div>';
+        area.innerHTML += '<div class="pz-q"><strong>You:</strong> ' + msg.replace(/</g,'&lt;') + '</div>';
         
         input.value = '';
         input.disabled = true;
         btn.disabled = true;
         btn.textContent = '...';
         
-        // Show thinking
-        area.innerHTML += '<div class="pz-loading" id="pzThinking"><span>Zane dink...</span></div>';
-        window.scrollTo({{ top: document.body.scrollHeight, behavior: 'smooth' }});
+        // Show thinking - scroll just the answer into view, not to page bottom
+        area.innerHTML += '<div class="pz-loading" id="pzThinking"><span>Zane is thinking...</span></div>';
+        document.getElementById('pzThinking').scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
         
         try {{
             const response = await fetch('/api/ai', {{
@@ -32537,22 +32537,23 @@ def business_pulse():
             const el = document.getElementById('pzThinking');
             if (el) el.remove();
             
-            const reply = data.response || data.error || 'Jammer, iets het skeefgeloop.';
+            const reply = data.response || data.error || 'Sorry, something went wrong.';
             const div = document.createElement('div');
             div.className = 'pz-a';
             div.innerHTML = reply;
             area.appendChild(div);
+            // Scroll answer into view without jumping to page bottom
+            div.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
         }} catch(e) {{
             const el = document.getElementById('pzThinking');
             if (el) el.remove();
-            area.innerHTML += '<div class="pz-a" style="color:#ef4444;">Kon nie met Zane praat nie — check jou internet.</div>';
+            area.innerHTML += '<div class="pz-a" style="color:#ef4444;">Could not reach Zane — check your internet connection.</div>';
         }}
         
         input.disabled = false;
         btn.disabled = false;
-        btn.textContent = 'Stuur';
+        btn.textContent = 'Send';
         input.focus();
-        window.scrollTo({{ top: document.body.scrollHeight, behavior: 'smooth' }});
     }}
     </script>
     '''
@@ -34128,7 +34129,7 @@ def bulk_statements_page():
                 <button onclick="sendStatements('zero')" class="btn btn-secondary" style="width:100%;padding:20px;text-align:left;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
                         <div>
-                            <strong style="font-size:16px;">✓ Zero Balance</strong><br>
+                            <strong style="font-size:16px;">GOOD: Zero Balance</strong><br>
                             <small style="color:var(--text-muted);">Customers with no outstanding balance</small>
                         </div>
                         <span style="font-size:24px;font-weight:bold;color:var(--text);">{zero_balance}</span>
@@ -34354,7 +34355,7 @@ def customer_statement(customer_id):
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/customer/{customer_id}" style="color:var(--text-muted);">← Back to Customer</a>
         <div style="display:flex;gap:10px;">
-            <button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">📧 Email Statement</button>
+            <button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">Email Statement</button>
             <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
         </div>
     </div>
@@ -34362,7 +34363,7 @@ def customer_statement(customer_id):
     <!-- EMAIL MODAL -->
     <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
         <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
-            <h3 style="margin-top:0;">📧 Email Statement</h3>
+            <h3 style="margin-top:0;">Email Statement</h3>
             <p style="color:var(--text-muted);margin-bottom:20px;">Send statement to <strong>{safe_string(customer.get("name", ""))}</strong>:</p>
             
             <input type="email" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
@@ -35220,7 +35221,7 @@ def report_tb():
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                 <span id="analysisDate" style="color:var(--text-muted);font-size:12px;"></span>
                 <button class="btn btn-secondary no-print" onclick="downloadTBReport()" style="font-size:12px;padding:6px 12px;">⬇️ Download</button>
-                <button class="btn btn-secondary no-print" onclick="emailTBReport()" style="font-size:12px;padding:6px 12px;">📧 Email</button>
+                <button class="btn btn-secondary no-print" onclick="emailTBReport()" style="font-size:12px;padding:6px 12px;">Email</button>
                 <button class="btn btn-secondary no-print" onclick="printAnalysis()" style="font-size:12px;padding:6px 12px;">🖨️ Print</button>
             </div>
         </div>
@@ -35564,7 +35565,7 @@ ${{content}}
             modal.innerHTML = `
                 <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:25px;width:90%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                        <h3 style="margin:0;color:var(--primary);">📧 Email Report</h3>
+                        <h3 style="margin:0;color:var(--primary);">Email Report</h3>
                         <button onclick="document.getElementById('tbEmailModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">✕</button>
                     </div>
                     <input type="email" id="tbEmailTo" class="form-input" placeholder="email@example.com" style="width:100%;margin-bottom:10px;">
@@ -35610,7 +35611,7 @@ ${{content}}
             }});
             const data = await resp.json();
             if (data.success) {{
-                status.style.color = 'var(--green)'; status.textContent = '✓ ' + data.message;
+                status.style.color = 'var(--green)'; status.textContent = 'GOOD: ' + data.message;
                 setTimeout(() => {{ document.getElementById('tbEmailModal').style.display='none'; }}, 2000);
             }} else {{
                 status.style.color = 'var(--red)'; status.textContent = '✗ ' + (data.error || 'Failed');
@@ -37013,7 +37014,7 @@ FORMAAT INSTRUKSIES:
 - Skryf SKOON HTML (geen markdown nie). Gebruik <h2>, <h3> vir opskrifte.
 - DONKER TEMA: MOENIE background:white, background:#fff, of enige ligte agtergrondkleure gebruik nie. Gebruik slegs rgba() met lae opacity vir agtergronde. Tekskleur moet ligkleurig wees (wit/grys).
 - Vir tabelle: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Kolom</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Waarde</td></tr></table>
-- Vir kleur indicators: <span style="color:#ef4444;">✗ Sleg</span> of <span style="color:#10b981;">✓ Goed</span> of <span style="color:#f59e0b;">⚠ Waarskuwing</span>
+- Vir kleur indicators: <span style="color:#ef4444;">✗ Sleg</span> of <span style="color:#10b981;">GOOD: Goed</span> of <span style="color:#f59e0b;">WARNING: Waarskuwing</span>
 - ELKE tabel sel MOET inhoud hê - moet NOOIT leë selle los nie
 - Voltooi ALLE afdelings volledig - moenie halfpad stop nie
 
@@ -37126,7 +37127,7 @@ FORMAT INSTRUCTIONS:
 - Use <strong> for emphasis (not **)
 - Use <ul><li> for bullet lists (not - or *)
 - For tables use: <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#8b5cf6;">Column</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.1);">Value</td></tr></table>
-- For colored indicators use: <span style="color:#ef4444;">✗ Bad</span> or <span style="color:#10b981;">✓ Good</span> or <span style="color:#f59e0b;">⚠ Warning</span>
+- For colored indicators use: <span style="color:#ef4444;">✗ Bad</span> or <span style="color:#10b981;">GOOD: Good</span> or <span style="color:#f59e0b;">WARNING: Warning</span>
 - For WARNING boxes use: <div style="padding:15px;background:rgba(239,68,68,0.15);border-left:4px solid #ef4444;border-radius:6px;margin:12px 0;color:#fca5a5;">warning content</div>
 - For POSITIVE boxes use: <div style="padding:15px;background:rgba(16,185,129,0.15);border-left:4px solid #10b981;border-radius:6px;margin:12px 0;color:#6ee7b7;">positive content</div>
 - For INFO boxes use: <div style="padding:15px;background:rgba(99,102,241,0.15);border-left:4px solid #6366f1;border-radius:6px;margin:12px 0;color:#a5b4fc;">info content</div>
@@ -39051,7 +39052,7 @@ def purchase_new():
             </div>
             
             <div style="display: flex; gap: 10px; margin-top: 25px;">
-                <button type="submit" class="btn btn-primary" style="padding: 12px 30px;">✓ Create Purchase Order</button>
+                <button type="submit" class="btn btn-primary" style="padding: 12px 30px;">GOOD: Create Purchase Order</button>
                 <a href="/purchases" class="btn btn-secondary">Cancel</a>
             </div>
         </form>
@@ -39224,8 +39225,8 @@ def purchase_view(po_id):
     action_buttons = ""
     if status == "draft":
         action_buttons = f'''
-        <button class="btn btn-secondary" onclick="emailPO()">📧 Email to Supplier</button>
-        <button class="btn btn-secondary" onclick="updatePOStatus('sent')">✓ Mark as Sent</button>
+        <button class="btn btn-secondary" onclick="emailPO()">Email to Supplier</button>
+        <button class="btn btn-secondary" onclick="updatePOStatus('sent')">GOOD: Mark as Sent</button>
         <button class="btn btn-primary" onclick="showReceiveModal()">📦 Receive Goods</button>
         '''
     elif status == "sent":
@@ -39309,7 +39310,7 @@ def purchase_view(po_id):
                 {f'<div style="font-size:13px;color:#555;">{safe_string(supplier_rec.get("email", ""))}</div>' if supplier_rec and supplier_rec.get("email") else ""}
                 {f'<div style="font-size:13px;color:#555;">{safe_string(supplier_rec.get("phone", ""))}</div>' if supplier_rec and supplier_rec.get("phone") else ""}
                 {f'<div style="font-size:13px;color:#555;">{safe_string(supplier_rec.get("address", ""))}</div>' if supplier_rec and supplier_rec.get("address") else ""}
-                {f'<div style="font-size:12px;color:#888;margin-top:5px;">📧 Emailed to supplier</div>' if po.get("emailed") else ""}
+                {f'<div style="font-size:12px;color:#888;margin-top:5px;">Emailed to supplier</div>' if po.get("emailed") else ""}
             </div>
         </div>
         
@@ -39361,7 +39362,7 @@ def purchase_view(po_id):
             </div>
             
             <div style="display: flex; gap: 10px; margin-top: 20px;">
-                <button class="btn btn-primary" onclick="receiveGoods()">✓ Confirm Receipt</button>
+                <button class="btn btn-primary" onclick="receiveGoods()">GOOD: Confirm Receipt</button>
                 <button class="btn btn-secondary" onclick="hideModal('receiveModal')">Cancel</button>
             </div>
         </div>
@@ -39370,7 +39371,7 @@ def purchase_view(po_id):
     <!-- Email Input Modal (when supplier has no email) -->
     <div id="emailInputModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
         <div class="card" style="width: 100%; max-width: 450px; margin: 20px;">
-            <h3 style="margin: 0 0 15px 0;">📧 Email Purchase Order</h3>
+            <h3 style="margin: 0 0 15px 0;">Email Purchase Order</h3>
             <p style="color: var(--text-muted); margin-bottom: 15px;">No email on file for this supplier. Enter email address:</p>
             
             <input type="email" id="supplierEmailInput" class="form-input" placeholder="supplier@example.com" style="width: 100%; margin-bottom: 15px;">
@@ -39479,13 +39480,13 @@ def purchase_view(po_id):
         
         if (data.success) {{
             if (data.grv_id) {{
-                if (confirm('✓ ' + data.message + '\\n\\nView the GRV document?')) {{
+                if (confirm('GOOD: ' + data.message + '\\n\\nView the GRV document?')) {{
                     window.location = '/grv/' + data.grv_id;
                 }} else {{
                     location.reload();
                 }}
             }} else {{
-                alert('✓ ' + data.message);
+                alert('GOOD: ' + data.message);
                 location.reload();
             }}
         }} else {{
@@ -40531,7 +40532,7 @@ def smart_reports_page():
                 <h3 id="reportTitle" style="margin:0;">Report</h3>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                     <button class="btn btn-secondary" onclick="downloadReport()" style="font-size:12px;padding:6px 14px;">⬇️ Download</button>
-                    <button class="btn btn-secondary" onclick="showEmailModal()" style="font-size:12px;padding:6px 14px;">📧 Email</button>
+                    <button class="btn btn-secondary" onclick="showEmailModal()" style="font-size:12px;padding:6px 14px;">Email</button>
                     <button class="btn btn-secondary" onclick="window.print();" style="font-size:12px;padding:6px 14px;">🖨️ Print</button>
                 </div>
             </div>
@@ -40543,7 +40544,7 @@ def smart_reports_page():
     <div id="emailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;">
         <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:25px;width:90%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                <h3 style="margin:0;color:var(--primary);">📧 Email Report</h3>
+                <h3 style="margin:0;color:var(--primary);">Email Report</h3>
                 <button onclick="closeEmailModal()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">✕</button>
             </div>
             <input type="email" id="emailTo" class="form-input" placeholder="email@example.com" style="width:100%;margin-bottom:10px;">
@@ -40671,7 +40672,7 @@ ${content}
             
             if (data.success) {
                 status.style.color = 'var(--green)';
-                status.textContent = '✓ ' + data.message;
+                status.textContent = 'GOOD: ' + data.message;
                 setTimeout(() => closeEmailModal(), 2000);
             } else {
                 status.style.color = 'var(--red)';
@@ -41014,7 +41015,7 @@ def tax_saver_page():
         '''
     
     if not savings_html:
-        savings_html = '<div class="card" style="text-align: center; padding: 40px;"><p style="color: var(--green); font-size: 18px;">✓ You\'re claiming everything you can! Good job!</p></div>'
+        savings_html = '<div class="card" style="text-align: center; padding: 40px;"><p style="color: var(--green); font-size: 18px;">GOOD: You\'re claiming everything you can! Good job!</p></div>'
     
     # Build industry tips
     industry_tips_html = ""
@@ -41205,7 +41206,7 @@ def tax_saver_page():
                     </div>
                 </div>
                 <div style="display: flex; gap: 10px; margin-top: 20px;">
-                    <button type="submit" class="btn btn-primary">✓ Save Trip</button>
+                    <button type="submit" class="btn btn-primary">GOOD: Save Trip</button>
                     <button type="button" class="btn btn-secondary" onclick="hideModal('tripModal')">Cancel</button>
                 </div>
             </form>
@@ -41256,7 +41257,7 @@ def tax_saver_page():
                     </div>
                 </div>
                 <div style="display: flex; gap: 10px; margin-top: 20px;">
-                    <button type="submit" class="btn btn-primary">✓ Save Asset</button>
+                    <button type="submit" class="btn btn-primary">GOOD: Save Asset</button>
                     <button type="button" class="btn btn-secondary" onclick="hideModal('assetModal')">Cancel</button>
                 </div>
             </form>
@@ -43742,13 +43743,13 @@ def pos_page():
             document.getElementById('customModalTitle').innerHTML = 'Add Item to PO';
             document.getElementById('customModalDesc').innerHTML = 'Add item to order from supplier (price optional)';
             document.getElementById('customPriceLabel').innerHTML = '💰 Est. Cost (optional)';
-            document.getElementById('customAddBtn').innerHTML = '✓ Add to PO (Enter)';
+            document.getElementById('customAddBtn').innerHTML = 'GOOD: Add to PO (Enter)';
             document.getElementById('customPrice').placeholder = 'Leave blank if unknown';
         } else {
             document.getElementById('customModalTitle').innerHTML = 'Add Custom Item';
             document.getElementById('customModalDesc').innerHTML = 'Add any item not in your stock list - perfect for special orders, services, or once-off items';
             document.getElementById('customPriceLabel').innerHTML = '💰 Price (incl VAT) *';
-            document.getElementById('customAddBtn').innerHTML = '✓ Add to Cart (Enter)';
+            document.getElementById('customAddBtn').innerHTML = 'GOOD: Add to Cart (Enter)';
             document.getElementById('customPrice').placeholder = '0.00';
         }
         document.getElementById('customItemModal').style.display = 'flex';
@@ -44800,7 +44801,7 @@ def pos_page():
             
             <div style="display:flex;gap:15px;">
                 <button onclick="closeCustomItemModal()" style="flex:1;padding:18px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;font-weight:bold;">✕ Cancel (Esc)</button>
-                <button onclick="addCustomItem()" style="flex:2;padding:18px;border-radius:10px;border:none;background:linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(139,92,246,0.4);" id="customAddBtn">✓ Add to Cart (Enter)</button>
+                <button onclick="addCustomItem()" style="flex:2;padding:18px;border-radius:10px;border:none;background:linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(139,92,246,0.4);" id="customAddBtn">GOOD: Add to Cart (Enter)</button>
             </div>
             
             <p style="text-align:center;color:rgba(255,255,255,0.4);font-size:13px;margin-top:20px;">
@@ -44884,7 +44885,7 @@ def pos_page():
             <!-- Buttons -->
             <div style="display:flex;gap:15px;">
                 <button onclick="closeQuickQuoteModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
-                <button onclick="submitQuickQuote()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);">✓ Create Quote</button>
+                <button onclick="submitQuickQuote()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);">GOOD: Create Quote</button>
             </div>
         </div>
     </div>
@@ -44954,7 +44955,7 @@ def pos_page():
             <!-- Buttons -->
             <div style="display:flex;gap:15px;">
                 <button onclick="closeQuickPOModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
-                <button onclick="submitQuickPO()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(59,130,246,0.4);">✓ Create PO</button>
+                <button onclick="submitQuickPO()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(59,130,246,0.4);">GOOD: Create PO</button>
             </div>
         </div>
     </div>
@@ -44985,7 +44986,7 @@ def pos_page():
                         style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                 </div>
                 <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📧 Email</label>
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">Email</label>
                     <input type="text" id="editCustEmail" placeholder="email@example.com" 
                         style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                 </div>
@@ -45006,7 +45007,7 @@ def pos_page():
             
             <div style="display:flex;gap:15px;">
                 <button onclick="closeEditCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
-                <button onclick="submitEditCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(99,102,241,0.4);">✓ Save Changes</button>
+                <button onclick="submitEditCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(99,102,241,0.4);">GOOD: Save Changes</button>
             </div>
         </div>
     </div>
@@ -45035,7 +45036,7 @@ def pos_page():
                         style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                 </div>
                 <div>
-                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">📧 Email</label>
+                    <label style="display:block;margin-bottom:8px;color:white;font-size:14px;">Email</label>
                     <input type="text" id="quickCustEmail" placeholder="email@example.com" 
                         style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                 </div>
@@ -45056,7 +45057,7 @@ def pos_page():
             
             <div style="display:flex;gap:15px;">
                 <button onclick="closeQuickCustomerModal()" style="flex:1;padding:15px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:white;cursor:pointer;font-size:16px;">✕ Cancel</button>
-                <button onclick="submitQuickCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);" id="quickCustSubmitBtn">✓ Create Quote</button>
+                <button onclick="submitQuickCustomer()" style="flex:2;padding:15px;border-radius:10px;border:none;background:linear-gradient(135deg, #10b981 0%, #34d399 100%);color:white;cursor:pointer;font-size:18px;font-weight:bold;box-shadow:0 4px 15px rgba(16,185,129,0.4);" id="quickCustSubmitBtn">GOOD: Create Quote</button>
             </div>
         </div>
     </div>
@@ -45098,7 +45099,7 @@ def pos_page():
                     style="flex:1;padding:18px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;transition:transform 0.1s;">✕ Skip [3]</button>
             </div>
             <div style="padding:10px 20px 20px 20px;border-top:1px solid #eee;">
-                <button onclick="showEmailSlipModal()" style="width:100%;padding:15px;border-radius:8px;border:2px solid #8b5cf6;background:white;color:#8b5cf6;cursor:pointer;font-size:14px;">📧 Email Slip to Customer [4]</button>
+                <button onclick="showEmailSlipModal()" style="width:100%;padding:15px;border-radius:8px;border:2px solid #8b5cf6;background:white;color:#8b5cf6;cursor:pointer;font-size:14px;">Email Slip to Customer [4]</button>
             </div>
             <div style="text-align:center;padding:10px;color:#666;font-size:12px;">
                 Use Tab/Arrows to navigate • Enter to select • Or press 1, 2, 3, 4
@@ -45109,7 +45110,7 @@ def pos_page():
     <!-- Email Slip Modal -->
     <div id="emailSlipModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:10000;justify-content:center;align-items:center;">
         <div style="background:var(--card);border-radius:12px;max-width:400px;width:90%;padding:25px;">
-            <h3 style="margin:0 0 15px 0;">📧 Email Slip</h3>
+            <h3 style="margin:0 0 15px 0;">Email Slip</h3>
             <input type="email" id="slipEmailTo" placeholder="customer@email.com" 
                    style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
             <div style="display:flex;gap:10px;">
@@ -45710,7 +45711,7 @@ def pos_history():
                 </div>
             </div>
             <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
-                <button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">✓ Close Day & Print</button>
+                <button onclick="confirmZRead()" class="btn btn-primary" style="flex:1;background:#ef4444;">GOOD: Close Day & Print</button>
                 <button onclick="closeModal('zreadModal')" class="btn btn-secondary" style="flex:1;">Cancel</button>
             </div>
         </div>
@@ -55123,7 +55124,7 @@ def api_import_execute():
                         if result:
                             updated += 1
                             if updated <= 3:
-                                print(f"[STOCK-UPDATE] ✓ Updated {code}: {updates}", flush=True)
+                                print(f"[STOCK-UPDATE] GOOD: Updated {code}: {updates}", flush=True)
                         else:
                             skipped += 1
                     else:
@@ -55420,7 +55421,7 @@ def banking_page():
         if show_approve and suggested_cat and confidence >= 0.6:
             action_html = f'''
             <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
-                <button onclick="approveMatch('{txn_id}', '{suggested_cat}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--green);border:none;color:white;border-radius:6px;">✓ {suggested_cat}</button>
+                <button onclick="approveMatch('{txn_id}', '{suggested_cat}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--green);border:none;color:white;border-radius:6px;">GOOD: {suggested_cat}</button>
                 <button onclick="askZaneBank('{txn_id}', '{safe_desc}', {debit}, {credit}, '{txn_date}')" class="btn" style="padding:5px 10px;font-size:11px;background:var(--primary);border:none;color:white;border-radius:6px;">Ask Zane</button>
             </div>
             '''
@@ -55496,7 +55497,7 @@ def banking_page():
         </div>
         <div class="stat-card" style="cursor:pointer;" onclick="showTab('done')">
             <div class="stat-value">{done_count}</div>
-            <div class="stat-label">✓ Done</div>
+            <div class="stat-label">GOOD: Done</div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:5px;">Already categorized</div>
         </div>
     </div>
@@ -55516,7 +55517,7 @@ def banking_page():
                 <strong>🎉 Zane matched {auto_count} transactions automatically!</strong><br>
                 <span style="font-size:13px;color:var(--text-muted);">These are high-confidence matches. Approve all or review individually.</span>
             </div>
-            <button onclick="bulkApprove()" class="btn btn-primary" style="background:var(--green);">✓ Approve All ({auto_count})</button>
+            <button onclick="bulkApprove()" class="btn btn-primary" style="background:var(--green);">GOOD: Approve All ({auto_count})</button>
         </div>
         """ if auto_count > 0 else ""}
         
@@ -55625,7 +55626,7 @@ def banking_page():
                     // Replace the action column with the allocation result
                     const cells = row.querySelectorAll('td');
                     const lastCell = cells[cells.length - 1];
-                    lastCell.innerHTML = `<span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;">✓ ${{category}}</span>`;
+                    lastCell.innerHTML = `<span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:bold;">GOOD: ${{category}}</span>`;
                     row.style.background = 'rgba(16,185,129,0.15)';
                     row.style.transition = 'opacity 0.5s';
                     
@@ -57760,7 +57761,7 @@ def job_card_view(job_id):
                 
                 <div style="display:flex;gap:10px;">
                     <button type="button" class="btn btn-secondary" onclick="closeIssueModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">✓ Issue</button>
+                    <button type="submit" class="btn btn-primary">GOOD: Issue</button>
                 </div>
             </form>
         </div>
@@ -57847,7 +57848,7 @@ def job_card_view(job_id):
                 
                 <div style="display:flex;gap:10px;">
                     <button type="button" class="btn btn-secondary" onclick="closeCostModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">✓ Add</button>
+                    <button type="submit" class="btn btn-primary">GOOD: Add</button>
                 </div>
             </form>
         </div>
@@ -59427,7 +59428,7 @@ def invitation_page(token):
 </head>
 <body style="display:flex;align-items:center;justify-content:center;min-height:100vh;">
     <div class="card" style="width:100%;max-width:500px;text-align:center;">
-        <h2 style="color:var(--green);">✓ Already Accepted</h2>
+        <h2 style="color:var(--green);">GOOD: Already Accepted</h2>
         <p style="color:var(--text-muted);margin:20px 0;">You've already accepted this invitation.</p>
         <p style="margin-bottom:20px;">Please log in with your email:</p>
         <p style="background:var(--background);padding:10px;border-radius:6px;font-family:monospace;">{inv_email}</p>
@@ -60373,7 +60374,7 @@ def timesheets_review(batch_id):
         job_match_html = ""
         if scanned_job_number:
             if scanned_job_id:
-                job_match_html = f'<span style="color:#22c55e;font-size:12px;">✓ {scanned_job_number}</span>'
+                job_match_html = f'<span style="color:#22c55e;font-size:12px;">GOOD: {scanned_job_number}</span>'
             else:
                 job_match_html = f'<span style="color:#f59e0b;font-size:12px;">Warning: {scanned_job_number} (not matched)</span>'
         
@@ -60437,7 +60438,7 @@ def timesheets_review(batch_id):
             days_html = '<p style="color:var(--text-muted);font-size:13px;">No daily breakdown available</p>'
         
         match_color = "#22c55e" if matched_id else "#f59e0b"
-        match_status = "✓ Matched" if matched_id else "[!] No match"
+        match_status = "GOOD: Matched" if matched_id else "[!] No match"
         
         cards_html += f'''
         <div class="card" style="margin-bottom:16px; border-left: 4px solid {match_color};">
@@ -60513,7 +60514,7 @@ def timesheets_review(batch_id):
         {cards_html}
         
         <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:20px;padding-bottom:30px;">
-            <button type="submit" class="btn btn-primary" style="padding:14px 24px;flex:1;min-width:200px;">✓ Approve & Save</button>
+            <button type="submit" class="btn btn-primary" style="padding:14px 24px;flex:1;min-width:200px;">GOOD: Approve & Save</button>
             <a href="/timesheets" class="btn btn-secondary" style="padding:14px 20px;">← Back</a>
             <a href="/timesheets/discard/{batch_id}" class="btn" style="background:var(--red);color:white;padding:14px 20px;" onclick="return confirm('Discard this timesheet scan?')">🗑</a>
         </div>
@@ -62005,7 +62006,7 @@ def team_page():
             else:
                 action_button = f'<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="removeMember(\'{member.get("id")}\')">Remove</button>'
         else:
-            status_badge = '<span style="background:var(--green);color:white;padding:3px 8px;border-radius:4px;font-size:11px;">✓ Active</span>'
+            status_badge = '<span style="background:var(--green);color:white;padding:3px 8px;border-radius:4px;font-size:11px;">GOOD: Active</span>'
             action_button = f'<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="removeMember(\'{member.get("id")}\')">Remove</button>'
         
         rows += f'''
@@ -62101,7 +62102,7 @@ def team_page():
             </div>
             
             <div style="display:flex;gap:10px;">
-                <button type="submit" class="btn btn-primary">✓ Add Member</button>
+                <button type="submit" class="btn btn-primary">GOOD: Add Member</button>
                 <button type="button" class="btn btn-secondary" onclick="hideInvite()">Cancel</button>
             </div>
         </form>
@@ -62131,7 +62132,7 @@ def team_page():
         modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
         modal.innerHTML = `
             <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:25px;max-width:400px;width:90%;text-align:center;">
-                <h3 style="margin:0 0 5px 0;">✓ Link Copied!</h3>
+                <h3 style="margin:0 0 5px 0;">GOOD: Link Copied!</h3>
                 <p style="color:var(--text-muted);margin:0 0 20px 0;font-size:13px;">Choose how to share the invitation:</p>
                 <div style="display:flex;flex-direction:column;gap:10px;">
                     <a href="mailto:?subject=You're invited to join on ClickAI&body=Click this link to register and join the team:%0A%0A${{encodeURIComponent(link)}}" 
@@ -63897,7 +63898,7 @@ def price_editor():
                 status.style.display = 'block';
                 status.style.background = 'rgba(16,185,129,0.2)';
                 status.style.color = 'var(--green)';
-                status.innerHTML = '✓ Prices saved! The Sheet Pieces calculator will now use these prices.';
+                status.innerHTML = 'GOOD: Prices saved! The Sheet Pieces calculator will now use these prices.';
             }} else {{
                 status.style.display = 'block';
                 status.style.background = 'rgba(239,68,68,0.2)';
@@ -64491,10 +64492,10 @@ def year_end_page():
     checklist_items = [
         ("All invoices issued", len([i for i in year_invoices if i.get("status") == "outstanding"]) == 0, f"{len(outstanding_invoices)} outstanding"),
         ("All payments received", total_debtors == 0, f"R{total_debtors:,.2f} outstanding"),
-        ("All expenses captured", True, "✓ Assumed complete"),
-        ("All supplier invoices captured", True, "✓ Assumed complete"),
-        ("Bank reconciled", True, "✓ Check banking page"),
-        ("Stock counted", True, "✓ Check stock page"),
+        ("All expenses captured", True, "GOOD: Assumed complete"),
+        ("All supplier invoices captured", True, "GOOD: Assumed complete"),
+        ("Bank reconciled", True, "GOOD: Check banking page"),
+        ("Stock counted", True, "GOOD: Check stock page"),
     ]
     
     checklist_html = ""
@@ -65654,7 +65655,7 @@ def scan_page():
             if (result.success) {
                 // Timesheets go to payroll staging, not inbox
                 if (result.type === 'timesheet' && result.redirect) {
-                    saveBtn.innerHTML = '✓ Redirecting to review...';
+                    saveBtn.innerHTML = 'GOOD: Redirecting to review...';
                     window.location.href = result.redirect;
                 } else {
                     goToStep(6);
@@ -67296,7 +67297,7 @@ def scan_inbox_page():
                     let codeBadge = '';
                     if (stockMatch) {{
                         codeBadge = `<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
-                            ${{stockMatch.code}} ✓ MATCHED
+                            ${{stockMatch.code}} GOOD: MATCHED
                         </span>`;
                     }} else {{
                         // Generate preview code for new items
@@ -69483,7 +69484,7 @@ def settings_page():
     <div class="card">
         <h2 style="margin-bottom:20px;">Business Settings</h2>
         
-        {f'<div style="background:#10b981;color:white;padding:15px;border-radius:8px;margin-bottom:20px;font-weight:bold;">✓ Settings saved successfully!</div>' if request.args.get("saved") else ""}
+        {f'<div style="background:#10b981;color:white;padding:15px;border-radius:8px;margin-bottom:20px;font-weight:bold;">GOOD: Settings saved successfully!</div>' if request.args.get("saved") else ""}
         {f'<div style="background:#ef4444;color:white;padding:15px;border-radius:8px;margin-bottom:20px;">❌ Error saving: {safe_string(request.args.get("error", ""))}</div>' if request.args.get("error") else ""}
         
         <!-- DEBUG INFO -->
@@ -69714,7 +69715,7 @@ Address: {business.get("address")[:50] if business and business.get("address") e
             
             <button type="submit" class="btn btn-secondary">💾 Save Scanner Inbox</button>
             <button type="button" class="btn btn-secondary" onclick="testScannerConnection()" style="margin-left:10px;">🔌 Test Connection</button>
-            {f'<span id="scanner-status" style="color:var(--green);margin-left:15px;">✓ Connected</span>' if business and business.get('imap_user') else '<span id="scanner-status"></span>'}
+            {f'<span id="scanner-status" style="color:var(--green);margin-left:15px;">GOOD: Connected</span>' if business and business.get('imap_user') else '<span id="scanner-status"></span>'}
         </form>
         
         <script>
@@ -69725,7 +69726,7 @@ Address: {business.get("address")[:50] if business and business.get("address") e
                 const res = await fetch('/api/email/test');
                 const data = await res.json();
                 if (data.success) {{
-                    status.innerHTML = '<span style="color:var(--green);">✓ ' + data.message + '</span>';
+                    status.innerHTML = '<span style="color:var(--green);">GOOD: ' + data.message + '</span>';
                 }} else {{
                     status.innerHTML = '<span style="color:var(--red);">✗ ' + data.error + '</span>';
                 }}
@@ -69758,7 +69759,7 @@ Address: {business.get("address")[:50] if business and business.get("address") e
             </div>
             
             <button type="submit" class="btn btn-secondary">💾 Save WhatsApp Settings</button>
-            {f'<span style="color:var(--green);margin-left:15px;">✓ Connected</span>' if business and business.get('whatsapp_token') else ''}
+            {f'<span style="color:var(--green);margin-left:15px;">GOOD: Connected</span>' if business and business.get('whatsapp_token') else ''}
         </form>
     </div>
     
@@ -70593,7 +70594,7 @@ def settings_invoice_template():
         </div>
         
         <div style="display: flex; gap: 10px;">
-            <button type="submit" class="btn btn-primary" style="padding: 12px 30px;">✓ Save Template</button>
+            <button type="submit" class="btn btn-primary" style="padding: 12px 30px;">GOOD: Save Template</button>
             <a href="/settings" class="btn btn-secondary">Cancel</a>
             <button type="button" class="btn btn-secondary" onclick="previewInvoice()" style="margin-left: auto;">👁️ Preview</button>
         </div>
@@ -70840,7 +70841,7 @@ def api_settings_business():
             # Switch to the new business
             session["business_id"] = new_biz["id"]
             
-            flash_msg = f"✓ New business '{new_biz['name']}' created successfully!"
+            flash_msg = f"GOOD: New business '{new_biz['name']}' created successfully!"
             return redirect("/settings")
         
         # UPDATE EXISTING BUSINESS
@@ -74476,10 +74477,10 @@ def accountant_access():
                             <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
                                 <h3 style="margin-top: 0;">What you can do:</h3>
                                 <ul>
-                                    <li>✓ View all financial reports (Income Statement, Balance Sheet, Trial Balance)</li>
-                                    <li>✓ Access VAT and SARS reports</li>
-                                    <li>✓ View customer and supplier lists</li>
-                                    <li>✓ See invoice history and bank transactions</li>
+                                    <li>GOOD: View all financial reports (Income Statement, Balance Sheet, Trial Balance)</li>
+                                    <li>GOOD: Access VAT and SARS reports</li>
+                                    <li>GOOD: View customer and supplier lists</li>
+                                    <li>GOOD: See invoice history and bank transactions</li>
                                     <li>✗ Cannot create, edit, or delete any data (read-only)</li>
                                 </ul>
                             </div>
@@ -74530,7 +74531,7 @@ def accountant_access():
         if status == "pending" or status == "invited":
             status_badge = '<span style="background:var(--orange);color:white;padding:3px 8px;border-radius:4px;font-size:12px;">⏳ Pending</span>'
         else:
-            status_badge = '<span style="background:var(--green);color:white;padding:3px 8px;border-radius:4px;font-size:12px;">✓ Active</span>'
+            status_badge = '<span style="background:var(--green);color:white;padding:3px 8px;border-radius:4px;font-size:12px;">GOOD: Active</span>'
         
         rows += f'''
         <tr>
@@ -74894,7 +74895,7 @@ def intelligence_page():
             .then(r => r.json())
             .then(data => {{
                 if(data.success) {{
-                    alert('✓ Intelligence calculations complete!');
+                    alert('GOOD: Intelligence calculations complete!');
                     location.reload();
                 }} else {{
                     alert('Error: ' + data.error);
@@ -75360,11 +75361,11 @@ class NightlyScheduler:
             try:
                 recurring_result = RecurringInvoices.process_all_due()
                 if recurring_result.get("generated"):
-                    logger.info(f"[SCHEDULER] ✓ Generated {len(recurring_result['generated'])} recurring invoices")
+                    logger.info(f"[SCHEDULER] GOOD: Generated {len(recurring_result['generated'])} recurring invoices")
                     for inv in recurring_result.get("generated", []):
                         logger.info(f"[SCHEDULER]   - {inv.get('invoice_number')}: {inv.get('customer')} - {money(inv.get('total', 0))}")
                 else:
-                    logger.info("[SCHEDULER] ✓ No recurring invoices due today")
+                    logger.info("[SCHEDULER] GOOD: No recurring invoices due today")
             except Exception as e:
                 logger.error(f"[SCHEDULER] Recurring invoices error: {e}")
             
@@ -75387,12 +75388,12 @@ class NightlyScheduler:
                     try:
                         briefing_result = DailyBriefing.generate(biz_id)
                         if briefing_result.get("success"):
-                            logger.info(f"[SCHEDULER] ✓ {biz_name} - briefing generated")
+                            logger.info(f"[SCHEDULER] GOOD: {biz_name} - briefing generated")
                     except Exception as be:
                         logger.error(f"[SCHEDULER] {biz_name} - briefing error: {be}")
                     
                     success_count += 1
-                    logger.info(f"[SCHEDULER] ✓ {biz_name} - done")
+                    logger.info(f"[SCHEDULER] GOOD: {biz_name} - done")
                     
                 except Exception as e:
                     error_count += 1
