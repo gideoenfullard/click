@@ -32029,6 +32029,35 @@ def business_pulse():
     role = get_user_role()
     is_manager = role in ("owner", "admin", "manager")
     
+    # Build Zane chat HTML separately (can't use triple quotes inside f-string)
+    zane_chat_html = ""
+    if is_manager:
+        zane_chat_html = '''
+    <div style="margin-bottom:25px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+            <span style="font-size:18px;font-weight:600;color:var(--text);">Praat met Zane</span>
+            <span style="color:var(--text-muted);font-size:13px;">Vra enigiets oor jou besigheid</span>
+        </div>
+        
+        <div id="pulseZaneChips" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+            <button onclick="pulseAsk(&#39;Wie skuld my die meeste geld?&#39;)" class="pz-chip">Wie skuld my?</button>
+            <button onclick="pulseAsk(&#39;Hoe lyk my cash flow situasie?&#39;)" class="pz-chip">Cash flow</button>
+            <button onclick="pulseAsk(&#39;Watter stock moet ek dringend bestel?&#39;)" class="pz-chip">Stock herbestel</button>
+            <button onclick="pulseAsk(&#39;Is my marges gesond vir my tipe besigheid?&#39;)" class="pz-chip">Marges</button>
+            <button onclick="pulseAsk(&#39;Wat kan ek aftrek by SARS?&#39;)" class="pz-chip">SARS aftrekkings</button>
+        </div>
+        
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:20px;">
+            <input type="text" id="pulseZaneInput" placeholder="Vra enigiets oor jou besigheid..." 
+                   onkeypress="if(event.key===&#39;Enter&#39;)pulseSendZane()"
+                   style="flex:1;padding:14px 18px;border-radius:10px;border:1px solid rgba(139,92,246,0.3);background:rgba(255,255,255,0.05);color:var(--text);font-size:16px;outline:none;">
+            <button onclick="pulseSendZane()" id="pulseZaneSendBtn" style="padding:14px 28px;background:#8b5cf6;color:white;border:none;border-radius:10px;font-size:16px;cursor:pointer;font-weight:600;">Stuur</button>
+        </div>
+        
+        <div id="pulseZaneArea"></div>
+    </div>
+        '''
+    
     content = f'''
     <div style="margin-bottom:20px;">
         <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -32116,31 +32145,7 @@ def business_pulse():
         </div>
     </div>
     
-    {"" if not is_manager else '''
-    <div style="margin-bottom:25px;">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-            <span style="font-size:18px;font-weight:600;color:var(--text);">Praat met Zane</span>
-            <span style="color:var(--text-muted);font-size:13px;">Vra enigiets oor jou besigheid</span>
-        </div>
-        
-        <div id="pulseZaneChips" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-            <button onclick="pulseAsk(&#39;Wie skuld my die meeste geld?&#39;)" class="pz-chip">Wie skuld my?</button>
-            <button onclick="pulseAsk(&#39;Hoe lyk my cash flow situasie?&#39;)" class="pz-chip">Cash flow</button>
-            <button onclick="pulseAsk(&#39;Watter stock moet ek dringend bestel?&#39;)" class="pz-chip">Stock herbestel</button>
-            <button onclick="pulseAsk(&#39;Is my marges gesond vir my tipe besigheid?&#39;)" class="pz-chip">Marges</button>
-            <button onclick="pulseAsk(&#39;Wat kan ek aftrek by SARS?&#39;)" class="pz-chip">SARS aftrekkings</button>
-        </div>
-        
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:20px;">
-            <input type="text" id="pulseZaneInput" placeholder="Vra enigiets oor jou besigheid..." 
-                   onkeypress="if(event.key===&#39;Enter&#39;)pulseSendZane()"
-                   style="flex:1;padding:14px 18px;border-radius:10px;border:1px solid rgba(139,92,246,0.3);background:rgba(255,255,255,0.05);color:var(--text);font-size:16px;outline:none;">
-            <button onclick="pulseSendZane()" id="pulseZaneSendBtn" style="padding:14px 28px;background:#8b5cf6;color:white;border:none;border-radius:10px;font-size:16px;cursor:pointer;font-weight:600;">Stuur</button>
-        </div>
-        
-        <div id="pulseZaneArea"></div>
-    </div>
-    '''}
+    {zane_chat_html}
     
     <!-- TODAY'S SNAPSHOT - placeholders filled by AJAX -->
     <div class="stats-grid" style="margin-bottom:15px;">
