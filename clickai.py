@@ -8062,6 +8062,37 @@ Settings: /settings (business info, VAT, users, preferences)
         except Exception as e:
             logger.error(f"[ZANE-PULSE] Pulse knowledge error: {e}")
 
+    # === RAG: Inject SARS tax knowledge (max 1 chunk — only when tax-related) ===
+    if SARS_KNOWLEDGE_LOADED and user_message:
+        try:
+            sars_chunks = get_relevant_sars_knowledge(user_message, max_chunks=1)
+            if sars_chunks:
+                prompt += format_sars_knowledge(sars_chunks)
+                logger.info(f"[ZANE-SARS] Injected SARS chunk")
+        except Exception:
+            pass
+
+    # === RAG: Inject industry benchmarks (max 1 chunk — only when industry-related) ===
+    if INDUSTRY_KNOWLEDGE_LOADED and user_message:
+        try:
+            biz_type = context.get("business_type", "") or context.get("industry", "")
+            ind_chunks = get_relevant_industry_knowledge(user_message, business_type=biz_type, max_chunks=1)
+            if ind_chunks:
+                prompt += format_industry_knowledge(ind_chunks)
+                logger.info(f"[ZANE-IND] Injected industry chunk")
+        except Exception:
+            pass
+
+    # === RAG: Inject bookkeeping rules (max 1 chunk — only when accounting-related) ===
+    if BOOKKEEPING_KNOWLEDGE_LOADED and user_message:
+        try:
+            bk_chunks = get_relevant_bookkeeping_knowledge(user_message, max_chunks=1)
+            if bk_chunks:
+                prompt += format_bookkeeping_knowledge(bk_chunks)
+                logger.info(f"[ZANE-BK] Injected bookkeeping chunk")
+        except Exception:
+            pass
+
     # === GROUP MODE: Inject cross-business context if user has linked businesses ===
     if BUSINESS_GROUPS_LOADED:
         try:
@@ -32151,6 +32182,49 @@ def business_pulse():
         </div>
     </div>
     
+    <!-- ZANE CHAT — Full width conversation area -->
+    <div id="pulseZaneChat" style="margin-top:30px;background:var(--card-bg);border:1px solid rgba(139,92,246,0.3);border-radius:12px;overflow:hidden;">
+        <div style="padding:16px 20px;background:linear-gradient(135deg, rgba(139,92,246,0.15), rgba(99,102,241,0.08));border-bottom:1px solid rgba(139,92,246,0.2);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <div>
+                <span style="font-size:18px;font-weight:600;color:var(--text);">Praat met Zane</span>
+                <span style="color:var(--text-muted);font-size:13px;margin-left:10px;">Vra enigiets oor jou besigheid</span>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;" id="pulseZaneSuggestions">
+                <button onclick="pulseAsk('Wie skuld my geld?')" class="pz-chip">Wie skuld my?</button>
+                <button onclick="pulseAsk('Hoe lyk my cash flow?')" class="pz-chip">Cash flow</button>
+                <button onclick="pulseAsk('Watter stock moet ek bestel?')" class="pz-chip">Stock herbestel</button>
+                <button onclick="pulseAsk('Is my marges gesond?')" class="pz-chip">Marges</button>
+            </div>
+        </div>
+        
+        <div id="pulseZaneMsgs" style="min-height:80px;max-height:500px;overflow-y:auto;padding:20px;">
+            <div style="color:var(--text-muted);font-size:14px;padding:20px;text-align:center;">
+                Vra Zane enigiets — hy ken jou besigheid se syfers, SARS reels, en kan jou help met boekhou vrae.
+            </div>
+        </div>
+        
+        <div style="padding:12px 20px;border-top:1px solid rgba(255,255,255,0.05);display:flex;gap:10px;align-items:center;">
+            <input type="text" id="pulseZaneInput" placeholder="Vra iets... bv. 'Is my food cost ok?' of 'Kan ek VAT claim op X?'" 
+                   onkeypress="if(event.key==='Enter')pulseSendZane()"
+                   style="flex:1;padding:12px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:var(--text);font-size:15px;outline:none;">
+            <button onclick="pulseSendZane()" id="pulseZaneSendBtn" style="padding:12px 24px;background:#8b5cf6;color:white;border:none;border-radius:8px;font-size:15px;cursor:pointer;font-weight:600;white-space:nowrap;">Stuur</button>
+        </div>
+    </div>
+    
+    <style>
+        .pz-chip {{
+            font-size:12px;padding:5px 12px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);
+            color:#a78bfa;border-radius:20px;cursor:pointer;white-space:nowrap;
+        }}
+        .pz-chip:hover {{ background:rgba(139,92,246,0.3); }}
+        .pz-user {{ background:rgba(139,92,246,0.1);border-radius:12px;padding:12px 16px;margin-bottom:12px;max-width:70%;margin-left:auto;color:var(--text);font-size:14px; }}
+        .pz-zane {{ background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:12px;padding:16px 20px;margin-bottom:12px;color:var(--text);font-size:14px;line-height:1.7; }}
+        .pz-thinking {{ color:var(--text-muted);font-size:13px;padding:12px 16px; }}
+        .pz-thinking span {{ animation:pzpulse 1.5s infinite; display:inline-block; }}
+        @keyframes pzpulse {{ 0%,100% {{ opacity:0.4; }} 50% {{ opacity:1; }} }}
+        #pulseZaneInput:focus {{ border-color:rgba(139,92,246,0.5); }}
+    </style>
+    
     <script>
     document.addEventListener('DOMContentLoaded', function() {{
         // Load data FIRST (fast), briefing LAST (may need AI)
@@ -32376,13 +32450,67 @@ def business_pulse():
     }}
     
     function quickZane(msg) {{
-        if (typeof toggleZaneChat === 'function') toggleZaneChat();
-        setTimeout(() => {{
-            const inp = document.getElementById('zaneInput');
-            if (inp) {{ inp.value = msg; }}
-            const btn = document.getElementById('zaneSendBtn');
-            if (btn) btn.click();
-        }}, 300);
+        pulseAsk(msg);
+    }}
+    
+    function pulseAsk(msg) {{
+        const input = document.getElementById('pulseZaneInput');
+        if (input) {{ input.value = msg; }}
+        pulseSendZane();
+    }}
+    
+    async function pulseSendZane() {{
+        const input = document.getElementById('pulseZaneInput');
+        const msgs = document.getElementById('pulseZaneMsgs');
+        const btn = document.getElementById('pulseZaneSendBtn');
+        const msg = input.value.trim();
+        if (!msg) return;
+        
+        // Hide suggestions after first message
+        const sug = document.getElementById('pulseZaneSuggestions');
+        if (sug) sug.style.display = 'none';
+        
+        // Clear placeholder on first message
+        if (msgs.querySelector('[style*="text-align:center"]')) msgs.innerHTML = '';
+        
+        // Show user message
+        msgs.innerHTML += '<div class="pz-user">' + msg.replace(/</g,'&lt;') + '</div>';
+        input.value = '';
+        input.disabled = true;
+        btn.disabled = true;
+        btn.textContent = '...';
+        
+        // Show thinking
+        msgs.innerHTML += '<div class="pz-thinking" id="pzThinking"><span>Zane dink...</span></div>';
+        msgs.scrollTop = msgs.scrollHeight;
+        
+        try {{
+            const response = await fetch('/api/ai', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{ command: msg, current_page: '/pulse' }})
+            }});
+            
+            const data = await response.json();
+            const el = document.getElementById('pzThinking');
+            if (el) el.remove();
+            
+            const reply = data.response || data.error || 'Jammer, iets het skeefgeloop.';
+            const div = document.createElement('div');
+            div.className = 'pz-zane';
+            div.innerHTML = reply;
+            msgs.appendChild(div);
+        }} catch(e) {{
+            const el = document.getElementById('pzThinking');
+            if (el) el.remove();
+            msgs.innerHTML += '<div class="pz-zane" style="color:#ef4444;">Kon nie met Zane praat nie — check jou internet.</div>';
+        }}
+        
+        input.disabled = false;
+        btn.disabled = false;
+        btn.textContent = 'Stuur';
+        input.focus();
+        msgs.scrollTop = msgs.scrollHeight;
     }}
     </script>
     '''
