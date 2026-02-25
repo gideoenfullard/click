@@ -18397,17 +18397,17 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         
         // Normalize search: lowercase, collapse spaces, normalize dimensions  
         let q = raw.toLowerCase().trim();
-        q = q.replace(/\\s*[xX]\\s*/g, 'x');  // "10 x 12" → "10x12"
-        q = q.replace(/\\s+/g, ' ');
+        q = q.replace(/\s*[xX]\s*/g, 'x');  // "10 x 12" → "10x12"
+        q = q.replace(/\s+/g, ' ');
         
         // Split into search terms for multi-word matching
-        const terms = q.split(/\\s+/).filter(t => t.length > 0);
+        const terms = q.split(/\s+/).filter(t => t.length > 0);
         
         let visibleCount = 0;
         rows.forEach(r => {{
             let text = r.textContent.toLowerCase();
-            text = text.replace(/\\s*[xX]\\s*/g, 'x');
-            text = text.replace(/\\s+/g, ' ');
+            text = text.replace(/\s*[xX]\s*/g, 'x');
+            text = text.replace(/\s+/g, ' ');
             
             // ALL terms must match (AND logic) — order doesn't matter
             const match = terms.every(term => text.includes(term));
@@ -18470,7 +18470,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
                 const desc = opt.dataset.desc || val;
                 const qty = parseFloat(opt.dataset.qty) || 0;
                 const code = val.includes(' - ') ? val.split(' - ')[0].trim() : '';
-                const searchText = val.toLowerCase().replace(/\\s*[xX]\\s*/g, 'x');
+                const searchText = val.toLowerCase().replace(/\s*[xX]\s*/g, 'x');
                 stockData.push({{ val, price, stockId, desc, qty, code, searchText }});
             }});
             
@@ -18513,8 +18513,8 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             let activeIdx = -1;
             
             function render(query) {{
-                let q = query.toLowerCase().trim().replace(/\\s*[xX]\\s*/g, 'x');
-                const terms = q.split(/\\s+/).filter(t => t.length > 0);
+                let q = query.toLowerCase().trim().replace(/\s*[xX]\s*/g, 'x');
+                const terms = q.split(/\s+/).filter(t => t.length > 0);
                 
                 let matches = stockData.filter(s => {{
                     if (!terms.length) return true;
@@ -21806,11 +21806,11 @@ def customers_page():
         let visible = 0;
         
         let search = raw.toLowerCase().trim();
-        search = search.replace(/\\s*[xX]\\s*/g, 'x');
-        const terms = search.split(/\\s+/).filter(t => t.length > 0);
+        search = search.replace(/\s*[xX]\s*/g, 'x');
+        const terms = search.split(/\s+/).filter(t => t.length > 0);
         
         rows.forEach(row => {{
-            let searchText = (row.dataset.search || '').replace(/\\s*[xX]\\s*/g, 'x');
+            let searchText = (row.dataset.search || '').replace(/\s*[xX]\s*/g, 'x');
             const balance = parseFloat(row.dataset.balance) || 0;
             
             let show = true;
@@ -39210,12 +39210,12 @@ def purchase_new():
             wrap.appendChild(dd);
         }}
         
-        let q = input.value.toLowerCase().trim().replace(/\\s*[xX]\\s*/g, 'x');
-        const terms = q.split(/\\s+/).filter(t => t.length > 0);
+        let q = input.value.toLowerCase().trim().replace(/\s*[xX]\s*/g, 'x');
+        const terms = q.split(/\s+/).filter(t => t.length > 0);
         
         let matches = poStockData.filter(s => {{
             if (!terms.length) return true;
-            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\\s*[xX]\\s*/g, 'x');
+            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
             return terms.every(t => text.includes(t));
         }}).slice(0, 20);
         
@@ -42998,14 +42998,14 @@ def pos_page():
         }
         
         // Normalize dimensions
-        search = search.replace(/\\s*[xX]\\s*/g, 'x');
+        search = search.replace(/\s*[xX]\s*/g, 'x');
         
         let visibleCount = 0;
         selectedRowIndex = -1;
         
         rows.forEach((row, index) => {
             let data = (row.getAttribute('data-search') || '').toLowerCase();
-            data = data.replace(/\\s*[xX]\\s*/g, 'x');
+            data = data.replace(/\s*[xX]\s*/g, 'x');
             
             if (search === '' || data.indexOf(search) !== -1) {
                 row.style.display = '';
