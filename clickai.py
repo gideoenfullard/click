@@ -20636,15 +20636,16 @@ def api_ai():
             # Action was executed - clear any pending delete
             session.pop("zane_pending_delete", None)
         
-        # Save to chat history (session) — keep MINIMAL, DB has full history
-        chat_history.append({"role": "user", "content": command[:200]})
+        # Save to chat history (session) — MINIMAL, DB has full history via ZaneMemory
+        chat_history.append({"role": "user", "content": command[:100]})
         response_text = result.get("response", "")
         if response_text:
-            chat_history.append({"role": "assistant", "content": response_text[:200]})  # Truncate hard for cookie size
+            chat_history.append({"role": "assistant", "content": response_text[:100]})
         
-        # Keep only last 6 messages (3 exchanges) in session — cookie limit is 4KB!
-        session[chat_key] = chat_history[-6:]
-        session.permanent = True  # Ensure session persists
+        # Keep only last 2 messages (1 exchange) — session cookie limit is 4KB!
+        # Full history is in DB via ZaneMemory.save_exchange below
+        session[chat_key] = chat_history[-2:]
+        session.permanent = True
         
         # ═══════════════════════════════════════════════════════════
         # SAVE TO PERSISTENT DB MEMORY (async-safe, non-blocking)
@@ -21363,155 +21364,6 @@ def api_health_check():
     </body></html>'''
     
     return html
-
-
-@app.route("/pulse-debug")
-@login_required
-def pulse_debug():
-    """Diagnostic page — tests backend + live AJAX calls to find the Pulse hang."""
-    import traceback
-    
-    user = Auth.get_current_user()
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    biz_name = business.get("name", "?") if business else "?"
-    
-    results = []
-    
-    def step(name, fn):
-        t0 = time.time()
-        try:
-            val = fn()
-            elapsed = time.time() - t0
-            results.append({"name": name, "ok": True, "time": elapsed, "detail": str(val)[:200]})
-        except Exception as e:
-            elapsed = time.time() - t0
-            results.append({"name": name, "ok": False, "time": elapsed, "detail": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-400:]})
-    
-    step("1. Auth", lambda: f"{user.get('email', '?')}" if user else "NO USER")
-    step("2. Business", lambda: f"{biz_name} ({biz_id[:8]})" if biz_id else "NO BIZ")
-    
-    # Session cookie size check
-    session_data = dict(session)
-    session_keys = {k: len(str(v)) for k, v in session_data.items()}
-    session_total = sum(session_keys.values())
-    step("3. Session size", lambda: f"{session_total} chars, keys: {session_keys}")
-    
-    if biz_id:
-        step("4. get_business_users", lambda: f"{len(db.get_business_users(biz_id) or [])} users")
-        
-        # Actually call the full pulse data logic
-        def test_full_pulse():
-            with app.test_request_context('/api/pulse/data', method='POST', json={"force": True}):
-                session['user_id'] = user.get('id')
-                session['business_id'] = biz_id
-                resp = api_pulse_data()
-                if hasattr(resp, 'json'):
-                    data = resp.json
-                    return f"success={data.get('success')}, keys={list(data.keys())[:5]}"
-                return f"type={type(resp)}"
-        step("5. FULL api_pulse_data()", test_full_pulse)
-    
-    # Build rows
-    rows = ""
-    for r in results:
-        icon = "&#9989;" if r["ok"] else "&#10060;"
-        tc = "#ef4444" if r["time"] > 5 else "#f59e0b" if r["time"] > 1 else "#10b981"
-        trace = f'<pre style="color:#f97316;font-size:10px;margin:4px 0 0;white-space:pre-wrap;">{r.get("trace","")}</pre>' if r.get("trace") else ""
-        rows += f'<tr style="border-bottom:1px solid rgba(255,255,255,0.06);"><td style="padding:8px;">{icon}</td><td style="padding:8px;color:#e2e8f0;">{r["name"]}</td><td style="padding:8px;color:{tc};font-family:monospace;">{r["time"]:.2f}s</td><td style="padding:8px;color:{"#10b981" if r["ok"] else "#ef4444"};font-size:13px;">{r["detail"]}{trace}</td></tr>'
-    
-    return f'''<!DOCTYPE html><html><head><title>Pulse Debug</title></head>
-    <body style="background:#0a0a1a;color:#e2e8f0;font-family:system-ui;padding:20px;margin:0;">
-    <div style="max-width:950px;margin:0 auto;">
-        <h1 style="color:#8b5cf6;">Pulse Debug v2</h1>
-        <p style="color:#94a3b8;">{len(results)} backend tests</p>
-        
-        <h3 style="color:#f59e0b;">Backend Tests (Python)</h3>
-        <table style="width:100%;border-collapse:collapse;background:rgba(255,255,255,0.03);border-radius:8px;">
-        <thead><tr style="border-bottom:2px solid rgba(139,92,246,0.3);"><th style="padding:8px;width:30px;"></th><th style="padding:8px;text-align:left;">Step</th><th style="padding:8px;text-align:left;">Time</th><th style="padding:8px;text-align:left;">Result</th></tr></thead>
-        <tbody>{rows}</tbody></table>
-
-        <h3 style="color:#f59e0b;margin-top:30px;">Live AJAX Tests (Browser → Server)</h3>
-        <p style="color:#94a3b8;font-size:13px;">These test the EXACT same calls Pulse makes. If they fail here, they fail on Pulse.</p>
-        
-        <div id="ajaxResults" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:15px;">
-            <button onclick="runAjaxTests()" style="padding:10px 25px;background:#8b5cf6;color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:bold;">Run AJAX Tests</button>
-            <div id="ajaxOutput" style="margin-top:15px;font-family:monospace;font-size:13px;"></div>
-        </div>
-        
-        <h3 style="color:#f59e0b;margin-top:30px;">Cookie Check</h3>
-        <div id="cookieInfo" style="background:rgba(255,255,255,0.03);border-radius:8px;padding:15px;font-family:monospace;font-size:13px;"></div>
-    </div>
-    
-    <script>
-    // Show cookie info
-    (function() {{
-        const cookies = document.cookie;
-        const sessionCookie = cookies.split(';').find(c => c.trim().startsWith('session='));
-        const el = document.getElementById('cookieInfo');
-        if (sessionCookie) {{
-            const size = sessionCookie.trim().length;
-            const color = size > 4000 ? '#ef4444' : size > 3000 ? '#f59e0b' : '#10b981';
-            el.innerHTML = '<span style="color:' + color + ';font-weight:bold;">' + size + ' bytes</span> (limit ~4093)<br>Cookie present: YES';
-            if (size > 4000) el.innerHTML += '<br><span style="color:#ef4444;font-weight:bold;">&#9888; OVER LIMIT — browser may drop this cookie!</span>';
-        }} else {{
-            el.innerHTML = '<span style="color:#ef4444;font-weight:bold;">NO SESSION COOKIE FOUND — auth will fail!</span>';
-        }}
-    }})();
-    
-    async function runAjaxTests() {{
-        const out = document.getElementById('ajaxOutput');
-        out.innerHTML = 'Testing...<br>';
-        
-        const tests = [
-            {{ name: '/api/pulse/data (POST)', url: '/api/pulse/data', method: 'POST', body: JSON.stringify({{force:true}}) }},
-            {{ name: '/api/briefing/generate (POST)', url: '/api/briefing/generate', method: 'POST', body: JSON.stringify({{force:false}}) }},
-            {{ name: '/api/assistant/items (GET)', url: '/api/assistant/items', method: 'GET', body: null }},
-        ];
-        
-        for (const t of tests) {{
-            const t0 = performance.now();
-            try {{
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 25000);
-                const opts = {{
-                    method: t.method,
-                    headers: {{'Content-Type': 'application/json'}},
-                    signal: controller.signal,
-                    credentials: 'same-origin'
-                }};
-                if (t.body) opts.body = t.body;
-                
-                const res = await fetch(t.url, opts);
-                clearTimeout(timeout);
-                const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
-                
-                const text = await res.text();
-                let parsed;
-                try {{ parsed = JSON.parse(text); }} catch(e) {{ parsed = null; }}
-                
-                if (res.status === 200 && parsed && parsed.success !== false) {{
-                    const keys = parsed ? Object.keys(parsed).slice(0, 4).join(', ') : '?';
-                    out.innerHTML += '<span style="color:#10b981;">&#9989; ' + t.name + '</span> — ' + elapsed + 's — status=' + res.status + ' keys=[' + keys + ']<br>';
-                }} else if (res.status === 401) {{
-                    out.innerHTML += '<span style="color:#ef4444;">&#10060; ' + t.name + '</span> — <b>401 SESSION EXPIRED</b> — Cookie too large?<br>';
-                }} else if (res.status === 302 || (text.includes('login') && text.includes('html'))) {{
-                    out.innerHTML += '<span style="color:#ef4444;">&#10060; ' + t.name + '</span> — <b>REDIRECTED TO LOGIN</b> — Session invalid<br>';
-                }} else {{
-                    out.innerHTML += '<span style="color:#f59e0b;">&#9888; ' + t.name + '</span> — status=' + res.status + ' — ' + elapsed + 's — ' + text.substring(0, 100) + '<br>';
-                }}
-            }} catch(e) {{
-                const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
-                if (e.name === 'AbortError') {{
-                    out.innerHTML += '<span style="color:#ef4444;">&#10060; ' + t.name + '</span> — <b>TIMEOUT (25s)</b> — request never completed<br>';
-                }} else {{
-                    out.innerHTML += '<span style="color:#ef4444;">&#10060; ' + t.name + '</span> — ' + elapsed + 's — ERROR: ' + e.message + '<br>';
-                }}
-            }}
-        }}
-        out.innerHTML += '<br>Done. If any show TIMEOUT, that is what hangs Pulse.';
-    }}
-    </script></body></html>'''
 
 
 @app.route("/dashboard")
