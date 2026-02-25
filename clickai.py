@@ -20531,15 +20531,18 @@ def api_ai():
         # PERSISTENT MEMORY - Load from DB, merge with session
         # ═══════════════════════════════════════════════════════════
         chat_key = f"zane_chat_{biz_id}" if biz_id else "zane_chat"
-        session_history = session.get(chat_key, [])
         
-        # Load persistent memory from DB (only if session is empty - prevents duplicates)
-        if not session_history and biz_id and user_id:
+        # Clean up old session chat data (was causing cookie to exceed 4KB limit)
+        session.pop(chat_key, None)
+        session.pop("zane_chat_before", None)
+        
+        # Load chat history from DB (not session — session cookie can't handle it)
+        session_history = []
+        if biz_id and user_id:
             db_history = ZaneMemory.load(biz_id, user_id)
             if db_history:
                 session_history = db_history
-                session[chat_key] = session_history
-                logger.info(f"[ZANE] Restored {len(db_history)} messages from DB memory")
+                logger.info(f"[ZANE] Loaded {len(db_history)} messages from DB memory")
         
         # Filter out stale/lazy responses from history before passing to AI
         bad_phrases = ["soos hierbo", "as shown above", "gelewer soos", "oorsig gelewer", "already provided", "hierbo"]
@@ -20636,15 +20639,15 @@ def api_ai():
             # Action was executed - clear any pending delete
             session.pop("zane_pending_delete", None)
         
-        # Save to chat history (session) — MINIMAL, DB has full history via ZaneMemory
-        chat_history.append({"role": "user", "content": command[:100]})
+        # Save to chat history — SESSION-FREE, DB has full history via ZaneMemory
+        chat_history.append({"role": "user", "content": command[:200]})
         response_text = result.get("response", "")
         if response_text:
-            chat_history.append({"role": "assistant", "content": response_text[:100]})
+            chat_history.append({"role": "assistant", "content": response_text[:200]})
         
-        # Keep only last 2 messages (1 exchange) — session cookie limit is 4KB!
-        # Full history is in DB via ZaneMemory.save_exchange below
-        session[chat_key] = chat_history[-2:]
+        # Do NOT store chat in session — it bloats the cookie past 4KB limit
+        # which causes browser to drop the cookie → auth fails → Pulse hangs
+        # Full history is loaded from DB via ZaneMemory.load() at top of this function
         session.permanent = True
         
         # ═══════════════════════════════════════════════════════════
@@ -21081,14 +21084,14 @@ def api_stock_dedup():
 def service_worker():
     """Service Worker for offline POS capability"""
     sw_js = """
-const CACHE_NAME = 'clickai-pos-v2';
-const OFFLINE_URLS = ['/pos', '/expenses', '/', '/stock', '/customers', '/suppliers', '/invoices', '/pos/history'];
+const CACHE_NAME = 'clickai-pos-v3';
+const OFFLINE_URLS = ['/pos'];
 
-// Install — cache POS page
+// Install — only cache POS (not all pages — that blocks the single server worker)
 self.addEventListener('install', event => {
     event.waitUntil(
         caches.open(CACHE_NAME).then(cache => {
-            console.log('[SW] Caching POS page for offline use');
+            console.log('[SW] Caching POS for offline');
             return cache.addAll(OFFLINE_URLS);
         }).catch(err => console.log('[SW] Cache failed:', err))
     );
@@ -21114,8 +21117,8 @@ self.addEventListener('fetch', event => {
     // Only intercept same-origin navigation requests
     if (url.origin !== location.origin) return;
     
-    // For cached pages — network first, cache fallback
-    const cachedPaths = ['/pos', '/expenses', '/', '/stock', '/customers', '/suppliers', '/invoices', '/pos/history'];
+    // For POS page — network first, cache fallback (offline POS)
+    const cachedPaths = ['/pos'];
     if (cachedPaths.includes(url.pathname)) {
         event.respondWith(
             fetch(event.request).then(response => {
@@ -32104,6 +32107,13 @@ def business_pulse():
     BUSINESS PULSE - Lightweight skeleton, data loads via AJAX.
     Page loads instantly, data fills in async.
     """
+    
+    # ── SESSION CLEANUP ── Strip old bloated data to keep cookie under 4KB
+    # Without this, the session cookie exceeds browser limit → browser drops it
+    # → AJAX calls have no auth → Pulse shows "Loading..." forever
+    for key in list(session.keys()):
+        if key.startswith("zane_chat") or key.startswith("zane_import") or key == "zane_pending_delete" or key == "zane_last_error":
+            session.pop(key, None)
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
