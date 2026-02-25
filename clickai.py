@@ -7755,6 +7755,12 @@ def build_zane_core_prompt(context: dict, user_message: str = "") -> str:
     prompt = f"""You are Zane, the senior business advisor and head bookkeeper for {biz_name}.
 You are talking to {user_name}. Today is {datetime.now().strftime('%A %d %B %Y')}.
 
+## CRITICAL FORMAT RULE - NO EMOJIS
+NEVER use ANY emojis in your responses. Not a single one. No checkmarks, no warning signs, no icons, no symbols like these: 
+Do not use unicode emoji characters anywhere in your output. Use plain text only.
+Instead of emoji, use text labels: "Good:", "Warning:", "Note:", "Important:", "Error:"
+This is professional business software. Emoji makes it look unprofessional.
+
 ## WHO YOU ARE
 You are a QUALIFIED South African bookkeeper with deep expertise in:
 - Double-entry bookkeeping (you can do journal entries in your sleep)
@@ -8140,6 +8146,9 @@ Respond in the same language the user uses.
         except Exception as e:
             logger.error(f"[ZANE-GROUP] Group context error: {e}")
 
+    # Final reminder - models pay attention to end of prompt
+    prompt += "\n\nREMINDER: Absolutely NO emojis in your response. Zero. Use plain text only."
+    
     return prompt
 
 
@@ -8784,6 +8793,11 @@ Requires WhatsApp Business API account from Meta (Meta Business verification nee
 """
         
         return f"""You are Zane, a highly qualified business advisor for {biz_name}.
+
+## CRITICAL FORMAT RULE - NO EMOJIS
+NEVER use ANY emojis in your responses. Not a single one. No checkmarks, warning signs, icons, or unicode emoji characters.
+Use plain text labels instead: "Good:", "Warning:", "Note:", "Important:"
+This is professional business software.
 
 ## WHO YOU ARE
 
@@ -10404,7 +10418,7 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                     }
             elif to_email and not inv_num:
                 return {
-                    "response": f"📧 Which invoice do you want to send to {to_email}?\n\nTry: \"email inv 0051 to {to_email}\"",
+                    "response": f"Which invoice do you want to send to {to_email}?\n\nTry: \"email inv 0051 to {to_email}\"",
                     "actions_taken": [],
                     "data": {},
                     "suggestions": [{"label": "View Invoices", "url": "/invoices"}]
@@ -10435,10 +10449,10 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
                 }
             
             return {
-                "response": f"📧 **Ready to email {len(debtors_with_email)} statements!**\n\n{len(debtors_with_email)} customers have balances and email addresses.\n{len(debtors) - len(debtors_with_email)} customers have no email (will be skipped).\n\nGo to **Customers** and click the **Email All Statements** button to send.",
+                "response": f"READY: **Ready to email {len(debtors_with_email)} statements!**\n\n{len(debtors_with_email)} customers have balances and email addresses.\n{len(debtors) - len(debtors_with_email)} customers have no email (will be skipped).\n\nGo to **Customers** and click the **Email All Statements** button to send.",
                 "actions_taken": [],
                 "data": {"debtors": len(debtors), "with_email": len(debtors_with_email)},
-                "suggestions": [{"label": "📧 Go to Customers", "url": "/customers"}],
+                "suggestions": [{"label": "Go to Customers", "url": "/customers"}],
                 "navigate": "/customers"
             }
         
@@ -10455,7 +10469,7 @@ Which email provider are you using? (Gmail/Outlook/Other)""",
         # WhatsApp setup pattern
         if any(x in msg_lower for x in ["setup whatsapp", "set up whatsapp", "configure whatsapp", "whatsapp settings"]):
             return {
-                "response": """💬 **WhatsApp Setup**
+                "response": """WhatsApp Setup**
 
 To send invoices via WhatsApp, you need a WhatsApp Business API account.
 
@@ -13619,7 +13633,8 @@ YOUR STYLE:
 - Write like a senior advisor who genuinely cares - not like a robot
 - Be warm but professional - like a respected colleague
 - DO NOT use "Boss" or "Baas"
-- No emojis or excessive exclamation marks
+- No emojis whatsoever - not a single emoji character. Use plain text only.
+- No excessive exclamation marks
 - ALWAYS write in English unless the data clearly shows otherwise
 
 CONTENT PRIORITY - THE BOSS WANTS TO KNOW:
@@ -13648,7 +13663,10 @@ Write with confidence - you KNOW what you're talking about. Sign off with "- Zan
                 )
                 if message.content:
                     logger.info("[BRIEFING] Claude Haiku 4.5 success")
-                    return message.content[0].text
+                    import re as _re
+                    briefing_text = message.content[0].text
+                    briefing_text = _re.sub(r'[\U0001F300-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\u2600-\u27BF\u2B50\u2B55\u26A0\u2705\u274C\u274E\u2714\u2716\u2728\u2753\u2754\u2755\u2757\u2763\u2764\u203C\u2049\u200D\u20E3\uFE0F]', '', briefing_text)
+                    return briefing_text
             except Exception as e:
                 logger.error(f"[BRIEFING] Claude Haiku failed: {e}")
         
@@ -15687,7 +15705,7 @@ class TaxSaver:
         # Cellphone/telephone
         if any(word in category for word in ["cell", "phone", "vodacom", "mtn", "telkom", "mobile"]):
             tips.append({
-                "title": "📱 Do you use your phone for work?",
+                "title": "Do you use your phone for work?",
                 "message": f"If 60% business use, you can deduct R{amount * 0.6:.0f} of this (60% of R{amount:.0f})",
                 "action": "Set business use %",
                 "potential_monthly": amount * 0.6
@@ -16179,59 +16197,74 @@ class Auth:
     def login(email: str, password: str) -> Tuple[bool, str]:
         """Authenticate user - handles both hashed and legacy plain-text passwords"""
         email = email.lower().strip()  # Normalize email
+        password = password.strip()  # Strip whitespace from password
         users = db.get("users", {"email": email})
         
         if not users:
             return False, "User not found"
         
-        user = users[0]
-        
         # Hash the entered password
         pwd_hash = hashlib.sha256(password.encode()).hexdigest()
         
-        # Check against all possible password fields (encrypted_password, password_hash, password)
-        stored_encrypted = user.get("encrypted_password", "")
-        stored_hash = user.get("password_hash", "")
-        stored_plain = user.get("password", "")
-        
-        password_match = False
+        # Try ALL user records (handles duplicate accounts)
+        matched_user = None
         needs_upgrade = False
         
-        # Check hashed password against encrypted_password and password_hash
-        if stored_encrypted and stored_encrypted == pwd_hash:
-            password_match = True
-        elif stored_hash and stored_hash == pwd_hash:
-            password_match = True
-        # Legacy: check if stored password is plain text (not a 64-char hex hash)
-        elif stored_encrypted and len(stored_encrypted) != 64 and stored_encrypted == password:
-            password_match = True
-            needs_upgrade = True
-        elif stored_hash and len(stored_hash) != 64 and stored_hash == password:
-            password_match = True
-            needs_upgrade = True
-        elif stored_plain and stored_plain == password:
-            password_match = True
-            needs_upgrade = True
-        # Legacy plain text case-insensitive check (some passwords were created without case sensitivity)
-        elif stored_encrypted and len(stored_encrypted) != 64 and stored_encrypted.lower() == password.lower():
-            password_match = True
-            needs_upgrade = True
-        elif stored_hash and len(stored_hash) != 64 and stored_hash.lower() == password.lower():
-            password_match = True
-            needs_upgrade = True
-        elif stored_plain and stored_plain.lower() == password.lower():
-            password_match = True
-            needs_upgrade = True
+        for user in users:
+            stored_encrypted = user.get("encrypted_password", "")
+            stored_hash = user.get("password_hash", "")
+            stored_plain = user.get("password", "")
+            
+            # Check hashed password against encrypted_password and password_hash
+            if stored_encrypted and stored_encrypted == pwd_hash:
+                matched_user = user
+                break
+            elif stored_hash and stored_hash == pwd_hash:
+                matched_user = user
+                break
+            # Legacy: check if stored password is plain text (not a 64-char hex hash)
+            elif stored_encrypted and len(stored_encrypted) != 64 and stored_encrypted == password:
+                matched_user = user
+                needs_upgrade = True
+                break
+            elif stored_hash and len(stored_hash) != 64 and stored_hash == password:
+                matched_user = user
+                needs_upgrade = True
+                break
+            elif stored_plain and stored_plain == password:
+                matched_user = user
+                needs_upgrade = True
+                break
+            # Legacy plain text case-insensitive check
+            elif stored_encrypted and len(stored_encrypted) != 64 and stored_encrypted.lower() == password.lower():
+                matched_user = user
+                needs_upgrade = True
+                break
+            elif stored_hash and len(stored_hash) != 64 and stored_hash.lower() == password.lower():
+                matched_user = user
+                needs_upgrade = True
+                break
+            elif stored_plain and stored_plain.lower() == password.lower():
+                matched_user = user
+                needs_upgrade = True
+                break
         
-        if not password_match:
-            logger.warning(f"[LOGIN] Failed for {email}: encrypted_len={len(stored_encrypted or '')}, hash_len={len(stored_hash or '')}, plain_len={len(stored_plain or '')}, entered_hash={pwd_hash[:8]}..., stored_enc={stored_encrypted[:8] if stored_encrypted else 'None'}...")
+        if not matched_user:
+            user = users[0]
+            stored_encrypted = user.get("encrypted_password", "")
+            stored_hash = user.get("password_hash", "")
+            stored_plain = user.get("password", "")
+            logger.warning(f"[LOGIN] Failed for {email}: {len(users)} user records found, encrypted_len={len(stored_encrypted or '')}, hash_len={len(stored_hash or '')}, plain_len={len(stored_plain or '')}, entered_hash={pwd_hash[:8]}..., stored_enc={stored_encrypted[:8] if stored_encrypted else 'None'}...")
             return False, "Invalid password"
         
-        # Auto-upgrade legacy plain text passwords to hashed
+        user = matched_user
+        
+        # Auto-upgrade ALL user records for this email to hashed password
         if needs_upgrade:
             try:
-                db.update("users", user["id"], {"encrypted_password": pwd_hash})
-                logger.info(f"[LOGIN] Auto-upgraded password hash for {email}")
+                for u in users:
+                    db.update("users", u["id"], {"encrypted_password": pwd_hash})
+                logger.info(f"[LOGIN] Auto-upgraded password hash for {email} ({len(users)} records)")
             except Exception as e:
                 logger.warning(f"[LOGIN] Password upgrade failed (non-critical): {e}")
         
@@ -17802,7 +17835,7 @@ def get_page_help(active: str) -> str:
             </div>
             {tips_html}
             <div style="margin-top:15px;padding-top:12px;border-top:1px solid var(--border);text-align:center;">
-                <p style="color:var(--text-muted);font-size:12px;margin:0;">Vir boekhou en belasting vrae, vra vir Zane 💬</p>
+                <p style="color:var(--text-muted);font-size:12px;margin:0;">Vir boekhou en belasting vrae, vra vir Zane</p>
             </div>
         </div>
     </div>
@@ -18646,7 +18679,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             if (total === 0) {{ updateGlobalBanner(); return; }}
             
             const syncBtn = document.getElementById('globalSyncBtn');
-            if (syncBtn) syncBtn.textContent = '⏳ SYNCING...';
+            if (syncBtn) syncBtn.textContent = 'SYNCING...';
             let synced = 0, errors = [];
             
             try {{
@@ -19213,8 +19246,8 @@ def get_zane_chat() -> str:
                     audioChunks = [];
                     
                     // Show transcribing state
-                    input.placeholder = '⏳ Transribeer...';
-                    if (label) label.textContent = '⏳ Whisper transkribeer...';
+                    input.placeholder = 'Transcribing...';
+                    if (label) label.textContent = 'Whisper transcribing...';
                     
                     try {
                         const formData = new FormData();
@@ -19680,7 +19713,7 @@ def get_zane_chat() -> str:
     async function finishOnboarding() {
         const container = document.getElementById('onboardStep');
         container.innerHTML = `<div style="text-align:center;padding:10px;">
-            <div style="font-size:28px;margin-bottom:8px;">🚀</div>
+            <div style="font-size:28px;margin-bottom:8px;">Done!</div>
             <div style="font-weight:600;margin-bottom:4px;">Setup Complete!</div>
             <div style="font-size:12px;color:var(--text-muted);">I now know your business. Ask me anything.</div>
         </div>`;
@@ -19705,6 +19738,32 @@ def get_zane_chat() -> str:
             setTimeout(checkZaneOnboarding, 500);
         }
     });
+    
+    // Simple markdown to HTML for Zane responses
+    function _zaneMd(text) {
+        if (!text) return '';
+        let h = text;
+        // Tables
+        if (h.includes('|')) {
+            h = h.replace(/^(\|.+\|)\n\|[-:| ]+\|\n((?:\|.+\|\n?)*)/gm, function(m, hdr, body) {
+                const hc = hdr.split('|').filter(c=>c.trim()).map(c=>'<th style="padding:6px 10px;text-align:left;border-bottom:2px solid rgba(139,92,246,0.3);font-size:13px;">'+c.trim()+'</th>').join('');
+                const rs = body.trim().split('\n').map(r=>{
+                    const cs = r.split('|').filter(c=>c.trim()).map(c=>'<td style="padding:4px 10px;border-bottom:1px solid rgba(255,255,255,0.1);font-size:13px;">'+c.trim()+'</td>').join('');
+                    return '<tr>'+cs+'</tr>';
+                }).join('');
+                return '<table style="width:100%;border-collapse:collapse;margin:8px 0;"><thead><tr>'+hc+'</tr></thead><tbody>'+rs+'</tbody></table>';
+            });
+        }
+        h = h.replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 4px;color:var(--primary);font-size:14px;">$1</h4>');
+        h = h.replace(/^## (.+)$/gm, '<h3 style="margin:10px 0 6px;color:var(--primary);font-size:15px;">$1</h3>');
+        h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+        h = h.replace(/^- (.+)$/gm, '<li style="margin:2px 0;font-size:13px;">$1</li>');
+        h = h.replace(/(<li[^>]*>.*<\/li>\n?)+/g, '<ul style="margin:6px 0;padding-left:16px;">$&</ul>');
+        h = h.replace(/\n\n/g, '</p><p style="margin:6px 0;">');
+        h = h.replace(/\n/g, '<br>');
+        return '<p style="margin:6px 0;">' + h + '</p>';
+    }
     
     async function sendZaneMsg() {
         const input = document.getElementById('zaneInput');
@@ -19737,7 +19796,7 @@ def get_zane_chat() -> str:
             const reply = data.response || data.error || 'Sorry, I had trouble with that.';
             const msgDiv = document.createElement('div');
             msgDiv.className = 'zane-msg zane';
-            msgDiv.innerHTML = reply;
+            msgDiv.innerHTML = _zaneMd(reply);
             body.appendChild(msgDiv);
             addSpeakerBtn(msgDiv);
             
@@ -20444,7 +20503,7 @@ def api_ai():
                     ZaneMemory.clear(biz_id, user_id)
                 except:
                     pass
-            return jsonify({"response": "✅ Chat geskoon. Vra my enigiets!", "actions_taken": [], "data": {}, "suggestions": []})
+            return jsonify({"response": "Chat cleared. Ask me anything!", "actions_taken": [], "data": {}, "suggestions": []})
         
         # ═══════════════════════════════════════════════════════════
         # PERSISTENT MEMORY - Load from DB, merge with session
@@ -20541,6 +20600,11 @@ def api_ai():
         
         # Let Zane think
         result = Brain.think(command, context)
+        
+        # Strip emojis from response (safety net - Sonnet sometimes ignores instructions)
+        if result.get("response"):
+            import re as _re
+            result["response"] = _re.sub(r'[\U0001F300-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\u2600-\u27BF\u2B50\u2B55\u26A0\u2705\u274C\u274E\u2714\u2716\u2728\u2753\u2754\u2755\u2757\u2763\u2764\u203C\u2049\u200D\u20E3\uFE0F]', '', result["response"])
         
         # Store pending delete data in session for confirmation flow
         if result.get("data", {}).get("pending_delete"):
@@ -32503,6 +32567,38 @@ def business_pulse():
         pulseSendZane();
     }}
     
+    // Simple markdown to HTML converter for Zane responses
+    function mdToHtml(text) {{
+        if (!text) return '';
+        let html = text;
+        // Tables: | col | col | → proper HTML table
+        if (html.includes('|')) {{
+            html = html.replace(/^(\|.+\|)\n\|[-:| ]+\|\n((?:\|.+\|\n?)*)/gm, function(match, header, body) {{
+                const hCells = header.split('|').filter(c => c.trim()).map(c => '<th style="padding:8px 12px;text-align:left;border-bottom:2px solid rgba(139,92,246,0.3);">' + c.trim() + '</th>').join('');
+                const rows = body.trim().split('\n').map(row => {{
+                    const cells = row.split('|').filter(c => c.trim()).map(c => '<td style="padding:6px 12px;border-bottom:1px solid rgba(255,255,255,0.1);">' + c.trim() + '</td>').join('');
+                    return '<tr>' + cells + '</tr>';
+                }}).join('');
+                return '<table style="width:100%;border-collapse:collapse;margin:10px 0;font-size:14px;"><thead><tr>' + hCells + '</tr></thead><tbody>' + rows + '</tbody></table>';
+            }});
+        }}
+        // Headers
+        html = html.replace(/^### (.+)$/gm, '<h4 style="margin:12px 0 6px;color:var(--primary);">$1</h4>');
+        html = html.replace(/^## (.+)$/gm, '<h3 style="margin:14px 0 8px;color:var(--primary);">$1</h3>');
+        // Bold
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        // Italic
+        html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+        // Bullet lists
+        html = html.replace(/^- (.+)$/gm, '<li style="margin:3px 0;">$1</li>');
+        html = html.replace(/(<li[^>]*>.*<\/li>\n?)+/g, '<ul style="margin:8px 0;padding-left:20px;">$&</ul>');
+        // Line breaks (double newline = paragraph, single = br)
+        html = html.replace(/\n\n/g, '</p><p style="margin:8px 0;">');
+        html = html.replace(/\n/g, '<br>');
+        html = '<p style="margin:8px 0;">' + html + '</p>';
+        return html;
+    }}
+    
     async function pulseSendZane() {{
         const input = document.getElementById('pulseZaneInput');
         const area = document.getElementById('pulseZaneArea');
@@ -32540,7 +32636,7 @@ def business_pulse():
             const reply = data.response || data.error || 'Sorry, something went wrong.';
             const div = document.createElement('div');
             div.className = 'pz-a';
-            div.innerHTML = reply;
+            div.innerHTML = mdToHtml(reply);
             area.appendChild(div);
             // Scroll answer into view without jumping to page bottom
             div.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
@@ -45184,7 +45280,7 @@ def pos_page():
             if (queue.length === 0) { updateUI(); return; }
             
             const textEl = document.getElementById('offlineText');
-            if (textEl) textEl.textContent = '⏳ SYNCING ' + queue.length + '...';
+            if (textEl) textEl.textContent = 'SYNCING ' + queue.length + '...';
             
             try {
                 const resp = await fetch('/api/pos/sync-offline', {
@@ -61996,7 +62092,7 @@ def team_page():
         
         # Show as active unless explicitly pending
         if status == "pending" or status == "invited":
-            status_badge = '<span style="background:var(--orange);color:white;padding:3px 8px;border-radius:4px;font-size:11px;">⏳ Pending</span>'
+            status_badge = '<span style="background:var(--orange);color:white;padding:3px 8px;border-radius:4px;font-size:11px;">Pending</span>'
             # Add copy invitation link button for pending members
             if invitation_token:
                 action_button = f'''
@@ -62006,8 +62102,9 @@ def team_page():
             else:
                 action_button = f'<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="removeMember(\'{member.get("id")}\')">Remove</button>'
         else:
-            status_badge = '<span style="background:var(--green);color:white;padding:3px 8px;border-radius:4px;font-size:11px;">GOOD: Active</span>'
-            action_button = f'<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="removeMember(\'{member.get("id")}\')">Remove</button>'
+            status_badge = '<span style="background:var(--green);color:white;padding:3px 8px;border-radius:4px;font-size:11px;">Active</span>'
+            action_button = f'''<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;margin-right:5px;" onclick="resetPassword('{safe_string(member.get("email", ""))}', '{safe_string(member.get("name", ""))}')">Reset Password</button>
+                <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="removeMember('{member.get("id")}')">Remove</button>'''
         
         rows += f'''
         <tr>
@@ -62157,6 +62254,28 @@ def team_page():
         document.body.appendChild(modal);
         modal.addEventListener('click', (e) => {{ if(e.target === modal) modal.remove(); }});
     }}
+    async function resetPassword(email, name) {{
+        const newPwd = prompt('New password for ' + name + '\\n(min 6 characters):');
+        if (!newPwd || newPwd.length < 6) {{ 
+            if (newPwd) alert('Password must be at least 6 characters');
+            return; 
+        }}
+        try {{
+            const resp = await fetch('/api/team/reset-password', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{ email: email, new_password: newPwd }})
+            }});
+            const data = await resp.json();
+            if (data.success) {{
+                alert('Password reset for ' + name + '. New password: ' + newPwd);
+            }} else {{
+                alert('Failed: ' + (data.error || 'Unknown error'));
+            }}
+        }} catch(e) {{
+            alert('Error: ' + e.message);
+        }}
+    }}
     </script>
     '''
     
@@ -62278,6 +62397,51 @@ def api_team_remove(member_id):
         return jsonify({"success": True})
     except:
         return jsonify({"success": False})
+
+
+@app.route("/api/team/reset-password", methods=["POST"])
+@login_required
+def api_team_reset_password():
+    """Admin reset a team member's password"""
+    try:
+        # Only owner/admin can reset passwords
+        role = get_user_role()
+        if role not in ("owner", "admin"):
+            return jsonify({"success": False, "error": "Only owner/admin can reset passwords"})
+        
+        data = request.get_json()
+        email = (data.get("email", "") or "").lower().strip()
+        new_password = data.get("new_password", "")
+        
+        if not email or not new_password:
+            return jsonify({"success": False, "error": "Email and password required"})
+        if len(new_password) < 6:
+            return jsonify({"success": False, "error": "Password must be at least 6 characters"})
+        
+        # Find ALL user records for this email
+        users = db.get("users", {"email": email})
+        if not users:
+            return jsonify({"success": False, "error": f"User {email} not found"})
+        
+        # Hash new password and update ALL records
+        pwd_hash = hashlib.sha256(new_password.encode()).hexdigest()
+        updated = 0
+        for u in users:
+            try:
+                db.update("users", u["id"], {
+                    "encrypted_password": pwd_hash,
+                    "password_hash": pwd_hash,
+                    "password": ""  # Clear plain text
+                })
+                updated += 1
+            except Exception as e:
+                logger.warning(f"[ADMIN RESET] Failed to update user record {u['id']}: {e}")
+        
+        logger.info(f"[ADMIN RESET] Password reset for {email} by {get_user_role()}, updated {updated}/{len(users)} records")
+        return jsonify({"success": True, "message": f"Password reset for {email} ({updated} records updated)"})
+    except Exception as e:
+        logger.error(f"[ADMIN RESET] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
 
 
 # 
@@ -74529,7 +74693,7 @@ def accountant_access():
         status = acc.get("status", "active")
         # Show as active unless explicitly pending
         if status == "pending" or status == "invited":
-            status_badge = '<span style="background:var(--orange);color:white;padding:3px 8px;border-radius:4px;font-size:12px;">⏳ Pending</span>'
+            status_badge = '<span style="background:var(--orange);color:white;padding:3px 8px;border-radius:4px;font-size:12px;">Pending</span>'
         else:
             status_badge = '<span style="background:var(--green);color:white;padding:3px 8px;border-radius:4px;font-size:12px;">GOOD: Active</span>'
         
