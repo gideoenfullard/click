@@ -32126,6 +32126,41 @@ def business_pulse():
     role = get_user_role()
     is_manager = role in ("owner", "admin", "manager")
     
+    # Build mdToHtml JS function as regular string (NOT f-string) so regex backslashes survive
+    pulse_md_to_html_js = '''
+    // Simple markdown to HTML converter for Zane responses
+    function mdToHtml(text) {
+        if (!text) return '';
+        let html = text;
+        // Tables: | col | col | → proper HTML table
+        if (html.includes('|')) {
+            html = html.replace(/^(\\|.+\\|)\\n\\|[-:| ]+\\|\\n((?:\\|.+\\|\\n?)*)/gm, function(match, header, body) {
+                const hCells = header.split('|').filter(c => c.trim()).map(c => '<th style="padding:8px 12px;text-align:left;border-bottom:2px solid rgba(139,92,246,0.3);">' + c.trim() + '</th>').join('');
+                const rows = body.trim().split('\\n').map(row => {
+                    const cells = row.split('|').filter(c => c.trim()).map(c => '<td style="padding:6px 12px;border-bottom:1px solid rgba(255,255,255,0.1);">' + c.trim() + '</td>').join('');
+                    return '<tr>' + cells + '</tr>';
+                }).join('');
+                return '<table style="width:100%;border-collapse:collapse;margin:10px 0;font-size:14px;"><thead><tr>' + hCells + '</tr></thead><tbody>' + rows + '</tbody></table>';
+            });
+        }
+        // Headers
+        html = html.replace(/^### (.+)$/gm, '<h4 style="margin:12px 0 6px;color:var(--primary);">$1</h4>');
+        html = html.replace(/^## (.+)$/gm, '<h3 style="margin:14px 0 8px;color:var(--primary);">$1</h3>');
+        // Bold
+        html = html.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');
+        // Italic
+        html = html.replace(/\\*(.+?)\\*/g, '<em>$1</em>');
+        // Bullet lists
+        html = html.replace(/^- (.+)$/gm, '<li style="margin:3px 0;">$1</li>');
+        html = html.replace(/(<li[^>]*>.*<\\/li>\\n?)+/g, '<ul style="margin:8px 0;padding-left:20px;">$&</ul>');
+        // Line breaks (double newline = paragraph, single = br)
+        html = html.replace(/\\n\\n/g, '</p><p style="margin:8px 0;">');
+        html = html.replace(/\\n/g, '<br>');
+        html = '<p style="margin:8px 0;">' + html + '</p>';
+        return html;
+    }
+    '''
+
     # Build Zane chat HTML separately (can't use triple quotes inside f-string)
     zane_chat_html = ""
     if is_manager:
@@ -32599,39 +32634,7 @@ def business_pulse():
         if (input) {{ input.value = msg; }}
         pulseSendZane();
     }}
-    
-    // Simple markdown to HTML converter for Zane responses
-    function mdToHtml(text) {{
-        if (!text) return '';
-        let html = text;
-        // Tables: | col | col | → proper HTML table
-        if (html.includes('|')) {{
-            html = html.replace(/^(\|.+\|)\n\|[-:| ]+\|\n((?:\|.+\|\n?)*)/gm, function(match, header, body) {{
-                const hCells = header.split('|').filter(c => c.trim()).map(c => '<th style="padding:8px 12px;text-align:left;border-bottom:2px solid rgba(139,92,246,0.3);">' + c.trim() + '</th>').join('');
-                const rows = body.trim().split('\n').map(row => {{
-                    const cells = row.split('|').filter(c => c.trim()).map(c => '<td style="padding:6px 12px;border-bottom:1px solid rgba(255,255,255,0.1);">' + c.trim() + '</td>').join('');
-                    return '<tr>' + cells + '</tr>';
-                }}).join('');
-                return '<table style="width:100%;border-collapse:collapse;margin:10px 0;font-size:14px;"><thead><tr>' + hCells + '</tr></thead><tbody>' + rows + '</tbody></table>';
-            }});
-        }}
-        // Headers
-        html = html.replace(/^### (.+)$/gm, '<h4 style="margin:12px 0 6px;color:var(--primary);">$1</h4>');
-        html = html.replace(/^## (.+)$/gm, '<h3 style="margin:14px 0 8px;color:var(--primary);">$1</h3>');
-        // Bold
-        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        // Italic
-        html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-        // Bullet lists
-        html = html.replace(/^- (.+)$/gm, '<li style="margin:3px 0;">$1</li>');
-        html = html.replace(/(<li[^>]*>.*<\/li>\n?)+/g, '<ul style="margin:8px 0;padding-left:20px;">$&</ul>');
-        // Line breaks (double newline = paragraph, single = br)
-        html = html.replace(/\n\n/g, '</p><p style="margin:8px 0;">');
-        html = html.replace(/\n/g, '<br>');
-        html = '<p style="margin:8px 0;">' + html + '</p>';
-        return html;
-    }}
-    
+    {pulse_md_to_html_js}
     async function pulseSendZane() {{
         const input = document.getElementById('pulseZaneInput');
         const area = document.getElementById('pulseZaneArea');
