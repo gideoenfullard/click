@@ -11132,9 +11132,10 @@ class Actions:
             # Create journal entries for GL
             biz_id = context.get("business_id")
             excl_amount = float(amount - vat_amount)
-            # Debit Expense (7000) + VAT Input (1400), Credit Bank (1000)
+            # Use proper GL code based on category
+            expense_gl = IndustryKnowledge.get_gl_code(category) if category else "7999"
             create_journal_entry(biz_id, today(), description[:50], f"EXP-{expense['id'][:8]}", [
-                {"account_code": "7000", "debit": excl_amount, "credit": 0},        # General Expenses
+                {"account_code": expense_gl, "debit": excl_amount, "credit": 0},        # Expense account
                 {"account_code": "1400", "debit": float(vat_amount), "credit": 0},  # VAT Input
                 {"account_code": "1000", "debit": 0, "credit": float(amount)},      # Bank
             ])
@@ -11249,9 +11250,13 @@ class Actions:
                     {"account_code": "2100", "debit": 0, "credit": float(vat_amount)},   # VAT Output
                 ])
             else:
-                # Cash sale: Debit Petty Cash, Credit Sales + VAT
+                # Cash/Card/EFT sale
+                if payment_method == "cash":
+                    bank_account = "1100"  # Petty Cash for POS cash
+                else:
+                    bank_account = "1000"  # Bank for card/EFT
                 create_journal_entry(biz_id, today(), f"Sale - {item.get('description')}", f"SALE-{sale_id[:8]}", [
-                    {"account_code": "1100", "debit": float(line_total), "credit": 0},  # Petty Cash (POS cash)
+                    {"account_code": bank_account, "debit": float(line_total), "credit": 0},
                     {"account_code": "4000", "debit": 0, "credit": excl_amount},         # Sales
                     {"account_code": "2100", "debit": 0, "credit": float(vat_amount)},   # VAT Output
                 ])
@@ -30889,14 +30894,36 @@ def payroll_run():
                     
                     # Create journal entries for GL
                     # Employee salary: Debit expense, Credit liabilities and bank
-                    # Debits must equal Credits for double-entry
-                    # Bank pays NET (after ALL deductions)
-                    create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", [
-                        {"account_code": "6000", "debit": round(basic, 2), "credit": 0},           # Salaries expense
-                        {"account_code": "2200", "debit": 0, "credit": round(paye, 2)},            # PAYE Payable
-                        {"account_code": "2300", "debit": 0, "credit": round(uif, 2)},             # UIF Payable
-                        {"account_code": "1000", "debit": 0, "credit": round(net, 2)},             # Bank (NET pay)
-                    ])
+                    # Must be balanced: Total Debits = Total Credits
+                    payroll_entries = [
+                        # EXPENSE SIDE (Debits)
+                        {"account_code": "6200", "debit": round(basic, 2), "credit": 0},           # Salary expense
+                    ]
+                    
+                    # Employer contributions as expense
+                    employer_uif_amount = round(uif_employer, 2) if uif_employer > 0 else 0
+                    employer_sdl_amount = round(sdl, 2) if sdl > 0 else 0
+                    total_employer_expense = employer_uif_amount + employer_sdl_amount
+                    if total_employer_expense > 0:
+                        payroll_entries.append({"account_code": "6210", "debit": round(total_employer_expense, 2), "credit": 0})  # Employer statutory costs
+                    
+                    # LIABILITY & PAYMENT SIDE (Credits)
+                    if paye > 0:
+                        payroll_entries.append({"account_code": "2200", "debit": 0, "credit": round(paye, 2)})      # PAYE Payable
+                    if uif > 0 or employer_uif_amount > 0:
+                        payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})  # UIF Payable (employee + employer)
+                    if employer_sdl_amount > 0:
+                        payroll_entries.append({"account_code": "2220", "debit": 0, "credit": round(employer_sdl_amount, 2)})  # SDL Payable
+                    
+                    # Other deductions as liabilities (medical, pension, union, loan)
+                    other_deduction_total = round(medical + union_fees + pension + loan + other_ded, 2)
+                    if other_deduction_total > 0:
+                        payroll_entries.append({"account_code": "2400", "debit": 0, "credit": round(other_deduction_total, 2)})  # Other payroll deductions payable
+                    
+                    # Net pay to bank
+                    payroll_entries.append({"account_code": "1000", "debit": 0, "credit": round(net, 2)})  # Bank (NET pay)
+                    
+                    create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
                 else:
                     logger.error(f"[PAYROLL] Payslip save failed: {response.text[:200]}")
             except Exception as e:
@@ -34784,6 +34811,13 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
     if not biz_id:
         logger.error("[GL] No business_id provided for journal entry")
         return
+    
+    # Validate balance: total debits must equal total credits
+    total_debits = sum(float(e.get("debit", 0)) for e in entries)
+    total_credits = sum(float(e.get("credit", 0)) for e in entries)
+    if abs(total_debits - total_credits) > 0.02:  # Allow 2c rounding tolerance
+        logger.error(f"[GL] UNBALANCED journal entry! ref={reference} debits={total_debits:.2f} credits={total_credits:.2f} diff={total_debits - total_credits:.2f}")
+        # Still save but log the error for debugging
     
     # Ensure accounts exist for this business
     get_or_create_accounts(biz_id)
@@ -40193,8 +40227,8 @@ def api_po_create_invoice(po_id):
                 try:
                     create_journal_entry(biz_id, today(), f"Supplier Invoice {inv_number} - {po.get('supplier_name')}", inv_number, [
                         {"account_code": "5000", "debit": float(subtotal), "credit": 0},
-                        {"account_code": "2110", "debit": float(vat), "credit": 0},
-                        {"account_code": "2200", "debit": 0, "credit": float(total)},
+                        {"account_code": "1400", "debit": float(vat), "credit": 0},
+                        {"account_code": "2000", "debit": 0, "credit": float(total)},
                     ])
                     
                     if po.get("supplier_id"):
@@ -59021,9 +59055,9 @@ def api_job_card_create_invoice(job_id):
                 f"Invoice {inv_number} - Job {job.get('job_number')}",
                 inv_number,
                 [
-                    {"account": "Debtors", "debit": float(invoice.get("total", 0)), "credit": 0},
-                    {"account": "Sales", "debit": 0, "credit": float(invoice.get("subtotal", 0))},
-                    {"account": "Output VAT", "debit": 0, "credit": float(invoice.get("vat", 0))}
+                    {"account_code": "1200", "debit": float(invoice.get("total", 0)), "credit": 0},
+                    {"account_code": "4000", "debit": 0, "credit": float(invoice.get("subtotal", 0))},
+                    {"account_code": "2100", "debit": 0, "credit": float(invoice.get("vat", 0))}
                 ]
             )
             
@@ -59177,9 +59211,9 @@ def api_job_card_create_both(job_id):
             f"Invoice {inv_number} - Job {job.get('job_number')}",
             inv_number,
             [
-                {"account": "Debtors", "debit": float(invoice.get("total", 0)), "credit": 0},
-                {"account": "Sales", "debit": 0, "credit": float(invoice.get("subtotal", 0))},
-                {"account": "Output VAT", "debit": 0, "credit": float(invoice.get("vat", 0))}
+                {"account_code": "1200", "debit": float(invoice.get("total", 0)), "credit": 0},
+                {"account_code": "4000", "debit": 0, "credit": float(invoice.get("subtotal", 0))},
+                {"account_code": "2100", "debit": 0, "credit": float(invoice.get("vat", 0))}
             ]
         )
         
