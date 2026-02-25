@@ -91,11 +91,7 @@ try:
     from clickai_sars_knowledge import get_relevant_sars_knowledge, format_sars_knowledge
     SARS_KNOWLEDGE_LOADED = True
 except ImportError:
-    try:
-        from clickai_sars_knoledge import get_relevant_sars_knowledge, format_sars_knowledge
-        SARS_KNOWLEDGE_LOADED = True
-    except ImportError:
-        SARS_KNOWLEDGE_LOADED = False
+    SARS_KNOWLEDGE_LOADED = False
 try:
     from clickai_industry_knowledge import get_relevant_industry_knowledge, format_industry_knowledge
     INDUSTRY_KNOWLEDGE_LOADED = True
@@ -13305,7 +13301,7 @@ class DailyBriefing:
     def _gather_range_data(cls, business_id: str, start_date, end_date) -> dict:
         """Gather all data for a date range."""
         
-        # Get all data IN PARALLEL (no 'with' — see api_pulse_data comment)
+        # Get all data IN PARALLEL (no 'with' — same reason as api_pulse_data)
         pool = ThreadPoolExecutor(max_workers=8)
         try:
             f_sales = pool.submit(db.get, "sales", {"business_id": business_id})
@@ -13317,15 +13313,15 @@ class DailyBriefing:
             f_stock = pool.submit(db.get_all_stock, business_id)
             f_users = pool.submit(db.get_business_users, business_id)
             
-            sales = f_sales.result(timeout=15) or []
-            invoices = f_invoices.result(timeout=15) or []
-            quotes = f_quotes.result(timeout=15) or []
-            payments = f_payments.result(timeout=15) or []
-            purchase_orders = f_pos.result(timeout=15) or []
-            customers = f_customers.result(timeout=15) or []
-            stock = f_stock.result(timeout=15) or []
+            sales = f_sales.result(timeout=20) or []
+            invoices = f_invoices.result(timeout=20) or []
+            quotes = f_quotes.result(timeout=20) or []
+            payments = f_payments.result(timeout=20) or []
+            purchase_orders = f_pos.result(timeout=20) or []
+            customers = f_customers.result(timeout=20) or []
+            stock = f_stock.result(timeout=20) or []
             try:
-                users = f_users.result(timeout=15) or []
+                users = f_users.result(timeout=20) or []
             except Exception:
                 users = []
         finally:
@@ -32379,29 +32375,15 @@ def business_pulse():
     // ═══════════════════════════════════════════════════
     // PULSE DATA - Load all stats via AJAX
     // ═══════════════════════════════════════════════════
-    let _pulseLoading = false;
     async function loadPulseData(force) {{
-        if (_pulseLoading) return;  // prevent overlapping requests
-        _pulseLoading = true;
         try {{
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 20000);  // 20s client timeout
             const res = await fetch('/api/pulse/data', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{force: force}}),
-                signal: controller.signal
+                body: JSON.stringify({{force: force}})
             }});
-            clearTimeout(timeoutId);
             const d = await res.json();
-            if (!d.success) {{
-                console.error('Pulse data failed:', d.error);
-                // Show error in one visible place so user knows
-                const el = document.getElementById('pulseLastUpdate');
-                if (el) el.innerHTML = '<span style="color:#ef4444;">&#9888; Data load failed — retrying in 30s</span>';
-                _pulseLoading = false;
-                return;
-            }}
+            if (!d.success) return;
             
             // Fill stat cards
             document.getElementById('pulseTodayPayments').textContent = d.today_payments || 'R0.00';
@@ -32434,26 +32416,17 @@ def business_pulse():
             
         }} catch(e) {{
             console.error('Pulse data error:', e);
-            const el = document.getElementById('pulseLastUpdate');
-            if (el) el.innerHTML = '<span style="color:#ef4444;">&#9888; Connection issue — retrying in 30s</span>';
         }}
-        _pulseLoading = false;
     }}
     
     // ═══════════════════════════════════════════════════
     // ASSISTANT CARDS - Reminders & To-Dos from DB
     // ═══════════════════════════════════════════════════
-    let _assistantLoading = false;
     async function loadAssistantItems() {{
-        if (_assistantLoading) return;
-        _assistantLoading = true;
         try {{
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000);
-            const res = await fetch('/api/assistant/items', {{ signal: controller.signal }});
-            clearTimeout(timeoutId);
+            const res = await fetch('/api/assistant/items');
             const data = await res.json();
-            if (!data.success) {{ _assistantLoading = false; return; }}
+            if (!data.success) return;
             
             // Reminders
             const reminders = data.reminders || [];
@@ -32505,7 +32478,6 @@ def business_pulse():
         }} catch(e) {{
             console.error('Assistant items error:', e);
         }}
-        _assistantLoading = false;
     }}
     
     async function completeReminder(id) {{
@@ -32741,9 +32713,8 @@ def api_pulse_data():
         week_ago_str = (today_date - timedelta(days=7)).strftime("%Y-%m-%d")
         
         # ── Load data IN PARALLEL ──
-        # NOTE: Do NOT use 'with' context manager — it calls shutdown(wait=True) 
-        # which blocks until ALL futures complete, making individual timeouts useless.
-        # get_business_users makes sequential HTTP calls and can be slow.
+        # CRITICAL: Don't use 'with' — shutdown(wait=True) blocks until ALL futures
+        # complete, so if get_business_users is slow, everything waits.
         pool = ThreadPoolExecutor(max_workers=7)
         try:
             f_invoices = pool.submit(db.get, "invoices", {"business_id": biz_id})
@@ -32754,15 +32725,14 @@ def api_pulse_data():
             f_stock = pool.submit(db.get_all_stock, biz_id)
             f_users = pool.submit(db.get_business_users, biz_id)
             
-            # Each .result() now actually respects its timeout
-            invoices = f_invoices.result(timeout=15) or []
-            sales = f_sales.result(timeout=15) or []
-            payments = f_payments.result(timeout=15) or []
-            quotes = f_quotes.result(timeout=15) or []
-            suppliers = f_suppliers.result(timeout=15) or []
-            stock = f_stock.result(timeout=15) or []
+            invoices = f_invoices.result(timeout=20) or []
+            sales = f_sales.result(timeout=20) or []
+            payments = f_payments.result(timeout=20) or []
+            quotes = f_quotes.result(timeout=20) or []
+            suppliers = f_suppliers.result(timeout=20) or []
+            stock = f_stock.result(timeout=20) or []
             try:
-                team_users = f_users.result(timeout=15) or []
+                team_users = f_users.result(timeout=20) or []
             except Exception:
                 team_users = []
                 logger.warning("[PULSE] get_business_users timed out — continuing without team data")
