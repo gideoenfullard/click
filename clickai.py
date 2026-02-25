@@ -55494,17 +55494,13 @@ def banking_page():
     all_transactions = db.get("bank_transactions", {"business_id": biz_id}) if biz_id else []
     all_transactions = sorted(all_transactions, key=lambda x: x.get("date", ""), reverse=True)
     
-    # ═══ INVOICE MATCHING — match bank transactions to scanned invoices ═══
-    if biz_id:
-        try:
-            InvoiceMatch.match_all_transactions(biz_id, all_transactions)
-        except Exception as e:
-            logger.error(f"[BANKING PAGE] Invoice matching error: {e}")
+    # NOTE: InvoiceMatch.match_all_transactions removed from page load — was causing 6+ second delays
+    # Matching now happens at IMPORT time (see api_banking_import) and on-demand via Zane
     
     auto_matched = [t for t in all_transactions if (t.get("auto_matched") or t.get("invoice_matched")) and not t.get("manually_reviewed")]
     suggested = [t for t in all_transactions if t.get("suggested_category") and not t.get("matched") and t.get("suggestion_confidence", 0) < 0.85]
     needs_attention = [t for t in all_transactions if not t.get("matched") and not t.get("suggested_category")]
-    already_done = [t for t in all_transactions if t.get("matched") and t.get("manually_reviewed")]
+    already_done = [t for t in all_transactions if t.get("matched")]
     
     # Get expense categories
     expense_categories = IndustryKnowledge.get_expense_categories(biz_id) if biz_id else ["General Expenses"]
@@ -55595,6 +55591,26 @@ def banking_page():
     suggested_rows = "".join([build_row(t, show_approve=True) for t in suggested[:100]])
     needs_rows = "".join([build_row(t, show_approve=False, show_suggestion=False) for t in needs_attention[:100]])
     
+    # Build done rows - show allocated transactions so they're traceable
+    done_rows_html = ""
+    for t in already_done[:200]:
+        txn_id = t.get("id", "")
+        debit = float(t.get("debit", 0))
+        credit = float(t.get("credit", 0))
+        desc = safe_string(t.get("description", "-"))
+        cat = t.get("category", t.get("suggested_category", ""))
+        matched_at = str(t.get("matched_at", ""))[:10]
+        done_rows_html += f'''
+        <tr data-id="{txn_id}">
+            <td style="white-space:nowrap;">{t.get("date", "-")}</td>
+            <td><div style="max-width:300px;">{desc}</div></td>
+            <td style="text-align:right;color:var(--red);white-space:nowrap;">{money(debit) if debit > 0 else "-"}</td>
+            <td style="text-align:right;color:var(--green);white-space:nowrap;">{money(credit) if credit > 0 else "-"}</td>
+            <td><span style="background:var(--green);color:white;padding:4px 10px;border-radius:4px;font-size:12px;">{cat}</span>
+                <div style="font-size:10px;color:var(--text-muted);margin-top:3px;">{matched_at}</div></td>
+        </tr>
+        '''
+    
     content = f'''
     <style>
     .recon-tabs {{ display: flex; gap: 5px; margin-bottom: 20px; flex-wrap: wrap; }}
@@ -55648,6 +55664,7 @@ def banking_page():
         <div class="recon-tab active" onclick="showTab('auto')">✅ Auto-Matched <span class="count">{auto_count}</span></div>
         <div class="recon-tab" onclick="showTab('suggested')">🤖 Suggested <span class="count">{suggested_count}</span></div>
         <div class="recon-tab" onclick="showTab('needs')">❓ Needs You <span class="count">{needs_count}</span></div>
+        <div class="recon-tab" onclick="showTab('done')">✅ Done <span class="count">{done_count}</span></div>
     </div>
     
     <!-- AUTO-MATCHED SECTION -->
@@ -55723,6 +55740,30 @@ def banking_page():
                 </thead>
                 <tbody>
                     {needs_rows or "<tr><td colspan='5' style='text-align:center;padding:40px;color:var(--green);'>🎉 Nothing needs your attention!</td></tr>"}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- DONE / HISTORY SECTION -->
+    <div id="section-done" class="recon-section">
+        <div class="card" style="margin-bottom:15px;background:rgba(16,185,129,0.1);">
+            <p style="margin:0;"><strong>Allocated Transactions</strong> - These have been categorized and recorded in your books.</p>
+        </div>
+        
+        <div class="card">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th style="width:100px;">Date</th>
+                        <th>Description</th>
+                        <th style="text-align:right;width:100px;">Out</th>
+                        <th style="text-align:right;width:100px;">In</th>
+                        <th style="width:150px;">Category</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {done_rows_html or "<tr><td colspan='5' style='text-align:center;padding:40px;color:var(--text-muted);'>No allocated transactions yet. Categorize transactions above and they will appear here.</td></tr>"}
                 </tbody>
             </table>
         </div>
@@ -56563,6 +56604,20 @@ RULES:
             except Exception as row_err:
                 logger.warning(f"[BANK] Row error: {row_err}")
                 continue
+        
+        # Run invoice matching on imported transactions (was previously on every page load)
+        try:
+            all_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+            unmatched = [t for t in all_txns if not t.get("matched") and not t.get("invoice_matched")]
+            if unmatched:
+                InvoiceMatch.match_all_transactions(biz_id, unmatched)
+                # Save matched results
+                for t in unmatched:
+                    if t.get("invoice_matched"):
+                        db.save("bank_transactions", t)
+                logger.info(f"[BANK IMPORT] Invoice matching completed on {len(unmatched)} transactions")
+        except Exception as match_err:
+            logger.warning(f"[BANK IMPORT] Invoice matching failed (non-critical): {match_err}")
         
         needs_attention = imported - auto_matched - suggested
         
