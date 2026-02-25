@@ -41576,9 +41576,10 @@ def pos_page():
     # Sort stock by category then code
     stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("code") or ""))
     
-    # Build stock rows for the table
+    # Build stock rows for the table (only first 100 visible for fast render)
     stock_rows = ""
-    for item in stock:
+    total_stock_count = len(stock)
+    for row_idx, item in enumerate(stock):
         code = safe_string(item.get("code", ""))
         desc = safe_string(item.get("description", ""))
         price = float(item.get("price") or item.get("selling_price") or 0)
@@ -41600,8 +41601,9 @@ def pos_page():
         else:
             stock_badge = f'<span class="stock-badge">{qty:.0f}</span>'
         
+        row_hidden = ' style="display:none"' if row_idx >= 100 else ''
         stock_rows += f'''
-        <tr class="stock-row {stock_class}" 
+        <tr class="stock-row {stock_class}"{row_hidden}
             data-id="{item.get("id")}"
             data-code="{code}"
             data-desc="{desc}"
@@ -41841,17 +41843,14 @@ def pos_page():
     
     .stock-row {
         cursor: pointer;
-        transition: all 0.2s;
         border-bottom: 1px solid rgba(255,255,255,0.05);
     }
     
     .stock-row:hover {
         background: linear-gradient(90deg, rgba(99, 102, 241, 0.15), transparent);
-        transform: scale(1.005);
     }
     
     .stock-row:active {
-        transform: scale(0.995);
         background: rgba(99, 102, 241, 0.25);
     }
     
@@ -42444,6 +42443,9 @@ def pos_page():
                     <div>No items found</div>
                     <div style="font-size:12px;margin-top:5px;">Try a different search term</div>
                 </div>
+                <div id="stockCount" style="text-align:center;padding:8px;color:var(--text-muted);font-size:12px;">
+                    Showing 100 of {total_stock_count} items &bull; Type to search all
+                </div>
             </div>
         </div>
         
@@ -43034,13 +43036,14 @@ def pos_page():
         search = search.replace(/\s*[xX]\s*/g, 'x');
         
         let visibleCount = 0;
+        const MAX_VISIBLE = 100;
         selectedRowIndex = -1;
         
         rows.forEach((row, index) => {
             let data = (row.getAttribute('data-search') || '').toLowerCase();
             data = data.replace(/\s*[xX]\s*/g, 'x');
             
-            if (search === '' || data.indexOf(search) !== -1) {
+            if ((search === '' && visibleCount < MAX_VISIBLE) || (search !== '' && data.indexOf(search) !== -1 && visibleCount < MAX_VISIBLE)) {
                 row.style.display = '';
                 visibleCount++;
                 if (selectedRowIndex === -1) selectedRowIndex = index;
@@ -43049,11 +43052,22 @@ def pos_page():
             }
         });
         
-        // Show/hide no results message
+        // Show/hide no results message and update count
+        const stockCountEl = document.getElementById('stockCount');
         if (visibleCount === 0 && search !== '') {
             noResults.classList.add('show');
+            if (stockCountEl) stockCountEl.style.display = 'none';
         } else {
             noResults.classList.remove('show');
+            if (stockCountEl) {
+                const totalRows = rows.length;
+                stockCountEl.style.display = '';
+                if (search !== '') {
+                    stockCountEl.textContent = 'Showing ' + visibleCount + ' of ' + totalRows + ' items matching "' + search + '"';
+                } else {
+                    stockCountEl.textContent = 'Showing ' + visibleCount + ' of ' + totalRows + ' items \u2022 Type to search all';
+                }
+            }
         }
         
         // Remove highlight when typing
