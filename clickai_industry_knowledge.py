@@ -237,14 +237,17 @@ INDUSTRY_CHUNKS = [
 
     # ═══ TRANSPORT & LOGISTICS ═══
     {
-        "keywords": ["TRANSPORT", "TRUCKING", "LOGISTICS", "DELIVERY", "COURIER", "VERVOER"],
+        "keywords": ["TRANSPORT", "TRUCKING", "LOGISTICS", "DELIVERY", "COURIER", "VERVOER", "HAULAGE", "FREIGHT"],
         "context": "Transport/logistics. Target margin: 15-25% (tight margins, high costs). "
-                   "Biggest costs: fuel (30-40%!), vehicle maintenance, tyres, insurance, drivers. "
+                   "Biggest costs: fuel (30-40%), vehicle maintenance/tyres (15-20%), drivers (15-20%), insurance (3-5%). "
                    "Key GL: Fuel — Business Vehicle, Vehicle Repairs & Service, Tyres, "
                    "Vehicle Insurance, Wages — Staff (drivers), Tolls & Parking, Vehicle Licence. "
-                   "Watch for: fuel theft/misuse, tyre costs (R5k-R15k per truck tyre), "
-                   "maintenance scheduling (breakdowns = lost revenue), overloading fines. "
-                   "Must comply with NRCS regulations. Cross-border: need permits per country. "
+                   "Watch for: fuel theft/misuse, short-loading (ordered 36t, loaded 34t), tyre costs (R5k-R15k per truck tyre), "
+                   "maintenance scheduling (breakdowns = lost revenue), overloading fines (R100-R150 per kg over). "
+                   "Must have: COF annually, PrDP for drivers, operator registration, GPS tracking. "
+                   "Cross-border: need C-BRTA permits per country. "
+                   "Critical KPIs: fuel consumption per km per vehicle, empty running % (<30% target), "
+                   "on-time delivery rate (>95%), vehicle utilisation (>85% of available days). "
                    "Tip: fuel is biggest controllable cost — track consumption per km per vehicle."
     },
 

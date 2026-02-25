@@ -103,6 +103,11 @@ try:
 except ImportError:
     BOOKKEEPING_KNOWLEDGE_LOADED = False
 try:
+    from clickai_transport_knowledge import get_relevant_transport_knowledge, format_transport_knowledge
+    TRANSPORT_KNOWLEDGE_LOADED = True
+except ImportError:
+    TRANSPORT_KNOWLEDGE_LOADED = False
+try:
     from clickai_business_groups import BusinessGroupManager, register_group_routes
     BUSINESS_GROUPS_LOADED = True
 except ImportError:
@@ -8096,6 +8101,16 @@ Settings: /settings (business info, VAT, users, preferences)
             if bk_chunks:
                 prompt += format_bookkeeping_knowledge(bk_chunks)
                 logger.info(f"[ZANE-BK] Injected bookkeeping chunk")
+        except Exception:
+            pass
+
+    # === RAG: Inject transport/logistics knowledge (max 2 chunks — deep industry knowledge) ===
+    if TRANSPORT_KNOWLEDGE_LOADED and user_message:
+        try:
+            transport_chunks = get_relevant_transport_knowledge(user_message, max_chunks=2)
+            if transport_chunks:
+                prompt += format_transport_knowledge(transport_chunks)
+                logger.info(f"[ZANE-TRANSPORT] Injected {len(transport_chunks)} transport chunk(s)")
         except Exception:
             pass
 
@@ -44602,62 +44617,62 @@ def pos_page():
             const lineTotal = item.price * item.quantity;
             // Prefer description, fall back to code only if description is empty/missing
             const itemName = (item.description && item.description.trim()) ? item.description : (item.code || 'Item');
-            itemsHtml += '<tr><td style="padding:10px 0;font-size:18px;">' + item.quantity + 'x ' + itemName + '</td><td style="text-align:right;padding:10px 0;font-size:18px;">R' + lineTotal.toFixed(2) + '</td></tr>';
+            itemsHtml += '<tr><td style="padding:3px 0;font-size:13px;">' + item.quantity + 'x ' + itemName + '</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R' + lineTotal.toFixed(2) + '</td></tr>';
         });
         
         // Cash payment details (only for cash sales)
         let cashHtml = '';
         if (method === 'cash' && cashReceived > 0) {
             cashHtml = `
-                <div style="margin-top:15px;padding:15px;background:#f5f5f5;border-radius:8px;">
-                    <div style="display:flex;justify-content:space-between;font-size:20px;padding:5px 0;">
-                        <span>💵 Cash Received</span><span>R${cashReceived.toFixed(2)}</span>
+                <div style="margin-top:8px;padding:8px;background:#f5f5f5;border-radius:6px;">
+                    <div style="display:flex;justify-content:space-between;font-size:14px;padding:2px 0;">
+                        <span>Cash Received</span><span>R${cashReceived.toFixed(2)}</span>
                     </div>
-                    <div style="display:flex;justify-content:space-between;font-size:24px;font-weight:bold;padding:5px 0;color:#10b981;">
-                        <span>🔄 Change</span><span>R${changeGiven.toFixed(2)}</span>
+                    <div style="display:flex;justify-content:space-between;font-size:18px;font-weight:bold;padding:2px 0;color:#10b981;">
+                        <span>Change</span><span>R${changeGiven.toFixed(2)}</span>
                     </div>
                 </div>
             `;
         }
         
         const slipHtml = `
-            <div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:15px;margin-bottom:15px;">
-                <div style="font-size:28px;font-weight:bold;">${posSettings.business_name || 'Business'}</div>
-                ${posSettings.phone ? '<div style="font-size:18px;color:#666;">Tel: ' + posSettings.phone + '</div>' : ''}
-                ${posSettings.vat_number ? '<div style="font-size:18px;color:#666;">VAT: ' + posSettings.vat_number + '</div>' : ''}
-                <div style="margin-top:10px;font-size:22px;font-weight:bold;">${saleNum}</div>
-                ${saleNum.startsWith('OFF') ? '<div style="background:#dc2626;color:white;padding:4px 10px;border-radius:4px;font-size:14px;display:inline-block;margin-top:6px;">📴 OFFLINE — Will sync when internet returns</div>' : ''}
-                <div style="font-size:18px;color:#666;">${date} ${time}</div>
-                ${currentCashierName ? '<div style="font-size:16px;color:#666;margin-top:4px;">Cashier: ' + currentCashierName + '</div>' : ''}
+            <div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:8px;margin-bottom:8px;">
+                <div style="font-size:18px;font-weight:bold;">${posSettings.business_name || 'Business'}</div>
+                ${posSettings.phone ? '<div style="font-size:12px;color:#666;">Tel: ' + posSettings.phone + '</div>' : ''}
+                ${posSettings.vat_number ? '<div style="font-size:12px;color:#666;">VAT: ' + posSettings.vat_number + '</div>' : ''}
+                <div style="margin-top:6px;font-size:15px;font-weight:bold;">${saleNum}</div>
+                ${saleNum.startsWith('OFF') ? '<div style="background:#dc2626;color:white;padding:2px 6px;border-radius:3px;font-size:11px;display:inline-block;margin-top:4px;">OFFLINE</div>' : ''}
+                <div style="font-size:12px;color:#666;">${date} ${time}</div>
+                ${currentCashierName ? '<div style="font-size:12px;color:#666;margin-top:2px;">Cashier: ' + currentCashierName + '</div>' : ''}
             </div>
             
-            <div style="margin-bottom:15px;font-size:18px;">
-                <span style="background:#333;color:white;padding:6px 12px;border-radius:3px;font-size:18px;">${methodLabel}</span>
-                <span style="margin-left:12px;font-size:18px;">${customerName || 'Cash Sale'}</span>
-                ${customerAddress ? '<div style="font-size:14px;color:#666;margin-top:6px;margin-left:4px;">' + customerAddress.replace(/\\n/g, '<br>') + '</div>' : ''}
-                ${customerPhone ? '<div style="font-size:14px;color:#666;margin-left:4px;">Tel: ' + customerPhone + '</div>' : ''}
-                ${customerVat ? '<div style="font-size:14px;color:#666;margin-left:4px;font-weight:bold;">VAT: ' + customerVat + '</div>' : ''}
+            <div style="margin-bottom:8px;font-size:13px;">
+                <span style="background:#333;color:white;padding:3px 8px;border-radius:3px;font-size:12px;">${methodLabel}</span>
+                <span style="margin-left:8px;font-size:13px;">${customerName || 'Cash Sale'}</span>
+                ${customerAddress ? '<div style="font-size:11px;color:#666;margin-top:4px;margin-left:4px;">' + customerAddress.replace(/\\n/g, '<br>') + '</div>' : ''}
+                ${customerPhone ? '<div style="font-size:11px;color:#666;margin-left:4px;">Tel: ' + customerPhone + '</div>' : ''}
+                ${customerVat ? '<div style="font-size:11px;color:#666;margin-left:4px;font-weight:bold;">VAT: ' + customerVat + '</div>' : ''}
             </div>
             
-            <table style="width:100%;border-collapse:collapse;margin-bottom:15px;">
+            <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
                 ${itemsHtml}
             </table>
             
-            <div style="border-top:2px dashed #000;padding-top:12px;">
-                <div style="display:flex;justify-content:space-between;font-size:18px;color:#666;padding:4px 0;">
+            <div style="border-top:2px dashed #000;padding-top:6px;">
+                <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
                     <span>Subtotal</span><span>R${subtotal.toFixed(2)}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;font-size:18px;color:#666;padding:4px 0;">
+                <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
                     <span>VAT (15%)</span><span>R${vat.toFixed(2)}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;font-size:30px;font-weight:bold;margin-top:10px;">
+                <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:bold;margin-top:6px;">
                     <span>TOTAL</span><span>R${total.toFixed(2)}</span>
                 </div>
             </div>
             
             ${cashHtml}
             
-            <div style="text-align:center;margin-top:15px;padding-top:15px;border-top:2px dashed #000;font-size:18px;color:#666;">
+            <div style="text-align:center;margin-top:8px;padding-top:8px;border-top:2px dashed #000;font-size:12px;color:#666;">
                 ${posSettings.slip_footer || 'Thank you for your purchase!'}
             </div>
         `;
@@ -45179,7 +45194,7 @@ def pos_page():
     <!-- Print Slip Modal -->
     <div id="printSlipModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;justify-content:center;align-items:flex-start;overflow-y:auto;padding:20px;">
         <div style="background:white;border-radius:8px;max-width:450px;width:100%;margin:auto;">
-            <div id="slipContent" style="padding:20px;font-family:'Courier New',monospace;font-size:16px;color:#000;"></div>
+            <div id="slipContent" style="padding:12px;font-family:'Courier New',monospace;font-size:13px;color:#000;"></div>
             <div style="padding:20px;border-top:2px solid #eee;display:flex;gap:15px;flex-wrap:wrap;" id="printButtonRow">
                 <button id="btnPrintThermal" tabindex="0" onclick="doPrintSlip('thermal')" 
                     onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
