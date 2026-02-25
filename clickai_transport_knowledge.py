@@ -219,7 +219,7 @@ TRANSPORT_CHUNKS = [
 
     # ═══ FINANCIAL MANAGEMENT FOR TRANSPORT ═══
     {
-        "keywords": ["FINANCE", "CASH FLOW", "INVOICE", "PAYMENT", "DEBTOR", "ACCOUNT", "REKENING", "BETALING", "KONTANTVLOEI"],
+        "keywords": ["TRANSPORT FINANCE", "TRANSPORT CASH FLOW", "TRANSPORT INVOICE", "TRANSPORT PAYMENT", "TRANSPORT DEBTOR", "FLEET ACCOUNT", "TRIP COST", "COST PER KM", "POD", "PROOF OF DELIVERY", "DIESEL REBATE", "BACKLOAD", "VERVOER FINANSIES", "KONTANTVLOEI VERVOER"],
         "context": "Financial management specific to transport businesses. "
                    "CASH FLOW KILLER: Transport businesses fail on cash flow, not profitability. "
                    "Typical payment terms: 30-60 days from customer, but you pay fuel/tolls/drivers immediately. "
@@ -265,7 +265,7 @@ TRANSPORT_CHUNKS = [
 
     # ═══ SAFETY & ACCIDENTS ═══
     {
-        "keywords": ["SAFETY", "ACCIDENT", "CRASH", "VEILIGHEID", "ONGELUK", "DASHCAM", "SPEED", "SPOED"],
+        "keywords": ["SAFETY", "ACCIDENT", "CRASH", "VEILIGHEID", "ONGELUK", "FLEET CAMERA", "SPEED", "SPOED"],
         "context": "Transport safety management in South Africa. "
                    "SA ROAD STATISTICS: ~14,000 road deaths/year. Trucks involved in ~12% of fatal crashes. "
                    "Main causes: fatigue, speeding, vehicle defects, drunk driving, poor road conditions. "
