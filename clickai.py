@@ -14329,8 +14329,8 @@ class IndustryKnowledge:
                 ("Commission Received", "4300"),
                 ("Interest Received", "4400"),
                 ("Sundry Income", "4900"),
-                ("Customer Payment", "1000"),
-                ("POS Deposit", "1000"),
+                ("Customer Payment", "1200"),
+                ("POS Deposit", "1100"),
             ]
         },
         "cost_of_sales": {
@@ -14453,7 +14453,7 @@ class IndustryKnowledge:
         "tax_compliance": {
             "label": "Tax & Compliance / Belasting",
             "items": [
-                ("VAT Payment to SARS", "9100"),
+                ("VAT Payment to SARS", "2100"),
                 ("Provisional Tax Payment", "9200"),
                 ("Penalties & Fines — SARS", "9210"),
                 ("Licence Fees — Business / Trade", "9300"),
@@ -14493,10 +14493,11 @@ class IndustryKnowledge:
         "owner": {
             "label": "Owner / Eienaar",
             "items": [
-                ("Owner Drawings", "3100"),
+                ("Owner Drawings", "3200"),
                 ("Owner Capital Introduced", "3000"),
-                ("Loan Repayment", "2200"),
-                ("Loan", "2200"),
+                ("Supplier Payment", "2000"),
+                ("Loan Repayment", "2300"),
+                ("Loan", "2300"),
                 ("Transfer Between Accounts", "1000"),
             ]
         },
@@ -55551,7 +55552,7 @@ def banking_page():
     category_options = "".join([f'<option value="{c}">{c}</option>' for c in expense_categories])
     
     # Add common categories
-    extra_cats = ["Customer Payment", "POS Deposit", "Owner Drawings", "Loan", "Refund", "Transfer", "Ignore"]
+    extra_cats = ["Customer Payment", "Supplier Payment", "POS Deposit", "Owner Drawings", "Owner Capital Introduced", "Loan", "Loan Repayment", "Refund", "Transfer", "Ignore"]
     for cat in extra_cats:
         if cat not in expense_categories:
             category_options += f'<option value="{cat}">{cat}</option>'
@@ -56733,17 +56734,92 @@ def api_banking_categorize():
         no_vat_cats = ["fuel", "entertainment", "meals", "membership"]
         is_no_vat = any(nv in category.lower() for nv in no_vat_cats)
         
-        # Determine if money out (expense) or money in (payment/deposit)
+        # === SPECIAL CATEGORIES with custom GL logic ===
+        # These need specific double-entry treatment, not generic expense/income
+        
+        special_categories = {
+            # Money IN specials
+            "Customer Payment",      # Debit Bank, Credit Debtors (1200)
+            "POS Deposit",           # Debit Bank, Credit Petty Cash (1100)
+            "Supplier Payment",      # Money OUT: Debit Creditors (2000), Credit Bank
+            "VAT Payment to SARS",   # Debit VAT Output (2100), Credit Bank - paying liability
+            "Owner Drawings",        # Debit Drawings (3200), Credit Bank
+            "Owner Capital Introduced",  # Debit Bank, Credit Capital (3000)
+            "Loan",                  # IN: Debit Bank, Credit Loan (2300). OUT: Debit Loan (2300), Credit Bank
+            "Loan Repayment",        # Debit Loan (2300), Credit Bank
+            "Transfer Between Accounts",  # No journal - need both accounts
+            "Ignore",               # No journal
+        }
+        
+        txn_date = txn.get("date", today())
+        ref = f"BNK-{txn_id[:8]}"
+        desc_short = description[:50]
+        
+        # Determine if money out (expense) or money in (income/payment)
         if debit > 0 or amount < 0:
             expense_amount = debit if debit > 0 else abs(amount)
-            # Money out - could be expense or other
-            if category not in ["Customer Payment", "POS Deposit", "Transfer Between Accounts", "Ignore", "Owner Drawings", "Loan", "Loan Repayment"]:
-                # Create expense record with specific category + GL code
+            expense_rounded = round(expense_amount, 2)
+            
+            if category in special_categories:
+                # --- SPECIAL MONEY OUT HANDLING ---
+                if category == "Owner Drawings":
+                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        {"account_code": "3200", "debit": expense_rounded, "credit": 0},  # Drawings
+                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
+                    ])
+                elif category == "Loan Repayment":
+                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        {"account_code": "2300", "debit": expense_rounded, "credit": 0},  # Loan liability down
+                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
+                    ])
+                elif category == "Loan":
+                    # Money OUT as Loan = repaying loan principal
+                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        {"account_code": "2300", "debit": expense_rounded, "credit": 0},  # Loan liability down
+                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
+                    ])
+                elif category == "Customer Payment":
+                    # Money OUT to customer = refund from bank
+                    create_journal_entry(biz_id, txn_date, f"Customer refund: {desc_short}", ref, [
+                        {"account_code": "4000", "debit": expense_rounded, "credit": 0},   # Sales reversed
+                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},    # Bank out
+                    ])
+                elif category == "Supplier Payment":
+                    # Paying a supplier - reduce creditors
+                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        {"account_code": "2000", "debit": expense_rounded, "credit": 0},  # Creditors down
+                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
+                    ])
+                    # Try to match supplier invoice if reference exists
+                    match_ref = txn.get("match_reference", "")
+                    if match_ref:
+                        inv_num = match_ref.split(" - ")[0] if " - " in match_ref else match_ref
+                        if inv_num:
+                            s_invoices = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_num})
+                            if s_invoices:
+                                s_inv = s_invoices[0]
+                                s_inv["status"] = "paid"
+                                s_inv["paid_date"] = txn_date
+                                db.save("supplier_invoices", s_inv)
+                                logger.info(f"[BANK] Marked supplier invoice {inv_num} as paid")
+                elif category == "VAT Payment to SARS":
+                    # Paying VAT liability - NOT an expense!
+                    create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                        {"account_code": "2100", "debit": expense_rounded, "credit": 0},  # VAT Output liability down
+                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
+                    ])
+                elif category == "POS Deposit":
+                    # POS Deposit as money OUT doesn't apply - skip
+                    pass
+                # Transfer/Ignore = no journal entry
+                
+            else:
+                # --- REGULAR EXPENSE ---
                 expense = RecordFactory.expense(
                     business_id=biz_id,
                     description=description,
                     amount=expense_amount,
-                    date=txn.get("date", today()),
+                    date=txn_date,
                     category=category,
                     category_code=gl_code,
                     reference=f"Bank: {txn_id[:8]}"
@@ -56761,42 +56837,68 @@ def api_banking_categorize():
                     journal_entries.append({"account_code": "1400", "debit": vat_amount, "credit": 0})
                 journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(expense_amount, 2)})
                 
-                create_journal_entry(biz_id, txn.get("date", today()), description[:50], f"BNK-{txn_id[:8]}", journal_entries)
+                create_journal_entry(biz_id, txn_date, desc_short, ref, journal_entries)
                 logger.info(f"[BANK] Created expense: {category} GL={gl_code} R{expense_amount}")
-            
-            elif category == "Owner Drawings":
-                create_journal_entry(biz_id, txn.get("date", today()), description[:50], f"BNK-{txn_id[:8]}", [
-                    {"account_code": "3100", "debit": round(expense_amount, 2), "credit": 0},
-                    {"account_code": "1000", "debit": 0, "credit": round(expense_amount, 2)},
-                ])
-            elif category == "Loan Repayment":
-                create_journal_entry(biz_id, txn.get("date", today()), description[:50], f"BNK-{txn_id[:8]}", [
-                    {"account_code": "2200", "debit": round(expense_amount, 2), "credit": 0},
-                    {"account_code": "1000", "debit": 0, "credit": round(expense_amount, 2)},
-                ])
         
         elif credit > 0 or amount > 0:
             income_amount = credit if credit > 0 else amount
-            # Money in - could be customer payment
-            if category == "Customer Payment" and txn.get("match_reference"):
-                # Try to mark invoice as paid
-                ref = txn.get("match_reference", "")
-                inv_num = ref.split(" - ")[0] if " - " in ref else ref
-                if inv_num.startswith("INV"):
-                    invoices = db.get("invoices", {"business_id": biz_id, "invoice_number": inv_num})
-                    if invoices:
-                        inv = invoices[0]
-                        inv["status"] = "paid"
-                        inv["paid_date"] = txn.get("date", today())
-                        inv["paid_amount"] = income_amount
-                        db.save("invoices", inv)
-                        logger.info(f"[BANK] Marked {inv_num} as paid")
+            income_rounded = round(income_amount, 2)
             
-            # Create journal entry for income
-            if category not in ["Transfer Between Accounts", "Ignore"]:
-                create_journal_entry(biz_id, txn.get("date", today()), description[:50], f"BNK-{txn_id[:8]}", [
-                    {"account_code": "1000", "debit": round(income_amount, 2), "credit": 0},
-                    {"account_code": gl_code, "debit": 0, "credit": round(income_amount, 2)},
+            if category == "Customer Payment":
+                # Customer paying their account - reduce debtors
+                create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": "1200", "debit": 0, "credit": income_rounded},    # Debtors down
+                ])
+                # Try to mark invoice as paid
+                match_ref = txn.get("match_reference", "")
+                if match_ref:
+                    inv_num = match_ref.split(" - ")[0] if " - " in match_ref else match_ref
+                    if inv_num.startswith("INV"):
+                        invoices = db.get("invoices", {"business_id": biz_id, "invoice_number": inv_num})
+                        if invoices:
+                            inv = invoices[0]
+                            inv["status"] = "paid"
+                            inv["paid_date"] = txn_date
+                            inv["paid_amount"] = income_amount
+                            db.save("invoices", inv)
+                            logger.info(f"[BANK] Marked {inv_num} as paid")
+                            
+            elif category == "POS Deposit":
+                # POS cash deposited into bank
+                create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": "1100", "debit": 0, "credit": income_rounded},    # Petty Cash down
+                ])
+                
+            elif category == "Owner Capital Introduced":
+                create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": "3000", "debit": 0, "credit": income_rounded},    # Capital up
+                ])
+                
+            elif category == "Loan":
+                # Receiving loan funds
+                create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": "2300", "debit": 0, "credit": income_rounded},    # Loan liability up
+                ])
+                
+            elif category == "Refund":
+                # Refund received - credit original expense
+                create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": "7900", "debit": 0, "credit": income_rounded},    # Sundry expenses reversed
+                ])
+                
+            elif category in ["Transfer Between Accounts", "Ignore"]:
+                pass  # No journal entry
+                
+            else:
+                # Regular income
+                create_journal_entry(biz_id, txn_date, desc_short, ref, [
+                    {"account_code": "1000", "debit": income_rounded, "credit": 0},
+                    {"account_code": gl_code, "debit": 0, "credit": income_rounded},
                 ])
         
         return jsonify({"success": True, "message": f"Categorized as {category}"})
