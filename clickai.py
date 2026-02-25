@@ -24025,15 +24025,35 @@ def api_fulltech_apply_recalc():
 @app.route("/api/stock/all")
 @login_required
 def api_stock_all():
-    """Return all stock for caching"""
+    """Return all stock for listing page — lightweight fields only.
+    Full item data loads on the detail page (/stock/<id>)."""
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
     if not biz_id:
         return jsonify({"success": False, "error": "No business"})
     
+    # Cache stock list for 30 seconds per business (avoid hammering Supabase)
+    global _pulse_cache
+    cache_key = f"stock_list_{biz_id}"
+    cached = _pulse_cache.get(cache_key)
+    if cached and (time.time() - cached.get("ts", 0)) < 30:
+        return jsonify(cached["data"])
+    
     items = db.get_all_stock(biz_id)
-    return jsonify({"success": True, "items": items})
+    
+    # Strip to only fields the listing page needs (was sending 6MB+ with full data)
+    listing_fields = {"id", "code", "description", "category", "quantity", "qty", 
+                      "cost_price", "cost", "selling_price", "price", "unit",
+                      "reorder_level", "reorder_qty", "supplier_name", "barcode"}
+    slim_items = []
+    for item in items:
+        slim = {k: v for k, v in item.items() if k in listing_fields}
+        slim_items.append(slim)
+    
+    result = {"success": True, "items": slim_items}
+    _pulse_cache[cache_key] = {"data": result, "ts": time.time()}
+    return jsonify(result)
 
 
 @app.route("/api/customers/all")
@@ -41534,10 +41554,24 @@ def pos_page():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Get stock, customers and suppliers
-    stock = db.get_all_stock(biz_id)
-    customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-    suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
+    # Get stock, customers, suppliers IN PARALLEL (was sequential — each takes 0.5-2s)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        f_stock = pool.submit(db.get_all_stock, biz_id)
+        f_customers = pool.submit(db.get, "customers", {"business_id": biz_id}) if biz_id else None
+        f_suppliers = pool.submit(db.get, "suppliers", {"business_id": biz_id}) if biz_id else None
+        f_cashiers = pool.submit(db.get_business_users, biz_id) if biz_id else None
+    
+    stock = f_stock.result(timeout=15) or []
+    customers = f_customers.result(timeout=15) if f_customers else []
+    customers = customers or []
+    suppliers = f_suppliers.result(timeout=15) if f_suppliers else []
+    suppliers = suppliers or []
+    try:
+        cashier_list = f_cashiers.result(timeout=15) if f_cashiers else []
+        cashier_list = cashier_list or []
+    except Exception:
+        cashier_list = []
     
     # Sort stock by category then code
     stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("code") or ""))
@@ -41619,11 +41653,7 @@ def pos_page():
     }
     pos_settings_json = json.dumps(pos_settings).replace("'", "&#39;")
     
-    # Get team members for cashier selector
-    try:
-        cashier_list = db.get_business_users(biz_id)
-    except:
-        cashier_list = []
+    # cashier_list already loaded in parallel above
     current_user_id = user.get("id", "") if user else ""
     current_user_name = user.get("name", user.get("email", "Me")) if user else "Me"
     # Extract first name
