@@ -32559,7 +32559,7 @@ def business_pulse():
                             let html = (d2.briefing || '')
                                 .replace(/\\n\\n/g, '<br><br>')
                                 .replace(/\\n/g, '<br>')
-                                .replace(/\\*\\*([^*]+)\\*\\*/g, '<b style="color:#8b5cf6;">$1</b>');
+                                .replace(/[*][*]([^*]+)[*][*]/g, '<b style="color:#8b5cf6;">$1</b>');
                             content.innerHTML = html;
                             dateEl.textContent = 'Fresh &bull; just generated';
                             refreshBtn.innerHTML = '&#8635; Refresh';
@@ -32572,7 +32572,7 @@ def business_pulse():
                 let html = (data.briefing || 'No briefing available.')
                     .replace(/\\n\\n/g, '<br><br>')
                     .replace(/\\n/g, '<br>')
-                    .replace(/\\*\\*([^*]+)\\*\\*/g, '<b style="color:#8b5cf6;">$1</b>');
+                    .replace(/[*][*]([^*]+)[*][*]/g, '<b style="color:#8b5cf6;">$1</b>');
                 content.innerHTML = html;
                 if (data.cached) {{
                     dateEl.textContent = 'Cached from ' + (data.generated_at || 'earlier today');
