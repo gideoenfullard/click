@@ -816,9 +816,9 @@ def _start_timer():
 @app.before_request
 def _enforce_role_access():
     """Block staff/pos_only from accessing restricted routes"""
-    # Skip for static files, auth, API, health checks
+    # Skip for static files, auth, API calls, health checks, PWA files
     path = request.path
-    if path.startswith(('/static/', '/login', '/logout', '/health', '/favicon')):
+    if path.startswith(('/static/', '/login', '/logout', '/health', '/favicon', '/api/', '/sw.js', '/manifest', '/invite', '/reset-password', '/register')):
         return None
     
     # Only check logged-in users
@@ -854,6 +854,7 @@ def _enforce_role_access():
         if any(path.startswith(p) for p in allowed_prefix):
             return None
         # Block everything else
+        logger.warning(f"[ACCESS] Denied {path} for role={role} user={user.get('email', '?')}")
         return redirect('/?error=Access+denied')
 
 @app.after_request
@@ -16451,7 +16452,7 @@ def get_user_role():
         g._cached_role = c["d"]
         return c["d"]
     team = db.get("team_members", {"business_id": business.get("id"), "email": user.get("email")})
-    role = team[0].get("role", "staff") if team else "owner"
+    role = (team[0].get("role", "staff") if team else "owner").lower().strip()
     Auth._mem[key] = {"d": role, "t": time.time()}
     g._cached_role = role
     return role
@@ -20587,7 +20588,7 @@ def api_ai():
                 logger.error(f"[ZANE-GROUP] Error checking groups: {e}")
         
         # Add chat history to context for Zane to see
-        context["chat_history"] = chat_history[-16:]  # Last 8 exchanges (16 messages)
+        context["chat_history"] = chat_history[-8:]  # Last 4 exchanges
         
         # ═══════════════════════════════════════════════════════════
         # ZANE'S EYES - He can see where user is and what's happening!
@@ -20629,14 +20630,14 @@ def api_ai():
             # Action was executed - clear any pending delete
             session.pop("zane_pending_delete", None)
         
-        # Save to chat history (session)
-        chat_history.append({"role": "user", "content": command})
+        # Save to chat history (session) — keep MINIMAL, DB has full history
+        chat_history.append({"role": "user", "content": command[:200]})
         response_text = result.get("response", "")
         if response_text:
-            chat_history.append({"role": "assistant", "content": response_text[:500]})  # Truncate for session size
+            chat_history.append({"role": "assistant", "content": response_text[:200]})  # Truncate hard for cookie size
         
-        # Keep only last 16 messages (8 exchanges) in session
-        session[chat_key] = chat_history[-16:]
+        # Keep only last 6 messages (3 exchanges) in session — cookie limit is 4KB!
+        session[chat_key] = chat_history[-6:]
         session.permanent = True  # Ensure session persists
         
         # ═══════════════════════════════════════════════════════════
