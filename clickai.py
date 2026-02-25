@@ -21365,6 +21365,103 @@ def api_health_check():
     return html
 
 
+@app.route("/pulse-debug")
+@login_required
+def pulse_debug():
+    """Diagnostic page — tests every step Pulse needs, shows timing and errors."""
+    import traceback
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    biz_name = business.get("name", "?") if business else "?"
+    
+    results = []
+    
+    def step(name, fn):
+        t0 = time.time()
+        try:
+            val = fn()
+            elapsed = time.time() - t0
+            results.append({"name": name, "ok": True, "time": elapsed, "detail": str(val)[:200]})
+        except Exception as e:
+            elapsed = time.time() - t0
+            tb = traceback.format_exc()
+            results.append({"name": name, "ok": False, "time": elapsed, "detail": f"{type(e).__name__}: {e}", "trace": tb[-500:]})
+    
+    step("1. Auth user", lambda: user.get("email", "?") if user else "NO USER")
+    step("2. Business", lambda: f"{biz_name} ({biz_id[:8]}...)" if biz_id else "NO BUSINESS")
+    
+    if biz_id:
+        step("3a. db.get invoices", lambda: f"{len(db.get('invoices', {'business_id': biz_id}) or [])} rows")
+        step("3b. db.get sales", lambda: f"{len(db.get('sales', {'business_id': biz_id}) or [])} rows")
+        step("3c. db.get payments", lambda: f"{len(db.get('payments', {'business_id': biz_id}) or [])} rows")
+        step("3d. db.get quotes", lambda: f"{len(db.get('quotes', {'business_id': biz_id}) or [])} rows")
+        step("3e. db.get suppliers", lambda: f"{len(db.get('suppliers', {'business_id': biz_id}) or [])} rows")
+        step("3f. db.get_all_stock", lambda: f"{len(db.get_all_stock(biz_id) or [])} rows")
+        step("3g. db.get_business_users ⚠️ SLOW", lambda: f"{len(db.get_business_users(biz_id) or [])} users")
+        
+        # Test ThreadPoolExecutor (the actual Pulse pattern)
+        def test_pool():
+            pool = ThreadPoolExecutor(max_workers=3)
+            try:
+                f1 = pool.submit(db.get, "invoices", {"business_id": biz_id})
+                f2 = pool.submit(db.get_business_users, biz_id)
+                r1 = f1.result(timeout=15)
+                try:
+                    r2 = f2.result(timeout=15)
+                except Exception:
+                    r2 = []
+                return f"invoices={len(r1 or [])}, users={len(r2 or [])} — pool OK"
+            finally:
+                pool.shutdown(wait=False)
+        
+        step("4. ThreadPoolExecutor test", test_pool)
+        
+        # Test briefing cache
+        step("5. Briefing cache", lambda: f"cached={biz_id in _briefing_cache}")
+        
+        # Test Anthropic
+        step("6. Anthropic API key", lambda: f"{'SET' if ANTHROPIC_API_KEY else 'MISSING'} ({ANTHROPIC_API_KEY[:12]}...)" if ANTHROPIC_API_KEY else "MISSING")
+    
+    # Build HTML
+    rows = ""
+    total_time = 0
+    for r in results:
+        total_time += r["time"]
+        icon = "✅" if r["ok"] else "❌"
+        color = "#10b981" if r["ok"] else "#ef4444"
+        time_color = "#ef4444" if r["time"] > 5 else "#f59e0b" if r["time"] > 1 else "#10b981"
+        trace_html = f'<pre style="color:#f97316;font-size:11px;margin:5px 0 0;white-space:pre-wrap;">{r.get("trace", "")}</pre>' if r.get("trace") else ""
+        rows += f'''<tr style="border-bottom:1px solid rgba(255,255,255,0.08);">
+            <td style="padding:10px;font-size:18px;">{icon}</td>
+            <td style="padding:10px;font-weight:600;color:#e2e8f0;">{r["name"]}</td>
+            <td style="padding:10px;color:{time_color};font-weight:bold;font-family:monospace;">{r["time"]:.2f}s</td>
+            <td style="padding:10px;color:{color};font-size:13px;">{r["detail"]}{trace_html}</td>
+        </tr>'''
+    
+    return f'''<!DOCTYPE html>
+    <html><head><title>Pulse Debug</title></head>
+    <body style="background:#0a0a1a;color:#e2e8f0;font-family:system-ui;padding:20px;margin:0;">
+    <div style="max-width:900px;margin:0 auto;">
+        <h1 style="color:#8b5cf6;">Pulse Debug</h1>
+        <p style="color:#94a3b8;">Total: {total_time:.1f}s — {sum(1 for r in results if r["ok"])}/{len(results)} passed</p>
+        <table style="width:100%;border-collapse:collapse;background:rgba(255,255,255,0.03);border-radius:8px;">
+        <thead><tr style="border-bottom:2px solid rgba(139,92,246,0.3);">
+            <th style="padding:10px;width:30px;"></th>
+            <th style="padding:10px;text-align:left;">Step</th>
+            <th style="padding:10px;text-align:left;">Time</th>
+            <th style="padding:10px;text-align:left;">Result</th>
+        </tr></thead>
+        <tbody>{rows}</tbody></table>
+        <p style="color:#64748b;margin-top:20px;font-size:13px;">
+            If 3g (get_business_users) is &gt;10s, that's the hang.<br>
+            If 4 (ThreadPoolExecutor) fails, the fix isn't deployed.<br>
+            <a href="/pulse-debug" style="color:#8b5cf6;">🔄 Run Again</a> &bull; <a href="/pulse" style="color:#8b5cf6;">Back to Pulse</a>
+        </p>
+    </div></body></html>'''
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard_redirect():
