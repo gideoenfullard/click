@@ -25130,13 +25130,13 @@ def invoice_view(invoice_id):
         total_incl = round(total_excl + vat_amount, 2)
         items_html += f'''
         <tr style="border-bottom:1px solid #e5e7eb;">
-            <td style="padding:10px;font-size:15px;">{safe_string(desc)}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;">{qty}</td>
-            <td style="text-align:right;padding:10px;font-size:15px;">{money(price)}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;">{disc:.1f}%</td>
-            <td style="text-align:center;padding:10px;font-size:15px;">{vat_rate:.0f}%</td>
-            <td style="text-align:right;padding:10px;font-size:15px;">{money(total_excl)}</td>
-            <td style="text-align:right;padding:10px;font-size:15px;font-weight:600;">{money(total_incl)}</td>
+            <td style="padding:4px 6px;font-size:11px;">{safe_string(desc)}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{qty}</td>
+            <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(price)}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{disc:.1f}%</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{vat_rate:.0f}%</td>
+            <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(total_excl)}</td>
+            <td style="text-align:right;padding:4px 6px;font-size:11px;font-weight:600;">{money(total_incl)}</td>
         </tr>
         '''
     
@@ -25227,22 +25227,22 @@ def invoice_view(invoice_id):
     
     <div class="card" id="invoicePrint" style="background:white;color:#333;padding:0;overflow:hidden;">
         <!-- TOP BAR -->
-        <div style="background:#1a1a2e;color:white;padding:25px 40px;display:flex;justify-content:space-between;align-items:center;">
+        <div style="background:#1a1a2e;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
             <div>
-                <h1 style="margin:0;font-size:28px;font-weight:700;letter-spacing:0.5px;">{biz_name}</h1>
-                {f'<p style="margin:4px 0 0 0;font-size:13px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
+                <h1 style="margin:0;font-size:16px;font-weight:700;letter-spacing:0.5px;">{biz_name}</h1>
+                {f'<p style="margin:4px 0 0 0;font-size:10px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
             </div>
             <div style="text-align:right;">
-                <h2 style="margin:0;font-size:32px;font-weight:700;letter-spacing:2px;">TAX INVOICE</h2>
+                <h2 style="margin:0;font-size:20px;font-weight:700;letter-spacing:2px;">TAX INVOICE</h2>
                 {status_badge}
             </div>
         </div>
         
         <!-- DETAILS GRID -->
-        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+        <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
             <!-- LEFT: Document details -->
             <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
-                <table style="width:100%;font-size:14px;color:#333;">
+                <table style="width:100%;font-size:11px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:120px;">Number:</td><td style="padding:4px 0;font-weight:600;">{invoice.get("invoice_number", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{invoice.get("date", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Due Date:</td><td style="padding:4px 0;">{invoice.get("due_date", "-")}</td></tr>
@@ -25254,27 +25254,27 @@ def invoice_view(invoice_id):
             </div>
             <!-- RIGHT: Customer details -->
             <div style="padding-left:25px;">
-                <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;">Bill To</div>
-                <div style="font-size:16px;font-weight:700;color:#1a1a2e;margin-bottom:4px;">{cust_name}</div>
-                {f'<div style="font-size:13px;color:#555;margin-bottom:2px;">{cust_address}</div>' if cust_address else ''}
-                {f'<div style="font-size:13px;color:#555;">Tel: {cust_tel}</div>' if cust_tel else ''}
-                {f'<div style="font-size:13px;color:#555;">{cust_email}</div>' if cust_email else ''}
-                {f'<div style="font-size:13px;color:#555;margin-top:4px;">VAT No: {cust_vat}</div>' if cust_vat else ''}
+                <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600;">Bill To</div>
+                <div style="font-size:13px;font-weight:700;color:#1a1a2e;margin-bottom:4px;">{cust_name}</div>
+                {f'<div style="font-size:10px;color:#555;margin-bottom:2px;">{cust_address}</div>' if cust_address else ''}
+                {f'<div style="font-size:10px;color:#555;">Tel: {cust_tel}</div>' if cust_tel else ''}
+                {f'<div style="font-size:10px;color:#555;">{cust_email}</div>' if cust_email else ''}
+                {f'<div style="font-size:10px;color:#555;margin-top:4px;">VAT No: {cust_vat}</div>' if cust_vat else ''}
             </div>
         </div>
         
         <!-- ITEMS TABLE -->
-        <div style="padding:0 40px;">
+        <div style="padding:0 25px;">
             <table style="width:100%;border-collapse:collapse;font-size:14px;">
                 <thead>
                     <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
-                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">Description</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:60px;">Qty</th>
-                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Excl. Price</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:60px;">Disc %</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:60px;">VAT %</th>
-                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Excl. Total</th>
-                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Incl. Total</th>
+                        <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Description</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Disc %</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">VAT %</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Total</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Incl. Total</th>
                     </tr>
                 </thead>
                 <tbody style="color:#333;">
@@ -25284,7 +25284,7 @@ def invoice_view(invoice_id):
         </div>
         
         <!-- TOTALS + BANKING -->
-        <div style="padding:20px 40px 30px;display:flex;justify-content:space-between;align-items:flex-end;">
+        <div style="padding:10px 25px 15px;display:flex;justify-content:space-between;align-items:flex-end;">
             <!-- Banking Details -->
             <div style="font-size:12px;color:#666;max-width:55%;">
                 {f"""<div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;">
@@ -25299,26 +25299,26 @@ def invoice_view(invoice_id):
                 </div>
             </div>
             <!-- Totals -->
-            <table style="width:280px;border-collapse:collapse;">
+            <table style="width:220px;border-collapse:collapse;">
                 <tr style="border-bottom:1px solid #e5e7eb;">
-                    <td style="padding:8px 12px;color:#666;font-size:14px;">Total Discount</td>
-                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;">R0.00</td>
+                    <td style="padding:4px 8px;color:#666;font-size:11px;">Total Discount</td>
+                    <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;">R0.00</td>
                 </tr>
                 <tr style="border-bottom:1px solid #e5e7eb;">
-                    <td style="padding:8px 12px;color:#666;font-size:14px;">Total Exclusive</td>
-                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;">{money(invoice.get("subtotal", 0))}</td>
+                    <td style="padding:4px 8px;color:#666;font-size:11px;">Total Exclusive</td>
+                    <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;">{money(invoice.get("subtotal", 0))}</td>
                 </tr>
                 <tr style="border-bottom:1px solid #e5e7eb;">
-                    <td style="padding:8px 12px;color:#666;font-size:14px;">Total VAT</td>
-                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;">{money(invoice.get("vat", 0))}</td>
+                    <td style="padding:4px 8px;color:#666;font-size:11px;">Total VAT</td>
+                    <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;">{money(invoice.get("vat", 0))}</td>
                 </tr>
                 <tr style="border-bottom:1px solid #e5e7eb;">
-                    <td style="padding:8px 12px;color:#666;font-size:14px;">Sub Total</td>
-                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;font-weight:600;">{money(invoice.get("total", 0))}</td>
+                    <td style="padding:4px 8px;color:#666;font-size:11px;">Sub Total</td>
+                    <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;font-weight:600;">{money(invoice.get("total", 0))}</td>
                 </tr>
                 <tr style="background:#1a1a2e;">
-                    <td style="padding:14px 12px;color:white;font-size:16px;font-weight:700;">BALANCE DUE</td>
-                    <td style="padding:14px 12px;text-align:right;color:white;font-size:18px;font-weight:700;">{money(invoice.get("total", 0))}</td>
+                    <td style="padding:8px 8px;color:white;font-size:13px;font-weight:700;">BALANCE DUE</td>
+                    <td style="padding:8px 8px;text-align:right;color:white;font-size:13px;font-weight:700;">{money(invoice.get("total", 0))}</td>
                 </tr>
             </table>
         </div>
@@ -25405,10 +25405,11 @@ def invoice_view(invoice_id):
                 <style>
                     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
                     body {{ 
-                        font-family: Arial, sans-serif; 
-                        padding: 20px;
+                        font-family: Arial, Helvetica, sans-serif; 
+                        padding: 0;
                         color: #333;
                         background: white;
+                        font-size: 11px;
                     }}
                     table {{ 
                         width: 100%; 
@@ -25417,14 +25418,9 @@ def invoice_view(invoice_id):
                     }}
                     tr {{ page-break-inside: avoid; }}
                     thead {{ display: table-header-group; }}
-                    th, td {{ 
-                        padding: 10px; 
-                        border-bottom: 1px solid #ddd; 
-                    }}
-                    th {{ background: #10b981; color: white; }}
                     @media print {{
                         body {{ padding: 0; }}
-                        @page {{ size: A4; margin: 15mm; }}
+                        @page {{ size: A4; margin: 10mm 12mm; }}
                     }}
                 </style>
             </head>
@@ -28634,13 +28630,13 @@ def quote_view(quote_id):
         total_incl = round(total_excl + vat_amount, 2)
         items_html += f'''
         <tr style="border-bottom:1px solid #e5e7eb;">
-            <td style="padding:10px;font-size:15px;">{safe_string(desc)}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;">{qty}</td>
-            <td style="text-align:right;padding:10px;font-size:15px;">{money(price)}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;">{disc:.1f}%</td>
-            <td style="text-align:center;padding:10px;font-size:15px;">{vat_rate:.0f}%</td>
-            <td style="text-align:right;padding:10px;font-size:15px;">{money(total_excl)}</td>
-            <td style="text-align:right;padding:10px;font-size:15px;font-weight:600;">{money(total_incl)}</td>
+            <td style="padding:4px 6px;font-size:11px;">{safe_string(desc)}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{qty}</td>
+            <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(price)}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{disc:.1f}%</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{vat_rate:.0f}%</td>
+            <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(total_excl)}</td>
+            <td style="text-align:right;padding:4px 6px;font-size:11px;font-weight:600;">{money(total_incl)}</td>
         </tr>
         '''
     
@@ -28735,13 +28731,13 @@ def quote_view(quote_id):
     
     <div class="card" id="printArea" style="background:white;color:#333;padding:0;overflow:hidden;">
         <!-- TOP BAR -->
-        <div style="background:#1e3a5f;color:white;padding:25px 40px;display:flex;justify-content:space-between;align-items:center;">
+        <div style="background:#1e3a5f;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
             <div>
-                <h1 style="margin:0;font-size:28px;font-weight:700;letter-spacing:0.5px;">{biz_name}</h1>
-                {f'<p style="margin:4px 0 0 0;font-size:13px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
+                <h1 style="margin:0;font-size:16px;font-weight:700;letter-spacing:0.5px;">{biz_name}</h1>
+                {f'<p style="margin:4px 0 0 0;font-size:10px;opacity:0.8;">{biz_address}</p>' if biz_address else ''}
             </div>
             <div style="text-align:right;">
-                <h2 style="margin:0;font-size:32px;font-weight:700;letter-spacing:2px;">QUOTATION</h2>
+                <h2 style="margin:0;font-size:20px;font-weight:700;letter-spacing:2px;">QUOTATION</h2>
                 <span style="background:{"#10b981" if status == "accepted" else "#ef4444" if status == "declined" else "rgba(255,255,255,0.2)"};color:white;padding:4px 12px;border-radius:20px;font-size:12px;">
                     {status.upper()}
                 </span>
@@ -28749,41 +28745,41 @@ def quote_view(quote_id):
         </div>
         
         <!-- DETAILS GRID -->
-        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+        <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
             <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
-                <table style="width:100%;font-size:14px;color:#333;">
+                <table style="width:100%;font-size:11px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:120px;">Number:</td><td style="padding:4px 0;font-weight:600;">{quote.get("quote_number", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{quote.get("date", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Valid Until:</td><td style="padding:4px 0;">{quote.get("valid_until", "14 days")}</td></tr>
                     {f'<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
                 </table>
-                {f'<div style="margin-top:8px;font-size:13px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
-                {f'<div style="font-size:13px;color:#666;">{biz_email}</div>' if biz_email else ''}
+                {f'<div style="margin-top:8px;font-size:10px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
+                {f'<div style="font-size:10px;color:#666;">{biz_email}</div>' if biz_email else ''}
             </div>
             <div style="padding-left:25px;">
-                <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;">Quote To</div>
-                <div style="font-size:16px;font-weight:700;color:#1e3a5f;margin-bottom:4px;">{cust_name}</div>
-                {f'<div style="font-size:13px;color:#555;margin-bottom:2px;">{cust_address}</div>' if cust_address else ''}
-                {f'<div style="font-size:13px;color:#555;">Tel: {cust_tel}</div>' if cust_tel else ''}
-                {f'<div style="font-size:13px;color:#555;">{cust_email}</div>' if cust_email else ''}
-                {f'<div style="font-size:13px;color:#555;margin-top:4px;">VAT No: {cust_vat}</div>' if cust_vat else ''}
+                <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600;">Quote To</div>
+                <div style="font-size:13px;font-weight:700;color:#1e3a5f;margin-bottom:4px;">{cust_name}</div>
+                {f'<div style="font-size:10px;color:#555;margin-bottom:2px;">{cust_address}</div>' if cust_address else ''}
+                {f'<div style="font-size:10px;color:#555;">Tel: {cust_tel}</div>' if cust_tel else ''}
+                {f'<div style="font-size:10px;color:#555;">{cust_email}</div>' if cust_email else ''}
+                {f'<div style="font-size:10px;color:#555;margin-top:4px;">VAT No: {cust_vat}</div>' if cust_vat else ''}
             </div>
         </div>
         
         {weight_info}
         
         <!-- ITEMS TABLE -->
-        <div style="padding:0 40px;">
+        <div style="padding:0 25px;">
             <table style="width:100%;border-collapse:collapse;font-size:14px;">
                 <thead>
                     <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
-                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;">Description</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:60px;">Qty</th>
-                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Excl. Price</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:60px;">Disc %</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:60px;">VAT %</th>
-                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Excl. Total</th>
-                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Incl. Total</th>
+                        <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Disc %</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">VAT %</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Total</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Incl. Total</th>
                     </tr>
                 </thead>
                 <tbody style="color:#333;">
@@ -28793,7 +28789,7 @@ def quote_view(quote_id):
         </div>
         
         <!-- TOTALS + BANKING -->
-        <div style="padding:20px 40px 30px;display:flex;justify-content:space-between;align-items:flex-end;">
+        <div style="padding:10px 25px 15px;display:flex;justify-content:space-between;align-items:flex-end;">
             <div style="font-size:12px;color:#666;max-width:55%;">
                 {f"""<div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;">
                     <div style="font-weight:600;color:#333;margin-bottom:6px;font-size:13px;">Banking Details</div>
@@ -28805,18 +28801,18 @@ def quote_view(quote_id):
                     <p style="margin:2px 0;">Thank you for your business!</p>
                 </div>
             </div>
-            <table style="width:280px;border-collapse:collapse;">
+            <table style="width:220px;border-collapse:collapse;">
                 <tr style="border-bottom:1px solid #e5e7eb;">
-                    <td style="padding:8px 12px;color:#666;font-size:14px;">Total Exclusive</td>
-                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;">{money(quote.get("subtotal", 0))}</td>
+                    <td style="padding:4px 8px;color:#666;font-size:11px;">Total Exclusive</td>
+                    <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;">{money(quote.get("subtotal", 0))}</td>
                 </tr>
                 <tr style="border-bottom:1px solid #e5e7eb;">
-                    <td style="padding:8px 12px;color:#666;font-size:14px;">Total VAT</td>
-                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;">{money(quote.get("vat", 0))}</td>
+                    <td style="padding:4px 8px;color:#666;font-size:11px;">Total VAT</td>
+                    <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;">{money(quote.get("vat", 0))}</td>
                 </tr>
                 <tr style="background:#1e3a5f;">
-                    <td style="padding:14px 12px;color:white;font-size:16px;font-weight:700;">TOTAL</td>
-                    <td style="padding:14px 12px;text-align:right;color:white;font-size:18px;font-weight:700;">{money(quote.get("total", 0))}</td>
+                    <td style="padding:8px 8px;color:white;font-size:13px;font-weight:700;">TOTAL</td>
+                    <td style="padding:8px 8px;text-align:right;color:white;font-size:13px;font-weight:700;">{money(quote.get("total", 0))}</td>
                 </tr>
             </table>
         </div>
@@ -28895,10 +28891,11 @@ def quote_view(quote_id):
                 <style>
                     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
                     body {{ 
-                        font-family: Arial, sans-serif; 
-                        padding: 20px;
+                        font-family: Arial, Helvetica, sans-serif; 
+                        padding: 0;
                         color: #333;
                         background: white;
+                        font-size: 11px;
                     }}
                     table {{ 
                         width: 100%; 
@@ -28907,14 +28904,9 @@ def quote_view(quote_id):
                     }}
                     tr {{ page-break-inside: avoid; }}
                     thead {{ display: table-header-group; }}
-                    th, td {{ 
-                        padding: 10px; 
-                        border-bottom: 1px solid #ddd; 
-                    }}
-                    th {{ background: #3b82f6; color: white; }}
                     @media print {{
                         body {{ padding: 0; }}
-                        @page {{ size: A4; margin: 15mm; }}
+                        @page {{ size: A4; margin: 10mm 12mm; }}
                     }}
                 </style>
             </head>
@@ -29534,8 +29526,8 @@ def delivery_note_view(dn_id):
     for item in items:
         items_html += f'''
         <tr style="border-bottom:1px solid #e5e7eb;">
-            <td style="padding:10px;font-size:15px;">{safe_string(item.get("description", "-"))}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;font-weight:600;">{item.get("quantity", 1)}</td>
+            <td style="padding:4px 6px;font-size:11px;">{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;font-weight:600;">{item.get("quantity", 1)}</td>
         </tr>
         '''
     
@@ -29584,7 +29576,7 @@ def delivery_note_view(dn_id):
         </div>
         
         <!-- DETAILS GRID -->
-        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+        <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
             <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
                 <table style="width:100%;font-size:14px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:130px;">DN Number:</td><td style="padding:4px 0;font-weight:600;">{dn.get("delivery_note_number", "-")}</td></tr>
@@ -29596,17 +29588,17 @@ def delivery_note_view(dn_id):
             <div style="padding-left:25px;">
                 <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;">Deliver To</div>
                 <div style="font-size:16px;font-weight:700;color:#7c3aed;margin-bottom:4px;">{safe_string(dn.get("customer_name", "-"))}</div>
-                {f'<div style="font-size:13px;color:#555;">{safe_string(dn.get("delivery_address", ""))}</div>' if dn.get("delivery_address") else ''}
+                {f'<div style="font-size:10px;color:#555;">{safe_string(dn.get("delivery_address", ""))}</div>' if dn.get("delivery_address") else ''}
             </div>
         </div>
         
         <!-- ITEMS TABLE -->
-        <div style="padding:0 40px;">
+        <div style="padding:0 25px;">
             <table style="width:100%;border-collapse:collapse;font-size:14px;">
                 <thead>
                     <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
-                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;">Description</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Quantity</th>
+                        <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Quantity</th>
                     </tr>
                 </thead>
                 <tbody style="color:#333;">
@@ -29616,7 +29608,7 @@ def delivery_note_view(dn_id):
         </div>
         
         <!-- FOOTER -->
-        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:40px;border-top:1px solid #e5e7eb;margin-top:20px;">
+        <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:40px;border-top:1px solid #e5e7eb;margin-top:20px;">
             <div>
                 <div style="font-size:12px;color:#888;text-transform:uppercase;margin-bottom:8px;">Received By (Name & Signature)</div>
                 <div style="border-bottom:1px solid #ccc;height:40px;"></div>
@@ -29627,7 +29619,7 @@ def delivery_note_view(dn_id):
             </div>
         </div>
         
-        {"<div style='padding:0 40px 20px;'><div style='padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;'><strong>Notes:</strong> " + safe_string(dn.get('notes','')) + "</div></div>" if dn.get('notes') else ""}
+        {"<div style='padding:0 25px 20px;'><div style='padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;'><strong>Notes:</strong> " + safe_string(dn.get('notes','')) + "</div></div>" if dn.get('notes') else ""}
     </div>
     
     <script>
@@ -31999,9 +31991,9 @@ def grv_view(grv_id):
         items_html += f'''
         <tr style="border-bottom:1px solid #e5e7eb;">
             <td style="padding:10px;font-size:14px;color:#666;">{safe_string(item.get("code", ""))}</td>
-            <td style="padding:10px;font-size:15px;">{safe_string(item.get("description", "-"))}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;">{item.get("qty_ordered", "-")}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;font-weight:700;color:#10b981;">{item.get("qty_received", 0)}</td>
+            <td style="padding:4px 6px;font-size:11px;">{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{item.get("qty_ordered", "-")}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;font-weight:700;color:#10b981;">{item.get("qty_received", 0)}</td>
         </tr>
         '''
     
@@ -32028,7 +32020,7 @@ def grv_view(grv_id):
         </div>
         
         <!-- DETAILS GRID -->
-        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+        <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
             <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
                 <table style="width:100%;font-size:14px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:130px;">GRV Number:</td><td style="padding:4px 0;font-weight:600;">{grv.get("grv_number", "-")}</td></tr>
@@ -32044,14 +32036,14 @@ def grv_view(grv_id):
         </div>
         
         <!-- ITEMS TABLE -->
-        <div style="padding:0 40px;">
+        <div style="padding:0 25px;">
             <table style="width:100%;border-collapse:collapse;font-size:14px;">
                 <thead>
                     <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
-                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Code</th>
-                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;">Description</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Ordered</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Received</th>
+                        <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Code</th>
+                        <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Ordered</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Received</th>
                     </tr>
                 </thead>
                 <tbody style="color:#333;">
@@ -32078,7 +32070,7 @@ def grv_view(grv_id):
             </div>
         </div>
         
-        {f'<div style="padding:0 40px 20px;"><div style="padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;"><strong>Notes:</strong> {safe_string(grv.get("notes", ""))}</div></div>' if grv.get("notes") else ""}
+        {f'<div style="padding:0 25px 20px;"><div style="padding:12px;background:#fafafa;border-radius:6px;font-size:13px;color:#666;"><strong>Notes:</strong> {safe_string(grv.get("notes", ""))}</div></div>' if grv.get("notes") else ""}
     </div>
     
     <!-- STOCK BOOKING REPORT -->
@@ -39408,9 +39400,9 @@ def purchase_view(po_id):
         items_html += f'''
         <tr style="border-bottom:1px solid #e5e7eb;">
             <td style="padding:10px;font-size:14px;color:#666;">{safe_string(item.get("code", ""))}</td>
-            <td style="padding:10px;font-size:15px;">{safe_string(item.get("description", "-"))}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;font-weight:600;">{qty_ordered}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;">{receive_status}</td>
+            <td style="padding:4px 6px;font-size:11px;">{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;font-weight:600;">{qty_ordered}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{receive_status}</td>
         </tr>
         '''
     
@@ -39489,7 +39481,7 @@ def purchase_view(po_id):
         </div>
         
         <!-- DETAILS GRID -->
-        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+        <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
             <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
                 <table style="width:100%;font-size:14px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:130px;">PO Number:</td><td style="padding:4px 0;font-weight:600;">{po.get("po_number", "-")}</td></tr>
@@ -39503,22 +39495,22 @@ def purchase_view(po_id):
             <div style="padding-left:25px;">
                 <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;">Order To (Supplier)</div>
                 <div style="font-size:16px;font-weight:700;color:#0f766e;margin-bottom:4px;">{safe_string(po.get("supplier_name", "-"))}</div>
-                {f'<div style="font-size:13px;color:#555;">{safe_string(supplier_rec.get("email", ""))}</div>' if supplier_rec and supplier_rec.get("email") else ""}
-                {f'<div style="font-size:13px;color:#555;">{safe_string(supplier_rec.get("phone", ""))}</div>' if supplier_rec and supplier_rec.get("phone") else ""}
-                {f'<div style="font-size:13px;color:#555;">{safe_string(supplier_rec.get("address", ""))}</div>' if supplier_rec and supplier_rec.get("address") else ""}
+                {f'<div style="font-size:10px;color:#555;">{safe_string(supplier_rec.get("email", ""))}</div>' if supplier_rec and supplier_rec.get("email") else ""}
+                {f'<div style="font-size:10px;color:#555;">{safe_string(supplier_rec.get("phone", ""))}</div>' if supplier_rec and supplier_rec.get("phone") else ""}
+                {f'<div style="font-size:10px;color:#555;">{safe_string(supplier_rec.get("address", ""))}</div>' if supplier_rec and supplier_rec.get("address") else ""}
                 {f'<div style="font-size:12px;color:#888;margin-top:5px;">Emailed to supplier</div>' if po.get("emailed") else ""}
             </div>
         </div>
         
         <!-- ITEMS TABLE -->
-        <div style="padding:0 40px;">
+        <div style="padding:0 25px;">
             <table style="width:100%;border-collapse:collapse;font-size:14px;">
                 <thead>
                     <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
-                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Code</th>
-                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;">Description</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:80px;">Qty</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Received</th>
+                        <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Code</th>
+                        <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:80px;">Qty</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Received</th>
                     </tr>
                 </thead>
                 <tbody style="color:#333;">
@@ -56065,7 +56057,7 @@ def banking_page():
         const dateText = tds[0]?.textContent?.trim() || '';
         
         actionCell.innerHTML = `
-            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:280px;max-width:350px;position:relative;">
+            <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.25);border-radius:10px;padding:12px;min-width:220px;max-width:350px;position:relative;">
                 <button onclick="resetAskZane('${{txnId}}', '${{safeDesc}}', ${{debitText}}, ${{creditText}}, '${{dateText}}')" 
                         style="position:absolute;top:6px;right:8px;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;line-height:1;z-index:1;" 
                         title="Close">✕</button>
@@ -64737,11 +64729,11 @@ def view_credit_note(cn_id):
         total_incl = round(total_excl + vat_amount, 2)
         items_html += f'''
         <tr style="border-bottom:1px solid #e5e7eb;">
-            <td style="padding:10px;font-size:15px;">{safe_string(item.get("description", "-"))}</td>
-            <td style="text-align:center;padding:10px;font-size:15px;">{qty}</td>
-            <td style="text-align:right;padding:10px;font-size:15px;">{money(price)}</td>
-            <td style="text-align:right;padding:10px;font-size:15px;">{money(total_excl)}</td>
-            <td style="text-align:right;padding:10px;font-size:15px;font-weight:600;">{money(total_incl)}</td>
+            <td style="padding:4px 6px;font-size:11px;">{safe_string(item.get("description", "-"))}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{qty}</td>
+            <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(price)}</td>
+            <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(total_excl)}</td>
+            <td style="text-align:right;padding:4px 6px;font-size:11px;font-weight:600;">{money(total_incl)}</td>
         </tr>
         '''
     
@@ -64767,7 +64759,7 @@ def view_credit_note(cn_id):
         </div>
         
         <!-- DETAILS GRID -->
-        <div style="padding:25px 40px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
+        <div style="padding:10px 25px;display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e5e7eb;">
             <div style="border-right:1px solid #e5e7eb;padding-right:25px;">
                 <table style="width:100%;font-size:14px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:130px;">CN Number:</td><td style="padding:4px 0;font-weight:600;">{cn.get("credit_note_number", "-")}</td></tr>
@@ -64788,15 +64780,15 @@ def view_credit_note(cn_id):
         </div>
         
         <!-- ITEMS TABLE -->
-        <div style="padding:0 40px;">
+        <div style="padding:0 25px;">
             <table style="width:100%;border-collapse:collapse;font-size:14px;">
                 <thead>
                     <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
-                        <th style="padding:12px 10px;text-align:left;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;">Description</th>
-                        <th style="padding:12px 10px;text-align:center;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:60px;">Qty</th>
-                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Excl. Price</th>
-                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Excl. Total</th>
-                        <th style="padding:12px 10px;text-align:right;color:#475569;font-weight:600;font-size:13px;text-transform:uppercase;width:100px;">Incl. Total</th>
+                        <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Total</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Incl. Total</th>
                     </tr>
                 </thead>
                 <tbody style="color:#333;">
@@ -64806,19 +64798,19 @@ def view_credit_note(cn_id):
         </div>
         
         <!-- TOTALS -->
-        <div style="padding:20px 40px 30px;display:flex;justify-content:flex-end;">
-            <table style="width:280px;border-collapse:collapse;">
+        <div style="padding:10px 25px 15px;display:flex;justify-content:flex-end;">
+            <table style="width:220px;border-collapse:collapse;">
                 <tr style="border-bottom:1px solid #e5e7eb;">
-                    <td style="padding:8px 12px;color:#666;font-size:14px;">Total Exclusive</td>
-                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;">{money(cn.get("subtotal", 0))}</td>
+                    <td style="padding:4px 8px;color:#666;font-size:11px;">Total Exclusive</td>
+                    <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;">{money(cn.get("subtotal", 0))}</td>
                 </tr>
                 <tr style="border-bottom:1px solid #e5e7eb;">
-                    <td style="padding:8px 12px;color:#666;font-size:14px;">Total VAT</td>
-                    <td style="padding:8px 12px;text-align:right;color:#333;font-size:14px;">{money(cn.get("vat", 0))}</td>
+                    <td style="padding:4px 8px;color:#666;font-size:11px;">Total VAT</td>
+                    <td style="padding:4px 8px;text-align:right;color:#333;font-size:11px;">{money(cn.get("vat", 0))}</td>
                 </tr>
                 <tr style="background:#991b1b;">
-                    <td style="padding:14px 12px;color:white;font-size:16px;font-weight:700;">CREDIT TOTAL</td>
-                    <td style="padding:14px 12px;text-align:right;color:white;font-size:18px;font-weight:700;">{money(cn.get("total", 0))}</td>
+                    <td style="padding:8px 8px;color:white;font-size:13px;font-weight:700;">CREDIT TOTAL</td>
+                    <td style="padding:8px 8px;text-align:right;color:white;font-size:13px;font-weight:700;">{money(cn.get("total", 0))}</td>
                 </tr>
             </table>
         </div>
