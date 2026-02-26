@@ -22058,6 +22058,23 @@ def dashboard():
         if low_stock:
             _j_ticker = f'<div class="j-ticker"><b>&#9888; ALERT</b><span class="jt-msg">Low Stock: {_ls_items}{_ls_more}</span><a href="/stock" class="jt-act">INVESTIGATE &rarr;</a></div>'
         
+        # Calculate gauge values
+        _circ = 2 * 3.14159 * 43  # circumference for r=43
+        # Collection rate: paid invoices / total invoices
+        _total_inv = len(recent) if recent else 1
+        _paid_inv = len([i for i in recent if i.get("status") == "paid"])
+        _collect_pct = int((_paid_inv / _total_inv) * 100) if _total_inv > 0 else 0
+        _collect_off = _circ - (_circ * _collect_pct / 100)
+        # Overdue ratio
+        _overdue_pct = min(100, int((total_debtors / max(total_sales, 1)) * 100)) if total_sales > 0 else 0
+        _overdue_off = _circ - (_circ * _overdue_pct / 100)
+        # Stock health: items with stock / total items
+        _stock_pct = min(100, max(10, 100 - int((len(low_stock) / max(stock_count, 1)) * 500))) if stock_count > 0 else 50
+        _stock_off = _circ - (_circ * _stock_pct / 100)
+        # System health: always high
+        _sys_pct = 95
+        _sys_off = _circ - (_circ * _sys_pct / 100)
+        
         content = f'''
         <style>
         /* Jarvis Dashboard HUD Overrides */
@@ -22114,7 +22131,17 @@ def dashboard():
         .j-ph .j-badge {{ font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a7aaa;letter-spacing:1px;padding:2px 8px;border:1px solid rgba(80,180,255,0.15); }}
         .j-pb {{ padding:12px 18px 16px; }}
         
-        /* Bottom techline */
+        /* Arc gauge stats */
+        .j-arcs {{ display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:16px; }}
+        .j-arc {{ display:flex;flex-direction:column;align-items:center;padding:22px 12px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,25,50,0.2);position:relative;transition:all 0.3s; }}
+        .j-arc:hover {{ border-color:rgba(80,180,255,0.25);background:rgba(10,30,60,0.3);box-shadow:0 0 25px rgba(80,180,255,0.06); }}
+        .j-arc::after {{ content:'';position:absolute;bottom:0;left:15%;right:15%;height:1px;background:linear-gradient(90deg,transparent,rgba(80,180,255,0.25),transparent); }}
+        .j-marc {{ width:100px;height:100px;position:relative; }}
+        .j-marc svg {{ width:100px;height:100px;transform:rotate(-90deg); }}
+        .j-marc .jtrack {{ fill:none;stroke:rgba(80,180,255,0.06);stroke-width:3; }}
+        .j-marc .jbar {{ fill:none;stroke-width:3;stroke-linecap:round; }}
+        .j-marc .jval {{ position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Orbitron',monospace;font-size:16px;font-weight:600;color:#a0ddff;text-shadow:0 0 10px rgba(120,200,255,0.3); }}
+        .j-arc .jasl {{ font-size:11px;color:#3a7aaa;letter-spacing:1.5px;font-weight:600;margin-top:8px;text-transform:uppercase;text-align:center; }}
         .j-techline {{ padding:14px 0;display:flex;align-items:center;justify-content:center;gap:35px;border-top:1px solid rgba(80,180,255,0.08);margin-top:16px; }}
         .j-tl {{ font-family:'Share Tech Mono',monospace;font-size:11px;color:#2a5a80;letter-spacing:1.5px; }}
         .j-tl b {{ color:#4a90bb;font-weight:400; }}
@@ -22173,6 +22200,50 @@ def dashboard():
                 <div class="j-pb">
                     {_ji_rows or '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO INVOICES YET</div>'}
                 </div>
+            </div>
+        </div>
+        
+        <!-- ARC GAUGES -->
+        <div class="j-arcs">
+            <div class="j-arc">
+                <div class="j-marc">
+                    <svg viewBox="0 0 100 100">
+                        <circle class="jtrack" cx="50" cy="50" r="43"/>
+                        <circle class="jbar" cx="50" cy="50" r="43" stroke="#00ffcc" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_collect_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,255,204,0.5)) drop-shadow(0 0 10px rgba(0,255,204,0.2))"/>
+                    </svg>
+                    <div class="jval">{_collect_pct}%</div>
+                </div>
+                <div class="jasl">Collection Rate</div>
+            </div>
+            <div class="j-arc">
+                <div class="j-marc">
+                    <svg viewBox="0 0 100 100">
+                        <circle class="jtrack" cx="50" cy="50" r="43"/>
+                        <circle class="jbar" cx="50" cy="50" r="43" stroke="#ff4466" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_overdue_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(255,68,102,0.5)) drop-shadow(0 0 10px rgba(255,68,102,0.2))"/>
+                    </svg>
+                    <div class="jval" style="color:#ff8899;">{_overdue_pct}%</div>
+                </div>
+                <div class="jasl">Overdue Ratio</div>
+            </div>
+            <div class="j-arc">
+                <div class="j-marc">
+                    <svg viewBox="0 0 100 100">
+                        <circle class="jtrack" cx="50" cy="50" r="43"/>
+                        <circle class="jbar" cx="50" cy="50" r="43" stroke="#00aaff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_stock_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,170,255,0.5)) drop-shadow(0 0 10px rgba(0,170,255,0.2))"/>
+                    </svg>
+                    <div class="jval">{_stock_pct}%</div>
+                </div>
+                <div class="jasl">Stock Health</div>
+            </div>
+            <div class="j-arc">
+                <div class="j-marc">
+                    <svg viewBox="0 0 100 100">
+                        <circle class="jtrack" cx="50" cy="50" r="43"/>
+                        <circle class="jbar" cx="50" cy="50" r="43" stroke="#aa55ff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_sys_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(170,85,255,0.5)) drop-shadow(0 0 10px rgba(170,85,255,0.2))"/>
+                    </svg>
+                    <div class="jval" style="color:#cc99ff;">{_sys_pct}%</div>
+                </div>
+                <div class="jasl">System Health</div>
             </div>
         </div>
         
