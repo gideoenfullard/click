@@ -22155,7 +22155,7 @@ def dashboard():
         
         {"" if not low_stock else f'''
         <div class="j-ticker">
-            <b>⚠ ALERT</b>
+            <b>&#9888; ALERT</b>
             <span class="jt-msg">Low Stock: {_ls_items}{_ls_more}</span>
             <a href="/stock" class="jt-act">INVESTIGATE →</a>
         </div>
