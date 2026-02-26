@@ -25832,6 +25832,7 @@ def recurring_invoices_page():
             <td style="color:{status_color};">{status.title()}</td>
             <td>
                 {"✉️" if r.get("auto_send") else ""}
+                {"<span style='color:var(--orange);' title='Annual increase pending'>📈</span>" if r.get("escalation_pending") else ""}
             </td>
         </tr>
         '''
@@ -25938,7 +25939,10 @@ def recurring_invoice_new():
             "start_date": request.form.get("start_date", today()),
             "end_date": request.form.get("end_date") or None,
             "auto_send": request.form.get("auto_send") == "on",
-            "notes": request.form.get("notes", "")
+            "notes": request.form.get("notes", ""),
+            "escalation_percent": float(request.form.get("escalation_percent") or 0),
+            "escalation_month": int(request.form.get("escalation_month") or 0),
+            "escalation_auto": request.form.get("escalation_auto", "remind")
         })
         
         if result.get("success"):
@@ -26014,6 +26018,44 @@ def recurring_invoice_new():
                     <span><strong>Auto-send invoice to customer via email</strong></span>
                 </label>
                 <small style="color: var(--text-muted); margin-left: 28px;">Invoice will be emailed automatically when generated</small>
+            </div>
+            
+            <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);border-radius:8px;padding:15px;margin-bottom:20px;">
+                <h4 style="margin:0 0 10px 0;">📈 Annual Price Increase (Optional)</h4>
+                <p style="color:var(--text-muted);font-size:13px;margin:0 0 12px 0;">Set a yearly escalation — system will remind you and can auto-apply the increase</p>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Increase %</label>
+                        <input type="number" name="escalation_percent" class="form-input" placeholder="e.g. 8" step="0.5" min="0" max="50">
+                        <small style="color:var(--text-muted);">0 = no increase</small>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Increase Month</label>
+                        <select name="escalation_month" class="form-input">
+                            <option value="">-- Select --</option>
+                            <option value="1">January</option>
+                            <option value="2">February</option>
+                            <option value="3">March</option>
+                            <option value="4">April</option>
+                            <option value="5">May</option>
+                            <option value="6">June</option>
+                            <option value="7">July</option>
+                            <option value="8">August</option>
+                            <option value="9">September</option>
+                            <option value="10">October</option>
+                            <option value="11">November</option>
+                            <option value="12">December</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Auto-apply?</label>
+                        <select name="escalation_auto" class="form-input">
+                            <option value="remind">Remind me first</option>
+                            <option value="auto">Auto-apply increase</option>
+                        </select>
+                        <small style="color:var(--text-muted);">Remind = notification before applying</small>
+                    </div>
+                </div>
             </div>
             
             <hr style="border: none; border-top: 1px solid var(--border); margin: 25px 0;">
@@ -26144,9 +26186,10 @@ def recurring_invoice_view(recurring_id):
     except:
         items = []
     
-    # Get generated invoices
+    # Get generated invoices (check recurring_id field OR notes containing the ID)
     all_invoices = db.get("invoices", {"business_id": biz_id}) or []
-    generated_invoices = [inv for inv in all_invoices if inv.get("recurring_id") == recurring_id]
+    rec_id_short = recurring_id[:8] if recurring_id else ""
+    generated_invoices = [inv for inv in all_invoices if inv.get("recurring_id") == recurring_id or f"[Recurring: {rec_id_short}]" in (inv.get("notes") or "")]
     generated_invoices = sorted(generated_invoices, key=lambda x: x.get("date", ""), reverse=True)
     
     status = recurring.get("status", "active")
@@ -26179,7 +26222,25 @@ def recurring_invoice_view(recurring_id):
         </tr>
         '''
     
+    # Escalation pending banner
+    esc_banner = ""
+    if recurring.get("escalation_pending") and float(recurring.get("escalation_percent", 0) or 0) > 0:
+        esc_pct = recurring.get("escalation_percent", 0)
+        new_total = round(float(recurring.get("total", 0)) * (1 + float(esc_pct) / 100), 2)
+        esc_banner = f'''
+        <div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);border-radius:8px;padding:15px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <strong style="color:var(--orange);">📈 Annual Price Increase Due!</strong><br>
+                <span style="color:var(--text-muted);">{esc_pct}% increase pending — current {money(recurring.get("total", 0))} → new {money(new_total)} per invoice</span>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <button class="btn btn-primary" style="background:var(--green);" onclick="applyEscalation()">✓ Apply {esc_pct}% Increase</button>
+                <button class="btn btn-secondary" onclick="dismissEscalation()">Skip This Year</button>
+            </div>
+        </div>'''
+    
     content = f'''
+    {esc_banner}
     <div style="margin-bottom: 20px;">
         <a href="/recurring-invoices" style="color:var(--text-muted);">← Back to Recurring Invoices</a>
     </div>
@@ -26238,6 +26299,7 @@ def recurring_invoice_view(recurring_id):
                     <td style="padding: 8px 0; color: var(--text-muted);">Invoices Generated</td>
                     <td style="padding: 8px 0; text-align: right;">{recurring.get("invoices_generated", 0)}</td>
                 </tr>
+                {"<tr><td style='padding:8px 0;color:var(--text-muted);'>Annual Increase</td><td style='padding:8px 0;text-align:right;'>" + str(recurring.get('escalation_percent', 0)) + "% in " + ['', 'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][int(recurring.get('escalation_month', 0) or 0)] + " (" + recurring.get('escalation_auto', 'remind').title() + ")</td></tr>" if float(recurring.get("escalation_percent", 0) or 0) > 0 else ""}
             </table>
         </div>
         
@@ -26331,6 +26393,25 @@ def recurring_invoice_view(recurring_id):
             alert('Error: ' + result.error);
         }}
     }}
+    
+    async function applyEscalation() {{
+        if (!confirm('Apply the annual price increase? All future invoices will use the new prices.')) return;
+        const response = await fetch('/api/recurring-invoice/{recurring_id}/escalate', {{method: 'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify({{action: 'apply'}})}});
+        const result = await response.json();
+        if (result.success) {{
+            alert('✅ ' + result.message);
+            location.reload();
+        }} else {{
+            alert('Error: ' + result.error);
+        }}
+    }}
+    
+    async function dismissEscalation() {{
+        if (!confirm('Skip the price increase for this year?')) return;
+        const response = await fetch('/api/recurring-invoice/{recurring_id}/escalate', {{method: 'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify({{action: 'dismiss'}})}});
+        const result = await response.json();
+        if (result.success) {{ location.reload(); }} else {{ alert('Error: ' + result.error); }}
+    }}
     </script>
     '''
     
@@ -26398,6 +26479,59 @@ def api_recurring_delete(recurring_id):
         return jsonify(result)
     except Exception as e:
         logger.error(f"[RECURRING] Delete error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/api/recurring-invoice/<recurring_id>/escalate", methods=["POST"])
+@login_required
+def api_recurring_escalate(recurring_id):
+    """Apply or dismiss annual price escalation"""
+    try:
+        recurring = db.get_one("recurring_invoices", recurring_id)
+        if not recurring:
+            return jsonify({"success": False, "error": "Not found"})
+        
+        data = request.get_json() or {}
+        action = data.get("action", "apply")
+        
+        esc_percent = float(recurring.get("escalation_percent") or 0)
+        current_year = str(datetime.now().year)
+        
+        if action == "apply" and esc_percent > 0:
+            # Apply the increase to all items
+            try:
+                items = json.loads(recurring.get("items", "[]"))
+            except:
+                items = []
+            
+            multiplier = 1 + (esc_percent / 100)
+            old_total = float(recurring.get("total", 0))
+            
+            for item in items:
+                item["price"] = round(float(item.get("price", 0)) * multiplier, 2)
+            
+            subtotal = sum(float(item.get("quantity", 1)) * float(item.get("price", 0)) for item in items)
+            recurring["items"] = json.dumps(items)
+            recurring["subtotal"] = round(subtotal, 2)
+            recurring["vat"] = round(subtotal * 0.15, 2)
+            recurring["total"] = round(subtotal * 1.15, 2)
+            recurring["last_escalation_year"] = current_year
+            recurring["escalation_pending"] = False
+            
+            db.save("recurring_invoices", recurring)
+            
+            new_total = recurring["total"]
+            return jsonify({"success": True, "message": f"Price increased by {esc_percent}%! {money(old_total)} → {money(new_total)} per invoice"})
+        
+        elif action == "dismiss":
+            recurring["escalation_pending"] = False
+            recurring["last_escalation_year"] = current_year
+            db.save("recurring_invoices", recurring)
+            return jsonify({"success": True, "message": "Escalation skipped for this year"})
+        
+        return jsonify({"success": False, "error": "Invalid action"})
+    except Exception as e:
+        logger.error(f"[RECURRING] Escalation error: {e}")
         return jsonify({"success": False, "error": str(e)})
 
 
@@ -75802,6 +75936,10 @@ class RecurringInvoices:
             "status": "active",  # active, paused, completed
             "invoices_generated": 0,
             "last_generated": None,
+            "escalation_percent": float(data.get("escalation_percent") or 0),
+            "escalation_month": int(data.get("escalation_month") or 0),
+            "escalation_auto": data.get("escalation_auto", "remind"),
+            "last_escalation_year": None,
             "created_at": now()
         }
         
@@ -75916,13 +76054,47 @@ class RecurringInvoices:
         except:
             items = []
         
+        # Check if annual escalation is due
+        esc_percent = float(recurring.get("escalation_percent") or 0)
+        esc_month = int(recurring.get("escalation_month") or 0)
+        esc_auto = recurring.get("escalation_auto", "remind")
+        last_esc_year = recurring.get("last_escalation_year")
+        current_month = datetime.now().month
+        current_year = str(datetime.now().year)
+        
+        escalation_applied = False
+        if esc_percent > 0 and esc_month > 0 and current_month == esc_month and last_esc_year != current_year:
+            if esc_auto == "auto":
+                # Auto-apply the increase
+                multiplier = 1 + (esc_percent / 100)
+                for item in items:
+                    item["price"] = round(float(item.get("price", 0)) * multiplier, 2)
+                # Update the recurring template with new prices
+                subtotal_new = sum(float(item.get("quantity", 1)) * float(item.get("price", 0)) for item in items)
+                recurring["items"] = json.dumps(items)
+                recurring["subtotal"] = round(subtotal_new, 2)
+                recurring["vat"] = round(subtotal_new * 0.15, 2)
+                recurring["total"] = round(subtotal_new * 1.15, 2)
+                recurring["last_escalation_year"] = current_year
+                db.save("recurring_invoices", recurring)
+                escalation_applied = True
+                logger.info(f"[RECURRING] 📈 Auto-escalation {esc_percent}% applied for {customer_name} — new total: {recurring['total']}")
+            else:
+                # Remind mode - create a notification but DON'T apply yet
+                # Store reminder flag so it shows on the recurring invoice page
+                if not recurring.get("escalation_pending"):
+                    recurring["escalation_pending"] = True
+                    recurring["escalation_pending_year"] = current_year
+                    db.save("recurring_invoices", recurring)
+                    logger.info(f"[RECURRING] 📈 Escalation reminder set for {customer_name} — {esc_percent}% increase pending approval")
+        
         subtotal = recurring.get("subtotal", 0)
         vat = recurring.get("vat", 0)
         total = recurring.get("total", 0)
         
         # Generate invoice number
         existing = db.get("invoices", {"business_id": business_id}) or []
-        inv_num = f"INV{len(existing) + 1:04d}"
+        inv_num = next_document_number("INV-", existing, "invoice_number")
         
         # Create the invoice
         invoice = RecordFactory.invoice(
@@ -75941,6 +76113,7 @@ class RecurringInvoices:
             notes=f"{recurring.get('notes', '')} [Recurring: {recurring.get('id', '')[:8]}]"
         )
         invoice_id = invoice["id"]
+        invoice["recurring_id"] = recurring.get("id")  # Link back to recurring template
         
         success, _ = db.save("invoices", invoice)
         
@@ -76077,17 +76250,18 @@ class NightlyScheduler:
         """Main scheduler loop - runs forever"""
         while cls._running:
             try:
-                # Calculate seconds until 2am
-                now_time = datetime.now()
-                target = now_time.replace(hour=2, minute=0, second=0, microsecond=0)
+                # Calculate seconds until 2am SOUTH AFRICAN TIME (UTC+2)
+                now_utc = datetime.utcnow()
+                now_sa = now_utc + timedelta(hours=2)  # SA is UTC+2
+                target_sa = now_sa.replace(hour=2, minute=0, second=0, microsecond=0)
                 
-                # If it's already past 2am today, schedule for tomorrow
-                if now_time.hour >= 2:
-                    target += timedelta(days=1)
+                # If it's already past 2am SA time today, schedule for tomorrow
+                if now_sa.hour >= 2:
+                    target_sa += timedelta(days=1)
                 
-                sleep_seconds = (target - now_time).total_seconds()
+                sleep_seconds = (target_sa - now_sa).total_seconds()
                 
-                logger.info(f"[SCHEDULER] Next run in {sleep_seconds/3600:.1f} hours at {target.strftime('%Y-%m-%d %H:%M')}")
+                logger.info(f"[SCHEDULER] SA time: {now_sa.strftime('%H:%M')} — Next run in {sleep_seconds/3600:.1f} hours at {target_sa.strftime('%Y-%m-%d %H:%M')} SAST")
                 
                 # Sleep until 2am (check every hour if still running)
                 while sleep_seconds > 0 and cls._running:
