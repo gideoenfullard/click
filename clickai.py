@@ -16742,6 +16742,354 @@ CSS = """
     --orange: #f59e0b;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   THEME SYSTEM — Override :root variables per theme
+   Applied via data-theme attribute on <html>
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Jarvis theme fonts (loaded on demand via CSS) */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
+
+/* THEME: Midnight (Default - current look) */
+[data-theme="midnight"] {
+    --bg: #0a0a1a; --card: #12122a; --border: #2a2a4a;
+    --text: #ffffff; --text-muted: #8888aa;
+    --primary: #6366f1; --primary-glow: rgba(99,102,241,0.3);
+    --green: #10b981; --red: #ef4444; --orange: #f59e0b;
+}
+
+/* THEME: Cyber — Futuristic neon-on-dark */
+[data-theme="cyber"] {
+    --bg: #060b18; --card: #0c1529; --border: #0e2a4a;
+    --text: #e0f0ff; --text-muted: #5a8aaa;
+    --primary: #00e5ff; --primary-glow: rgba(0,229,255,0.25);
+    --green: #00e676; --red: #ff1744; --orange: #ff9100;
+    --nav-bg: rgba(6,11,24,0.92); --header-gradient: linear-gradient(135deg,#00e5ff,#7c3aed);
+}
+[data-theme="cyber"] body { font-family: 'Segoe UI', system-ui, sans-serif; }
+[data-theme="cyber"] .header { background: rgba(6,11,24,0.92) !important; border-bottom: 1px solid rgba(0,229,255,0.12) !important; backdrop-filter: blur(20px); }
+[data-theme="cyber"] .card { background: rgba(12,21,41,0.7) !important; border: 1px solid rgba(0,229,255,0.08) !important; backdrop-filter: blur(8px); }
+[data-theme="cyber"] .btn-primary { background: linear-gradient(135deg,#00e5ff,#7c3aed) !important; box-shadow: 0 0 20px rgba(0,229,255,0.3) !important; }
+[data-theme="cyber"] .stat-value { text-shadow: 0 0 10px rgba(0,229,255,0.3); }
+[data-theme="cyber"] .table thead th { background: rgba(0,229,255,0.06) !important; border-bottom: 1px solid rgba(0,229,255,0.15) !important; }
+[data-theme="cyber"] .table tbody tr:hover { background: rgba(0,229,255,0.04) !important; }
+[data-theme="cyber"] input, [data-theme="cyber"] select, [data-theme="cyber"] textarea,
+[data-theme="cyber"] .form-input { background: rgba(6,11,24,0.8) !important; border-color: rgba(0,229,255,0.15) !important; color: #e0f0ff !important; }
+[data-theme="cyber"] input:focus, [data-theme="cyber"] select:focus, [data-theme="cyber"] textarea:focus,
+[data-theme="cyber"] .form-input:focus { border-color: #00e5ff !important; box-shadow: 0 0 12px rgba(0,229,255,0.2) !important; }
+[data-theme="cyber"] .sidebar a.active, [data-theme="cyber"] .sidebar a:hover { background: rgba(0,229,255,0.1) !important; border-color: rgba(0,229,255,0.3) !important; }
+
+/* THEME: Emerald — Rich dark green */
+[data-theme="emerald"] {
+    --bg: #071210; --card: #0d1f1a; --border: #1a3d30;
+    --text: #e8f5f0; --text-muted: #6aaa8a;
+    --primary: #10b981; --primary-glow: rgba(16,185,129,0.3);
+    --green: #34d399; --red: #f87171; --orange: #fbbf24;
+}
+[data-theme="emerald"] .header { background: rgba(7,18,16,0.95) !important; border-bottom: 1px solid rgba(16,185,129,0.15) !important; }
+[data-theme="emerald"] .card { background: rgba(13,31,26,0.8) !important; border: 1px solid rgba(16,185,129,0.1) !important; }
+[data-theme="emerald"] .btn-primary { background: linear-gradient(135deg,#10b981,#059669) !important; box-shadow: 0 0 15px rgba(16,185,129,0.25) !important; }
+[data-theme="emerald"] .table thead th { background: rgba(16,185,129,0.06) !important; }
+[data-theme="emerald"] input, [data-theme="emerald"] select, [data-theme="emerald"] textarea,
+[data-theme="emerald"] .form-input { background: rgba(7,18,16,0.8) !important; border-color: rgba(16,185,129,0.15) !important; }
+
+/* THEME: Sunset — Warm orange/amber dark */
+[data-theme="sunset"] {
+    --bg: #1a0f08; --card: #261a0e; --border: #4a3020;
+    --text: #fff5eb; --text-muted: #b8916a;
+    --primary: #f59e0b; --primary-glow: rgba(245,158,11,0.3);
+    --green: #22c55e; --red: #ef4444; --orange: #fb923c;
+}
+[data-theme="sunset"] .header { background: rgba(26,15,8,0.95) !important; border-bottom: 1px solid rgba(245,158,11,0.15) !important; }
+[data-theme="sunset"] .card { background: rgba(38,26,14,0.8) !important; border: 1px solid rgba(245,158,11,0.1) !important; }
+[data-theme="sunset"] .btn-primary { background: linear-gradient(135deg,#f59e0b,#d97706) !important; color: #000 !important; box-shadow: 0 0 15px rgba(245,158,11,0.25) !important; }
+[data-theme="sunset"] input, [data-theme="sunset"] select, [data-theme="sunset"] textarea,
+[data-theme="sunset"] .form-input { background: rgba(26,15,8,0.8) !important; border-color: rgba(245,158,11,0.15) !important; }
+
+/* THEME: Clean Light — Professional white */
+[data-theme="light"] {
+    --bg: #f4f6f9; --card: #ffffff; --border: #e2e5ea;
+    --text: #1a1a2e; --text-muted: #6b7280;
+    --primary: #4f46e5; --primary-glow: rgba(79,70,229,0.15);
+    --green: #059669; --red: #dc2626; --orange: #d97706;
+}
+[data-theme="light"] body { color: #1a1a2e; }
+[data-theme="light"] .header { background: #ffffff !important; border-bottom: 1px solid #e2e5ea !important; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+[data-theme="light"] .card { background: #ffffff !important; border: 1px solid #e2e5ea !important; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+[data-theme="light"] .btn-primary { background: linear-gradient(135deg,#4f46e5,#6366f1) !important; box-shadow: 0 2px 8px rgba(79,70,229,0.25) !important; }
+[data-theme="light"] .btn-secondary { background: #f4f6f9 !important; color: #1a1a2e !important; border: 1px solid #e2e5ea !important; }
+[data-theme="light"] .table thead th { background: #f8f9fb !important; color: #6b7280 !important; border-bottom: 2px solid #e2e5ea !important; }
+[data-theme="light"] .table tbody tr:hover { background: #f8f9fb !important; }
+[data-theme="light"] .stat-card { background: #ffffff !important; }
+[data-theme="light"] .stat-value { color: #1a1a2e !important; }
+[data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea,
+[data-theme="light"] .form-input { background: #ffffff !important; border: 1px solid #d1d5db !important; color: #1a1a2e !important; }
+[data-theme="light"] input:focus, [data-theme="light"] select:focus,
+[data-theme="light"] .form-input:focus { border-color: #4f46e5 !important; box-shadow: 0 0 0 3px rgba(79,70,229,0.1) !important; }
+[data-theme="light"] .sidebar { background: #ffffff !important; border-right: 1px solid #e2e5ea !important; }
+[data-theme="light"] .sidebar a { color: #4b5563 !important; }
+[data-theme="light"] .sidebar a.active, [data-theme="light"] .sidebar a:hover { background: rgba(79,70,229,0.08) !important; color: #4f46e5 !important; }
+[data-theme="light"] a { color: #4f46e5; }
+[data-theme="light"] .text-error, [data-theme="light"] .text-red { color: #dc2626 !important; }
+
+/* THEME: Slate — Neutral professional dark */
+[data-theme="slate"] {
+    --bg: #0f172a; --card: #1e293b; --border: #334155;
+    --text: #f1f5f9; --text-muted: #94a3b8;
+    --primary: #3b82f6; --primary-glow: rgba(59,130,246,0.25);
+    --green: #22c55e; --red: #ef4444; --orange: #f59e0b;
+}
+[data-theme="slate"] .header { background: rgba(15,23,42,0.95) !important; border-bottom: 1px solid #334155 !important; }
+[data-theme="slate"] .card { background: #1e293b !important; border: 1px solid #334155 !important; }
+[data-theme="slate"] .btn-primary { background: linear-gradient(135deg,#3b82f6,#2563eb) !important; }
+[data-theme="slate"] input, [data-theme="slate"] select, [data-theme="slate"] textarea,
+[data-theme="slate"] .form-input { background: #0f172a !important; border-color: #334155 !important; }
+
+/* THEME: Jarvis — Iron Man HUD holographic */
+[data-theme="jarvis"] {
+    --bg: #000810; --card: rgba(8,20,45,0.6); --border: rgba(80,180,255,0.2);
+    --text: #c0e0ff; --text-muted: #4a8abb;
+    --primary: #00ccff; --primary-glow: rgba(0,204,255,0.3);
+    --green: #00ff88; --red: #ff4466; --orange: #ffaa00;
+    --nav-bg: rgba(4,12,35,0.95); --header-gradient: linear-gradient(135deg,#00ccff,#0066ff);
+}
+[data-theme="jarvis"] body {
+    background: #000810 !important;
+    font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+}
+/* Hex grid background */
+[data-theme="jarvis"] body::after {
+    content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='52'%3E%3Cpolygon points='30,2 56,15 56,37 30,50 4,37 4,15' fill='none' stroke='rgba(0,140,220,0.05)' stroke-width='0.5'/%3E%3C/svg%3E");
+    background-size: 60px 52px;
+    opacity: 0.5;
+}
+/* Ambient glow */
+[data-theme="jarvis"] body::before {
+    content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+        radial-gradient(ellipse at 50% 30%, rgba(30,120,220,0.06) 0%, transparent 60%),
+        radial-gradient(ellipse at 20% 80%, rgba(0,160,255,0.03) 0%, transparent 40%),
+        radial-gradient(ellipse at 80% 20%, rgba(0,200,255,0.03) 0%, transparent 40%);
+}
+/* Header */
+[data-theme="jarvis"] .header {
+    background: rgba(4,12,35,0.95) !important;
+    border-bottom: 1px solid rgba(80,180,255,0.2) !important;
+    box-shadow: 0 2px 25px rgba(0,160,255,0.08) !important;
+    backdrop-filter: blur(20px);
+}
+/* Cards — HUD panel style with corner brackets */
+[data-theme="jarvis"] .card {
+    background: rgba(8,20,45,0.5) !important;
+    border: 1px solid rgba(80,180,255,0.15) !important;
+    box-shadow: 0 0 10px rgba(0,180,255,0.05), inset 0 0 30px rgba(0,120,255,0.02) !important;
+    position: relative;
+}
+[data-theme="jarvis"] .card::before {
+    content: ''; position: absolute; top: 0; left: 0; width: 16px; height: 16px;
+    border-top: 2px solid rgba(80,180,255,0.3); border-left: 2px solid rgba(80,180,255,0.3);
+    pointer-events: none; z-index: 1;
+}
+[data-theme="jarvis"] .card::after {
+    content: ''; position: absolute; bottom: 0; right: 0; width: 16px; height: 16px;
+    border-bottom: 2px solid rgba(80,180,255,0.3); border-right: 2px solid rgba(80,180,255,0.3);
+    pointer-events: none; z-index: 1;
+}
+/* Stat cards glow */
+[data-theme="jarvis"] .stat-card {
+    background: rgba(8,20,45,0.5) !important;
+    border: 1px solid rgba(80,180,255,0.15) !important;
+    box-shadow: 0 0 12px rgba(0,180,255,0.06) !important;
+    animation: jarvis-breathe 3.5s ease-in-out infinite;
+}
+@keyframes jarvis-breathe {
+    0%,100% { box-shadow: 0 0 8px rgba(0,180,255,0.05); border-color: rgba(80,180,255,0.12); }
+    50% { box-shadow: 0 0 16px rgba(0,200,255,0.1), 0 0 40px rgba(0,180,255,0.04); border-color: rgba(80,180,255,0.25); }
+}
+[data-theme="jarvis"] .stat-value {
+    color: #b0e0ff !important;
+    text-shadow: 0 0 12px rgba(0,200,255,0.3), 0 0 30px rgba(0,180,255,0.08);
+    font-family: 'Orbitron', 'Share Tech Mono', monospace !important;
+}
+/* Buttons */
+[data-theme="jarvis"] .btn-primary {
+    background: linear-gradient(135deg, rgba(0,180,255,0.2), rgba(0,140,255,0.3)) !important;
+    border: 1px solid rgba(0,200,255,0.4) !important;
+    color: #00ddff !important;
+    box-shadow: 0 0 15px rgba(0,200,255,0.15) !important;
+    text-shadow: 0 0 8px rgba(0,220,255,0.4);
+    font-family: 'Rajdhani', sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: 1px !important;
+}
+[data-theme="jarvis"] .btn-primary:hover {
+    background: linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,160,255,0.4)) !important;
+    box-shadow: 0 0 25px rgba(0,220,255,0.25) !important;
+}
+[data-theme="jarvis"] .btn-secondary {
+    background: rgba(8,20,45,0.4) !important;
+    border: 1px solid rgba(80,180,255,0.15) !important;
+    color: #70b0dd !important;
+}
+/* Tables */
+[data-theme="jarvis"] .table thead th {
+    background: rgba(0,140,255,0.06) !important;
+    border-bottom: 1px solid rgba(80,180,255,0.15) !important;
+    color: #5aaadd !important;
+    font-family: 'Rajdhani', sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: 1px !important;
+    text-transform: uppercase !important;
+    font-size: 11px !important;
+}
+[data-theme="jarvis"] .table tbody tr { border-bottom: 1px solid rgba(80,180,255,0.04) !important; }
+[data-theme="jarvis"] .table tbody tr:hover {
+    background: rgba(0,180,255,0.04) !important;
+    box-shadow: inset 2px 0 0 rgba(80,180,255,0.3) !important;
+}
+[data-theme="jarvis"] .table tbody td { color: #90c0e0 !important; }
+/* Inputs */
+[data-theme="jarvis"] input, [data-theme="jarvis"] select, [data-theme="jarvis"] textarea,
+[data-theme="jarvis"] .form-input {
+    background: rgba(4,12,35,0.7) !important;
+    border: 1px solid rgba(80,180,255,0.12) !important;
+    color: #b0d8f0 !important;
+    font-family: 'Share Tech Mono', monospace !important;
+}
+[data-theme="jarvis"] input:focus, [data-theme="jarvis"] select:focus, [data-theme="jarvis"] textarea:focus,
+[data-theme="jarvis"] .form-input:focus {
+    border-color: rgba(0,200,255,0.4) !important;
+    box-shadow: 0 0 12px rgba(0,200,255,0.15) !important;
+    outline: none !important;
+}
+[data-theme="jarvis"] input::placeholder { color: #2a5a80 !important; }
+/* Sidebar */
+[data-theme="jarvis"] .sidebar {
+    background: rgba(4,10,28,0.95) !important;
+    border-right: 1px solid rgba(80,180,255,0.1) !important;
+}
+[data-theme="jarvis"] .sidebar a {
+    color: #4a8abb !important;
+    font-family: 'Rajdhani', sans-serif !important;
+    letter-spacing: 0.5px !important;
+    transition: all 0.2s !important;
+}
+[data-theme="jarvis"] .sidebar a.active, [data-theme="jarvis"] .sidebar a:hover {
+    background: rgba(0,180,255,0.08) !important;
+    color: #00ddff !important;
+    border-color: rgba(0,200,255,0.3) !important;
+    text-shadow: 0 0 8px rgba(0,200,255,0.3) !important;
+    box-shadow: inset 2px 0 0 rgba(0,200,255,0.5) !important;
+}
+/* Modals */
+[data-theme="jarvis"] .modal-content {
+    background: rgba(6,16,40,0.95) !important;
+    border: 1px solid rgba(80,180,255,0.2) !important;
+    box-shadow: 0 0 40px rgba(0,160,255,0.1), 0 20px 60px rgba(0,0,0,0.5) !important;
+}
+/* Links */
+[data-theme="jarvis"] a { color: #00bbee; }
+[data-theme="jarvis"] a:hover { color: #00eeff; text-shadow: 0 0 8px rgba(0,238,255,0.3); }
+/* Badges & status */
+[data-theme="jarvis"] .badge-success, [data-theme="jarvis"] .status-paid {
+    background: rgba(0,255,136,0.1) !important; color: #00ff88 !important;
+    text-shadow: 0 0 8px rgba(0,255,136,0.4); border: 1px solid rgba(0,255,136,0.2) !important;
+}
+[data-theme="jarvis"] .badge-danger, [data-theme="jarvis"] .status-overdue {
+    background: rgba(255,68,102,0.1) !important; color: #ff4466 !important;
+    text-shadow: 0 0 8px rgba(255,68,102,0.4); border: 1px solid rgba(255,68,102,0.2) !important;
+}
+[data-theme="jarvis"] .badge-warning, [data-theme="jarvis"] .status-pending {
+    background: rgba(255,170,0,0.1) !important; color: #ffaa00 !important;
+    text-shadow: 0 0 8px rgba(255,170,0,0.4); border: 1px solid rgba(255,170,0,0.2) !important;
+}
+/* Nav tabs */
+[data-theme="jarvis"] .nav-tabs .nav-link {
+    color: #4a8abb !important;
+    border: 1px solid transparent !important;
+}
+[data-theme="jarvis"] .nav-tabs .nav-link.active {
+    color: #00ddff !important;
+    border-bottom: 2px solid #00ccff !important;
+    background: rgba(0,200,255,0.06) !important;
+    text-shadow: 0 0 10px rgba(0,200,255,0.4) !important;
+}
+/* Scrollbar */
+[data-theme="jarvis"] ::-webkit-scrollbar { width: 6px; }
+[data-theme="jarvis"] ::-webkit-scrollbar-track { background: #000810; }
+[data-theme="jarvis"] ::-webkit-scrollbar-thumb { background: rgba(80,180,255,0.2); border-radius: 3px; }
+[data-theme="jarvis"] ::-webkit-scrollbar-thumb:hover { background: rgba(80,180,255,0.35); }
+/* Alerts & notifications */
+[data-theme="jarvis"] .alert-warning {
+    background: rgba(255,170,0,0.06) !important;
+    border: 1px solid rgba(255,170,0,0.2) !important;
+    color: #cc9933 !important;
+}
+[data-theme="jarvis"] .alert-danger {
+    background: rgba(255,68,102,0.06) !important;
+    border: 1px solid rgba(255,68,102,0.2) !important;
+    color: #ff6688 !important;
+}
+[data-theme="jarvis"] .alert-success {
+    background: rgba(0,255,136,0.06) !important;
+    border: 1px solid rgba(0,255,136,0.2) !important;
+    color: #44ffaa !important;
+}
+/* Dropdown menus */
+[data-theme="jarvis"] .dropdown-menu {
+    background: rgba(6,16,40,0.95) !important;
+    border: 1px solid rgba(80,180,255,0.15) !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
+}
+[data-theme="jarvis"] .dropdown-item { color: #80b0dd !important; }
+[data-theme="jarvis"] .dropdown-item:hover { background: rgba(0,180,255,0.08) !important; color: #00ddff !important; }
+/* Pagination */
+[data-theme="jarvis"] .page-link {
+    background: rgba(8,20,45,0.5) !important;
+    border-color: rgba(80,180,255,0.1) !important;
+    color: #5a99bb !important;
+}
+[data-theme="jarvis"] .page-link:hover, [data-theme="jarvis"] .page-item.active .page-link {
+    background: rgba(0,180,255,0.1) !important;
+    border-color: rgba(0,200,255,0.3) !important;
+    color: #00ddff !important;
+}
+/* Zane chat */
+[data-theme="jarvis"] .zane-message {
+    background: rgba(8,20,45,0.5) !important;
+    border: 1px solid rgba(80,180,255,0.1) !important;
+}
+[data-theme="jarvis"] .zane-input {
+    background: rgba(4,12,35,0.7) !important;
+    border: 1px solid rgba(80,180,255,0.15) !important;
+}
+/* Headings */
+[data-theme="jarvis"] h1, [data-theme="jarvis"] h2, [data-theme="jarvis"] h3,
+[data-theme="jarvis"] h4, [data-theme="jarvis"] h5 {
+    color: #90ccee !important;
+    text-shadow: 0 0 8px rgba(0,180,255,0.1);
+}
+/* Progress bars */
+[data-theme="jarvis"] .progress {
+    background: rgba(80,180,255,0.06) !important;
+    border: 1px solid rgba(80,180,255,0.08) !important;
+}
+[data-theme="jarvis"] .progress-bar {
+    background: linear-gradient(90deg, #00aaff, #00ddff) !important;
+    box-shadow: 0 0 10px rgba(0,200,255,0.3) !important;
+}
+
+/* Theme picker button style */
+.theme-picker-btn { position:relative; cursor:pointer; padding:4px 8px; border-radius:6px; border:1px solid var(--border); background:var(--card); display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted); transition:all 0.2s; }
+.theme-picker-btn:hover { border-color:var(--primary); color:var(--text); }
+.theme-dot { width:10px; height:10px; border-radius:50%; border:1.5px solid rgba(255,255,255,0.2); }
+.theme-dropdown { display:none; position:absolute; top:100%; right:0; margin-top:6px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:8px; min-width:180px; z-index:9999; box-shadow:0 8px 32px rgba(0,0,0,0.4); }
+.theme-dropdown.show { display:block; }
+.theme-option { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:6px; cursor:pointer; font-size:12px; color:var(--text-muted); transition:all 0.15s; border:none; background:none; width:100%; text-align:left; font-family:inherit; }
+.theme-option:hover { background:rgba(255,255,255,0.05); color:var(--text); }
+.theme-option.active { color:var(--primary); font-weight:600; }
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 /* Prevent horizontal overflow globally */
@@ -18067,14 +18415,29 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     user_html = ""
     if user:
         user_html = f'''
-        <div class="user-info">
+        <div class="user-info" style="display:flex;align-items:center;gap:10px;">
             {business_html}
+            <div class="theme-picker-btn" onclick="document.getElementById('themeDrop').classList.toggle('show')" title="Theme">
+                <div class="theme-dot" style="background:var(--primary);"></div>
+                <span>Theme</span>
+                <div class="theme-dropdown" id="themeDrop">
+                    <button class="theme-option {'active' if _user_theme=='midnight' else ''}" onclick="setTheme('midnight')"><span class="theme-dot" style="background:#6366f1;"></span> Midnight</button>
+                    <button class="theme-option {'active' if _user_theme=='cyber' else ''}" onclick="setTheme('cyber')"><span class="theme-dot" style="background:#00e5ff;"></span> Cyber</button>
+                    <button class="theme-option {'active' if _user_theme=='emerald' else ''}" onclick="setTheme('emerald')"><span class="theme-dot" style="background:#10b981;"></span> Emerald</button>
+                    <button class="theme-option {'active' if _user_theme=='sunset' else ''}" onclick="setTheme('sunset')"><span class="theme-dot" style="background:#f59e0b;"></span> Sunset</button>
+                    <button class="theme-option {'active' if _user_theme=='slate' else ''}" onclick="setTheme('slate')"><span class="theme-dot" style="background:#3b82f6;"></span> Slate</button>
+                    <button class="theme-option {'active' if _user_theme=='jarvis' else ''}" onclick="setTheme('jarvis')"><span class="theme-dot" style="background:#00ccff;border-color:rgba(0,204,255,0.5);box-shadow:0 0 6px rgba(0,204,255,0.4);"></span> Jarvis</button>
+                    <button class="theme-option {'active' if _user_theme=='light' else ''}" onclick="setTheme('light')"><span class="theme-dot" style="background:#e2e5ea;border-color:#999;"></span> Light</button>
+                </div>
+            </div>
             <a href="/logout">Logout</a>
         </div>
         '''
     
+    _user_theme = request.cookies.get("clickai_theme", "midnight")
+    
     return f'''<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="{_user_theme}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -18122,6 +18485,23 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     {get_zane_proactive_tip(active)}
     
     <script>
+    function setTheme(theme) {{
+        document.documentElement.setAttribute('data-theme', theme);
+        document.cookie = 'clickai_theme=' + theme + ';path=/;max-age=31536000';
+        // Update active state
+        document.querySelectorAll('.theme-option').forEach(b => b.classList.remove('active'));
+        event.target.closest('.theme-option').classList.add('active');
+        // Update dot color
+        const dot = document.querySelector('.theme-picker-btn > .theme-dot');
+        if (dot) dot.style.background = getComputedStyle(document.documentElement).getPropertyValue('--primary');
+        // Close dropdown
+        setTimeout(() => document.getElementById('themeDrop').classList.remove('show'), 150);
+    }}
+    // Close theme dropdown on outside click
+    document.addEventListener('click', function(e) {{
+        const dd = document.getElementById('themeDrop');
+        if (dd && !e.target.closest('.theme-picker-btn')) dd.classList.remove('show');
+    }});
     function switchBusiness(bizId) {{
         fetch('/api/switch-business', {{
             method: 'POST',
