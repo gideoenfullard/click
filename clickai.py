@@ -18413,6 +18413,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         '''
     
     user_html = ""
+    _user_theme = request.cookies.get("clickai_theme", "midnight")
     if user:
         user_html = f'''
         <div class="user-info" style="display:flex;align-items:center;gap:10px;">
@@ -18434,7 +18435,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         </div>
         '''
     
-    _user_theme = request.cookies.get("clickai_theme", "midnight")
     
     return f'''<!DOCTYPE html>
 <html lang="en" data-theme="{_user_theme}">
