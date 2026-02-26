@@ -11759,6 +11759,19 @@ class Actions:
                 new_balance = float(supplier.get("balance", 0)) + amount
                 db.save("suppliers", {"id": supplier["id"], "balance": new_balance})
             
+            # Create GL journal entries
+            try:
+                net_amount = round(float(subtotal), 2)
+                vat_amt = round(float(vat_amount), 2)
+                total_amt = round(float(amount), 2)
+                create_journal_entry(biz_id, today(), f"Supplier Invoice - {supplier_name}", invoice.get("invoice_number", ""), [
+                    {"account_code": "5100", "debit": net_amount, "credit": 0},      # Purchases/Cost of Sales
+                    {"account_code": "1400", "debit": vat_amt, "credit": 0},          # VAT Input
+                    {"account_code": "2000", "debit": 0, "credit": total_amt},         # Creditors
+                ])
+            except Exception as gl_err:
+                logger.error(f"[ZANE] GL entry failed for supplier invoice: {gl_err}")
+            
             return {
                 "success": True,
                 "message": f"Recorded invoice from {supplier_name} - {money(amount)}",
@@ -35676,36 +35689,67 @@ def report_tb():
         logger.info(f"[TB] Using imported TB only - not adding live transaction data")
     
     else:
-        # NO imported TB - build from live transaction data
-        logger.info(f"[TB] No imported TB - building from live transactions")
+        # NO imported TB - check if we have GL journals
+        all_journals_check = db.get("journals", {"business_id": biz_id}) or []
         
-        # Debtors Control - from customer balances
-        debtors_total = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
-        if debtors_total > 0:
-            add_account("1200", "Debtors Control", debit=debtors_total)
-        
-        # Creditors Control - from supplier balances
-        creditors_total = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
-        if creditors_total > 0:
-            add_account("3000", "Creditors Control", credit=creditors_total)
-        
-        # Sales - from invoices (excluding credited)
-        inv_sales = sum(float(inv.get("subtotal", 0)) for inv in invoices if inv.get("status") != "credited")
-        pos_sales = sum(float(s.get("subtotal", 0)) for s in sales)
-        total_sales = inv_sales + pos_sales
-        if total_sales > 0:
-            add_account("5000", "Sales", credit=total_sales)
-        
-        # VAT Output - from invoices and POS
-        vat_output = sum(float(inv.get("vat", 0)) for inv in invoices if inv.get("status") != "credited")
-        vat_output += sum(float(s.get("vat", 0)) for s in sales)
-        if vat_output > 0:
-            add_account("2100", "VAT Output", credit=vat_output)
-        
-        # Operating Expenses
-        exp_total = sum(float(e.get("amount", 0)) for e in expenses)
-        if exp_total > 0:
-            add_account("6000", "Operating Expenses", debit=exp_total)
+        if not all_journals_check:
+            # No imported TB AND no journals - use live data estimates as fallback
+            logger.info(f"[TB] No imported TB, no journals - building from live transaction estimates")
+            
+            # Debtors Control - from customer balances
+            debtors_total = sum(float(c.get("balance", 0)) for c in customers if float(c.get("balance", 0)) > 0)
+            if debtors_total > 0:
+                add_account("1200", "Debtors Control", debit=debtors_total)
+            
+            # Creditors Control - from supplier balances
+            creditors_total = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
+            if creditors_total > 0:
+                add_account("3000", "Creditors Control", credit=creditors_total)
+            
+            # Sales - from invoices (excluding credited)
+            inv_sales = sum(float(inv.get("subtotal", 0)) for inv in invoices if inv.get("status") != "credited")
+            pos_sales = sum(float(s.get("subtotal", 0)) for s in sales)
+            total_sales = inv_sales + pos_sales
+            if total_sales > 0:
+                add_account("5000", "Sales", credit=total_sales)
+            
+            # VAT Output - from invoices and POS
+            vat_output = sum(float(inv.get("vat", 0)) for inv in invoices if inv.get("status") != "credited")
+            vat_output += sum(float(s.get("vat", 0)) for s in sales)
+            if vat_output > 0:
+                add_account("2100", "VAT Output", credit=vat_output)
+            
+            # Operating Expenses
+            exp_total = sum(float(e.get("amount", 0)) for e in expenses)
+            if exp_total > 0:
+                add_account("6000", "Operating Expenses", debit=exp_total)
+        else:
+            logger.info(f"[TB] No imported TB but {len(all_journals_check)} GL journals found - using journals only")
+    
+    # ═══════════════════════════════════════════════════════════════
+    # PROCESS ALL GL JOURNALS (banking, payments, payroll, invoices, etc.)
+    # These are individual debit/credit lines in the "journals" table,
+    # created by create_journal_entry() throughout the system
+    # ═══════════════════════════════════════════════════════════════
+    all_journals = db.get("journals", {"business_id": biz_id}) or []
+    # Get account names from accounts table
+    all_accounts = db.get("accounts", {"business_id": biz_id}) or []
+    account_names = {a.get("code"): a.get("name", f"Account {a.get('code')}") for a in all_accounts}
+    
+    if all_journals:
+        logger.info(f"[TB] Processing {len(all_journals)} GL journal lines into TB")
+        for jl in all_journals:
+            try:
+                acc_code = jl.get("account_code", "")
+                if not acc_code:
+                    continue
+                debit = float(jl.get("debit", 0) or 0)
+                credit = float(jl.get("credit", 0) or 0)
+                acc_name = account_names.get(acc_code, f"Account {acc_code}")
+                if debit > 0 or credit > 0:
+                    add_account(acc_code, acc_name, debit=debit, credit=credit)
+            except Exception as jl_err:
+                logger.error(f"[TB] Error processing journal line {jl.get('id', '?')}: {jl_err}")
     
     # Calculate totals
     total_debit = sum(acc.get("debit", 0) for acc in tb_accounts.values())
@@ -40660,7 +40704,7 @@ def api_po_create_invoice(po_id):
             if success:
                 try:
                     create_journal_entry(biz_id, today(), f"Supplier Invoice {inv_number} - {po.get('supplier_name')}", inv_number, [
-                        {"account_code": "5000", "debit": float(subtotal), "credit": 0},
+                        {"account_code": "5100", "debit": float(subtotal), "credit": 0},  # Cost of Sales/Purchases
                         {"account_code": "1400", "debit": float(vat), "credit": 0},
                         {"account_code": "2000", "debit": 0, "credit": float(total)},
                     ])
@@ -57333,19 +57377,60 @@ def api_banking_categorize():
                     {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
                     {"account_code": "1200", "debit": 0, "credit": income_rounded},    # Debtors down
                 ])
-                # Try to mark invoice as paid
+                # Try to mark invoice as paid — multiple matching strategies
+                matched_invoice = None
+                
+                # Strategy 1: match_reference has invoice number
                 match_ref = txn.get("match_reference", "")
                 if match_ref:
                     inv_num = match_ref.split(" - ")[0] if " - " in match_ref else match_ref
+                    inv_num = inv_num.replace("Maybe ", "").replace("?", "").strip()
                     if inv_num.startswith("INV"):
                         invoices = db.get("invoices", {"business_id": biz_id, "invoice_number": inv_num})
                         if invoices:
-                            inv = invoices[0]
-                            inv["status"] = "paid"
-                            inv["paid_date"] = txn_date
-                            inv["paid_amount"] = income_amount
-                            db.save("invoices", inv)
-                            logger.info(f"[BANK] Marked {inv_num} as paid")
+                            matched_invoice = invoices[0]
+                
+                # Strategy 2: match by exact amount + customer name in bank description
+                if not matched_invoice:
+                    outstanding_inv = db.get("invoices", {"business_id": biz_id}) or []
+                    outstanding_inv = [i for i in outstanding_inv if i.get("status") not in ("paid", "credited")]
+                    desc_upper = (txn.get("description") or "").upper()
+                    
+                    for inv in outstanding_inv:
+                        inv_total = float(inv.get("total", 0))
+                        cust_name = (inv.get("customer_name") or "").upper().strip()
+                        # Exact amount match AND customer name appears in bank description
+                        if abs(income_amount - inv_total) < 1 and cust_name and len(cust_name) >= 3 and cust_name[:6] in desc_upper:
+                            matched_invoice = inv
+                            break
+                
+                # Strategy 3: exact amount match — only if exactly ONE outstanding invoice matches
+                if not matched_invoice:
+                    amount_matches = [i for i in outstanding_inv if abs(income_amount - float(i.get("total", 0))) < 1]
+                    if len(amount_matches) == 1:
+                        matched_invoice = amount_matches[0]
+                
+                if matched_invoice:
+                    matched_invoice["status"] = "paid"
+                    matched_invoice["paid_date"] = txn_date
+                    matched_invoice["paid_amount"] = income_amount
+                    matched_invoice["paid_via"] = "banking_recon"
+                    db.save("invoices", matched_invoice)
+                    inv_num = matched_invoice.get("invoice_number", "?")
+                    cust = matched_invoice.get("customer_name", "?")
+                    logger.info(f"[BANK] ✅ Marked {inv_num} ({cust}) as PAID via banking recon — R{income_amount}")
+                    
+                    # Also update customer balance
+                    cust_id = matched_invoice.get("customer_id")
+                    if cust_id:
+                        try:
+                            customer = db.get_one("customers", cust_id)
+                            if customer:
+                                new_bal = max(0, float(customer.get("balance", 0)) - income_amount)
+                                db.update("customers", cust_id, {"balance": new_bal})
+                        except: pass
+                else:
+                    logger.info(f"[BANK] Customer Payment R{income_amount} — no matching invoice found")
                             
             elif category == "POS Deposit":
                 # POS cash deposited into bank
