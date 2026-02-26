@@ -22019,12 +22019,12 @@ def dashboard():
                     {invoices_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No invoices yet</td></tr>"}
                 </tbody>
             </table>
-            <a href="/invoices" style="color: var(--primary); display: block; margin-top: 10px;">View all invoices →</a>
+            <a href="/invoices" style="color: var(--primary); display: block; margin-top: 10px;">View all invoices &rarr;</a>
         </div>
     </div>
     '''
     
-    # ── JARVIS THEME: Replace dashboard with HUD layout ──
+    # -- JARVIS THEME: Replace dashboard with HUD layout --
     _user_theme = request.cookies.get("clickai_theme", "midnight")
     if _user_theme == 'jarvis' and not is_staff:
         # Build debtor rows for HUD
@@ -22157,7 +22157,7 @@ def dashboard():
         <div class="j-ticker">
             <b>&#9888; ALERT</b>
             <span class="jt-msg">Low Stock: {_ls_items}{_ls_more}</span>
-            <a href="/stock" class="jt-act">INVESTIGATE →</a>
+            <a href="/stock" class="jt-act">INVESTIGATE &rarr;</a>
         </div>
         '''}
         
