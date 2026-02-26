@@ -22051,7 +22051,12 @@ def dashboard():
         
         # Low stock for ticker
         _ls_items = ", ".join([f"{safe(l.get('description','-')[:25])} ({l.get('qty',0)})" for l in low_stock[:4]]) if low_stock else ""
-        _ls_more = f" and {{len(low_stock)-4}} more" if len(low_stock) > 4 else ""
+        _ls_more = f" and {len(low_stock)-4} more" if len(low_stock) > 4 else ""
+        
+        # Build ticker HTML separately (Python 3.11 can't nest f''' inside f''')
+        _j_ticker = ""
+        if low_stock:
+            _j_ticker = f'<div class="j-ticker"><b>&#9888; ALERT</b><span class="jt-msg">Low Stock: {_ls_items}{_ls_more}</span><a href="/stock" class="jt-act">INVESTIGATE &rarr;</a></div>'
         
         content = f'''
         <style>
@@ -22153,13 +22158,7 @@ def dashboard():
             </div>
         </div>
         
-        {"" if not low_stock else f'''
-        <div class="j-ticker">
-            <b>&#9888; ALERT</b>
-            <span class="jt-msg">Low Stock: {_ls_items}{_ls_more}</span>
-            <a href="/stock" class="jt-act">INVESTIGATE &rarr;</a>
-        </div>
-        '''}
+        {_j_ticker}
         
         <!-- HUD PANELS -->
         <div class="j-panels">
