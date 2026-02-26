@@ -22024,6 +22024,170 @@ def dashboard():
     </div>
     '''
     
+    # ── JARVIS THEME: Replace dashboard with HUD layout ──
+    _user_theme = request.cookies.get("clickai_theme", "midnight")
+    if _user_theme == 'jarvis' and not is_staff:
+        # Build debtor rows for HUD
+        _jd_rows = ""
+        for d in debtors:
+            _jd_rows += f'''<div style="display:grid;grid-template-columns:2fr 1.2fr 1fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background='rgba(60,160,240,0.04)';this.style.boxShadow='inset 2px 0 0 rgba(80,180,255,0.3)'" onmouseout="this.style.background='none';this.style.boxShadow='none'">
+                <span style="font-size:14px;font-weight:600;color:#80bbdd;">{safe(d.get("name","-"))}</span>
+                <span style="font-size:12px;color:#3a6a90;font-family:'Share Tech Mono',monospace;">{safe(d.get("phone","-"))}</span>
+                <span style="font-size:14px;font-weight:700;text-align:right;font-family:'Share Tech Mono',monospace;color:#ff4466;text-shadow:0 0 10px rgba(255,68,102,0.4);">{money(d.get("balance",0))}</span>
+            </div>'''
+        
+        # Build invoice rows for HUD
+        _ji_rows = ""
+        for inv in recent[:5]:
+            _st = inv.get("status","-")
+            _stc = "color:#00ff88;text-shadow:0 0 10px rgba(0,255,136,0.5)" if _st=="paid" else "color:#ffaa00;text-shadow:0 0 10px rgba(255,170,0,0.5)"
+            _stl = "CLEARED" if _st=="paid" else "PENDING"
+            _ji_rows += f'''<div style="display:grid;grid-template-columns:0.8fr 1.6fr 0.8fr 0.7fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background='rgba(60,160,240,0.04)'" onmouseout="this.style.background='none'">
+                <span style="font-size:12px;color:#3a6a90;font-family:'Share Tech Mono',monospace;">{safe(inv.get("number","-"))}</span>
+                <span style="font-size:13px;color:#70aacc;font-weight:500;">{safe(inv.get("customer","-"))}</span>
+                <span style="font-size:13px;text-align:right;font-family:'Share Tech Mono',monospace;color:#5a99bb;">{money(inv.get("total",0))}</span>
+                <span style="font-size:10px;font-weight:700;text-align:right;letter-spacing:1px;{_stc}">{_stl}</span>
+            </div>'''
+        
+        # Low stock for ticker
+        _ls_items = ", ".join([f"{safe(l.get('description','-')[:25])} ({l.get('qty',0)})" for l in low_stock[:4]]) if low_stock else ""
+        _ls_more = f" and {{len(low_stock)-4}} more" if len(low_stock) > 4 else ""
+        
+        content = f'''
+        <style>
+        /* Jarvis Dashboard HUD Overrides */
+        .jarvis-hud {{ position:relative; }}
+        .j-arc-section {{ display:flex;align-items:center;justify-content:center;padding:30px 0 25px;position:relative; }}
+        .j-flank {{ display:flex;flex-direction:column;gap:6px;width:180px; }}
+        .j-fb {{ padding:8px 12px;border:1px solid rgba(80,180,255,0.12);border-left:2px solid rgba(80,180,255,0.3);background:rgba(10,30,60,0.3);position:relative; }}
+        .j-fb.right {{ border-left:none;border-right:2px solid rgba(80,180,255,0.3); }}
+        .j-fb.red {{ border-left-color:rgba(255,68,102,0.3); }}
+        .j-fb.red.right {{ border-right-color:rgba(255,68,102,0.3);border-left:none; }}
+        .j-fl {{ display:flex;align-items:center;gap:8px; }}
+        .j-dot {{ width:5px;height:5px;border-radius:50%;flex-shrink:0; }}
+        .j-dot.g {{ background:#00ff88;box-shadow:0 0 4px #00ff88,0 0 10px rgba(0,255,136,0.3); }}
+        .j-dot.c {{ background:#00ccff;box-shadow:0 0 4px #00ccff,0 0 10px rgba(0,204,255,0.3); }}
+        .j-dot.o {{ background:#ffaa00;box-shadow:0 0 4px #ffaa00,0 0 10px rgba(255,170,0,0.3); }}
+        .j-dot.r {{ background:#ff4466;box-shadow:0 0 4px #ff4466,0 0 10px rgba(255,68,102,0.3); }}
+        .j-dot.p {{ background:#aa55ff;box-shadow:0 0 4px #aa55ff,0 0 10px rgba(170,85,255,0.3); }}
+        .j-lbl {{ font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a6a90;letter-spacing:1px;flex:1; }}
+        .j-val {{ font-family:'Orbitron',monospace;font-size:13px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3); }}
+        .j-val.rv {{ color:#ff6688;text-shadow:0 0 6px rgba(255,68,102,0.3); }}
+        .j-val.gv {{ color:#00ff88;text-shadow:0 0 6px rgba(0,255,136,0.3); }}
+        .j-conn {{ width:35px;height:2px;flex-shrink:0;position:relative; }}
+        .j-conn::before {{ content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(80,180,255,0.05),rgba(80,180,255,0.25)); }}
+        .j-conn.right::before {{ background:linear-gradient(90deg,rgba(80,180,255,0.25),rgba(80,180,255,0.05)); }}
+        .j-conn::after {{ content:'';position:absolute;right:-2px;top:-2px;width:6px;height:6px;border-radius:50%;background:rgba(80,180,255,0.3);box-shadow:0 0 6px rgba(80,180,255,0.3); }}
+        .j-conn.right::after {{ left:-2px;right:auto; }}
+        .j-fline {{ width:100%;height:1px;background:linear-gradient(90deg,transparent,rgba(80,180,255,0.25),transparent); }}
+        
+        /* Arc reactor */
+        .j-reactor {{ width:260px;height:260px;position:relative;flex-shrink:0; }}
+        .j-ring {{ position:absolute;border-radius:50%;border:1px solid rgba(80,180,255,0.2); }}
+        .j-ring.r1 {{ inset:0;border-color:rgba(80,180,255,0.25);border-top-color:rgba(120,210,255,0.6);border-right-color:transparent;animation:jspin 8s linear infinite;box-shadow:0 0 20px rgba(80,180,255,0.08),inset 0 0 20px rgba(80,180,255,0.04); }}
+        .j-ring.r2 {{ inset:16px;border-color:rgba(60,160,240,0.15);border-bottom-color:rgba(100,200,255,0.5);border-left-color:transparent;animation:jspin 6s linear infinite reverse; }}
+        .j-ring.r3 {{ inset:32px;border-color:rgba(80,180,255,0.1);border-top-color:rgba(140,220,255,0.4);animation:jspin 4s linear infinite; }}
+        .j-ring.r4 {{ inset:48px;border:2px solid rgba(100,200,255,0.08);border-top-color:rgba(160,230,255,0.5);border-left-color:rgba(120,210,255,0.3);animation:jspin 12s linear infinite reverse; }}
+        .j-core {{ position:absolute;inset:65px;border-radius:50%;background:radial-gradient(circle,rgba(120,210,255,0.15) 0%,rgba(60,160,240,0.05) 60%,transparent 100%);border:1px solid rgba(100,200,255,0.2);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 30px rgba(80,180,255,0.1),0 0 60px rgba(60,160,240,0.05); }}
+        .j-core-val {{ font-family:'Orbitron',monospace;font-size:28px;font-weight:700;color:#bbecff;text-shadow:0 0 15px rgba(140,220,255,0.6),0 0 40px rgba(100,200,255,0.2); }}
+        .j-core-lbl {{ font-size:11px;color:#4a90bb;letter-spacing:3px;margin-top:3px;font-weight:600; }}
+        @keyframes jspin {{ 0%{{transform:rotate(0deg)}} 100%{{transform:rotate(360deg)}} }}
+        
+        /* Alert ticker */
+        .j-ticker {{ margin:12px 0;padding:10px 18px;border:1px solid rgba(255,160,0,0.25);border-left:3px solid rgba(255,160,0,0.5);background:rgba(255,120,0,0.03);display:flex;align-items:center;gap:14px;font-size:13px;box-shadow:0 0 20px rgba(255,120,0,0.04); }}
+        .j-ticker b {{ color:#ffaa00;text-shadow:0 0 10px rgba(255,170,0,0.5);font-weight:700;font-size:11px;letter-spacing:1.5px; }}
+        .j-ticker .jt-msg {{ color:#8a7040;flex:1; }}
+        .j-ticker .jt-act {{ color:#60ccff;font-weight:700;font-size:11px;letter-spacing:1.5px;text-shadow:0 0 8px rgba(96,204,255,0.4);text-decoration:none; }}
+        
+        /* HUD panels */
+        .j-panels {{ display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px; }}
+        .j-panel {{ border:1px solid rgba(80,180,255,0.12);background:rgba(8,20,45,0.3);position:relative;overflow:hidden; }}
+        .j-panel::before {{ content:'';position:absolute;top:0;left:0;width:18px;height:18px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35); }}
+        .j-panel::after {{ content:'';position:absolute;bottom:0;right:0;width:18px;height:18px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35); }}
+        .j-ph {{ padding:12px 18px;border-bottom:1px solid rgba(80,180,255,0.1);display:flex;align-items:center;justify-content:space-between; }}
+        .j-ph h3 {{ font-family:'Orbitron',monospace;font-size:12px;font-weight:600;color:#5aaadd;letter-spacing:2.5px;text-transform:uppercase;text-shadow:0 0 10px rgba(90,170,221,0.3);margin:0; }}
+        .j-ph .j-badge {{ font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a7aaa;letter-spacing:1px;padding:2px 8px;border:1px solid rgba(80,180,255,0.15); }}
+        .j-pb {{ padding:12px 18px 16px; }}
+        
+        /* Bottom techline */
+        .j-techline {{ padding:14px 0;display:flex;align-items:center;justify-content:center;gap:35px;border-top:1px solid rgba(80,180,255,0.08);margin-top:16px; }}
+        .j-tl {{ font-family:'Share Tech Mono',monospace;font-size:11px;color:#2a5a80;letter-spacing:1.5px; }}
+        .j-tl b {{ color:#4a90bb;font-weight:400; }}
+        
+        /* Neon graph */
+        .j-graph {{ margin:12px 0 0;padding:14px 10px 6px;background:rgba(0,15,40,0.4);border:1px solid rgba(80,180,255,0.08);position:relative; }}
+        .j-graph svg {{ display:block;width:100%;height:90px; }}
+        </style>
+        
+        <div class="jarvis-hud">
+        
+        <!-- ARC REACTOR with flanking readouts -->
+        <div class="j-arc-section">
+            <div class="j-flank">
+                <div class="j-fb"><div class="j-fl"><div class="j-dot g"></div><span class="j-lbl">REVENUE</span><span class="j-val gv">{money(total_sales)}</span></div></div>
+                <div class="j-fb"><div class="j-fl"><div class="j-dot c"></div><span class="j-lbl">CUSTOMERS</span><span class="j-val">{customer_count}</span></div></div>
+                <div class="j-fline"></div>
+                <div class="j-fb"><div class="j-fl"><div class="j-dot o"></div><span class="j-lbl">CREDITORS</span><span class="j-val">{money(total_creditors)}</span></div></div>
+                <div class="j-fline"></div>
+                <div class="j-fb"><div class="j-fl"><div class="j-dot p"></div><span class="j-lbl">SUPPLIERS</span><span class="j-val">{supplier_count}</span></div></div>
+            </div>
+            <div class="j-conn"></div>
+            <div class="j-reactor">
+                <div class="j-ring r1"></div>
+                <div class="j-ring r2"></div>
+                <div class="j-ring r3"></div>
+                <div class="j-ring r4"></div>
+                <div class="j-core">
+                    <div class="j-core-val">{money(stock_value)}</div>
+                    <div class="j-core-lbl">STOCK VALUE</div>
+                </div>
+            </div>
+            <div class="j-conn right"></div>
+            <div class="j-flank">
+                <div class="j-fb red right"><div class="j-fl"><div class="j-dot r"></div><span class="j-lbl">OVERDUE</span><span class="j-val rv">{money(total_debtors)}</span></div></div>
+                <div class="j-fb right"><div class="j-fl"><div class="j-dot c"></div><span class="j-lbl">STOCK ITEMS</span><span class="j-val">{stock_count:,}</span></div></div>
+                <div class="j-fline"></div>
+                <div class="j-fb right"><div class="j-fl"><div class="j-dot g"></div><span class="j-lbl">TODAY</span><span class="j-val gv">{money(today_sales)}</span></div></div>
+                <div class="j-fline"></div>
+                <div class="j-fb right"><div class="j-fl"><div class="j-dot c"></div><span class="j-lbl">ITEMS</span><span class="j-val">{stock_count:,}</span></div></div>
+            </div>
+        </div>
+        
+        {"" if not low_stock else f'''
+        <div class="j-ticker">
+            <b>⚠ ALERT</b>
+            <span class="jt-msg">Low Stock: {_ls_items}{_ls_more}</span>
+            <a href="/stock" class="jt-act">INVESTIGATE →</a>
+        </div>
+        '''}
+        
+        <!-- HUD PANELS -->
+        <div class="j-panels">
+            <div class="j-panel">
+                <div class="j-ph"><h3>Top Debtors</h3><span class="j-badge">{len(debtors)} RECORDS</span></div>
+                <div class="j-pb">
+                    {_jd_rows or '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO OUTSTANDING DEBT</div>'}
+                </div>
+            </div>
+            <div class="j-panel">
+                <div class="j-ph"><h3>Recent Invoices</h3><span class="j-badge">LIVE FEED</span></div>
+                <div class="j-pb">
+                    {_ji_rows or '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO INVOICES YET</div>'}
+                </div>
+            </div>
+        </div>
+        
+        <!-- BOTTOM TECH LINE -->
+        <div class="j-techline">
+            <span class="j-tl">SYS <b>ONLINE</b></span>
+            <span class="j-tl">DB <b>CONNECTED</b></span>
+            <span class="j-tl">AI <b>ACTIVE</b></span>
+            <span class="j-tl">ZANE <b>READY</b></span>
+        </div>
+        
+        </div>
+        '''
+    
     return render_page("Dashboard", content, user, "dashboard")
 
 
