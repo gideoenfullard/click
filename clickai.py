@@ -1942,6 +1942,24 @@ def money(amount) -> str:
     except:
         return "R0.00"
 
+def next_document_number(prefix: str, existing_docs: list, field: str = "invoice_number") -> str:
+    """Generate next sequential document number, safe even after deletions.
+    Extracts max number from existing docs and adds 1.
+    prefix: 'INV-', 'QU-', 'CN-', 'DN-', 'PO-' etc.
+    """
+    import re
+    max_num = 0
+    for doc in existing_docs:
+        num_str = doc.get(field, "")
+        if isinstance(num_str, str):
+            # Extract digits after prefix
+            match = re.search(r'(\d+)', num_str.replace(prefix, ""))
+            if match:
+                num = int(match.group(1))
+                if num > max_num:
+                    max_num = num
+    return f"{prefix}{max_num + 1:05d}"
+
 def extract_time(timestamp_str) -> str:
     """Extract HH:MM from any timestamp format, converted to SA time (UTC+2)
     Handles: 2026-02-16T18:57:32+00:00, 2026-02-16T18:57:32.123456+00:00, 
@@ -10689,9 +10707,9 @@ class Actions:
         vat_amount = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
         total = subtotal + vat_amount
         
-        # Generate invoice number
-        inv_count = db.count("invoices", {"business_id": biz_id})
-        inv_number = f"INV-{inv_count + 1:05d}"
+        # Generate invoice number (safe even after deletions)
+        existing_invs = db.get("invoices", {"business_id": biz_id}) or []
+        inv_number = next_document_number("INV-", existing_invs, "invoice_number")
         
         # Build items
         if not items:
@@ -11408,7 +11426,7 @@ class Actions:
         
         # Create invoice from quote
         existing_inv = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        inv_num = f"INV-{len(existing_inv) + 1:04d}"
+        inv_num = next_document_number("INV-", existing_inv, "invoice_number")
         
         # Parse items from quote
         quote_items = quote.get("items", [])
@@ -23648,7 +23666,66 @@ def stock_new():
         
         if not description:
             flash("Description is required", "error")
-        else:
+        elif request.form.get("force_save") != "1":
+            # DUPLICATE DETECTION: Check exact code match, exact desc match, and fuzzy word match
+            dup_warnings = []
+            
+            if code:
+                existing_by_code = [s for s in all_stock if s.get("code", "").strip().upper() == code.upper()]
+                if existing_by_code:
+                    e = existing_by_code[0]
+                    dup_warnings.append(f"⚠️ Code <strong>{code}</strong> already exists: {safe_string(e.get('description', ''))} (Qty: {e.get('qty', e.get('quantity', 0))})")
+            
+            if description:
+                desc_lower = description.lower().strip()
+                desc_words = set(desc_lower.replace("-", " ").split())
+                
+                for s in all_stock:
+                    s_desc = (s.get("description") or "").lower().strip()
+                    s_code = (s.get("code") or "").lower().strip()
+                    s_words = set(s_desc.replace("-", " ").split()) | set(s_code.replace("-", " ").split())
+                    
+                    # Exact description match
+                    if s_desc == desc_lower:
+                        dup_warnings.append(f"⚠️ Exact match: <strong>{safe_string(s.get('description', ''))}</strong> [{s.get('code', '')}] (Qty: {s.get('qty', s.get('quantity', 0))})")
+                        continue
+                    
+                    # Word overlap: if 2+ words match (catches BOLT-TEST vs TEST-BOLT)
+                    if len(desc_words) >= 2 and len(desc_words & s_words) >= 2:
+                        dup_warnings.append(f"⚠️ Similar: <strong>{safe_string(s.get('description', ''))}</strong> [{s.get('code', '')}] (Qty: {s.get('qty', s.get('quantity', 0))})")
+                    elif len(desc_words) == 1 and desc_words & s_words:
+                        # Single word exact match in code or description
+                        if desc_lower in s_desc or desc_lower in s_code:
+                            dup_warnings.append(f"⚠️ Similar: <strong>{safe_string(s.get('description', ''))}</strong> [{s.get('code', '')}] (Qty: {s.get('qty', s.get('quantity', 0))})")
+                    
+                    if len(dup_warnings) >= 5:
+                        break  # Don't show too many
+            
+            if dup_warnings:
+                warnings_html = "<br>".join(dup_warnings[:5])
+                # Show warning with "Save Anyway" button
+                flash(f"Possible duplicates found! Review below.", "error")
+                dup_form = f'''<div class="card">
+                    <h3 style="color:var(--orange);margin-top:0;">⚠️ Possible Duplicates Found</h3>
+                    <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:15px;margin-bottom:15px;">
+                        {warnings_html}
+                    </div>
+                    <p>If this is a <strong>different item</strong>, click "Save Anyway":</p>
+                    <form method="POST" style="display:flex;gap:10px;">
+                        <input type="hidden" name="code" value="{safe_string(code)}">
+                        <input type="hidden" name="description" value="{safe_string(description)}">
+                        <input type="hidden" name="category" value="{safe_string(request.form.get('category', ''))}">
+                        <input type="hidden" name="cost_price" value="{request.form.get('cost_price', '0')}">
+                        <input type="hidden" name="selling_price" value="{request.form.get('selling_price', '0')}">
+                        <input type="hidden" name="quantity" value="{request.form.get('quantity', '0')}">
+                        <input type="hidden" name="force_save" value="1">
+                        <button type="submit" class="btn btn-primary" style="background:var(--orange);">✓ Save Anyway — It's Different</button>
+                        <a href="/stock" class="btn btn-secondary">✕ Cancel</a>
+                    </form>
+                </div>'''
+                return render_page("Add Stock — Duplicate Warning", dup_form, user, "stock")
+            
+            # No duplicates found, proceed to save
             stock_id = generate_id()
             
             # Auto-generate code if not provided
@@ -23671,6 +23748,28 @@ def stock_new():
             success, err = db.save_stock(item)
             if success:
                 flash(f"Stock item '{description}' added", "success")
+                return redirect("/stock")
+            else:
+                flash(f"Error adding item: {err}", "error")
+        else:
+            # force_save == "1" — user confirmed it's not a duplicate, save directly
+            stock_id = generate_id()
+            if not code:
+                words = description.upper().split()[:3]
+                code = "-".join(w[:4] for w in words if w)
+            item = RecordFactory.stock_item(
+                business_id=biz_id,
+                description=description,
+                id=stock_id,
+                code=code,
+                category=request.form.get("category", "") or "General",
+                cost_price=cost_price,
+                selling_price=selling_price,
+                quantity=quantity
+            )
+            success, err = db.save_stock(item)
+            if success:
+                flash(f"Stock item '{description}' added (confirmed not duplicate)", "success")
                 return redirect("/stock")
             else:
                 flash(f"Error adding item: {err}", "error")
@@ -24796,9 +24895,9 @@ def invoice_new():
         vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
         total = subtotal + vat
         
-        # Generate invoice number
-        existing = db.get("invoices", {"business_id": biz_id})
-        inv_num = f"INV{len(existing) + 1:04d}"
+        # Generate invoice number (safe even after deletions)
+        existing = db.get("invoices", {"business_id": biz_id}) or []
+        inv_num = next_document_number("INV-", existing, "invoice_number")
         
         # Save invoice
         invoice = RecordFactory.invoice(
@@ -29810,24 +29909,57 @@ def expenses_page():
                 <input type="text" id="expSupplier" class="form-input" placeholder="Supplier (optional)" style="width:100%;">
                 <select id="expCategory" class="form-input" style="width:100%;">
                     <option value="General Expenses">General Expenses</option>
-                    <option value="Fuel — Business Vehicle">Fuel — Business Vehicle</option>
+                    <option disabled>── Stock & Purchases ──</option>
+                    <option value="Stock Purchases — General">Stock Purchases</option>
+                    <option value="Delivery / Freight Costs">Delivery / Freight</option>
+                    <option value="Packaging Materials">Packaging</option>
+                    <option disabled>── Premises ──</option>
+                    <option value="Rent — Business Premises">Rent</option>
                     <option value="Electricity">Electricity</option>
-                    <option value="Telephone — Landline">Telephone</option>
-                    <option value="Internet / WiFi">Internet / WiFi</option>
-                    <option value="Cellphone / Mobile">Cellphone</option>
-                    <option value="Insurance — Business / Contents">Insurance</option>
-                    <option value="Cleaning & Hygiene">Cleaning</option>
-                    <option value="Repairs & Maintenance — Building">Repairs & Maintenance</option>
-                    <option value="Stationery & Office Supplies">Stationery</option>
-                    <option value="Advertising & Marketing">Advertising</option>
-                    <option value="Bank Charges">Bank Charges</option>
-                    <option value="Security">Security</option>
+                    <option value="Water">Water</option>
                     <option value="Rates & Taxes — Municipal">Rates & Taxes</option>
-                    <option value="Staff — Refreshments & Welfare">Staff Welfare</option>
-                    <option value="Computer Software & IT">Computer / IT</option>
-                    <option value="Courier & Delivery">Courier / Delivery</option>
+                    <option value="Repairs & Maintenance — Building">Repairs — Building</option>
+                    <option value="Cleaning & Hygiene">Cleaning</option>
+                    <option value="Security">Security</option>
+                    <option value="Waste Removal / Refuse">Waste Removal</option>
+                    <option disabled>── Salaries & Labour ──</option>
+                    <option value="Wages — Staff">Wages — Staff</option>
+                    <option value="Wages — Casual / Temp">Casual Labour</option>
+                    <option value="PAYE / UIF / SDL Payment">PAYE / UIF / SDL</option>
+                    <option value="Protective Clothing / Uniforms">Protective Clothing</option>
+                    <option disabled>── Vehicle ──</option>
+                    <option value="Fuel — Business Vehicle">Fuel</option>
+                    <option value="Vehicle Repairs & Service">Vehicle Repairs</option>
+                    <option value="Vehicle Insurance">Vehicle Insurance</option>
+                    <option value="Tolls & Parking">Tolls & Parking</option>
+                    <option value="Tyres">Tyres</option>
+                    <option disabled>── Admin & Office ──</option>
+                    <option value="Stationery & Printing">Stationery</option>
+                    <option value="Telephone — Landline">Telephone</option>
+                    <option value="Cellphone / Mobile">Cellphone</option>
+                    <option value="Internet / WiFi">Internet / WiFi</option>
+                    <option value="Software Subscription (Monthly)">Software Subscription</option>
+                    <option value="Computer Equipment & Repairs">Computer / IT</option>
+                    <option value="Postage & Courier">Courier / Delivery</option>
+                    <option disabled>── Professional ──</option>
+                    <option value="Accounting Fees">Accounting Fees</option>
+                    <option value="Legal Fees">Legal Fees</option>
+                    <option value="Consulting Fees">Consulting Fees</option>
+                    <option disabled>── Insurance ──</option>
+                    <option value="Insurance — Business / Contents">Insurance — Business</option>
+                    <option value="Insurance — Vehicle">Insurance — Vehicle</option>
+                    <option disabled>── Marketing ──</option>
+                    <option value="Advertising — Online / Social Media">Advertising</option>
+                    <option value="Signage & Branding">Signage & Branding</option>
+                    <option disabled>── Finance ──</option>
+                    <option value="Bank Charges">Bank Charges</option>
+                    <option value="Card Machine Fees">Card Machine Fees</option>
+                    <option value="Interest Paid — Loan">Interest — Loan</option>
+                    <option disabled>── Other ──</option>
                     <option value="Entertainment">Entertainment</option>
                     <option value="Meals — Business">Meals</option>
+                    <option value="Travel — Local">Travel</option>
+                    <option value="Sundry Expenses">Sundry / Other</option>
                 </select>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
                     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:8px;border:1px solid var(--border);border-radius:8px;justify-content:center;font-size:13px;">
@@ -47065,9 +47197,9 @@ def api_pos_invoice():
             vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
             total = subtotal + vat
         
-        # Generate invoice number
+        # Generate invoice number (safe even after deletions)
         existing = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        inv_num = f"INV-{len(existing) + 1:05d}"
+        inv_num = next_document_number("INV-", existing, "invoice_number")
         
         # Create invoice
         user = Auth.get_current_user()
@@ -59014,7 +59146,7 @@ def api_job_card_create_invoice(job_id):
         
         # Generate invoice number
         existing_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        inv_number = f"INV-{len(existing_invoices) + 1:05d}"
+        inv_number = next_document_number("INV-", existing_invoices, "invoice_number")
         
         # Create invoice
         invoice = RecordFactory.invoice(
@@ -59167,7 +59299,7 @@ def api_job_card_create_both(job_id):
         
         # === CREATE INVOICE ===
         existing_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-        inv_number = f"INV-{len(existing_invoices) + 1:05d}"
+        inv_number = next_document_number("INV-", existing_invoices, "invoice_number")
         
         invoice = RecordFactory.invoice(
             business_id=biz_id,
