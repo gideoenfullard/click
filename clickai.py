@@ -17080,6 +17080,306 @@ CSS = """
     box-shadow: 0 0 10px rgba(0,200,255,0.3) !important;
 }
 
+/* ===== JARVIS: GLOBAL AI HUD FEEL FOR ALL PAGES ===== */
+
+/* Logo transforms to CLICK.AI // BUSINESS INTELLIGENCE */
+[data-theme="jarvis"] .logo {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    letter-spacing: 4px !important;
+    color: #40aaee !important;
+    text-shadow: 0 0 15px rgba(64,170,238,0.5), 0 0 40px rgba(64,170,238,0.15) !important;
+}
+[data-theme="jarvis"] .logo::after {
+    content: ' // BUSINESS INTELLIGENCE';
+    font-weight: 400;
+    letter-spacing: 2px;
+    font-size: 11px;
+    opacity: 0.5;
+    color: #88ddff;
+}
+
+/* Nav links - pill style */
+[data-theme="jarvis"] .nav a {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: 1px !important;
+    text-transform: uppercase !important;
+    font-size: 11px !important;
+    color: #3a7aaa !important;
+    border: 1px solid transparent !important;
+    border-radius: 2px !important;
+    transition: all 0.3s !important;
+    padding: 6px 14px !important;
+}
+[data-theme="jarvis"] .nav a:hover {
+    color: #70bbee !important;
+    border-color: rgba(80,180,255,0.15) !important;
+    text-shadow: 0 0 8px rgba(80,180,255,0.3) !important;
+    background: none !important;
+}
+[data-theme="jarvis"] .nav a.active {
+    color: #88ddff !important;
+    border-color: rgba(100,200,255,0.3) !important;
+    background: rgba(40,140,220,0.06) !important;
+    text-shadow: 0 0 10px rgba(100,200,255,0.4) !important;
+    box-shadow: 0 0 15px rgba(80,180,255,0.06) !important;
+}
+/* Remove nav underline selector for jarvis */
+[data-theme="jarvis"] .nav-selector {
+    display: none !important;
+}
+
+/* Container breathing */
+[data-theme="jarvis"] .container {
+    position: relative;
+    z-index: 1;
+}
+
+/* ALL cards get HUD corners + breathing */
+[data-theme="jarvis"] .card,
+[data-theme="jarvis"] .stat-card {
+    animation: jarvis-breathe 3.5s ease-in-out infinite;
+    overflow: visible !important;
+}
+
+/* Page title styling */
+[data-theme="jarvis"] h1, [data-theme="jarvis"] .page-title {
+    font-family: 'Orbitron', monospace !important;
+    font-size: 16px !important;
+    font-weight: 600 !important;
+    color: #5aaadd !important;
+    letter-spacing: 3px !important;
+    text-transform: uppercase !important;
+    text-shadow: 0 0 10px rgba(90,170,221,0.3) !important;
+}
+
+/* Card titles */
+[data-theme="jarvis"] .card-title, [data-theme="jarvis"] h3 {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-weight: 700 !important;
+    color: #80ccee !important;
+    letter-spacing: 0.5px !important;
+    text-shadow: 0 0 8px rgba(0,180,255,0.15) !important;
+}
+
+/* Stat values get Orbitron font */
+[data-theme="jarvis"] .stat-value, [data-theme="jarvis"] .stat-number {
+    font-family: 'Orbitron', monospace !important;
+    color: #b0e0ff !important;
+    text-shadow: 0 0 14px rgba(0,200,255,0.35), 0 0 40px rgba(0,180,255,0.1) !important;
+}
+[data-theme="jarvis"] .stat-label {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: 1.5px !important;
+    text-transform: uppercase !important;
+    font-size: 11px !important;
+    color: #3a7aaa !important;
+}
+
+/* Stats grid enhanced */
+[data-theme="jarvis"] .stats-grid {
+    gap: 14px !important;
+}
+[data-theme="jarvis"] .stat-card.green {
+    border-color: rgba(0,255,136,0.2) !important;
+}
+[data-theme="jarvis"] .stat-card.green .stat-value {
+    color: #00ff88 !important;
+    text-shadow: 0 0 14px rgba(0,255,136,0.4), 0 0 35px rgba(0,255,136,0.12) !important;
+}
+[data-theme="jarvis"] .stat-card.red, [data-theme="jarvis"] .stat-card.danger {
+    border-color: rgba(255,68,102,0.2) !important;
+}
+[data-theme="jarvis"] .stat-card.red .stat-value {
+    color: #ff6688 !important;
+    text-shadow: 0 0 14px rgba(255,68,102,0.4), 0 0 35px rgba(255,68,102,0.12) !important;
+}
+
+/* Table styling - holographic */
+[data-theme="jarvis"] .table {
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+}
+[data-theme="jarvis"] .table thead th {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 1.5px !important;
+    color: #4a90bb !important;
+    background: rgba(0,140,255,0.04) !important;
+    border-bottom: 1px solid rgba(80,180,255,0.12) !important;
+    padding: 10px 12px !important;
+}
+[data-theme="jarvis"] .table tbody td {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-size: 13px !important;
+    color: #80b8dd !important;
+    border-bottom: 1px solid rgba(80,180,255,0.04) !important;
+    padding: 9px 12px !important;
+}
+[data-theme="jarvis"] .table tbody tr {
+    transition: all 0.15s !important;
+}
+[data-theme="jarvis"] .table tbody tr:hover {
+    background: rgba(0,180,255,0.04) !important;
+    box-shadow: inset 2px 0 0 rgba(80,180,255,0.3) !important;
+}
+
+/* Money amounts in tables */
+[data-theme="jarvis"] td[style*="color:var(--red)"], [data-theme="jarvis"] .text-red, [data-theme="jarvis"] .text-danger {
+    color: #ff4466 !important;
+    text-shadow: 0 0 8px rgba(255,68,102,0.3) !important;
+    font-family: 'Share Tech Mono', monospace !important;
+}
+[data-theme="jarvis"] td[style*="color:var(--green)"], [data-theme="jarvis"] .text-green, [data-theme="jarvis"] .text-success {
+    color: #00ff88 !important;
+    text-shadow: 0 0 8px rgba(0,255,136,0.3) !important;
+}
+[data-theme="jarvis"] td[style*="color:var(--orange)"], [data-theme="jarvis"] .text-orange, [data-theme="jarvis"] .text-warning {
+    color: #ffaa00 !important;
+    text-shadow: 0 0 8px rgba(255,170,0,0.3) !important;
+}
+
+/* Form labels */
+[data-theme="jarvis"] label {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.5px !important;
+    color: #5a99bb !important;
+}
+
+/* Select dropdowns */
+[data-theme="jarvis"] select option {
+    background: #0a1830 !important;
+    color: #b0d8f0 !important;
+}
+
+/* Search inputs */
+[data-theme="jarvis"] input[type="search"], [data-theme="jarvis"] .search-input {
+    font-family: 'Share Tech Mono', monospace !important;
+}
+
+/* Pagination */
+[data-theme="jarvis"] .pagination {
+    gap: 4px !important;
+}
+
+/* Action buttons in tables */
+[data-theme="jarvis"] .btn-sm, [data-theme="jarvis"] .btn-xs {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.5px !important;
+    font-size: 11px !important;
+}
+
+/* Zane chat styling */
+[data-theme="jarvis"] .zane-chat-container {
+    background: rgba(4,10,28,0.95) !important;
+    border: 1px solid rgba(80,180,255,0.15) !important;
+    box-shadow: 0 0 30px rgba(0,160,255,0.08) !important;
+}
+[data-theme="jarvis"] .zane-chat-header {
+    background: rgba(6,16,40,0.9) !important;
+    border-bottom: 1px solid rgba(80,180,255,0.12) !important;
+    font-family: 'Orbitron', monospace !important;
+    letter-spacing: 2px !important;
+}
+[data-theme="jarvis"] .zane-message-ai {
+    background: rgba(0,140,255,0.06) !important;
+    border-left: 2px solid rgba(80,180,255,0.3) !important;
+}
+
+/* Toast notifications */
+[data-theme="jarvis"] .toast, [data-theme="jarvis"] .notification {
+    background: rgba(6,16,40,0.95) !important;
+    border: 1px solid rgba(80,180,255,0.2) !important;
+    font-family: 'Rajdhani', sans-serif !important;
+}
+
+/* Loading/progress overlay */
+[data-theme="jarvis"] .progress-modal {
+    background: rgba(6,16,40,0.95) !important;
+    border: 1px solid rgba(80,180,255,0.2) !important;
+}
+[data-theme="jarvis"] .progress-label {
+    font-family: 'Orbitron', monospace !important;
+    letter-spacing: 2px !important;
+    color: #5aaadd !important;
+}
+[data-theme="jarvis"] .progress-track {
+    background: rgba(80,180,255,0.06) !important;
+    border: 1px solid rgba(80,180,255,0.1) !important;
+}
+[data-theme="jarvis"] .progress-fill {
+    background: linear-gradient(90deg, #00aaff, #00ddff) !important;
+    box-shadow: 0 0 10px rgba(0,200,255,0.4) !important;
+}
+
+/* Tabs */
+[data-theme="jarvis"] .tab-btn, [data-theme="jarvis"] .nav-tab {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: 1px !important;
+    text-transform: uppercase !important;
+    color: #3a7aaa !important;
+}
+[data-theme="jarvis"] .tab-btn.active, [data-theme="jarvis"] .nav-tab.active {
+    color: #00ddff !important;
+    border-color: #00ccff !important;
+    text-shadow: 0 0 8px rgba(0,200,255,0.4) !important;
+}
+
+/* Footer area */
+[data-theme="jarvis"] .footer, [data-theme="jarvis"] footer {
+    border-top: 1px solid rgba(80,180,255,0.08) !important;
+    font-family: 'Share Tech Mono', monospace !important;
+    color: #2a5a80 !important;
+}
+
+/* Pulse page specific */
+[data-theme="jarvis"] .pulse-card {
+    animation: jarvis-breathe 3.5s ease-in-out infinite;
+}
+
+/* Import page */
+[data-theme="jarvis"] .import-zone, [data-theme="jarvis"] .drop-zone {
+    border: 2px dashed rgba(80,180,255,0.2) !important;
+    background: rgba(8,20,45,0.3) !important;
+}
+[data-theme="jarvis"] .import-zone:hover, [data-theme="jarvis"] .drop-zone:hover {
+    border-color: rgba(0,200,255,0.4) !important;
+    box-shadow: 0 0 20px rgba(0,200,255,0.08) !important;
+}
+
+/* POS specific */
+[data-theme="jarvis"] .pos-total {
+    font-family: 'Orbitron', monospace !important;
+    text-shadow: 0 0 14px rgba(0,255,136,0.4) !important;
+}
+
+/* Empty states */
+[data-theme="jarvis"] .empty-state {
+    color: #3a6a90 !important;
+    font-family: 'Share Tech Mono', monospace !important;
+}
+
+/* Header bottom border glow */
+[data-theme="jarvis"] .header::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 5%;
+    right: 5%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0,200,255,0.3), transparent);
+    box-shadow: 0 0 8px rgba(0,200,255,0.15);
+    pointer-events: none;
+}
+
 /* Theme picker button style */
 .theme-picker-btn { position:relative; cursor:pointer; padding:4px 8px; border-radius:6px; border:1px solid var(--border); background:var(--card); display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted); transition:all 0.2s; }
 .theme-picker-btn:hover { border-color:var(--primary); color:var(--text); }
