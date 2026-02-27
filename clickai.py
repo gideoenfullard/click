@@ -16260,6 +16260,41 @@ class Auth:
         users = db.get("users", {"email": email})
         
         if not users:
+            # USER NOT FOUND - check if they have a team_members record
+            # This handles the case where user record got deleted but team invite exists
+            team_records = db.get("team_members", {"email": email}) or []
+            if team_records:
+                logger.warning(f"[LOGIN] No user record for {email} but {len(team_records)} team_members found! Recreating user.")
+                try:
+                    pwd_hash = hashlib.sha256(password.encode()).hexdigest()
+                    user_id = generate_id()
+                    tm = team_records[0]
+                    biz_id = tm.get("business_id", "")
+                    db.save("users", {
+                        "id": user_id,
+                        "email": email,
+                        "encrypted_password": pwd_hash,
+                        "confirmed_at": now(),
+                        "default_business_id": biz_id,
+                        "raw_user_meta_data": json.dumps({"full_name": tm.get("name", email.split("@")[0])}),
+                        "created_at": now(),
+                        "updated_at": now()
+                    })
+                    # Fix team member record
+                    tm["status"] = "active"
+                    tm["invitation_status"] = "accepted"
+                    tm["user_id"] = user_id
+                    db.save("team_members", tm)
+                    
+                    # Login directly
+                    Auth.clear_cache()
+                    session.permanent = True
+                    session["user_id"] = user_id
+                    session["business_id"] = biz_id
+                    logger.info(f"[LOGIN] Auto-recreated user {email} from team_members, biz={biz_id}")
+                    return True, "Welcome back!"
+                except Exception as e:
+                    logger.error(f"[LOGIN] Failed to recreate user {email}: {e}")
             return False, "User not found"
         
         # Hash the entered password
@@ -16314,7 +16349,20 @@ class Auth:
             stored_hash = user.get("password_hash", "")
             stored_plain = user.get("password", "")
             logger.warning(f"[LOGIN] Failed for {email}: {len(users)} user records found, encrypted_len={len(stored_encrypted or '')}, hash_len={len(stored_hash or '')}, plain_len={len(stored_plain or '')}, entered_hash={pwd_hash[:8]}..., stored_enc={stored_encrypted[:8] if stored_encrypted else 'None'}...")
-            return False, "Invalid password"
+            
+            # EMERGENCY FIX: If password fields are all empty but user exists, 
+            # this means the user record got corrupted. Reset password to entered one.
+            if not stored_encrypted and not stored_hash and not stored_plain:
+                logger.warning(f"[LOGIN] USER {email} has NO password fields! Auto-fixing by setting current password.")
+                try:
+                    db.update("users", user["id"], {"encrypted_password": pwd_hash})
+                    matched_user = user
+                    logger.info(f"[LOGIN] Fixed empty password for {email}")
+                except Exception as e:
+                    logger.error(f"[LOGIN] Could not fix password for {email}: {e}")
+                    return False, "Account error - please contact admin"
+            else:
+                return False, "Invalid password"
         
         user = matched_user
         
@@ -16394,7 +16442,9 @@ class Auth:
     
     @staticmethod
     def logout():
-        """Logout user"""
+        """Logout user - clear session but preserve user record"""
+        user_id = session.get("user_id", "unknown")
+        logger.info(f"[LOGOUT] User {user_id} logging out")
         session.clear()
 
 
