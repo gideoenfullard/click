@@ -17132,22 +17132,33 @@ CSS = """
 
 /* ===== JARVIS: GLOBAL AI HUD FEEL FOR ALL PAGES ===== */
 
-/* Logo transforms to CLICK.AI // BUSINESS INTELLIGENCE */
+/* Logo transforms to WELCOME TO THE FUTURE */
 [data-theme="jarvis"] .logo {
     font-family: 'Orbitron', monospace !important;
-    font-size: 14px !important;
-    font-weight: 700 !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
     letter-spacing: 4px !important;
     color: #40aaee !important;
     text-shadow: 0 0 15px rgba(64,170,238,0.5), 0 0 40px rgba(64,170,238,0.15) !important;
+    visibility: hidden;
+    position: relative;
+}
+[data-theme="jarvis"] .logo::before {
+    content: 'WELCOME TO THE FUTURE';
+    visibility: visible;
+    position: absolute;
+    left: 0;
+    font-family: 'Orbitron', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 4px;
+    color: #40aaee;
+    text-shadow: 0 0 15px rgba(64,170,238,0.5), 0 0 40px rgba(64,170,238,0.15);
+    white-space: nowrap;
 }
 [data-theme="jarvis"] .logo::after {
-    content: ' // BUSINESS INTELLIGENCE';
-    font-weight: 400;
-    letter-spacing: 2px;
-    font-size: 11px;
-    opacity: 0.5;
-    color: #88ddff;
+    content: '';
+    display: none;
 }
 
 /* Nav links - pill style */
@@ -22207,6 +22218,45 @@ JARVIS_HUD_CSS = '''
 .j-rx.big .j-hint{bottom:-26px;}
 /* Page reactor (smaller) */
 .j-rx.page{width:230px;height:230px;}
+/* ═══ ZANE REACTOR EXTENSION CHAT ═══ */
+.j-zane-ext{max-height:0;overflow:hidden;transition:max-height 0.5s cubic-bezier(0.4,0,0.2,1);position:relative;}
+.j-zane-ext.open{max-height:420px;}
+.j-zane-ext .j-scanline{position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(0,200,255,0.5),transparent);opacity:0;pointer-events:none;z-index:6;}
+.j-zane-ext.open .j-scanline{animation:jzscan 0.8s ease-out forwards;}
+@keyframes jzscan{0%{top:0;opacity:1;}100%{top:100%;opacity:0;}}
+.j-zane-ctx{display:flex;align-items:center;justify-content:space-between;padding:0 24px 6px;}
+.j-zane-ctx .jzc-left{display:flex;align-items:center;gap:16px;}
+.j-zane-ctx .jzc-ci{font-family:'Share Tech Mono',monospace;font-size:8px;color:#2a5a80;letter-spacing:1.5px;display:flex;align-items:center;gap:5px;}
+.j-zane-ctx .jzc-ci .jzd{width:3px;height:3px;border-radius:50%;background:#3a7aaa;}
+.j-zane-ctx .jzc-close{color:#3a6a90;font-size:9px;cursor:pointer;background:none;border:1px solid rgba(80,180,255,0.08);font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1.5px;padding:4px 12px;transition:all 0.2s;}
+.j-zane-ctx .jzc-close:hover{color:#ff4466;border-color:rgba(255,68,102,0.25);}
+.j-zane-layout{display:flex;gap:0;padding:0 24px 0;position:relative;min-height:280px;}
+.j-zane-left,.j-zane-right{flex:1;display:flex;flex-direction:column;padding-top:6px;}
+.j-zane-center{width:210px;min-width:210px;display:flex;flex-direction:column;align-items:center;position:relative;padding-top:0;}
+.j-zane-center::before{content:'';position:absolute;top:-40px;left:50%;transform:translateX(-50%);width:180px;height:80px;background:radial-gradient(ellipse,rgba(80,180,255,0.08) 0%,transparent 70%);pointer-events:none;}
+.jzc-label{font-family:'Orbitron',monospace;font-size:10px;font-weight:600;color:#5aaadd;letter-spacing:3px;margin-bottom:8px;text-shadow:0 0 10px rgba(90,170,221,0.3);}
+.jzc-status{font-family:'Share Tech Mono',monospace;font-size:8px;color:#00ff88;letter-spacing:1.5px;padding:2px 8px;border:1px solid rgba(0,255,136,0.2);margin-bottom:12px;animation:jpulse 2s ease-in-out infinite;}
+.jzc-actions{display:flex;flex-direction:column;gap:4px;width:100%;}
+.jzc-btn{font-family:'Rajdhani',sans-serif;font-weight:600;font-size:11px;color:#4a8abb;padding:7px 10px;text-align:center;border:1px solid rgba(80,180,255,0.1);background:rgba(80,180,255,0.02);cursor:pointer;transition:all 0.2s;letter-spacing:0.3px;}
+.jzc-btn:hover{color:#00ddff;border-color:rgba(0,200,255,0.3);background:rgba(0,200,255,0.05);text-shadow:0 0 6px rgba(0,200,255,0.3);}
+.j-zane-msgs{flex:1;max-height:220px;overflow-y:auto;padding:6px 12px 6px 0;display:flex;flex-direction:column;gap:8px;}
+.j-zane-msgs::-webkit-scrollbar{width:2px;}
+.j-zane-msgs::-webkit-scrollbar-thumb{background:rgba(80,180,255,0.12);}
+.jzm-ai{padding:10px 12px;background:rgba(0,140,255,0.03);border-left:2px solid rgba(80,180,255,0.25);}
+.jzm-ai p{font-size:13px;color:#88bbdd;line-height:1.6;margin:0;}
+.jzm-ai strong{color:#b0ddff;}
+.jzm-ai .jzhl{color:#00ff88;text-shadow:0 0 6px rgba(0,255,136,0.25);font-family:'Share Tech Mono',monospace;font-size:12px;}
+.jzm-user{padding:8px 12px;background:rgba(80,180,255,0.03);border-right:2px solid rgba(0,200,255,0.2);align-self:flex-end;max-width:90%;}
+.jzm-user p{font-size:12px;color:#70aacc;margin:0;}
+.j-zane-inp{display:flex;align-items:center;border-top:1px solid rgba(80,180,255,0.06);margin:8px 24px 12px;}
+.j-zane-inp input{flex:1;background:transparent;border:none;color:#b0d8f0;font-family:'Share Tech Mono',monospace;font-size:13px;padding:12px 0;outline:none;}
+.j-zane-inp input::placeholder{color:#2a5a80;}
+.j-zane-inp .jzs{background:none;border:none;border-left:1px solid rgba(80,180,255,0.06);color:#3a7aaa;font-family:'Orbitron',monospace;font-size:9px;font-weight:700;letter-spacing:2px;padding:12px 18px;cursor:pointer;transition:all 0.3s;}
+.j-zane-inp .jzs:hover{color:#00ddff;text-shadow:0 0 10px rgba(0,200,255,0.4);}
+.j-hud-wrap{border:1px solid rgba(80,180,255,0.12);background:rgba(4,12,35,0.35);position:relative;overflow:visible;}
+.j-hud-wrap::before{content:'';position:absolute;top:0;left:0;width:24px;height:24px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
+.j-hud-wrap::after{content:'';position:absolute;bottom:0;right:0;width:24px;height:24px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
+.j-hud-pad{height:16px;}
 </style>
 '''
 
@@ -22220,15 +22270,8 @@ def jarvis_hud_item(label, value, dot_color="c", val_color="", side="L", accent=
 
 def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_size="page", alert_html=""):
     """
-    Build the Jarvis HUD header with reactor + flanking stats.
-    
-    Args:
-        page_name: Page title shown under reactor (e.g. "SUPPLIERS")
-        page_count: Record count shown under title (e.g. "128 RECORDS LOADED")
-        left_items: List of (label, value, dot_color, val_color, accent) tuples
-        right_items: List of (label, value, dot_color, val_color, accent) tuples
-        reactor_size: "big" for dashboard, "page" for other pages
-        alert_html: Optional alert ticker HTML
+    Build the Jarvis HUD header with reactor + flanking stats + Zane extension chat.
+    Everything is wrapped in one unified HUD container.
     """
     # Build left flank
     left_html = ""
@@ -22247,29 +22290,102 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
             right_html += '<div class="j-fln"></div>'
     
     return f'''
-    <div class="j-hero">
-        <div class="j-flank">{left_html}</div>
-        <div class="j-cn"></div>
-        <div class="j-rx {reactor_size}" onclick="toggleZaneChat()">
-            <div class="j-rg r1"></div>
-            <div class="j-rg r2"></div>
-            <div class="j-rg r3"></div>
-            <div class="j-rg r4"></div>
-            <div class="j-core">
-                <div class="j-brand">CLICK.AI</div>
-                <div class="j-sub">// BUSINESS INTELLIGENCE</div>
-                <div class="j-ai">ZANE AI</div>
+    <div class="j-hud-wrap">
+        <div class="j-hero" style="padding:14px 20px 0;">
+            <div class="j-flank">{left_html}</div>
+            <div class="j-cn"></div>
+            <div class="j-rx {reactor_size}" onclick="jzToggle()" style="z-index:10;">
+                <div class="j-rg r1"></div>
+                <div class="j-rg r2"></div>
+                <div class="j-rg r3"></div>
+                <div class="j-rg r4"></div>
+                <div class="j-core">
+                    <div class="j-brand">CLICK.AI</div>
+                    <div class="j-sub">// BUSINESS INTELLIGENCE</div>
+                    <div class="j-ai">ZANE AI</div>
+                </div>
+                <div class="j-hint">CLICK TO TALK TO ZANE</div>
             </div>
-            <div class="j-hint">CLICK TO TALK TO ZANE</div>
+            <div class="j-cn R"></div>
+            <div class="j-flank">{right_html}</div>
+            <div class="j-plbl">
+                <div class="j-pn">{page_name}</div>
+                <div class="j-pc">{page_count}</div>
+            </div>
         </div>
-        <div class="j-cn R"></div>
-        <div class="j-flank">{right_html}</div>
-        <div class="j-plbl">
-            <div class="j-pn">{page_name}</div>
-            <div class="j-pc">{page_count}</div>
+        <div class="j-hud-pad" id="jHudPad"></div>
+        <div class="j-zane-ext" id="jZaneExt">
+            <div class="j-scanline"></div>
+            <div class="j-zane-ctx">
+                <div class="jzc-left">
+                    <span class="jzc-ci"><span class="jzd"></span>{page_name}</span>
+                    <span class="jzc-ci"><span class="jzd"></span>AI READY</span>
+                </div>
+                <button class="jzc-close" onclick="jzToggle()">CLOSE [ESC]</button>
+            </div>
+            <div class="j-zane-layout">
+                <div class="j-zane-left">
+                    <div class="j-zane-msgs" id="jzMsgsL"></div>
+                </div>
+                <div class="j-zane-center">
+                    <div class="jzc-label">ZANE AI</div>
+                    <div class="jzc-status">ONLINE</div>
+                    <div class="jzc-actions">
+                        <button class="jzc-btn" onclick="jzSend('Give me a business summary')">Business Summary</button>
+                        <button class="jzc-btn" onclick="jzSend('Who owes me the most?')">Top Debtors</button>
+                        <button class="jzc-btn" onclick="jzSend('Show low stock items')">Low Stock</button>
+                        <button class="jzc-btn" onclick="jzSend('Run business pulse')">Run Pulse</button>
+                        <button class="jzc-btn" onclick="jzSend('Cash flow forecast')">Cash Flow</button>
+                        <button class="jzc-btn" onclick="jzSend('Create new invoice')">New Invoice</button>
+                    </div>
+                </div>
+                <div class="j-zane-right">
+                    <div class="j-zane-msgs" id="jzMsgsR"></div>
+                </div>
+            </div>
+            <div class="j-zane-inp">
+                <input type="text" placeholder="Ask Zane anything..." id="jzInput" onkeydown="if(event.key==='Enter'){{jzSend(this.value);this.value=''}}">
+                <button class="jzs" onclick="jzSend(document.getElementById('jzInput').value);document.getElementById('jzInput').value=''">SEND</button>
+            </div>
         </div>
     </div>
     {alert_html}
+    <script>
+    function jzToggle(){{
+        var ext=document.getElementById('jZaneExt');
+        var pad=document.getElementById('jHudPad');
+        ext.classList.toggle('open');
+        if(pad)pad.style.display=ext.classList.contains('open')?'none':'';
+        if(ext.classList.contains('open')){{
+            setTimeout(function(){{document.getElementById('jzInput').focus();}},400);
+            if(!document.getElementById('jzMsgsL').children.length){{
+                document.getElementById('jzMsgsL').innerHTML='<div class="jzm-ai"><p>Hello! I\\'m <strong>Zane</strong>, your AI business assistant. Ask me anything about your data, or use the quick actions.</p></div>';
+                document.getElementById('jzMsgsR').innerHTML='<div class="jzm-ai"><p><strong>Quick insights loading...</strong></p><p>Click a quick action or ask me a question to get started.</p></div>';
+            }}
+        }}
+    }}
+    function jzSend(text){{
+        if(!text||!text.trim())return;
+        var msgs=document.getElementById('jzMsgsL');
+        var input=document.getElementById('jzInput');
+        msgs.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';
+        msgs.scrollTop=msgs.scrollHeight;
+        input.value='';
+        // Forward to actual Zane chat system
+        if(typeof sendZaneMessage==='function'){{
+            sendZaneMessage(text);
+        }} else if(typeof toggleZaneChat==='function'){{
+            toggleZaneChat();
+            setTimeout(function(){{
+                var zi=document.getElementById('zaneInput');
+                if(zi){{zi.value=text;zi.dispatchEvent(new Event('input'));}}
+                var zs=document.querySelector('.zane-chat-send');
+                if(zs)zs.click();
+            }},500);
+        }}
+    }}
+    document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var ext=document.getElementById('jZaneExt');if(ext&&ext.classList.contains('open'))jzToggle();}}}});
+    </script>
     '''
 
 
@@ -22288,34 +22404,67 @@ def is_jarvis():
 
 
 def _jarvis_global_hud(title, content):
-    """Wrap any page content with a mini Jarvis reactor header.
+    """Wrap any page content with a mini Jarvis reactor header + Zane extension.
     Only used for pages that don't have their own custom HUD.
     """
     try:
-        # Clean title for display
         page_name = title.upper().replace(" - CLICK AI", "").strip()
         
-        # Build a minimal reactor header with just branding
         hdr = f'''
-        <div class="j-hero" style="padding:8px 0 12px;">
-            <div class="j-cn"></div>
-            <div class="j-rx page" onclick="toggleZaneChat()" title="Click to talk to Zane" style="width:180px;height:180px;">
-                <div class="j-rg r1"></div>
-                <div class="j-rg r2"></div>
-                <div class="j-rg r3"></div>
-                <div class="j-rg r4"></div>
-                <div class="j-core" style="inset:48px;">
-                    <div class="j-brand" style="font-size:14px;">CLICK.AI</div>
-                    <div class="j-sub">// BUSINESS INTELLIGENCE</div>
-                    <div class="j-ai">ZANE AI</div>
+        <div class="j-hud-wrap">
+            <div class="j-hero" style="padding:10px 20px 0;">
+                <div class="j-cn"></div>
+                <div class="j-rx page" onclick="jzToggle()" style="width:180px;height:180px;z-index:10;">
+                    <div class="j-rg r1"></div>
+                    <div class="j-rg r2"></div>
+                    <div class="j-rg r3"></div>
+                    <div class="j-rg r4"></div>
+                    <div class="j-core" style="inset:48px;">
+                        <div class="j-brand" style="font-size:14px;">CLICK.AI</div>
+                        <div class="j-sub">// BUSINESS INTELLIGENCE</div>
+                        <div class="j-ai">ZANE AI</div>
+                    </div>
+                    <div class="j-hint">CLICK TO TALK TO ZANE</div>
                 </div>
-                <div class="j-hint">CLICK TO TALK TO ZANE</div>
+                <div class="j-cn R"></div>
+                <div class="j-plbl">
+                    <div class="j-pn">{page_name}</div>
+                </div>
             </div>
-            <div class="j-cn R"></div>
-            <div class="j-plbl">
-                <div class="j-pn">{page_name}</div>
+            <div class="j-hud-pad" id="jHudPad"></div>
+            <div class="j-zane-ext" id="jZaneExt">
+                <div class="j-scanline"></div>
+                <div class="j-zane-ctx">
+                    <div class="jzc-left"><span class="jzc-ci"><span class="jzd"></span>{page_name}</span><span class="jzc-ci"><span class="jzd"></span>AI READY</span></div>
+                    <button class="jzc-close" onclick="jzToggle()">CLOSE [ESC]</button>
+                </div>
+                <div class="j-zane-layout">
+                    <div class="j-zane-left"><div class="j-zane-msgs" id="jzMsgsL"></div></div>
+                    <div class="j-zane-center">
+                        <div class="jzc-label">ZANE AI</div>
+                        <div class="jzc-status">ONLINE</div>
+                        <div class="jzc-actions">
+                            <button class="jzc-btn" onclick="jzSend('Give me a business summary')">Business Summary</button>
+                            <button class="jzc-btn" onclick="jzSend('Who owes me the most?')">Top Debtors</button>
+                            <button class="jzc-btn" onclick="jzSend('Show low stock items')">Low Stock</button>
+                            <button class="jzc-btn" onclick="jzSend('Run business pulse')">Run Pulse</button>
+                            <button class="jzc-btn" onclick="jzSend('Cash flow forecast')">Cash Flow</button>
+                            <button class="jzc-btn" onclick="jzSend('Create new invoice')">New Invoice</button>
+                        </div>
+                    </div>
+                    <div class="j-zane-right"><div class="j-zane-msgs" id="jzMsgsR"></div></div>
+                </div>
+                <div class="j-zane-inp">
+                    <input type="text" placeholder="Ask Zane anything..." id="jzInput" onkeydown="if(event.key==='Enter'){{jzSend(this.value);this.value=''}}">
+                    <button class="jzs" onclick="jzSend(document.getElementById('jzInput').value);document.getElementById('jzInput').value=''">SEND</button>
+                </div>
             </div>
         </div>
+        <script>
+        function jzToggle(){{var ext=document.getElementById('jZaneExt');var pad=document.getElementById('jHudPad');ext.classList.toggle('open');if(pad)pad.style.display=ext.classList.contains('open')?'none':'';if(ext.classList.contains('open')){{setTimeout(function(){{document.getElementById('jzInput').focus();}},400);if(!document.getElementById('jzMsgsL').children.length){{document.getElementById('jzMsgsL').innerHTML='<div class="jzm-ai"><p>Hello! I\\'m <strong>Zane</strong>, your AI assistant. Ask me anything or use the quick actions.</p></div>';document.getElementById('jzMsgsR').innerHTML='<div class="jzm-ai"><p><strong>Quick insights loading...</strong></p><p>Ask a question to get started.</p></div>';}}}}}}
+        function jzSend(text){{if(!text||!text.trim())return;var msgs=document.getElementById('jzMsgsL');var input=document.getElementById('jzInput');msgs.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';msgs.scrollTop=msgs.scrollHeight;input.value='';if(typeof sendZaneMessage==='function'){{sendZaneMessage(text);}}else if(typeof toggleZaneChat==='function'){{toggleZaneChat();setTimeout(function(){{var zi=document.getElementById('zaneInput');if(zi){{zi.value=text;zi.dispatchEvent(new Event('input'));}}var zs=document.querySelector('.zane-chat-send');if(zs)zs.click();}},500);}}}}
+        document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var ext=document.getElementById('jZaneExt');if(ext&&ext.classList.contains('open'))jzToggle();}}}});
+        </script>
         '''
         
         tl = jarvis_techline()
