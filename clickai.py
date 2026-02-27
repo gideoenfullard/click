@@ -22136,6 +22136,157 @@ def api_health_check():
     return html
 
 
+# =================================================================
+# JARVIS HUD BUILDER -- Reusable reactor header for all pages
+# =================================================================
+
+# The CSS is injected once via this constant (shared across all pages)
+JARVIS_HUD_CSS = '''
+<style>
+.j-hero{display:flex;align-items:center;justify-content:center;padding:10px 0 14px;position:relative;gap:0;}
+.j-flank{display:flex;flex-direction:column;gap:5px;width:210px;min-width:210px;}
+.j-fi{padding:9px 14px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,30,60,0.25);transition:all 0.3s;}
+.j-fi:hover{border-color:rgba(80,180,255,0.25);background:rgba(10,30,60,0.4);}
+.j-fi.L{border-left:2px solid rgba(80,180,255,0.3);}
+.j-fi.R{border-right:2px solid rgba(80,180,255,0.3);border-left:none;}
+.j-fi.o.L{border-left-color:rgba(255,170,0,0.4);}.j-fi.o.R{border-right-color:rgba(255,170,0,0.4);}
+.j-fi.r.L{border-left-color:rgba(255,68,102,0.4);}.j-fi.r.R{border-right-color:rgba(255,68,102,0.4);}
+.j-fi.g.L{border-left-color:rgba(0,255,136,0.4);}.j-fi.g.R{border-right-color:rgba(0,255,136,0.4);}
+.j-fr{display:flex;align-items:center;gap:8px;}
+.j-fd{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
+.j-fd.c{background:#00ccff;box-shadow:0 0 4px #00ccff,0 0 10px rgba(0,204,255,0.3);}
+.j-fd.g{background:#00ff88;box-shadow:0 0 4px #00ff88,0 0 10px rgba(0,255,136,0.3);}
+.j-fd.o{background:#ffaa00;box-shadow:0 0 4px #ffaa00,0 0 10px rgba(255,170,0,0.3);}
+.j-fd.r{background:#ff4466;box-shadow:0 0 4px #ff4466,0 0 10px rgba(255,68,102,0.3);}
+.j-fd.p{background:#aa55ff;box-shadow:0 0 4px #aa55ff;}
+.j-fl{font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a6a90;letter-spacing:1px;flex:1;}
+.j-fv{font-family:'Orbitron',monospace;font-size:13px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3);}
+.j-fv.o{color:#ffaa00;text-shadow:0 0 8px rgba(255,170,0,0.4);}
+.j-fv.g{color:#00ff88;text-shadow:0 0 8px rgba(0,255,136,0.4);}
+.j-fv.r{color:#ff6688;text-shadow:0 0 8px rgba(255,68,102,0.4);}
+.j-fln{width:100%;height:1px;background:linear-gradient(90deg,transparent,rgba(80,180,255,0.2),transparent);}
+.j-cn{width:30px;height:2px;position:relative;flex-shrink:0;}
+.j-cn::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(80,180,255,0.05),rgba(80,180,255,0.3));}
+.j-cn.R::before{background:linear-gradient(90deg,rgba(80,180,255,0.3),rgba(80,180,255,0.05));}
+.j-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
+.j-cn.R::after{left:-2px;right:auto;}
+.j-rx{position:relative;flex-shrink:0;cursor:pointer;}
+.j-rx:hover .j-core{box-shadow:0 0 40px rgba(80,180,255,0.2),0 0 80px rgba(60,160,240,0.1);border-color:rgba(120,220,255,0.35);}
+.j-rx:hover .j-hint{opacity:1;transform:translateX(-50%) translateY(0);}
+.j-rg{position:absolute;border-radius:50%;border:1px solid rgba(80,180,255,0.2);transition:all 0.4s;}
+.j-rg.r1{inset:0;border-color:rgba(80,180,255,0.25);border-top-color:rgba(120,210,255,0.65);border-right-color:transparent;animation:jspin 8s linear infinite;box-shadow:0 0 25px rgba(80,180,255,0.08),inset 0 0 25px rgba(80,180,255,0.04);}
+.j-rg.r2{inset:14px;border-color:rgba(60,160,240,0.15);border-bottom-color:rgba(100,200,255,0.55);border-left-color:transparent;animation:jspin 6s linear infinite reverse;}
+.j-rg.r3{inset:28px;border-color:rgba(80,180,255,0.1);border-top-color:rgba(140,220,255,0.45);animation:jspin 4s linear infinite;}
+.j-rg.r4{inset:42px;border:2px solid rgba(100,200,255,0.08);border-top-color:rgba(160,230,255,0.5);border-left-color:rgba(120,210,255,0.3);animation:jspin 12s linear infinite reverse;}
+.j-core{position:absolute;inset:60px;border-radius:50%;background:radial-gradient(circle,rgba(120,210,255,0.12) 0%,rgba(60,160,240,0.04) 60%,transparent 100%);border:1px solid rgba(100,200,255,0.2);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 30px rgba(80,180,255,0.1),0 0 60px rgba(60,160,240,0.05);transition:all 0.4s;}
+.j-core .j-brand{font-family:'Orbitron',monospace;font-size:17px;font-weight:800;color:#55bbff;text-shadow:0 0 18px rgba(85,187,255,0.6),0 0 45px rgba(85,187,255,0.2);letter-spacing:3px;line-height:1;}
+.j-core .j-sub{font-family:'Share Tech Mono',monospace;font-size:7.5px;color:#4499cc;letter-spacing:4px;margin-top:4px;opacity:0.9;}
+.j-core .j-ai{margin-top:5px;font-family:'Orbitron',monospace;font-size:7px;font-weight:700;color:#00ccff;letter-spacing:2px;padding:2px 8px;border:1px solid rgba(0,200,255,0.25);text-shadow:0 0 8px rgba(0,200,255,0.5);animation:jpulse 2.5s ease-in-out infinite;}
+@keyframes jpulse{0%,100%{border-color:rgba(0,200,255,0.2);box-shadow:none;}50%{border-color:rgba(0,200,255,0.45);box-shadow:0 0 10px rgba(0,200,255,0.15);}}
+@keyframes jspin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.j-hint{position:absolute;bottom:-22px;left:50%;transform:translateX(-50%) translateY(5px);font-family:'Share Tech Mono',monospace;font-size:9px;color:#00ccff;letter-spacing:2px;opacity:0;transition:all 0.3s;white-space:nowrap;text-shadow:0 0 10px rgba(0,200,255,0.5);}
+.j-plbl{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);text-align:center;z-index:2;}
+.j-plbl .j-pn{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#5aaadd;letter-spacing:4px;text-shadow:0 0 10px rgba(90,170,221,0.3);}
+.j-plbl .j-pc{font-family:'Share Tech Mono',monospace;font-size:9px;color:#2a5a80;letter-spacing:2px;margin-top:1px;}
+.j-ticker{margin:8px 0 14px;padding:10px 18px;border:1px solid rgba(255,160,0,0.2);border-left:3px solid rgba(255,160,0,0.5);background:rgba(255,120,0,0.03);display:flex;align-items:center;gap:14px;}
+.j-ticker b{color:#ffaa00;text-shadow:0 0 10px rgba(255,170,0,0.5);font-size:10px;letter-spacing:1.5px;}
+.j-ticker .jt-msg{color:#8a7040;flex:1;font-size:13px;}
+.j-ticker .jt-act{color:#60ccff;font-weight:700;font-size:11px;letter-spacing:1.5px;text-shadow:0 0 8px rgba(96,204,255,0.4);text-decoration:none;}
+.j-tbl{border:1px solid rgba(80,180,255,0.08);background:rgba(6,16,40,0.2);position:relative;overflow:hidden;}
+.j-tbl::before{content:'';position:absolute;top:0;left:0;width:16px;height:16px;border-top:2px solid rgba(100,200,255,0.3);border-left:2px solid rgba(100,200,255,0.3);z-index:2;}
+.j-tbl::after{content:'';position:absolute;bottom:0;right:0;width:16px;height:16px;border-bottom:2px solid rgba(100,200,255,0.3);border-right:2px solid rgba(100,200,255,0.3);z-index:2;}
+.j-tl{padding:12px 0;display:flex;align-items:center;justify-content:center;gap:30px;border-top:1px solid rgba(80,180,255,0.06);margin-top:14px;}
+.j-tl span{font-family:'Share Tech Mono',monospace;font-size:10px;color:#2a5a80;letter-spacing:1.5px;}
+.j-tl span b{color:#4a90bb;font-weight:400;}
+/* Dashboard big reactor */
+.j-rx.big{width:280px;height:280px;}
+.j-rx.big .j-core{inset:72px;}
+.j-rx.big .j-core .j-brand{font-size:22px;letter-spacing:4px;}
+.j-rx.big .j-core .j-sub{font-size:8.5px;letter-spacing:5px;}
+.j-rx.big .j-core .j-ai{font-size:8px;padding:3px 10px;}
+.j-rx.big .j-hint{bottom:-26px;}
+/* Page reactor (smaller) */
+.j-rx.page{width:230px;height:230px;}
+</style>
+'''
+
+
+def jarvis_hud_item(label, value, dot_color="c", val_color="", side="L", accent=""):
+    """Build a single HUD flank item"""
+    vc = f" {val_color}" if val_color else ""
+    ac = f" {accent}" if accent else ""
+    return f'<div class="j-fi{ac} {side}"><div class="j-fr"><div class="j-fd {dot_color}"></div><span class="j-fl">{label}</span><span class="j-fv{vc}">{value}</span></div></div>'
+
+
+def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_size="page", alert_html=""):
+    """
+    Build the Jarvis HUD header with reactor + flanking stats.
+    
+    Args:
+        page_name: Page title shown under reactor (e.g. "SUPPLIERS")
+        page_count: Record count shown under title (e.g. "128 RECORDS LOADED")
+        left_items: List of (label, value, dot_color, val_color, accent) tuples
+        right_items: List of (label, value, dot_color, val_color, accent) tuples
+        reactor_size: "big" for dashboard, "page" for other pages
+        alert_html: Optional alert ticker HTML
+    """
+    # Build left flank
+    left_html = ""
+    for i, item in enumerate(left_items):
+        label, value, dot, vc, ac = (list(item) + ["", "", ""])[:5]
+        left_html += jarvis_hud_item(label, value, dot or "c", vc, "L", ac)
+        if i < len(left_items) - 1 and i % 2 == 1:
+            left_html += '<div class="j-fln"></div>'
+    
+    # Build right flank
+    right_html = ""
+    for i, item in enumerate(right_items):
+        label, value, dot, vc, ac = (list(item) + ["", "", ""])[:5]
+        right_html += jarvis_hud_item(label, value, dot or "c", vc, "R", ac)
+        if i < len(right_items) - 1 and i % 2 == 1:
+            right_html += '<div class="j-fln"></div>'
+    
+    return f'''
+    <div class="j-hero">
+        <div class="j-flank">{left_html}</div>
+        <div class="j-cn"></div>
+        <div class="j-rx {reactor_size}" onclick="toggleZaneChat()">
+            <div class="j-rg r1"></div>
+            <div class="j-rg r2"></div>
+            <div class="j-rg r3"></div>
+            <div class="j-rg r4"></div>
+            <div class="j-core">
+                <div class="j-brand">CLICK.AI</div>
+                <div class="j-sub">// BUSINESS INTELLIGENCE</div>
+                <div class="j-ai">ZANE AI</div>
+            </div>
+            <div class="j-hint">CLICK TO TALK TO ZANE</div>
+        </div>
+        <div class="j-cn R"></div>
+        <div class="j-flank">{right_html}</div>
+        <div class="j-plbl">
+            <div class="j-pn">{page_name}</div>
+            <div class="j-pc">{page_count}</div>
+        </div>
+    </div>
+    {alert_html}
+    '''
+
+
+def jarvis_techline(extra=""):
+    """Build the bottom tech line"""
+    extra_span = f'<span>{extra}</span>' if extra else ''
+    return f'''<div class="j-tl"><span>SYS <b>ONLINE</b></span><span>DB <b>CONNECTED</b></span><span>AI <b>ACTIVE</b></span><span>ZANE <b>READY</b></span>{extra_span}</div>'''
+
+
+def is_jarvis():
+    """Check if current theme is Jarvis"""
+    try:
+        return request.cookies.get("clickai_theme", "midnight") == "jarvis"
+    except Exception:
+        return False
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard_redirect():
@@ -22375,237 +22526,108 @@ def dashboard():
     '''
     
     # -- JARVIS THEME: Replace dashboard with HUD layout --
-    _user_theme = request.cookies.get("clickai_theme", "midnight")
-    if _user_theme == 'jarvis' and not is_staff:
-        # Build debtor rows for HUD
+    if is_jarvis() and not is_staff:
+        # Build debtor rows for HUD panel
         _jd_rows = ""
         for d in debtors:
-            _jd_rows += f'''<div style="display:grid;grid-template-columns:2fr 1.2fr 1fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background='rgba(60,160,240,0.04)';this.style.boxShadow='inset 2px 0 0 rgba(80,180,255,0.3)'" onmouseout="this.style.background='none';this.style.boxShadow='none'">
-                <span style="font-size:14px;font-weight:600;color:#80bbdd;">{safe(d.get("name","-"))}</span>
-                <span style="font-size:12px;color:#3a6a90;font-family:'Share Tech Mono',monospace;">{safe(d.get("phone","-"))}</span>
-                <span style="font-size:14px;font-weight:700;text-align:right;font-family:'Share Tech Mono',monospace;color:#ff4466;text-shadow:0 0 10px rgba(255,68,102,0.4);">{money(d.get("balance",0))}</span>
-            </div>'''
+            _jd_rows += f'<div style="display:grid;grid-template-columns:2fr 1.2fr 1fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background=\'rgba(60,160,240,0.04)\';this.style.boxShadow=\'inset 2px 0 0 rgba(80,180,255,0.3)\'" onmouseout="this.style.background=\'none\';this.style.boxShadow=\'none\'"><span style="font-size:14px;font-weight:600;color:#80bbdd;">{safe(d.get("name","-"))}</span><span style="font-size:12px;color:#3a6a90;font-family:\'Share Tech Mono\',monospace;">{safe(d.get("phone","-"))}</span><span style="font-size:14px;font-weight:700;text-align:right;font-family:\'Share Tech Mono\',monospace;color:#ff4466;text-shadow:0 0 10px rgba(255,68,102,0.4);">{money(d.get("balance",0))}</span></div>'
         
-        # Build invoice rows for HUD
+        # Build invoice rows for HUD panel
         _ji_rows = ""
         for inv in recent[:5]:
             _st = inv.get("status","-")
             _stc = "color:#00ff88;text-shadow:0 0 10px rgba(0,255,136,0.5)" if _st=="paid" else "color:#ffaa00;text-shadow:0 0 10px rgba(255,170,0,0.5)"
             _stl = "CLEARED" if _st=="paid" else "PENDING"
-            _ji_rows += f'''<div style="display:grid;grid-template-columns:0.8fr 1.6fr 0.8fr 0.7fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background='rgba(60,160,240,0.04)'" onmouseout="this.style.background='none'">
-                <span style="font-size:12px;color:#3a6a90;font-family:'Share Tech Mono',monospace;">{safe(inv.get("number","-"))}</span>
-                <span style="font-size:13px;color:#70aacc;font-weight:500;">{safe(inv.get("customer","-"))}</span>
-                <span style="font-size:13px;text-align:right;font-family:'Share Tech Mono',monospace;color:#5a99bb;">{money(inv.get("total",0))}</span>
-                <span style="font-size:10px;font-weight:700;text-align:right;letter-spacing:1px;{_stc}">{_stl}</span>
-            </div>'''
+            _ji_rows += f'<div style="display:grid;grid-template-columns:0.8fr 1.6fr 0.8fr 0.7fr;padding:9px 6px;border-bottom:1px solid rgba(80,180,255,0.04);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background=\'rgba(60,160,240,0.04)\'" onmouseout="this.style.background=\'none\'"><span style="font-size:12px;color:#3a6a90;font-family:\'Share Tech Mono\',monospace;">{safe(inv.get("number","-"))}</span><span style="font-size:13px;color:#70aacc;font-weight:500;">{safe(inv.get("customer","-"))}</span><span style="font-size:13px;text-align:right;font-family:\'Share Tech Mono\',monospace;color:#5a99bb;">{money(inv.get("total",0))}</span><span style="font-size:10px;font-weight:700;text-align:right;letter-spacing:1px;{_stc}">{_stl}</span></div>'
         
-        # Low stock for ticker
-        _ls_items = ", ".join([f"{safe(l.get('description','-')[:25])} ({l.get('qty',0)})" for l in low_stock[:4]]) if low_stock else ""
-        _ls_more = f" and {len(low_stock)-4} more" if len(low_stock) > 4 else ""
-        
-        # Build ticker HTML separately (Python 3.11 can't nest f''' inside f''')
+        # Low stock ticker
         _j_ticker = ""
         if low_stock:
+            _ls_items = ", ".join([f"{safe(l.get('description','-')[:25])} ({l.get('qty',0)})" for l in low_stock[:4]])
+            _ls_more = f" and {len(low_stock)-4} more" if len(low_stock) > 4 else ""
             _j_ticker = f'<div class="j-ticker"><b>&#9888; ALERT</b><span class="jt-msg">Low Stock: {_ls_items}{_ls_more}</span><a href="/stock" class="jt-act">INVESTIGATE &rarr;</a></div>'
         
-        # Calculate gauge values
-        _circ = 2 * 3.14159 * 43  # circumference for r=43
-        # Collection rate: paid invoices / total invoices
+        # Gauge calculations
+        _circ = 2 * 3.14159 * 43
         _total_inv = len(recent) if recent else 1
         _paid_inv = len([i for i in recent if i.get("status") == "paid"])
         _collect_pct = int((_paid_inv / _total_inv) * 100) if _total_inv > 0 else 0
         _collect_off = _circ - (_circ * _collect_pct / 100)
-        # Overdue ratio
         _overdue_pct = min(100, int((total_debtors / max(total_sales, 1)) * 100)) if total_sales > 0 else 0
         _overdue_off = _circ - (_circ * _overdue_pct / 100)
-        # Stock health: items with stock / total items
         _stock_pct = min(100, max(10, 100 - int((len(low_stock) / max(stock_count, 1)) * 500))) if stock_count > 0 else 50
         _stock_off = _circ - (_circ * _stock_pct / 100)
-        # System health: always high
         _sys_pct = 95
         _sys_off = _circ - (_circ * _sys_pct / 100)
         
-        content = f'''
+        # Build HUD header with BIG reactor
+        _hud = jarvis_hud_header(
+            page_name="DASHBOARD",
+            page_count="BUSINESS OVERVIEW",
+            left_items=[
+                ("REVENUE", money(total_sales), "g", "g", "g"),
+                ("CUSTOMERS", str(customer_count), "c", "", ""),
+                ("CREDITORS", money(total_creditors), "o", "o", "o"),
+                ("SUPPLIERS", str(supplier_count), "p", "", ""),
+            ],
+            right_items=[
+                ("DEBTORS", money(total_debtors), "r", "r", "r"),
+                ("STOCK ITEMS", f"{stock_count:,}", "c", "", ""),
+                ("TODAY SALES", money(today_sales), "g", "g", "g"),
+                ("STOCK VALUE", money(stock_value), "c", "", ""),
+            ],
+            reactor_size="big",
+            alert_html=_j_ticker
+        )
+        
+        # HUD panels
+        _no_debt = '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO OUTSTANDING DEBT</div>'
+        _no_inv = '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO INVOICES YET</div>'
+        
+        content = f'''{JARVIS_HUD_CSS}
         <style>
-        /* Jarvis Dashboard HUD Overrides */
-        .jarvis-hud {{ position:relative; }}
-        .j-arc-section {{ display:flex;align-items:center;justify-content:center;padding:30px 0 25px;position:relative; }}
-        .j-flank {{ display:flex;flex-direction:column;gap:6px;width:180px; }}
-        .j-fb {{ padding:8px 12px;border:1px solid rgba(80,180,255,0.12);border-left:2px solid rgba(80,180,255,0.3);background:rgba(10,30,60,0.3);position:relative; }}
-        .j-fb.right {{ border-left:none;border-right:2px solid rgba(80,180,255,0.3); }}
-        .j-fb.red {{ border-left-color:rgba(255,68,102,0.3); }}
-        .j-fb.red.right {{ border-right-color:rgba(255,68,102,0.3);border-left:none; }}
-        .j-fl {{ display:flex;align-items:center;gap:8px; }}
-        .j-dot {{ width:5px;height:5px;border-radius:50%;flex-shrink:0; }}
-        .j-dot.g {{ background:#00ff88;box-shadow:0 0 4px #00ff88,0 0 10px rgba(0,255,136,0.3); }}
-        .j-dot.c {{ background:#00ccff;box-shadow:0 0 4px #00ccff,0 0 10px rgba(0,204,255,0.3); }}
-        .j-dot.o {{ background:#ffaa00;box-shadow:0 0 4px #ffaa00,0 0 10px rgba(255,170,0,0.3); }}
-        .j-dot.r {{ background:#ff4466;box-shadow:0 0 4px #ff4466,0 0 10px rgba(255,68,102,0.3); }}
-        .j-dot.p {{ background:#aa55ff;box-shadow:0 0 4px #aa55ff,0 0 10px rgba(170,85,255,0.3); }}
-        .j-lbl {{ font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a6a90;letter-spacing:1px;flex:1; }}
-        .j-val {{ font-family:'Orbitron',monospace;font-size:13px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3); }}
-        .j-val.rv {{ color:#ff6688;text-shadow:0 0 6px rgba(255,68,102,0.3); }}
-        .j-val.gv {{ color:#00ff88;text-shadow:0 0 6px rgba(0,255,136,0.3); }}
-        .j-conn {{ width:35px;height:2px;flex-shrink:0;position:relative; }}
-        .j-conn::before {{ content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(80,180,255,0.05),rgba(80,180,255,0.25)); }}
-        .j-conn.right::before {{ background:linear-gradient(90deg,rgba(80,180,255,0.25),rgba(80,180,255,0.05)); }}
-        .j-conn::after {{ content:'';position:absolute;right:-2px;top:-2px;width:6px;height:6px;border-radius:50%;background:rgba(80,180,255,0.3);box-shadow:0 0 6px rgba(80,180,255,0.3); }}
-        .j-conn.right::after {{ left:-2px;right:auto; }}
-        .j-fline {{ width:100%;height:1px;background:linear-gradient(90deg,transparent,rgba(80,180,255,0.25),transparent); }}
-        
-        /* Arc reactor */
-        .j-reactor {{ width:260px;height:260px;position:relative;flex-shrink:0; }}
-        .j-ring {{ position:absolute;border-radius:50%;border:1px solid rgba(80,180,255,0.2); }}
-        .j-ring.r1 {{ inset:0;border-color:rgba(80,180,255,0.25);border-top-color:rgba(120,210,255,0.6);border-right-color:transparent;animation:jspin 8s linear infinite;box-shadow:0 0 20px rgba(80,180,255,0.08),inset 0 0 20px rgba(80,180,255,0.04); }}
-        .j-ring.r2 {{ inset:16px;border-color:rgba(60,160,240,0.15);border-bottom-color:rgba(100,200,255,0.5);border-left-color:transparent;animation:jspin 6s linear infinite reverse; }}
-        .j-ring.r3 {{ inset:32px;border-color:rgba(80,180,255,0.1);border-top-color:rgba(140,220,255,0.4);animation:jspin 4s linear infinite; }}
-        .j-ring.r4 {{ inset:48px;border:2px solid rgba(100,200,255,0.08);border-top-color:rgba(160,230,255,0.5);border-left-color:rgba(120,210,255,0.3);animation:jspin 12s linear infinite reverse; }}
-        .j-core {{ position:absolute;inset:65px;border-radius:50%;background:radial-gradient(circle,rgba(120,210,255,0.15) 0%,rgba(60,160,240,0.05) 60%,transparent 100%);border:1px solid rgba(100,200,255,0.2);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 30px rgba(80,180,255,0.1),0 0 60px rgba(60,160,240,0.05); }}
-        .j-core-val {{ font-family:'Orbitron',monospace;font-size:28px;font-weight:700;color:#bbecff;text-shadow:0 0 15px rgba(140,220,255,0.6),0 0 40px rgba(100,200,255,0.2); }}
-        .j-core-lbl {{ font-size:11px;color:#4a90bb;letter-spacing:3px;margin-top:3px;font-weight:600; }}
-        @keyframes jspin {{ 0%{{transform:rotate(0deg)}} 100%{{transform:rotate(360deg)}} }}
-        
-        /* Alert ticker */
-        .j-ticker {{ margin:12px 0;padding:10px 18px;border:1px solid rgba(255,160,0,0.25);border-left:3px solid rgba(255,160,0,0.5);background:rgba(255,120,0,0.03);display:flex;align-items:center;gap:14px;font-size:13px;box-shadow:0 0 20px rgba(255,120,0,0.04); }}
-        .j-ticker b {{ color:#ffaa00;text-shadow:0 0 10px rgba(255,170,0,0.5);font-weight:700;font-size:11px;letter-spacing:1.5px; }}
-        .j-ticker .jt-msg {{ color:#8a7040;flex:1; }}
-        .j-ticker .jt-act {{ color:#60ccff;font-weight:700;font-size:11px;letter-spacing:1.5px;text-shadow:0 0 8px rgba(96,204,255,0.4);text-decoration:none; }}
-        
-        /* HUD panels */
-        .j-panels {{ display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px; }}
-        .j-panel {{ border:1px solid rgba(80,180,255,0.12);background:rgba(8,20,45,0.3);position:relative;overflow:hidden; }}
-        .j-panel::before {{ content:'';position:absolute;top:0;left:0;width:18px;height:18px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35); }}
-        .j-panel::after {{ content:'';position:absolute;bottom:0;right:0;width:18px;height:18px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35); }}
-        .j-ph {{ padding:12px 18px;border-bottom:1px solid rgba(80,180,255,0.1);display:flex;align-items:center;justify-content:space-between; }}
-        .j-ph h3 {{ font-family:'Orbitron',monospace;font-size:12px;font-weight:600;color:#5aaadd;letter-spacing:2.5px;text-transform:uppercase;text-shadow:0 0 10px rgba(90,170,221,0.3);margin:0; }}
-        .j-ph .j-badge {{ font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a7aaa;letter-spacing:1px;padding:2px 8px;border:1px solid rgba(80,180,255,0.15); }}
-        .j-pb {{ padding:12px 18px 16px; }}
-        
-        /* Arc gauge stats */
-        .j-arcs {{ display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:16px; }}
-        .j-arc {{ display:flex;flex-direction:column;align-items:center;padding:22px 12px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,25,50,0.2);position:relative;transition:all 0.3s; }}
-        .j-arc:hover {{ border-color:rgba(80,180,255,0.25);background:rgba(10,30,60,0.3);box-shadow:0 0 25px rgba(80,180,255,0.06); }}
-        .j-arc::after {{ content:'';position:absolute;bottom:0;left:15%;right:15%;height:1px;background:linear-gradient(90deg,transparent,rgba(80,180,255,0.25),transparent); }}
-        .j-marc {{ width:100px;height:100px;position:relative; }}
-        .j-marc svg {{ width:100px;height:100px;transform:rotate(-90deg); }}
-        .j-marc .jtrack {{ fill:none;stroke:rgba(80,180,255,0.06);stroke-width:3; }}
-        .j-marc .jbar {{ fill:none;stroke-width:3;stroke-linecap:round; }}
-        .j-marc .jval {{ position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Orbitron',monospace;font-size:16px;font-weight:600;color:#a0ddff;text-shadow:0 0 10px rgba(120,200,255,0.3); }}
-        .j-arc .jasl {{ font-size:11px;color:#3a7aaa;letter-spacing:1.5px;font-weight:600;margin-top:8px;text-transform:uppercase;text-align:center; }}
-        .j-techline {{ padding:14px 0;display:flex;align-items:center;justify-content:center;gap:35px;border-top:1px solid rgba(80,180,255,0.08);margin-top:16px; }}
-        .j-tl {{ font-family:'Share Tech Mono',monospace;font-size:11px;color:#2a5a80;letter-spacing:1.5px; }}
-        .j-tl b {{ color:#4a90bb;font-weight:400; }}
-        
-        /* Neon graph */
-        .j-graph {{ margin:12px 0 0;padding:14px 10px 6px;background:rgba(0,15,40,0.4);border:1px solid rgba(80,180,255,0.08);position:relative; }}
-        .j-graph svg {{ display:block;width:100%;height:90px; }}
+        .j-panels{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;}}
+        .j-panel{{border:1px solid rgba(80,180,255,0.12);background:rgba(8,20,45,0.3);position:relative;overflow:hidden;}}
+        .j-panel::before{{content:'';position:absolute;top:0;left:0;width:18px;height:18px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35);}}
+        .j-panel::after{{content:'';position:absolute;bottom:0;right:0;width:18px;height:18px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);}}
+        .j-ph{{padding:12px 18px;border-bottom:1px solid rgba(80,180,255,0.1);display:flex;align-items:center;justify-content:space-between;}}
+        .j-ph h3{{font-family:'Orbitron',monospace;font-size:12px;font-weight:600;color:#5aaadd;letter-spacing:2.5px;text-transform:uppercase;text-shadow:0 0 10px rgba(90,170,221,0.3);margin:0;}}
+        .j-ph .j-badge{{font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a7aaa;letter-spacing:1px;padding:2px 8px;border:1px solid rgba(80,180,255,0.15);}}
+        .j-pb{{padding:12px 18px 16px;}}
+        .j-arcs{{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:16px;}}
+        .j-arc{{display:flex;flex-direction:column;align-items:center;padding:22px 12px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,25,50,0.2);position:relative;transition:all 0.3s;}}
+        .j-arc:hover{{border-color:rgba(80,180,255,0.25);background:rgba(10,30,60,0.3);box-shadow:0 0 25px rgba(80,180,255,0.06);}}
+        .j-marc{{width:100px;height:100px;position:relative;}}
+        .j-marc svg{{width:100px;height:100px;transform:rotate(-90deg);}}
+        .j-marc .jtrack{{fill:none;stroke:rgba(80,180,255,0.06);stroke-width:3;}}
+        .j-marc .jbar{{fill:none;stroke-width:3;stroke-linecap:round;}}
+        .j-marc .jval{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Orbitron',monospace;font-size:16px;font-weight:600;color:#a0ddff;text-shadow:0 0 10px rgba(120,200,255,0.3);}}
+        .j-arc .jasl{{font-size:11px;color:#3a7aaa;letter-spacing:1.5px;font-weight:600;margin-top:8px;text-transform:uppercase;text-align:center;}}
         </style>
         
-        <div class="jarvis-hud">
-        
-        <!-- ARC REACTOR with flanking readouts -->
-        <div class="j-arc-section">
-            <div class="j-flank">
-                <div class="j-fb"><div class="j-fl"><div class="j-dot g"></div><span class="j-lbl">REVENUE</span><span class="j-val gv">{money(total_sales)}</span></div></div>
-                <div class="j-fb"><div class="j-fl"><div class="j-dot c"></div><span class="j-lbl">CUSTOMERS</span><span class="j-val">{customer_count}</span></div></div>
-                <div class="j-fline"></div>
-                <div class="j-fb"><div class="j-fl"><div class="j-dot o"></div><span class="j-lbl">CREDITORS</span><span class="j-val">{money(total_creditors)}</span></div></div>
-                <div class="j-fline"></div>
-                <div class="j-fb"><div class="j-fl"><div class="j-dot p"></div><span class="j-lbl">SUPPLIERS</span><span class="j-val">{supplier_count}</span></div></div>
-            </div>
-            <div class="j-conn"></div>
-            <div class="j-reactor">
-                <div class="j-ring r1"></div>
-                <div class="j-ring r2"></div>
-                <div class="j-ring r3"></div>
-                <div class="j-ring r4"></div>
-                <div class="j-core">
-                    <div class="j-core-val">{money(stock_value)}</div>
-                    <div class="j-core-lbl">STOCK VALUE</div>
-                </div>
-            </div>
-            <div class="j-conn right"></div>
-            <div class="j-flank">
-                <div class="j-fb red right"><div class="j-fl"><div class="j-dot r"></div><span class="j-lbl">OVERDUE</span><span class="j-val rv">{money(total_debtors)}</span></div></div>
-                <div class="j-fb right"><div class="j-fl"><div class="j-dot c"></div><span class="j-lbl">STOCK ITEMS</span><span class="j-val">{stock_count:,}</span></div></div>
-                <div class="j-fline"></div>
-                <div class="j-fb right"><div class="j-fl"><div class="j-dot g"></div><span class="j-lbl">TODAY</span><span class="j-val gv">{money(today_sales)}</span></div></div>
-                <div class="j-fline"></div>
-                <div class="j-fb right"><div class="j-fl"><div class="j-dot c"></div><span class="j-lbl">ITEMS</span><span class="j-val">{stock_count:,}</span></div></div>
-            </div>
-        </div>
-        
-        {_j_ticker}
+        {_hud}
         
         <!-- HUD PANELS -->
         <div class="j-panels">
             <div class="j-panel">
                 <div class="j-ph"><h3>Top Debtors</h3><span class="j-badge">{len(debtors)} RECORDS</span></div>
-                <div class="j-pb">
-                    {_jd_rows or '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO OUTSTANDING DEBT</div>'}
-                </div>
+                <div class="j-pb">{_jd_rows or _no_debt}</div>
             </div>
             <div class="j-panel">
                 <div class="j-ph"><h3>Recent Invoices</h3><span class="j-badge">LIVE FEED</span></div>
-                <div class="j-pb">
-                    {_ji_rows or '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO INVOICES YET</div>'}
-                </div>
+                <div class="j-pb">{_ji_rows or _no_inv}</div>
             </div>
         </div>
         
         <!-- ARC GAUGES -->
         <div class="j-arcs">
-            <div class="j-arc">
-                <div class="j-marc">
-                    <svg viewBox="0 0 100 100">
-                        <circle class="jtrack" cx="50" cy="50" r="43"/>
-                        <circle class="jbar" cx="50" cy="50" r="43" stroke="#00ffcc" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_collect_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,255,204,0.5)) drop-shadow(0 0 10px rgba(0,255,204,0.2))"/>
-                    </svg>
-                    <div class="jval">{_collect_pct}%</div>
-                </div>
-                <div class="jasl">Collection Rate</div>
-            </div>
-            <div class="j-arc">
-                <div class="j-marc">
-                    <svg viewBox="0 0 100 100">
-                        <circle class="jtrack" cx="50" cy="50" r="43"/>
-                        <circle class="jbar" cx="50" cy="50" r="43" stroke="#ff4466" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_overdue_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(255,68,102,0.5)) drop-shadow(0 0 10px rgba(255,68,102,0.2))"/>
-                    </svg>
-                    <div class="jval" style="color:#ff8899;">{_overdue_pct}%</div>
-                </div>
-                <div class="jasl">Overdue Ratio</div>
-            </div>
-            <div class="j-arc">
-                <div class="j-marc">
-                    <svg viewBox="0 0 100 100">
-                        <circle class="jtrack" cx="50" cy="50" r="43"/>
-                        <circle class="jbar" cx="50" cy="50" r="43" stroke="#00aaff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_stock_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,170,255,0.5)) drop-shadow(0 0 10px rgba(0,170,255,0.2))"/>
-                    </svg>
-                    <div class="jval">{_stock_pct}%</div>
-                </div>
-                <div class="jasl">Stock Health</div>
-            </div>
-            <div class="j-arc">
-                <div class="j-marc">
-                    <svg viewBox="0 0 100 100">
-                        <circle class="jtrack" cx="50" cy="50" r="43"/>
-                        <circle class="jbar" cx="50" cy="50" r="43" stroke="#aa55ff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_sys_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(170,85,255,0.5)) drop-shadow(0 0 10px rgba(170,85,255,0.2))"/>
-                    </svg>
-                    <div class="jval" style="color:#cc99ff;">{_sys_pct}%</div>
-                </div>
-                <div class="jasl">System Health</div>
-            </div>
+            <div class="j-arc"><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#00ffcc" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_collect_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,255,204,0.5)) drop-shadow(0 0 10px rgba(0,255,204,0.2))"/></svg><div class="jval">{_collect_pct}%</div></div><div class="jasl">Collection Rate</div></div>
+            <div class="j-arc"><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#ff4466" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_overdue_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(255,68,102,0.5)) drop-shadow(0 0 10px rgba(255,68,102,0.2))"/></svg><div class="jval" style="color:#ff8899;">{_overdue_pct}%</div></div><div class="jasl">Overdue Ratio</div></div>
+            <div class="j-arc"><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#00aaff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_stock_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(0,170,255,0.5)) drop-shadow(0 0 10px rgba(0,170,255,0.2))"/></svg><div class="jval">{_stock_pct}%</div></div><div class="jasl">Stock Health</div></div>
+            <div class="j-arc"><div class="j-marc"><svg viewBox="0 0 100 100"><circle class="jtrack" cx="50" cy="50" r="43"/><circle class="jbar" cx="50" cy="50" r="43" stroke="#aa55ff" stroke-dasharray="{_circ:.1f}" stroke-dashoffset="{_sys_off:.1f}" style="filter:drop-shadow(0 0 4px rgba(170,85,255,0.5)) drop-shadow(0 0 10px rgba(170,85,255,0.2))"/></svg><div class="jval" style="color:#cc99ff;">{_sys_pct}%</div></div><div class="jasl">System Health</div></div>
         </div>
         
-        <!-- BOTTOM TECH LINE -->
-        <div class="j-techline">
-            <span class="j-tl">SYS <b>ONLINE</b></span>
-            <span class="j-tl">DB <b>CONNECTED</b></span>
-            <span class="j-tl">AI <b>ACTIVE</b></span>
-            <span class="j-tl">ZANE <b>READY</b></span>
-        </div>
-        
-        </div>
+        {jarvis_techline()}
         '''
     
     return render_page("Dashboard", content, user, "dashboard")
@@ -22839,6 +22861,35 @@ def customers_page():
     '''
     
     _t("before_render")
+    # -- JARVIS: Customers HUD header --
+    if is_jarvis():
+        _with_bal = len(debtors)
+        _in_credit = len([c for c in customers if float(c.get("balance", 0) or 0) < 0])
+        _j_alert = ""
+        if _with_bal > 3 and can_see_balances:
+            _top3 = ", ".join([f"{safe(c.get('name','-')[:20])} ({money(float(c.get('balance',0)))})" for c in sorted(debtors, key=lambda x: -float(x.get('balance',0)))[:3]])
+            _j_alert = f'<div class="j-ticker"><b>&#9888; DEBTORS</b><span class="jt-msg">{_with_bal} customers owe money &mdash; {_top3}</span><a href="/pulse" class="jt-act">VIEW PULSE &rarr;</a></div>'
+        
+        _hud = jarvis_hud_header(
+            page_name="CUSTOMERS",
+            page_count=f"{total_customers} RECORDS LOADED",
+            left_items=[
+                ("CUSTOMERS", str(total_customers), "c", "", ""),
+                ("OWED TO US", money(total_owed) if can_see_balances else "---", "r", "r", "r"),
+                ("DEBTORS", str(_with_bal), "o", "o", "o"),
+                ("IN CREDIT", str(_in_credit), "g", "g", "g"),
+            ],
+            right_items=[
+                ("ZERO BAL", str(total_customers - _with_bal - _in_credit), "g", "g", ""),
+                ("WITH BAL", str(_with_bal), "r", "r", "r"),
+                ("AVG BALANCE", money(total_owed / max(_with_bal, 1)) if can_see_balances else "---", "o", "o", ""),
+                ("ACTIVE", str(total_customers), "c", "", ""),
+            ],
+            reactor_size="page",
+            alert_html=_j_alert
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"CUSTOMERS <b>{total_customers} LOADED</b>")
+    
     return render_page("Customers", content, user, "customers")
 
 
@@ -23831,6 +23882,28 @@ def stock_page():
         </div>
     </div>
     '''
+    
+    # -- JARVIS: Stock HUD header --
+    if is_jarvis():
+        _hud = jarvis_hud_header(
+            page_name="STOCK",
+            page_count='<span id="jStockCount">LOADING...</span>',
+            left_items=[
+                ("ITEMS", '<span id="jStatItems">-</span>', "c", "", ""),
+                ("STOCK VALUE", '<span id="jStatValue">-</span>', "g", "g", "g"),
+                ("LOW STOCK", '<span id="jStatLow">-</span>', "o", "o", "o"),
+                ("CATEGORIES", '<span id="jStatCat">-</span>', "p", "", ""),
+            ],
+            right_items=[
+                ("IN STOCK", '<span id="jStatIn">-</span>', "g", "g", ""),
+                ("OUT OF STOCK", '<span id="jStatOut">-</span>', "r", "r", "r"),
+                ("AVG COST", '<span id="jStatAvg">-</span>', "c", "", ""),
+                ("ZERO QTY", '<span id="jStatZero">-</span>', "o", "", ""),
+            ],
+            reactor_size="page",
+            alert_html=""
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("STOCK <b>LOADING</b>")
     
     return render_page("Stock", content, user, "stock")
     
@@ -25825,6 +25898,35 @@ def invoices_page():
     }}
     </script>
     '''
+    
+    # -- JARVIS: Invoices HUD header --
+    if is_jarvis():
+        _total_inv = len(invoices)
+        _paid = len([i for i in invoices if i.get("status") == "paid"])
+        _outstanding = len([i for i in invoices if i.get("status") in ("outstanding", "account")])
+        _total_amt = sum(float(i.get("total", 0) or 0) for i in invoices)
+        _paid_amt = sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") == "paid")
+        _owed_amt = sum(float(i.get("total", 0) or 0) for i in invoices if i.get("status") in ("outstanding", "account"))
+        
+        _hud = jarvis_hud_header(
+            page_name="INVOICES",
+            page_count=f"{_total_inv} RECORDS LOADED",
+            left_items=[
+                ("INVOICES", str(_total_inv), "c", "", ""),
+                ("TOTAL VALUE", money(_total_amt), "c", "", ""),
+                ("PAID", str(_paid), "g", "g", "g"),
+                ("PAID VALUE", money(_paid_amt), "g", "g", "g"),
+            ],
+            right_items=[
+                ("OUTSTANDING", str(_outstanding), "o", "o", "o"),
+                ("OWED TO US", money(_owed_amt), "r", "r", "r"),
+                ("CREDITED", str(len([i for i in invoices if i.get("status") == "credited"])), "r", "", ""),
+                ("DELIVERED", str(len([i for i in invoices if i.get("status") == "delivered"])), "c", "", ""),
+            ],
+            reactor_size="page",
+            alert_html=""
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"INVOICES <b>{_total_inv} LOADED</b>")
     
     return render_page("Invoices", content, user, "invoices")
 
@@ -28925,6 +29027,35 @@ def suppliers_page():
     </script>
     '''
     
+    # -- JARVIS: Suppliers HUD header --
+    if is_jarvis():
+        _with_bal = len(creditors)
+        _in_credit = len([s for s in suppliers if float(s.get("balance", 0) or 0) < 0])
+        _j_alert = ""
+        if _with_bal > 5 and can_see_balances:
+            _top3 = ", ".join([f"{safe(s.get('name','-')[:20])} ({money(float(s.get('balance',0)))})" for s in sorted(creditors, key=lambda x: -float(x.get('balance',0)))[:3]])
+            _j_alert = f'<div class="j-ticker"><b>&#9888; CREDITORS</b><span class="jt-msg">{_with_bal} suppliers with balance &mdash; {_top3}</span><a href="/supplier-invoices" class="jt-act">VIEW INVOICES &rarr;</a></div>'
+        
+        _hud = jarvis_hud_header(
+            page_name="SUPPLIERS",
+            page_count=f"{total_suppliers} RECORDS LOADED",
+            left_items=[
+                ("SUPPLIERS", str(total_suppliers), "c", "", ""),
+                ("WE OWE", money(total_owed) if can_see_balances else "---", "o", "o", "o"),
+                ("WITH BALANCE", str(_with_bal), "o", "", ""),
+                ("IN CREDIT", str(_in_credit), "g", "g", "g"),
+            ],
+            right_items=[
+                ("ACTIVE", str(total_suppliers - _in_credit - _with_bal), "g", "g", ""),
+                ("OWING", str(_with_bal), "r", "r", "r"),
+                ("NEW MTD", "0", "c", "", ""),
+                ("AVG DAYS", "24", "p", "", ""),
+            ],
+            reactor_size="page",
+            alert_html=_j_alert
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"SUPPLIERS <b>{total_suppliers} LOADED</b>")
+    
     return render_page("Suppliers", content, user, "suppliers")
 
 
@@ -31255,6 +31386,29 @@ def expenses_page():
     </script>
     '''
     
+    # -- JARVIS: Expenses HUD header --
+    if is_jarvis():
+        _exp_count = len(expenses)
+        _hud = jarvis_hud_header(
+            page_name="EXPENSES",
+            page_count=f"{_exp_count} RECORDS",
+            left_items=[
+                ("EXPENSES", str(_exp_count), "c", "", ""),
+                ("TOTAL SPENT", money(total_expenses), "r", "r", "r"),
+                ("VAT CLAIMED", money(total_vat), "o", "o", "o"),
+                ("CASH", str(cash_count), "g", "", ""),
+            ],
+            right_items=[
+                ("CARD", str(card_count), "p", "", ""),
+                ("EFT", str(eft_count), "c", "", ""),
+                ("NET EXCL VAT", money(total_expenses - total_vat), "r", "r", ""),
+                ("AVG EXPENSE", money(total_expenses / max(_exp_count, 1)), "o", "", ""),
+            ],
+            reactor_size="page",
+            alert_html=""
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"EXPENSES <b>{_exp_count} LOADED</b>")
+    
     return render_page("Expenses", content, user, "expenses")
 
 
@@ -31696,6 +31850,32 @@ def payroll_page():
         </div>
     </div>
     '''
+    
+    # -- JARVIS: Payroll HUD header --
+    if is_jarvis():
+        _emp_count = len(employees)
+        _ps_count = len(payslips)
+        _pending = len(staging_batches)
+        
+        _hud = jarvis_hud_header(
+            page_name="PAYROLL",
+            page_count=f"{_emp_count} EMPLOYEES",
+            left_items=[
+                ("EMPLOYEES", str(_emp_count), "c", "", ""),
+                ("TOTAL SALARIES", money(total_salaries), "o", "o", "o"),
+                ("PAYSLIPS", str(_ps_count), "g", "g", ""),
+                ("PENDING", str(_pending), "o" if _pending > 0 else "c", "o" if _pending > 0 else "", "o" if _pending > 0 else ""),
+            ],
+            right_items=[
+                ("COST/MONTH", money(total_salaries), "r", "r", "r"),
+                ("BATCHES", str(len(staging_batches)), "c", "", ""),
+                ("RECENT", str(len(recent_payslips)), "g", "", ""),
+                ("STATUS", "ACTIVE", "g", "g", ""),
+            ],
+            reactor_size="page",
+            alert_html=""
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"PAYROLL <b>{_emp_count} EMPLOYEES</b>")
     
     return render_page("Payroll", content, user, "payroll")
 
@@ -34138,6 +34318,28 @@ def business_pulse():
     </script>
     '''
     
+    # -- JARVIS: Pulse HUD header --
+    if is_jarvis():
+        _hud = jarvis_hud_header(
+            page_name="BUSINESS PULSE",
+            page_count="AI-POWERED INSIGHTS",
+            left_items=[
+                ("ANALYSIS", "AI", "p", "", ""),
+                ("TRENDS", "LIVE", "g", "g", ""),
+                ("KPIs", "ACTIVE", "c", "", ""),
+                ("FORECAST", "READY", "o", "", ""),
+            ],
+            right_items=[
+                ("HEALTH", "SCANNING", "g", "g", ""),
+                ("RISKS", "MONITORED", "r", "", ""),
+                ("GROWTH", "TRACKING", "g", "g", "g"),
+                ("ZANE", "ONLINE", "c", "", ""),
+            ],
+            reactor_size="page",
+            alert_html=""
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("PULSE <b>AI ACTIVE</b>")
+    
     return render_page("Business Pulse", content, user, "pulse")
 
 
@@ -35063,6 +35265,28 @@ def reports_page():
         [TIP] Or just ask Zane anything: "Show me aging" / "Who owes me?" / "Write me a management report"
     </p>
     '''
+    
+    # -- JARVIS: Reports HUD header --
+    if is_jarvis():
+        _hud = jarvis_hud_header(
+            page_name="REPORTS",
+            page_count="FINANCIAL ANALYTICS",
+            left_items=[
+                ("TRIAL BALANCE", "VIEW", "c", "", ""),
+                ("P&amp;L", "VIEW", "g", "g", ""),
+                ("BALANCE SHEET", "VIEW", "c", "", ""),
+                ("VAT RETURN", "VIEW", "o", "", ""),
+            ],
+            right_items=[
+                ("SMART REPORTS", "AI", "p", "", ""),
+                ("CASH FLOW", "VIEW", "g", "g", ""),
+                ("DEBTORS AGE", "VIEW", "r", "", ""),
+                ("CREDITORS AGE", "VIEW", "o", "", ""),
+            ],
+            reactor_size="page",
+            alert_html=""
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("REPORTS <b>READY</b>")
     
     return render_page("Reports", content, user, "reports")
 
@@ -57648,6 +57872,33 @@ def banking_page():
     </script>
     '''
     
+    # -- JARVIS: Banking HUD header --
+    if is_jarvis():
+        _match_pct = int((done_count / max(total_count, 1)) * 100)
+        _j_alert = ""
+        if needs_count > 0:
+            _j_alert = f'<div class="j-ticker"><b>&#9888; RECONCILE</b><span class="jt-msg">{needs_count} transactions need attention &mdash; {money(total_debit)} debits, {money(total_credit)} credits unmatched</span><a href="#needsSection" class="jt-act">REVIEW NOW &rarr;</a></div>'
+        
+        _hud = jarvis_hud_header(
+            page_name="BANKING",
+            page_count=f"{total_count} TRANSACTIONS",
+            left_items=[
+                ("TRANSACTIONS", str(total_count), "c", "", ""),
+                ("RECONCILED", str(done_count), "g", "g", "g"),
+                ("AUTO MATCHED", str(auto_count), "c", "", ""),
+                ("SUGGESTED", str(suggested_count), "o", "o", ""),
+            ],
+            right_items=[
+                ("NEEDS REVIEW", str(needs_count), "r", "r", "r"),
+                ("UNMATCHED DR", money(total_debit), "o", "o", "o"),
+                ("UNMATCHED CR", money(total_credit), "g", "g", "g"),
+                ("MATCH RATE", f"{_match_pct}%", "c", "", ""),
+            ],
+            reactor_size="page",
+            alert_html=_j_alert
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"BANKING <b>{total_count} TXN</b>")
+    
     return render_page("Banking", content, user, "banking")
 
 
@@ -71832,6 +72083,28 @@ Address: {business.get("address")[:50] if business and business.get("address") e
         <a href="/settings/business-groups" class="btn btn-primary">Manage Business Groups →</a>
     </div>
     '''
+    
+    # -- JARVIS: Settings HUD header --
+    if is_jarvis():
+        _hud = jarvis_hud_header(
+            page_name="SETTINGS",
+            page_count="SYSTEM CONFIGURATION",
+            left_items=[
+                ("BUSINESS", "ACTIVE", "g", "g", ""),
+                ("TEAM", "MANAGE", "c", "", ""),
+                ("THEME", "JARVIS", "c", "", ""),
+                ("SECURITY", "ON", "g", "g", "g"),
+            ],
+            right_items=[
+                ("API", "CONNECTED", "g", "g", ""),
+                ("IMPORT", "READY", "c", "", ""),
+                ("EXPORT", "READY", "c", "", ""),
+                ("BACKUP", "AUTO", "p", "", ""),
+            ],
+            reactor_size="page",
+            alert_html=""
+        )
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("SETTINGS <b>LOADED</b>")
     
     return render_page("Settings", content, user, "settings")
 
