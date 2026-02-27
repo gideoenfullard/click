@@ -18824,7 +18824,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             <div id="globalQueueInfo" style="margin-top:6px;font-size:11px;color:var(--text-muted);display:none;"></div>
         </div>
         <main class="container">
-            {content}
+            {_jarvis_global_hud(title, content) if is_jarvis() and 'j-hero' not in content else content}
         </main>
     </div>
     
@@ -22285,6 +22285,43 @@ def is_jarvis():
         return request.cookies.get("clickai_theme", "midnight") == "jarvis"
     except Exception:
         return False
+
+
+def _jarvis_global_hud(title, content):
+    """Wrap any page content with a mini Jarvis reactor header.
+    Only used for pages that don't have their own custom HUD.
+    """
+    try:
+        # Clean title for display
+        page_name = title.upper().replace(" - CLICK AI", "").strip()
+        
+        # Build a minimal reactor header with just branding
+        hdr = f'''
+        <div class="j-hero" style="padding:8px 0 12px;">
+            <div class="j-cn"></div>
+            <div class="j-rx page" onclick="toggleZaneChat()" title="Click to talk to Zane" style="width:180px;height:180px;">
+                <div class="j-rg r1"></div>
+                <div class="j-rg r2"></div>
+                <div class="j-rg r3"></div>
+                <div class="j-rg r4"></div>
+                <div class="j-core" style="inset:48px;">
+                    <div class="j-brand" style="font-size:14px;">CLICK.AI</div>
+                    <div class="j-sub">// BUSINESS INTELLIGENCE</div>
+                    <div class="j-ai">ZANE AI</div>
+                </div>
+                <div class="j-hint">CLICK TO TALK TO ZANE</div>
+            </div>
+            <div class="j-cn R"></div>
+            <div class="j-plbl">
+                <div class="j-pn">{page_name}</div>
+            </div>
+        </div>
+        '''
+        
+        tl = jarvis_techline()
+        return JARVIS_HUD_CSS + hdr + content + tl
+    except Exception:
+        return content
 
 
 @app.route("/dashboard")
