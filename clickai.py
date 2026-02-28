@@ -16541,6 +16541,14 @@ try:
 except Exception as e:
     logger.error(f"[BIZ-GROUP] Failed to register routes: {e}")
 
+# Order Scanner — Order-to-Invoice Pipeline
+try:
+    from clickai_order_scanner import register_order_scanner_routes
+    register_order_scanner_routes(app, db, login_required)
+    logger.info("[MODULES] ✅ Order Scanner loaded")
+except Exception as e:
+    logger.warning(f"[MODULES] Order Scanner not loaded: {e}")
+
 # === DEBUG: Temporary endpoint to diagnose business group dropdown ===
 @app.route("/api/debug-businesses")
 @login_required
