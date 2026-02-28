@@ -23583,7 +23583,7 @@ def customer_view(customer_id):
     
     # Build sales HTML
     sales_html = ""
-    for s in sales[:10]:
+    for s in sales[:200]:
         method = s.get("payment_method", "cash")
         method_color = {"cash": "#10b981", "card": "#3b82f6", "account": "#f59e0b"}.get(method, "#888")
         sales_html += f'''
@@ -23596,7 +23596,7 @@ def customer_view(customer_id):
         '''
     
     invoices_html = ""
-    for inv in invoices[:50]:
+    for inv in invoices[:200]:
         status = inv.get("status", "outstanding")
         status_colors = {"paid": "var(--green)", "credited": "var(--red)", "delivered": "#3b82f6", "account": "#f59e0b", "partial_credit": "#f59e0b"}
         status_color = status_colors.get(status, "var(--orange)")
@@ -23611,7 +23611,7 @@ def customer_view(customer_id):
     
     # Credit notes rows
     credit_notes_html = ""
-    for cn in credit_notes[:50]:
+    for cn in credit_notes[:200]:
         credit_notes_html += f'''
         <tr style="cursor:pointer;" onclick="window.location='/credit-note/{cn.get("id")}'">
             <td>{cn.get("credit_note_number", "-")}</td>
@@ -23624,7 +23624,7 @@ def customer_view(customer_id):
     
     # Delivery notes rows
     delivery_notes_html = ""
-    for dn in delivery_notes[:50]:
+    for dn in delivery_notes[:200]:
         dn_status = dn.get("status", "pending")
         dn_color = "var(--green)" if dn_status == "delivered" else "var(--orange)"
         delivery_notes_html += f'''
@@ -23638,7 +23638,7 @@ def customer_view(customer_id):
     
     # Quotes rows
     quotes_html = ""
-    for q in quotes[:50]:
+    for q in quotes[:200]:
         q_status = q.get("status", "draft")
         q_colors = {"accepted": "var(--green)", "converted": "#3b82f6", "declined": "var(--red)", "expired": "var(--text-muted)"}
         q_color = q_colors.get(q_status, "var(--orange)")
@@ -23653,7 +23653,7 @@ def customer_view(customer_id):
     
     # Jobs rows
     jobs_html = ""
-    for j in jobs[:50]:
+    for j in jobs[:200]:
         j_status = j.get("status", "open")
         j_colors = {"completed": "var(--green)", "invoiced": "#3b82f6", "cancelled": "var(--red)"}
         j_color = j_colors.get(j_status, "var(--orange)")
@@ -23667,7 +23667,7 @@ def customer_view(customer_id):
         '''
     
     receipts_html = ""
-    for r in receipts[:50]:
+    for r in receipts[:200]:
         receipts_html += f'''
         <tr>
             <td>{r.get("receipt_number", "-")}</td>
@@ -23952,6 +23952,29 @@ def customer_view(customer_id):
     </div>
     
     <script>
+    // Auto-collapse tables with more than 50 rows
+    document.addEventListener('DOMContentLoaded', function() {{
+        document.querySelectorAll('.card table.table tbody').forEach(function(tbody) {{
+            var rows = tbody.querySelectorAll('tr');
+            if (rows.length > 50) {{
+                for (var i = 50; i < rows.length; i++) {{
+                    rows[i].style.display = 'none';
+                    rows[i].classList.add('extra-row');
+                }}
+                var table = tbody.closest('table');
+                var btn = document.createElement('div');
+                btn.style.cssText = 'text-align:center;padding:10px;cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;border-top:1px solid var(--border);margin-top:-1px;';
+                btn.innerHTML = '▼ Show all ' + rows.length + ' records';
+                btn.onclick = function() {{
+                    var extra = tbody.querySelectorAll('.extra-row');
+                    var hidden = extra[0].style.display === 'none';
+                    extra.forEach(function(r) {{ r.style.display = hidden ? '' : 'none'; }});
+                    btn.innerHTML = hidden ? '▲ Show first 50' : '▼ Show all ' + rows.length + ' records';
+                }};
+                table.parentNode.insertBefore(btn, table.nextSibling);
+            }}
+        }});
+    }});
     function showEmailModal() {{
         document.getElementById('emailGroupModal').style.display = 'flex';
     }}
@@ -30000,7 +30023,7 @@ def supplier_view(supplier_id):
     
     expenses_html = ""
     if can_see_balances:
-        for e in expenses[:50]:
+        for e in expenses[:200]:
             status = e.get("status", "outstanding")
             status_color = "var(--green)" if status == "paid" else "var(--orange)"
             expenses_html += f'''
@@ -30015,7 +30038,7 @@ def supplier_view(supplier_id):
     
     supplier_inv_html = ""
     if can_see_balances:
-        for si in supplier_invoices[:50]:
+        for si in supplier_invoices[:200]:
             si_status = si.get("status", "outstanding")
             si_color = "var(--green)" if si_status == "paid" else "var(--orange)"
             supplier_inv_html += f'''
@@ -30030,7 +30053,7 @@ def supplier_view(supplier_id):
     
     payments_html = ""
     if can_see_balances:
-        for p in payments[:10]:
+        for p in payments[:200]:
             payments_html += f'''
             <tr>
                 <td>{p.get("reference", "-")}</td>
@@ -30243,7 +30266,7 @@ def supplier_view(supplier_id):
                 <tr><th>PO Number</th><th>Date</th><th>Total</th><th>Status</th></tr>
             </thead>
             <tbody>
-                {''.join(f"""<tr style="cursor:pointer;" onclick="window.location='/purchase/{po.get('id')}'"><td>{po.get('po_number', '-')}</td><td>{po.get('date', '-')}</td><td>{money(po.get('total', 0))}</td><td style="color:{'var(--green)' if po.get('status') == 'received' else 'var(--orange)'};">{(po.get('status', 'draft')).upper()}</td></tr>""" for po in purchase_orders[:50]) or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No purchase orders</td></tr>"}
+                {''.join(f"""<tr style="cursor:pointer;" onclick="window.location='/purchase/{po.get('id')}'"><td>{po.get('po_number', '-')}</td><td>{po.get('date', '-')}</td><td>{money(po.get('total', 0))}</td><td style="color:{'var(--green)' if po.get('status') == 'received' else 'var(--orange)'};">{(po.get('status', 'draft')).upper()}</td></tr>""" for po in purchase_orders[:200]) or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No purchase orders</td></tr>"}
             </tbody>
         </table>
     </div>
@@ -30267,6 +30290,29 @@ def supplier_view(supplier_id):
     </div>
     
     <script>
+    // Auto-collapse tables with more than 50 rows
+    document.addEventListener('DOMContentLoaded', function() {{
+        document.querySelectorAll('.card table.table tbody').forEach(function(tbody) {{
+            var rows = tbody.querySelectorAll('tr');
+            if (rows.length > 50) {{
+                for (var i = 50; i < rows.length; i++) {{
+                    rows[i].style.display = 'none';
+                    rows[i].classList.add('extra-row');
+                }}
+                var table = tbody.closest('table');
+                var btn = document.createElement('div');
+                btn.style.cssText = 'text-align:center;padding:10px;cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;border-top:1px solid var(--border);margin-top:-1px;';
+                btn.innerHTML = '▼ Show all ' + rows.length + ' records';
+                btn.onclick = function() {{
+                    var extra = tbody.querySelectorAll('.extra-row');
+                    var hidden = extra[0].style.display === 'none';
+                    extra.forEach(function(r) {{ r.style.display = hidden ? '' : 'none'; }});
+                    btn.innerHTML = hidden ? '▲ Show first 50' : '▼ Show all ' + rows.length + ' records';
+                }};
+                table.parentNode.insertBefore(btn, table.nextSibling);
+            }}
+        }});
+    }});
     async function viewScannedDoc(docId) {{
         document.getElementById('scanModal').style.display = 'flex';
         document.getElementById('scanModalContent').innerHTML = '<p>Loading document...</p>';
