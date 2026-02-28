@@ -18866,7 +18866,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     </div>
     <header class="header">
         <div class="header-top">
-            <div class="logo" onclick="if(typeof jzToggle==='function'){jzToggle();}else if(typeof toggleZaneChat==='function'){toggleZaneChat();}">Click AI</div>
+            <div class="logo" onclick="(typeof jzToggle==='function')?jzToggle():toggleZaneChat()">Click AI</div>
             {user_html}
         </div>
         <div class="nav-wrapper" id="navWrapper">
@@ -19147,7 +19147,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         <a href="/scan" class="{'active' if active in ('scan', 'inbox') else ''}">
             <span>📷</span>Scan
         </a>
-        <button class="mic-btn" id="mobileMicBtn" onclick="if(typeof jzToggle==='function'){jzToggle();}else if(typeof toggleZaneChat==='function'){toggleZaneChat();}">
+        <button class="mic-btn" id="mobileMicBtn" onclick="(typeof jzToggle==='function')?jzToggle():toggleZaneChat()">
             🎤
         </button>
         <a href="/stock" class="{'active' if active == 'stock' else ''}">
@@ -22537,7 +22537,7 @@ def _jarvis_global_hud(title, content):
         </div>
         <script>
         function jzToggle(){{var ext=document.getElementById('jZaneExt');var pad=document.getElementById('jHudPad');ext.classList.toggle('open');if(pad)pad.style.display=ext.classList.contains('open')?'none':'';if(ext.classList.contains('open')){{setTimeout(function(){{document.getElementById('jzInput').focus();}},400);if(!document.getElementById('jzMsgsL').children.length){{document.getElementById('jzMsgsL').innerHTML='<div class="jzm-ai"><p>Hello! I\\'m <strong>Zane</strong>, your AI assistant. Ask me anything or use the quick actions.</p></div>';document.getElementById('jzMsgsR').innerHTML='<div class="jzm-ai"><p><strong>Quick insights loading...</strong></p><p>Ask a question to get started.</p></div>';}}}}}}
-        async function jzSend(text){{if(!text||!text.trim())return;var msgsL=document.getElementById('jzMsgsL');var msgsR=document.getElementById('jzMsgsR');var input=document.getElementById('jzInput');msgsL.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';msgsL.scrollTop=msgsL.scrollHeight;input.value='';msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ffaa00;">⟳ Processing...</p></div>';try{{var resp=await fetch("/api/ai",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{command:text,current_page:window.location.pathname}})}});var data=await resp.json();var reply=data.response||data.error||"Sorry, I had trouble with that.";var h=reply;h=h.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>");h=h.replace(/\*(.+?)\*/g,"<em>$1</em>");h=h.replace(/^- (.+)$/gm,"<li>$1</li>");h=h.replace(/\\n\\n/g,"</p><p>");h=h.replace(/\\n/g,"<br>");h="<p>"+h+"</p>";msgsR.innerHTML='<div class="jzm-ai">'+h+"</div>";msgsR.scrollTop=msgsR.scrollHeight;if(data.navigate&&!data.error){{var t=data.navigate;if(t&&t.startsWith("/")&&t!==window.location.pathname){{setTimeout(function(){{window.location.href=t;}},1500);}}}}}}catch(e){{msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ff4466;">Error. Try again.</p></div>';}}}}
+        async function jzSend(text){{if(!text||!text.trim())return;var msgsL=document.getElementById('jzMsgsL');var msgsR=document.getElementById('jzMsgsR');var input=document.getElementById('jzInput');msgsL.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';msgsL.scrollTop=msgsL.scrollHeight;input.value='';msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ffaa00;">⟳ Processing...</p></div>';try{{var resp=await fetch("/api/ai",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{command:text,current_page:window.location.pathname}})}});var data=await resp.json();var reply=data.response||data.error||"Sorry, I had trouble with that.";var h=reply;h=h.replace(/\\*\\*(.+?)\\*\\*/g,"<strong>$1</strong>");h=h.replace(/\\*(.+?)\\*/g,"<em>$1</em>");h=h.replace(/^- (.+)$/gm,"<li>$1</li>");h=h.replace(/\\n\\n/g,"</p><p>");h=h.replace(/\\n/g,"<br>");h="<p>"+h+"</p>";msgsR.innerHTML='<div class="jzm-ai">'+h+"</div>";msgsR.scrollTop=msgsR.scrollHeight;if(data.navigate&&!data.error){{var t=data.navigate;if(t&&t.startsWith("/")&&t!==window.location.pathname){{setTimeout(function(){{window.location.href=t;}},1500);}}}}}}catch(e){{msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ff4466;">Error. Try again.</p></div>';}}}}
         document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var ext=document.getElementById('jZaneExt');if(ext&&ext.classList.contains('open'))jzToggle();}}}});
         </script>
         '''
