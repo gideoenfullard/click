@@ -18885,7 +18885,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             <div id="globalQueueInfo" style="margin-top:6px;font-size:11px;color:var(--text-muted);display:none;"></div>
         </div>
         <main class="container">
-            {_jarvis_global_hud(title, content) if is_jarvis() and 'j-hero' not in content else content}
+            {_jarvis_global_hud(title, content) if has_reactor_hud() and 'j-hero' not in content else content}
         </main>
     </div>
     
@@ -19697,16 +19697,16 @@ def get_zane_proactive_tip(page: str, context: dict = None) -> str:
     return ''  # Disabled - was interfering with Tab navigation and printing
 
 def get_zane_chat() -> str:
-    """Zane chat popup - managers/admin/owner only. Skipped on Jarvis theme (reactor HUD used instead)."""
+    """Zane chat popup - managers/admin/owner only. Skipped on reactor themes (HUD handles chat)."""
     try:
         role = get_user_role()
         if role in ("staff", "cashier", "pos_only", "waiter", "sales"):
             return ''  # No Zane for staff
     except:
         pass
-    # On Jarvis theme, the reactor HUD dropdown handles Zane chat directly
+    # On reactor themes, the HUD dropdown handles Zane chat directly
     try:
-        if is_jarvis():
+        if has_reactor_hud():
             return ''
     except:
         pass
@@ -22316,6 +22316,281 @@ JARVIS_HUD_CSS = '''
 </style>
 '''
 
+# ═══════════════════════════════════════════════════════════════
+# THEME REACTOR SKINS - Override Jarvis colors per theme
+# All themes reuse the .j-* structural classes, just re-skin
+# ═══════════════════════════════════════════════════════════════
+THEME_REACTOR_SKINS = '''<style>
+/* ═══ MIDNIGHT — Purple Holographic ═══ */
+[data-theme="midnight"] .j-hud-wrap{border-color:rgba(139,92,246,0.15);background:linear-gradient(160deg,rgba(20,10,40,0.7),rgba(10,5,30,0.8));border-radius:16px;overflow:hidden;}
+[data-theme="midnight"] .j-hud-wrap::before{border-color:rgba(139,92,246,0.3);}
+[data-theme="midnight"] .j-hud-wrap::after{border-color:rgba(139,92,246,0.3);}
+[data-theme="midnight"] .j-fi{border-color:rgba(139,92,246,0.08)!important;background:rgba(139,92,246,0.04);border-radius:10px;}
+[data-theme="midnight"] .j-fi.L{border-left:2px solid rgba(139,92,246,0.25)!important;}
+[data-theme="midnight"] .j-fi.R{border-right:2px solid rgba(139,92,246,0.25)!important;}
+[data-theme="midnight"] .j-fi.g.L{border-left-color:rgba(16,185,129,0.4)!important;}
+[data-theme="midnight"] .j-fi.g.R{border-right-color:rgba(16,185,129,0.4)!important;}
+[data-theme="midnight"] .j-fi.r.L{border-left-color:rgba(244,63,94,0.4)!important;}
+[data-theme="midnight"] .j-fi.r.R{border-right-color:rgba(244,63,94,0.4)!important;}
+[data-theme="midnight"] .j-fi.o.L{border-left-color:rgba(251,191,36,0.4)!important;}
+[data-theme="midnight"] .j-fi.o.R{border-right-color:rgba(251,191,36,0.4)!important;}
+[data-theme="midnight"] .j-fd.c{background:#8b5cf6;box-shadow:0 0 6px rgba(139,92,246,0.5);}
+[data-theme="midnight"] .j-fd.g{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,0.5);}
+[data-theme="midnight"] .j-fd.o{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,0.5);}
+[data-theme="midnight"] .j-fd.r{background:#f43f5e;box-shadow:0 0 6px rgba(244,63,94,0.5);}
+[data-theme="midnight"] .j-fl{font-family:'Segoe UI',system-ui,sans-serif;color:#6d5aad;}
+[data-theme="midnight"] .j-fv{font-family:'Segoe UI',system-ui,sans-serif;font-weight:700;color:#a78bfa;text-shadow:0 0 8px rgba(139,92,246,0.3);}
+[data-theme="midnight"] .j-fv.g{color:#34d399;text-shadow:0 0 8px rgba(16,185,129,0.3);}
+[data-theme="midnight"] .j-fv.o{color:#fbbf24;text-shadow:0 0 8px rgba(251,191,36,0.3);}
+[data-theme="midnight"] .j-fv.r{color:#fb7185;text-shadow:0 0 8px rgba(244,63,94,0.3);}
+[data-theme="midnight"] .j-cn::before{background:linear-gradient(90deg,rgba(139,92,246,0.05),rgba(139,92,246,0.3));}
+[data-theme="midnight"] .j-cn.R::before{background:linear-gradient(90deg,rgba(139,92,246,0.3),rgba(139,92,246,0.05));}
+[data-theme="midnight"] .j-cn::after{background:rgba(139,92,246,0.35);box-shadow:0 0 8px rgba(139,92,246,0.4);}
+[data-theme="midnight"] .j-rg.r1{border-color:rgba(139,92,246,0.15);border-top-color:rgba(139,92,246,0.55);box-shadow:0 0 25px rgba(139,92,246,0.08),inset 0 0 25px rgba(139,92,246,0.04);}
+[data-theme="midnight"] .j-rg.r2{border-color:rgba(139,92,246,0.1);border-bottom-color:rgba(168,85,247,0.45);}
+[data-theme="midnight"] .j-rg.r3{border-color:rgba(139,92,246,0.08);border-top-color:rgba(99,102,241,0.4);}
+[data-theme="midnight"] .j-rg.r4{border-color:rgba(139,92,246,0.05);border-top-color:rgba(139,92,246,0.35);border-left-color:rgba(168,85,247,0.25);}
+[data-theme="midnight"] .j-core{background:radial-gradient(circle,rgba(139,92,246,0.12) 0%,rgba(60,30,100,0.3) 60%,transparent 100%);border-color:rgba(139,92,246,0.2);box-shadow:0 0 40px rgba(139,92,246,0.1);}
+[data-theme="midnight"] .j-core .j-brand{color:#c4b5fd;text-shadow:0 0 18px rgba(139,92,246,0.6),0 0 45px rgba(139,92,246,0.2);}
+[data-theme="midnight"] .j-core .j-sub{color:#6d5aad;}
+[data-theme="midnight"] .j-core .j-ai{color:#a78bfa;border-color:rgba(139,92,246,0.25);text-shadow:0 0 8px rgba(139,92,246,0.5);}
+[data-theme="midnight"] .j-hint{color:#a78bfa;text-shadow:0 0 10px rgba(139,92,246,0.5);}
+[data-theme="midnight"] .j-plbl .j-pn{font-family:'Segoe UI',system-ui,sans-serif;color:#a78bfa;text-shadow:0 0 10px rgba(139,92,246,0.3);}
+[data-theme="midnight"] .j-plbl .j-pc{font-family:'Segoe UI',system-ui,sans-serif;color:#5a4a8a;}
+[data-theme="midnight"] .j-ticker{border-color:rgba(251,191,36,0.2);border-left-color:rgba(251,191,36,0.5);background:rgba(251,191,36,0.03);}
+[data-theme="midnight"] .j-tl{border-top-color:rgba(139,92,246,0.06);}
+[data-theme="midnight"] .j-tl span{color:#5a4a8a;}
+[data-theme="midnight"] .j-tl span b{color:#7c6abc;}
+[data-theme="midnight"] .j-zane-ext{border-top:1px solid rgba(139,92,246,0.06);}
+[data-theme="midnight"] .jzc-label{font-family:'Segoe UI',system-ui,sans-serif;color:#a78bfa;}
+[data-theme="midnight"] .jzc-status{color:#10b981;border-color:rgba(16,185,129,0.2);}
+[data-theme="midnight"] .jzc-btn{font-family:'Segoe UI',system-ui,sans-serif;color:#8b7cc8;border-color:rgba(139,92,246,0.1);border-radius:8px;}
+[data-theme="midnight"] .jzc-btn:hover{color:#c4b5fd;border-color:rgba(139,92,246,0.3);background:rgba(139,92,246,0.08);text-shadow:0 0 8px rgba(139,92,246,0.3);}
+[data-theme="midnight"] .jzm-ai{background:rgba(139,92,246,0.04);border-left-color:rgba(139,92,246,0.2);border-radius:0 8px 8px 0;}
+[data-theme="midnight"] .jzm-ai p{color:#b0a0d0;}
+[data-theme="midnight"] .jzm-ai strong{color:#c4b5fd;}
+[data-theme="midnight"] .jzm-user{background:rgba(99,102,241,0.06);border-right-color:rgba(99,102,241,0.2);border-radius:8px 0 0 8px;}
+[data-theme="midnight"] .jzm-user p{color:#9088c0;}
+[data-theme="midnight"] .j-zane-inp{border-top-color:rgba(139,92,246,0.08);}
+[data-theme="midnight"] .j-zane-inp input{color:#c4b5fd;}
+[data-theme="midnight"] .j-zane-inp input::placeholder{color:#3a2a6a;}
+[data-theme="midnight"] .j-zane-inp .jzs{color:#6d5aad;border-left-color:rgba(139,92,246,0.08);}
+[data-theme="midnight"] .j-zane-inp .jzs:hover{color:#a78bfa;text-shadow:0 0 10px rgba(139,92,246,0.4);}
+[data-theme="midnight"] .jzc-close{color:#5a4a8a;border-color:rgba(139,92,246,0.1);border-radius:8px;}
+[data-theme="midnight"] .jzc-close:hover{color:#ff6b9d;border-color:rgba(255,107,157,0.25);}
+[data-theme="midnight"] .j-zane-ctx .jzc-ci{color:#5a4a8a;}
+[data-theme="midnight"] .j-zane-ctx .jzc-ci .jzd{background:#7c3aed;}
+
+/* ═══ CYBER — Neon Grid ═══ */
+[data-theme="cyber"] .j-hud-wrap{border-color:rgba(0,229,255,0.12);background:rgba(0,10,20,0.9);overflow:hidden;}
+[data-theme="cyber"] .j-hud-wrap::before{border-color:rgba(0,229,255,0.25);}
+[data-theme="cyber"] .j-hud-wrap::after{border-color:rgba(0,229,255,0.25);}
+[data-theme="cyber"] .j-fi{border-color:rgba(0,229,255,0.08)!important;background:rgba(0,229,255,0.02);}
+[data-theme="cyber"] .j-fi.L{border-left:2px solid rgba(0,229,255,0.2)!important;}
+[data-theme="cyber"] .j-fi.R{border-right:2px solid rgba(0,229,255,0.2)!important;}
+[data-theme="cyber"] .j-fi.g.L{border-left-color:rgba(0,255,136,0.4)!important;}
+[data-theme="cyber"] .j-fi.g.R{border-right-color:rgba(0,255,136,0.4)!important;}
+[data-theme="cyber"] .j-fd.c{background:#00e5ff;box-shadow:0 0 6px rgba(0,229,255,0.5);}
+[data-theme="cyber"] .j-fd.g{background:#00ff88;box-shadow:0 0 6px rgba(0,255,136,0.5);}
+[data-theme="cyber"] .j-fd.o{background:#ffaa00;box-shadow:0 0 6px rgba(255,170,0,0.5);}
+[data-theme="cyber"] .j-fd.r{background:#ff0066;box-shadow:0 0 6px rgba(255,0,102,0.5);}
+[data-theme="cyber"] .j-fl{color:#006670;}
+[data-theme="cyber"] .j-fv{color:#00e5ff;text-shadow:0 0 8px rgba(0,229,255,0.4);}
+[data-theme="cyber"] .j-fv.g{color:#00ff88;text-shadow:0 0 8px rgba(0,255,136,0.4);}
+[data-theme="cyber"] .j-fv.o{color:#ffaa00;}
+[data-theme="cyber"] .j-fv.r{color:#ff0066;text-shadow:0 0 8px rgba(255,0,102,0.4);}
+[data-theme="cyber"] .j-cn::before{background:linear-gradient(90deg,rgba(0,229,255,0.05),rgba(0,229,255,0.3));}
+[data-theme="cyber"] .j-cn.R::before{background:linear-gradient(90deg,rgba(0,229,255,0.3),rgba(0,229,255,0.05));}
+[data-theme="cyber"] .j-cn::after{background:rgba(0,229,255,0.35);box-shadow:0 0 8px rgba(0,229,255,0.4);}
+[data-theme="cyber"] .j-rg.r1{border-color:rgba(0,229,255,0.15);border-top-color:rgba(0,229,255,0.6);border-bottom-color:rgba(0,229,255,0.3);box-shadow:0 0 25px rgba(0,229,255,0.08);}
+[data-theme="cyber"] .j-rg.r2{border-color:rgba(0,229,255,0.1);border-right-color:rgba(0,229,255,0.5);}
+[data-theme="cyber"] .j-rg.r3{border-color:rgba(0,229,255,0.08);border-bottom-color:rgba(0,229,255,0.4);border-left-color:rgba(0,229,255,0.2);}
+[data-theme="cyber"] .j-rg.r4{border-color:rgba(0,229,255,0.05);border-left-color:rgba(0,229,255,0.3);}
+[data-theme="cyber"] .j-core{background:radial-gradient(circle,rgba(0,229,255,0.08) 0%,rgba(0,30,35,0.4) 60%,transparent 100%);border-color:rgba(0,229,255,0.2);box-shadow:0 0 30px rgba(0,229,255,0.08);}
+[data-theme="cyber"] .j-core .j-brand{color:#00e5ff;text-shadow:0 0 18px rgba(0,229,255,0.6),0 0 45px rgba(0,229,255,0.15);}
+[data-theme="cyber"] .j-core .j-sub{color:#006670;}
+[data-theme="cyber"] .j-core .j-ai{color:#00e5ff;border-color:rgba(0,229,255,0.3);text-shadow:0 0 8px rgba(0,229,255,0.5);background:rgba(0,229,255,0.05);}
+[data-theme="cyber"] .j-hint{color:#00e5ff;text-shadow:0 0 10px rgba(0,229,255,0.5);}
+[data-theme="cyber"] .j-plbl .j-pn{color:#00e5ff;text-shadow:0 0 10px rgba(0,229,255,0.3);}
+[data-theme="cyber"] .j-plbl .j-pc{color:#006670;}
+[data-theme="cyber"] .j-tl span{color:#006670;}
+[data-theme="cyber"] .j-tl span b{color:#00aacc;}
+[data-theme="cyber"] .jzc-label{color:#00e5ff;text-shadow:0 0 10px rgba(0,229,255,0.3);}
+[data-theme="cyber"] .jzc-status{color:#00ff88;border-color:rgba(0,255,136,0.2);}
+[data-theme="cyber"] .jzc-btn{color:#009aaa;border-color:rgba(0,229,255,0.08);}
+[data-theme="cyber"] .jzc-btn:hover{color:#00e5ff;border-color:rgba(0,229,255,0.3);background:rgba(0,229,255,0.03);text-shadow:0 0 8px rgba(0,229,255,0.4);}
+[data-theme="cyber"] .jzm-ai{background:rgba(0,229,255,0.02);border-left-color:rgba(0,229,255,0.2);}
+[data-theme="cyber"] .jzm-ai p{color:#66ccbb;}
+[data-theme="cyber"] .jzm-ai strong{color:#00e5ff;}
+[data-theme="cyber"] .jzm-user{background:rgba(0,229,255,0.02);border-right-color:rgba(0,229,255,0.15);}
+[data-theme="cyber"] .jzm-user p{color:#448877;}
+[data-theme="cyber"] .j-zane-inp input{color:#00e5ff;}
+[data-theme="cyber"] .j-zane-inp input::placeholder{color:#004455;}
+[data-theme="cyber"] .j-zane-inp .jzs{color:#006670;border-left-color:rgba(0,229,255,0.06);}
+[data-theme="cyber"] .j-zane-inp .jzs:hover{color:#00e5ff;text-shadow:0 0 10px rgba(0,229,255,0.5);}
+[data-theme="cyber"] .jzc-close{color:#006670;border-color:rgba(0,229,255,0.08);}
+[data-theme="cyber"] .jzc-close:hover{color:#ff0066;border-color:rgba(255,0,102,0.2);}
+[data-theme="cyber"] .j-zane-ctx .jzc-ci{color:#006670;}
+[data-theme="cyber"] .j-zane-ctx .jzc-ci .jzd{background:#00aacc;}
+
+/* ═══ EMERALD — Terminal Green ═══ */
+[data-theme="emerald"] .j-hud-wrap{border-color:rgba(16,185,129,0.15);background:rgba(5,15,10,0.8);}
+[data-theme="emerald"] .j-hud-wrap::before{border-color:rgba(16,185,129,0.3);}
+[data-theme="emerald"] .j-hud-wrap::after{border-color:rgba(16,185,129,0.3);}
+[data-theme="emerald"] .j-fi{border-color:rgba(16,185,129,0.08)!important;background:rgba(16,185,129,0.02);}
+[data-theme="emerald"] .j-fi.L{border-left:2px solid rgba(16,185,129,0.25)!important;}
+[data-theme="emerald"] .j-fi.R{border-right:2px solid rgba(16,185,129,0.25)!important;}
+[data-theme="emerald"] .j-fi.g.L{border-left-color:rgba(52,211,153,0.4)!important;}
+[data-theme="emerald"] .j-fi.g.R{border-right-color:rgba(52,211,153,0.4)!important;}
+[data-theme="emerald"] .j-fd.c{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,0.5);}
+[data-theme="emerald"] .j-fd.g{background:#34d399;box-shadow:0 0 6px rgba(52,211,153,0.5);}
+[data-theme="emerald"] .j-fd.o{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,0.5);}
+[data-theme="emerald"] .j-fd.r{background:#f87171;box-shadow:0 0 6px rgba(248,113,113,0.5);}
+[data-theme="emerald"] .j-fl{color:#065f46;}
+[data-theme="emerald"] .j-fv{color:#34d399;text-shadow:0 0 6px rgba(16,185,129,0.3);}
+[data-theme="emerald"] .j-fv.g{color:#6ee7b7;text-shadow:0 0 6px rgba(16,185,129,0.4);}
+[data-theme="emerald"] .j-fv.o{color:#fbbf24;}
+[data-theme="emerald"] .j-fv.r{color:#f87171;text-shadow:0 0 6px rgba(248,113,113,0.3);}
+[data-theme="emerald"] .j-cn::before{background:linear-gradient(90deg,rgba(16,185,129,0.05),rgba(16,185,129,0.3));}
+[data-theme="emerald"] .j-cn.R::before{background:linear-gradient(90deg,rgba(16,185,129,0.3),rgba(16,185,129,0.05));}
+[data-theme="emerald"] .j-cn::after{background:rgba(16,185,129,0.35);box-shadow:0 0 8px rgba(16,185,129,0.4);}
+[data-theme="emerald"] .j-rg.r1{border-color:rgba(16,185,129,0.15);border-top-color:rgba(16,185,129,0.5);box-shadow:0 0 20px rgba(16,185,129,0.06);}
+[data-theme="emerald"] .j-rg.r2{border-color:rgba(16,185,129,0.1);border-right-color:rgba(52,211,153,0.4);}
+[data-theme="emerald"] .j-rg.r3{border-color:rgba(16,185,129,0.08);border-bottom-color:rgba(16,185,129,0.35);}
+[data-theme="emerald"] .j-rg.r4{border-color:rgba(16,185,129,0.05);border-left-color:rgba(16,185,129,0.25);}
+[data-theme="emerald"] .j-core{background:radial-gradient(circle,rgba(16,185,129,0.08) 0%,rgba(0,30,20,0.4) 60%,transparent 100%);border-color:rgba(16,185,129,0.2);box-shadow:0 0 25px rgba(16,185,129,0.08);}
+[data-theme="emerald"] .j-core .j-brand{color:#10b981;text-shadow:0 0 15px rgba(16,185,129,0.5),0 0 40px rgba(16,185,129,0.15);}
+[data-theme="emerald"] .j-core .j-sub{color:#065f46;}
+[data-theme="emerald"] .j-core .j-ai{color:#34d399;border-color:rgba(16,185,129,0.25);text-shadow:0 0 8px rgba(16,185,129,0.5);}
+[data-theme="emerald"] .j-hint{color:#34d399;text-shadow:0 0 10px rgba(16,185,129,0.5);}
+[data-theme="emerald"] .j-plbl .j-pn{color:#10b981;text-shadow:0 0 8px rgba(16,185,129,0.3);}
+[data-theme="emerald"] .j-plbl .j-pc{color:#065f46;}
+[data-theme="emerald"] .j-tl span{color:#065f46;}
+[data-theme="emerald"] .j-tl span b{color:#059669;}
+[data-theme="emerald"] .jzc-label{color:#10b981;}
+[data-theme="emerald"] .jzc-status{color:#34d399;border-color:rgba(16,185,129,0.2);}
+[data-theme="emerald"] .jzc-btn{color:#059669;border-color:rgba(16,185,129,0.1);}
+[data-theme="emerald"] .jzc-btn:hover{color:#34d399;border-color:rgba(16,185,129,0.3);background:rgba(16,185,129,0.05);text-shadow:0 0 6px rgba(16,185,129,0.3);}
+[data-theme="emerald"] .jzm-ai{background:rgba(16,185,129,0.03);border-left-color:rgba(16,185,129,0.2);}
+[data-theme="emerald"] .jzm-ai p{color:#6ee7b7;}
+[data-theme="emerald"] .jzm-ai strong{color:#34d399;}
+[data-theme="emerald"] .jzm-user{background:rgba(16,185,129,0.02);border-right-color:rgba(16,185,129,0.15);}
+[data-theme="emerald"] .jzm-user p{color:#4ade80;}
+[data-theme="emerald"] .j-zane-inp input{color:#34d399;}
+[data-theme="emerald"] .j-zane-inp input::placeholder{color:#064e3b;}
+[data-theme="emerald"] .j-zane-inp .jzs{color:#065f46;border-left-color:rgba(16,185,129,0.06);}
+[data-theme="emerald"] .j-zane-inp .jzs:hover{color:#34d399;}
+[data-theme="emerald"] .jzc-close{color:#065f46;border-color:rgba(16,185,129,0.1);}
+[data-theme="emerald"] .jzc-close:hover{color:#f87171;border-color:rgba(248,113,113,0.2);}
+[data-theme="emerald"] .j-zane-ctx .jzc-ci{color:#065f46;}
+[data-theme="emerald"] .j-zane-ctx .jzc-ci .jzd{background:#059669;}
+
+/* ═══ SUNSET — Amber Mission Control ═══ */
+[data-theme="sunset"] .j-hud-wrap{border-color:rgba(245,158,11,0.15);background:linear-gradient(170deg,rgba(30,15,5,0.7),rgba(20,10,2,0.85));}
+[data-theme="sunset"] .j-hud-wrap::before{border-color:rgba(245,158,11,0.3);}
+[data-theme="sunset"] .j-hud-wrap::after{border-color:rgba(245,158,11,0.3);}
+[data-theme="sunset"] .j-fi{border-color:rgba(245,158,11,0.08)!important;background:rgba(245,158,11,0.02);}
+[data-theme="sunset"] .j-fi.L{border-left:2px solid rgba(245,158,11,0.25)!important;}
+[data-theme="sunset"] .j-fi.R{border-right:2px solid rgba(245,158,11,0.25)!important;}
+[data-theme="sunset"] .j-fi.g.L{border-left-color:rgba(16,185,129,0.4)!important;}
+[data-theme="sunset"] .j-fi.g.R{border-right-color:rgba(16,185,129,0.4)!important;}
+[data-theme="sunset"] .j-fd.c{background:#f59e0b;box-shadow:0 0 6px rgba(245,158,11,0.5);}
+[data-theme="sunset"] .j-fd.g{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,0.5);}
+[data-theme="sunset"] .j-fd.o{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,0.5);}
+[data-theme="sunset"] .j-fd.r{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.5);}
+[data-theme="sunset"] .j-fl{color:#92400e;}
+[data-theme="sunset"] .j-fv{color:#fbbf24;text-shadow:0 0 8px rgba(245,158,11,0.3);}
+[data-theme="sunset"] .j-fv.g{color:#34d399;text-shadow:0 0 8px rgba(16,185,129,0.3);}
+[data-theme="sunset"] .j-fv.o{color:#fbbf24;}
+[data-theme="sunset"] .j-fv.r{color:#f87171;text-shadow:0 0 8px rgba(248,113,113,0.3);}
+[data-theme="sunset"] .j-cn::before{background:linear-gradient(90deg,rgba(245,158,11,0.05),rgba(245,158,11,0.3));}
+[data-theme="sunset"] .j-cn.R::before{background:linear-gradient(90deg,rgba(245,158,11,0.3),rgba(245,158,11,0.05));}
+[data-theme="sunset"] .j-cn::after{background:rgba(245,158,11,0.35);box-shadow:0 0 8px rgba(245,158,11,0.4);}
+[data-theme="sunset"] .j-rg.r1{border-color:rgba(245,158,11,0.15);border-top-color:rgba(245,158,11,0.5);box-shadow:0 0 20px rgba(245,158,11,0.06);}
+[data-theme="sunset"] .j-rg.r2{border-color:rgba(245,158,11,0.1);border-right-color:rgba(251,191,36,0.4);}
+[data-theme="sunset"] .j-rg.r3{border-color:rgba(245,158,11,0.08);border-bottom-color:rgba(245,158,11,0.35);}
+[data-theme="sunset"] .j-rg.r4{border-color:rgba(245,158,11,0.05);border-left-color:rgba(245,158,11,0.25);}
+[data-theme="sunset"] .j-core{background:radial-gradient(circle,rgba(245,158,11,0.1) 0%,rgba(60,30,0,0.3) 60%,transparent 100%);border-color:rgba(245,158,11,0.2);box-shadow:0 0 25px rgba(245,158,11,0.08);}
+[data-theme="sunset"] .j-core .j-brand{color:#fbbf24;text-shadow:0 0 15px rgba(245,158,11,0.5),0 0 40px rgba(245,158,11,0.15);}
+[data-theme="sunset"] .j-core .j-sub{color:#92400e;}
+[data-theme="sunset"] .j-core .j-ai{color:#f59e0b;border-color:rgba(245,158,11,0.25);text-shadow:0 0 8px rgba(245,158,11,0.5);}
+[data-theme="sunset"] .j-hint{color:#fbbf24;text-shadow:0 0 10px rgba(245,158,11,0.5);}
+[data-theme="sunset"] .j-plbl .j-pn{color:#fbbf24;text-shadow:0 0 8px rgba(245,158,11,0.3);}
+[data-theme="sunset"] .j-plbl .j-pc{color:#92400e;}
+[data-theme="sunset"] .j-tl span{color:#92400e;}
+[data-theme="sunset"] .j-tl span b{color:#b45309;}
+[data-theme="sunset"] .jzc-label{color:#fbbf24;}
+[data-theme="sunset"] .jzc-status{color:#10b981;border-color:rgba(16,185,129,0.2);}
+[data-theme="sunset"] .jzc-btn{color:#b45309;border-color:rgba(245,158,11,0.1);}
+[data-theme="sunset"] .jzc-btn:hover{color:#fbbf24;border-color:rgba(245,158,11,0.3);background:rgba(245,158,11,0.06);text-shadow:0 0 8px rgba(245,158,11,0.3);}
+[data-theme="sunset"] .jzm-ai{background:rgba(245,158,11,0.03);border-left-color:rgba(245,158,11,0.2);}
+[data-theme="sunset"] .jzm-ai p{color:#c4a060;}
+[data-theme="sunset"] .jzm-ai strong{color:#fbbf24;}
+[data-theme="sunset"] .jzm-user{background:rgba(245,158,11,0.02);border-right-color:rgba(245,158,11,0.15);}
+[data-theme="sunset"] .jzm-user p{color:#a07840;}
+[data-theme="sunset"] .j-zane-inp input{color:#fbbf24;}
+[data-theme="sunset"] .j-zane-inp input::placeholder{color:#78350f;}
+[data-theme="sunset"] .j-zane-inp .jzs{color:#92400e;border-left-color:rgba(245,158,11,0.06);}
+[data-theme="sunset"] .j-zane-inp .jzs:hover{color:#fbbf24;text-shadow:0 0 10px rgba(245,158,11,0.4);}
+[data-theme="sunset"] .jzc-close{color:#92400e;border-color:rgba(245,158,11,0.1);}
+[data-theme="sunset"] .jzc-close:hover{color:#ef4444;border-color:rgba(239,68,68,0.25);}
+[data-theme="sunset"] .j-zane-ctx .jzc-ci{color:#92400e;}
+[data-theme="sunset"] .j-zane-ctx .jzc-ci .jzd{background:#d97706;}
+
+/* ═══ SLATE — Military Blue Ops ═══ */
+[data-theme="slate"] .j-hud-wrap{border-color:rgba(59,130,246,0.12);background:linear-gradient(170deg,rgba(5,10,30,0.8),rgba(3,8,25,0.9));}
+[data-theme="slate"] .j-hud-wrap::before{border-color:rgba(59,130,246,0.3);}
+[data-theme="slate"] .j-hud-wrap::after{border-color:rgba(59,130,246,0.3);}
+[data-theme="slate"] .j-fi{border-color:rgba(59,130,246,0.08)!important;background:rgba(59,130,246,0.02);}
+[data-theme="slate"] .j-fi.L{border-left:2px solid rgba(59,130,246,0.2)!important;}
+[data-theme="slate"] .j-fi.R{border-right:2px solid rgba(59,130,246,0.2)!important;}
+[data-theme="slate"] .j-fi.g.L{border-left-color:rgba(34,197,94,0.4)!important;}
+[data-theme="slate"] .j-fi.g.R{border-right-color:rgba(34,197,94,0.4)!important;}
+[data-theme="slate"] .j-fd.c{background:#3b82f6;box-shadow:0 0 6px rgba(59,130,246,0.5);}
+[data-theme="slate"] .j-fd.g{background:#22c55e;box-shadow:0 0 6px rgba(34,197,94,0.5);}
+[data-theme="slate"] .j-fd.o{background:#eab308;box-shadow:0 0 6px rgba(234,179,8,0.5);}
+[data-theme="slate"] .j-fd.r{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.5);}
+[data-theme="slate"] .j-fl{color:#1e3a5f;}
+[data-theme="slate"] .j-fv{color:#60a5fa;text-shadow:0 0 6px rgba(59,130,246,0.2);}
+[data-theme="slate"] .j-fv.g{color:#4ade80;text-shadow:0 0 6px rgba(34,197,94,0.3);}
+[data-theme="slate"] .j-fv.o{color:#eab308;}
+[data-theme="slate"] .j-fv.r{color:#f87171;text-shadow:0 0 6px rgba(239,68,68,0.3);}
+[data-theme="slate"] .j-cn::before{background:linear-gradient(90deg,rgba(59,130,246,0.05),rgba(59,130,246,0.3));}
+[data-theme="slate"] .j-cn.R::before{background:linear-gradient(90deg,rgba(59,130,246,0.3),rgba(59,130,246,0.05));}
+[data-theme="slate"] .j-cn::after{background:rgba(59,130,246,0.35);box-shadow:0 0 8px rgba(59,130,246,0.4);}
+[data-theme="slate"] .j-rg.r1{border-color:rgba(59,130,246,0.12);border-top-color:rgba(59,130,246,0.5);box-shadow:0 0 20px rgba(59,130,246,0.06);}
+[data-theme="slate"] .j-rg.r2{border-color:rgba(59,130,246,0.1);border-right-color:rgba(96,165,250,0.4);}
+[data-theme="slate"] .j-rg.r3{border-color:rgba(59,130,246,0.06);border-bottom-color:rgba(59,130,246,0.3);}
+[data-theme="slate"] .j-rg.r4{border-color:rgba(59,130,246,0.04);border-left-color:rgba(59,130,246,0.2);}
+[data-theme="slate"] .j-core{background:radial-gradient(circle,rgba(59,130,246,0.08) 0%,rgba(10,20,50,0.4) 60%,transparent 100%);border-color:rgba(59,130,246,0.2);box-shadow:0 0 25px rgba(59,130,246,0.06);}
+[data-theme="slate"] .j-core .j-brand{color:#60a5fa;text-shadow:0 0 15px rgba(59,130,246,0.4),0 0 40px rgba(59,130,246,0.1);}
+[data-theme="slate"] .j-core .j-sub{color:#1e3a5f;}
+[data-theme="slate"] .j-core .j-ai{color:#3b82f6;border-color:rgba(59,130,246,0.2);text-shadow:0 0 8px rgba(59,130,246,0.4);}
+[data-theme="slate"] .j-hint{color:#60a5fa;text-shadow:0 0 10px rgba(59,130,246,0.4);}
+[data-theme="slate"] .j-plbl .j-pn{color:#60a5fa;text-shadow:0 0 8px rgba(59,130,246,0.2);}
+[data-theme="slate"] .j-plbl .j-pc{color:#1e3a5f;}
+[data-theme="slate"] .j-tl span{color:#1e3a5f;}
+[data-theme="slate"] .j-tl span b{color:#2563eb;}
+[data-theme="slate"] .jzc-label{color:#60a5fa;}
+[data-theme="slate"] .jzc-status{color:#22c55e;border-color:rgba(34,197,94,0.2);}
+[data-theme="slate"] .jzc-btn{color:#2563eb;border-color:rgba(59,130,246,0.08);}
+[data-theme="slate"] .jzc-btn:hover{color:#60a5fa;border-color:rgba(59,130,246,0.25);background:rgba(59,130,246,0.06);}
+[data-theme="slate"] .jzm-ai{background:rgba(59,130,246,0.03);border-left-color:rgba(59,130,246,0.15);}
+[data-theme="slate"] .jzm-ai p{color:#7090b0;}
+[data-theme="slate"] .jzm-ai strong{color:#93c5fd;}
+[data-theme="slate"] .jzm-user{background:rgba(59,130,246,0.02);border-right-color:rgba(59,130,246,0.1);}
+[data-theme="slate"] .jzm-user p{color:#4070a0;}
+[data-theme="slate"] .j-zane-inp input{color:#93c5fd;}
+[data-theme="slate"] .j-zane-inp input::placeholder{color:#1e3a5f;}
+[data-theme="slate"] .j-zane-inp .jzs{color:#1e3a5f;border-left-color:rgba(59,130,246,0.06);}
+[data-theme="slate"] .j-zane-inp .jzs:hover{color:#60a5fa;text-shadow:0 0 10px rgba(59,130,246,0.3);}
+[data-theme="slate"] .jzc-close{color:#1e3a5f;border-color:rgba(59,130,246,0.08);}
+[data-theme="slate"] .jzc-close:hover{color:#ef4444;border-color:rgba(239,68,68,0.2);}
+[data-theme="slate"] .j-zane-ctx .jzc-ci{color:#1e3a5f;}
+[data-theme="slate"] .j-zane-ctx .jzc-ci .jzd{background:#2563eb;}
+</style>
+'''
+
 
 def jarvis_hud_item(label, value, dot_color="c", val_color="", side="L", accent=""):
     """Build a single HUD flank item"""
@@ -22428,7 +22703,7 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
         msgsL.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';
         msgsL.scrollTop=msgsL.scrollHeight;
         input.value='';
-        msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ffaa00;">⟳ Processing...</p></div>';
+        msgsR.innerHTML='<div class="jzm-ai"><p style="opacity:0.6;">⟳ Processing...</p></div>';
         try {{
             var resp=await fetch('/api/ai',{{
                 method:'POST',
@@ -22456,7 +22731,7 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
                 }}
             }}
         }} catch(e) {{
-            msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ff4466;">Error connecting to Zane. Try again.</p></div>';
+            msgsR.innerHTML='<div class="jzm-ai"><p style="color:var(--danger,#ff4466);">Error connecting to Zane. Try again.</p></div>';
         }}
     }}
     document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var ext=document.getElementById('jZaneExt');if(ext&&ext.classList.contains('open'))jzToggle();}}}});
@@ -22474,6 +22749,15 @@ def is_jarvis():
     """Check if current theme is Jarvis"""
     try:
         return request.cookies.get("clickai_theme", "midnight") == "jarvis"
+    except Exception:
+        return False
+
+
+def has_reactor_hud():
+    """Check if current theme supports the reactor HUD (all dark themes)"""
+    try:
+        theme = request.cookies.get("clickai_theme", "midnight")
+        return theme in ("jarvis", "midnight", "cyber", "emerald", "sunset", "slate")
     except Exception:
         return False
 
@@ -22537,13 +22821,13 @@ def _jarvis_global_hud(title, content):
         </div>
         <script>
         function jzToggle(){{var ext=document.getElementById('jZaneExt');var pad=document.getElementById('jHudPad');ext.classList.toggle('open');if(pad)pad.style.display=ext.classList.contains('open')?'none':'';if(ext.classList.contains('open')){{setTimeout(function(){{document.getElementById('jzInput').focus();}},400);if(!document.getElementById('jzMsgsL').children.length){{document.getElementById('jzMsgsL').innerHTML='<div class="jzm-ai"><p>Hello! I\\'m <strong>Zane</strong>, your AI assistant. Ask me anything or use the quick actions.</p></div>';document.getElementById('jzMsgsR').innerHTML='<div class="jzm-ai"><p><strong>Quick insights loading...</strong></p><p>Ask a question to get started.</p></div>';}}}}}}
-        async function jzSend(text){{if(!text||!text.trim())return;var msgsL=document.getElementById('jzMsgsL');var msgsR=document.getElementById('jzMsgsR');var input=document.getElementById('jzInput');msgsL.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';msgsL.scrollTop=msgsL.scrollHeight;input.value='';msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ffaa00;">⟳ Processing...</p></div>';try{{var resp=await fetch("/api/ai",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{command:text,current_page:window.location.pathname}})}});var data=await resp.json();var reply=data.response||data.error||"Sorry, I had trouble with that.";var h=reply;h=h.replace(/\\*\\*(.+?)\\*\\*/g,"<strong>$1</strong>");h=h.replace(/\\*(.+?)\\*/g,"<em>$1</em>");h=h.replace(/^- (.+)$/gm,"<li>$1</li>");h=h.replace(/\\n\\n/g,"</p><p>");h=h.replace(/\\n/g,"<br>");h="<p>"+h+"</p>";msgsR.innerHTML='<div class="jzm-ai">'+h+"</div>";msgsR.scrollTop=msgsR.scrollHeight;if(data.navigate&&!data.error){{var t=data.navigate;if(t&&t.startsWith("/")&&t!==window.location.pathname){{setTimeout(function(){{window.location.href=t;}},1500);}}}}}}catch(e){{msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ff4466;">Error. Try again.</p></div>';}}}}
+        async function jzSend(text){{if(!text||!text.trim())return;var msgsL=document.getElementById('jzMsgsL');var msgsR=document.getElementById('jzMsgsR');var input=document.getElementById('jzInput');msgsL.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';msgsL.scrollTop=msgsL.scrollHeight;input.value='';msgsR.innerHTML='<div class="jzm-ai"><p style="opacity:0.6;">⟳ Processing...</p></div>';try{{var resp=await fetch("/api/ai",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{command:text,current_page:window.location.pathname}})}});var data=await resp.json();var reply=data.response||data.error||"Sorry, I had trouble with that.";var h=reply;h=h.replace(/\\*\\*(.+?)\\*\\*/g,"<strong>$1</strong>");h=h.replace(/\\*(.+?)\\*/g,"<em>$1</em>");h=h.replace(/^- (.+)$/gm,"<li>$1</li>");h=h.replace(/\\n\\n/g,"</p><p>");h=h.replace(/\\n/g,"<br>");h="<p>"+h+"</p>";msgsR.innerHTML='<div class="jzm-ai">'+h+"</div>";msgsR.scrollTop=msgsR.scrollHeight;if(data.navigate&&!data.error){{var t=data.navigate;if(t&&t.startsWith("/")&&t!==window.location.pathname){{setTimeout(function(){{window.location.href=t;}},1500);}}}}}}catch(e){{msgsR.innerHTML='<div class="jzm-ai"><p style="color:var(--danger,#ff4466);">Error. Try again.</p></div>';}}}}
         document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var ext=document.getElementById('jZaneExt');if(ext&&ext.classList.contains('open'))jzToggle();}}}});
         </script>
         '''
         
         tl = jarvis_techline()
-        return JARVIS_HUD_CSS + hdr + content + tl
+        return JARVIS_HUD_CSS + THEME_REACTOR_SKINS + hdr + content + tl
     except Exception:
         return content
 
@@ -22787,7 +23071,7 @@ def dashboard():
     '''
     
     # -- JARVIS THEME: Replace dashboard with HUD layout --
-    if is_jarvis() and not is_staff:
+    if has_reactor_hud() and not is_staff:
         # Build debtor rows for HUD panel
         _jd_rows = ""
         for d in debtors:
@@ -22845,7 +23129,7 @@ def dashboard():
         _no_debt = '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO OUTSTANDING DEBT</div>'
         _no_inv = '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO INVOICES YET</div>'
         
-        content = f'''{JARVIS_HUD_CSS}
+        content = f'''{JARVIS_HUD_CSS}{THEME_REACTOR_SKINS}
         <style>
         .j-panels{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;}}
         .j-panel{{border:1px solid rgba(80,180,255,0.12);background:rgba(8,20,45,0.3);position:relative;overflow:hidden;}}
@@ -23123,7 +23407,7 @@ def customers_page():
     
     _t("before_render")
     # -- JARVIS: Customers HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _with_bal = len(debtors)
         _in_credit = len([c for c in customers if float(c.get("balance", 0) or 0) < 0])
         _j_alert = ""
@@ -23149,7 +23433,7 @@ def customers_page():
             reactor_size="page",
             alert_html=_j_alert
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"CUSTOMERS <b>{total_customers} LOADED</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"CUSTOMERS <b>{total_customers} LOADED</b>")
     
     return render_page("Customers", content, user, "customers")
 
@@ -24145,7 +24429,7 @@ def stock_page():
     '''
     
     # -- JARVIS: Stock HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _hud = jarvis_hud_header(
             page_name="STOCK",
             page_count='<span id="jStockCount">LOADING...</span>',
@@ -24164,7 +24448,7 @@ def stock_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("STOCK <b>LOADING</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("STOCK <b>LOADING</b>")
     
     return render_page("Stock", content, user, "stock")
     
@@ -26161,7 +26445,7 @@ def invoices_page():
     '''
     
     # -- JARVIS: Invoices HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _total_inv = len(invoices)
         _paid = len([i for i in invoices if i.get("status") == "paid"])
         _outstanding = len([i for i in invoices if i.get("status") in ("outstanding", "account")])
@@ -26187,7 +26471,7 @@ def invoices_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"INVOICES <b>{_total_inv} LOADED</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"INVOICES <b>{_total_inv} LOADED</b>")
     
     return render_page("Invoices", content, user, "invoices")
 
@@ -29289,7 +29573,7 @@ def suppliers_page():
     '''
     
     # -- JARVIS: Suppliers HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _with_bal = len(creditors)
         _in_credit = len([s for s in suppliers if float(s.get("balance", 0) or 0) < 0])
         _j_alert = ""
@@ -29315,7 +29599,7 @@ def suppliers_page():
             reactor_size="page",
             alert_html=_j_alert
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"SUPPLIERS <b>{total_suppliers} LOADED</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"SUPPLIERS <b>{total_suppliers} LOADED</b>")
     
     return render_page("Suppliers", content, user, "suppliers")
 
@@ -31648,7 +31932,7 @@ def expenses_page():
     '''
     
     # -- JARVIS: Expenses HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _exp_count = len(expenses)
         _hud = jarvis_hud_header(
             page_name="EXPENSES",
@@ -31668,7 +31952,7 @@ def expenses_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"EXPENSES <b>{_exp_count} LOADED</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"EXPENSES <b>{_exp_count} LOADED</b>")
     
     return render_page("Expenses", content, user, "expenses")
 
@@ -32113,7 +32397,7 @@ def payroll_page():
     '''
     
     # -- JARVIS: Payroll HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _emp_count = len(employees)
         _ps_count = len(payslips)
         _pending = len(staging_batches)
@@ -32136,7 +32420,7 @@ def payroll_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"PAYROLL <b>{_emp_count} EMPLOYEES</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"PAYROLL <b>{_emp_count} EMPLOYEES</b>")
     
     return render_page("Payroll", content, user, "payroll")
 
@@ -34580,7 +34864,7 @@ def business_pulse():
     '''
     
     # -- JARVIS: Pulse HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _hud = jarvis_hud_header(
             page_name="BUSINESS PULSE",
             page_count="AI-POWERED INSIGHTS",
@@ -34599,7 +34883,7 @@ def business_pulse():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("PULSE <b>AI ACTIVE</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("PULSE <b>AI ACTIVE</b>")
     
     return render_page("Business Pulse", content, user, "pulse")
 
@@ -35528,7 +35812,7 @@ def reports_page():
     '''
     
     # -- JARVIS: Reports HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _hud = jarvis_hud_header(
             page_name="REPORTS",
             page_count="FINANCIAL ANALYTICS",
@@ -35547,7 +35831,7 @@ def reports_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("REPORTS <b>READY</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("REPORTS <b>READY</b>")
     
     return render_page("Reports", content, user, "reports")
 
@@ -58134,7 +58418,7 @@ def banking_page():
     '''
     
     # -- JARVIS: Banking HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _match_pct = int((done_count / max(total_count, 1)) * 100)
         _j_alert = ""
         if needs_count > 0:
@@ -58158,7 +58442,7 @@ def banking_page():
             reactor_size="page",
             alert_html=_j_alert
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"BANKING <b>{total_count} TXN</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"BANKING <b>{total_count} TXN</b>")
     
     return render_page("Banking", content, user, "banking")
 
@@ -72346,7 +72630,7 @@ Address: {business.get("address")[:50] if business and business.get("address") e
     '''
     
     # -- JARVIS: Settings HUD header --
-    if is_jarvis():
+    if has_reactor_hud():
         _hud = jarvis_hud_header(
             page_name="SETTINGS",
             page_count="SYSTEM CONFIGURATION",
@@ -72365,7 +72649,7 @@ Address: {business.get("address")[:50] if business and business.get("address") e
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("SETTINGS <b>LOADED</b>")
+        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("SETTINGS <b>LOADED</b>")
     
     return render_page("Settings", content, user, "settings")
 
