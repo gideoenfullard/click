@@ -12261,7 +12261,6 @@ class Actions:
                 _protected = [r for r in to_delete if r.get("status") in ("paid", "account", "credited")]
                 if _protected and _role not in ("owner", "admin"):
                     return {"success": False, "message": f"Cannot delete {len(_protected)} paid/credited invoices. Only the business owner can do this. Use credit notes instead."}
-                # Even for owner, filter out paid ones and warn
                 if _protected and _role in ("owner", "admin"):
                     _safe = [r for r in to_delete if r.get("status") not in ("paid", "account", "credited")]
                     if not _safe:
@@ -22236,28 +22235,28 @@ def api_health_check():
 JARVIS_HUD_CSS = '''
 <style>
 .j-hero{display:flex;align-items:center;justify-content:center;padding:10px 0 14px;position:relative;gap:0;}
-.j-flank{display:flex;flex-direction:column;gap:5px;width:210px;min-width:210px;}
-.j-fi{padding:9px 14px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,30,60,0.25);transition:all 0.3s;}
+.j-flank{display:flex;flex-direction:column;gap:5px;width:180px;min-width:0;flex:1;max-width:200px;overflow:hidden;}
+.j-fi{padding:7px 10px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,30,60,0.25);transition:all 0.3s;}
 .j-fi:hover{border-color:rgba(80,180,255,0.25);background:rgba(10,30,60,0.4);}
 .j-fi.L{border-left:2px solid rgba(80,180,255,0.3);}
 .j-fi.R{border-right:2px solid rgba(80,180,255,0.3);border-left:none;}
 .j-fi.o.L{border-left-color:rgba(255,170,0,0.4);}.j-fi.o.R{border-right-color:rgba(255,170,0,0.4);}
 .j-fi.r.L{border-left-color:rgba(255,68,102,0.4);}.j-fi.r.R{border-right-color:rgba(255,68,102,0.4);}
 .j-fi.g.L{border-left-color:rgba(0,255,136,0.4);}.j-fi.g.R{border-right-color:rgba(0,255,136,0.4);}
-.j-fr{display:flex;align-items:center;gap:8px;}
+.j-fr{display:flex;align-items:center;gap:6px;overflow:hidden;}
 .j-fd{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
 .j-fd.c{background:#00ccff;box-shadow:0 0 4px #00ccff,0 0 10px rgba(0,204,255,0.3);}
 .j-fd.g{background:#00ff88;box-shadow:0 0 4px #00ff88,0 0 10px rgba(0,255,136,0.3);}
 .j-fd.o{background:#ffaa00;box-shadow:0 0 4px #ffaa00,0 0 10px rgba(255,170,0,0.3);}
 .j-fd.r{background:#ff4466;box-shadow:0 0 4px #ff4466,0 0 10px rgba(255,68,102,0.3);}
 .j-fd.p{background:#aa55ff;box-shadow:0 0 4px #aa55ff;}
-.j-fl{font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a6a90;letter-spacing:1px;flex:1;}
-.j-fv{font-family:'Orbitron',monospace;font-size:13px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3);}
+.j-fl{font-family:'Share Tech Mono',monospace;font-size:9px;color:#3a6a90;letter-spacing:0.8px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.j-fv{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3);white-space:nowrap;flex-shrink:0;}
 .j-fv.o{color:#ffaa00;text-shadow:0 0 8px rgba(255,170,0,0.4);}
 .j-fv.g{color:#00ff88;text-shadow:0 0 8px rgba(0,255,136,0.4);}
 .j-fv.r{color:#ff6688;text-shadow:0 0 8px rgba(255,68,102,0.4);}
 .j-fln{width:100%;height:1px;background:linear-gradient(90deg,transparent,rgba(80,180,255,0.2),transparent);}
-.j-cn{width:30px;height:2px;position:relative;flex-shrink:0;}
+.j-cn{width:20px;height:2px;position:relative;flex-shrink:0;}
 .j-cn::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(80,180,255,0.05),rgba(80,180,255,0.3));}
 .j-cn.R::before{background:linear-gradient(90deg,rgba(80,180,255,0.3),rgba(80,180,255,0.05));}
 .j-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
@@ -22291,14 +22290,15 @@ JARVIS_HUD_CSS = '''
 .j-tl span{font-family:'Share Tech Mono',monospace;font-size:10px;color:#2a5a80;letter-spacing:1.5px;}
 .j-tl span b{color:#4a90bb;font-weight:400;}
 /* Dashboard big reactor */
-.j-rx.big{width:280px;height:280px;}
-.j-rx.big .j-core{inset:72px;}
-.j-rx.big .j-core .j-brand{font-size:22px;letter-spacing:4px;}
-.j-rx.big .j-core .j-sub{font-size:8.5px;letter-spacing:5px;}
-.j-rx.big .j-core .j-ai{font-size:8px;padding:3px 10px;}
-.j-rx.big .j-hint{bottom:-26px;}
+.j-rx.big{width:220px;height:220px;}
+.j-rx.big .j-core{inset:58px;}
+.j-rx.big .j-core .j-brand{font-size:18px;letter-spacing:3px;}
+.j-rx.big .j-core .j-sub{font-size:7px;letter-spacing:4px;}
+.j-rx.big .j-core .j-ai{font-size:7px;padding:2px 8px;}
+.j-rx.big .j-hint{bottom:-22px;}
 /* Page reactor (smaller) */
-.j-rx.page{width:230px;height:230px;}
+.j-rx.page{width:180px;height:180px;}
+.j-rx.page .j-core{inset:48px;}
 /* ═══ ZANE REACTOR EXTENSION CHAT ═══ */
 .j-zane-ext{max-height:0;overflow:hidden;transition:max-height 0.5s cubic-bezier(0.4,0,0.2,1);position:relative;}
 .j-zane-ext.open{max-height:420px;}
@@ -22338,13 +22338,32 @@ JARVIS_HUD_CSS = '''
 .j-hud-wrap::before{content:'';position:absolute;top:0;left:0;width:24px;height:24px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-wrap::after{content:'';position:absolute;bottom:0;right:0;width:24px;height:24px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-pad{height:16px;}
+/* Responsive: hide flanks on small screens, shrink reactor */
+@media(max-width:768px){
+.j-hero{flex-wrap:wrap;gap:8px;padding:8px 0 10px;}
+.j-flank{display:none;}
+.j-cn{display:none;}
+.j-rx.big{width:160px;height:160px;}
+.j-rx.big .j-core{inset:42px;}
+.j-rx.big .j-core .j-brand{font-size:14px;letter-spacing:2px;}
+.j-rx.page{width:140px;height:140px;}
+.j-rx.page .j-core{inset:38px;}
+.j-plbl .j-pn{font-size:10px;letter-spacing:3px;}
+.j-zane-layout{flex-direction:column;}
+.j-zane-center{width:100%;flex-direction:row;flex-wrap:wrap;justify-content:center;gap:6px;}
+.jzc-actions{flex-direction:row;flex-wrap:wrap;gap:4px;}
+.jzc-btn{font-size:10px;padding:5px 8px;}
+}
+@media(max-width:1024px){
+.j-flank{max-width:160px;}
+.j-fv{font-size:10px;}
+.j-fl{font-size:8px;}
+.j-rx.big{width:190px;height:190px;}
+.j-rx.big .j-core{inset:50px;}
+}
 </style>
 '''
 
-# ═══════════════════════════════════════════════════════════════
-# THEME REACTOR SKINS - Override Jarvis colors per theme
-# All themes reuse the .j-* structural classes, just re-skin
-# ═══════════════════════════════════════════════════════════════
 THEME_REACTOR_SKINS = '''<style>
 /* ═══ MIDNIGHT — Purple Holographic ═══ */
 [data-theme="midnight"] .j-hud-wrap{border-color:rgba(139,92,246,0.15);background:linear-gradient(160deg,rgba(20,10,40,0.7),rgba(10,5,30,0.8));border-radius:16px;overflow:hidden;}
@@ -22738,11 +22757,11 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
             var data=await resp.json();
             var reply=data.response||data.error||'Sorry, I had trouble with that.';
             var h=reply;
-            h=h.replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>');
-            h=h.replace(/\\*(.+?)\\*/g,'<em>$1</em>');
+            h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+            h=h.replace(/\*(.+?)\*/g,'<em>$1</em>');
             h=h.replace(/^- (.+)$/gm,'<li>$1</li>');
-            h=h.replace(/\\n\\n/g,'</p><p style="margin:6px 0;">');
-            h=h.replace(/\\n/g,'<br>');
+            h=h.replace(/\n\n/g,'</p><p style="margin:6px 0;">');
+            h=h.replace(/\n/g,'<br>');
             h='<p style="margin:6px 0;">'+h+'</p>';
             msgsR.innerHTML='<div class="jzm-ai">'+h+'</div>';
             msgsR.scrollTop=msgsR.scrollHeight;
@@ -26956,8 +26975,7 @@ def invoice_view(invoice_id):
     _inv_error = request.args.get("error", "")
     _inv_error_html = f'<div style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:var(--text);padding:12px 16px;border-radius:8px;margin-bottom:15px;"><strong>⚠</strong> {safe_string(_inv_error)}</div>' if _inv_error else ""
     
-    content = f'''
-    {_inv_error_html}
+    content = f'''{_inv_error_html}
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
             <a href="/invoices" style="color:var(--text-muted);">← Back to Invoices</a>
@@ -66918,7 +66936,7 @@ def create_credit_note(invoice_id):
                 FraudGuard.log_sensitive_action(
                     db, "INVOICE_CREDIT", invoice, user, biz_id,
                     reason=reason or "No reason",
-                    details=f"CN {cn_num} for {money(float(cn_total))} ({credit_type})"
+                    details=f"CN {cn_num} for R{float(cn_total):.2f} ({credit_type})"
                 )
         except Exception:
             pass
