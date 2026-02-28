@@ -12907,7 +12907,7 @@ class Context:
     
     @staticmethod
     def get_dashboard_stats(user: dict, business: dict) -> dict:
-        """FAST dashboard stats - uses COUNT and SUM queries, NOT loading all data"""
+        """FAST dashboard stats - parallel DB calls, no duplicates, session cached"""
         
         biz_id = business.get("id") if business else None
         if not biz_id:
@@ -12917,37 +12917,79 @@ class Context:
                 "customer_count": 0, "supplier_count": 0, "stock_count": 0,
                 "total_debtors": 0, "total_creditors": 0,
                 "today_sales": 0, "total_sales": 0,
-                "stock_value": 0, "stock_retail_value": 0
+                "stock_value": 0, "stock_retail_value": 0,
+                "customers_summary": [], "recent_invoices": [], "low_stock": []
             }
         
-        # FAST COUNTS - no data loaded, just counts
-        customer_count = db.count("customers", {"business_id": biz_id})
-        supplier_count = db.count("suppliers", {"business_id": biz_id})
-        # Stock count uses get_all_stock (merges both stock + stock_items tables)
-        # Count is derived from the actual merged list below to avoid mismatch
+        # SESSION CACHE — reuse for 60 seconds
+        import time as _time
+        _cache_key = f"dash_stats_{biz_id}"
+        _cached = session.get(_cache_key)
+        _cache_ts = session.get(f"{_cache_key}_ts", 0)
+        if _cached and (_time.time() - _cache_ts) < 60:
+            logger.info("[DASHBOARD] Using cached stats (< 60s old)")
+            return _cached
         
-        # FAST SUMS - only load the columns we need
-        # Debtors: customers with positive balance
-        customer_balances = db.get_columns("customers", ["balance"], {"business_id": biz_id})
-        total_debtors = sum(float(c.get("balance", 0) or 0) for c in customer_balances if float(c.get("balance", 0) or 0) > 0)
+        # PARALLEL DB CALLS — run all at once instead of sequential
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
-        # Creditors: suppliers with positive balance
-        supplier_balances = db.get_columns("suppliers", ["balance"], {"business_id": biz_id})
-        total_creditors = sum(float(s.get("balance", 0) or 0) for s in supplier_balances if float(s.get("balance", 0) or 0) > 0)
+        results = {}
+        def _fetch(key, fn):
+            try:
+                results[key] = fn()
+            except Exception as e:
+                logger.error(f"[DASHBOARD] {key} failed: {e}")
+                results[key] = None
         
-        # Sales: only load date and total columns
-        sales_data = db.get_columns("sales", ["date", "total"], {"business_id": biz_id})
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            # Only 5 calls instead of 9 — no duplicates!
+            pool.submit(_fetch, "customers", lambda: db.get_columns("customers", ["name", "phone", "balance"], {"business_id": biz_id}))
+            pool.submit(_fetch, "suppliers", lambda: db.get_columns("suppliers", ["balance"], {"business_id": biz_id}))
+            pool.submit(_fetch, "sales", lambda: db.get_columns("sales", ["date", "total"], {"business_id": biz_id}))
+            pool.submit(_fetch, "stock", lambda: db.get_all_stock(biz_id))
+            pool.submit(_fetch, "invoices", lambda: db.get_columns("invoices", ["invoice_number", "customer_name", "total", "status", "date"], {"business_id": biz_id}, limit=200))
+            pool.shutdown(wait=True)
+        
+        # Process results — all from single loads
+        customers = results.get("customers") or []
+        suppliers = results.get("suppliers") or []
+        sales_data = results.get("sales") or []
+        stock_data = results.get("stock") or []
+        invoices = results.get("invoices") or []
+        
+        # Counts
+        customer_count = len(customers)
+        supplier_count = len(suppliers)
+        stock_count = len(stock_data)
+        
+        # Debtors (from same customer load)
+        total_debtors = sum(float(c.get("balance", 0) or 0) for c in customers if float(c.get("balance", 0) or 0) > 0)
+        
+        # Creditors
+        total_creditors = sum(float(s.get("balance", 0) or 0) for s in suppliers if float(s.get("balance", 0) or 0) > 0)
+        
+        # Sales
         today_str = today()
         today_sales = sum(float(s.get("total", 0) or 0) for s in sales_data if s.get("date") == today_str)
         total_sales = sum(float(s.get("total", 0) or 0) for s in sales_data)
         
-        # Stock value: load from both tables via helper
-        stock_data = db.get_all_stock(biz_id)
-        stock_count = len(stock_data)  # Count from MERGED tables (stock + stock_items)
+        # Stock value (from same stock load)
         stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock_data)
         stock_retail_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("price") or s.get("selling_price") or 0) for s in stock_data)
         
-        return {
+        # Top debtors (from same customer load — NO extra DB call)
+        debtors = [d for d in customers if float(d.get("balance", 0) or 0) > 0]
+        debtors.sort(key=lambda x: float(x.get("balance", 0) or 0), reverse=True)
+        
+        # Recent invoices (from same invoice load — NO extra DB call)
+        invoices.sort(key=lambda x: x.get("date", "") or "", reverse=True)
+        recent_invoices = [{"number": i.get("invoice_number"), "customer": i.get("customer_name"), "total": i.get("total"), "status": i.get("status")} for i in invoices[:50]]
+        
+        # Low stock (from same stock load — NO extra DB call)
+        low_stock = [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0)} 
+                     for s in stock_data if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5) or 5)][:20]
+        
+        result = {
             "business_id": biz_id,
             "business_name": business.get("name", "Business") if business else "Business",
             "user_name": user.get("name", "there") if user else "there",
@@ -12960,11 +13002,19 @@ class Context:
             "total_sales": total_sales,
             "stock_value": stock_value,
             "stock_retail_value": stock_retail_value,
-            # Extra data for dashboard widgets - OPTIMIZED
-            "customers_summary": Context._get_top_debtors(biz_id),
-            "recent_invoices": Context._get_recent_invoices(biz_id),
-            "low_stock": Context._get_low_stock(biz_id)
+            "customers_summary": debtors[:50],
+            "recent_invoices": recent_invoices,
+            "low_stock": low_stock
         }
+        
+        # Cache in session
+        try:
+            session[_cache_key] = result
+            session[f"{_cache_key}_ts"] = _time.time()
+        except Exception:
+            pass
+        
+        return result
     
     @staticmethod
     def _get_top_debtors(biz_id: str, limit: int = 50) -> list:
@@ -18816,7 +18866,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     </div>
     <header class="header">
         <div class="header-top">
-            <div class="logo" onclick="toggleZaneChat()">Click AI</div>
+            <div class="logo" onclick="if(typeof jzToggle==='function'){jzToggle();}else if(typeof toggleZaneChat==='function'){toggleZaneChat();}">Click AI</div>
             {user_html}
         </div>
         <div class="nav-wrapper" id="navWrapper">
@@ -19097,7 +19147,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         <a href="/scan" class="{'active' if active in ('scan', 'inbox') else ''}">
             <span>📷</span>Scan
         </a>
-        <button class="mic-btn" id="mobileMicBtn" onclick="toggleZaneChat()">
+        <button class="mic-btn" id="mobileMicBtn" onclick="if(typeof jzToggle==='function'){jzToggle();}else if(typeof toggleZaneChat==='function'){toggleZaneChat();}">
             🎤
         </button>
         <a href="/stock" class="{'active' if active == 'stock' else ''}">
@@ -19619,7 +19669,7 @@ def get_zane_header_btn() -> str:
     except:
         pass
     return '''
-    <button class="clickai-btn" onclick="toggleZaneChat()" title="Ask Zane">Click AI</button>
+    <button class="clickai-btn" onclick="if(typeof jzToggle==='function'){jzToggle();}else{toggleZaneChat();}" title="Ask Zane">Click AI</button>
     <style>
     .clickai-btn {
         padding: 8px 14px;
@@ -19647,11 +19697,17 @@ def get_zane_proactive_tip(page: str, context: dict = None) -> str:
     return ''  # Disabled - was interfering with Tab navigation and printing
 
 def get_zane_chat() -> str:
-    """Zane chat popup - managers/admin/owner only"""
+    """Zane chat popup - managers/admin/owner only. Skipped on Jarvis theme (reactor HUD used instead)."""
     try:
         role = get_user_role()
         if role in ("staff", "cashier", "pos_only", "waiter", "sales"):
             return ''  # No Zane for staff
+    except:
+        pass
+    # On Jarvis theme, the reactor HUD dropdown handles Zane chat directly
+    try:
+        if is_jarvis():
+            return ''
     except:
         pass
     return r'''
@@ -22364,24 +22420,43 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
             }}
         }}
     }}
-    function jzSend(text){{
+    async function jzSend(text){{
         if(!text||!text.trim())return;
-        var msgs=document.getElementById('jzMsgsL');
+        var msgsL=document.getElementById('jzMsgsL');
+        var msgsR=document.getElementById('jzMsgsR');
         var input=document.getElementById('jzInput');
-        msgs.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';
-        msgs.scrollTop=msgs.scrollHeight;
+        msgsL.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';
+        msgsL.scrollTop=msgsL.scrollHeight;
         input.value='';
-        // Forward to actual Zane chat system
-        if(typeof sendZaneMessage==='function'){{
-            sendZaneMessage(text);
-        }} else if(typeof toggleZaneChat==='function'){{
-            toggleZaneChat();
-            setTimeout(function(){{
-                var zi=document.getElementById('zaneInput');
-                if(zi){{zi.value=text;zi.dispatchEvent(new Event('input'));}}
-                var zs=document.querySelector('.zane-chat-send');
-                if(zs)zs.click();
-            }},500);
+        msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ffaa00;">⟳ Processing...</p></div>';
+        try {{
+            var resp=await fetch('/api/ai',{{
+                method:'POST',
+                headers:{{'Content-Type':'application/json'}},
+                body:JSON.stringify({{command:text,current_page:window.location.pathname}})
+            }});
+            var data=await resp.json();
+            var reply=data.response||data.error||'Sorry, I had trouble with that.';
+            var h=reply;
+            h=h.replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>');
+            h=h.replace(/\\*(.+?)\\*/g,'<em>$1</em>');
+            h=h.replace(/^- (.+)$/gm,'<li>$1</li>');
+            h=h.replace(/\\n\\n/g,'</p><p style="margin:6px 0;">');
+            h=h.replace(/\\n/g,'<br>');
+            h='<p style="margin:6px 0;">'+h+'</p>';
+            msgsR.innerHTML='<div class="jzm-ai">'+h+'</div>';
+            msgsR.scrollTop=msgsR.scrollHeight;
+            msgsL.scrollTop=msgsL.scrollHeight;
+            if(data.navigate&&!data.error){{
+                var target=data.navigate;
+                if(target&&target.startsWith('/')&&target!==window.location.pathname){{
+                    if(data.highlight)localStorage.setItem('zane_highlight',data.highlight);
+                    if(data.next_message)localStorage.setItem('zane_next_message',data.next_message);
+                    setTimeout(function(){{window.location.href=target;}},1500);
+                }}
+            }}
+        }} catch(e) {{
+            msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ff4466;">Error connecting to Zane. Try again.</p></div>';
         }}
     }}
     document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var ext=document.getElementById('jZaneExt');if(ext&&ext.classList.contains('open'))jzToggle();}}}});
@@ -22462,7 +22537,7 @@ def _jarvis_global_hud(title, content):
         </div>
         <script>
         function jzToggle(){{var ext=document.getElementById('jZaneExt');var pad=document.getElementById('jHudPad');ext.classList.toggle('open');if(pad)pad.style.display=ext.classList.contains('open')?'none':'';if(ext.classList.contains('open')){{setTimeout(function(){{document.getElementById('jzInput').focus();}},400);if(!document.getElementById('jzMsgsL').children.length){{document.getElementById('jzMsgsL').innerHTML='<div class="jzm-ai"><p>Hello! I\\'m <strong>Zane</strong>, your AI assistant. Ask me anything or use the quick actions.</p></div>';document.getElementById('jzMsgsR').innerHTML='<div class="jzm-ai"><p><strong>Quick insights loading...</strong></p><p>Ask a question to get started.</p></div>';}}}}}}
-        function jzSend(text){{if(!text||!text.trim())return;var msgs=document.getElementById('jzMsgsL');var input=document.getElementById('jzInput');msgs.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';msgs.scrollTop=msgs.scrollHeight;input.value='';if(typeof sendZaneMessage==='function'){{sendZaneMessage(text);}}else if(typeof toggleZaneChat==='function'){{toggleZaneChat();setTimeout(function(){{var zi=document.getElementById('zaneInput');if(zi){{zi.value=text;zi.dispatchEvent(new Event('input'));}}var zs=document.querySelector('.zane-chat-send');if(zs)zs.click();}},500);}}}}
+        async function jzSend(text){{if(!text||!text.trim())return;var msgsL=document.getElementById('jzMsgsL');var msgsR=document.getElementById('jzMsgsR');var input=document.getElementById('jzInput');msgsL.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';msgsL.scrollTop=msgsL.scrollHeight;input.value='';msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ffaa00;">⟳ Processing...</p></div>';try{{var resp=await fetch("/api/ai",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{command:text,current_page:window.location.pathname}})}});var data=await resp.json();var reply=data.response||data.error||"Sorry, I had trouble with that.";var h=reply;h=h.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>");h=h.replace(/\*(.+?)\*/g,"<em>$1</em>");h=h.replace(/^- (.+)$/gm,"<li>$1</li>");h=h.replace(/\\n\\n/g,"</p><p>");h=h.replace(/\\n/g,"<br>");h="<p>"+h+"</p>";msgsR.innerHTML='<div class="jzm-ai">'+h+"</div>";msgsR.scrollTop=msgsR.scrollHeight;if(data.navigate&&!data.error){{var t=data.navigate;if(t&&t.startsWith("/")&&t!==window.location.pathname){{setTimeout(function(){{window.location.href=t;}},1500);}}}}}}catch(e){{msgsR.innerHTML='<div class="jzm-ai"><p style="color:#ff4466;">Error. Try again.</p></div>';}}}}
         document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var ext=document.getElementById('jZaneExt');if(ext&&ext.classList.contains('open'))jzToggle();}}}});
         </script>
         '''
