@@ -45061,218 +45061,6 @@ def pos_page():
     .no-results.show {
         display: block;
     }
-    
-    /* ═══════════════════════════════════════════════════════════════
-       POS REACTOR UPGRADE - Visual enhancements
-       ═══════════════════════════════════════════════════════════════ */
-    
-    /* Animated glow border on search */
-    .pos-search input {
-        border: 2px solid rgba(99, 102, 241, 0.3) !important;
-        animation: searchPulse 3s ease-in-out infinite;
-    }
-    @keyframes searchPulse {
-        0%, 100% { border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 0 15px rgba(99, 102, 241, 0.1); }
-        50% { border-color: rgba(99, 102, 241, 0.6); box-shadow: 0 0 25px rgba(99, 102, 241, 0.3); }
-    }
-    .pos-search input:focus {
-        animation: none !important;
-        border-color: #6366f1 !important;
-        box-shadow: 0 0 40px rgba(99, 102, 241, 0.5), inset 0 0 20px rgba(99, 102, 241, 0.05) !important;
-    }
-    
-    /* Reactor glow on cart panel */
-    .pos-cart {
-        border: 1px solid rgba(99, 102, 241, 0.2) !important;
-        box-shadow: 0 0 30px rgba(99, 102, 241, 0.08), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
-        position: relative;
-        overflow: hidden;
-    }
-    .pos-cart::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0;
-        height: 2px;
-        background: linear-gradient(90deg, transparent, #6366f1, #10b981, #6366f1, transparent);
-        animation: cartTopGlow 4s linear infinite;
-    }
-    @keyframes cartTopGlow {
-        0% { background-position: -200% 0; }
-        100% { background-position: 200% 0; }
-    }
-    .pos-cart::before { background-size: 200% 100%; }
-    
-    /* Stock table reactor styling */
-    .pos-table-wrapper {
-        border: 1px solid rgba(99, 102, 241, 0.15) !important;
-        box-shadow: 0 0 20px rgba(99, 102, 241, 0.05), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
-    }
-    
-    .pos-table thead th {
-        background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(16, 185, 129, 0.08)) !important;
-        text-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
-        letter-spacing: 1.5px !important;
-    }
-    
-    /* Row hover with cyan glow like dashboard */
-    .stock-row:hover {
-        background: linear-gradient(90deg, rgba(6, 182, 212, 0.12), rgba(99, 102, 241, 0.08), transparent) !important;
-        box-shadow: inset 3px 0 0 #06b6d4;
-    }
-    
-    .stock-row:active {
-        background: linear-gradient(90deg, rgba(16, 185, 129, 0.2), rgba(99, 102, 241, 0.1), transparent) !important;
-    }
-    
-    /* Price column glow */
-    .col-price {
-        text-shadow: 0 0 8px rgba(16, 185, 129, 0.4) !important;
-    }
-    
-    /* Code column cyan tint like dashboard */
-    .col-code {
-        color: #06b6d4 !important;
-        text-shadow: 0 0 6px rgba(6, 182, 212, 0.3);
-    }
-    
-    /* QTY button upgrade */
-    .qty-btn {
-        background: linear-gradient(135deg, #6366f1, #06b6d4) !important;
-        box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    .qty-btn:hover {
-        box-shadow: 0 4px 20px rgba(6, 182, 212, 0.5) !important;
-    }
-    
-    /* Header total glow effect */
-    .pos-header-total {
-        text-shadow: 0 0 30px rgba(16, 185, 129, 0.6), 0 0 60px rgba(16, 185, 129, 0.2) !important;
-        font-size: 24px !important;
-    }
-    
-    /* Payment buttons - more vibrant with glow */
-    .pos-pay-btn.cash {
-        box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
-    }
-    .pos-pay-btn.card {
-        box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
-    }
-    .pos-pay-btn.account {
-        box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);
-    }
-    .pos-pay-btn.quote {
-        box-shadow: 0 0 15px rgba(139, 92, 246, 0.3);
-    }
-    .pos-pay-btn.cash:hover {
-        box-shadow: 0 0 25px rgba(16, 185, 129, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
-    }
-    .pos-pay-btn.card:hover {
-        box-shadow: 0 0 25px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
-    }
-    .pos-pay-btn.account:hover {
-        box-shadow: 0 0 25px rgba(245, 158, 11, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
-    }
-    .pos-pay-btn.quote:hover {
-        box-shadow: 0 0 25px rgba(139, 92, 246, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
-    }
-    
-    /* Cashier buttons - reactor style */
-    .cashier-btn {
-        text-transform: uppercase !important;
-        letter-spacing: 0.5px !important;
-        font-size: 12px !important;
-    }
-    .cashier-btn.active {
-        box-shadow: 0 0 20px rgba(99, 102, 241, 0.5), 0 0 40px rgba(99, 102, 241, 0.2) !important;
-        animation: activeCashierPulse 2s ease-in-out infinite;
-    }
-    @keyframes activeCashierPulse {
-        0%, 100% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.4); }
-        50% { box-shadow: 0 0 25px rgba(99, 102, 241, 0.6), 0 0 40px rgba(99, 102, 241, 0.2); }
-    }
-    
-    /* Cashier bar reactor border */
-    .cashier-bar {
-        border-bottom: 1px solid rgba(6, 182, 212, 0.2) !important;
-        background: linear-gradient(135deg, rgba(15, 15, 30, 0.95), rgba(20, 20, 45, 0.95)) !important;
-    }
-    
-    /* Cart item hover glow */
-    .cart-item:hover {
-        background: rgba(99, 102, 241, 0.08) !important;
-        box-shadow: inset 2px 0 0 #6366f1;
-    }
-    
-    /* Grand total in cart - reactor green */
-    .pos-total-row.grand span:last-child {
-        text-shadow: 0 0 15px rgba(16, 185, 129, 0.5) !important;
-        font-size: 20px !important;
-    }
-    
-    /* Cart empty state - add subtle animation */
-    .pos-empty-icon {
-        animation: emptyFloat 3s ease-in-out infinite;
-    }
-    @keyframes emptyFloat {
-        0%, 100% { transform: translateY(0); }
-        50% { transform: translateY(-5px); }
-    }
-    
-    /* Header - reactor gradient border bottom */
-    .pos-header {
-        border-bottom: 1px solid transparent !important;
-        background-image: linear-gradient(rgba(30,30,50,0.95), rgba(30,30,50,0.95)), 
-                          linear-gradient(90deg, transparent, rgba(99,102,241,0.4), rgba(6,182,212,0.3), rgba(16,185,129,0.3), transparent) !important;
-        background-origin: border-box !important;
-        background-clip: padding-box, border-box !important;
-    }
-    
-    /* Stock badge upgrades - glow on good stock */
-    .stock-badge:not(.negative):not(.zero):not(.low) {
-        background: rgba(16, 185, 129, 0.15) !important;
-        color: #10b981 !important;
-        border: 1px solid rgba(16, 185, 129, 0.2);
-    }
-    
-    .stock-badge.low {
-        animation: lowStockPulse 2s ease-in-out infinite;
-    }
-    @keyframes lowStockPulse {
-        0%, 100% { background: rgba(245, 158, 11, 0.15); }
-        50% { background: rgba(245, 158, 11, 0.25); }
-    }
-    
-    .stock-badge.negative {
-        animation: negStockPulse 1.5s ease-in-out infinite;
-    }
-    @keyframes negStockPulse {
-        0%, 100% { background: rgba(239, 68, 68, 0.15); }
-        50% { background: rgba(239, 68, 68, 0.3); }
-    }
-    
-    /* Keyboard bar at bottom - reactor style */
-    .keyboard-bar {
-        background: linear-gradient(180deg, rgba(15,15,30,0.95), rgba(10,10,25,0.98)) !important;
-        border-top: 1px solid rgba(6, 182, 212, 0.15) !important;
-        box-shadow: 0 -4px 20px rgba(0,0,0,0.3) !important;
-    }
-    
-    /* Custom button in cart header */
-    .pos-cart-header button, .pos-cart-header .btn {
-        border: 1px solid rgba(99, 102, 241, 0.3) !important;
-    }
-    
-    /* Scan effect on row click */
-    @keyframes rowFlash {
-        0% { background: rgba(16, 185, 129, 0.3); }
-        100% { background: transparent; }
-    }
-    .stock-row.just-added {
-        animation: rowFlash 0.4s ease-out;
-    }
-    
     </style>
     '''
     
@@ -45423,13 +45211,13 @@ def pos_page():
     }
     
     function showAddedFeedback(code) {
-        // Reactor flash on the row
+        // Brief flash on the row
         const row = document.querySelector(`tr[data-code="${code}"]`);
         if (row) {
-            row.classList.remove('just-added');
-            void row.offsetWidth; // force reflow
-            row.classList.add('just-added');
-            setTimeout(() => row.classList.remove('just-added'), 500);
+            row.style.background = 'rgba(16, 185, 129, 0.3)';
+            setTimeout(() => {
+                row.style.background = '';
+            }, 200);
         }
     }
     
@@ -68962,6 +68750,7 @@ def scan_page():
                 </div>
             `;
         } else if (scanType === 'customer_order') {
+            // Customer Order preview - show customer and items
             let orderItemsHtml = '';
             const orderItems = data.items || [];
             if (orderItems.length > 0) {
@@ -68978,6 +68767,7 @@ def scan_page():
                 });
                 orderItemsHtml += '</div>';
             }
+            
             html = `
                 <div style="background:rgba(16,185,129,0.15);padding:10px;border-radius:8px;margin-bottom:15px;text-align:center;">
                     <strong style="color:#10b981;">CUSTOMER ORDER</strong>
@@ -69005,6 +68795,8 @@ def scan_page():
                     <strong>Notes:</strong> ${data.notes}
                 </div>` : ''}
             `;
+            
+            // Update save button for orders
             document.getElementById('saveBtn').innerHTML = 'Save to Order Inbox';
             document.getElementById('saveBtn').style.background = '#10b981';
             document.getElementById('saveHint').textContent = 'Order will be saved. Open from inbox to create a quote with your prices.';
@@ -69774,12 +69566,14 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
 @app.route("/api/scan/create-quote-from-order", methods=["POST"])
 @login_required
 def api_scan_create_quote_from_order():
-    """Create a quote from a scanned customer order"""
+    """Create a quote from a scanned customer order - the NDE pipeline"""
+    
     try:
         data = request.get_json()
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
+        
         if not biz_id:
             return jsonify({"success": False, "error": "No business selected"})
         
@@ -69792,63 +69586,139 @@ def api_scan_create_quote_from_order():
         if not items:
             return jsonify({"success": False, "error": "No items in order"})
         
-        # Find or create customer
+        # ═══════════════════════════════════════════════════════
+        # STEP 1: Find or create customer
+        # ═══════════════════════════════════════════════════════
         customer_id = ""
         existing_customers = db.get("customers", {"business_id": biz_id}) or []
+        
         for c in existing_customers:
             c_name = (c.get("name") or "").lower().strip()
             if c_name and c_name in customer_name.lower():
                 customer_id = c.get("id", "")
-                customer_name = c.get("name", customer_name)
+                customer_name = c.get("name", customer_name)  # Use existing name
                 break
         
         if not customer_id:
+            # Create new customer
             customer_id = generate_id()
-            db.save("customers", {"id": customer_id, "business_id": biz_id, "name": customer_name, "phone": customer_phone, "balance": 0, "created_at": now()})
-            logger.info(f"[ORDER→QUOTE] New customer: {customer_name}")
+            new_customer = {
+                "id": customer_id,
+                "business_id": biz_id,
+                "name": customer_name,
+                "phone": customer_phone,
+                "balance": 0,
+                "created_at": now()
+            }
+            success, err = db.save("customers", new_customer)
+            if success:
+                logger.info(f"[ORDER→QUOTE] New customer created: {customer_name}")
+            else:
+                logger.warning(f"[ORDER→QUOTE] Customer create failed: {err} - continuing without customer_id")
+                customer_id = ""
         
-        # Build quote items with prices from form
+        # ═══════════════════════════════════════════════════════
+        # STEP 2: Match items to stock and use OUR prices
+        # ═══════════════════════════════════════════════════════
+        all_stock = db.get_all_stock(biz_id) if hasattr(db, 'get_all_stock') else (db.get("stock", {"business_id": biz_id}) or [])
+        
         quote_items = []
         matched_count = 0
         unmatched_count = 0
+        
         for item in items:
             desc = item.get("description", "Unknown Item")
             qty = float(item.get("qty") or item.get("quantity") or 1)
-            price = float(item.get("price") or 0)
-            if price > 0:
-                matched_count += 1
+            price = float(item.get("price") or 0)  # This is from the form (already matched price)
+            
+            # If price is 0, try to match stock
+            if price == 0 and all_stock:
+                # Smart search
+                search_text = desc.lower()
+                best_match = None
+                best_score = 0
+                
+                for s in all_stock:
+                    s_desc = (s.get("description") or "").lower()
+                    s_code = (s.get("code") or "").lower()
+                    s_name = (s.get("name") or "").lower()
+                    combined = f"{s_code} {s_desc} {s_name}"
+                    
+                    # Simple word match
+                    words = search_text.replace(',', ' ').replace('/', ' ').replace('-', ' ').split()
+                    matches = sum(1 for w in words if w in combined)
+                    if matches > best_score and matches >= len(words) * 0.5:
+                        best_score = matches
+                        best_match = s
+                
+                if best_match:
+                    price = float(best_match.get("price") or best_match.get("selling_price") or 0)
+                    matched_count += 1
+                else:
+                    unmatched_count += 1
             else:
-                unmatched_count += 1
-            quote_items.append({"description": desc, "qty": qty, "price": price, "total": round(qty * price, 2)})
+                matched_count += 1
+            
+            line_total = round(qty * price, 2)
+            quote_items.append({
+                "description": desc,
+                "qty": qty,
+                "price": price,
+                "total": line_total
+            })
         
+        # ═══════════════════════════════════════════════════════
+        # STEP 3: Calculate totals
+        # ═══════════════════════════════════════════════════════
         subtotal = sum(item["total"] for item in quote_items)
         vat = round(subtotal * 0.15, 2)
         total = round(subtotal + vat, 2)
         
+        # ═══════════════════════════════════════════════════════
+        # STEP 4: Generate quote number and create quote
+        # ═══════════════════════════════════════════════════════
         existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
         quote_num = f"Q-{len(existing_quotes) + 1:05d}"
         
         quote = RecordFactory.quote(
-            business_id=biz_id, customer_id=customer_id, customer_name=customer_name,
-            items=quote_items, quote_number=quote_num, date=today(),
-            subtotal=subtotal, vat=vat, total=total, status="draft",
+            business_id=biz_id,
+            customer_id=customer_id,
+            customer_name=customer_name,
+            items=quote_items,
+            quote_number=quote_num,
+            date=today(),
+            subtotal=subtotal,
+            vat=vat,
+            total=total,
+            status="draft",
             notes=f"From order{' ' + order_reference if order_reference else ''}. {notes}".strip(),
             created_by=user.get("id", "") if user else ""
         )
         quote_id = quote["id"]
+        
         success, err = db.save("quotes", quote)
         
         if success:
-            logger.info(f"[ORDER→QUOTE] {quote_num}: {customer_name} R{total:.2f}")
+            logger.info(f"[ORDER→QUOTE] Quote {quote_num} created: {customer_name} - R{total:.2f} ({matched_count} matched, {unmatched_count} unmatched)")
+            
+            # Log audit trail
             try:
-                AuditLog.log("CREATE", "quotes", quote_id, details=f"From scanned order - {customer_name}")
+                AuditLog.log("CREATE", "quotes", quote_id, details=f"Quote from scanned order - {customer_name} - {order_reference}")
             except:
                 pass
-            return jsonify({"success": True, "quote_id": quote_id, "quote_number": quote_num,
-                          "message": f"Quote {quote_num} created for {customer_name} - R{total:.2f}",
-                          "stock_matched": matched_count, "stock_unmatched": unmatched_count})
+            
+            return jsonify({
+                "success": True,
+                "quote_id": quote_id,
+                "quote_number": quote_num,
+                "message": f"Quote {quote_num} created for {customer_name} - R{total:.2f}",
+                "stock_matched": matched_count,
+                "stock_unmatched": unmatched_count
+            })
         else:
+            logger.error(f"[ORDER→QUOTE] Failed to save: {err}")
             return jsonify({"success": False, "error": f"Failed to save quote: {str(err)}"})
+    
     except Exception as e:
         logger.error(f"[ORDER→QUOTE] Error: {e}")
         return jsonify({"success": False, "error": str(e)})
@@ -71007,8 +70877,13 @@ def scan_inbox_page():
                 </div>
             `;
         }} else if (type === 'customer_order') {{
+            // ═══════════════════════════════════════════════════════
+            // CUSTOMER ORDER → QUOTE FORM
+            // Match items to stock, use OUR prices, create quote
+            // ═══════════════════════════════════════════════════════
             const orderItems = data.items || [];
             let orderItemsHtml = '';
+            
             if (orderItems.length > 0) {{
                 orderItemsHtml = `
                 <div style="margin:15px 0;background:rgba(16,185,129,0.1);border-radius:12px;padding:15px;">
@@ -71020,33 +70895,59 @@ def scan_inbox_page():
                     </div>
                     <div style="max-height:350px;overflow-y:auto;">
                 `;
+                
                 orderItems.forEach((item, i) => {{
                     const desc = item.description || 'Item';
                     const qty = item.qty || item.quantity || 1;
+                    
+                    // Match against existing stock
                     const stockMatch = matchStock(desc);
                     let matchBadge = '';
                     let matchedPrice = 0;
+                    let stockCode = '';
+                    
                     if (stockMatch) {{
                         matchedPrice = parseFloat(stockMatch.price || stockMatch.selling_price || 0);
-                        matchBadge = `<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">${{stockMatch.code || ''}} MATCHED</span>`;
+                        stockCode = stockMatch.code || '';
+                        matchBadge = `<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
+                            ${{stockCode}} MATCHED
+                        </span>`;
                     }} else {{
-                        matchBadge = `<span style="background:#f97316;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">NOT FOUND</span>`;
+                        matchBadge = `<span style="background:#f97316;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
+                            NOT FOUND - enter price
+                        </span>`;
                     }}
+                    
                     const lineTotal = (parseFloat(qty) * matchedPrice).toFixed(2);
+                    
                     orderItemsHtml += `
                     <div class="order-item-row" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;">
                         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
                             <div style="flex:1;">
                                 <div style="font-weight:500;margin-bottom:6px;">
                                     <span style="color:var(--text-muted);">${{i+1}}.</span>
-                                    <input type="text" id="ord_desc_${{i}}" value="${{desc}}" style="border:none;background:transparent;font-weight:500;width:90%;outline:none;font-size:14px;color:#fff;" />
+                                    <input type="text" id="ord_desc_${{i}}" value="${{desc}}"
+                                           style="border:none;background:transparent;font-weight:500;width:90%;outline:none;font-size:14px;color:#fff;"
+                                           onfocus="this.style.background='#1e293b';this.style.padding='4px';this.style.borderRadius='4px'"
+                                           onblur="this.style.background='transparent';this.style.padding='0'"
+                                    />
                                 </div>
-                                <div style="display:flex;gap:6px;flex-wrap:wrap;">${{matchBadge}}</div>
+                                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                                    ${{matchBadge}}
+                                </div>
                             </div>
                             <div style="text-align:right;min-width:140px;">
                                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">
-                                    x<input type="number" id="ord_qty_${{i}}" value="${{qty}}" style="border:none;background:transparent;width:40px;outline:none;text-align:center;color:#fff;" step="1" onchange="recalcOrderTotal()" />
-                                    @ R<input type="number" id="ord_price_${{i}}" value="${{matchedPrice.toFixed(2)}}" style="border:1px solid ${{matchedPrice > 0 ? '#22c55e' : '#f97316'}};background:${{matchedPrice > 0 ? 'transparent' : 'rgba(249,115,22,0.1)'}};width:80px;outline:none;text-align:right;color:#fff;border-radius:4px;padding:2px 4px;" step="0.01" onchange="recalcOrderTotal()" />
+                                    x<input type="number" id="ord_qty_${{i}}" value="${{qty}}"
+                                           style="border:none;background:transparent;width:40px;outline:none;text-align:center;color:#fff;"
+                                           onfocus="this.style.background='#1e293b';this.style.padding='2px';this.style.borderRadius='3px'"
+                                           onblur="this.style.background='transparent';this.style.padding='0'"
+                                           step="1" onchange="recalcOrderTotal()"
+                                    />
+                                    @ R<input type="number" id="ord_price_${{i}}" value="${{matchedPrice.toFixed(2)}}"
+                                             style="border:1px solid ${{matchedPrice > 0 ? '#22c55e' : '#f97316'}};background:${{matchedPrice > 0 ? 'transparent' : 'rgba(249,115,22,0.1)'}};width:80px;outline:none;text-align:right;color:#fff;border-radius:4px;padding:2px 4px;"
+                                             step="0.01" onchange="recalcOrderTotal()"
+                                    />
                                 </div>
                                 <div style="font-weight:600;color:#10b981;" id="ord_line_${{i}}">R${{lineTotal}}</div>
                             </div>
@@ -71054,31 +70955,53 @@ def scan_inbox_page():
                     </div>
                     `;
                 }});
+                
                 orderItemsHtml += '</div></div>';
             }}
+            
             formHtml = `
                 <div style="background:rgba(16,185,129,0.15);padding:12px;border-radius:8px;margin-bottom:15px;text-align:center;">
                     <strong style="color:#10b981;font-size:16px;">🛒 CUSTOMER ORDER → CREATE QUOTE</strong>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Items matched to YOUR stock with YOUR selling prices</div>
                 </div>
                 <div class="modal-field">
                     <label>Customer Name</label>
                     <input type="text" id="m_customer" value="${{data.customer_name || data.customer || ''}}">
                 </div>
                 <div class="modal-row">
-                    <div class="modal-field"><label>Phone</label><input type="text" id="m_customer_phone" value="${{data.customer_phone || data.phone || ''}}"></div>
-                    <div class="modal-field"><label>Order Ref</label><input type="text" id="m_order_ref" value="${{data.order_reference || ''}}"></div>
+                    <div class="modal-field">
+                        <label>Phone</label>
+                        <input type="text" id="m_customer_phone" value="${{data.customer_phone || data.phone || ''}}">
+                    </div>
+                    <div class="modal-field">
+                        <label>Order Ref</label>
+                        <input type="text" id="m_order_ref" value="${{data.order_reference || ''}}">
+                    </div>
                 </div>
+                
                 ${{orderItemsHtml}}
+                
                 <div class="modal-row" style="margin-top:15px;">
-                    <div class="modal-field"><label>Subtotal (excl VAT)</label><input type="number" step="0.01" id="m_order_subtotal" value="0" readonly style="font-weight:bold;"></div>
-                    <div class="modal-field"><label>VAT (15%)</label><input type="number" step="0.01" id="m_order_vat" value="0" readonly></div>
+                    <div class="modal-field">
+                        <label>Subtotal (excl VAT)</label>
+                        <input type="number" step="0.01" id="m_order_subtotal" value="0" readonly style="font-weight:bold;">
+                    </div>
+                    <div class="modal-field">
+                        <label>VAT (15%)</label>
+                        <input type="number" step="0.01" id="m_order_vat" value="0" readonly>
+                    </div>
                 </div>
                 <div class="modal-field">
                     <label>Total (incl VAT)</label>
                     <input type="number" step="0.01" id="m_order_total" value="0" readonly style="font-size:20px;font-weight:bold;background:rgba(16,185,129,0.1);border-color:#10b981;">
                 </div>
-                ${{data.notes ? `<div class="modal-field"><label>Notes</label><input type="text" id="m_order_notes" value="${{data.notes || ''}}"></div>` : ''}}
+                ${{data.notes ? `
+                <div class="modal-field">
+                    <label>Notes</label>
+                    <input type="text" id="m_order_notes" value="${{data.notes || ''}}">
+                </div>` : ''}}
             `;
+            
             saveHtml = `
                 <button class="btn" onclick="processAs('create_quote')" style="padding:16px;background:#10b981;color:white;width:100%;font-size:16px;font-weight:bold;">
                     CREATE QUOTE
@@ -71087,6 +71010,8 @@ def scan_inbox_page():
                     Quote will be created as Draft. View it to convert to Invoice.
                 </div>
             `;
+            
+            // Auto-calculate totals after render
             setTimeout(() => {{ recalcOrderTotal(); }}, 100);
         }} else if (type === 'payslip') {{
             formHtml = `
@@ -71489,6 +71414,9 @@ def scan_inbox_page():
             endpoint = '/api/scan/save-timesheet-batch';
             redirect = '/payroll';
         }} else if (saveType === 'create_quote') {{
+            // ═══════════════════════════════════════════════════════
+            // CREATE QUOTE FROM CUSTOMER ORDER
+            // ═══════════════════════════════════════════════════════
             const quoteItems = [];
             const orderRows = document.querySelectorAll('.order-item-row');
             orderRows.forEach((row, i) => {{
@@ -71506,6 +71434,7 @@ def scan_inbox_page():
                     }});
                 }}
             }});
+            
             payload = {{
                 customer_name: document.getElementById('m_customer')?.value || 'Unknown',
                 customer_phone: document.getElementById('m_customer_phone')?.value || '',
@@ -71578,6 +71507,7 @@ def scan_inbox_page():
                 if (redirect === '/banking' && data.imported > 0) {{
                     window.location = '/banking';
                 }} else if (data.quote_id) {{
+                    // Redirect to the new quote so Daphne can review and convert to invoice
                     window.location = '/quote/' + data.quote_id + '?success=Created+from+order';
                 }} else {{
                     window.location.reload();
@@ -71591,6 +71521,7 @@ def scan_inbox_page():
     }}
     
     function recalcOrderTotal() {{
+        // Recalculate order totals from item rows
         let subtotal = 0;
         const rows = document.querySelectorAll('.order-item-row');
         rows.forEach((row, i) => {{
