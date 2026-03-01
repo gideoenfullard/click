@@ -25698,6 +25698,11 @@ def fulltech_tools():
                     <option value="sell_only">Selling Price Only</option>
                 </select>
             </div>
+            <div style="background:rgba(251,191,36,0.08);padding:15px;border-radius:8px;border:1px solid rgba(251,191,36,0.2);">
+                <label style="display:block;margin-bottom:5px;color:#fbbf24;font-weight:bold;">Max Change %</label>
+                <input type="number" id="maxChangePct" class="form-control" value="50" step="10" min="10" max="500" style="width:100%;padding:10px;font-size:18px;font-weight:bold;text-align:center;">
+                <small style="color:#888;">Skip items with bigger changes</small>
+            </div>
         </div>
         
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;">
@@ -25849,17 +25854,19 @@ def fulltech_tools():
     async function applyAll() {{
         const markup=getMarkup();
         const target=document.getElementById('updateTarget').value;
-        const n=allData.length;
-        if(!confirm('Update '+n+' items?\\nMarkup: '+markup+'%\\nTarget: '+target)) return;
+        const maxPct=parseFloat(document.getElementById('maxChangePct').value)||50;
+        const toApply=allData.filter(i=> !i.has_cost || Math.abs(i.pct_change)<=maxPct);
+        const skipping=allData.length-toApply.length;
+        if(!confirm('Apply '+toApply.length+' items (skip '+skipping+' with >'+maxPct+'% change)\\nMarkup: '+markup+'%')) return;
         
         const btn=document.getElementById('btnApply');
-        btn.disabled=true; btn.textContent='⏳ Applying...';
+        btn.disabled=true; btn.textContent='Applying...';
         showStatus('Writing to database...', false);
         
         const batchSize=50;
         let ok=0, fail=0;
-        for(let i=0;i<allData.length;i+=batchSize) {{
-            const batch=allData.slice(i,i+batchSize).map(it=>({{
+        for(let i=0;i<toApply.length;i+=batchSize) {{
+            const batch=toApply.slice(i,i+batchSize).map(it=>({{
                 id:it.id, new_cost:it.new_cost, sell_price:Math.round(it.new_cost*(1+markup/100)*100)/100
             }}));
             try {{

@@ -73,31 +73,31 @@ class BoltPricer:
     # Conservative (low) to avoid overpricing
     # ══════════════════════════════════════════════════════
     FALLBACK_RKG = {
-        "HT": {"set": 22, "mf_set": 35, "hex_bolt": 28, "cap_screw": 55,
-                "csk_cap": 50, "button_head": 55, "cheese_head": 28,
-                "cup_square": 35, "stud": 70, "grub_screw": 60,
-                "coach_bolt": 30, "roofing_bolt": 30, "coach_screw": 32,
-                "nut": 28, "nyloc_nut": 42, "dome_nut": 50, "wing_nut": 45,
-                "washer": 22, "spring_washer": 32, "fender_washer": 28,
-                "self_tapper": 40, "tek_screw": 38},
-        "SS": {"set": 50, "mf_set": 65, "hex_bolt": 70, "cap_screw": 80,
-               "csk_cap": 100, "button_head": 80, "cheese_head": 70,
-               "cup_square": 75, "stud": 95, "grub_screw": 100,
-               "nut": 75, "nyloc_nut": 90, "dome_nut": 110, "wing_nut": 100,
-               "washer": 60, "spring_washer": 80, "fender_washer": 70},
-        "ZP": {"set": 30, "mf_set": 38, "hex_bolt": 30, "cap_screw": 52,
-               "csk_cap": 50, "button_head": 52, "cup_square": 32,
-               "stud": 75, "nut": 30, "nyloc_nut": 45, "washer": 26,
-               "fender_washer": 30},
-        "BLK": {"set": 22, "hex_bolt": 28, "cap_screw": 50, "csk_cap": 50,
-                "cup_square": 33, "stud": 70, "nut": 28, "washer": 22},
-        "HDG": {"set": 30, "hex_bolt": 38, "cap_screw": 60, "cup_square": 40,
-                "nut": 38, "washer": 32},
-        "10.9": {"set": 36, "mf_set": 44, "hex_bolt": 40, "cap_screw": 62,
-                 "csk_cap": 62, "stud": 82, "nut": 42},
-        "8.8": {"set": 30, "hex_bolt": 33, "cap_screw": 55, "nut": 35},
-        "12.9": {"set": 46, "hex_bolt": 48, "cap_screw": 75, "csk_cap": 75},
-        "BRASS": {"hex_bolt": 110, "cap_screw": 130, "nut": 120, "washer": 100},
+        "HT": {"set": 10, "mf_set": 18, "hex_bolt": 14, "cap_screw": 25,
+                "csk_cap": 22, "button_head": 25, "cheese_head": 14,
+                "cup_square": 16, "stud": 35, "grub_screw": 30,
+                "coach_bolt": 15, "roofing_bolt": 15, "coach_screw": 16,
+                "nut": 16, "nyloc_nut": 22, "dome_nut": 28, "wing_nut": 24,
+                "washer": 12, "spring_washer": 18, "fender_washer": 14,
+                "self_tapper": 20, "tek_screw": 18},
+        "SS": {"set": 25, "mf_set": 35, "hex_bolt": 35, "cap_screw": 42,
+               "csk_cap": 50, "button_head": 42, "cheese_head": 35,
+               "cup_square": 38, "stud": 50, "grub_screw": 50,
+               "nut": 38, "nyloc_nut": 48, "dome_nut": 55, "wing_nut": 50,
+               "washer": 30, "spring_washer": 40, "fender_washer": 35},
+        "ZP": {"set": 14, "mf_set": 20, "hex_bolt": 14, "cap_screw": 26,
+               "csk_cap": 24, "button_head": 26, "cup_square": 16,
+               "stud": 38, "nut": 16, "nyloc_nut": 24, "washer": 13,
+               "fender_washer": 15},
+        "BLK": {"set": 10, "hex_bolt": 14, "cap_screw": 24, "csk_cap": 24,
+                "cup_square": 16, "stud": 35, "nut": 14, "washer": 12},
+        "HDG": {"set": 15, "hex_bolt": 20, "cap_screw": 30, "cup_square": 20,
+                "nut": 20, "washer": 16},
+        "10.9": {"set": 18, "mf_set": 22, "hex_bolt": 20, "cap_screw": 32,
+                 "csk_cap": 32, "stud": 42, "nut": 22},
+        "8.8": {"set": 15, "hex_bolt": 16, "cap_screw": 28, "nut": 18},
+        "12.9": {"set": 24, "hex_bolt": 25, "cap_screw": 38, "csk_cap": 38},
+        "BRASS": {"hex_bolt": 55, "cap_screw": 65, "nut": 60, "washer": 50},
     }
 
     # Learned rates from calibration: {(type, material, size_band): [r/kg values]}
@@ -213,14 +213,22 @@ class BoltPricer:
             cls._learned_rkg[(it, "ALL", "ALL")].append(implied_rkg)
             count += 1
 
-        # Calculate medians
+        # Calculate 25th percentile (Q1) — more representative of actual buying prices
+        # Median gets skewed by supplier list prices; Q1 matches bulk buying rates
         cls._calibrated_rkg = {}
         for key, values in cls._learned_rkg.items():
             if len(values) >= 1:
                 sorted_vals = sorted(values)
-                mid = len(sorted_vals) // 2
-                median = sorted_vals[mid] if len(sorted_vals) % 2 else (sorted_vals[mid-1] + sorted_vals[mid]) / 2
-                cls._calibrated_rkg[key] = round(median, 1)
+                # Use 25th percentile for groups with enough data
+                if len(sorted_vals) >= 4:
+                    q1_idx = len(sorted_vals) // 4
+                    rate = sorted_vals[q1_idx]
+                elif len(sorted_vals) >= 2:
+                    # Small groups: use lower of the two middle values
+                    rate = sorted_vals[0] if len(sorted_vals) == 2 else sorted_vals[len(sorted_vals)//3]
+                else:
+                    rate = sorted_vals[0]
+                cls._calibrated_rkg[key] = round(rate, 1)
 
         cls._is_calibrated = True
         logger.info(f"[BOLT PRICER] Calibrated from {count} items → {len(cls._calibrated_rkg)} rate groups")
@@ -320,9 +328,9 @@ class BoltPricer:
             return rate
 
         # Ultimate fallback
-        defaults = {"HT": 25, "SS": 65, "ZP": 30, "BLK": 25,
-                    "HDG": 35, "10.9": 38, "8.8": 32, "12.9": 50, "BRASS": 110}
-        return defaults.get(material, 25)
+        defaults = {"HT": 12, "SS": 35, "ZP": 15, "BLK": 12,
+                    "HDG": 18, "10.9": 20, "8.8": 16, "12.9": 26, "BRASS": 55}
+        return defaults.get(material, 12)
 
     @classmethod
     def price(cls, description):
