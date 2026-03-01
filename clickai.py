@@ -13862,14 +13862,15 @@ class ReportEngine:
             # Fallback: convert any remaining markdown to HTML (in case AI mixed formats)
             if report and ("##" in report or "**" in report or "\n- " in report):
                 import re
-                report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
-                report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
+                report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:12px;">\1</h3>', report, flags=re.MULTILINE)
+                report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:18px;">\1</h2>', report, flags=re.MULTILINE)
                 report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
                 report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
                 report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
                 report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
                 report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
-                report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
+                # Wrap orphan text lines in <p> tags, single <br> for spacing
+                report = re.sub(r'\n\n(?!<)', '\n<br>\n', report)
             
             return {"success": True, "report": report}
             
@@ -13942,9 +13943,9 @@ WRITING STYLE:
 - "debtor days are high" is BAD — "debtor days of 36 against industry standard of 30-45 days" is GOOD
 
 FORMAT — OUTPUT CLEAN HTML ONLY (no markdown, no ## or **):
-- <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:8px;margin-top:30px;"> for section headings
-- <h3 style="color:#8b5cf6;margin-top:20px;"> for sub-headings
-- <p style="margin:8px 0;line-height:1.7;"> for paragraphs
+- <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:8px;margin-top:18px;"> for section headings
+- <h3 style="color:#8b5cf6;margin-top:12px;"> for sub-headings
+- <p style="margin:6px 0;line-height:1.7;"> for paragraphs
 - <strong> for emphasis
 - <ul style="margin:8px 0 8px 20px;"><li style="margin:4px 0;"> for lists
 - <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:10px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">Header</th></tr><tr><td style="padding:10px;border-bottom:1px solid rgba(255,255,255,0.08);">Value</td></tr></table>
@@ -16540,14 +16541,6 @@ try:
         register_group_routes(app, db, login_required)
 except Exception as e:
     logger.error(f"[BIZ-GROUP] Failed to register routes: {e}")
-
-# Order Scanner — Order-to-Invoice Pipeline
-try:
-    from clickai_order_scanner import register_order_scanner_routes
-    register_order_scanner_routes(app, db, login_required)
-    logger.info("[MODULES] ✅ Order Scanner loaded")
-except Exception as e:
-    logger.warning(f"[MODULES] Order Scanner not loaded: {e}")
 
 # === DEBUG: Temporary endpoint to diagnose business group dropdown ===
 @app.route("/api/debug-businesses")
@@ -39776,8 +39769,8 @@ List 3-5 questions you would ask the business owner.
 FORMAT INSTRUCTIONS:
 - Output CLEAN HTML only. NEVER USE MARKDOWN. No ##, no **, no ---, no * bullets.
 - DARK THEME: NEVER use background:white, background:#fff, or any light background colors. Only use rgba() with low opacity for backgrounds. Text color must be light (white/grey). All content renders on a dark navy background.
-- Use <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;"> for main section headings
-- Use <h3 style="color:#8b5cf6;margin-top:18px;"> for sub-headings
+- Use <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:18px;"> for main section headings
+- Use <h3 style="color:#8b5cf6;margin-top:12px;"> for sub-headings
 - Use <p> for all paragraph text
 - Use <strong> for emphasis (not **)
 - Use <ul><li> for bullet lists (not - or *)
@@ -40012,8 +40005,8 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
             insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:18px 0;">', insights_html, flags=_re.MULTILINE)
             
             # Paragraph spacing
-            insights_html = _re.sub(r'\n{3,}', '<br><br>', insights_html)
-            insights_html = _re.sub(r'\n\n', '<br><br>', insights_html)
+            insights_html = _re.sub(r'\n{3,}', '<br>', insights_html)
+            insights_html = _re.sub(r'\n\n', '<br>', insights_html)
             insights_html = _re.sub(r'(?<!>)\n(?!<)', '<br>', insights_html)
             
             # Wrap any Sonnet-generated tables in dark styling
@@ -40681,52 +40674,109 @@ Debt/Equity: {debt_equity}:1
 """
         
         report_prompts = {
-            "management": """Write a professional MANAGEMENT STATEMENT (Year-to-Date). Structure:
-1. Executive Summary (2-3 sentences)
-2. Income Statement Analysis (revenue, margins, expense breakdown)
-3. Balance Sheet Summary
-4. Key Ratios & What They Mean
-5. Concerns & Red Flags
-6. Recommendations (5+ specific actions)""",
+            "management": """Write a THOROUGH professional MANAGEMENT STATEMENT (Year-to-Date). 
+You MUST cover ALL of these sections in detail with specific numbers:
+
+1. EXECUTIVE SUMMARY — 3-4 sentences capturing the overall financial picture, profit/loss status, and biggest concern
+2. INCOME STATEMENT ANALYSIS — Revenue performance, cost of sales, gross profit margin analysis vs industry norm (30% for trading, 60% for services), each major expense category with % of sales, net profit/loss verdict
+3. BALANCE SHEET POSITION — Total assets vs liabilities, current ratio meaning, solvency assessment, asset composition
+4. KEY RATIOS EXPLAINED — Current ratio, gross margin, net margin, debt/equity — what each means for THIS business, traffic light status (good/warning/critical)
+5. EXPENSE DEEP DIVE — Table of all expenses with amounts and % of sales, flag any that are too high vs benchmarks (salaries >30%, rent >10% = concern)
+6. CRITICAL RED FLAGS — Each risk in its own warning box with severity level. If making a loss, this is #1 priority
+7. RECOMMENDATIONS — 5-8 numbered, prioritized action items marked as IMMEDIATE / 7 DAYS / 30 DAYS with specific targets
+
+Report MUST be 800-1200 words. Every section MUST have specific R-amounts. Do NOT stop early.""",
             
-            "kpi": f"""Write a KPI DASHBOARD REPORT with traffic light status (Green/Amber/Red):
-1. Gross Profit Margin ({gp_margin}%)
-2. Net Profit Margin ({np_margin}%)
-3. Current Ratio ({current_ratio}:1)
-4. Salaries % of Sales ({sal_pct}%)
-5. Rent % of Sales ({rent_pct}%)
-6. Debt to Equity ({debt_equity}:1)
-For each: meaning, benchmark, and action.""",
+            "kpi": f"""Write a comprehensive KPI DASHBOARD REPORT with traffic light status indicators.
+
+For EACH of these KPIs, write 2-3 paragraphs covering: what it means, the benchmark, how this business compares, and what action to take:
+
+1. GROSS PROFIT MARGIN — {gp_margin}% (benchmark: >30% trading, >50% services). Is pricing right? Cost control?
+2. NET PROFIT MARGIN — {np_margin}% (benchmark: >5% minimum, >10% healthy). Sustainable?
+3. CURRENT RATIO — {current_ratio}:1 (benchmark: >1.5:1). Can they pay bills? Liquidity risk?
+4. SALARIES AS % OF SALES — {sal_pct}% (benchmark: <30%). Overstaffed? Underpaying?
+5. RENT AS % OF SALES — {rent_pct}% (benchmark: <10%). Location cost justified?
+6. DEBT TO EQUITY — {debt_equity}:1 (benchmark: <1.5:1). Leverage risk?
+7. OVERALL HEALTH SCORE — Rate the business Green/Amber/Red with explanation
+
+Use a table for the KPI summary, then detailed analysis below.
+Include a concluding section with the 3 most urgent actions.
+Report MUST be 800-1200 words. Be specific with numbers throughout.""",
             
-            "sales": """Write a SALES ANALYSIS covering: revenue performance, cost structure, gross margin quality, expense impact, and improvement recommendations.""",
+            "sales": f"""Write a DETAILED SALES ANALYSIS REPORT covering ALL of these:
+
+1. REVENUE OVERVIEW — Total sales R{sales:,.2f}, context (is this strong/weak for the size of business?)
+2. COST STRUCTURE — Cost of sales R{cos:,.2f}, gross margin {gp_margin}%. Compare to industry norms. What does the margin tell us about pricing strategy?
+3. GROSS PROFIT QUALITY — R{gross_profit:,.2f} gross profit. Is it enough to cover operating expenses? Break-even analysis
+4. EXPENSE IMPACT ON PROFIT — How expenses eat into gross profit. Which expenses are the biggest burden? Table with each expense and % of sales
+5. PROFITABILITY VERDICT — Net profit/loss analysis. If loss: how much more revenue needed to break even? If profit: how sustainable?
+6. SCENARIO ANALYSIS — What happens if sales drop 10%? 20%? At what point does the business make a loss?
+7. IMPROVEMENT RECOMMENDATIONS — 5+ specific actions to improve sales performance and margins
+
+Report MUST be 800-1200 words. Use tables for expense breakdowns. Be specific with every number.""",
             
-            "debtor": f"""Write a WORKING CAPITAL report: Current Ratio ({current_ratio}), cash position, liquidity risk, and recommendations.""",
+            "debtor": f"""Write a WORKING CAPITAL & LIQUIDITY REPORT covering:
+
+1. LIQUIDITY POSITION — Current ratio {current_ratio}:1, what it means, can they pay short-term debts?
+2. CASH FLOW ANALYSIS — Current assets vs current liabilities, the gap, what it means practically
+3. ASSET COMPOSITION — What % is tied up in stock vs debtors vs cash? Is the mix healthy?
+4. LIABILITY PRESSURE — What must be paid and when? VAT, PAYE, creditors, loans
+5. WORKING CAPITAL CYCLE — Estimate debtor days, creditor days, stock days if applicable
+6. RISK ASSESSMENT — Rate liquidity risk as Low/Medium/High/Critical with explanation
+7. RECOMMENDATIONS — 5+ actions to improve cash position, prioritized by urgency
+
+Report MUST be 600-1000 words. Be specific about amounts and risks.""",
             
-            "forecast": """Write a FORWARD-LOOKING ANALYSIS: sustainability, cash flow outlook, scenario analysis (sales drop 10/20/30%), and strategic recommendations.""",
+            "forecast": f"""Write a FORWARD-LOOKING FINANCIAL ANALYSIS covering:
+
+1. CURRENT TRAJECTORY — Based on current numbers, where is this business heading? Sustainable?
+2. CASH FLOW PROJECTION — Estimate next 3 months: expected income vs commitments
+3. SCENARIO ANALYSIS TABLE — Show impact of sales changes:
+   - Sales drop 10%: new gross profit, new net profit
+   - Sales drop 20%: new gross profit, new net profit  
+   - Sales drop 30%: new gross profit, new net profit
+   - Sales increase 15%: new gross profit, new net profit
+4. BREAK-EVEN POINT — How much revenue is needed to cover all expenses?
+5. BIGGEST FINANCIAL RISKS — What could go wrong? Economic factors, concentration risk, cash squeeze
+6. STRATEGIC RECOMMENDATIONS — 5+ forward-looking actions, both defensive and growth-oriented
+
+Report MUST be 800-1200 words. Use tables for scenarios. Be specific with projections.""",
             
-            "custom": f"""Answer this request: {custom_request or 'General financial overview'}"""
+            "custom": f"""Answer this request in THOROUGH DETAIL using ALL the financial data provided: {custom_request or 'General financial overview'}
+
+Be comprehensive - minimum 600 words. Use specific R-amounts from the data. Include tables where helpful. End with actionable recommendations."""
         }
         
         prompt = report_prompts.get(report_type, report_prompts["management"])
         
-        system_prompt = f"""You are Zane, ClickAI's senior financial analyst. You are writing a report for a CLIENT's uploaded trial balance.
+        system_prompt = f"""You are Zane, ClickAI's senior financial analyst writing a report for a CLIENT's uploaded trial balance.
 Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, ClickAI" only.
-RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
-{"Write in Afrikaans." if lang == "af" else "Write in English."} Use R (Rand) for all amounts.
+
+CRITICAL RULES:
+- Use ONLY the Python-calculated numbers provided. Do NOT recalculate or invent numbers.
+- Do NOT make fraud allegations. Flag concerns professionally.
+- {'"Write in Afrikaans."' if lang == 'af' else '"Write in English."'} Use R (Rand) for all amounts.
+- Be THOROUGH. This report may be presented to a client, investor, or board.
+- Every claim MUST reference a specific R-amount or percentage from the data.
+- "margins are low" is BAD — "gross margin of {gp_margin}% is below the industry benchmark of 30%" is GOOD.
+
+LENGTH: Write 800-1200 words MINIMUM. Complete ALL sections fully. Do NOT stop early or summarize prematurely.
+If you run out of things to say, go deeper into expense analysis, ratio interpretation, or add more recommendations.
 
 FORMAT RULES - OUTPUT CLEAN HTML:
-- Use <h2> for main sections, <h3> for subsections
-- Use <p> for paragraphs
+- Use <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:5px;margin-top:18px;"> for main sections
+- Use <h3 style="color:#8b5cf6;margin-top:12px;"> for sub-headings
+- Use <p style="margin:6px 0;line-height:1.7;"> for paragraphs
 - Use <strong> for emphasis
-- Use <table> with inline styles for any data tables
-- Use <div style="background:rgba(239,68,68,0.15);border-left:3px solid #ef4444;padding:12px;margin:10px 0;color:#fca5a5;border-radius:6px;"> for warnings/red flags
-- Use <div style="background:rgba(16,185,129,0.15);border-left:3px solid #10b981;padding:12px;margin:10px 0;color:#6ee7b7;border-radius:6px;"> for positive items
-- Use <div style="background:rgba(245,158,11,0.15);border-left:3px solid #f59e0b;padding:12px;margin:10px 0;color:#fcd34d;border-radius:6px;"> for caution items
-- Use <div style="background:rgba(16,185,129,0.1);border-left:3px solid #10b981;padding:10px;margin:10px 0;"> for positive items
-
+- Use <table style="width:100%;border-collapse:collapse;margin:10px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">Header</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.08);">Value</td></tr></table>
+- Use <div style="background:rgba(239,68,68,0.15);border-left:3px solid #ef4444;padding:12px;margin:8px 0;color:#fca5a5;border-radius:6px;"> for CRITICAL warnings
+- Use <div style="background:rgba(16,185,129,0.15);border-left:3px solid #10b981;padding:12px;margin:8px 0;color:#6ee7b7;border-radius:6px;"> for POSITIVE items
+- Use <div style="background:rgba(245,158,11,0.15);border-left:3px solid #f59e0b;padding:12px;margin:8px 0;color:#fcd34d;border-radius:6px;"> for CAUTION items
 - DO NOT use markdown (no ##, no **, no ---, no bullet points with -)
 - Use <ul><li> for lists
-- Make it visually professional and easy to scan"""
+- Make it visually professional and easy to scan
+- EVERY table cell MUST have content
+- Complete ALL sections fully — do not stop mid-section"""
 
         if not ANTHROPIC_API_KEY:
             return jsonify({"success": False, "error": "AI not configured"})
@@ -40742,15 +40792,15 @@ FORMAT RULES - OUTPUT CLEAN HTML:
         
         # Convert any remaining markdown to HTML (fallback if Sonnet mixed formats)
         import re
-        report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
-        report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
+        report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:12px;">\1</h3>', report, flags=re.MULTILINE)
+        report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:18px;">\1</h2>', report, flags=re.MULTILINE)
         report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
         report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
         report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
         report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
         report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
         # Wrap plain text paragraphs
-        report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
+        report = re.sub(r'\n\n(?!<)', '\n<br>\n', report)
         return jsonify({"success": True, "report": report})
         
     except Exception as e:
@@ -43227,6 +43277,16 @@ def smart_reports_page():
     .report-btn { transition: all 0.2s; border: 1px solid var(--border); }
     .report-btn:hover { border-color: var(--primary); transform: translateY(-2px); }
     .report-btn.disabled { opacity: 0.5; pointer-events: none; }
+    /* Report content spacing normalization */
+    #reportContent h2 { margin: 18px 0 8px 0 !important; }
+    #reportContent h3 { margin: 14px 0 6px 0 !important; }
+    #reportContent p { margin: 6px 0 !important; line-height: 1.7; }
+    #reportContent table { margin: 10px 0 !important; }
+    #reportContent ul, #reportContent ol { margin: 6px 0 6px 20px !important; }
+    #reportContent li { margin: 3px 0 !important; }
+    #reportContent hr { margin: 15px 0 !important; }
+    #reportContent div[style*="border-left"] { margin: 8px 0 !important; }
+    #reportContent br + br { display: none; }
     </style>
     
     <script>
