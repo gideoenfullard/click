@@ -68491,6 +68491,9 @@ def scan_page():
                 <button class="btn scan-type-btn" onclick="selectType('bank_statement')" style="padding:20px;background:#059669;color:white;">
                     🏦 Bank Statement
                 </button>
+                <button class="btn scan-type-btn" onclick="selectType('customer_order')" style="padding:20px;background:var(--card);border:2px solid #10b981;">
+                    🛒 Customer Order
+                </button>
                 <button class="btn scan-type-btn" onclick="selectType('other')" style="padding:20px;background:var(--card);border:1px solid var(--border);">
                     [DOC] Other Document
                 </button>
@@ -68607,6 +68610,7 @@ def scan_page():
         'payslip': '[MONEY] Payslip',
         'timesheet': 'Timesheet',
         'bank_statement': '🏦 Bank Statement',
+        'customer_order': '🛒 Customer Order',
         'other': '[DOC] Document'
     };
     
@@ -68615,6 +68619,7 @@ def scan_page():
         'payslip': '#ec4899',
         'timesheet': '#f59e0b',
         'bank_statement': '#059669',
+        'customer_order': '#10b981',
         'other': 'var(--text-muted)'
     };
     
@@ -68744,6 +68749,57 @@ def scan_page():
                     <strong style="font-size:20px;color:var(--primary);">R${(data.total || 0).toFixed(2)}</strong>
                 </div>
             `;
+        } else if (scanType === 'customer_order') {
+            // Customer Order preview - show customer and items
+            let orderItemsHtml = '';
+            const orderItems = data.items || [];
+            if (orderItems.length > 0) {
+                orderItemsHtml = '<div style="margin:15px 0;max-height:200px;overflow-y:auto;">';
+                orderItems.forEach((item, i) => {
+                    const desc = item.description || 'Item';
+                    const qty = item.qty || item.quantity || 1;
+                    orderItemsHtml += `
+                        <div style="display:flex;justify-content:space-between;padding:8px;background:rgba(16,185,129,0.1);border-radius:6px;margin-bottom:4px;font-size:13px;">
+                            <span style="flex:1;">${i+1}. ${desc.substring(0,40)}${desc.length > 40 ? '...' : ''}</span>
+                            <span style="font-weight:600;color:#10b981;">x${qty}</span>
+                        </div>
+                    `;
+                });
+                orderItemsHtml += '</div>';
+            }
+            
+            html = `
+                <div style="background:rgba(16,185,129,0.15);padding:10px;border-radius:8px;margin-bottom:15px;text-align:center;">
+                    <strong style="color:#10b981;">CUSTOMER ORDER</strong>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+                    <span style="color:var(--text-muted);">Customer</span>
+                    <strong>${data.customer_name || data.customer || 'Unknown'}</strong>
+                </div>
+                ${data.customer_phone || data.phone ? `
+                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+                    <span style="color:var(--text-muted);">Phone</span>
+                    <span>${data.customer_phone || data.phone || ''}</span>
+                </div>` : ''}
+                ${data.order_reference ? `
+                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+                    <span style="color:var(--text-muted);">Order Ref</span>
+                    <span>${data.order_reference}</span>
+                </div>` : ''}
+                <div style="margin:10px 0;padding-top:10px;border-top:1px solid var(--border);">
+                    <span style="color:var(--text-muted);font-size:12px;">${orderItems.length} ITEMS ORDERED</span>
+                </div>
+                ${orderItemsHtml}
+                ${data.notes ? `
+                <div style="margin-top:10px;padding:8px;background:rgba(245,158,11,0.1);border-radius:6px;font-size:12px;">
+                    <strong>Notes:</strong> ${data.notes}
+                </div>` : ''}
+            `;
+            
+            // Update save button for orders
+            document.getElementById('saveBtn').innerHTML = 'Save to Order Inbox';
+            document.getElementById('saveBtn').style.background = '#10b981';
+            document.getElementById('saveHint').textContent = 'Order will be saved. Open from inbox to create a quote with your prices.';
         } else if (scanType === 'payslip') {
             html = `
                 <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
@@ -69050,6 +69106,32 @@ Rules:
 - Read EVERY row, even bank charges and small fees
 - Combine multi-line descriptions into one string
 - Date format: YYYY-MM-DD"""
+        elif scan_type == 'customer_order':
+            prompt = """This is a CUSTOMER ORDER / PURCHASE ORDER from a customer who wants to buy from us.
+
+Extract the customer details and ALL items they want to order.
+
+CRITICAL RULES:
+1. Copy item descriptions EXACTLY as printed
+2. Read EVERY item - do not skip any
+3. Get quantities exactly right
+4. If prices are shown, include them (but we will use OUR prices)
+5. Look for customer name, company, phone, email, order number/reference
+
+Return ONLY valid JSON:
+{
+    "customer_name": "Company or person name",
+    "customer_phone": "",
+    "customer_email": "",
+    "order_reference": "Their PO/order number",
+    "date": "YYYY-MM-DD",
+    "items": [
+        {"description": "Exact item name as printed", "qty": 10, "price": 0.00}
+    ],
+    "notes": "Any special instructions, delivery notes etc"
+}
+
+NOTE: Read item descriptions and quantities exactly. Price can be 0 - we will use our own prices."""
         else:
             prompt = """Read this invoice/receipt carefully. Extract ALL line items AND supplier details.
 
@@ -69481,6 +69563,167 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
         return jsonify({"success": False, "error": str(e)})
 
 
+@app.route("/api/scan/create-quote-from-order", methods=["POST"])
+@login_required
+def api_scan_create_quote_from_order():
+    """Create a quote from a scanned customer order - the NDE pipeline"""
+    
+    try:
+        data = request.get_json()
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"})
+        
+        customer_name = data.get("customer_name", "Unknown Customer")
+        customer_phone = data.get("customer_phone", "")
+        order_reference = data.get("order_reference", "")
+        items = data.get("items", [])
+        notes = data.get("notes", "")
+        
+        if not items:
+            return jsonify({"success": False, "error": "No items in order"})
+        
+        # ═══════════════════════════════════════════════════════
+        # STEP 1: Find or create customer
+        # ═══════════════════════════════════════════════════════
+        customer_id = ""
+        existing_customers = db.get("customers", {"business_id": biz_id}) or []
+        
+        for c in existing_customers:
+            c_name = (c.get("name") or "").lower().strip()
+            if c_name and c_name in customer_name.lower():
+                customer_id = c.get("id", "")
+                customer_name = c.get("name", customer_name)  # Use existing name
+                break
+        
+        if not customer_id:
+            # Create new customer
+            customer_id = generate_id()
+            new_customer = {
+                "id": customer_id,
+                "business_id": biz_id,
+                "name": customer_name,
+                "phone": customer_phone,
+                "balance": 0,
+                "created_at": now()
+            }
+            success, err = db.save("customers", new_customer)
+            if success:
+                logger.info(f"[ORDER→QUOTE] New customer created: {customer_name}")
+            else:
+                logger.warning(f"[ORDER→QUOTE] Customer create failed: {err} - continuing without customer_id")
+                customer_id = ""
+        
+        # ═══════════════════════════════════════════════════════
+        # STEP 2: Match items to stock and use OUR prices
+        # ═══════════════════════════════════════════════════════
+        all_stock = db.get_all_stock(biz_id) if hasattr(db, 'get_all_stock') else (db.get("stock", {"business_id": biz_id}) or [])
+        
+        quote_items = []
+        matched_count = 0
+        unmatched_count = 0
+        
+        for item in items:
+            desc = item.get("description", "Unknown Item")
+            qty = float(item.get("qty") or item.get("quantity") or 1)
+            price = float(item.get("price") or 0)  # This is from the form (already matched price)
+            
+            # If price is 0, try to match stock
+            if price == 0 and all_stock:
+                # Smart search
+                search_text = desc.lower()
+                best_match = None
+                best_score = 0
+                
+                for s in all_stock:
+                    s_desc = (s.get("description") or "").lower()
+                    s_code = (s.get("code") or "").lower()
+                    s_name = (s.get("name") or "").lower()
+                    combined = f"{s_code} {s_desc} {s_name}"
+                    
+                    # Simple word match
+                    words = search_text.replace(',', ' ').replace('/', ' ').replace('-', ' ').split()
+                    matches = sum(1 for w in words if w in combined)
+                    if matches > best_score and matches >= len(words) * 0.5:
+                        best_score = matches
+                        best_match = s
+                
+                if best_match:
+                    price = float(best_match.get("price") or best_match.get("selling_price") or 0)
+                    matched_count += 1
+                else:
+                    unmatched_count += 1
+            else:
+                matched_count += 1
+            
+            line_total = round(qty * price, 2)
+            quote_items.append({
+                "description": desc,
+                "qty": qty,
+                "price": price,
+                "total": line_total
+            })
+        
+        # ═══════════════════════════════════════════════════════
+        # STEP 3: Calculate totals
+        # ═══════════════════════════════════════════════════════
+        subtotal = sum(item["total"] for item in quote_items)
+        vat = round(subtotal * 0.15, 2)
+        total = round(subtotal + vat, 2)
+        
+        # ═══════════════════════════════════════════════════════
+        # STEP 4: Generate quote number and create quote
+        # ═══════════════════════════════════════════════════════
+        existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
+        quote_num = f"Q-{len(existing_quotes) + 1:05d}"
+        
+        quote = RecordFactory.quote(
+            business_id=biz_id,
+            customer_id=customer_id,
+            customer_name=customer_name,
+            items=quote_items,
+            quote_number=quote_num,
+            date=today(),
+            subtotal=subtotal,
+            vat=vat,
+            total=total,
+            status="draft",
+            notes=f"From order{' ' + order_reference if order_reference else ''}. {notes}".strip(),
+            created_by=user.get("id", "") if user else ""
+        )
+        quote_id = quote["id"]
+        
+        success, err = db.save("quotes", quote)
+        
+        if success:
+            logger.info(f"[ORDER→QUOTE] Quote {quote_num} created: {customer_name} - R{total:.2f} ({matched_count} matched, {unmatched_count} unmatched)")
+            
+            # Log audit trail
+            try:
+                AuditLog.log("CREATE", "quotes", quote_id, details=f"Quote from scanned order - {customer_name} - {order_reference}")
+            except:
+                pass
+            
+            return jsonify({
+                "success": True,
+                "quote_id": quote_id,
+                "quote_number": quote_num,
+                "message": f"Quote {quote_num} created for {customer_name} - R{total:.2f}",
+                "stock_matched": matched_count,
+                "stock_unmatched": unmatched_count
+            })
+        else:
+            logger.error(f"[ORDER→QUOTE] Failed to save: {err}")
+            return jsonify({"success": False, "error": f"Failed to save quote: {str(err)}"})
+    
+    except Exception as e:
+        logger.error(f"[ORDER→QUOTE] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
 @app.route("/api/scan/check-duplicate", methods=["POST"])
 @login_required
 def api_scan_check_duplicate():
@@ -69818,6 +70061,12 @@ def api_scan_save_to_inbox():
             except (ValueError, TypeError):
                 _net = 0
             summary = f"{extracted.get('employee_name') or 'Unknown'} - R{_net:.2f}"
+        elif doc_type == "customer_order":
+            customer = extracted.get('customer_name') or extracted.get('customer') or 'Unknown Customer'
+            items = extracted.get('items', [])
+            order_ref = extracted.get('order_reference') or ''
+            ref_str = f" ({order_ref})" if order_ref else ''
+            summary = f"Order from {customer}{ref_str} - {len(items)} items"
         elif doc_type == "timesheet":
             # Handle new format with employees array
             employees = extracted.get('employees', [])
@@ -69964,8 +70213,8 @@ def scan_inbox_page():
     inbox_html = ""
     for item in inbox_items:
         doc_type = item.get("type", "other")
-        type_icon = {"invoice": "[INV]", "payslip": "[MONEY]", "timesheet": "⏱️", "other": "[DOC]"}.get(doc_type, "[DOC]")
-        type_color = {"invoice": "var(--primary)", "payslip": "#ec4899", "timesheet": "#f59e0b", "other": "var(--text-muted)"}.get(doc_type, "var(--text-muted)")
+        type_icon = {"invoice": "[INV]", "payslip": "[MONEY]", "timesheet": "⏱️", "customer_order": "🛒", "other": "[DOC]"}.get(doc_type, "[DOC]")
+        type_color = {"invoice": "var(--primary)", "payslip": "#ec4899", "timesheet": "#f59e0b", "customer_order": "#10b981", "other": "var(--text-muted)"}.get(doc_type, "var(--text-muted)")
         
         # Parse stored data
         try:
@@ -70008,6 +70257,10 @@ def scan_inbox_page():
         <div class="stat-card" style="background:rgba(245,158,11,0.1);border-color:#f59e0b;">
             <div class="stat-value">{type_counts.get("timesheet", 0)}</div>
             <div class="stat-label">Timesheets</div>
+        </div>
+        <div class="stat-card" style="background:rgba(16,185,129,0.1);border-color:#10b981;">
+            <div class="stat-value">{type_counts.get("customer_order", 0)}</div>
+            <div class="stat-label">Orders</div>
         </div>
     </div>
     
@@ -70623,6 +70876,143 @@ def scan_inbox_page():
                     <button class="btn" onclick="processAs('supplier')" style="padding:14px;background:var(--primary);color:white;">📦 Stock Purchase (Credit)</button>
                 </div>
             `;
+        }} else if (type === 'customer_order') {{
+            // ═══════════════════════════════════════════════════════
+            // CUSTOMER ORDER → QUOTE FORM
+            // Match items to stock, use OUR prices, create quote
+            // ═══════════════════════════════════════════════════════
+            const orderItems = data.items || [];
+            let orderItemsHtml = '';
+            
+            if (orderItems.length > 0) {{
+                orderItemsHtml = `
+                <div style="margin:15px 0;background:rgba(16,185,129,0.1);border-radius:12px;padding:15px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <span style="font-weight:600;color:#10b981;">ORDER ITEMS (${{orderItems.length}})</span>
+                        <span style="font-size:11px;color:var(--text-muted);background:rgba(16,185,129,0.2);padding:3px 8px;border-radius:4px;">
+                            Prices = YOUR selling prices
+                        </span>
+                    </div>
+                    <div style="max-height:350px;overflow-y:auto;">
+                `;
+                
+                orderItems.forEach((item, i) => {{
+                    const desc = item.description || 'Item';
+                    const qty = item.qty || item.quantity || 1;
+                    
+                    // Match against existing stock
+                    const stockMatch = matchStock(desc);
+                    let matchBadge = '';
+                    let matchedPrice = 0;
+                    let stockCode = '';
+                    
+                    if (stockMatch) {{
+                        matchedPrice = parseFloat(stockMatch.price || stockMatch.selling_price || 0);
+                        stockCode = stockMatch.code || '';
+                        matchBadge = `<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
+                            ${{stockCode}} MATCHED
+                        </span>`;
+                    }} else {{
+                        matchBadge = `<span style="background:#f97316;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">
+                            NOT FOUND - enter price
+                        </span>`;
+                    }}
+                    
+                    const lineTotal = (parseFloat(qty) * matchedPrice).toFixed(2);
+                    
+                    orderItemsHtml += `
+                    <div class="order-item-row" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+                            <div style="flex:1;">
+                                <div style="font-weight:500;margin-bottom:6px;">
+                                    <span style="color:var(--text-muted);">${{i+1}}.</span>
+                                    <input type="text" id="ord_desc_${{i}}" value="${{desc}}"
+                                           style="border:none;background:transparent;font-weight:500;width:90%;outline:none;font-size:14px;color:#fff;"
+                                           onfocus="this.style.background='#1e293b';this.style.padding='4px';this.style.borderRadius='4px'"
+                                           onblur="this.style.background='transparent';this.style.padding='0'"
+                                    />
+                                </div>
+                                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                                    ${{matchBadge}}
+                                </div>
+                            </div>
+                            <div style="text-align:right;min-width:140px;">
+                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">
+                                    x<input type="number" id="ord_qty_${{i}}" value="${{qty}}"
+                                           style="border:none;background:transparent;width:40px;outline:none;text-align:center;color:#fff;"
+                                           onfocus="this.style.background='#1e293b';this.style.padding='2px';this.style.borderRadius='3px'"
+                                           onblur="this.style.background='transparent';this.style.padding='0'"
+                                           step="1" onchange="recalcOrderTotal()"
+                                    />
+                                    @ R<input type="number" id="ord_price_${{i}}" value="${{matchedPrice.toFixed(2)}}"
+                                             style="border:1px solid ${{matchedPrice > 0 ? '#22c55e' : '#f97316'}};background:${{matchedPrice > 0 ? 'transparent' : 'rgba(249,115,22,0.1)'}};width:80px;outline:none;text-align:right;color:#fff;border-radius:4px;padding:2px 4px;"
+                                             step="0.01" onchange="recalcOrderTotal()"
+                                    />
+                                </div>
+                                <div style="font-weight:600;color:#10b981;" id="ord_line_${{i}}">R${{lineTotal}}</div>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }});
+                
+                orderItemsHtml += '</div></div>';
+            }}
+            
+            formHtml = `
+                <div style="background:rgba(16,185,129,0.15);padding:12px;border-radius:8px;margin-bottom:15px;text-align:center;">
+                    <strong style="color:#10b981;font-size:16px;">🛒 CUSTOMER ORDER → CREATE QUOTE</strong>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">Items matched to YOUR stock with YOUR selling prices</div>
+                </div>
+                <div class="modal-field">
+                    <label>Customer Name</label>
+                    <input type="text" id="m_customer" value="${{data.customer_name || data.customer || ''}}">
+                </div>
+                <div class="modal-row">
+                    <div class="modal-field">
+                        <label>Phone</label>
+                        <input type="text" id="m_customer_phone" value="${{data.customer_phone || data.phone || ''}}">
+                    </div>
+                    <div class="modal-field">
+                        <label>Order Ref</label>
+                        <input type="text" id="m_order_ref" value="${{data.order_reference || ''}}">
+                    </div>
+                </div>
+                
+                ${{orderItemsHtml}}
+                
+                <div class="modal-row" style="margin-top:15px;">
+                    <div class="modal-field">
+                        <label>Subtotal (excl VAT)</label>
+                        <input type="number" step="0.01" id="m_order_subtotal" value="0" readonly style="font-weight:bold;">
+                    </div>
+                    <div class="modal-field">
+                        <label>VAT (15%)</label>
+                        <input type="number" step="0.01" id="m_order_vat" value="0" readonly>
+                    </div>
+                </div>
+                <div class="modal-field">
+                    <label>Total (incl VAT)</label>
+                    <input type="number" step="0.01" id="m_order_total" value="0" readonly style="font-size:20px;font-weight:bold;background:rgba(16,185,129,0.1);border-color:#10b981;">
+                </div>
+                ${{data.notes ? `
+                <div class="modal-field">
+                    <label>Notes</label>
+                    <input type="text" id="m_order_notes" value="${{data.notes || ''}}">
+                </div>` : ''}}
+            `;
+            
+            saveHtml = `
+                <button class="btn" onclick="processAs('create_quote')" style="padding:16px;background:#10b981;color:white;width:100%;font-size:16px;font-weight:bold;">
+                    CREATE QUOTE
+                </button>
+                <div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text-muted);">
+                    Quote will be created as Draft. View it to convert to Invoice.
+                </div>
+            `;
+            
+            // Auto-calculate totals after render
+            setTimeout(() => {{ recalcOrderTotal(); }}, 100);
         }} else if (type === 'payslip') {{
             formHtml = `
                 <div class="modal-field">
@@ -71023,6 +71413,40 @@ def scan_inbox_page():
             }};
             endpoint = '/api/scan/save-timesheet-batch';
             redirect = '/payroll';
+        }} else if (saveType === 'create_quote') {{
+            // ═══════════════════════════════════════════════════════
+            // CREATE QUOTE FROM CUSTOMER ORDER
+            // ═══════════════════════════════════════════════════════
+            const quoteItems = [];
+            const orderRows = document.querySelectorAll('.order-item-row');
+            orderRows.forEach((row, i) => {{
+                const descEl = document.getElementById(`ord_desc_${{i}}`);
+                const qtyEl = document.getElementById(`ord_qty_${{i}}`);
+                const priceEl = document.getElementById(`ord_price_${{i}}`);
+                if (descEl) {{
+                    const qty = parseFloat(qtyEl?.value || 1);
+                    const price = parseFloat(priceEl?.value || 0);
+                    quoteItems.push({{
+                        description: descEl.value.trim(),
+                        qty: qty,
+                        price: price,
+                        total: Math.round(qty * price * 100) / 100
+                    }});
+                }}
+            }});
+            
+            payload = {{
+                customer_name: document.getElementById('m_customer')?.value || 'Unknown',
+                customer_phone: document.getElementById('m_customer_phone')?.value || '',
+                order_reference: document.getElementById('m_order_ref')?.value || '',
+                items: quoteItems,
+                subtotal: parseFloat(document.getElementById('m_order_subtotal')?.value || 0),
+                vat: parseFloat(document.getElementById('m_order_vat')?.value || 0),
+                total: parseFloat(document.getElementById('m_order_total')?.value || 0),
+                notes: document.getElementById('m_order_notes')?.value || ''
+            }};
+            endpoint = '/api/scan/create-quote-from-order';
+            redirect = '/quotes';
         }} else if (saveType === 'bank_statement') {{
             // Import bank statement transactions to banking
             const txns = currentItemData.transactions || (currentItemData.extracted && currentItemData.extracted.transactions) || [];
@@ -71082,6 +71506,9 @@ def scan_inbox_page():
                 
                 if (redirect === '/banking' && data.imported > 0) {{
                     window.location = '/banking';
+                }} else if (data.quote_id) {{
+                    // Redirect to the new quote so Daphne can review and convert to invoice
+                    window.location = '/quote/' + data.quote_id + '?success=Created+from+order';
                 }} else {{
                     window.location.reload();
                 }}
@@ -71091,6 +71518,28 @@ def scan_inbox_page():
         }} catch(err) {{
             alert(' Error: ' + err.message);
         }}
+    }}
+    
+    function recalcOrderTotal() {{
+        // Recalculate order totals from item rows
+        let subtotal = 0;
+        const rows = document.querySelectorAll('.order-item-row');
+        rows.forEach((row, i) => {{
+            const qty = parseFloat(document.getElementById(`ord_qty_${{i}}`)?.value || 0);
+            const price = parseFloat(document.getElementById(`ord_price_${{i}}`)?.value || 0);
+            const lineTotal = qty * price;
+            subtotal += lineTotal;
+            const lineEl = document.getElementById(`ord_line_${{i}}`);
+            if (lineEl) lineEl.textContent = 'R' + lineTotal.toFixed(2);
+        }});
+        const vat = subtotal * 0.15;
+        const total = subtotal + vat;
+        const subEl = document.getElementById('m_order_subtotal');
+        const vatEl = document.getElementById('m_order_vat');
+        const totalEl = document.getElementById('m_order_total');
+        if (subEl) subEl.value = subtotal.toFixed(2);
+        if (vatEl) vatEl.value = vat.toFixed(2);
+        if (totalEl) totalEl.value = total.toFixed(2);
     }}
     
     async function deleteFromInbox() {{
