@@ -25797,8 +25797,8 @@ def fulltech_tools():
                 <div class="stat-box"><div class="num" style="color:#a78bfa">${{s.fasteners_matched}}</div><div class="lbl">Fasteners</div></div>
                 <div class="stat-box"><div class="num" style="color:#fbbf24">${{s.changes_needed}}</div><div class="lbl">Changes</div></div>
                 <div class="stat-box"><div class="num" style="color:#38bdf8">${{s.needs_cost_price}}</div><div class="lbl">No Cost Yet</div></div>
-                <div class="stat-box"><div class="num" style="color:#4ade80">${{s.not_fasteners}}</div><div class="lbl">Skipped</div></div>
-                <div class="stat-box"><div class="num">${{s.elapsed_seconds}}s</div><div class="lbl">Time</div></div>
+                <div class="stat-box"><div class="num" style="color:#10b981">${{s.calibrated_from}}</div><div class="lbl">🧠 Learned From</div></div>
+                <div class="stat-box"><div class="num">${{s.rate_groups}}</div><div class="lbl">Rate Groups</div></div>
             `;
             
             document.getElementById('btnApply').disabled=false;
@@ -25832,7 +25832,7 @@ def fulltech_tools():
                 <td style="padding:6px;font-size:11px;">${{i.type_label}}</td>
                 <td style="padding:6px;text-align:center;"><span style="padding:1px 6px;border-radius:3px;font-size:11px;background:#334155;">${{i.material}}</span></td>
                 <td style="padding:6px;text-align:right;">${{i.weight_g}}g</td>
-                <td style="padding:6px;text-align:right;color:#888;">R${{i.rkg}}</td>
+                <td style="padding:6px;text-align:right;color:#888;">R${{i.rkg}} ${{i.source==='calibrated'?'🧠':i.source==='calibrated-broad'?'🔄':'⚡'}}</td>
                 <td style="padding:6px;text-align:right;">${{i.old_cost>0?'R'+i.old_cost.toFixed(2):'—'}}</td>
                 <td style="padding:6px;text-align:right;font-weight:700;color:#10b981;">R${{i.new_cost.toFixed(2)}}</td>
                 <td style="padding:6px;text-align:right;font-weight:700;color:#fbbf24;">R${{sell.toFixed(2)}}</td>
@@ -25881,18 +25881,25 @@ def fulltech_tools():
 @app.route("/api/fulltech/bolt-check", methods=["POST"])
 @login_required
 def api_fulltech_bolt_check():
-    """Single item price check using BoltPricer"""
+    """Single item price check using BoltPricer — auto-calibrates if needed"""
     data = request.get_json() or {}
     desc = data.get("description", "")
-    if BoltPricer:
-        return jsonify(BoltPricer.price(desc))
-    return jsonify({"success": False, "error": "BoltPricer not loaded"})
+    if not BoltPricer:
+        return jsonify({"success": False, "error": "BoltPricer not loaded"})
+    # Auto-calibrate from DB if not yet done
+    if not BoltPricer._is_calibrated:
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if biz_id:
+            stock = db.get_all_stock(biz_id)
+            BoltPricer.calibrate(stock)
+    return jsonify(BoltPricer.price(desc))
 
 
 @app.route("/api/fulltech/bolt-preview")
 @login_required
 def api_fulltech_bolt_preview():
-    """Preview bolt repricing for all stock"""
+    """Preview bolt repricing — self-calibrates from existing prices first"""
     import time as _time
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
@@ -25903,38 +25910,15 @@ def api_fulltech_bolt_preview():
     
     t0 = _time.time()
     all_stock = db.get_all_stock(biz_id)
-    matched, skipped, no_change = [], [], []
     
-    for item in all_stock:
-        desc = item.get("description") or item.get("code") or ""
-        item_id = item.get("id", "")
-        code = item.get("code", "")
-        old_cost = float(item.get("cost_price") or item.get("cost") or 0)
-        old_sell = float(item.get("selling_price") or item.get("price") or 0)
-        
-        r = BoltPricer.price(desc)
-        if not r.get("success"):
-            skipped.append({"id": item_id, "code": code, "description": desc, "reason": r.get("error","?")})
-            continue
-        
-        new_cost = r["cost"]
-        diff = round(new_cost - old_cost, 2)
-        pct = round((diff/old_cost*100),1) if old_cost > 0 else (999 if new_cost > 0 else 0)
-        
-        entry = {
-            "id": item_id, "code": code, "description": desc,
-            "item_type": r["item_type"], "type_label": r["type_label"],
-            "material": r["material"], "mat_label": r["mat_label"],
-            "m_size": r["m_size"], "length": r.get("length"),
-            "weight_g": r["weight_g"], "rkg": r["rkg"],
-            "old_cost": old_cost, "new_cost": new_cost, "old_sell": old_sell,
-            "difference": diff, "pct_change": pct, "has_cost": old_cost > 0,
-        }
-        
-        if abs(pct) < 1 and old_cost > 0:
-            no_change.append(entry)
-        else:
-            matched.append(entry)
+    # bulk_recalc auto-calibrates from items WITH prices, then prices ALL items
+    result = BoltPricer.bulk_recalc(all_stock)
+    
+    matched = result.get("updated", [])
+    skipped = result.get("skipped", [])
+    no_change = result.get("no_change", [])
+    cal = result.get("calibration", {})
+    learned = result.get("learned_rates", {})
     
     matched.sort(key=lambda x: abs(x["pct_change"]), reverse=True)
     elapsed = round(_time.time() - t0, 2)
@@ -25950,10 +25934,13 @@ def api_fulltech_bolt_preview():
             "no_change": len(no_change),
             "not_fasteners": len(skipped),
             "needs_cost_price": len(needs_cost),
+            "calibrated_from": cal.get("items_used", 0),
+            "rate_groups": cal.get("groups", 0),
             "elapsed_seconds": elapsed,
         },
         "matched": matched,
         "skipped": skipped[:50],
+        "learned_rates": learned,
     })
 
 

@@ -1,19 +1,24 @@
 """
-ClickAI Bolt Pricer v2 — Formula-based cost pricing
-════════════════════════════════════════════════════════
-R/kg varies by TYPE, MATERIAL, and M-SIZE.
-Uses formula: R/kg = base + size_factor/M
-Calibrated from Fulltech actual supplier cost prices.
+ClickAI Bolt Pricer v3 — Self-calibrating from actual DB prices
+════════════════════════════════════════════════════════════════
+1. Identifies fasteners by description (type, material, M-size, length)
+2. Calculates weight from ISO tables
+3. For items WITH cost → calculates their implied R/kg (learns from data)
+4. For items WITHOUT cost → applies learned R/kg from similar items
+5. Falls back to conservative defaults only when no data exists
 
 Usage:
     from clickai_bolt_pricer import BoltPricer
     result = BoltPricer.price("CAP SCREW M12X50 S/S")
-    BoltPricer.zane_price_check("SET M16X50 HT")
+    # For bulk: first calibrate, then price
+    BoltPricer.calibrate(stock_items_with_costs)
+    result = BoltPricer.price("SET M10X30 HT")  # uses learned rates
 """
 
 import re
 import math
 import logging
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +26,7 @@ logger = logging.getLogger(__name__)
 class BoltPricer:
 
     # ══════════════════════════════════════════════════════
-    # ISO 4017 HEX BOLT weights (grams) — verified
+    # ISO 4017 HEX BOLT weights (grams)
     # ══════════════════════════════════════════════════════
     HEX_BOLT_WEIGHTS = {
         3:  {6:0.7,8:0.9,10:1.1,12:1.3,16:1.6,20:2.0,25:2.5,30:2.9,40:3.8},
@@ -64,138 +69,42 @@ class BoltPricer:
     }
 
     # ══════════════════════════════════════════════════════
-    # R/kg FORMULAS — calibrated from actual cost prices
-    # 
-    # Format: (base, size_factor)
-    # R/kg = base + size_factor / M
-    #
-    # Derived by curve-fitting Fulltech x50mm cost data:
-    #   SET HT:       R/kg ≈ 24 flat (R21-R31, no size trend)
-    #   CAP SCREW HT: R/kg = 55 + 76/M (M4=R74, M24=R58)
-    #   CSK CAP HT:   R/kg ≈ 57 flat (R46-R65, slight trend)
-    #   MF SET HT:    R/kg ≈ 39 flat (R33-R43)
-    #   HEX BOLT HT:  R/kg ≈ 30 (R27-R49, limited data)
-    #   SET ZP:        R/kg ≈ 33 flat (R27-R38)
-    #
-    # Material multipliers derived from cross-type data:
-    #   SS ≈ 2.2× HT rate
-    #   ZP ≈ 1.35× HT rate for sets, ~1.05× for bolts
-    #   10.9 ≈ 1.6× HT set rate
-    #   BLK ≈ 1.0× HT rate
-    #   HDG ≈ 1.3× HT rate
+    # FALLBACK R/kg — only used when NO calibration data
+    # Conservative (low) to avoid overpricing
     # ══════════════════════════════════════════════════════
-
-    # (base_rkg, size_factor) → R/kg = base + factor/M
-    # factor=0 means flat rate (no size dependency)
-    RKG_FORMULAS = {
-        "HT": {
-            "set":           (24, 0),       # R24/kg flat — 10 data points, very consistent
-            "mf_set":        (39, 0),       # R39/kg flat — 6 data points
-            "hex_bolt":      (30, 0),       # R30/kg flat — limited data
-            "cap_screw":     (55, 76),      # R55+76/M — 10 data points, clear size trend
-            "csk_cap":       (57, 0),       # R57/kg flat — 6 data points
-            "button_head":   (55, 76),      # same as cap screw (similar manufacturing)
-            "cheese_head":   (29, 0),       # 1 data point
-            "cup_square":    (38, 0),       # R38/kg — 2 data points
-            "stud":          (80, 0),       # inconsistent data — verify with supplier!
-            "grub_screw":    (65, 0),
-            "coach_bolt":    (32, 0),
-            "roofing_bolt":  (32, 0),
-            "coach_screw":   (35, 0),
-            "nut":           (30, 0),
-            "nyloc_nut":     (45, 0),
-            "dome_nut":      (55, 0),
-            "wing_nut":      (50, 0),
-            "washer":        (25, 0),
-            "spring_washer": (35, 0),
-            "fender_washer": (30, 0),
-        },
-        "SS": {
-            "set":           (54, 0),       # 2.2× HT — verified (R45-R59, 2 items)
-            "mf_set":        (70, 0),
-            "hex_bolt":      (75, 0),
-            "cap_screw":     (85, 0),       # verified (R79-R90, 2 items)
-            "csk_cap":       (110, 0),      # verified (R96-R127, 2 items)
-            "button_head":   (85, 0),       # verified (R76, 1 item)
-            "cheese_head":   (75, 0),
-            "cup_square":    (80, 0),
-            "stud":          (100, 0),
-            "grub_screw":    (110, 0),
-            "nut":           (80, 0),
-            "nyloc_nut":     (100, 0),
-            "dome_nut":      (120, 0),
-            "wing_nut":      (110, 0),
-            "washer":        (65, 0),
-            "spring_washer": (85, 0),
-            "fender_washer": (75, 0),
-        },
-        "ZP": {
-            "set":           (33, 0),       # verified (R27-R38, 5 items)
-            "mf_set":        (42, 0),
-            "hex_bolt":      (33, 0),
-            "cap_screw":     (58, 0),
-            "csk_cap":       (55, 0),
-            "button_head":   (55, 0),
-            "cup_square":    (35, 0),
-            "stud":          (85, 0),
-            "nut":           (33, 0),
-            "nyloc_nut":     (48, 0),
-            "washer":        (28, 0),
-            "fender_washer": (33, 0),
-        },
-        "BLK": {
-            "set":           (24, 0),
-            "hex_bolt":      (30, 0),
-            "cap_screw":     (55, 76),
-            "csk_cap":       (57, 0),
-            "cup_square":    (36, 0),       # verified (R36, 1 item)
-            "stud":          (80, 0),
-            "nut":           (30, 0),
-            "washer":        (25, 0),
-        },
-        "HDG": {
-            "set":           (32, 0),
-            "hex_bolt":      (40, 0),
-            "cap_screw":     (65, 0),
-            "cup_square":    (42, 0),
-            "nut":           (40, 0),
-            "washer":        (35, 0),
-        },
-        "10.9": {
-            "set":           (39, 0),       # verified (R39, 1 item)
-            "mf_set":        (48, 0),
-            "hex_bolt":      (42, 0),
-            "cap_screw":     (68, 0),
-            "csk_cap":       (68, 0),
-            "stud":          (90, 0),
-            "nut":           (45, 0),
-        },
-        "8.8": {
-            "set":           (32, 0),
-            "hex_bolt":      (35, 0),
-            "cap_screw":     (58, 0),
-            "nut":           (38, 0),
-        },
-        "12.9": {
-            "set":           (50, 0),
-            "hex_bolt":      (52, 0),
-            "cap_screw":     (80, 0),
-            "csk_cap":       (80, 0),
-        },
-        "BRASS": {
-            "hex_bolt":      (120, 0),
-            "cap_screw":     (140, 0),
-            "nut":           (130, 0),
-            "washer":        (110, 0),
-        },
+    FALLBACK_RKG = {
+        "HT": {"set": 22, "mf_set": 35, "hex_bolt": 28, "cap_screw": 55,
+                "csk_cap": 50, "button_head": 55, "cheese_head": 28,
+                "cup_square": 35, "stud": 70, "grub_screw": 60,
+                "coach_bolt": 30, "roofing_bolt": 30, "coach_screw": 32,
+                "nut": 28, "nyloc_nut": 42, "dome_nut": 50, "wing_nut": 45,
+                "washer": 22, "spring_washer": 32, "fender_washer": 28,
+                "self_tapper": 40, "tek_screw": 38},
+        "SS": {"set": 50, "mf_set": 65, "hex_bolt": 70, "cap_screw": 80,
+               "csk_cap": 100, "button_head": 80, "cheese_head": 70,
+               "cup_square": 75, "stud": 95, "grub_screw": 100,
+               "nut": 75, "nyloc_nut": 90, "dome_nut": 110, "wing_nut": 100,
+               "washer": 60, "spring_washer": 80, "fender_washer": 70},
+        "ZP": {"set": 30, "mf_set": 38, "hex_bolt": 30, "cap_screw": 52,
+               "csk_cap": 50, "button_head": 52, "cup_square": 32,
+               "stud": 75, "nut": 30, "nyloc_nut": 45, "washer": 26,
+               "fender_washer": 30},
+        "BLK": {"set": 22, "hex_bolt": 28, "cap_screw": 50, "csk_cap": 50,
+                "cup_square": 33, "stud": 70, "nut": 28, "washer": 22},
+        "HDG": {"set": 30, "hex_bolt": 38, "cap_screw": 60, "cup_square": 40,
+                "nut": 38, "washer": 32},
+        "10.9": {"set": 36, "mf_set": 44, "hex_bolt": 40, "cap_screw": 62,
+                 "csk_cap": 62, "stud": 82, "nut": 42},
+        "8.8": {"set": 30, "hex_bolt": 33, "cap_screw": 55, "nut": 35},
+        "12.9": {"set": 46, "hex_bolt": 48, "cap_screw": 75, "csk_cap": 75},
+        "BRASS": {"hex_bolt": 110, "cap_screw": 130, "nut": 120, "washer": 100},
     }
 
-    # Fallback defaults per material
-    RKG_DEFAULTS = {
-        "HT": (30, 0), "SS": (80, 0), "ZP": (35, 0), "BLK": (30, 0),
-        "HDG": (38, 0), "10.9": (42, 0), "8.8": (35, 0), "12.9": (55, 0),
-        "BRASS": (130, 0),
-    }
+    # Learned rates from calibration: {(type, material, size_band): [r/kg values]}
+    _learned_rkg = {}
+    # Median per group after calibration
+    _calibrated_rkg = {}
+    _is_calibrated = False
 
     # ══════════════════════════════════════════════════════
     # IDENTIFICATION PATTERNS
@@ -242,6 +151,80 @@ class BoltPricer:
     _RE_MF1 = re.compile(r'M(\d+)\s*[xX]\s*(\d+\.\d+)\s*[xX]\s*(\d+)')
     _RE_MF2 = re.compile(r'M(\d+)\s*[xX]\s*(\d+)\s*[xX]\s*(\d+\.\d+)')
     _RE_STD = re.compile(r'M(\d+)\s*[xX]\s*(\d+)(?!\s*[xX]\s*\d)')
+
+    # ══════════════════════════════════════════════════════
+    # SIZE BANDS for grouping
+    # ══════════════════════════════════════════════════════
+    @staticmethod
+    def _size_band(m):
+        if m is None: return "unknown"
+        if m <= 6: return "small"      # M3-M6
+        if m <= 12: return "medium"    # M7-M12
+        if m <= 20: return "large"     # M13-M20
+        return "xl"                     # M21+
+
+    # ══════════════════════════════════════════════════════
+    # CALIBRATION — learn from existing prices
+    # ══════════════════════════════════════════════════════
+    @classmethod
+    def calibrate(cls, stock_items):
+        """
+        Learn R/kg rates from items that have cost prices.
+        Groups by (item_type, material, size_band) and finds median R/kg.
+        
+        After calibration, price() uses learned rates for all items.
+        Items without matches fall back to FALLBACK_RKG.
+        """
+        cls._learned_rkg = defaultdict(list)
+        count = 0
+
+        for item in stock_items:
+            desc = item.get("description") or item.get("code") or ""
+            cost = float(item.get("cost_price") or item.get("cost") or 0)
+            if cost <= 0:
+                continue
+
+            info = cls.identify(desc)
+            if not info.get("is_fastener"):
+                continue
+
+            it = info["item_type"]
+            mat = info["material"]
+            m = info.get("m_size")
+            l = info.get("length")
+            wm = info.get("weight_mode")
+
+            wt = cls.get_weight(it, m, l, wm)
+            if not wt or wt < 0.5:
+                continue
+
+            implied_rkg = cost / (wt / 1000)
+
+            # Sanity check: R/kg should be R5-R500
+            if implied_rkg < 5 or implied_rkg > 500:
+                continue
+
+            band = cls._size_band(m)
+
+            # Store at multiple levels for fallback
+            cls._learned_rkg[(it, mat, band)].append(implied_rkg)
+            cls._learned_rkg[(it, mat, "ALL")].append(implied_rkg)
+            cls._learned_rkg[(it, "ALL", band)].append(implied_rkg)
+            cls._learned_rkg[(it, "ALL", "ALL")].append(implied_rkg)
+            count += 1
+
+        # Calculate medians
+        cls._calibrated_rkg = {}
+        for key, values in cls._learned_rkg.items():
+            if len(values) >= 1:
+                sorted_vals = sorted(values)
+                mid = len(sorted_vals) // 2
+                median = sorted_vals[mid] if len(sorted_vals) % 2 else (sorted_vals[mid-1] + sorted_vals[mid]) / 2
+                cls._calibrated_rkg[key] = round(median, 1)
+
+        cls._is_calibrated = True
+        logger.info(f"[BOLT PRICER] Calibrated from {count} items → {len(cls._calibrated_rkg)} rate groups")
+        return {"items_used": count, "groups": len(cls._calibrated_rkg)}
 
     # ══════════════════════════════════════════════════════
     # PUBLIC API
@@ -309,22 +292,37 @@ class BoltPricer:
     @classmethod
     def get_rkg(cls, item_type, material, m_size=10):
         """
-        Get R/kg for type + material + M-size.
-        Formula: R/kg = base + size_factor / M
+        Get R/kg with cascade:
+        1. Calibrated: exact (type, material, size_band)
+        2. Calibrated: (type, material, ALL sizes)
+        3. Calibrated: (type, ALL materials, size_band)
+        4. Calibrated: (type, ALL, ALL)
+        5. Fallback table
+        6. Default R30/kg
         """
-        m = max(m_size or 10, 3)  # prevent division by zero
+        band = cls._size_band(m_size)
 
-        # Look up formula
-        mat_formulas = cls.RKG_FORMULAS.get(material, cls.RKG_FORMULAS.get("HT", {}))
-        formula = mat_formulas.get(item_type)
+        if cls._is_calibrated:
+            # Try increasingly broad matches
+            for key in [
+                (item_type, material, band),       # exact match
+                (item_type, material, "ALL"),       # any size this type+mat
+                (item_type, "ALL", band),           # any material this type+size
+                (item_type, "ALL", "ALL"),           # any this type
+            ]:
+                if key in cls._calibrated_rkg:
+                    return cls._calibrated_rkg[key]
 
-        if formula is None:
-            # Try default for this material
-            formula = cls.RKG_DEFAULTS.get(material, (30, 0))
+        # Fallback to hardcoded
+        mat_rates = cls.FALLBACK_RKG.get(material, cls.FALLBACK_RKG.get("HT", {}))
+        rate = mat_rates.get(item_type)
+        if rate:
+            return rate
 
-        base, size_factor = formula
-        rkg = base + (size_factor / m)
-        return round(rkg, 1)
+        # Ultimate fallback
+        defaults = {"HT": 25, "SS": 65, "ZP": 30, "BLK": 25,
+                    "HDG": 35, "10.9": 38, "8.8": 32, "12.9": 50, "BRASS": 110}
+        return defaults.get(material, 25)
 
     @classmethod
     def price(cls, description):
@@ -346,10 +344,16 @@ class BoltPricer:
         rkg = cls.get_rkg(it, mat, m)
         cost = round((wt / 1000) * rkg, 2)
 
+        band = cls._size_band(m)
+        source = "calibrated" if cls._is_calibrated and (it, mat, band) in cls._calibrated_rkg else \
+                 "calibrated-broad" if cls._is_calibrated and (it, mat, "ALL") in cls._calibrated_rkg else \
+                 "fallback"
+
         return {"success": True, "cost": cost, "weight_g": round(wt, 1),
                 "rkg": rkg, "item_type": it, "type_label": cls._type_label(it),
                 "material": mat, "mat_label": cls._mat_label(mat),
-                "m_size": m, "length": l, "description": description}
+                "m_size": m, "length": l, "description": description,
+                "source": source, "size_band": band}
 
     @classmethod
     def zane_price_check(cls, description):
@@ -357,79 +361,94 @@ class BoltPricer:
         if not r.get("success"):
             return f"Cannot price '{description}': {r.get('error')}"
         sz = f"M{r['m_size']}" + (f" x {r['length']}mm" if r.get('length') else "")
+        src = r.get('source', 'fallback')
         return (f"{description}\n"
                 f"  Type:     {r['type_label']}\n"
                 f"  Material: {r['mat_label']}\n"
                 f"  Size:     {sz}\n"
                 f"  Weight:   {r['weight_g']}g\n"
-                f"  R/kg:     R{r['rkg']}/kg\n"
+                f"  R/kg:     R{r['rkg']}/kg ({src})\n"
                 f"  COST:     R{r['cost']:.2f}")
 
     @classmethod
-    def bulk_recalc(cls, stock_items, custom_rkg=None):
-        if custom_rkg:
-            for mat, tiers in custom_rkg.items():
-                if mat in cls.RKG_FORMULAS:
-                    for it, val in tiers.items():
-                        if isinstance(val, (list, tuple)):
-                            cls.RKG_FORMULAS[mat][it] = tuple(val)
-                        else:
-                            cls.RKG_FORMULAS[mat][it] = (val, 0)
+    def bulk_recalc(cls, stock_items, custom_rkg=None, markup=1.0):
+        """
+        Smart bulk recalc:
+        1. First calibrate from items WITH costs
+        2. Then price ALL items (including those without costs)
+        """
+        # Step 1: Calibrate from existing data
+        cal = cls.calibrate(stock_items)
 
-        updated, skipped = [], []
+        updated, skipped, no_change = [], [], []
         t_old = t_new = 0.0
 
         for item in stock_items:
             desc = item.get("description") or item.get("code") or ""
             iid = item.get("id", "")
-            old = float(item.get("cost_price") or item.get("cost") or 0)
+            code = item.get("code", "")
+            old_cost = float(item.get("cost_price") or item.get("cost") or 0)
+            old_sell = float(item.get("selling_price") or item.get("price") or 0)
 
             r = cls.price(desc)
             if not r.get("success"):
-                skipped.append({"id": iid, "description": desc,
-                                "reason": r.get("error","?"), "old_cost": old})
+                skipped.append({"id": iid, "code": code, "description": desc,
+                                "reason": r.get("error","?"), "old_cost": old_cost})
                 continue
 
             nc = r["cost"]
-            diff = round(nc - old, 2)
-            pct = round((diff / old * 100), 1) if old > 0 else 0.0
-            t_old += old; t_new += nc
+            diff = round(nc - old_cost, 2)
+            pct = round((diff / old_cost * 100), 1) if old_cost > 0 else (999 if nc > 0 else 0)
+            t_old += old_cost; t_new += nc
 
-            updated.append({"id": iid, "description": desc,
+            entry = {"id": iid, "code": code, "description": desc,
                 "item_type": r["item_type"], "type_label": r["type_label"],
-                "material": r["material"], "m_size": r["m_size"],
-                "length": r.get("length"), "weight_g": r["weight_g"],
-                "rkg": r["rkg"], "old_cost": old, "new_cost": nc,
-                "difference": diff, "pct_change": pct})
+                "material": r["material"], "mat_label": r["mat_label"],
+                "m_size": r["m_size"], "length": r.get("length"),
+                "weight_g": r["weight_g"], "rkg": r["rkg"],
+                "old_cost": old_cost, "new_cost": nc, "old_sell": old_sell,
+                "difference": diff, "pct_change": pct,
+                "has_cost": old_cost > 0, "source": r.get("source", "?")}
 
-        return {"updated": updated, "skipped": skipped,
+            if abs(pct) < 2 and old_cost > 0:
+                no_change.append(entry)
+            else:
+                updated.append(entry)
+
+        return {"updated": updated, "skipped": skipped, "no_change": no_change,
+                "calibration": cal,
+                "learned_rates": {f"{k[0]}|{k[1]}|{k[2]}": v 
+                                  for k, v in cls._calibrated_rkg.items()
+                                  if k[1] != "ALL" and k[2] != "ALL"},
                 "stats": {"total": len(stock_items),
                     "updated_count": len(updated), "skipped_count": len(skipped),
+                    "no_change_count": len(no_change),
                     "total_old_cost": round(t_old, 2), "total_new_cost": round(t_new, 2),
                     "difference": round(t_new - t_old, 2)}}
 
     @classmethod
     def get_all_tiers(cls):
-        """Return all R/kg formulas for admin display."""
-        result = {}
-        for mat, formulas in cls.RKG_FORMULAS.items():
-            result[mat] = {}
-            for itype, (base, sfactor) in formulas.items():
-                if sfactor > 0:
-                    result[mat][itype] = {"base": base, "size_factor": sfactor,
-                                          "example_M6": round(base + sfactor/6),
-                                          "example_M12": round(base + sfactor/12),
-                                          "example_M20": round(base + sfactor/20)}
-                else:
-                    result[mat][itype] = {"flat": base}
-        return result
+        """Return calibrated rates for display."""
+        if cls._is_calibrated:
+            result = {}
+            for (it, mat, band), rkg in sorted(cls._calibrated_rkg.items()):
+                if mat == "ALL" or band == "ALL":
+                    continue
+                key = f"{mat}"
+                if key not in result:
+                    result[key] = {}
+                if it not in result[key]:
+                    result[key][it] = {}
+                result[key][it][band] = rkg
+            return result
+        return cls.FALLBACK_RKG
 
     @classmethod
-    def update_tier(cls, material, item_type, base, size_factor=0):
-        mat = material.upper()
-        if mat not in cls.RKG_FORMULAS:
-            cls.RKG_FORMULAS[mat] = {}
-        cls.RKG_FORMULAS[mat][item_type] = (float(base), float(size_factor))
+    def update_tier(cls, material, item_type, rkg, size_band="ALL"):
+        """Manual override for a rate."""
+        key = (item_type, material, size_band)
+        cls._calibrated_rkg[key] = float(rkg)
+        cls._is_calibrated = True
         return True
 
     # ══════════════════════════════════════════════════════
@@ -521,32 +540,6 @@ def register_bolt_pricer_routes(app, db, Auth, get_user_role, login_required):
         data = request.get_json() or {}
         return jsonify(BoltPricer.price(data.get("description", "")))
 
-    @app.route("/api/bolt-pricer/bulk", methods=["POST"])
-    @login_required
-    def api_bolt_pricer_bulk():
-        if get_user_role() not in ("owner", "admin"):
-            return jsonify({"success": False, "error": "Owner/Admin only"})
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business"})
-
-        data = request.get_json() or {}
-        stock = db.get_all_stock(biz_id)
-        results = BoltPricer.bulk_recalc(stock, data.get("custom_rkg"))
-
-        if data.get("apply") and results["updated"]:
-            cnt = 0
-            for it in results["updated"]:
-                try:
-                    db.update("stock_items", it["id"], {"cost_price": it["new_cost"]})
-                    cnt += 1
-                except Exception as e:
-                    logger.error(f"[BOLT PRICER] DB fail {it['id']}: {e}")
-            results["stats"]["db_updated"] = cnt
-
-        return jsonify({"success": True, **results})
-
     @app.route("/api/bolt-pricer/tiers", methods=["GET", "POST"])
     @login_required
     def api_bolt_pricer_tiers():
@@ -555,11 +548,11 @@ def register_bolt_pricer_routes(app, db, Auth, get_user_role, login_required):
         data = request.get_json() or {}
         mat = data.get("material","").upper()
         it = data.get("item_type","")
-        base = float(data.get("base", data.get("rkg", 0)))
-        sf = float(data.get("size_factor", 0))
-        if mat and it and base > 0:
-            BoltPricer.update_tier(mat, it, base, sf)
-            return jsonify({"success": True, "message": f"{mat}/{it} -> R{base}+{sf}/M"})
-        return jsonify({"success": False, "error": "Need material, item_type, base"})
+        rkg = float(data.get("rkg", 0))
+        band = data.get("size_band", "ALL")
+        if mat and it and rkg > 0:
+            BoltPricer.update_tier(mat, it, rkg, band)
+            return jsonify({"success": True})
+        return jsonify({"success": False, "error": "Need material, item_type, rkg"})
 
     logger.info("[BOLT PRICER] Routes registered")
