@@ -118,6 +118,12 @@ try:
 except ImportError:
     FraudGuard = None
     FRAUD_GUARD_LOADED = False
+try:
+    from clickai_bolt_pricer import BoltPricer, register_bolt_pricer_routes
+    BOLT_PRICER_LOADED = True
+except ImportError:
+    BoltPricer = None
+    BOLT_PRICER_LOADED = False
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -13862,15 +13868,14 @@ class ReportEngine:
             # Fallback: convert any remaining markdown to HTML (in case AI mixed formats)
             if report and ("##" in report or "**" in report or "\n- " in report):
                 import re
-                report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:12px;">\1</h3>', report, flags=re.MULTILINE)
-                report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:18px;">\1</h2>', report, flags=re.MULTILINE)
+                report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
+                report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
                 report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
                 report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
                 report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
                 report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
                 report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
-                # Wrap orphan text lines in <p> tags, single <br> for spacing
-                report = re.sub(r'\n\n(?!<)', '\n<br>\n', report)
+                report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
             
             return {"success": True, "report": report}
             
@@ -13943,9 +13948,9 @@ WRITING STYLE:
 - "debtor days are high" is BAD — "debtor days of 36 against industry standard of 30-45 days" is GOOD
 
 FORMAT — OUTPUT CLEAN HTML ONLY (no markdown, no ## or **):
-- <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:8px;margin-top:18px;"> for section headings
-- <h3 style="color:#8b5cf6;margin-top:12px;"> for sub-headings
-- <p style="margin:6px 0;line-height:1.7;"> for paragraphs
+- <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:8px;margin-top:30px;"> for section headings
+- <h3 style="color:#8b5cf6;margin-top:20px;"> for sub-headings
+- <p style="margin:8px 0;line-height:1.7;"> for paragraphs
 - <strong> for emphasis
 - <ul style="margin:8px 0 8px 20px;"><li style="margin:4px 0;"> for lists
 - <table style="width:100%;border-collapse:collapse;margin:15px 0;"><tr><th style="text-align:left;padding:10px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">Header</th></tr><tr><td style="padding:10px;border-bottom:1px solid rgba(255,255,255,0.08);">Value</td></tr></table>
@@ -16653,6 +16658,15 @@ def role_required(*allowed_roles):
             return f(*args, **kwargs)
         return decorated
     return decorator
+
+
+# Register bolt pricer routes (separate module — needs get_user_role)
+try:
+    if BOLT_PRICER_LOADED:
+        register_bolt_pricer_routes(app, db, Auth, get_user_role, login_required)
+        logger.info("[BOLT PRICER] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[BOLT PRICER] Failed to register routes: {e}")
 
 
 # 
@@ -25632,222 +25646,254 @@ def stock_new():
 
 
 # ═══════════════════════════════════════════════════════════════
-# FULLTECH TOOLS - Bolt Weight Calculator & Price Recalculator
+# FULLTECH TOOLS - Bolt Pricer (Type-aware, weight-based)
 # ═══════════════════════════════════════════════════════════════
 
 @app.route("/fulltech")
 @login_required
 def fulltech_tools():
-    """Fulltech addon tools - bolt pricing, weight calculations"""
+    """Fulltech addon tools - type-aware bolt pricing with BoltPricer"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     
     content = f'''
     <div class="card" style="margin-bottom:20px;">
-        <h2 style="margin:0 0 10px 0;">🔩 Fulltech Tools</h2>
-        <p style="color:#888;">Weight-based pricing for bolts, nuts, and washers</p>
+        <h2 style="margin:0 0 10px 0;">🔩 Fulltech Bolt Pricer</h2>
+        <p style="color:#888;">v4 — Verified supplier rates (94% binne 20% akkuraatheid). Sets R24/kg, Caps R63/kg, Bolts R30/kg, Studs per-stuk.</p>
     </div>
     
+    <!-- SINGLE ITEM CHECK -->
+    <div class="card" style="margin-bottom:20px;">
+        <h3>⚖️ Quick Price Check</h3>
+        <p style="color:#888;margin-bottom:15px;">Type any description — pricer identifies type, material, size and calculates cost</p>
+        <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">
+            <div style="flex:1;min-width:250px;">
+                <label style="display:block;margin-bottom:5px;color:#888;">Description</label>
+                <input type="text" id="checkDesc" class="form-control" placeholder="e.g. CAP SCREW M12X50 S/S" 
+                    style="width:100%;padding:12px;font-size:15px;" 
+                    onkeydown="if(event.key==='Enter')quickCheck()">
+            </div>
+            <button onclick="quickCheck()" class="btn btn-primary" style="padding:12px 24px;">Check Price</button>
+        </div>
+        <div id="quickResult" style="display:none;margin-top:15px;padding:15px;background:rgba(16,185,129,0.08);border-radius:8px;border:1px solid rgba(16,185,129,0.2);font-family:monospace;white-space:pre-line;font-size:14px;"></div>
+    </div>
+    
+    <!-- BULK REPRICING -->
     <div class="card">
-        <h3>⚖️ Bolt Price Calculator</h3>
-        <p style="color:#888;margin-bottom:20px;">Calculate individual bolt/nut/washer prices based on weight</p>
+        <h3>🔄 Bulk Reprice All Stock</h3>
+        <p style="color:#888;margin-bottom:20px;">Preview calculated costs for all fasteners, set markup %, then apply</p>
         
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin-bottom:20px;">
-            <div>
-                <label style="display:block;margin-bottom:5px;color:#888;">Type</label>
-                <select id="calcType" class="form-control" style="width:100%;padding:10px;">
-                    <option value="bolt">Bolt</option>
-                    <option value="nut">Nut</option>
-                    <option value="washer">Washer</option>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:15px;margin-bottom:20px;">
+            <div style="background:rgba(168,85,247,0.08);padding:15px;border-radius:8px;border:1px solid rgba(168,85,247,0.2);">
+                <label style="display:block;margin-bottom:5px;color:#a855f7;font-weight:bold;">Update Mode</label>
+                <select id="updateMode" class="form-control" style="width:100%;padding:10px;">
+                    <option value="no_cost_only">A) No Cost Items Only</option>
+                    <option value="all_items" selected>B) All Items (full reprice)</option>
+                </select>
+                <small style="color:#888;">A = safe, B = update all to supplier rates</small>
+            </div>
+            <div style="background:rgba(59,130,246,0.08);padding:15px;border-radius:8px;border:1px solid rgba(59,130,246,0.2);">
+                <label style="display:block;margin-bottom:5px;color:#3b82f6;font-weight:bold;">Markup %</label>
+                <input type="number" id="markupPct" class="form-control" value="30" step="5" min="0" max="200" style="width:100%;padding:10px;font-size:18px;font-weight:bold;text-align:center;">
+                <small style="color:#888;">30% = cost × 1.30</small>
+            </div>
+            <div style="background:rgba(16,185,129,0.08);padding:15px;border-radius:8px;border:1px solid rgba(16,185,129,0.2);">
+                <label style="display:block;margin-bottom:5px;color:#10b981;font-weight:bold;">Update What?</label>
+                <select id="updateTarget" class="form-control" style="width:100%;padding:10px;">
+                    <option value="cost_only">Cost Price Only</option>
+                    <option value="cost_and_sell" selected>Cost + Selling Price</option>
+                    <option value="sell_only">Selling Price Only</option>
                 </select>
             </div>
-            <div>
-                <label style="display:block;margin-bottom:5px;color:#888;">M Size</label>
-                <select id="calcSize" class="form-control" style="width:100%;padding:10px;">
-                    <option value="3">M3</option>
-                    <option value="4">M4</option>
-                    <option value="5">M5</option>
-                    <option value="6" selected>M6</option>
-                    <option value="8">M8</option>
-                    <option value="10">M10</option>
-                    <option value="12">M12</option>
-                    <option value="14">M14</option>
-                    <option value="16">M16</option>
-                    <option value="18">M18</option>
-                    <option value="20">M20</option>
-                    <option value="22">M22</option>
-                    <option value="24">M24</option>
-                    <option value="27">M27</option>
-                    <option value="30">M30</option>
-                </select>
-            </div>
-            <div id="lengthDiv">
-                <label style="display:block;margin-bottom:5px;color:#888;">Length (mm)</label>
-                <input type="number" id="calcLength" class="form-control" value="50" min="5" max="200" style="width:100%;padding:10px;">
-            </div>
-            <div>
-                <label style="display:block;margin-bottom:5px;color:#888;">R/kg</label>
-                <input type="number" id="calcRkg" class="form-control" value="250" step="10" style="width:100%;padding:10px;">
+            <div style="background:rgba(251,191,36,0.08);padding:15px;border-radius:8px;border:1px solid rgba(251,191,36,0.2);">
+                <label style="display:block;margin-bottom:5px;color:#fbbf24;font-weight:bold;">Max Change %</label>
+                <input type="number" id="maxChangePct" class="form-control" value="50" step="10" min="10" max="500" style="width:100%;padding:10px;font-size:18px;font-weight:bold;text-align:center;">
+                <small style="color:#888;">Skip items with bigger changes</small>
             </div>
         </div>
         
-        <button onclick="calcBoltPrice()" class="btn btn-primary" style="margin-bottom:20px;">Calculate</button>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;">
+            <button onclick="loadPreview()" class="btn btn-primary" id="btnPreview">📊 Preview All Stock</button>
+            <button onclick="applyAll()" class="btn" style="background:#22c55e;" id="btnApply" disabled>✅ Apply Changes</button>
+            <span id="itemCount" style="color:#888;padding:10px;font-size:13px;"></span>
+        </div>
         
-        <div id="calcResult" style="display:none;padding:20px;background:rgba(16,185,129,0.1);border-radius:8px;border:1px solid rgba(16,185,129,0.3);">
+        <div id="statusMsg" style="display:none;padding:12px;border-radius:8px;margin-bottom:15px;"></div>
+        
+        <!-- STATS -->
+        <div id="statsRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:15px;"></div>
+        
+        <!-- FILTER -->
+        <div id="filterRow" style="display:none;margin-bottom:10px;">
+            <input type="text" id="searchBox" class="form-control" placeholder="Soek... (desc, code, type)" oninput="filterTable()" style="padding:10px;width:100%;max-width:400px;margin-bottom:8px;">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button class="btn btn-sm flt active" data-f="all" onclick="setFlt(this)">All</button>
+                <button class="btn btn-sm flt" data-f="needs" onclick="setFlt(this)">⭐ No Cost</button>
+                <button class="btn btn-sm flt" data-f="bigup" onclick="setFlt(this)">🔴 Big Up</button>
+                <button class="btn btn-sm flt" data-f="bigdown" onclick="setFlt(this)">🔵 Big Down</button>
+            </div>
+        </div>
+        
+        <!-- TABLE -->
+        <div id="tableWrap" style="display:none;max-height:65vh;overflow-y:auto;border-radius:8px;border:1px solid #333;">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <thead>
+                    <tr style="background:#1e293b;position:sticky;top:0;">
+                        <th style="padding:8px;text-align:left;cursor:pointer;" onclick="doSort('description')">Description</th>
+                        <th style="padding:8px;text-align:left;cursor:pointer;" onclick="doSort('type_label')">Type</th>
+                        <th style="padding:8px;cursor:pointer;" onclick="doSort('material')">Mat</th>
+                        <th style="padding:8px;text-align:right;cursor:pointer;" onclick="doSort('weight_g')">Weight</th>
+                        <th style="padding:8px;text-align:right;cursor:pointer;" onclick="doSort('rkg')">R/kg</th>
+                        <th style="padding:8px;text-align:right;cursor:pointer;" onclick="doSort('old_cost')">Old Cost</th>
+                        <th style="padding:8px;text-align:right;cursor:pointer;color:#10b981;" onclick="doSort('new_cost')">New Cost</th>
+                        <th style="padding:8px;text-align:right;cursor:pointer;color:#fbbf24;" onclick="doSort('sell_price')">Sell Price</th>
+                        <th style="padding:8px;text-align:right;cursor:pointer;" onclick="doSort('pct_change')">%</th>
+                    </tr>
+                </thead>
+                <tbody id="tBody"></tbody>
+            </table>
         </div>
     </div>
     
-    <div class="card" style="margin-top:20px;">
-        <h3>🔄 Bulk Recalculate Stock Prices</h3>
-        <p style="color:#888;margin-bottom:20px;">Recalculate ALL bolt/nut/washer prices in your stock based on weight. Smaller sizes = higher R/kg (more work per kg).</p>
-        
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:15px;margin-bottom:20px;">
-            <div style="background:rgba(239,68,68,0.1);padding:15px;border-radius:8px;border:1px solid rgba(239,68,68,0.3);">
-                <label style="display:block;margin-bottom:5px;color:#ef4444;font-weight:bold;">M3 - M6</label>
-                <input type="number" id="rkgSmall" class="form-control" value="350" step="10" style="width:100%;padding:10px;">
-                <small style="color:#888;">Small fasteners</small>
-            </div>
-            <div style="background:rgba(251,191,36,0.1);padding:15px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);">
-                <label style="display:block;margin-bottom:5px;color:#fbbf24;font-weight:bold;">M8 - M12</label>
-                <input type="number" id="rkgMedium" class="form-control" value="280" step="10" style="width:100%;padding:10px;">
-                <small style="color:#888;">Medium fasteners</small>
-            </div>
-            <div style="background:rgba(16,185,129,0.1);padding:15px;border-radius:8px;border:1px solid rgba(16,185,129,0.3);">
-                <label style="display:block;margin-bottom:5px;color:#10b981;font-weight:bold;">M14 - M20</label>
-                <input type="number" id="rkgLarge" class="form-control" value="220" step="10" style="width:100%;padding:10px;">
-                <small style="color:#888;">Large fasteners</small>
-            </div>
-            <div style="background:rgba(59,130,246,0.1);padding:15px;border-radius:8px;border:1px solid rgba(59,130,246,0.3);">
-                <label style="display:block;margin-bottom:5px;color:#3b82f6;font-weight:bold;">M22+</label>
-                <input type="number" id="rkgXL" class="form-control" value="180" step="10" style="width:100%;padding:10px;">
-                <small style="color:#888;">Extra large</small>
-            </div>
-            <div>
-                <label style="display:block;margin-bottom:5px;color:#888;">Markup %</label>
-                <input type="number" id="bulkMarkup" class="form-control" value="30" step="5" style="width:100%;padding:10px;">
-                <small style="color:#666;">30% = cost × 1.30</small>
-            </div>
-        </div>
-        
-        <button onclick="previewRecalc()" class="btn btn-primary" style="margin-right:10px;">Preview Changes</button>
-        <button onclick="applyRecalc()" class="btn" style="background:#ef4444;" id="applyBtn" disabled>Apply Changes</button>
-        
-        <div id="recalcResult" style="margin-top:20px;"></div>
-    </div>
+    <style>
+        .flt {{ padding:4px 12px;border-radius:6px;border:1px solid #475569;background:transparent;color:#94a3b8;font-size:12px;cursor:pointer; }}
+        .flt.active {{ background:#3b82f6;color:white;border-color:#3b82f6; }}
+        .stat-box {{ padding:12px;border-radius:8px;background:#1e293b;text-align:center; }}
+        .stat-box .num {{ font-size:22px;font-weight:700; }}
+        .stat-box .lbl {{ font-size:11px;color:#94a3b8;text-transform:uppercase; }}
+    </style>
     
     <script>
-    document.getElementById('calcType').addEventListener('change', function() {{
-        document.getElementById('lengthDiv').style.display = this.value === 'bolt' ? 'block' : 'none';
-    }});
+    let allData=[], curFilter='all', sortCol='pct_change', sortDir=-1;
     
-    async function calcBoltPrice() {{
-        const type = document.getElementById('calcType').value;
-        const size = document.getElementById('calcSize').value;
-        const length = document.getElementById('calcLength').value;
-        const rkg = document.getElementById('calcRkg').value;
-        
-        const res = await fetch('/api/fulltech/calc-bolt?' + new URLSearchParams({{
-            type, m_size: size, length, rkg
-        }}));
-        const data = await res.json();
-        
-        const div = document.getElementById('calcResult');
-        if (data.success) {{
-            div.innerHTML = `
-                <div style="font-size:24px;font-weight:bold;color:#10b981;margin-bottom:10px;">
-                    R${{data.price.toFixed(2)}}
-                </div>
-                <div style="color:#888;">
-                    ${{type === 'bolt' ? 'M' + size + 'x' + length : type.toUpperCase() + ' M' + size}}<br>
-                    Weight: ${{data.weight_g}}g<br>
-                    @ R${{rkg}}/kg
-                </div>
-            `;
-        }} else {{
-            div.innerHTML = `<div style="color:#ef4444;">${{data.error}}</div>`;
-        }}
-        div.style.display = 'block';
+    function showStatus(msg, ok) {{
+        const el=document.getElementById('statusMsg');
+        el.textContent=msg;
+        el.style.display='block';
+        el.style.background=ok?'rgba(16,185,129,0.15)':'rgba(59,130,246,0.15)';
+        el.style.borderLeft=ok?'4px solid #10b981':'4px solid #3b82f6';
     }}
     
-    let pendingUpdates = [];
+    async function quickCheck() {{
+        const desc=document.getElementById('checkDesc').value.trim();
+        if(!desc) return;
+        const res=await fetch('/api/fulltech/bolt-check',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{description:desc}})}});
+        const d=await res.json();
+        const el=document.getElementById('quickResult');
+        if(d.success) {{
+            const markup=parseFloat(document.getElementById('markupPct').value)||30;
+            const sell=d.cost*(1+markup/100);
+            el.textContent=d.type_label+'  |  '+d.mat_label+'\\nSize: M'+d.m_size+(d.length?'x'+d.length:'')+'  |  Weight: '+d.weight_g+'g\\nR/kg: R'+d.rkg+'  |  Cost: R'+d.cost.toFixed(2)+'\\nMarkup '+markup+'%  →  Sell: R'+sell.toFixed(2);
+        }} else {{
+            el.textContent='❌ '+d.error;
+        }}
+        el.style.display='block';
+    }}
     
-    async function previewRecalc() {{
-        const rkgSmall = document.getElementById('rkgSmall').value;
-        const rkgMedium = document.getElementById('rkgMedium').value;
-        const rkgLarge = document.getElementById('rkgLarge').value;
-        const rkgXL = document.getElementById('rkgXL').value;
-        const markup = 1 + (parseFloat(document.getElementById('bulkMarkup').value) / 100);
-        
-        document.getElementById('recalcResult').innerHTML = '<div style="text-align:center;padding:20px;">⏳ Analysing stock...</div>';
+    async function loadPreview() {{
+        const btn=document.getElementById('btnPreview');
+        btn.disabled=true; btn.textContent='⏳ Loading...';
+        showStatus('Pulling stock and calculating prices...', false);
         
         try {{
-        const res = await fetch('/api/fulltech/preview-recalc?' + new URLSearchParams({{ 
-            rkg_small: rkgSmall, rkg_medium: rkgMedium, rkg_large: rkgLarge, rkg_xl: rkgXL, markup 
-        }}));
-        if (!res.ok) throw new Error('Server error: ' + res.status);
-        const data = await res.json();
-        
-        pendingUpdates = data.updated || [];
-        
-        let html = '<div style="margin-bottom:15px;padding:15px;background:rgba(59,130,246,0.1);border-radius:8px;">';
-        html += `<strong>${{data.updated?.length || 0}}</strong> items will be updated<br>`;
-        html += `<strong>${{data.skipped?.length || 0}}</strong> items skipped (no M-size pattern)<br>`;
-        html += `<strong>${{data.errors?.length || 0}}</strong> errors`;
-        html += '</div>';
-        
-        if (data.updated?.length > 0) {{
-            html += '<table style="width:100%;border-collapse:collapse;font-size:14px;">';
-            html += '<tr style="background:#333;"><th style="padding:10px;text-align:left;">Code</th><th>Type</th><th>Weight</th><th>R/kg</th><th style="text-align:right;">Old Price</th><th style="text-align:right;">New Price</th><th style="text-align:right;">Change</th></tr>';
+            const res=await fetch('/api/fulltech/bolt-preview');
+            const d=await res.json();
+            if(!d.success) {{ showStatus('Error: '+(d.error||'Unknown'),false); btn.disabled=false; btn.textContent='📊 Preview'; return; }}
             
-            data.updated.slice(0, 50).forEach(item => {{
-                const changeColor = item.change > 0 ? '#10b981' : item.change < 0 ? '#ef4444' : '#888';
-                html += `<tr style="border-bottom:1px solid #333;">
-                    <td style="padding:8px;">${{item.code}}</td>
-                    <td style="text-align:center;">${{item.item_type}} M${{item.m_size}}${{item.length ? 'x' + item.length : ''}}</td>
-                    <td style="text-align:center;">${{item.weight_g}}g</td>
-                    <td style="text-align:center;color:#888;">R${{item.rkg}}</td>
-                    <td style="text-align:right;">R${{item.old_price.toFixed(2)}}</td>
-                    <td style="text-align:right;font-weight:bold;">R${{item.new_price.toFixed(2)}}</td>
-                    <td style="text-align:right;color:${{changeColor}};">${{item.change > 0 ? '+' : ''}}R${{item.change.toFixed(2)}}</td>
-                </tr>`;
-            }});
+            allData=d.matched||[];
+            const s=d.stats;
             
-            if (data.updated.length > 50) {{
-                html += `<tr><td colspan="7" style="padding:10px;text-align:center;color:#888;">... and ${{data.updated.length - 50}} more items</td></tr>`;
-            }}
-            html += '</table>';
+            document.getElementById('statsRow').style.display='grid';
+            document.getElementById('statsRow').innerHTML=`
+                <div class="stat-box"><div class="num">${{s.total_stock}}</div><div class="lbl">Total Stock</div></div>
+                <div class="stat-box"><div class="num" style="color:#a78bfa">${{s.fasteners_matched}}</div><div class="lbl">Fasteners</div></div>
+                <div class="stat-box"><div class="num" style="color:#fbbf24">${{s.changes_needed}}</div><div class="lbl">Changes</div></div>
+                <div class="stat-box"><div class="num" style="color:#38bdf8">${{s.needs_cost_price}}</div><div class="lbl">No Cost Yet</div></div>
+                <div class="stat-box"><div class="num" style="color:#10b981">${{s.calibrated_from}}</div><div class="lbl">Verified Items</div></div>
+                <div class="stat-box"><div class="num">${{s.rate_groups}}</div><div class="lbl">Rate Groups</div></div>
+            `;
             
-            document.getElementById('applyBtn').disabled = false;
-        }}
-        
-        document.getElementById('recalcResult').innerHTML = html;
-        }} catch(err) {{
-            document.getElementById('recalcResult').innerHTML = '<div style="text-align:center;padding:20px;color:#ef4444;">❌ Error: ' + err.message + '<br><br><button onclick="previewRecalc()" class="btn btn-primary">Try Again</button></div>';
-        }}
+            document.getElementById('btnApply').disabled=false;
+            document.getElementById('filterRow').style.display='block';
+            document.getElementById('tableWrap').style.display='block';
+            renderTable();
+            showStatus('✅ '+allData.length+' items ready. Adjust markup % and click Apply.', true);
+        }} catch(e) {{ showStatus('Error: '+e.message, false); }}
+        btn.disabled=false; btn.textContent='📊 Refresh';
     }}
     
-    async function applyRecalc() {{
-        if (!confirm('This will update ' + pendingUpdates.length + ' stock prices. Continue?')) return;
+    function getMarkup() {{ return parseFloat(document.getElementById('markupPct').value)||30; }}
+    
+    function renderTable() {{
+        const markup=getMarkup();
+        let items=[...allData];
+        const q=document.getElementById('searchBox').value.toLowerCase();
+        if(q) items=items.filter(i=>(i.description||'').toLowerCase().includes(q)||(i.code||'').toLowerCase().includes(q)||(i.type_label||'').toLowerCase().includes(q));
+        if(curFilter==='needs') items=items.filter(i=>!i.has_cost);
+        else if(curFilter==='bigup') items=items.filter(i=>i.pct_change>30);
+        else if(curFilter==='bigdown') items=items.filter(i=>i.pct_change<-30);
+        items.sort((a,b)=>{{ let va=a[sortCol],vb=b[sortCol]; if(typeof va==='string') return va.localeCompare(vb)*sortDir; return((va||0)-(vb||0))*sortDir; }});
+        document.getElementById('itemCount').textContent=items.length+' items';
         
-        document.getElementById('applyBtn').disabled = true;
-        document.getElementById('applyBtn').textContent = 'Applying...';
+        document.getElementById('tBody').innerHTML=items.map(i=>{{
+            const sell=i.new_cost*(1+markup/100);
+            const dc=!i.has_cost?'color:#38bdf8':i.pct_change>25?'color:#ef4444':i.pct_change<-25?'color:#22c55e':'color:#888';
+            const pctStr=i.has_cost?(i.pct_change>=0?'+':'')+i.pct_change.toFixed(0)+'%':'NEW';
+            return `<tr style="border-bottom:1px solid #1e293b;">
+                <td style="padding:6px 8px;"><strong>${{i.description}}</strong></td>
+                <td style="padding:6px;font-size:11px;">${{i.type_label}}</td>
+                <td style="padding:6px;text-align:center;"><span style="padding:1px 6px;border-radius:3px;font-size:11px;background:#334155;">${{i.material}}</span></td>
+                <td style="padding:6px;text-align:right;">${{i.weight_g}}g</td>
+                <td style="padding:6px;text-align:right;color:#888;">R${{i.rkg}}</td>
+                <td style="padding:6px;text-align:right;">${{i.old_cost>0?'R'+i.old_cost.toFixed(2):'—'}}</td>
+                <td style="padding:6px;text-align:right;font-weight:700;color:#10b981;">R${{i.new_cost.toFixed(2)}}</td>
+                <td style="padding:6px;text-align:right;font-weight:700;color:#fbbf24;">R${{sell.toFixed(2)}}</td>
+                <td style="padding:6px;text-align:right;${{dc}};">${{pctStr}}</td>
+            </tr>`;
+        }}).join('');
+    }}
+    
+    document.getElementById('markupPct').addEventListener('input', ()=>{{ if(allData.length) renderTable(); }});
+    function filterTable() {{ renderTable(); }}
+    function setFlt(btn) {{ document.querySelectorAll('.flt').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); curFilter=btn.dataset.f; renderTable(); }}
+    function doSort(col) {{ if(sortCol===col) sortDir*=-1; else {{ sortCol=col; sortDir=1; }} renderTable(); }}
+    
+    async function applyAll() {{
+        const markup=getMarkup();
+        const target=document.getElementById('updateTarget').value;
+        const maxPct=parseFloat(document.getElementById('maxChangePct').value)||50;
+        const mode=document.getElementById('updateMode').value;
         
-        const res = await fetch('/api/fulltech/apply-recalc', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{ updates: pendingUpdates }})
-        }});
-        const data = await res.json();
-        
-        if (data.success) {{
-            alert('✅ Updated ' + data.count + ' stock prices!');
-            location.reload();
+        let toApply;
+        if(mode==='no_cost_only') {{
+            toApply=allData.filter(i=> !i.has_cost);
         }} else {{
-            alert('Error: ' + data.error);
-            document.getElementById('applyBtn').disabled = false;
-            document.getElementById('applyBtn').textContent = 'Apply Changes';
+            toApply=allData.filter(i=> !i.has_cost || Math.abs(i.pct_change)<=maxPct);
         }}
+        const skipping=allData.length-toApply.length;
+        const modeLabel=mode==='no_cost_only'?'NO COST ONLY':'ALL (max '+maxPct+'% change)';
+        if(!confirm('Mode: '+modeLabel+'\\nApply '+toApply.length+' items (skip '+skipping+')\\nMarkup: '+markup+'%\\nTarget: '+target)) return;
+        
+        const btn=document.getElementById('btnApply');
+        btn.disabled=true; btn.textContent='Applying...';
+        showStatus('Writing to database...', false);
+        
+        const batchSize=50;
+        let ok=0, fail=0;
+        for(let i=0;i<toApply.length;i+=batchSize) {{
+            const batch=toApply.slice(i,i+batchSize).map(it=>({{
+                id:it.id, new_cost:it.new_cost, sell_price:Math.round(it.new_cost*(1+markup/100)*100)/100
+            }}));
+            try {{
+                const res=await fetch('/api/fulltech/bolt-apply',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{items:batch,target:target}})}});
+                const d=await res.json();
+                ok+=(d.updated||0); fail+=(d.failed||0);
+            }} catch(e) {{ fail+=batch.length; }}
+        }}
+        
+        showStatus('✅ Done! '+ok+' updated'+(fail?' ('+fail+' failed)':''), fail===0);
+        btn.disabled=false; btn.textContent='✅ Apply Changes';
     }}
     </script>
     '''
@@ -25855,62 +25901,166 @@ def fulltech_tools():
     return render_page("Fulltech Tools", content, user, "stock")
 
 
+@app.route("/api/fulltech/bolt-check", methods=["POST"])
+@login_required
+def api_fulltech_bolt_check():
+    """Single item price check using BoltPricer v4 verified rates"""
+    data = request.get_json() or {}
+    desc = data.get("description", "")
+    if not BoltPricer:
+        return jsonify({"success": False, "error": "BoltPricer not loaded"})
+    return jsonify(BoltPricer.price(desc))
+
+
+@app.route("/api/fulltech/bolt-preview")
+@login_required
+def api_fulltech_bolt_preview():
+    """Preview bolt repricing using v4 verified supplier rates"""
+    import time as _time
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    if not BoltPricer:
+        return jsonify({"success": False, "error": "BoltPricer not loaded"})
+    
+    t0 = _time.time()
+    all_stock = db.get_all_stock(biz_id)
+    
+    matched = []
+    skipped = []
+    no_change = []
+    needs_cost = 0
+    
+    for item in all_stock:
+        desc = item.get("description") or item.get("name") or ""
+        r = BoltPricer.price(desc)
+        if not r.get("success"):
+            skipped.append({"id": item.get("id"), "description": desc, "reason": r.get("error", "")})
+            continue
+        
+        old_cost = float(item.get("cost_price") or item.get("cost") or 0)
+        new_cost = r["cost"]
+        has_cost = old_cost > 0
+        
+        if not has_cost:
+            needs_cost += 1
+        
+        # Check if change is meaningful (>2%)
+        if has_cost and abs(new_cost - old_cost) / old_cost < 0.02:
+            no_change.append({"id": item.get("id"), "description": desc})
+            continue
+        
+        pct = ((new_cost - old_cost) / old_cost * 100) if has_cost and old_cost > 0 else 0
+        
+        matched.append({
+            "id": item.get("id"),
+            "code": item.get("code") or item.get("sku") or "",
+            "description": desc,
+            "item_type": r.get("item_type", ""),
+            "type_label": r.get("type_label", ""),
+            "material": r.get("material", ""),
+            "weight_g": r.get("weight_g", 0),
+            "rkg": r.get("rkg", 0),
+            "old_cost": round(old_cost, 2),
+            "new_cost": round(new_cost, 2),
+            "has_cost": has_cost,
+            "pct_change": round(pct, 1),
+            "pricing_method": r.get("pricing_method", "weight_x_rkg"),
+            "source": "verified",
+        })
+    
+    matched.sort(key=lambda x: abs(x["pct_change"]), reverse=True)
+    elapsed = round(_time.time() - t0, 2)
+    
+    return jsonify({
+        "success": True,
+        "stats": {
+            "total_stock": len(all_stock),
+            "fasteners_matched": len(matched) + len(no_change),
+            "changes_needed": len(matched),
+            "no_change": len(no_change),
+            "not_fasteners": len(skipped),
+            "needs_cost_price": needs_cost,
+            "calibrated_from": 62,
+            "rate_groups": len(BoltPricer.VERIFIED_RKG),
+            "elapsed_seconds": elapsed,
+        },
+        "matched": matched,
+        "skipped": skipped[:50],
+    })
+
+
+@app.route("/api/fulltech/bolt-apply", methods=["POST"])
+@login_required
+def api_fulltech_bolt_apply():
+    """Apply cost + selling price changes"""
+    role = get_user_role()
+    if role not in ("owner", "admin"):
+        return jsonify({"success": False, "error": "Owner/Admin only"})
+    
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify({"success": False, "error": "No business"})
+    
+    data = request.get_json() or {}
+    items = data.get("items", [])
+    target = data.get("target", "cost_and_sell")
+    
+    ok_count = 0
+    fail_count = 0
+    
+    for item in items:
+        item_id = item.get("id")
+        new_cost = item.get("new_cost")
+        sell_price = item.get("sell_price")
+        if not item_id:
+            fail_count += 1
+            continue
+        
+        updates = {}
+        if target in ("cost_only", "cost_and_sell") and new_cost is not None:
+            updates["cost_price"] = round(float(new_cost), 2)
+        if target in ("sell_only", "cost_and_sell") and sell_price is not None:
+            updates["selling_price"] = round(float(sell_price), 2)
+        
+        if not updates:
+            fail_count += 1
+            continue
+        
+        try:
+            success = db.update("stock_items", item_id, updates, business_id=biz_id)
+            if not success:
+                # Try legacy table
+                legacy = {}
+                if "cost_price" in updates:
+                    legacy["cost"] = updates["cost_price"]
+                if "selling_price" in updates:
+                    legacy["price"] = updates["selling_price"]
+                success = db.update("stock", item_id, legacy, business_id=biz_id)
+            if success:
+                ok_count += 1
+            else:
+                fail_count += 1
+        except Exception as e:
+            logger.error(f"[FULLTECH] Bolt apply fail {item_id}: {e}")
+            fail_count += 1
+    
+    return jsonify({"success": True, "updated": ok_count, "failed": fail_count})
+
+
+# Keep old endpoints as aliases for backward compatibility
 @app.route("/api/fulltech/calc-bolt")
 @login_required
 def api_fulltech_calc_bolt():
-    """Calculate single bolt/nut/washer price"""
+    """Legacy endpoint — redirects to BoltPricer"""
     item_type = request.args.get("type", "bolt")
     m_size = int(request.args.get("m_size", 6))
     length = int(request.args.get("length", 50)) if item_type == "bolt" else None
     rkg = float(request.args.get("rkg", 250))
-    
     result = fulltech_addon.calc_bolt_price(m_size, length, rkg, item_type)
     return jsonify(result)
-
-
-@app.route("/api/fulltech/preview-recalc")
-@login_required
-def api_fulltech_preview_recalc():
-    """Preview bulk price recalculation with tiered R/kg"""
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    # Tiered R/kg: smaller fasteners cost more per kg
-    rkg_tiers = {
-        "small": float(request.args.get("rkg_small", 350)),   # M3-M6
-        "medium": float(request.args.get("rkg_medium", 280)), # M8-M12
-        "large": float(request.args.get("rkg_large", 220)),   # M14-M20
-        "xl": float(request.args.get("rkg_xl", 180)),         # M22+
-    }
-    markup = float(request.args.get("markup", 1.3))
-    
-    # Get all stock
-    stock = db.get_all_stock(biz_id) or []
-    
-    result = fulltech_addon.bulk_recalc_bolt_prices(stock, rkg_tiers, markup)
-    return jsonify(result)
-
-
-@app.route("/api/fulltech/apply-recalc", methods=["POST"])
-@login_required
-def api_fulltech_apply_recalc():
-    """Apply bulk price recalculation"""
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    
-    data = request.get_json()
-    updates = data.get("updates", [])
-    
-    count = 0
-    for item in updates:
-        stock_id = item.get("id")
-        new_price = item.get("new_price")
-        if stock_id and new_price is not None:
-            db.update_stock(stock_id, {"selling_price": new_price}, biz_id)
-            count += 1
-    
-    return jsonify({"success": True, "count": count})
-
 
 # ═══════════════════════════════════════════════════════════════
 # STOCK SEARCH API - Server-side search and pagination for 7000+ items
@@ -39769,8 +39919,8 @@ List 3-5 questions you would ask the business owner.
 FORMAT INSTRUCTIONS:
 - Output CLEAN HTML only. NEVER USE MARKDOWN. No ##, no **, no ---, no * bullets.
 - DARK THEME: NEVER use background:white, background:#fff, or any light background colors. Only use rgba() with low opacity for backgrounds. Text color must be light (white/grey). All content renders on a dark navy background.
-- Use <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:18px;"> for main section headings
-- Use <h3 style="color:#8b5cf6;margin-top:12px;"> for sub-headings
+- Use <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;"> for main section headings
+- Use <h3 style="color:#8b5cf6;margin-top:18px;"> for sub-headings
 - Use <p> for all paragraph text
 - Use <strong> for emphasis (not **)
 - Use <ul><li> for bullet lists (not - or *)
@@ -40005,8 +40155,8 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
             insights_html = _re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:18px 0;">', insights_html, flags=_re.MULTILINE)
             
             # Paragraph spacing
-            insights_html = _re.sub(r'\n{3,}', '<br>', insights_html)
-            insights_html = _re.sub(r'\n\n', '<br>', insights_html)
+            insights_html = _re.sub(r'\n{3,}', '<br><br>', insights_html)
+            insights_html = _re.sub(r'\n\n', '<br><br>', insights_html)
             insights_html = _re.sub(r'(?<!>)\n(?!<)', '<br>', insights_html)
             
             # Wrap any Sonnet-generated tables in dark styling
@@ -40674,109 +40824,52 @@ Debt/Equity: {debt_equity}:1
 """
         
         report_prompts = {
-            "management": """Write a THOROUGH professional MANAGEMENT STATEMENT (Year-to-Date). 
-You MUST cover ALL of these sections in detail with specific numbers:
-
-1. EXECUTIVE SUMMARY — 3-4 sentences capturing the overall financial picture, profit/loss status, and biggest concern
-2. INCOME STATEMENT ANALYSIS — Revenue performance, cost of sales, gross profit margin analysis vs industry norm (30% for trading, 60% for services), each major expense category with % of sales, net profit/loss verdict
-3. BALANCE SHEET POSITION — Total assets vs liabilities, current ratio meaning, solvency assessment, asset composition
-4. KEY RATIOS EXPLAINED — Current ratio, gross margin, net margin, debt/equity — what each means for THIS business, traffic light status (good/warning/critical)
-5. EXPENSE DEEP DIVE — Table of all expenses with amounts and % of sales, flag any that are too high vs benchmarks (salaries >30%, rent >10% = concern)
-6. CRITICAL RED FLAGS — Each risk in its own warning box with severity level. If making a loss, this is #1 priority
-7. RECOMMENDATIONS — 5-8 numbered, prioritized action items marked as IMMEDIATE / 7 DAYS / 30 DAYS with specific targets
-
-Report MUST be 800-1200 words. Every section MUST have specific R-amounts. Do NOT stop early.""",
+            "management": """Write a professional MANAGEMENT STATEMENT (Year-to-Date). Structure:
+1. Executive Summary (2-3 sentences)
+2. Income Statement Analysis (revenue, margins, expense breakdown)
+3. Balance Sheet Summary
+4. Key Ratios & What They Mean
+5. Concerns & Red Flags
+6. Recommendations (5+ specific actions)""",
             
-            "kpi": f"""Write a comprehensive KPI DASHBOARD REPORT with traffic light status indicators.
-
-For EACH of these KPIs, write 2-3 paragraphs covering: what it means, the benchmark, how this business compares, and what action to take:
-
-1. GROSS PROFIT MARGIN — {gp_margin}% (benchmark: >30% trading, >50% services). Is pricing right? Cost control?
-2. NET PROFIT MARGIN — {np_margin}% (benchmark: >5% minimum, >10% healthy). Sustainable?
-3. CURRENT RATIO — {current_ratio}:1 (benchmark: >1.5:1). Can they pay bills? Liquidity risk?
-4. SALARIES AS % OF SALES — {sal_pct}% (benchmark: <30%). Overstaffed? Underpaying?
-5. RENT AS % OF SALES — {rent_pct}% (benchmark: <10%). Location cost justified?
-6. DEBT TO EQUITY — {debt_equity}:1 (benchmark: <1.5:1). Leverage risk?
-7. OVERALL HEALTH SCORE — Rate the business Green/Amber/Red with explanation
-
-Use a table for the KPI summary, then detailed analysis below.
-Include a concluding section with the 3 most urgent actions.
-Report MUST be 800-1200 words. Be specific with numbers throughout.""",
+            "kpi": f"""Write a KPI DASHBOARD REPORT with traffic light status (Green/Amber/Red):
+1. Gross Profit Margin ({gp_margin}%)
+2. Net Profit Margin ({np_margin}%)
+3. Current Ratio ({current_ratio}:1)
+4. Salaries % of Sales ({sal_pct}%)
+5. Rent % of Sales ({rent_pct}%)
+6. Debt to Equity ({debt_equity}:1)
+For each: meaning, benchmark, and action.""",
             
-            "sales": f"""Write a DETAILED SALES ANALYSIS REPORT covering ALL of these:
-
-1. REVENUE OVERVIEW — Total sales R{sales:,.2f}, context (is this strong/weak for the size of business?)
-2. COST STRUCTURE — Cost of sales R{cos:,.2f}, gross margin {gp_margin}%. Compare to industry norms. What does the margin tell us about pricing strategy?
-3. GROSS PROFIT QUALITY — R{gross_profit:,.2f} gross profit. Is it enough to cover operating expenses? Break-even analysis
-4. EXPENSE IMPACT ON PROFIT — How expenses eat into gross profit. Which expenses are the biggest burden? Table with each expense and % of sales
-5. PROFITABILITY VERDICT — Net profit/loss analysis. If loss: how much more revenue needed to break even? If profit: how sustainable?
-6. SCENARIO ANALYSIS — What happens if sales drop 10%? 20%? At what point does the business make a loss?
-7. IMPROVEMENT RECOMMENDATIONS — 5+ specific actions to improve sales performance and margins
-
-Report MUST be 800-1200 words. Use tables for expense breakdowns. Be specific with every number.""",
+            "sales": """Write a SALES ANALYSIS covering: revenue performance, cost structure, gross margin quality, expense impact, and improvement recommendations.""",
             
-            "debtor": f"""Write a WORKING CAPITAL & LIQUIDITY REPORT covering:
-
-1. LIQUIDITY POSITION — Current ratio {current_ratio}:1, what it means, can they pay short-term debts?
-2. CASH FLOW ANALYSIS — Current assets vs current liabilities, the gap, what it means practically
-3. ASSET COMPOSITION — What % is tied up in stock vs debtors vs cash? Is the mix healthy?
-4. LIABILITY PRESSURE — What must be paid and when? VAT, PAYE, creditors, loans
-5. WORKING CAPITAL CYCLE — Estimate debtor days, creditor days, stock days if applicable
-6. RISK ASSESSMENT — Rate liquidity risk as Low/Medium/High/Critical with explanation
-7. RECOMMENDATIONS — 5+ actions to improve cash position, prioritized by urgency
-
-Report MUST be 600-1000 words. Be specific about amounts and risks.""",
+            "debtor": f"""Write a WORKING CAPITAL report: Current Ratio ({current_ratio}), cash position, liquidity risk, and recommendations.""",
             
-            "forecast": f"""Write a FORWARD-LOOKING FINANCIAL ANALYSIS covering:
-
-1. CURRENT TRAJECTORY — Based on current numbers, where is this business heading? Sustainable?
-2. CASH FLOW PROJECTION — Estimate next 3 months: expected income vs commitments
-3. SCENARIO ANALYSIS TABLE — Show impact of sales changes:
-   - Sales drop 10%: new gross profit, new net profit
-   - Sales drop 20%: new gross profit, new net profit  
-   - Sales drop 30%: new gross profit, new net profit
-   - Sales increase 15%: new gross profit, new net profit
-4. BREAK-EVEN POINT — How much revenue is needed to cover all expenses?
-5. BIGGEST FINANCIAL RISKS — What could go wrong? Economic factors, concentration risk, cash squeeze
-6. STRATEGIC RECOMMENDATIONS — 5+ forward-looking actions, both defensive and growth-oriented
-
-Report MUST be 800-1200 words. Use tables for scenarios. Be specific with projections.""",
+            "forecast": """Write a FORWARD-LOOKING ANALYSIS: sustainability, cash flow outlook, scenario analysis (sales drop 10/20/30%), and strategic recommendations.""",
             
-            "custom": f"""Answer this request in THOROUGH DETAIL using ALL the financial data provided: {custom_request or 'General financial overview'}
-
-Be comprehensive - minimum 600 words. Use specific R-amounts from the data. Include tables where helpful. End with actionable recommendations."""
+            "custom": f"""Answer this request: {custom_request or 'General financial overview'}"""
         }
         
         prompt = report_prompts.get(report_type, report_prompts["management"])
         
-        system_prompt = f"""You are Zane, ClickAI's senior financial analyst writing a report for a CLIENT's uploaded trial balance.
+        system_prompt = f"""You are Zane, ClickAI's senior financial analyst. You are writing a report for a CLIENT's uploaded trial balance.
 Your name is simply "Zane" - do NOT use any surname. Sign as "Zane, ClickAI" only.
-
-CRITICAL RULES:
-- Use ONLY the Python-calculated numbers provided. Do NOT recalculate or invent numbers.
-- Do NOT make fraud allegations. Flag concerns professionally.
-- {'"Write in Afrikaans."' if lang == 'af' else '"Write in English."'} Use R (Rand) for all amounts.
-- Be THOROUGH. This report may be presented to a client, investor, or board.
-- Every claim MUST reference a specific R-amount or percentage from the data.
-- "margins are low" is BAD — "gross margin of {gp_margin}% is below the industry benchmark of 30%" is GOOD.
-
-LENGTH: Write 800-1200 words MINIMUM. Complete ALL sections fully. Do NOT stop early or summarize prematurely.
-If you run out of things to say, go deeper into expense analysis, ratio interpretation, or add more recommendations.
+RULES: Use ONLY the Python-calculated numbers. Do NOT recalculate. Do NOT make fraud allegations.
+{"Write in Afrikaans." if lang == "af" else "Write in English."} Use R (Rand) for all amounts.
 
 FORMAT RULES - OUTPUT CLEAN HTML:
-- Use <h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:5px;margin-top:18px;"> for main sections
-- Use <h3 style="color:#8b5cf6;margin-top:12px;"> for sub-headings
-- Use <p style="margin:6px 0;line-height:1.7;"> for paragraphs
+- Use <h2> for main sections, <h3> for subsections
+- Use <p> for paragraphs
 - Use <strong> for emphasis
-- Use <table style="width:100%;border-collapse:collapse;margin:10px 0;"><tr><th style="text-align:left;padding:8px;border-bottom:2px solid rgba(255,255,255,0.2);color:#10b981;">Header</th></tr><tr><td style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.08);">Value</td></tr></table>
-- Use <div style="background:rgba(239,68,68,0.15);border-left:3px solid #ef4444;padding:12px;margin:8px 0;color:#fca5a5;border-radius:6px;"> for CRITICAL warnings
-- Use <div style="background:rgba(16,185,129,0.15);border-left:3px solid #10b981;padding:12px;margin:8px 0;color:#6ee7b7;border-radius:6px;"> for POSITIVE items
-- Use <div style="background:rgba(245,158,11,0.15);border-left:3px solid #f59e0b;padding:12px;margin:8px 0;color:#fcd34d;border-radius:6px;"> for CAUTION items
+- Use <table> with inline styles for any data tables
+- Use <div style="background:rgba(239,68,68,0.15);border-left:3px solid #ef4444;padding:12px;margin:10px 0;color:#fca5a5;border-radius:6px;"> for warnings/red flags
+- Use <div style="background:rgba(16,185,129,0.15);border-left:3px solid #10b981;padding:12px;margin:10px 0;color:#6ee7b7;border-radius:6px;"> for positive items
+- Use <div style="background:rgba(245,158,11,0.15);border-left:3px solid #f59e0b;padding:12px;margin:10px 0;color:#fcd34d;border-radius:6px;"> for caution items
+- Use <div style="background:rgba(16,185,129,0.1);border-left:3px solid #10b981;padding:10px;margin:10px 0;"> for positive items
+
 - DO NOT use markdown (no ##, no **, no ---, no bullet points with -)
 - Use <ul><li> for lists
-- Make it visually professional and easy to scan
-- EVERY table cell MUST have content
-- Complete ALL sections fully — do not stop mid-section"""
+- Make it visually professional and easy to scan"""
 
         if not ANTHROPIC_API_KEY:
             return jsonify({"success": False, "error": "AI not configured"})
@@ -40792,15 +40885,15 @@ FORMAT RULES - OUTPUT CLEAN HTML:
         
         # Convert any remaining markdown to HTML (fallback if Sonnet mixed formats)
         import re
-        report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:12px;">\1</h3>', report, flags=re.MULTILINE)
-        report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:18px;">\1</h2>', report, flags=re.MULTILINE)
+        report = re.sub(r'^### (.+)$', r'<h3 style="color:#8b5cf6;margin-top:20px;">\1</h3>', report, flags=re.MULTILINE)
+        report = re.sub(r'^## (.+)$', r'<h2 style="color:#10b981;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:5px;margin-top:25px;">\1</h2>', report, flags=re.MULTILINE)
         report = re.sub(r'^# (.+)$', r'<h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">\1</h2>', report, flags=re.MULTILINE)
         report = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', report)
         report = re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 20px;">• \1</div>', report, flags=re.MULTILINE)
         report = re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 20px;">→ \1</div>', report, flags=re.MULTILINE)
         report = re.sub(r'^---+$', r'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:15px 0;">', report, flags=re.MULTILINE)
         # Wrap plain text paragraphs
-        report = re.sub(r'\n\n(?!<)', '\n<br>\n', report)
+        report = re.sub(r'\n\n(?!<)', '\n<br><br>\n', report)
         return jsonify({"success": True, "report": report})
         
     except Exception as e:
@@ -43277,16 +43370,6 @@ def smart_reports_page():
     .report-btn { transition: all 0.2s; border: 1px solid var(--border); }
     .report-btn:hover { border-color: var(--primary); transform: translateY(-2px); }
     .report-btn.disabled { opacity: 0.5; pointer-events: none; }
-    /* Report content spacing normalization */
-    #reportContent h2 { margin: 18px 0 8px 0 !important; }
-    #reportContent h3 { margin: 14px 0 6px 0 !important; }
-    #reportContent p { margin: 6px 0 !important; line-height: 1.7; }
-    #reportContent table { margin: 10px 0 !important; }
-    #reportContent ul, #reportContent ol { margin: 6px 0 6px 20px !important; }
-    #reportContent li { margin: 3px 0 !important; }
-    #reportContent hr { margin: 15px 0 !important; }
-    #reportContent div[style*="border-left"] { margin: 8px 0 !important; }
-    #reportContent br + br { display: none; }
     </style>
     
     <script>
@@ -44978,6 +45061,218 @@ def pos_page():
     .no-results.show {
         display: block;
     }
+    
+    /* ═══════════════════════════════════════════════════════════════
+       POS REACTOR UPGRADE - Visual enhancements
+       ═══════════════════════════════════════════════════════════════ */
+    
+    /* Animated glow border on search */
+    .pos-search input {
+        border: 2px solid rgba(99, 102, 241, 0.3) !important;
+        animation: searchPulse 3s ease-in-out infinite;
+    }
+    @keyframes searchPulse {
+        0%, 100% { border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 0 15px rgba(99, 102, 241, 0.1); }
+        50% { border-color: rgba(99, 102, 241, 0.6); box-shadow: 0 0 25px rgba(99, 102, 241, 0.3); }
+    }
+    .pos-search input:focus {
+        animation: none !important;
+        border-color: #6366f1 !important;
+        box-shadow: 0 0 40px rgba(99, 102, 241, 0.5), inset 0 0 20px rgba(99, 102, 241, 0.05) !important;
+    }
+    
+    /* Reactor glow on cart panel */
+    .pos-cart {
+        border: 1px solid rgba(99, 102, 241, 0.2) !important;
+        box-shadow: 0 0 30px rgba(99, 102, 241, 0.08), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+        position: relative;
+        overflow: hidden;
+    }
+    .pos-cart::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #6366f1, #10b981, #6366f1, transparent);
+        animation: cartTopGlow 4s linear infinite;
+    }
+    @keyframes cartTopGlow {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+    }
+    .pos-cart::before { background-size: 200% 100%; }
+    
+    /* Stock table reactor styling */
+    .pos-table-wrapper {
+        border: 1px solid rgba(99, 102, 241, 0.15) !important;
+        box-shadow: 0 0 20px rgba(99, 102, 241, 0.05), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+    }
+    
+    .pos-table thead th {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(16, 185, 129, 0.08)) !important;
+        text-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+        letter-spacing: 1.5px !important;
+    }
+    
+    /* Row hover with cyan glow like dashboard */
+    .stock-row:hover {
+        background: linear-gradient(90deg, rgba(6, 182, 212, 0.12), rgba(99, 102, 241, 0.08), transparent) !important;
+        box-shadow: inset 3px 0 0 #06b6d4;
+    }
+    
+    .stock-row:active {
+        background: linear-gradient(90deg, rgba(16, 185, 129, 0.2), rgba(99, 102, 241, 0.1), transparent) !important;
+    }
+    
+    /* Price column glow */
+    .col-price {
+        text-shadow: 0 0 8px rgba(16, 185, 129, 0.4) !important;
+    }
+    
+    /* Code column cyan tint like dashboard */
+    .col-code {
+        color: #06b6d4 !important;
+        text-shadow: 0 0 6px rgba(6, 182, 212, 0.3);
+    }
+    
+    /* QTY button upgrade */
+    .qty-btn {
+        background: linear-gradient(135deg, #6366f1, #06b6d4) !important;
+        box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    .qty-btn:hover {
+        box-shadow: 0 4px 20px rgba(6, 182, 212, 0.5) !important;
+    }
+    
+    /* Header total glow effect */
+    .pos-header-total {
+        text-shadow: 0 0 30px rgba(16, 185, 129, 0.6), 0 0 60px rgba(16, 185, 129, 0.2) !important;
+        font-size: 24px !important;
+    }
+    
+    /* Payment buttons - more vibrant with glow */
+    .pos-pay-btn.cash {
+        box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+    }
+    .pos-pay-btn.card {
+        box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+    }
+    .pos-pay-btn.account {
+        box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);
+    }
+    .pos-pay-btn.quote {
+        box-shadow: 0 0 15px rgba(139, 92, 246, 0.3);
+    }
+    .pos-pay-btn.cash:hover {
+        box-shadow: 0 0 25px rgba(16, 185, 129, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
+    }
+    .pos-pay-btn.card:hover {
+        box-shadow: 0 0 25px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
+    }
+    .pos-pay-btn.account:hover {
+        box-shadow: 0 0 25px rgba(245, 158, 11, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
+    }
+    .pos-pay-btn.quote:hover {
+        box-shadow: 0 0 25px rgba(139, 92, 246, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
+    }
+    
+    /* Cashier buttons - reactor style */
+    .cashier-btn {
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+        font-size: 12px !important;
+    }
+    .cashier-btn.active {
+        box-shadow: 0 0 20px rgba(99, 102, 241, 0.5), 0 0 40px rgba(99, 102, 241, 0.2) !important;
+        animation: activeCashierPulse 2s ease-in-out infinite;
+    }
+    @keyframes activeCashierPulse {
+        0%, 100% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.4); }
+        50% { box-shadow: 0 0 25px rgba(99, 102, 241, 0.6), 0 0 40px rgba(99, 102, 241, 0.2); }
+    }
+    
+    /* Cashier bar reactor border */
+    .cashier-bar {
+        border-bottom: 1px solid rgba(6, 182, 212, 0.2) !important;
+        background: linear-gradient(135deg, rgba(15, 15, 30, 0.95), rgba(20, 20, 45, 0.95)) !important;
+    }
+    
+    /* Cart item hover glow */
+    .cart-item:hover {
+        background: rgba(99, 102, 241, 0.08) !important;
+        box-shadow: inset 2px 0 0 #6366f1;
+    }
+    
+    /* Grand total in cart - reactor green */
+    .pos-total-row.grand span:last-child {
+        text-shadow: 0 0 15px rgba(16, 185, 129, 0.5) !important;
+        font-size: 20px !important;
+    }
+    
+    /* Cart empty state - add subtle animation */
+    .pos-empty-icon {
+        animation: emptyFloat 3s ease-in-out infinite;
+    }
+    @keyframes emptyFloat {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-5px); }
+    }
+    
+    /* Header - reactor gradient border bottom */
+    .pos-header {
+        border-bottom: 1px solid transparent !important;
+        background-image: linear-gradient(rgba(30,30,50,0.95), rgba(30,30,50,0.95)), 
+                          linear-gradient(90deg, transparent, rgba(99,102,241,0.4), rgba(6,182,212,0.3), rgba(16,185,129,0.3), transparent) !important;
+        background-origin: border-box !important;
+        background-clip: padding-box, border-box !important;
+    }
+    
+    /* Stock badge upgrades - glow on good stock */
+    .stock-badge:not(.negative):not(.zero):not(.low) {
+        background: rgba(16, 185, 129, 0.15) !important;
+        color: #10b981 !important;
+        border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+    
+    .stock-badge.low {
+        animation: lowStockPulse 2s ease-in-out infinite;
+    }
+    @keyframes lowStockPulse {
+        0%, 100% { background: rgba(245, 158, 11, 0.15); }
+        50% { background: rgba(245, 158, 11, 0.25); }
+    }
+    
+    .stock-badge.negative {
+        animation: negStockPulse 1.5s ease-in-out infinite;
+    }
+    @keyframes negStockPulse {
+        0%, 100% { background: rgba(239, 68, 68, 0.15); }
+        50% { background: rgba(239, 68, 68, 0.3); }
+    }
+    
+    /* Keyboard bar at bottom - reactor style */
+    .keyboard-bar {
+        background: linear-gradient(180deg, rgba(15,15,30,0.95), rgba(10,10,25,0.98)) !important;
+        border-top: 1px solid rgba(6, 182, 212, 0.15) !important;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.3) !important;
+    }
+    
+    /* Custom button in cart header */
+    .pos-cart-header button, .pos-cart-header .btn {
+        border: 1px solid rgba(99, 102, 241, 0.3) !important;
+    }
+    
+    /* Scan effect on row click */
+    @keyframes rowFlash {
+        0% { background: rgba(16, 185, 129, 0.3); }
+        100% { background: transparent; }
+    }
+    .stock-row.just-added {
+        animation: rowFlash 0.4s ease-out;
+    }
+    
     </style>
     '''
     
@@ -45128,13 +45423,13 @@ def pos_page():
     }
     
     function showAddedFeedback(code) {
-        // Brief flash on the row
+        // Reactor flash on the row
         const row = document.querySelector(`tr[data-code="${code}"]`);
         if (row) {
-            row.style.background = 'rgba(16, 185, 129, 0.3)';
-            setTimeout(() => {
-                row.style.background = '';
-            }, 200);
+            row.classList.remove('just-added');
+            void row.offsetWidth; // force reflow
+            row.classList.add('just-added');
+            setTimeout(() => row.classList.remove('just-added'), 500);
         }
     }
     
@@ -68408,6 +68703,9 @@ def scan_page():
                 <button class="btn scan-type-btn" onclick="selectType('bank_statement')" style="padding:20px;background:#059669;color:white;">
                     🏦 Bank Statement
                 </button>
+                <button class="btn scan-type-btn" onclick="selectType('customer_order')" style="padding:20px;background:var(--card);border:2px solid #10b981;">
+                    🛒 Customer Order
+                </button>
                 <button class="btn scan-type-btn" onclick="selectType('other')" style="padding:20px;background:var(--card);border:1px solid var(--border);">
                     [DOC] Other Document
                 </button>
@@ -68524,6 +68822,7 @@ def scan_page():
         'payslip': '[MONEY] Payslip',
         'timesheet': 'Timesheet',
         'bank_statement': '🏦 Bank Statement',
+        'customer_order': '🛒 Customer Order',
         'other': '[DOC] Document'
     };
     
@@ -68532,6 +68831,7 @@ def scan_page():
         'payslip': '#ec4899',
         'timesheet': '#f59e0b',
         'bank_statement': '#059669',
+        'customer_order': '#10b981',
         'other': 'var(--text-muted)'
     };
     
@@ -68661,6 +68961,53 @@ def scan_page():
                     <strong style="font-size:20px;color:var(--primary);">R${(data.total || 0).toFixed(2)}</strong>
                 </div>
             `;
+        } else if (scanType === 'customer_order') {
+            let orderItemsHtml = '';
+            const orderItems = data.items || [];
+            if (orderItems.length > 0) {
+                orderItemsHtml = '<div style="margin:15px 0;max-height:200px;overflow-y:auto;">';
+                orderItems.forEach((item, i) => {
+                    const desc = item.description || 'Item';
+                    const qty = item.qty || item.quantity || 1;
+                    orderItemsHtml += `
+                        <div style="display:flex;justify-content:space-between;padding:8px;background:rgba(16,185,129,0.1);border-radius:6px;margin-bottom:4px;font-size:13px;">
+                            <span style="flex:1;">${i+1}. ${desc.substring(0,40)}${desc.length > 40 ? '...' : ''}</span>
+                            <span style="font-weight:600;color:#10b981;">x${qty}</span>
+                        </div>
+                    `;
+                });
+                orderItemsHtml += '</div>';
+            }
+            html = `
+                <div style="background:rgba(16,185,129,0.15);padding:10px;border-radius:8px;margin-bottom:15px;text-align:center;">
+                    <strong style="color:#10b981;">CUSTOMER ORDER</strong>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+                    <span style="color:var(--text-muted);">Customer</span>
+                    <strong>${data.customer_name || data.customer || 'Unknown'}</strong>
+                </div>
+                ${data.customer_phone || data.phone ? `
+                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+                    <span style="color:var(--text-muted);">Phone</span>
+                    <span>${data.customer_phone || data.phone || ''}</span>
+                </div>` : ''}
+                ${data.order_reference ? `
+                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+                    <span style="color:var(--text-muted);">Order Ref</span>
+                    <span>${data.order_reference}</span>
+                </div>` : ''}
+                <div style="margin:10px 0;padding-top:10px;border-top:1px solid var(--border);">
+                    <span style="color:var(--text-muted);font-size:12px;">${orderItems.length} ITEMS ORDERED</span>
+                </div>
+                ${orderItemsHtml}
+                ${data.notes ? `
+                <div style="margin-top:10px;padding:8px;background:rgba(245,158,11,0.1);border-radius:6px;font-size:12px;">
+                    <strong>Notes:</strong> ${data.notes}
+                </div>` : ''}
+            `;
+            document.getElementById('saveBtn').innerHTML = 'Save to Order Inbox';
+            document.getElementById('saveBtn').style.background = '#10b981';
+            document.getElementById('saveHint').textContent = 'Order will be saved. Open from inbox to create a quote with your prices.';
         } else if (scanType === 'payslip') {
             html = `
                 <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
@@ -68967,6 +69314,32 @@ Rules:
 - Read EVERY row, even bank charges and small fees
 - Combine multi-line descriptions into one string
 - Date format: YYYY-MM-DD"""
+        elif scan_type == 'customer_order':
+            prompt = """This is a CUSTOMER ORDER / PURCHASE ORDER from a customer who wants to buy from us.
+
+Extract the customer details and ALL items they want to order.
+
+CRITICAL RULES:
+1. Copy item descriptions EXACTLY as printed
+2. Read EVERY item - do not skip any
+3. Get quantities exactly right
+4. If prices are shown, include them (but we will use OUR prices)
+5. Look for customer name, company, phone, email, order number/reference
+
+Return ONLY valid JSON:
+{
+    "customer_name": "Company or person name",
+    "customer_phone": "",
+    "customer_email": "",
+    "order_reference": "Their PO/order number",
+    "date": "YYYY-MM-DD",
+    "items": [
+        {"description": "Exact item name as printed", "qty": 10, "price": 0.00}
+    ],
+    "notes": "Any special instructions, delivery notes etc"
+}
+
+NOTE: Read item descriptions and quantities exactly. Price can be 0 - we will use our own prices."""
         else:
             prompt = """Read this invoice/receipt carefully. Extract ALL line items AND supplier details.
 
@@ -69398,6 +69771,89 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
         return jsonify({"success": False, "error": str(e)})
 
 
+@app.route("/api/scan/create-quote-from-order", methods=["POST"])
+@login_required
+def api_scan_create_quote_from_order():
+    """Create a quote from a scanned customer order"""
+    try:
+        data = request.get_json()
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"})
+        
+        customer_name = data.get("customer_name", "Unknown Customer")
+        customer_phone = data.get("customer_phone", "")
+        order_reference = data.get("order_reference", "")
+        items = data.get("items", [])
+        notes = data.get("notes", "")
+        
+        if not items:
+            return jsonify({"success": False, "error": "No items in order"})
+        
+        # Find or create customer
+        customer_id = ""
+        existing_customers = db.get("customers", {"business_id": biz_id}) or []
+        for c in existing_customers:
+            c_name = (c.get("name") or "").lower().strip()
+            if c_name and c_name in customer_name.lower():
+                customer_id = c.get("id", "")
+                customer_name = c.get("name", customer_name)
+                break
+        
+        if not customer_id:
+            customer_id = generate_id()
+            db.save("customers", {"id": customer_id, "business_id": biz_id, "name": customer_name, "phone": customer_phone, "balance": 0, "created_at": now()})
+            logger.info(f"[ORDER→QUOTE] New customer: {customer_name}")
+        
+        # Build quote items with prices from form
+        quote_items = []
+        matched_count = 0
+        unmatched_count = 0
+        for item in items:
+            desc = item.get("description", "Unknown Item")
+            qty = float(item.get("qty") or item.get("quantity") or 1)
+            price = float(item.get("price") or 0)
+            if price > 0:
+                matched_count += 1
+            else:
+                unmatched_count += 1
+            quote_items.append({"description": desc, "qty": qty, "price": price, "total": round(qty * price, 2)})
+        
+        subtotal = sum(item["total"] for item in quote_items)
+        vat = round(subtotal * 0.15, 2)
+        total = round(subtotal + vat, 2)
+        
+        existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
+        quote_num = f"Q-{len(existing_quotes) + 1:05d}"
+        
+        quote = RecordFactory.quote(
+            business_id=biz_id, customer_id=customer_id, customer_name=customer_name,
+            items=quote_items, quote_number=quote_num, date=today(),
+            subtotal=subtotal, vat=vat, total=total, status="draft",
+            notes=f"From order{' ' + order_reference if order_reference else ''}. {notes}".strip(),
+            created_by=user.get("id", "") if user else ""
+        )
+        quote_id = quote["id"]
+        success, err = db.save("quotes", quote)
+        
+        if success:
+            logger.info(f"[ORDER→QUOTE] {quote_num}: {customer_name} R{total:.2f}")
+            try:
+                AuditLog.log("CREATE", "quotes", quote_id, details=f"From scanned order - {customer_name}")
+            except:
+                pass
+            return jsonify({"success": True, "quote_id": quote_id, "quote_number": quote_num,
+                          "message": f"Quote {quote_num} created for {customer_name} - R{total:.2f}",
+                          "stock_matched": matched_count, "stock_unmatched": unmatched_count})
+        else:
+            return jsonify({"success": False, "error": f"Failed to save quote: {str(err)}"})
+    except Exception as e:
+        logger.error(f"[ORDER→QUOTE] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
 @app.route("/api/scan/check-duplicate", methods=["POST"])
 @login_required
 def api_scan_check_duplicate():
@@ -69735,6 +70191,12 @@ def api_scan_save_to_inbox():
             except (ValueError, TypeError):
                 _net = 0
             summary = f"{extracted.get('employee_name') or 'Unknown'} - R{_net:.2f}"
+        elif doc_type == "customer_order":
+            customer = extracted.get('customer_name') or extracted.get('customer') or 'Unknown Customer'
+            items = extracted.get('items', [])
+            order_ref = extracted.get('order_reference') or ''
+            ref_str = f" ({order_ref})" if order_ref else ''
+            summary = f"Order from {customer}{ref_str} - {len(items)} items"
         elif doc_type == "timesheet":
             # Handle new format with employees array
             employees = extracted.get('employees', [])
@@ -69881,8 +70343,8 @@ def scan_inbox_page():
     inbox_html = ""
     for item in inbox_items:
         doc_type = item.get("type", "other")
-        type_icon = {"invoice": "[INV]", "payslip": "[MONEY]", "timesheet": "⏱️", "other": "[DOC]"}.get(doc_type, "[DOC]")
-        type_color = {"invoice": "var(--primary)", "payslip": "#ec4899", "timesheet": "#f59e0b", "other": "var(--text-muted)"}.get(doc_type, "var(--text-muted)")
+        type_icon = {"invoice": "[INV]", "payslip": "[MONEY]", "timesheet": "⏱️", "customer_order": "🛒", "other": "[DOC]"}.get(doc_type, "[DOC]")
+        type_color = {"invoice": "var(--primary)", "payslip": "#ec4899", "timesheet": "#f59e0b", "customer_order": "#10b981", "other": "var(--text-muted)"}.get(doc_type, "var(--text-muted)")
         
         # Parse stored data
         try:
@@ -69925,6 +70387,10 @@ def scan_inbox_page():
         <div class="stat-card" style="background:rgba(245,158,11,0.1);border-color:#f59e0b;">
             <div class="stat-value">{type_counts.get("timesheet", 0)}</div>
             <div class="stat-label">Timesheets</div>
+        </div>
+        <div class="stat-card" style="background:rgba(16,185,129,0.1);border-color:#10b981;">
+            <div class="stat-value">{type_counts.get("customer_order", 0)}</div>
+            <div class="stat-label">Orders</div>
         </div>
     </div>
     
@@ -70540,6 +71006,88 @@ def scan_inbox_page():
                     <button class="btn" onclick="processAs('supplier')" style="padding:14px;background:var(--primary);color:white;">📦 Stock Purchase (Credit)</button>
                 </div>
             `;
+        }} else if (type === 'customer_order') {{
+            const orderItems = data.items || [];
+            let orderItemsHtml = '';
+            if (orderItems.length > 0) {{
+                orderItemsHtml = `
+                <div style="margin:15px 0;background:rgba(16,185,129,0.1);border-radius:12px;padding:15px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <span style="font-weight:600;color:#10b981;">ORDER ITEMS (${{orderItems.length}})</span>
+                        <span style="font-size:11px;color:var(--text-muted);background:rgba(16,185,129,0.2);padding:3px 8px;border-radius:4px;">
+                            Prices = YOUR selling prices
+                        </span>
+                    </div>
+                    <div style="max-height:350px;overflow-y:auto;">
+                `;
+                orderItems.forEach((item, i) => {{
+                    const desc = item.description || 'Item';
+                    const qty = item.qty || item.quantity || 1;
+                    const stockMatch = matchStock(desc);
+                    let matchBadge = '';
+                    let matchedPrice = 0;
+                    if (stockMatch) {{
+                        matchedPrice = parseFloat(stockMatch.price || stockMatch.selling_price || 0);
+                        matchBadge = `<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">${{stockMatch.code || ''}} MATCHED</span>`;
+                    }} else {{
+                        matchBadge = `<span style="background:#f97316;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">NOT FOUND</span>`;
+                    }}
+                    const lineTotal = (parseFloat(qty) * matchedPrice).toFixed(2);
+                    orderItemsHtml += `
+                    <div class="order-item-row" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+                            <div style="flex:1;">
+                                <div style="font-weight:500;margin-bottom:6px;">
+                                    <span style="color:var(--text-muted);">${{i+1}}.</span>
+                                    <input type="text" id="ord_desc_${{i}}" value="${{desc}}" style="border:none;background:transparent;font-weight:500;width:90%;outline:none;font-size:14px;color:#fff;" />
+                                </div>
+                                <div style="display:flex;gap:6px;flex-wrap:wrap;">${{matchBadge}}</div>
+                            </div>
+                            <div style="text-align:right;min-width:140px;">
+                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">
+                                    x<input type="number" id="ord_qty_${{i}}" value="${{qty}}" style="border:none;background:transparent;width:40px;outline:none;text-align:center;color:#fff;" step="1" onchange="recalcOrderTotal()" />
+                                    @ R<input type="number" id="ord_price_${{i}}" value="${{matchedPrice.toFixed(2)}}" style="border:1px solid ${{matchedPrice > 0 ? '#22c55e' : '#f97316'}};background:${{matchedPrice > 0 ? 'transparent' : 'rgba(249,115,22,0.1)'}};width:80px;outline:none;text-align:right;color:#fff;border-radius:4px;padding:2px 4px;" step="0.01" onchange="recalcOrderTotal()" />
+                                </div>
+                                <div style="font-weight:600;color:#10b981;" id="ord_line_${{i}}">R${{lineTotal}}</div>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }});
+                orderItemsHtml += '</div></div>';
+            }}
+            formHtml = `
+                <div style="background:rgba(16,185,129,0.15);padding:12px;border-radius:8px;margin-bottom:15px;text-align:center;">
+                    <strong style="color:#10b981;font-size:16px;">🛒 CUSTOMER ORDER → CREATE QUOTE</strong>
+                </div>
+                <div class="modal-field">
+                    <label>Customer Name</label>
+                    <input type="text" id="m_customer" value="${{data.customer_name || data.customer || ''}}">
+                </div>
+                <div class="modal-row">
+                    <div class="modal-field"><label>Phone</label><input type="text" id="m_customer_phone" value="${{data.customer_phone || data.phone || ''}}"></div>
+                    <div class="modal-field"><label>Order Ref</label><input type="text" id="m_order_ref" value="${{data.order_reference || ''}}"></div>
+                </div>
+                ${{orderItemsHtml}}
+                <div class="modal-row" style="margin-top:15px;">
+                    <div class="modal-field"><label>Subtotal (excl VAT)</label><input type="number" step="0.01" id="m_order_subtotal" value="0" readonly style="font-weight:bold;"></div>
+                    <div class="modal-field"><label>VAT (15%)</label><input type="number" step="0.01" id="m_order_vat" value="0" readonly></div>
+                </div>
+                <div class="modal-field">
+                    <label>Total (incl VAT)</label>
+                    <input type="number" step="0.01" id="m_order_total" value="0" readonly style="font-size:20px;font-weight:bold;background:rgba(16,185,129,0.1);border-color:#10b981;">
+                </div>
+                ${{data.notes ? `<div class="modal-field"><label>Notes</label><input type="text" id="m_order_notes" value="${{data.notes || ''}}"></div>` : ''}}
+            `;
+            saveHtml = `
+                <button class="btn" onclick="processAs('create_quote')" style="padding:16px;background:#10b981;color:white;width:100%;font-size:16px;font-weight:bold;">
+                    CREATE QUOTE
+                </button>
+                <div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text-muted);">
+                    Quote will be created as Draft. View it to convert to Invoice.
+                </div>
+            `;
+            setTimeout(() => {{ recalcOrderTotal(); }}, 100);
         }} else if (type === 'payslip') {{
             formHtml = `
                 <div class="modal-field">
@@ -70940,6 +71488,36 @@ def scan_inbox_page():
             }};
             endpoint = '/api/scan/save-timesheet-batch';
             redirect = '/payroll';
+        }} else if (saveType === 'create_quote') {{
+            const quoteItems = [];
+            const orderRows = document.querySelectorAll('.order-item-row');
+            orderRows.forEach((row, i) => {{
+                const descEl = document.getElementById(`ord_desc_${{i}}`);
+                const qtyEl = document.getElementById(`ord_qty_${{i}}`);
+                const priceEl = document.getElementById(`ord_price_${{i}}`);
+                if (descEl) {{
+                    const qty = parseFloat(qtyEl?.value || 1);
+                    const price = parseFloat(priceEl?.value || 0);
+                    quoteItems.push({{
+                        description: descEl.value.trim(),
+                        qty: qty,
+                        price: price,
+                        total: Math.round(qty * price * 100) / 100
+                    }});
+                }}
+            }});
+            payload = {{
+                customer_name: document.getElementById('m_customer')?.value || 'Unknown',
+                customer_phone: document.getElementById('m_customer_phone')?.value || '',
+                order_reference: document.getElementById('m_order_ref')?.value || '',
+                items: quoteItems,
+                subtotal: parseFloat(document.getElementById('m_order_subtotal')?.value || 0),
+                vat: parseFloat(document.getElementById('m_order_vat')?.value || 0),
+                total: parseFloat(document.getElementById('m_order_total')?.value || 0),
+                notes: document.getElementById('m_order_notes')?.value || ''
+            }};
+            endpoint = '/api/scan/create-quote-from-order';
+            redirect = '/quotes';
         }} else if (saveType === 'bank_statement') {{
             // Import bank statement transactions to banking
             const txns = currentItemData.transactions || (currentItemData.extracted && currentItemData.extracted.transactions) || [];
@@ -70999,6 +71577,8 @@ def scan_inbox_page():
                 
                 if (redirect === '/banking' && data.imported > 0) {{
                     window.location = '/banking';
+                }} else if (data.quote_id) {{
+                    window.location = '/quote/' + data.quote_id + '?success=Created+from+order';
                 }} else {{
                     window.location.reload();
                 }}
@@ -71008,6 +71588,27 @@ def scan_inbox_page():
         }} catch(err) {{
             alert(' Error: ' + err.message);
         }}
+    }}
+    
+    function recalcOrderTotal() {{
+        let subtotal = 0;
+        const rows = document.querySelectorAll('.order-item-row');
+        rows.forEach((row, i) => {{
+            const qty = parseFloat(document.getElementById(`ord_qty_${{i}}`)?.value || 0);
+            const price = parseFloat(document.getElementById(`ord_price_${{i}}`)?.value || 0);
+            const lineTotal = qty * price;
+            subtotal += lineTotal;
+            const lineEl = document.getElementById(`ord_line_${{i}}`);
+            if (lineEl) lineEl.textContent = 'R' + lineTotal.toFixed(2);
+        }});
+        const vat = subtotal * 0.15;
+        const total = subtotal + vat;
+        const subEl = document.getElementById('m_order_subtotal');
+        const vatEl = document.getElementById('m_order_vat');
+        const totalEl = document.getElementById('m_order_total');
+        if (subEl) subEl.value = subtotal.toFixed(2);
+        if (vatEl) vatEl.value = vat.toFixed(2);
+        if (totalEl) totalEl.value = total.toFixed(2);
     }}
     
     async function deleteFromInbox() {{
