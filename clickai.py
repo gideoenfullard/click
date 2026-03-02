@@ -112,12 +112,6 @@ try:
     BUSINESS_GROUPS_LOADED = True
 except ImportError:
     BUSINESS_GROUPS_LOADED = False
-try:
-    from clickai_fraud_guard import FraudGuard
-    FRAUD_GUARD_LOADED = True
-except ImportError:
-    FraudGuard = None
-    FRAUD_GUARD_LOADED = False
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -12254,24 +12248,6 @@ class Actions:
         # BATCH DELETE - all at once!
         ids_to_delete = [r["id"] for r in to_delete]
         
-        # ── FRAUD GUARD: Protect paid/credited invoices from bulk delete ──
-        try:
-            if FraudGuard and table == "invoices":
-                _role = context.get("user_role", "owner")
-                _protected = [r for r in to_delete if r.get("status") in ("paid", "account", "credited")]
-                if _protected and _role not in ("owner", "admin"):
-                    return {"success": False, "message": f"Cannot delete {len(_protected)} paid/credited invoices. Only the business owner can do this. Use credit notes instead."}
-                if _protected and _role in ("owner", "admin"):
-                    _safe = [r for r in to_delete if r.get("status") not in ("paid", "account", "credited")]
-                    if not _safe:
-                        return {"success": False, "message": f"All {len(to_delete)} invoices are paid/credited. Use credit notes to reverse them - this protects your audit trail."}
-                    _skipped = len(to_delete) - len(_safe)
-                    to_delete = _safe
-                    ids_to_delete = [r["id"] for r in to_delete]
-                    logger.warning(f"[FRAUD GUARD] Skipped {_skipped} paid/credited invoices in bulk delete")
-        except Exception as _fg_err:
-            logger.error(f"[FRAUD GUARD] Bulk delete check failed (allowing): {_fg_err}")
-        
         # For stock, try deleting from both tables
         if table in ["stock", "stock_items"]:
             deleted1, failed1 = db.delete_many("stock_items", ids_to_delete, biz_id)
@@ -12931,7 +12907,7 @@ class Context:
     
     @staticmethod
     def get_dashboard_stats(user: dict, business: dict) -> dict:
-        """FAST dashboard stats - parallel DB calls, no duplicates, session cached"""
+        """FAST dashboard stats - uses COUNT and SUM queries, NOT loading all data"""
         
         biz_id = business.get("id") if business else None
         if not biz_id:
@@ -12941,79 +12917,37 @@ class Context:
                 "customer_count": 0, "supplier_count": 0, "stock_count": 0,
                 "total_debtors": 0, "total_creditors": 0,
                 "today_sales": 0, "total_sales": 0,
-                "stock_value": 0, "stock_retail_value": 0,
-                "customers_summary": [], "recent_invoices": [], "low_stock": []
+                "stock_value": 0, "stock_retail_value": 0
             }
         
-        # SESSION CACHE — reuse for 60 seconds
-        import time as _time
-        _cache_key = f"dash_stats_{biz_id}"
-        _cached = session.get(_cache_key)
-        _cache_ts = session.get(f"{_cache_key}_ts", 0)
-        if _cached and (_time.time() - _cache_ts) < 60:
-            logger.info("[DASHBOARD] Using cached stats (< 60s old)")
-            return _cached
+        # FAST COUNTS - no data loaded, just counts
+        customer_count = db.count("customers", {"business_id": biz_id})
+        supplier_count = db.count("suppliers", {"business_id": biz_id})
+        # Stock count uses get_all_stock (merges both stock + stock_items tables)
+        # Count is derived from the actual merged list below to avoid mismatch
         
-        # PARALLEL DB CALLS — run all at once instead of sequential
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        # FAST SUMS - only load the columns we need
+        # Debtors: customers with positive balance
+        customer_balances = db.get_columns("customers", ["balance"], {"business_id": biz_id})
+        total_debtors = sum(float(c.get("balance", 0) or 0) for c in customer_balances if float(c.get("balance", 0) or 0) > 0)
         
-        results = {}
-        def _fetch(key, fn):
-            try:
-                results[key] = fn()
-            except Exception as e:
-                logger.error(f"[DASHBOARD] {key} failed: {e}")
-                results[key] = None
+        # Creditors: suppliers with positive balance
+        supplier_balances = db.get_columns("suppliers", ["balance"], {"business_id": biz_id})
+        total_creditors = sum(float(s.get("balance", 0) or 0) for s in supplier_balances if float(s.get("balance", 0) or 0) > 0)
         
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            # Only 5 calls instead of 9 — no duplicates!
-            pool.submit(_fetch, "customers", lambda: db.get_columns("customers", ["name", "phone", "balance"], {"business_id": biz_id}))
-            pool.submit(_fetch, "suppliers", lambda: db.get_columns("suppliers", ["balance"], {"business_id": biz_id}))
-            pool.submit(_fetch, "sales", lambda: db.get_columns("sales", ["date", "total"], {"business_id": biz_id}))
-            pool.submit(_fetch, "stock", lambda: db.get_all_stock(biz_id))
-            pool.submit(_fetch, "invoices", lambda: db.get_columns("invoices", ["invoice_number", "customer_name", "total", "status", "date"], {"business_id": biz_id}, limit=200))
-            pool.shutdown(wait=True)
-        
-        # Process results — all from single loads
-        customers = results.get("customers") or []
-        suppliers = results.get("suppliers") or []
-        sales_data = results.get("sales") or []
-        stock_data = results.get("stock") or []
-        invoices = results.get("invoices") or []
-        
-        # Counts
-        customer_count = len(customers)
-        supplier_count = len(suppliers)
-        stock_count = len(stock_data)
-        
-        # Debtors (from same customer load)
-        total_debtors = sum(float(c.get("balance", 0) or 0) for c in customers if float(c.get("balance", 0) or 0) > 0)
-        
-        # Creditors
-        total_creditors = sum(float(s.get("balance", 0) or 0) for s in suppliers if float(s.get("balance", 0) or 0) > 0)
-        
-        # Sales
+        # Sales: only load date and total columns
+        sales_data = db.get_columns("sales", ["date", "total"], {"business_id": biz_id})
         today_str = today()
         today_sales = sum(float(s.get("total", 0) or 0) for s in sales_data if s.get("date") == today_str)
         total_sales = sum(float(s.get("total", 0) or 0) for s in sales_data)
         
-        # Stock value (from same stock load)
+        # Stock value: load from both tables via helper
+        stock_data = db.get_all_stock(biz_id)
+        stock_count = len(stock_data)  # Count from MERGED tables (stock + stock_items)
         stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock_data)
         stock_retail_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("price") or s.get("selling_price") or 0) for s in stock_data)
         
-        # Top debtors (from same customer load — NO extra DB call)
-        debtors = [d for d in customers if float(d.get("balance", 0) or 0) > 0]
-        debtors.sort(key=lambda x: float(x.get("balance", 0) or 0), reverse=True)
-        
-        # Recent invoices (from same invoice load — NO extra DB call)
-        invoices.sort(key=lambda x: x.get("date", "") or "", reverse=True)
-        recent_invoices = [{"number": i.get("invoice_number"), "customer": i.get("customer_name"), "total": i.get("total"), "status": i.get("status")} for i in invoices[:50]]
-        
-        # Low stock (from same stock load — NO extra DB call)
-        low_stock = [{"code": s.get("code"), "description": s.get("description", ""), "qty": s.get("qty") or s.get("quantity", 0)} 
-                     for s in stock_data if float(s.get("qty") or s.get("quantity") or 0) < float(s.get("reorder_level", 5) or 5)][:20]
-        
-        result = {
+        return {
             "business_id": biz_id,
             "business_name": business.get("name", "Business") if business else "Business",
             "user_name": user.get("name", "there") if user else "there",
@@ -13026,19 +12960,11 @@ class Context:
             "total_sales": total_sales,
             "stock_value": stock_value,
             "stock_retail_value": stock_retail_value,
-            "customers_summary": debtors[:50],
-            "recent_invoices": recent_invoices,
-            "low_stock": low_stock
+            # Extra data for dashboard widgets - OPTIMIZED
+            "customers_summary": Context._get_top_debtors(biz_id),
+            "recent_invoices": Context._get_recent_invoices(biz_id),
+            "low_stock": Context._get_low_stock(biz_id)
         }
-        
-        # Cache in session
-        try:
-            session[_cache_key] = result
-            session[f"{_cache_key}_ts"] = _time.time()
-        except Exception:
-            pass
-        
-        return result
     
     @staticmethod
     def _get_top_debtors(biz_id: str, limit: int = 50) -> list:
@@ -18890,7 +18816,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     </div>
     <header class="header">
         <div class="header-top">
-            <div class="logo" onclick="(typeof jzToggle==='function')?jzToggle():toggleZaneChat()">Click AI</div>
+            <div class="logo" onclick="toggleZaneChat()">Click AI</div>
             {user_html}
         </div>
         <div class="nav-wrapper" id="navWrapper">
@@ -18909,7 +18835,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             <div id="globalQueueInfo" style="margin-top:6px;font-size:11px;color:var(--text-muted);display:none;"></div>
         </div>
         <main class="container">
-            {_jarvis_global_hud(title, content) if has_reactor_hud() and 'j-hero' not in content else content}
+            {_jarvis_global_hud(title, content) if is_jarvis() and 'j-hero' not in content else content}
         </main>
     </div>
     
@@ -19171,7 +19097,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         <a href="/scan" class="{'active' if active in ('scan', 'inbox') else ''}">
             <span>📷</span>Scan
         </a>
-        <button class="mic-btn" id="mobileMicBtn" onclick="(typeof jzToggle==='function')?jzToggle():toggleZaneChat()">
+        <button class="mic-btn" id="mobileMicBtn" onclick="toggleZaneChat()">
             🎤
         </button>
         <a href="/stock" class="{'active' if active == 'stock' else ''}">
@@ -19693,7 +19619,7 @@ def get_zane_header_btn() -> str:
     except:
         pass
     return '''
-    <button class="clickai-btn" onclick="if(typeof jzToggle==='function'){jzToggle();}else{toggleZaneChat();}" title="Ask Zane">Click AI</button>
+    <button class="clickai-btn" onclick="toggleZaneChat()" title="Ask Zane">Click AI</button>
     <style>
     .clickai-btn {
         padding: 8px 14px;
@@ -19721,17 +19647,11 @@ def get_zane_proactive_tip(page: str, context: dict = None) -> str:
     return ''  # Disabled - was interfering with Tab navigation and printing
 
 def get_zane_chat() -> str:
-    """Zane chat popup - managers/admin/owner only. Skipped on reactor themes (HUD handles chat)."""
+    """Zane chat popup - managers/admin/owner only"""
     try:
         role = get_user_role()
         if role in ("staff", "cashier", "pos_only", "waiter", "sales"):
             return ''  # No Zane for staff
-    except:
-        pass
-    # On reactor themes, the HUD dropdown handles Zane chat directly
-    try:
-        if has_reactor_hud():
-            return ''
     except:
         pass
     return r'''
@@ -22235,28 +22155,28 @@ def api_health_check():
 JARVIS_HUD_CSS = '''
 <style>
 .j-hero{display:flex;align-items:center;justify-content:center;padding:10px 0 14px;position:relative;gap:0;}
-.j-flank{display:flex;flex-direction:column;gap:5px;width:180px;min-width:0;flex:1;max-width:200px;overflow:hidden;}
-.j-fi{padding:7px 10px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,30,60,0.25);transition:all 0.3s;}
+.j-flank{display:flex;flex-direction:column;gap:5px;width:210px;min-width:210px;}
+.j-fi{padding:9px 14px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,30,60,0.25);transition:all 0.3s;}
 .j-fi:hover{border-color:rgba(80,180,255,0.25);background:rgba(10,30,60,0.4);}
 .j-fi.L{border-left:2px solid rgba(80,180,255,0.3);}
 .j-fi.R{border-right:2px solid rgba(80,180,255,0.3);border-left:none;}
 .j-fi.o.L{border-left-color:rgba(255,170,0,0.4);}.j-fi.o.R{border-right-color:rgba(255,170,0,0.4);}
 .j-fi.r.L{border-left-color:rgba(255,68,102,0.4);}.j-fi.r.R{border-right-color:rgba(255,68,102,0.4);}
 .j-fi.g.L{border-left-color:rgba(0,255,136,0.4);}.j-fi.g.R{border-right-color:rgba(0,255,136,0.4);}
-.j-fr{display:flex;align-items:center;gap:6px;overflow:hidden;}
+.j-fr{display:flex;align-items:center;gap:8px;}
 .j-fd{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
 .j-fd.c{background:#00ccff;box-shadow:0 0 4px #00ccff,0 0 10px rgba(0,204,255,0.3);}
 .j-fd.g{background:#00ff88;box-shadow:0 0 4px #00ff88,0 0 10px rgba(0,255,136,0.3);}
 .j-fd.o{background:#ffaa00;box-shadow:0 0 4px #ffaa00,0 0 10px rgba(255,170,0,0.3);}
 .j-fd.r{background:#ff4466;box-shadow:0 0 4px #ff4466,0 0 10px rgba(255,68,102,0.3);}
 .j-fd.p{background:#aa55ff;box-shadow:0 0 4px #aa55ff;}
-.j-fl{font-family:'Share Tech Mono',monospace;font-size:9px;color:#3a6a90;letter-spacing:0.8px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.j-fv{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3);white-space:nowrap;flex-shrink:0;}
+.j-fl{font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a6a90;letter-spacing:1px;flex:1;}
+.j-fv{font-family:'Orbitron',monospace;font-size:13px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3);}
 .j-fv.o{color:#ffaa00;text-shadow:0 0 8px rgba(255,170,0,0.4);}
 .j-fv.g{color:#00ff88;text-shadow:0 0 8px rgba(0,255,136,0.4);}
 .j-fv.r{color:#ff6688;text-shadow:0 0 8px rgba(255,68,102,0.4);}
 .j-fln{width:100%;height:1px;background:linear-gradient(90deg,transparent,rgba(80,180,255,0.2),transparent);}
-.j-cn{width:20px;height:2px;position:relative;flex-shrink:0;}
+.j-cn{width:30px;height:2px;position:relative;flex-shrink:0;}
 .j-cn::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(80,180,255,0.05),rgba(80,180,255,0.3));}
 .j-cn.R::before{background:linear-gradient(90deg,rgba(80,180,255,0.3),rgba(80,180,255,0.05));}
 .j-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
@@ -22290,15 +22210,14 @@ JARVIS_HUD_CSS = '''
 .j-tl span{font-family:'Share Tech Mono',monospace;font-size:10px;color:#2a5a80;letter-spacing:1.5px;}
 .j-tl span b{color:#4a90bb;font-weight:400;}
 /* Dashboard big reactor */
-.j-rx.big{width:220px;height:220px;}
-.j-rx.big .j-core{inset:58px;}
-.j-rx.big .j-core .j-brand{font-size:18px;letter-spacing:3px;}
-.j-rx.big .j-core .j-sub{font-size:7px;letter-spacing:4px;}
-.j-rx.big .j-core .j-ai{font-size:7px;padding:2px 8px;}
-.j-rx.big .j-hint{bottom:-22px;}
+.j-rx.big{width:280px;height:280px;}
+.j-rx.big .j-core{inset:72px;}
+.j-rx.big .j-core .j-brand{font-size:22px;letter-spacing:4px;}
+.j-rx.big .j-core .j-sub{font-size:8.5px;letter-spacing:5px;}
+.j-rx.big .j-core .j-ai{font-size:8px;padding:3px 10px;}
+.j-rx.big .j-hint{bottom:-26px;}
 /* Page reactor (smaller) */
-.j-rx.page{width:180px;height:180px;}
-.j-rx.page .j-core{inset:48px;}
+.j-rx.page{width:230px;height:230px;}
 /* ═══ ZANE REACTOR EXTENSION CHAT ═══ */
 .j-zane-ext{max-height:0;overflow:hidden;transition:max-height 0.5s cubic-bezier(0.4,0,0.2,1);position:relative;}
 .j-zane-ext.open{max-height:420px;}
@@ -22338,300 +22257,6 @@ JARVIS_HUD_CSS = '''
 .j-hud-wrap::before{content:'';position:absolute;top:0;left:0;width:24px;height:24px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-wrap::after{content:'';position:absolute;bottom:0;right:0;width:24px;height:24px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-pad{height:16px;}
-/* Responsive: hide flanks on small screens, shrink reactor */
-@media(max-width:768px){
-.j-hero{flex-wrap:wrap;gap:8px;padding:8px 0 10px;}
-.j-flank{display:none;}
-.j-cn{display:none;}
-.j-rx.big{width:160px;height:160px;}
-.j-rx.big .j-core{inset:42px;}
-.j-rx.big .j-core .j-brand{font-size:14px;letter-spacing:2px;}
-.j-rx.page{width:140px;height:140px;}
-.j-rx.page .j-core{inset:38px;}
-.j-plbl .j-pn{font-size:10px;letter-spacing:3px;}
-.j-zane-layout{flex-direction:column;}
-.j-zane-center{width:100%;flex-direction:row;flex-wrap:wrap;justify-content:center;gap:6px;}
-.jzc-actions{flex-direction:row;flex-wrap:wrap;gap:4px;}
-.jzc-btn{font-size:10px;padding:5px 8px;}
-}
-@media(max-width:1024px){
-.j-flank{max-width:160px;}
-.j-fv{font-size:10px;}
-.j-fl{font-size:8px;}
-.j-rx.big{width:190px;height:190px;}
-.j-rx.big .j-core{inset:50px;}
-}
-</style>
-'''
-
-THEME_REACTOR_SKINS = '''<style>
-/* ═══ MIDNIGHT — Purple Holographic ═══ */
-[data-theme="midnight"] .j-hud-wrap{border-color:rgba(139,92,246,0.15);background:linear-gradient(160deg,rgba(20,10,40,0.7),rgba(10,5,30,0.8));border-radius:16px;overflow:hidden;}
-[data-theme="midnight"] .j-hud-wrap::before{border-color:rgba(139,92,246,0.3);}
-[data-theme="midnight"] .j-hud-wrap::after{border-color:rgba(139,92,246,0.3);}
-[data-theme="midnight"] .j-fi{border-color:rgba(139,92,246,0.08)!important;background:rgba(139,92,246,0.04);border-radius:10px;}
-[data-theme="midnight"] .j-fi.L{border-left:2px solid rgba(139,92,246,0.25)!important;}
-[data-theme="midnight"] .j-fi.R{border-right:2px solid rgba(139,92,246,0.25)!important;}
-[data-theme="midnight"] .j-fi.g.L{border-left-color:rgba(16,185,129,0.4)!important;}
-[data-theme="midnight"] .j-fi.g.R{border-right-color:rgba(16,185,129,0.4)!important;}
-[data-theme="midnight"] .j-fi.r.L{border-left-color:rgba(244,63,94,0.4)!important;}
-[data-theme="midnight"] .j-fi.r.R{border-right-color:rgba(244,63,94,0.4)!important;}
-[data-theme="midnight"] .j-fi.o.L{border-left-color:rgba(251,191,36,0.4)!important;}
-[data-theme="midnight"] .j-fi.o.R{border-right-color:rgba(251,191,36,0.4)!important;}
-[data-theme="midnight"] .j-fd.c{background:#8b5cf6;box-shadow:0 0 6px rgba(139,92,246,0.5);}
-[data-theme="midnight"] .j-fd.g{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,0.5);}
-[data-theme="midnight"] .j-fd.o{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,0.5);}
-[data-theme="midnight"] .j-fd.r{background:#f43f5e;box-shadow:0 0 6px rgba(244,63,94,0.5);}
-[data-theme="midnight"] .j-fl{font-family:'Segoe UI',system-ui,sans-serif;color:#6d5aad;}
-[data-theme="midnight"] .j-fv{font-family:'Segoe UI',system-ui,sans-serif;font-weight:700;color:#a78bfa;text-shadow:0 0 8px rgba(139,92,246,0.3);}
-[data-theme="midnight"] .j-fv.g{color:#34d399;text-shadow:0 0 8px rgba(16,185,129,0.3);}
-[data-theme="midnight"] .j-fv.o{color:#fbbf24;text-shadow:0 0 8px rgba(251,191,36,0.3);}
-[data-theme="midnight"] .j-fv.r{color:#fb7185;text-shadow:0 0 8px rgba(244,63,94,0.3);}
-[data-theme="midnight"] .j-cn::before{background:linear-gradient(90deg,rgba(139,92,246,0.05),rgba(139,92,246,0.3));}
-[data-theme="midnight"] .j-cn.R::before{background:linear-gradient(90deg,rgba(139,92,246,0.3),rgba(139,92,246,0.05));}
-[data-theme="midnight"] .j-cn::after{background:rgba(139,92,246,0.35);box-shadow:0 0 8px rgba(139,92,246,0.4);}
-[data-theme="midnight"] .j-rg.r1{border-color:rgba(139,92,246,0.15);border-top-color:rgba(139,92,246,0.55);box-shadow:0 0 25px rgba(139,92,246,0.08),inset 0 0 25px rgba(139,92,246,0.04);}
-[data-theme="midnight"] .j-rg.r2{border-color:rgba(139,92,246,0.1);border-bottom-color:rgba(168,85,247,0.45);}
-[data-theme="midnight"] .j-rg.r3{border-color:rgba(139,92,246,0.08);border-top-color:rgba(99,102,241,0.4);}
-[data-theme="midnight"] .j-rg.r4{border-color:rgba(139,92,246,0.05);border-top-color:rgba(139,92,246,0.35);border-left-color:rgba(168,85,247,0.25);}
-[data-theme="midnight"] .j-core{background:radial-gradient(circle,rgba(139,92,246,0.12) 0%,rgba(60,30,100,0.3) 60%,transparent 100%);border-color:rgba(139,92,246,0.2);box-shadow:0 0 40px rgba(139,92,246,0.1);}
-[data-theme="midnight"] .j-core .j-brand{color:#c4b5fd;text-shadow:0 0 18px rgba(139,92,246,0.6),0 0 45px rgba(139,92,246,0.2);}
-[data-theme="midnight"] .j-core .j-sub{color:#6d5aad;}
-[data-theme="midnight"] .j-core .j-ai{color:#a78bfa;border-color:rgba(139,92,246,0.25);text-shadow:0 0 8px rgba(139,92,246,0.5);}
-[data-theme="midnight"] .j-hint{color:#a78bfa;text-shadow:0 0 10px rgba(139,92,246,0.5);}
-[data-theme="midnight"] .j-plbl .j-pn{font-family:'Segoe UI',system-ui,sans-serif;color:#a78bfa;text-shadow:0 0 10px rgba(139,92,246,0.3);}
-[data-theme="midnight"] .j-plbl .j-pc{font-family:'Segoe UI',system-ui,sans-serif;color:#5a4a8a;}
-[data-theme="midnight"] .j-ticker{border-color:rgba(251,191,36,0.2);border-left-color:rgba(251,191,36,0.5);background:rgba(251,191,36,0.03);}
-[data-theme="midnight"] .j-tl{border-top-color:rgba(139,92,246,0.06);}
-[data-theme="midnight"] .j-tl span{color:#5a4a8a;}
-[data-theme="midnight"] .j-tl span b{color:#7c6abc;}
-[data-theme="midnight"] .j-zane-ext{border-top:1px solid rgba(139,92,246,0.06);}
-[data-theme="midnight"] .jzc-label{font-family:'Segoe UI',system-ui,sans-serif;color:#a78bfa;}
-[data-theme="midnight"] .jzc-status{color:#10b981;border-color:rgba(16,185,129,0.2);}
-[data-theme="midnight"] .jzc-btn{font-family:'Segoe UI',system-ui,sans-serif;color:#8b7cc8;border-color:rgba(139,92,246,0.1);border-radius:8px;}
-[data-theme="midnight"] .jzc-btn:hover{color:#c4b5fd;border-color:rgba(139,92,246,0.3);background:rgba(139,92,246,0.08);text-shadow:0 0 8px rgba(139,92,246,0.3);}
-[data-theme="midnight"] .jzm-ai{background:rgba(139,92,246,0.04);border-left-color:rgba(139,92,246,0.2);border-radius:0 8px 8px 0;}
-[data-theme="midnight"] .jzm-ai p{color:#b0a0d0;}
-[data-theme="midnight"] .jzm-ai strong{color:#c4b5fd;}
-[data-theme="midnight"] .jzm-user{background:rgba(99,102,241,0.06);border-right-color:rgba(99,102,241,0.2);border-radius:8px 0 0 8px;}
-[data-theme="midnight"] .jzm-user p{color:#9088c0;}
-[data-theme="midnight"] .j-zane-inp{border-top-color:rgba(139,92,246,0.08);}
-[data-theme="midnight"] .j-zane-inp input{color:#c4b5fd;}
-[data-theme="midnight"] .j-zane-inp input::placeholder{color:#3a2a6a;}
-[data-theme="midnight"] .j-zane-inp .jzs{color:#6d5aad;border-left-color:rgba(139,92,246,0.08);}
-[data-theme="midnight"] .j-zane-inp .jzs:hover{color:#a78bfa;text-shadow:0 0 10px rgba(139,92,246,0.4);}
-[data-theme="midnight"] .jzc-close{color:#5a4a8a;border-color:rgba(139,92,246,0.1);border-radius:8px;}
-[data-theme="midnight"] .jzc-close:hover{color:#ff6b9d;border-color:rgba(255,107,157,0.25);}
-[data-theme="midnight"] .j-zane-ctx .jzc-ci{color:#5a4a8a;}
-[data-theme="midnight"] .j-zane-ctx .jzc-ci .jzd{background:#7c3aed;}
-
-/* ═══ CYBER — Neon Grid ═══ */
-[data-theme="cyber"] .j-hud-wrap{border-color:rgba(0,229,255,0.12);background:rgba(0,10,20,0.9);overflow:hidden;}
-[data-theme="cyber"] .j-hud-wrap::before{border-color:rgba(0,229,255,0.25);}
-[data-theme="cyber"] .j-hud-wrap::after{border-color:rgba(0,229,255,0.25);}
-[data-theme="cyber"] .j-fi{border-color:rgba(0,229,255,0.08)!important;background:rgba(0,229,255,0.02);}
-[data-theme="cyber"] .j-fi.L{border-left:2px solid rgba(0,229,255,0.2)!important;}
-[data-theme="cyber"] .j-fi.R{border-right:2px solid rgba(0,229,255,0.2)!important;}
-[data-theme="cyber"] .j-fi.g.L{border-left-color:rgba(0,255,136,0.4)!important;}
-[data-theme="cyber"] .j-fi.g.R{border-right-color:rgba(0,255,136,0.4)!important;}
-[data-theme="cyber"] .j-fd.c{background:#00e5ff;box-shadow:0 0 6px rgba(0,229,255,0.5);}
-[data-theme="cyber"] .j-fd.g{background:#00ff88;box-shadow:0 0 6px rgba(0,255,136,0.5);}
-[data-theme="cyber"] .j-fd.o{background:#ffaa00;box-shadow:0 0 6px rgba(255,170,0,0.5);}
-[data-theme="cyber"] .j-fd.r{background:#ff0066;box-shadow:0 0 6px rgba(255,0,102,0.5);}
-[data-theme="cyber"] .j-fl{color:#006670;}
-[data-theme="cyber"] .j-fv{color:#00e5ff;text-shadow:0 0 8px rgba(0,229,255,0.4);}
-[data-theme="cyber"] .j-fv.g{color:#00ff88;text-shadow:0 0 8px rgba(0,255,136,0.4);}
-[data-theme="cyber"] .j-fv.o{color:#ffaa00;}
-[data-theme="cyber"] .j-fv.r{color:#ff0066;text-shadow:0 0 8px rgba(255,0,102,0.4);}
-[data-theme="cyber"] .j-cn::before{background:linear-gradient(90deg,rgba(0,229,255,0.05),rgba(0,229,255,0.3));}
-[data-theme="cyber"] .j-cn.R::before{background:linear-gradient(90deg,rgba(0,229,255,0.3),rgba(0,229,255,0.05));}
-[data-theme="cyber"] .j-cn::after{background:rgba(0,229,255,0.35);box-shadow:0 0 8px rgba(0,229,255,0.4);}
-[data-theme="cyber"] .j-rg.r1{border-color:rgba(0,229,255,0.15);border-top-color:rgba(0,229,255,0.6);border-bottom-color:rgba(0,229,255,0.3);box-shadow:0 0 25px rgba(0,229,255,0.08);}
-[data-theme="cyber"] .j-rg.r2{border-color:rgba(0,229,255,0.1);border-right-color:rgba(0,229,255,0.5);}
-[data-theme="cyber"] .j-rg.r3{border-color:rgba(0,229,255,0.08);border-bottom-color:rgba(0,229,255,0.4);border-left-color:rgba(0,229,255,0.2);}
-[data-theme="cyber"] .j-rg.r4{border-color:rgba(0,229,255,0.05);border-left-color:rgba(0,229,255,0.3);}
-[data-theme="cyber"] .j-core{background:radial-gradient(circle,rgba(0,229,255,0.08) 0%,rgba(0,30,35,0.4) 60%,transparent 100%);border-color:rgba(0,229,255,0.2);box-shadow:0 0 30px rgba(0,229,255,0.08);}
-[data-theme="cyber"] .j-core .j-brand{color:#00e5ff;text-shadow:0 0 18px rgba(0,229,255,0.6),0 0 45px rgba(0,229,255,0.15);}
-[data-theme="cyber"] .j-core .j-sub{color:#006670;}
-[data-theme="cyber"] .j-core .j-ai{color:#00e5ff;border-color:rgba(0,229,255,0.3);text-shadow:0 0 8px rgba(0,229,255,0.5);background:rgba(0,229,255,0.05);}
-[data-theme="cyber"] .j-hint{color:#00e5ff;text-shadow:0 0 10px rgba(0,229,255,0.5);}
-[data-theme="cyber"] .j-plbl .j-pn{color:#00e5ff;text-shadow:0 0 10px rgba(0,229,255,0.3);}
-[data-theme="cyber"] .j-plbl .j-pc{color:#006670;}
-[data-theme="cyber"] .j-tl span{color:#006670;}
-[data-theme="cyber"] .j-tl span b{color:#00aacc;}
-[data-theme="cyber"] .jzc-label{color:#00e5ff;text-shadow:0 0 10px rgba(0,229,255,0.3);}
-[data-theme="cyber"] .jzc-status{color:#00ff88;border-color:rgba(0,255,136,0.2);}
-[data-theme="cyber"] .jzc-btn{color:#009aaa;border-color:rgba(0,229,255,0.08);}
-[data-theme="cyber"] .jzc-btn:hover{color:#00e5ff;border-color:rgba(0,229,255,0.3);background:rgba(0,229,255,0.03);text-shadow:0 0 8px rgba(0,229,255,0.4);}
-[data-theme="cyber"] .jzm-ai{background:rgba(0,229,255,0.02);border-left-color:rgba(0,229,255,0.2);}
-[data-theme="cyber"] .jzm-ai p{color:#66ccbb;}
-[data-theme="cyber"] .jzm-ai strong{color:#00e5ff;}
-[data-theme="cyber"] .jzm-user{background:rgba(0,229,255,0.02);border-right-color:rgba(0,229,255,0.15);}
-[data-theme="cyber"] .jzm-user p{color:#448877;}
-[data-theme="cyber"] .j-zane-inp input{color:#00e5ff;}
-[data-theme="cyber"] .j-zane-inp input::placeholder{color:#004455;}
-[data-theme="cyber"] .j-zane-inp .jzs{color:#006670;border-left-color:rgba(0,229,255,0.06);}
-[data-theme="cyber"] .j-zane-inp .jzs:hover{color:#00e5ff;text-shadow:0 0 10px rgba(0,229,255,0.5);}
-[data-theme="cyber"] .jzc-close{color:#006670;border-color:rgba(0,229,255,0.08);}
-[data-theme="cyber"] .jzc-close:hover{color:#ff0066;border-color:rgba(255,0,102,0.2);}
-[data-theme="cyber"] .j-zane-ctx .jzc-ci{color:#006670;}
-[data-theme="cyber"] .j-zane-ctx .jzc-ci .jzd{background:#00aacc;}
-
-/* ═══ EMERALD — Terminal Green ═══ */
-[data-theme="emerald"] .j-hud-wrap{border-color:rgba(16,185,129,0.15);background:rgba(5,15,10,0.8);}
-[data-theme="emerald"] .j-hud-wrap::before{border-color:rgba(16,185,129,0.3);}
-[data-theme="emerald"] .j-hud-wrap::after{border-color:rgba(16,185,129,0.3);}
-[data-theme="emerald"] .j-fi{border-color:rgba(16,185,129,0.08)!important;background:rgba(16,185,129,0.02);}
-[data-theme="emerald"] .j-fi.L{border-left:2px solid rgba(16,185,129,0.25)!important;}
-[data-theme="emerald"] .j-fi.R{border-right:2px solid rgba(16,185,129,0.25)!important;}
-[data-theme="emerald"] .j-fi.g.L{border-left-color:rgba(52,211,153,0.4)!important;}
-[data-theme="emerald"] .j-fi.g.R{border-right-color:rgba(52,211,153,0.4)!important;}
-[data-theme="emerald"] .j-fd.c{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,0.5);}
-[data-theme="emerald"] .j-fd.g{background:#34d399;box-shadow:0 0 6px rgba(52,211,153,0.5);}
-[data-theme="emerald"] .j-fd.o{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,0.5);}
-[data-theme="emerald"] .j-fd.r{background:#f87171;box-shadow:0 0 6px rgba(248,113,113,0.5);}
-[data-theme="emerald"] .j-fl{color:#065f46;}
-[data-theme="emerald"] .j-fv{color:#34d399;text-shadow:0 0 6px rgba(16,185,129,0.3);}
-[data-theme="emerald"] .j-fv.g{color:#6ee7b7;text-shadow:0 0 6px rgba(16,185,129,0.4);}
-[data-theme="emerald"] .j-fv.o{color:#fbbf24;}
-[data-theme="emerald"] .j-fv.r{color:#f87171;text-shadow:0 0 6px rgba(248,113,113,0.3);}
-[data-theme="emerald"] .j-cn::before{background:linear-gradient(90deg,rgba(16,185,129,0.05),rgba(16,185,129,0.3));}
-[data-theme="emerald"] .j-cn.R::before{background:linear-gradient(90deg,rgba(16,185,129,0.3),rgba(16,185,129,0.05));}
-[data-theme="emerald"] .j-cn::after{background:rgba(16,185,129,0.35);box-shadow:0 0 8px rgba(16,185,129,0.4);}
-[data-theme="emerald"] .j-rg.r1{border-color:rgba(16,185,129,0.15);border-top-color:rgba(16,185,129,0.5);box-shadow:0 0 20px rgba(16,185,129,0.06);}
-[data-theme="emerald"] .j-rg.r2{border-color:rgba(16,185,129,0.1);border-right-color:rgba(52,211,153,0.4);}
-[data-theme="emerald"] .j-rg.r3{border-color:rgba(16,185,129,0.08);border-bottom-color:rgba(16,185,129,0.35);}
-[data-theme="emerald"] .j-rg.r4{border-color:rgba(16,185,129,0.05);border-left-color:rgba(16,185,129,0.25);}
-[data-theme="emerald"] .j-core{background:radial-gradient(circle,rgba(16,185,129,0.08) 0%,rgba(0,30,20,0.4) 60%,transparent 100%);border-color:rgba(16,185,129,0.2);box-shadow:0 0 25px rgba(16,185,129,0.08);}
-[data-theme="emerald"] .j-core .j-brand{color:#10b981;text-shadow:0 0 15px rgba(16,185,129,0.5),0 0 40px rgba(16,185,129,0.15);}
-[data-theme="emerald"] .j-core .j-sub{color:#065f46;}
-[data-theme="emerald"] .j-core .j-ai{color:#34d399;border-color:rgba(16,185,129,0.25);text-shadow:0 0 8px rgba(16,185,129,0.5);}
-[data-theme="emerald"] .j-hint{color:#34d399;text-shadow:0 0 10px rgba(16,185,129,0.5);}
-[data-theme="emerald"] .j-plbl .j-pn{color:#10b981;text-shadow:0 0 8px rgba(16,185,129,0.3);}
-[data-theme="emerald"] .j-plbl .j-pc{color:#065f46;}
-[data-theme="emerald"] .j-tl span{color:#065f46;}
-[data-theme="emerald"] .j-tl span b{color:#059669;}
-[data-theme="emerald"] .jzc-label{color:#10b981;}
-[data-theme="emerald"] .jzc-status{color:#34d399;border-color:rgba(16,185,129,0.2);}
-[data-theme="emerald"] .jzc-btn{color:#059669;border-color:rgba(16,185,129,0.1);}
-[data-theme="emerald"] .jzc-btn:hover{color:#34d399;border-color:rgba(16,185,129,0.3);background:rgba(16,185,129,0.05);text-shadow:0 0 6px rgba(16,185,129,0.3);}
-[data-theme="emerald"] .jzm-ai{background:rgba(16,185,129,0.03);border-left-color:rgba(16,185,129,0.2);}
-[data-theme="emerald"] .jzm-ai p{color:#6ee7b7;}
-[data-theme="emerald"] .jzm-ai strong{color:#34d399;}
-[data-theme="emerald"] .jzm-user{background:rgba(16,185,129,0.02);border-right-color:rgba(16,185,129,0.15);}
-[data-theme="emerald"] .jzm-user p{color:#4ade80;}
-[data-theme="emerald"] .j-zane-inp input{color:#34d399;}
-[data-theme="emerald"] .j-zane-inp input::placeholder{color:#064e3b;}
-[data-theme="emerald"] .j-zane-inp .jzs{color:#065f46;border-left-color:rgba(16,185,129,0.06);}
-[data-theme="emerald"] .j-zane-inp .jzs:hover{color:#34d399;}
-[data-theme="emerald"] .jzc-close{color:#065f46;border-color:rgba(16,185,129,0.1);}
-[data-theme="emerald"] .jzc-close:hover{color:#f87171;border-color:rgba(248,113,113,0.2);}
-[data-theme="emerald"] .j-zane-ctx .jzc-ci{color:#065f46;}
-[data-theme="emerald"] .j-zane-ctx .jzc-ci .jzd{background:#059669;}
-
-/* ═══ SUNSET — Amber Mission Control ═══ */
-[data-theme="sunset"] .j-hud-wrap{border-color:rgba(245,158,11,0.15);background:linear-gradient(170deg,rgba(30,15,5,0.7),rgba(20,10,2,0.85));}
-[data-theme="sunset"] .j-hud-wrap::before{border-color:rgba(245,158,11,0.3);}
-[data-theme="sunset"] .j-hud-wrap::after{border-color:rgba(245,158,11,0.3);}
-[data-theme="sunset"] .j-fi{border-color:rgba(245,158,11,0.08)!important;background:rgba(245,158,11,0.02);}
-[data-theme="sunset"] .j-fi.L{border-left:2px solid rgba(245,158,11,0.25)!important;}
-[data-theme="sunset"] .j-fi.R{border-right:2px solid rgba(245,158,11,0.25)!important;}
-[data-theme="sunset"] .j-fi.g.L{border-left-color:rgba(16,185,129,0.4)!important;}
-[data-theme="sunset"] .j-fi.g.R{border-right-color:rgba(16,185,129,0.4)!important;}
-[data-theme="sunset"] .j-fd.c{background:#f59e0b;box-shadow:0 0 6px rgba(245,158,11,0.5);}
-[data-theme="sunset"] .j-fd.g{background:#10b981;box-shadow:0 0 6px rgba(16,185,129,0.5);}
-[data-theme="sunset"] .j-fd.o{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,0.5);}
-[data-theme="sunset"] .j-fd.r{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.5);}
-[data-theme="sunset"] .j-fl{color:#92400e;}
-[data-theme="sunset"] .j-fv{color:#fbbf24;text-shadow:0 0 8px rgba(245,158,11,0.3);}
-[data-theme="sunset"] .j-fv.g{color:#34d399;text-shadow:0 0 8px rgba(16,185,129,0.3);}
-[data-theme="sunset"] .j-fv.o{color:#fbbf24;}
-[data-theme="sunset"] .j-fv.r{color:#f87171;text-shadow:0 0 8px rgba(248,113,113,0.3);}
-[data-theme="sunset"] .j-cn::before{background:linear-gradient(90deg,rgba(245,158,11,0.05),rgba(245,158,11,0.3));}
-[data-theme="sunset"] .j-cn.R::before{background:linear-gradient(90deg,rgba(245,158,11,0.3),rgba(245,158,11,0.05));}
-[data-theme="sunset"] .j-cn::after{background:rgba(245,158,11,0.35);box-shadow:0 0 8px rgba(245,158,11,0.4);}
-[data-theme="sunset"] .j-rg.r1{border-color:rgba(245,158,11,0.15);border-top-color:rgba(245,158,11,0.5);box-shadow:0 0 20px rgba(245,158,11,0.06);}
-[data-theme="sunset"] .j-rg.r2{border-color:rgba(245,158,11,0.1);border-right-color:rgba(251,191,36,0.4);}
-[data-theme="sunset"] .j-rg.r3{border-color:rgba(245,158,11,0.08);border-bottom-color:rgba(245,158,11,0.35);}
-[data-theme="sunset"] .j-rg.r4{border-color:rgba(245,158,11,0.05);border-left-color:rgba(245,158,11,0.25);}
-[data-theme="sunset"] .j-core{background:radial-gradient(circle,rgba(245,158,11,0.1) 0%,rgba(60,30,0,0.3) 60%,transparent 100%);border-color:rgba(245,158,11,0.2);box-shadow:0 0 25px rgba(245,158,11,0.08);}
-[data-theme="sunset"] .j-core .j-brand{color:#fbbf24;text-shadow:0 0 15px rgba(245,158,11,0.5),0 0 40px rgba(245,158,11,0.15);}
-[data-theme="sunset"] .j-core .j-sub{color:#92400e;}
-[data-theme="sunset"] .j-core .j-ai{color:#f59e0b;border-color:rgba(245,158,11,0.25);text-shadow:0 0 8px rgba(245,158,11,0.5);}
-[data-theme="sunset"] .j-hint{color:#fbbf24;text-shadow:0 0 10px rgba(245,158,11,0.5);}
-[data-theme="sunset"] .j-plbl .j-pn{color:#fbbf24;text-shadow:0 0 8px rgba(245,158,11,0.3);}
-[data-theme="sunset"] .j-plbl .j-pc{color:#92400e;}
-[data-theme="sunset"] .j-tl span{color:#92400e;}
-[data-theme="sunset"] .j-tl span b{color:#b45309;}
-[data-theme="sunset"] .jzc-label{color:#fbbf24;}
-[data-theme="sunset"] .jzc-status{color:#10b981;border-color:rgba(16,185,129,0.2);}
-[data-theme="sunset"] .jzc-btn{color:#b45309;border-color:rgba(245,158,11,0.1);}
-[data-theme="sunset"] .jzc-btn:hover{color:#fbbf24;border-color:rgba(245,158,11,0.3);background:rgba(245,158,11,0.06);text-shadow:0 0 8px rgba(245,158,11,0.3);}
-[data-theme="sunset"] .jzm-ai{background:rgba(245,158,11,0.03);border-left-color:rgba(245,158,11,0.2);}
-[data-theme="sunset"] .jzm-ai p{color:#c4a060;}
-[data-theme="sunset"] .jzm-ai strong{color:#fbbf24;}
-[data-theme="sunset"] .jzm-user{background:rgba(245,158,11,0.02);border-right-color:rgba(245,158,11,0.15);}
-[data-theme="sunset"] .jzm-user p{color:#a07840;}
-[data-theme="sunset"] .j-zane-inp input{color:#fbbf24;}
-[data-theme="sunset"] .j-zane-inp input::placeholder{color:#78350f;}
-[data-theme="sunset"] .j-zane-inp .jzs{color:#92400e;border-left-color:rgba(245,158,11,0.06);}
-[data-theme="sunset"] .j-zane-inp .jzs:hover{color:#fbbf24;text-shadow:0 0 10px rgba(245,158,11,0.4);}
-[data-theme="sunset"] .jzc-close{color:#92400e;border-color:rgba(245,158,11,0.1);}
-[data-theme="sunset"] .jzc-close:hover{color:#ef4444;border-color:rgba(239,68,68,0.25);}
-[data-theme="sunset"] .j-zane-ctx .jzc-ci{color:#92400e;}
-[data-theme="sunset"] .j-zane-ctx .jzc-ci .jzd{background:#d97706;}
-
-/* ═══ SLATE — Military Blue Ops ═══ */
-[data-theme="slate"] .j-hud-wrap{border-color:rgba(59,130,246,0.12);background:linear-gradient(170deg,rgba(5,10,30,0.8),rgba(3,8,25,0.9));}
-[data-theme="slate"] .j-hud-wrap::before{border-color:rgba(59,130,246,0.3);}
-[data-theme="slate"] .j-hud-wrap::after{border-color:rgba(59,130,246,0.3);}
-[data-theme="slate"] .j-fi{border-color:rgba(59,130,246,0.08)!important;background:rgba(59,130,246,0.02);}
-[data-theme="slate"] .j-fi.L{border-left:2px solid rgba(59,130,246,0.2)!important;}
-[data-theme="slate"] .j-fi.R{border-right:2px solid rgba(59,130,246,0.2)!important;}
-[data-theme="slate"] .j-fi.g.L{border-left-color:rgba(34,197,94,0.4)!important;}
-[data-theme="slate"] .j-fi.g.R{border-right-color:rgba(34,197,94,0.4)!important;}
-[data-theme="slate"] .j-fd.c{background:#3b82f6;box-shadow:0 0 6px rgba(59,130,246,0.5);}
-[data-theme="slate"] .j-fd.g{background:#22c55e;box-shadow:0 0 6px rgba(34,197,94,0.5);}
-[data-theme="slate"] .j-fd.o{background:#eab308;box-shadow:0 0 6px rgba(234,179,8,0.5);}
-[data-theme="slate"] .j-fd.r{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.5);}
-[data-theme="slate"] .j-fl{color:#1e3a5f;}
-[data-theme="slate"] .j-fv{color:#60a5fa;text-shadow:0 0 6px rgba(59,130,246,0.2);}
-[data-theme="slate"] .j-fv.g{color:#4ade80;text-shadow:0 0 6px rgba(34,197,94,0.3);}
-[data-theme="slate"] .j-fv.o{color:#eab308;}
-[data-theme="slate"] .j-fv.r{color:#f87171;text-shadow:0 0 6px rgba(239,68,68,0.3);}
-[data-theme="slate"] .j-cn::before{background:linear-gradient(90deg,rgba(59,130,246,0.05),rgba(59,130,246,0.3));}
-[data-theme="slate"] .j-cn.R::before{background:linear-gradient(90deg,rgba(59,130,246,0.3),rgba(59,130,246,0.05));}
-[data-theme="slate"] .j-cn::after{background:rgba(59,130,246,0.35);box-shadow:0 0 8px rgba(59,130,246,0.4);}
-[data-theme="slate"] .j-rg.r1{border-color:rgba(59,130,246,0.12);border-top-color:rgba(59,130,246,0.5);box-shadow:0 0 20px rgba(59,130,246,0.06);}
-[data-theme="slate"] .j-rg.r2{border-color:rgba(59,130,246,0.1);border-right-color:rgba(96,165,250,0.4);}
-[data-theme="slate"] .j-rg.r3{border-color:rgba(59,130,246,0.06);border-bottom-color:rgba(59,130,246,0.3);}
-[data-theme="slate"] .j-rg.r4{border-color:rgba(59,130,246,0.04);border-left-color:rgba(59,130,246,0.2);}
-[data-theme="slate"] .j-core{background:radial-gradient(circle,rgba(59,130,246,0.08) 0%,rgba(10,20,50,0.4) 60%,transparent 100%);border-color:rgba(59,130,246,0.2);box-shadow:0 0 25px rgba(59,130,246,0.06);}
-[data-theme="slate"] .j-core .j-brand{color:#60a5fa;text-shadow:0 0 15px rgba(59,130,246,0.4),0 0 40px rgba(59,130,246,0.1);}
-[data-theme="slate"] .j-core .j-sub{color:#1e3a5f;}
-[data-theme="slate"] .j-core .j-ai{color:#3b82f6;border-color:rgba(59,130,246,0.2);text-shadow:0 0 8px rgba(59,130,246,0.4);}
-[data-theme="slate"] .j-hint{color:#60a5fa;text-shadow:0 0 10px rgba(59,130,246,0.4);}
-[data-theme="slate"] .j-plbl .j-pn{color:#60a5fa;text-shadow:0 0 8px rgba(59,130,246,0.2);}
-[data-theme="slate"] .j-plbl .j-pc{color:#1e3a5f;}
-[data-theme="slate"] .j-tl span{color:#1e3a5f;}
-[data-theme="slate"] .j-tl span b{color:#2563eb;}
-[data-theme="slate"] .jzc-label{color:#60a5fa;}
-[data-theme="slate"] .jzc-status{color:#22c55e;border-color:rgba(34,197,94,0.2);}
-[data-theme="slate"] .jzc-btn{color:#2563eb;border-color:rgba(59,130,246,0.08);}
-[data-theme="slate"] .jzc-btn:hover{color:#60a5fa;border-color:rgba(59,130,246,0.25);background:rgba(59,130,246,0.06);}
-[data-theme="slate"] .jzm-ai{background:rgba(59,130,246,0.03);border-left-color:rgba(59,130,246,0.15);}
-[data-theme="slate"] .jzm-ai p{color:#7090b0;}
-[data-theme="slate"] .jzm-ai strong{color:#93c5fd;}
-[data-theme="slate"] .jzm-user{background:rgba(59,130,246,0.02);border-right-color:rgba(59,130,246,0.1);}
-[data-theme="slate"] .jzm-user p{color:#4070a0;}
-[data-theme="slate"] .j-zane-inp input{color:#93c5fd;}
-[data-theme="slate"] .j-zane-inp input::placeholder{color:#1e3a5f;}
-[data-theme="slate"] .j-zane-inp .jzs{color:#1e3a5f;border-left-color:rgba(59,130,246,0.06);}
-[data-theme="slate"] .j-zane-inp .jzs:hover{color:#60a5fa;text-shadow:0 0 10px rgba(59,130,246,0.3);}
-[data-theme="slate"] .jzc-close{color:#1e3a5f;border-color:rgba(59,130,246,0.08);}
-[data-theme="slate"] .jzc-close:hover{color:#ef4444;border-color:rgba(239,68,68,0.2);}
-[data-theme="slate"] .j-zane-ctx .jzc-ci{color:#1e3a5f;}
-[data-theme="slate"] .j-zane-ctx .jzc-ci .jzd{background:#2563eb;}
 </style>
 '''
 
@@ -22739,43 +22364,24 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
             }}
         }}
     }}
-    async function jzSend(text){{
+    function jzSend(text){{
         if(!text||!text.trim())return;
-        var msgsL=document.getElementById('jzMsgsL');
-        var msgsR=document.getElementById('jzMsgsR');
+        var msgs=document.getElementById('jzMsgsL');
         var input=document.getElementById('jzInput');
-        msgsL.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';
-        msgsL.scrollTop=msgsL.scrollHeight;
+        msgs.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';
+        msgs.scrollTop=msgs.scrollHeight;
         input.value='';
-        msgsR.innerHTML='<div class="jzm-ai"><p style="opacity:0.6;">⟳ Processing...</p></div>';
-        try {{
-            var resp=await fetch('/api/ai',{{
-                method:'POST',
-                headers:{{'Content-Type':'application/json'}},
-                body:JSON.stringify({{command:text,current_page:window.location.pathname}})
-            }});
-            var data=await resp.json();
-            var reply=data.response||data.error||'Sorry, I had trouble with that.';
-            var h=reply;
-            h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
-            h=h.replace(/\*(.+?)\*/g,'<em>$1</em>');
-            h=h.replace(/^- (.+)$/gm,'<li>$1</li>');
-            h=h.replace(/\n\n/g,'</p><p style="margin:6px 0;">');
-            h=h.replace(/\n/g,'<br>');
-            h='<p style="margin:6px 0;">'+h+'</p>';
-            msgsR.innerHTML='<div class="jzm-ai">'+h+'</div>';
-            msgsR.scrollTop=msgsR.scrollHeight;
-            msgsL.scrollTop=msgsL.scrollHeight;
-            if(data.navigate&&!data.error){{
-                var target=data.navigate;
-                if(target&&target.startsWith('/')&&target!==window.location.pathname){{
-                    if(data.highlight)localStorage.setItem('zane_highlight',data.highlight);
-                    if(data.next_message)localStorage.setItem('zane_next_message',data.next_message);
-                    setTimeout(function(){{window.location.href=target;}},1500);
-                }}
-            }}
-        }} catch(e) {{
-            msgsR.innerHTML='<div class="jzm-ai"><p style="color:var(--danger,#ff4466);">Error connecting to Zane. Try again.</p></div>';
+        // Forward to actual Zane chat system
+        if(typeof sendZaneMessage==='function'){{
+            sendZaneMessage(text);
+        }} else if(typeof toggleZaneChat==='function'){{
+            toggleZaneChat();
+            setTimeout(function(){{
+                var zi=document.getElementById('zaneInput');
+                if(zi){{zi.value=text;zi.dispatchEvent(new Event('input'));}}
+                var zs=document.querySelector('.zane-chat-send');
+                if(zs)zs.click();
+            }},500);
         }}
     }}
     document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var ext=document.getElementById('jZaneExt');if(ext&&ext.classList.contains('open'))jzToggle();}}}});
@@ -22793,15 +22399,6 @@ def is_jarvis():
     """Check if current theme is Jarvis"""
     try:
         return request.cookies.get("clickai_theme", "midnight") == "jarvis"
-    except Exception:
-        return False
-
-
-def has_reactor_hud():
-    """Check if current theme supports the reactor HUD (all dark themes)"""
-    try:
-        theme = request.cookies.get("clickai_theme", "midnight")
-        return theme in ("jarvis", "midnight", "cyber", "emerald", "sunset", "slate")
     except Exception:
         return False
 
@@ -22865,13 +22462,13 @@ def _jarvis_global_hud(title, content):
         </div>
         <script>
         function jzToggle(){{var ext=document.getElementById('jZaneExt');var pad=document.getElementById('jHudPad');ext.classList.toggle('open');if(pad)pad.style.display=ext.classList.contains('open')?'none':'';if(ext.classList.contains('open')){{setTimeout(function(){{document.getElementById('jzInput').focus();}},400);if(!document.getElementById('jzMsgsL').children.length){{document.getElementById('jzMsgsL').innerHTML='<div class="jzm-ai"><p>Hello! I\\'m <strong>Zane</strong>, your AI assistant. Ask me anything or use the quick actions.</p></div>';document.getElementById('jzMsgsR').innerHTML='<div class="jzm-ai"><p><strong>Quick insights loading...</strong></p><p>Ask a question to get started.</p></div>';}}}}}}
-        async function jzSend(text){{if(!text||!text.trim())return;var msgsL=document.getElementById('jzMsgsL');var msgsR=document.getElementById('jzMsgsR');var input=document.getElementById('jzInput');msgsL.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';msgsL.scrollTop=msgsL.scrollHeight;input.value='';msgsR.innerHTML='<div class="jzm-ai"><p style="opacity:0.6;">⟳ Processing...</p></div>';try{{var resp=await fetch("/api/ai",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{command:text,current_page:window.location.pathname}})}});var data=await resp.json();var reply=data.response||data.error||"Sorry, I had trouble with that.";var h=reply;h=h.replace(/\\*\\*(.+?)\\*\\*/g,"<strong>$1</strong>");h=h.replace(/\\*(.+?)\\*/g,"<em>$1</em>");h=h.replace(/^- (.+)$/gm,"<li>$1</li>");h=h.replace(/\\n\\n/g,"</p><p>");h=h.replace(/\\n/g,"<br>");h="<p>"+h+"</p>";msgsR.innerHTML='<div class="jzm-ai">'+h+"</div>";msgsR.scrollTop=msgsR.scrollHeight;if(data.navigate&&!data.error){{var t=data.navigate;if(t&&t.startsWith("/")&&t!==window.location.pathname){{setTimeout(function(){{window.location.href=t;}},1500);}}}}}}catch(e){{msgsR.innerHTML='<div class="jzm-ai"><p style="color:var(--danger,#ff4466);">Error. Try again.</p></div>';}}}}
+        function jzSend(text){{if(!text||!text.trim())return;var msgs=document.getElementById('jzMsgsL');var input=document.getElementById('jzInput');msgs.innerHTML+='<div class="jzm-user"><p>'+text+'</p></div>';msgs.scrollTop=msgs.scrollHeight;input.value='';if(typeof sendZaneMessage==='function'){{sendZaneMessage(text);}}else if(typeof toggleZaneChat==='function'){{toggleZaneChat();setTimeout(function(){{var zi=document.getElementById('zaneInput');if(zi){{zi.value=text;zi.dispatchEvent(new Event('input'));}}var zs=document.querySelector('.zane-chat-send');if(zs)zs.click();}},500);}}}}
         document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{var ext=document.getElementById('jZaneExt');if(ext&&ext.classList.contains('open'))jzToggle();}}}});
         </script>
         '''
         
         tl = jarvis_techline()
-        return JARVIS_HUD_CSS + THEME_REACTOR_SKINS + hdr + content + tl
+        return JARVIS_HUD_CSS + hdr + content + tl
     except Exception:
         return content
 
@@ -23115,7 +22712,7 @@ def dashboard():
     '''
     
     # -- JARVIS THEME: Replace dashboard with HUD layout --
-    if has_reactor_hud() and not is_staff:
+    if is_jarvis() and not is_staff:
         # Build debtor rows for HUD panel
         _jd_rows = ""
         for d in debtors:
@@ -23173,7 +22770,7 @@ def dashboard():
         _no_debt = '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO OUTSTANDING DEBT</div>'
         _no_inv = '<div style="text-align:center;color:#3a6a90;padding:20px;font-family:Share Tech Mono,monospace;">NO INVOICES YET</div>'
         
-        content = f'''{JARVIS_HUD_CSS}{THEME_REACTOR_SKINS}
+        content = f'''{JARVIS_HUD_CSS}
         <style>
         .j-panels{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;}}
         .j-panel{{border:1px solid rgba(80,180,255,0.12);background:rgba(8,20,45,0.3);position:relative;overflow:hidden;}}
@@ -23451,7 +23048,7 @@ def customers_page():
     
     _t("before_render")
     # -- JARVIS: Customers HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _with_bal = len(debtors)
         _in_credit = len([c for c in customers if float(c.get("balance", 0) or 0) < 0])
         _j_alert = ""
@@ -23477,7 +23074,7 @@ def customers_page():
             reactor_size="page",
             alert_html=_j_alert
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"CUSTOMERS <b>{total_customers} LOADED</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"CUSTOMERS <b>{total_customers} LOADED</b>")
     
     return render_page("Customers", content, user, "customers")
 
@@ -23506,22 +23103,10 @@ def customer_view(customer_id):
     # Get quotes
     all_quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
     quotes = [q for q in all_quotes if q.get("customer_id") == customer_id]
-    quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
-    
-    # Get credit notes for this customer
-    all_credit_notes = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
-    credit_notes = [cn for cn in all_credit_notes if cn.get("customer_id") == customer_id]
-    credit_notes = sorted(credit_notes, key=lambda x: x.get("date", ""), reverse=True)
-    
-    # Get delivery notes for this customer
-    all_delivery_notes = db.get("delivery_notes", {"business_id": biz_id}) if biz_id else []
-    delivery_notes = [dn for dn in all_delivery_notes if dn.get("customer_id") == customer_id]
-    delivery_notes = sorted(delivery_notes, key=lambda x: x.get("date", ""), reverse=True)
     
     # Get jobs
     all_jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
     jobs = [j for j in all_jobs if j.get("customer_id") == customer_id]
-    jobs = sorted(jobs, key=lambda x: x.get("created_at", ""), reverse=True)
     
     # Get recurring invoices for this customer
     all_recurring = db.get("recurring_invoices", {"business_id": biz_id}) if biz_id else []
@@ -23583,7 +23168,7 @@ def customer_view(customer_id):
     
     # Build sales HTML
     sales_html = ""
-    for s in sales[:200]:
+    for s in sales[:10]:
         method = s.get("payment_method", "cash")
         method_color = {"cash": "#10b981", "card": "#3b82f6", "account": "#f59e0b"}.get(method, "#888")
         sales_html += f'''
@@ -23596,78 +23181,20 @@ def customer_view(customer_id):
         '''
     
     invoices_html = ""
-    for inv in invoices[:200]:
+    for inv in invoices[:10]:
         status = inv.get("status", "outstanding")
-        status_colors = {"paid": "var(--green)", "credited": "var(--red)", "delivered": "#3b82f6", "account": "#f59e0b", "partial_credit": "#f59e0b"}
-        status_color = status_colors.get(status, "var(--orange)")
+        status_color = "var(--green)" if status == "paid" else "var(--orange)"
         invoices_html += f'''
         <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
             <td>{inv.get("invoice_number", "-")}</td>
             <td>{inv.get("date", "-")}</td>
             <td>{money(inv.get("total", 0)) if can_see_balances else "---"}</td>
-            <td style="color:{status_color};">{status.upper()}</td>
-        </tr>
-        '''
-    
-    # Credit notes rows
-    credit_notes_html = ""
-    for cn in credit_notes[:200]:
-        credit_notes_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/credit-note/{cn.get("id")}'">
-            <td>{cn.get("credit_note_number", "-")}</td>
-            <td>{cn.get("date", "-")}</td>
-            <td>{cn.get("invoice_number", "-")}</td>
-            <td style="color:var(--red);">{money(cn.get("total", 0)) if can_see_balances else "---"}</td>
-            <td>{safe_string(cn.get("reason", "-"))[:40]}</td>
-        </tr>
-        '''
-    
-    # Delivery notes rows
-    delivery_notes_html = ""
-    for dn in delivery_notes[:200]:
-        dn_status = dn.get("status", "pending")
-        dn_color = "var(--green)" if dn_status == "delivered" else "var(--orange)"
-        delivery_notes_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/delivery-note/{dn.get("id")}'">
-            <td>{dn.get("dn_number", dn.get("delivery_note_number", "-"))}</td>
-            <td>{dn.get("date", "-")}</td>
-            <td>{dn.get("invoice_number", "-")}</td>
-            <td style="color:{dn_color};">{dn_status.upper()}</td>
-        </tr>
-        '''
-    
-    # Quotes rows
-    quotes_html = ""
-    for q in quotes[:200]:
-        q_status = q.get("status", "draft")
-        q_colors = {"accepted": "var(--green)", "converted": "#3b82f6", "declined": "var(--red)", "expired": "var(--text-muted)"}
-        q_color = q_colors.get(q_status, "var(--orange)")
-        quotes_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/quote/{q.get("id")}'">
-            <td>{q.get("quote_number", "-")}</td>
-            <td>{q.get("date", "-")}</td>
-            <td>{money(q.get("total", 0)) if can_see_balances else "---"}</td>
-            <td style="color:{q_color};">{q_status.upper()}</td>
-        </tr>
-        '''
-    
-    # Jobs rows
-    jobs_html = ""
-    for j in jobs[:200]:
-        j_status = j.get("status", "open")
-        j_colors = {"completed": "var(--green)", "invoiced": "#3b82f6", "cancelled": "var(--red)"}
-        j_color = j_colors.get(j_status, "var(--orange)")
-        jobs_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/job/{j.get("id")}'">
-            <td>{j.get("job_number", "-")}</td>
-            <td>{j.get("title", j.get("description", "-"))[:40]}</td>
-            <td>{money(j.get("total", 0)) if can_see_balances else "---"}</td>
-            <td style="color:{j_color};">{j_status.upper()}</td>
+            <td style="color:{status_color};">{status}</td>
         </tr>
         '''
     
     receipts_html = ""
-    for r in receipts[:200]:
+    for r in receipts[:10]:
         receipts_html += f'''
         <tr>
             <td>{r.get("receipt_number", "-")}</td>
@@ -23815,12 +23342,8 @@ def customer_view(customer_id):
             <div class="stat-label">POS Sales</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">{len(quotes)}</div>
-            <div class="stat-label">Quotes</div>
-        </div>
-        <div class="stat-card" style="border-color:rgba(239,68,68,0.2);">
-            <div class="stat-value" style="color:var(--red);">{len(credit_notes)}</div>
-            <div class="stat-label">Credit Notes</div>
+            <div class="stat-value">{money(total_sales) if can_see_balances else "---"}</div>
+            <div class="stat-label">Sales Total</div>
         </div>
     </div>
     
@@ -23856,58 +23379,6 @@ def customer_view(customer_id):
             </thead>
             <tbody>
                 {receipts_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No payments recorded</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Credit Notes -->
-    <div class="card">
-        <h3 style="margin-bottom:15px;">📕 Credit Notes ({len(credit_notes)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>CN Number</th><th>Date</th><th>Invoice</th><th>Amount</th><th>Reason</th></tr>
-            </thead>
-            <tbody>
-                {credit_notes_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No credit notes</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Quotes -->
-    <div class="card">
-        <h3 style="margin-bottom:15px;">📝 Quotes ({len(quotes)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>Quote</th><th>Date</th><th>Total</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {quotes_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No quotes</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Delivery Notes -->
-    <div class="card">
-        <h3 style="margin-bottom:15px;">🚚 Delivery Notes ({len(delivery_notes)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>DN Number</th><th>Date</th><th>Invoice</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {delivery_notes_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No delivery notes</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Jobs -->
-    <div class="card">
-        <h3 style="margin-bottom:15px;">🔧 Jobs ({len(jobs)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>Job</th><th>Title</th><th>Value</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {jobs_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No jobs</td></tr>"}
             </tbody>
         </table>
     </div>
@@ -23952,29 +23423,6 @@ def customer_view(customer_id):
     </div>
     
     <script>
-    // Auto-collapse tables with more than 50 rows
-    document.addEventListener('DOMContentLoaded', function() {{
-        document.querySelectorAll('.card table.table tbody').forEach(function(tbody) {{
-            var rows = tbody.querySelectorAll('tr');
-            if (rows.length > 50) {{
-                for (var i = 50; i < rows.length; i++) {{
-                    rows[i].style.display = 'none';
-                    rows[i].classList.add('extra-row');
-                }}
-                var table = tbody.closest('table');
-                var btn = document.createElement('div');
-                btn.style.cssText = 'text-align:center;padding:10px;cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;border-top:1px solid var(--border);margin-top:-1px;';
-                btn.innerHTML = '▼ Show all ' + rows.length + ' records';
-                btn.onclick = function() {{
-                    var extra = tbody.querySelectorAll('.extra-row');
-                    var hidden = extra[0].style.display === 'none';
-                    extra.forEach(function(r) {{ r.style.display = hidden ? '' : 'none'; }});
-                    btn.innerHTML = hidden ? '▲ Show first 50' : '▼ Show all ' + rows.length + ' records';
-                }};
-                table.parentNode.insertBefore(btn, table.nextSibling);
-            }}
-        }});
-    }});
     function showEmailModal() {{
         document.getElementById('emailGroupModal').style.display = 'flex';
     }}
@@ -24622,7 +24070,7 @@ def stock_page():
     '''
     
     # -- JARVIS: Stock HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _hud = jarvis_hud_header(
             page_name="STOCK",
             page_count='<span id="jStockCount">LOADING...</span>',
@@ -24641,7 +24089,7 @@ def stock_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("STOCK <b>LOADING</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("STOCK <b>LOADING</b>")
     
     return render_page("Stock", content, user, "stock")
     
@@ -26638,7 +26086,7 @@ def invoices_page():
     '''
     
     # -- JARVIS: Invoices HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _total_inv = len(invoices)
         _paid = len([i for i in invoices if i.get("status") == "paid"])
         _outstanding = len([i for i in invoices if i.get("status") in ("outstanding", "account")])
@@ -26664,7 +26112,7 @@ def invoices_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"INVOICES <b>{_total_inv} LOADED</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"INVOICES <b>{_total_inv} LOADED</b>")
     
     return render_page("Invoices", content, user, "invoices")
 
@@ -27072,16 +26520,6 @@ def invoice_view(invoice_id):
     # Show credit note button - only hide if already fully credited
     cn_btn = "" if status == "credited" else f'<a href="/invoice/{invoice_id}/credit-note" class="btn btn-secondary">Credit Note</a>'
     
-    # ── FRAUD GUARD: Hide credit note button if user not allowed ──
-    try:
-        if FraudGuard and cn_btn:
-            _role = get_user_role()
-            _guard = FraudGuard.can_cancel_invoice(invoice, _role)
-            if not _guard.get("allowed"):
-                cn_btn = f'<span style="color:var(--text-muted);font-size:12px;padding:8px;" title="{_guard.get("reason", "")}">🔒 Credit Note (manager only)</span>'
-    except Exception:
-        pass
-    
     # Delivery note button - hide if already delivered or paid
     dn_btn = "" if status in ("delivered", "paid", "credited") else f'<a href="/invoice/{invoice_id}/create-delivery-note" class="btn btn-secondary">Delivery Note</a>'
     
@@ -27120,11 +26558,7 @@ def invoice_view(invoice_id):
     # Email button - show customer email if available
     email_btn = f'<button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">Email</button>'
     
-    # Show error if redirected back from fraud guard
-    _inv_error = request.args.get("error", "")
-    _inv_error_html = f'<div style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:var(--text);padding:12px 16px;border-radius:8px;margin-bottom:15px;"><strong>⚠</strong> {safe_string(_inv_error)}</div>' if _inv_error else ""
-    
-    content = f'''{_inv_error_html}
+    content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
             <a href="/invoices" style="color:var(--text-muted);">← Back to Invoices</a>
@@ -29780,7 +29214,7 @@ def suppliers_page():
     '''
     
     # -- JARVIS: Suppliers HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _with_bal = len(creditors)
         _in_credit = len([s for s in suppliers if float(s.get("balance", 0) or 0) < 0])
         _j_alert = ""
@@ -29806,7 +29240,7 @@ def suppliers_page():
             reactor_size="page",
             alert_html=_j_alert
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"SUPPLIERS <b>{total_suppliers} LOADED</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"SUPPLIERS <b>{total_suppliers} LOADED</b>")
     
     return render_page("Suppliers", content, user, "suppliers")
 
@@ -29967,14 +29401,6 @@ def supplier_view(supplier_id):
     payments = [p for p in all_payments if p.get("supplier_id") == supplier_id]
     payments = sorted(payments, key=lambda x: x.get("date", ""), reverse=True)
     
-    # Get purchase orders for this supplier
-    try:
-        all_pos = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        purchase_orders = [po for po in all_pos if po.get("supplier_id") == supplier_id]
-        purchase_orders = sorted(purchase_orders, key=lambda x: x.get("date", ""), reverse=True)
-    except Exception:
-        purchase_orders = []
-    
     # Get scanned documents for this supplier
     all_scanned_docs = db.get("scanned_documents", {"business_id": biz_id}) if biz_id else []
     scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
@@ -30023,37 +29449,37 @@ def supplier_view(supplier_id):
     
     expenses_html = ""
     if can_see_balances:
-        for e in expenses[:200]:
+        for e in expenses[:10]:
             status = e.get("status", "outstanding")
             status_color = "var(--green)" if status == "paid" else "var(--orange)"
             expenses_html += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/expense/{e.get("id")}'">
+            <tr>
                 <td>{e.get("invoice_number", e.get("reference", "-"))}</td>
                 <td>{e.get("date", "-")}</td>
                 <td>{safe_string(e.get("description", "-"))[:40]}</td>
                 <td>{money(e.get("total", e.get("amount", 0)))}</td>
-                <td style="color:{status_color};">{status.upper()}</td>
+                <td style="color:{status_color};">{status}</td>
             </tr>
             '''
     
     supplier_inv_html = ""
     if can_see_balances:
-        for si in supplier_invoices[:200]:
+        for si in supplier_invoices[:50]:
             si_status = si.get("status", "outstanding")
             si_color = "var(--green)" if si_status == "paid" else "var(--orange)"
             supplier_inv_html += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/supplier-invoice/{si.get("id")}'">
+            <tr>
                 <td>{safe_string(si.get("invoice_number", "-"))}</td>
                 <td>{si.get("date", "-")}</td>
                 <td>{si.get("due_date", "-")}</td>
                 <td>{money(si.get("total", 0))}</td>
-                <td style="color:{si_color};">{si_status.upper()}</td>
+                <td style="color:{si_color};">{si_status}</td>
             </tr>
             '''
     
     payments_html = ""
     if can_see_balances:
-        for p in payments[:200]:
+        for p in payments[:10]:
             payments_html += f'''
             <tr>
                 <td>{p.get("reference", "-")}</td>
@@ -30258,19 +29684,6 @@ def supplier_view(supplier_id):
     ''' if can_see_balances else '') + '''
     </div>
     
-    <!-- Purchase Orders Section -->
-    <div class="card" style="margin-top:20px;">
-        <h3 style="margin-bottom:15px;">📋 Purchase Orders ({len(purchase_orders)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>PO Number</th><th>Date</th><th>Total</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {''.join(f"""<tr style="cursor:pointer;" onclick="window.location='/purchase/{po.get('id')}'"><td>{po.get('po_number', '-')}</td><td>{po.get('date', '-')}</td><td>{money(po.get('total', 0))}</td><td style="color:{'var(--green)' if po.get('status') == 'received' else 'var(--orange)'};">{(po.get('status', 'draft')).upper()}</td></tr>""" for po in purchase_orders[:200]) or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No purchase orders</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
     <!-- Scanned Documents Section -->
     <div class="card" style="margin-top:20px;">
         <h3 style="margin-bottom:15px;">Scanned Documents ({len(scanned_docs)})</h3>
@@ -30290,29 +29703,6 @@ def supplier_view(supplier_id):
     </div>
     
     <script>
-    // Auto-collapse tables with more than 50 rows
-    document.addEventListener('DOMContentLoaded', function() {{
-        document.querySelectorAll('.card table.table tbody').forEach(function(tbody) {{
-            var rows = tbody.querySelectorAll('tr');
-            if (rows.length > 50) {{
-                for (var i = 50; i < rows.length; i++) {{
-                    rows[i].style.display = 'none';
-                    rows[i].classList.add('extra-row');
-                }}
-                var table = tbody.closest('table');
-                var btn = document.createElement('div');
-                btn.style.cssText = 'text-align:center;padding:10px;cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;border-top:1px solid var(--border);margin-top:-1px;';
-                btn.innerHTML = '▼ Show all ' + rows.length + ' records';
-                btn.onclick = function() {{
-                    var extra = tbody.querySelectorAll('.extra-row');
-                    var hidden = extra[0].style.display === 'none';
-                    extra.forEach(function(r) {{ r.style.display = hidden ? '' : 'none'; }});
-                    btn.innerHTML = hidden ? '▲ Show first 50' : '▼ Show all ' + rows.length + ' records';
-                }};
-                table.parentNode.insertBefore(btn, table.nextSibling);
-            }}
-        }});
-    }});
     async function viewScannedDoc(docId) {{
         document.getElementById('scanModal').style.display = 'flex';
         document.getElementById('scanModalContent').innerHTML = '<p>Loading document...</p>';
@@ -32183,7 +31573,7 @@ def expenses_page():
     '''
     
     # -- JARVIS: Expenses HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _exp_count = len(expenses)
         _hud = jarvis_hud_header(
             page_name="EXPENSES",
@@ -32203,7 +31593,7 @@ def expenses_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"EXPENSES <b>{_exp_count} LOADED</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"EXPENSES <b>{_exp_count} LOADED</b>")
     
     return render_page("Expenses", content, user, "expenses")
 
@@ -32648,7 +32038,7 @@ def payroll_page():
     '''
     
     # -- JARVIS: Payroll HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _emp_count = len(employees)
         _ps_count = len(payslips)
         _pending = len(staging_batches)
@@ -32671,7 +32061,7 @@ def payroll_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"PAYROLL <b>{_emp_count} EMPLOYEES</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"PAYROLL <b>{_emp_count} EMPLOYEES</b>")
     
     return render_page("Payroll", content, user, "payroll")
 
@@ -35115,7 +34505,7 @@ def business_pulse():
     '''
     
     # -- JARVIS: Pulse HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _hud = jarvis_hud_header(
             page_name="BUSINESS PULSE",
             page_count="AI-POWERED INSIGHTS",
@@ -35134,7 +34524,7 @@ def business_pulse():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("PULSE <b>AI ACTIVE</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("PULSE <b>AI ACTIVE</b>")
     
     return render_page("Business Pulse", content, user, "pulse")
 
@@ -36063,7 +35453,7 @@ def reports_page():
     '''
     
     # -- JARVIS: Reports HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _hud = jarvis_hud_header(
             page_name="REPORTS",
             page_count="FINANCIAL ANALYTICS",
@@ -36082,7 +35472,7 @@ def reports_page():
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("REPORTS <b>READY</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("REPORTS <b>READY</b>")
     
     return render_page("Reports", content, user, "reports")
 
@@ -49692,15 +49082,6 @@ def api_pos_credit_note():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # ── FRAUD GUARD: Check role for POS credit notes ──
-    try:
-        if FraudGuard:
-            _role = get_user_role()
-            if _role in ("cashier", "pos_only", "waiter"):
-                return jsonify({"success": False, "error": "Only a manager or owner can issue credit notes from POS. Ask your manager for help."})
-    except Exception:
-        pass
-    
     try:
         data = request.get_json()
         items = data.get("items", [])
@@ -58678,7 +58059,7 @@ def banking_page():
     '''
     
     # -- JARVIS: Banking HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _match_pct = int((done_count / max(total_count, 1)) * 100)
         _j_alert = ""
         if needs_count > 0:
@@ -58702,7 +58083,7 @@ def banking_page():
             reactor_size="page",
             alert_html=_j_alert
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline(f"BANKING <b>{total_count} TXN</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline(f"BANKING <b>{total_count} TXN</b>")
     
     return render_page("Banking", content, user, "banking")
 
@@ -67012,17 +66393,6 @@ def create_credit_note(invoice_id):
     logger.info(f"[CREDIT NOTE] Invoice {invoice.get('invoice_number')}: {len(inv_items)} items loaded, type={type(raw_items).__name__}")
     
     if request.method == "POST":
-        # ── FRAUD GUARD: Check if user is allowed to credit this invoice ──
-        try:
-            if FraudGuard:
-                _role = get_user_role()
-                _guard = FraudGuard.can_cancel_invoice(invoice, _role)
-                if not _guard.get("allowed"):
-                    logger.warning(f"[FRAUD GUARD] Credit note BLOCKED for {invoice.get('invoice_number')} - role:{_role} - {_guard.get('reason')}")
-                    return redirect(f"/invoice/{invoice_id}?error=" + urllib.parse.quote(_guard.get("reason", "Not allowed")))
-        except Exception as _fg_err:
-            logger.error(f"[FRAUD GUARD] Check failed (allowing): {_fg_err}")
-        
         reason = request.form.get("reason", "")
         credit_type = request.form.get("credit_type", "full")  # full or partial
         
@@ -67123,33 +66493,9 @@ def create_credit_note(invoice_id):
         else:
             db.update("invoices", invoice_id, {"status": "partial_credit"})
         
-        # ── FRAUD GUARD: Log this credit note action ──
-        try:
-            if FraudGuard:
-                FraudGuard.log_sensitive_action(
-                    db, "INVOICE_CREDIT", invoice, user, biz_id,
-                    reason=reason or "No reason",
-                    details=f"CN {cn_num} for R{float(cn_total):.2f} ({credit_type})"
-                )
-        except Exception:
-            pass
-        
         return redirect(f"/credit-note/{cn_id}")
     
     # GET - build form with line item selection
-    
-    # ── FRAUD GUARD: Check permission before showing form ──
-    _fg_warning = ""
-    try:
-        if FraudGuard:
-            _role = get_user_role()
-            _guard = FraudGuard.can_cancel_invoice(invoice, _role)
-            if not _guard.get("allowed"):
-                return redirect(f"/invoice/{invoice_id}?error=" + urllib.parse.quote(_guard.get("reason", "Not allowed")))
-            if _guard.get("notify_owner"):
-                _fg_warning = '<div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);padding:12px 16px;border-radius:8px;margin-bottom:15px;color:var(--text);"><strong>⚠ Note:</strong> The business owner will be notified about this credit note.</div>'
-    except Exception:
-        pass
     items_rows_html = ""
     inv_subtotal = Decimal("0")
     for i, item in enumerate(inv_items):
@@ -67177,7 +66523,6 @@ def create_credit_note(invoice_id):
     
     content = f'''
     {error_html}
-    {_fg_warning}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">← Back to Invoice</a>
     </div>
@@ -72926,7 +72271,7 @@ Address: {business.get("address")[:50] if business and business.get("address") e
     '''
     
     # -- JARVIS: Settings HUD header --
-    if has_reactor_hud():
+    if is_jarvis():
         _hud = jarvis_hud_header(
             page_name="SETTINGS",
             page_count="SYSTEM CONFIGURATION",
@@ -72945,7 +72290,7 @@ Address: {business.get("address")[:50] if business and business.get("address") e
             reactor_size="page",
             alert_html=""
         )
-        content = JARVIS_HUD_CSS + THEME_REACTOR_SKINS + _hud + content + jarvis_techline("SETTINGS <b>LOADED</b>")
+        content = JARVIS_HUD_CSS + _hud + content + jarvis_techline("SETTINGS <b>LOADED</b>")
     
     return render_page("Settings", content, user, "settings")
 
