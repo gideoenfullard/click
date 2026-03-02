@@ -44354,7 +44354,7 @@ def pos_page():
     }
     .cashier-btn {
         padding: 6px 14px;
-        border-radius: 20px;
+        border-radius: 0;
         border: 1px solid rgba(255,255,255,0.15);
         background: rgba(255,255,255,0.05);
         color: #aaa;
@@ -44791,7 +44791,7 @@ def pos_page():
         color: rgba(255,255,255,0.6);
         text-decoration: none;
         padding: 8px 14px;
-        border-radius: 8px;
+        border-radius: 0;
         font-size: 14px;
         transition: all 0.2s;
     }
@@ -44810,7 +44810,7 @@ def pos_page():
         font-weight: 800;
         font-size: 16px;
         padding: 8px 16px;
-        border-radius: 10px;
+        border-radius: 0;
         background: linear-gradient(135deg, var(--primary), #7c3aed);
         color: white;
         cursor: pointer;
@@ -44841,7 +44841,7 @@ def pos_page():
     .pos-pay-btn {
         padding: 10px 18px;
         border: none;
-        border-radius: 10px;
+        border-radius: 0;
         font-weight: 700;
         font-size: 13px;
         cursor: pointer;
@@ -44895,7 +44895,7 @@ def pos_page():
         font-size: 9px;
         background: rgba(0,0,0,0.3);
         padding: 2px 5px;
-        border-radius: 4px;
+        border-radius: 0;
         font-family: monospace;
     }
     
@@ -45148,7 +45148,7 @@ def pos_page():
     
     /* Header total glow effect */
     .pos-header-total {
-        text-shadow: 0 0 30px rgba(0, 255, 136, 0.7), 0 0 60px rgba(0, 255, 136, 0.3) !important;
+        text-shadow: 0 0 30px rgba(16, 185, 129, 0.6), 0 0 60px rgba(16, 185, 129, 0.2) !important;
         font-size: 24px !important;
     }
     
@@ -45279,10 +45279,10 @@ def pos_page():
     .pos-reactor-wrap::after{content:'';position:absolute;bottom:0;right:0;width:20px;height:20px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
     .pos-reactor-hero{display:flex;align-items:center;justify-content:center;padding:10px 20px;position:relative;gap:0;}
     .pos-btn-flank{display:flex;flex-direction:column;gap:4px;width:180px;flex:1;max-width:200px;}
-    .pos-hud-btn{padding:8px 10px;border:1px solid rgba(80,180,255,0.12);background:rgba(10,30,60,0.3);cursor:pointer;transition:all 0.2s;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:600;color:#a0d8f8;font-size:12px;letter-spacing:0.5px;text-transform:uppercase;}
+    .pos-hud-btn{padding:8px 10px;border:1px solid rgba(80,180,255,0.12);background:rgba(10,30,60,0.3);cursor:pointer;transition:all 0.2s;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:600;color:#5a99bb;font-size:12px;letter-spacing:0.5px;text-transform:uppercase;}
     .pos-hud-btn:hover:not(:disabled){border-color:rgba(0,200,255,0.35);background:rgba(0,200,255,0.06);color:#00ddff;text-shadow:0 0 8px rgba(0,200,255,0.3);}
-    .pos-hud-btn:disabled{opacity:0.35;cursor:not-allowed;}
-    .pos-hud-btn .pk,.pos-entity-btn .pk,.f11-btn .pk{font-family:'Share Tech Mono',monospace;font-size:10px;color:#00ccff;padding:2px 6px;border:1px solid rgba(0,200,255,0.3);letter-spacing:0.5px;flex-shrink:0;background:rgba(0,200,255,0.08);text-shadow:0 0 6px rgba(0,200,255,0.4);}
+    .pos-hud-btn:disabled{opacity:0.3;cursor:not-allowed;}
+    .pos-hud-btn .pk{font-family:'Share Tech Mono',monospace;font-size:9px;color:#2a5a80;padding:1px 5px;border:1px solid rgba(80,180,255,0.1);letter-spacing:0.5px;flex-shrink:0;}
     .pos-btn-flank.L .pos-hud-btn{border-left:2px solid rgba(80,180,255,0.3);}
     .pos-btn-flank.R .pos-hud-btn{border-right:2px solid rgba(80,180,255,0.3);flex-direction:row-reverse;}
     .pos-reactor-cn{width:16px;height:2px;position:relative;flex-shrink:0;}
@@ -45296,65 +45296,33 @@ def pos_page():
     .pos-rx .j-rg.r2{inset:12px;border-color:rgba(60,160,240,0.15);border-bottom-color:rgba(100,200,255,0.55);animation:jspin 6s linear infinite reverse;}
     .pos-rx .j-rg.r3{inset:24px;border-color:rgba(80,180,255,0.1);border-top-color:rgba(140,220,255,0.45);animation:jspin 4s linear infinite;}
     .pos-rx .j-rg.r4{inset:36px;border:2px solid rgba(100,200,255,0.08);border-top-color:rgba(160,230,255,0.5);animation:jspin 12s linear infinite reverse;}
-    .pos-rx .pos-rx-core{position:absolute;inset:42px;border-radius:50%;background:radial-gradient(circle,rgba(120,210,255,0.12) 0%,transparent 100%);border:1px solid rgba(100,200,255,0.2);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 30px rgba(80,180,255,0.1);}
+    .pos-rx .pos-rx-core{position:absolute;inset:42px;border-radius:50%;background:radial-gradient(circle,rgba(120,210,255,0.12) 0%,transparent 100%);border:1px solid rgba(100,200,255,0.2);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 30px rgba(80,180,255,0.1);transition:all 0.4s;}
     .pos-rx .pos-rx-core .j-brand{font-family:'Orbitron',monospace;font-size:13px;font-weight:800;color:#55bbff;text-shadow:0 0 18px rgba(85,187,255,0.6);letter-spacing:2px;}
     .pos-rx .pos-rx-core .j-sub{font-family:'Share Tech Mono',monospace;font-size:6.5px;color:#4499cc;letter-spacing:3px;margin-top:3px;}
     .pos-hud-total{font-family:'Orbitron',monospace;font-size:14px;font-weight:700;color:#00ff88;text-shadow:0 0 12px rgba(0,255,136,0.5);margin-top:4px;letter-spacing:1px;}
-    .pos-lbl{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);text-align:center;z-index:2;}
-    .pos-lbl span{font-family:'Orbitron',monospace;font-size:10px;font-weight:600;color:#5aaadd;letter-spacing:3px;text-shadow:0 0 10px rgba(90,170,221,0.3);}
     .pos-entity-bar{display:flex;align-items:center;justify-content:center;gap:0;padding:8px 20px;border-top:1px solid rgba(80,180,255,0.06);}
-    .pos-entity-btn{display:flex;align-items:center;justify-content:center;gap:5px;min-width:44px;padding:0 10px;height:36px;border:1px solid rgba(80,180,255,0.15);background:rgba(10,30,60,0.4);color:#a0d8f8;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;cursor:pointer;transition:all 0.2s;letter-spacing:1px;flex-shrink:0;}
+    .pos-entity-btn{display:flex;align-items:center;justify-content:center;gap:5px;width:auto;min-width:44px;padding:0 10px;height:36px;border:1px solid rgba(80,180,255,0.15);background:rgba(10,30,60,0.4);color:#5a99bb;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;cursor:pointer;transition:all 0.2s;letter-spacing:1px;flex-shrink:0;}
     .pos-entity-btn:hover{border-color:rgba(0,200,255,0.35);color:#00ddff;background:rgba(0,200,255,0.06);}
     .pos-entity-btn.active{background:rgba(80,180,255,0.12);color:#00ddff;border-color:rgba(0,200,255,0.3);}
     .pos-entity-btn.L{border-right:none;}
     .pos-entity-btn.R{border-left:none;}
-    .pos-entity-input{height:36px;width:240px;border:1px solid rgba(80,180,255,0.15);background:rgba(6,16,40,0.5);color:#e0f0ff;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;padding:0 14px;letter-spacing:0.5px;text-align:center;outline:none;}
-    .pos-entity-input::placeholder{color:#4a7a9a;letter-spacing:1px;}
+    .pos-entity-input{height:36px;width:240px;border:1px solid rgba(80,180,255,0.15);background:rgba(6,16,40,0.5);color:#88ccee;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;padding:0 14px;letter-spacing:0.5px;text-align:center;outline:none;transition:all 0.2s;}
+    .pos-entity-input::placeholder{color:#2a5a80;letter-spacing:1px;}
     .pos-entity-input:focus{border-color:rgba(0,200,255,0.35);background:rgba(0,200,255,0.04);}
+    .pos-lbl{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);text-align:center;z-index:2;}
+    .pos-lbl span{font-family:'Orbitron',monospace;font-size:10px;font-weight:600;color:#5aaadd;letter-spacing:3px;text-shadow:0 0 10px rgba(90,170,221,0.3);}
     @keyframes jspin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
-    .entity-list .entity-item{padding:8px 14px;cursor:pointer;color:#a0d8f8;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;}
-    .entity-list .entity-item:hover,.entity-list .entity-item.highlighted{background:rgba(0,200,255,0.06);color:#00ddff;}
-    @media(max-width:1200px){.pos-btn-flank{max-width:160px;}.pos-hud-btn{font-size:11px;padding:6px 8px;}}
-    @media(max-width:900px){.pos-reactor-hero{flex-wrap:wrap;gap:8px;}.pos-btn-flank{flex-direction:row;flex-wrap:wrap;width:100%;max-width:100%;}.pos-rx{width:120px;height:120px;}.pos-rx .pos-rx-core{inset:32px;}.pos-reactor-cn{display:none;}}
-
-    /* ═══ F11 FULLSCREEN MODE ═══ */
-    .f11-header{display:none;padding:8px 20px;background:rgba(4,12,35,0.95);border-bottom:1px solid rgba(80,180,255,0.12);align-items:center;gap:0;justify-content:space-between;}
-    .f11-left{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
-    .f11-btn{padding:9px 14px;border:1px solid rgba(80,180,255,0.12);background:rgba(10,30,60,0.3);cursor:pointer;transition:all 0.2s;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#a0d8f8;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;}
-    .f11-btn:hover{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.08);color:#00eeff;text-shadow:0 0 10px rgba(0,200,255,0.4);}
-    .f11-btn:disabled{opacity:0.35;cursor:not-allowed;}
-    .f11-sep{width:1px;height:30px;background:rgba(80,180,255,0.12);margin:0 8px;flex-shrink:0;}
-    .f11-right{display:flex;align-items:center;gap:14px;}
-    .f11-cust{font-family:'Rajdhani',sans-serif;font-size:15px;color:#a0d8f8;font-weight:700;letter-spacing:0.5px;}
-    .f11-total{font-family:'Orbitron',monospace;font-size:22px;font-weight:800;color:#00ff88;text-shadow:0 0 18px rgba(0,255,136,0.5);letter-spacing:1px;}
-    .f11-exit{padding:9px 14px;border:1px solid rgba(255,80,80,0.2);background:rgba(255,40,40,0.06);cursor:pointer;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#ff8888;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;transition:all 0.2s;}
-    .f11-exit:hover{border-color:rgba(255,80,80,0.4);background:rgba(255,40,40,0.12);color:#ffaaaa;}
-    .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.3);background:rgba(255,40,40,0.08);text-shadow:0 0 6px rgba(255,80,80,0.4);}
-    .f11-order-wrap{display:none;flex:1;overflow:hidden;flex-direction:column;}
-    .f11-search{padding:10px 20px;border-bottom:1px solid rgba(80,180,255,0.06);}
-    .f11-search input{width:100%;height:44px;background:rgba(6,16,40,0.6);border:1px solid rgba(80,180,255,0.2);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 16px;outline:none;letter-spacing:0.5px;}
-    .f11-search input::placeholder{color:#5a8aaa;}
-    .f11-search input:focus{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.04);box-shadow:0 0 12px rgba(0,200,255,0.08);}
-    .f11-table-wrap{flex:1;overflow-y:auto;padding:0 20px;}
-    .f11-table{width:100%;border-collapse:collapse;}
-    .f11-table th{text-align:left;padding:10px 12px;font-family:'Share Tech Mono',monospace;font-size:11px;color:#7abade;letter-spacing:1.5px;border-bottom:2px solid rgba(80,180,255,0.15);position:sticky;top:0;background:#0a0a1a;z-index:2;}
-    .f11-table th.r{text-align:right;}
-    .f11-table td{padding:10px 12px;font-size:15px;font-weight:600;color:#d8ecff;border-bottom:1px solid rgba(80,180,255,0.04);}
-    .f11-table td.r{text-align:right;font-family:'Share Tech Mono',monospace;}
-    .f11-table td.code{color:#7abade;font-family:'Share Tech Mono',monospace;font-size:14px;}
-    .f11-table td.qty{color:#00ff88;font-weight:700;}
-    .f11-table td.tot{color:#00ff88;font-weight:700;}
-    .f11-table tr:hover td{background:rgba(0,200,255,0.04);color:#fff;}
-    .f11-table tr.f11-sel td{background:rgba(80,180,255,0.08);border-bottom:1px solid rgba(0,200,255,0.15);}
-    .f11-table tr.f11-sel td:first-child{border-left:2px solid #00ccff;}
-    .f11-onhand{font-size:12px;color:#5a8aaa;font-family:'Share Tech Mono',monospace;}
-
-    /* F11 state toggle */
-    body.f11-mode .pos-header{display:none !important;}
-    body.f11-mode .pos-reactor-wrap{display:none !important;}
-    body.f11-mode .container{display:none !important;}
-    body.f11-mode .f11-header{display:flex !important;}
-    body.f11-mode .f11-order-wrap{display:flex !important;}
+    @media(max-width:1200px){
+        .pos-btn-flank{max-width:160px;}
+        .pos-hud-btn{font-size:11px;padding:6px 8px;}
+    }
+    @media(max-width:900px){
+        .pos-reactor-hero{flex-wrap:wrap;gap:8px;}
+        .pos-btn-flank{flex-direction:row;flex-wrap:wrap;width:100%;max-width:100%;}
+        .pos-rx{width:120px;height:120px;}
+        .pos-rx .pos-rx-core{inset:32px;}
+        .pos-reactor-cn{display:none;}
+    }
 
     </style>
     '''
@@ -45597,7 +45565,6 @@ def pos_page():
             document.getElementById('vatAmount').textContent = 'R0.00';
             document.getElementById('grandTotal').textContent = 'R0.00';
             document.getElementById('headerTotal').textContent = 'R0.00';
-            if (typeof renderF11Table === 'function' && f11Mode) { renderF11Table(); syncF11Buttons(); }
             document.getElementById('btnCash').disabled = true;
             document.getElementById('btnCard').disabled = true;
             // Account/Invoice - enabled if customer selected (will show "cart empty" message)
@@ -45649,8 +45616,6 @@ def pos_page():
         document.getElementById('vatAmount').textContent = 'R' + vat.toFixed(2);
         document.getElementById('grandTotal').textContent = 'R' + grandTotal.toFixed(2);
         document.getElementById('headerTotal').textContent = 'R' + grandTotal.toFixed(2);
-        // Sync F11 view
-        if (typeof renderF11Table === 'function' && f11Mode) { renderF11Table(); syncF11Buttons(); updateF11CustName(); }
         
         document.getElementById('btnCash').disabled = false;
         document.getElementById('btnCard').disabled = false;
@@ -45801,12 +45766,7 @@ def pos_page():
             searchInput.value = '';
             document.getElementById('entityValue').value = '';
         }
-        if (f11Mode) {
-            var f11El = document.getElementById('f11Search');
-            if (f11El) f11El.focus();
-        } else {
-            document.getElementById('stockSearch').focus();
-        }
+        document.getElementById('stockSearch').focus();
     }
     
     function renderEntityList(filter) {
@@ -46733,20 +46693,6 @@ def pos_page():
             return;
         }
         
-        // F11 = Toggle Fullscreen Order Mode
-        if (e.key === 'F11') {
-            e.preventDefault();
-            toggleF11();
-            return;
-        }
-        
-        // ESC in F11 mode = exit fullscreen (if no dropdown/modal open)
-        if (e.key === 'Escape' && f11Mode && !dropdownOpen) {
-            e.preventDefault();
-            toggleF11();
-            return;
-        }
-        
         // === PRINT MODAL KEYBOARD HANDLING ===
         const printModal = document.getElementById('printSlipModal');
         if (printModal && printModal.style.display === 'flex') {
@@ -46861,12 +46807,7 @@ def pos_page():
         
         // Focus search on typing
         if (!isInput && /^[a-zA-Z0-9]$/.test(e.key)) {
-            if (f11Mode) {
-                var f11El = document.getElementById('f11Search');
-                if (f11El) f11El.focus();
-            } else {
-                searchInput.focus();
-            }
+            searchInput.focus();
         }
     }, true);
     
@@ -48457,26 +48398,6 @@ def pos_page():
     </style>
 </head>
 <body>
-    <script>
-    /* ═══ F11 CORE — must be before pos_js ═══ */
-    var f11Mode = false;
-    var f11SelectedRow = 0;
-    
-    function toggleF11() {{
-        f11Mode = !f11Mode;
-        document.body.classList.toggle('f11-mode', f11Mode);
-        if (f11Mode) {{
-            if (typeof renderF11Table === 'function') renderF11Table();
-            if (typeof syncF11Buttons === 'function') syncF11Buttons();
-            if (typeof updateF11CustName === 'function') updateF11CustName();
-            var el = document.getElementById('f11Search');
-            if (el) {{ el.value = ''; el.focus(); }}
-        }} else {{
-            var el = document.getElementById('stockSearch');
-            if (el) el.focus();
-        }}
-    }}
-    </script>
     <header class="pos-header" style="padding:6px 20px 4px;">
         <div class="pos-header-nav">
             <a href="/">Dashboard</a>
@@ -48484,14 +48405,13 @@ def pos_page():
             <a href="/pos/history">History</a>
             <a href="/stock">Stock</a>
             <a href="/customers">Customers</a>
-            <span id="offlineIndicator" style="display:none;padding:4px 10px;font-size:11px;font-weight:700;margin-left:8px;cursor:pointer;" onclick="syncOfflineSales()" title="Click to sync when online">
+            <span id="offlineIndicator" style="display:none;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;margin-left:8px;cursor:pointer;" onclick="syncOfflineSales()" title="Click to sync when online">
                 <span id="offlineText">🔴 OFFLINE</span>
-                <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;margin-left:4px;font-size:10px;"></span>
+                <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;border-radius:3px;margin-left:4px;font-size:10px;"></span>
             </span>
-            <span id="onlineIndicator" style="padding:2px 8px;font-size:10px;color:#10b981;display:none;">🟢 Online</span>
+            <span id="onlineIndicator" style="padding:2px 8px;border-radius:4px;font-size:10px;color:#10b981;display:none;">🟢 Online</span>
         </div>
     </header>
-
     <div class="pos-reactor-wrap">
         <div class="pos-reactor-hero">
             <div class="pos-btn-flank L">
@@ -48502,7 +48422,10 @@ def pos_page():
             </div>
             <div class="pos-reactor-cn"></div>
             <div class="pos-rx">
-                <div class="j-rg r1"></div><div class="j-rg r2"></div><div class="j-rg r3"></div><div class="j-rg r4"></div>
+                <div class="j-rg r1"></div>
+                <div class="j-rg r2"></div>
+                <div class="j-rg r3"></div>
+                <div class="j-rg r4"></div>
                 <div class="pos-rx-core">
                     <div class="j-brand">CLICK.AI</div>
                     <div class="j-sub">// POINT OF SALE</div>
@@ -48514,16 +48437,16 @@ def pos_page():
                 <button class="pos-hud-btn" onclick="createPO()" id="btnPO" disabled>PO<span class="pk">F5</span></button>
                 <button class="pos-hud-btn" onclick="createInvoice()" id="btnInvoice" disabled>INVOICE<span class="pk">F6</span></button>
                 <button class="pos-hud-btn" onclick="createCreditNote()" id="btnCredit" disabled>CREDIT NOTE<span class="pk">F10</span></button>
-                <button class="pos-hud-btn" onclick="toggleF11()">FULLSCREEN<span class="pk">F11</span></button>
+                <button class="pos-hud-btn" onclick="if(cart.length>0 && confirm('Clear cart?'))clearCart()">CLEAR<span class="pk">ESC</span></button>
             </div>
             <div class="pos-lbl"><span>POINT OF SALE</span></div>
         </div>
         <div class="pos-entity-bar">
             <button class="pos-entity-btn L active" id="btnCust" onclick="toggleEntity('customer')" title="F8"><span class="pk">F8</span>C</button>
-            <div class="entity-dropdown" style="position:relative;">
-                <input type="text" class="pos-entity-input entity-search" id="entitySearch" placeholder="F7 · CASH SALE" onclick="openEntityDropdown()" autocomplete="off">
+            <div style="position:relative;">
+                <input type="text" class="pos-entity-input" id="entitySearch" placeholder="F7 · CASH SALE" onclick="openEntityDropdown()" autocomplete="off">
                 <input type="hidden" id="entityValue" value="">
-                <div class="entity-list" id="entityList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:300px;overflow-y:auto;background:rgba(10,20,40,0.95);border:1px solid rgba(80,180,255,0.2);"></div>
+                <div class="entity-list" id="entityList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;"></div>
             </div>
             <button class="pos-entity-btn R" id="btnSupp" onclick="toggleEntity('supplier')" title="F9">S<span class="pk">F9</span></button>
             <input type="hidden" id="supplierData" value='{supplier_json}'>
@@ -48531,170 +48454,13 @@ def pos_page():
             <input type="hidden" id="posSettings" value='{pos_settings_json}'>
         </div>
     </div>
-
-    <!-- F11 FULLSCREEN HEADER -->
-    <div class="f11-header">
-        <div class="f11-left">
-            <button class="f11-btn" onclick="completeSale('cash')" id="f11Cash" disabled><span class="pk">F1</span>CASH</button>
-            <button class="f11-btn" onclick="completeSale('card')" id="f11Card" disabled><span class="pk">F2</span>CARD</button>
-            <button class="f11-btn" onclick="completeSale('account')" id="f11Account" disabled><span class="pk">F3</span>ACCOUNT</button>
-            <button class="f11-btn" onclick="createQuote()" id="f11Quote" disabled><span class="pk">F4</span>QUOTE</button>
-            <button class="f11-btn" onclick="createPO()" id="f11PO" disabled><span class="pk">F5</span>PO</button>
-            <button class="f11-btn" onclick="createInvoice()" id="f11Invoice" disabled><span class="pk">F6</span>INVOICE</button>
-            <div class="f11-sep"></div>
-            <button class="f11-btn" onclick="showEditCustomerModal()"><span class="pk">F7</span>EDIT</button>
-            <button class="f11-btn" onclick="toggleEntity('customer')"><span class="pk">F8</span>CUST</button>
-            <button class="f11-btn" onclick="toggleEntity('supplier')"><span class="pk">F9</span>SUPP</button>
-            <button class="f11-btn" onclick="createCreditNote()" id="f11Credit" disabled><span class="pk">F10</span>CREDIT</button>
-        </div>
-        <div class="f11-right">
-            <div class="f11-cust" id="f11CustName">Cash Sale</div>
-            <div class="f11-total" id="f11Total">R0.00</div>
-            <button class="f11-exit" onclick="toggleF11()"><span class="pk">F11</span>EXIT</button>
-        </div>
-    </div>
-
-    <!-- F11 ORDER TABLE -->
-    <div class="f11-order-wrap">
-        <div class="f11-search">
-            <input type="text" id="f11Search" placeholder="Scan barcode or type code / description..." autocomplete="off">
-        </div>
-        <div class="f11-table-wrap">
-            <table class="f11-table">
-                <thead><tr>
-                    <th style="width:140px;">CODE</th><th>DESCRIPTION</th>
-                    <th class="r" style="width:60px;">QTY</th><th class="r" style="width:100px;">PRICE</th>
-                    <th class="r" style="width:80px;">DISC</th><th class="r" style="width:110px;">TOTAL</th>
-                    <th style="width:80px;">ON-HAND</th>
-                </tr></thead>
-                <tbody id="f11Body"></tbody>
-            </table>
-        </div>
-    </div>
-
+    
     <main class="container" style="padding-top:8px;height:calc(100vh - 250px);overflow:hidden;">
         {pos_html}
     </main>
     
     {get_zane_chat()}
     {pos_js}
-
-    <script>
-    /* ═══ F11 FULLSCREEN ORDER MODE ═══ */
-    // f11Mode and f11SelectedRow declared in earlier script block
-    // toggleF11 defined in earlier script block
-
-    function renderF11Table() {{
-        const tbody = document.getElementById('f11Body');
-        if (!tbody) return;
-        if (cart.length === 0) {{
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#5a8aaa;font-size:16px;">Scan barcode or type to add items...</td></tr>';
-            document.getElementById('f11Total').textContent = 'R0.00';
-            return;
-        }}
-        let html = '';
-        let grandTotal = 0;
-        cart.forEach((item, idx) => {{
-            const lineTotal = item.price * item.qty;
-            grandTotal += lineTotal;
-            const sel = idx === f11SelectedRow ? ' f11-sel' : '';
-            // Find stock qty
-            const stockRow = document.querySelector('.stock-row[data-id="' + item.id + '"]');
-            const onHand = stockRow ? stockRow.getAttribute('data-qty') : '—';
-            html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();">';
-            html += '<td class="code">' + item.code + '</td>';
-            html += '<td>' + item.desc + '</td>';
-            html += '<td class="r qty">' + item.qty + '</td>';
-            html += '<td class="r">R' + item.price.toFixed(2) + '</td>';
-            html += '<td class="r" style="color:#5a8aaa;">—</td>';
-            html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
-            html += '<td><span class="f11-onhand">' + onHand + '</span></td>';
-            html += '</tr>';
-        }});
-        tbody.innerHTML = html;
-        const vat = Math.round(grandTotal * 0.15 * 100) / 100;
-        document.getElementById('f11Total').textContent = 'R' + (grandTotal + vat).toFixed(2);
-    }}
-
-    function syncF11Buttons() {{
-        const hasItems = cart.length > 0;
-        const hasCust = !!document.getElementById('entityValue').value;
-        ['f11Cash','f11Card'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
-        ['f11Account','f11Invoice','f11Credit'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !(hasItems && hasCust); }});
-        ['f11Quote','f11PO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
-    }}
-
-    function updateF11CustName() {{
-        const el = document.getElementById('f11CustName');
-        if (!el) return;
-        const search = document.getElementById('entitySearch');
-        el.textContent = (search && search.value) ? search.value : 'Cash Sale';
-    }}
-
-    // F11 search — reuses same addToCart logic
-    document.addEventListener('DOMContentLoaded', function() {{
-        const f11Input = document.getElementById('f11Search');
-        if (!f11Input) return;
-        f11Input.addEventListener('keydown', function(e) {{
-            if (e.key === 'Enter') {{
-                e.preventDefault();
-                const raw = f11Input.value.trim();
-                if (!raw) return;
-                let qty = 1, searchCode = raw;
-                const star = raw.indexOf('*');
-                if (star > 0) {{
-                    const num = parseInt(raw.substring(0, star), 10);
-                    if (num > 0) {{ qty = num; searchCode = raw.substring(star + 1).trim(); }}
-                }}
-                searchCode = searchCode.toLowerCase().replace(/\s*x\s*/gi, 'x');
-                const rows = document.querySelectorAll('.stock-row');
-                let found = null;
-                for (let row of rows) {{
-                    let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
-                    if (data.indexOf(searchCode) !== -1) {{ found = row; break; }}
-                }}
-                if (found) {{
-                    const id = found.getAttribute('data-id');
-                    const code = found.getAttribute('data-code');
-                    const desc = found.getAttribute('data-desc');
-                    const price = parseFloat(found.getAttribute('data-price')) || 0;
-                    const existing = cart.find(item => item.id === id);
-                    if (existing) {{ existing.qty += qty; }}
-                    else {{ cart.push({{id, code, desc, price, qty: qty, maxQty: 99999}}); }}
-                    updateCart();
-                    renderF11Table();
-                    syncF11Buttons();
-                    f11SelectedRow = cart.length - 1;
-                    renderF11Table();
-                }} else {{
-                    // Flash search red briefly
-                    f11Input.style.borderColor = 'rgba(255,60,60,0.5)';
-                    setTimeout(() => {{ f11Input.style.borderColor = ''; }}, 500);
-                }}
-                f11Input.value = '';
-            }}
-            // Delete selected row
-            if (e.key === 'Delete' && cart.length > 0) {{
-                e.preventDefault();
-                cart.splice(f11SelectedRow, 1);
-                if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1);
-                updateCart();
-                renderF11Table();
-                syncF11Buttons();
-            }}
-            // Navigate rows
-            if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
-            if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
-        }});
-    }});
-
-    // Hook into updateCart to sync F11 view
-    const _origUpdateCart = typeof updateCart === 'function' ? updateCart : null;
-    // We'll override after pos_js loads — see observer below
-
-    // Sync F11 when entity changes
-    const _origToggleEntity = typeof toggleEntity === 'function' ? toggleEntity : null;
-    </script>
     <script>
     if ('serviceWorker' in navigator) {{
         navigator.serviceWorker.register('/sw.js', {{scope: '/'}})
