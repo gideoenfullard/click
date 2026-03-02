@@ -45312,6 +45312,8 @@ def pos_page():
     .pos-entity-input::placeholder{color:#4a7a9a;letter-spacing:1px;}
     .pos-entity-input:focus{border-color:rgba(0,200,255,0.35);background:rgba(0,200,255,0.04);}
     @keyframes jspin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    .entity-list .entity-item{padding:8px 14px;cursor:pointer;color:#a0d8f8;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;}
+    .entity-list .entity-item:hover,.entity-list .entity-item.highlighted{background:rgba(0,200,255,0.06);color:#00ddff;}
     @media(max-width:1200px){.pos-btn-flank{max-width:160px;}.pos-hud-btn{font-size:11px;padding:6px 8px;}}
     @media(max-width:900px){.pos-reactor-hero{flex-wrap:wrap;gap:8px;}.pos-btn-flank{flex-direction:row;flex-wrap:wrap;width:100%;max-width:100%;}.pos-rx{width:120px;height:120px;}.pos-rx .pos-rx-core{inset:32px;}.pos-reactor-cn{display:none;}}
 
@@ -45799,7 +45801,12 @@ def pos_page():
             searchInput.value = '';
             document.getElementById('entityValue').value = '';
         }
-        document.getElementById('stockSearch').focus();
+        if (f11Mode) {
+            var f11El = document.getElementById('f11Search');
+            if (f11El) f11El.focus();
+        } else {
+            document.getElementById('stockSearch').focus();
+        }
     }
     
     function renderEntityList(filter) {
@@ -46733,6 +46740,13 @@ def pos_page():
             return;
         }
         
+        // ESC in F11 mode = exit fullscreen (if no dropdown/modal open)
+        if (e.key === 'Escape' && f11Mode && !dropdownOpen) {
+            e.preventDefault();
+            toggleF11();
+            return;
+        }
+        
         // === PRINT MODAL KEYBOARD HANDLING ===
         const printModal = document.getElementById('printSlipModal');
         if (printModal && printModal.style.display === 'flex') {
@@ -46847,7 +46861,12 @@ def pos_page():
         
         // Focus search on typing
         if (!isInput && /^[a-zA-Z0-9]$/.test(e.key)) {
-            searchInput.focus();
+            if (f11Mode) {
+                var f11El = document.getElementById('f11Search');
+                if (f11El) f11El.focus();
+            } else {
+                searchInput.focus();
+            }
         }
     }, true);
     
@@ -48438,6 +48457,26 @@ def pos_page():
     </style>
 </head>
 <body>
+    <script>
+    /* ═══ F11 CORE — must be before pos_js ═══ */
+    var f11Mode = false;
+    var f11SelectedRow = 0;
+    
+    function toggleF11() {{
+        f11Mode = !f11Mode;
+        document.body.classList.toggle('f11-mode', f11Mode);
+        if (f11Mode) {{
+            if (typeof renderF11Table === 'function') renderF11Table();
+            if (typeof syncF11Buttons === 'function') syncF11Buttons();
+            if (typeof updateF11CustName === 'function') updateF11CustName();
+            var el = document.getElementById('f11Search');
+            if (el) {{ el.value = ''; el.focus(); }}
+        }} else {{
+            var el = document.getElementById('stockSearch');
+            if (el) el.focus();
+        }}
+    }}
+    </script>
     <header class="pos-header" style="padding:6px 20px 4px;">
         <div class="pos-header-nav">
             <a href="/">Dashboard</a>
@@ -48481,10 +48520,10 @@ def pos_page():
         </div>
         <div class="pos-entity-bar">
             <button class="pos-entity-btn L active" id="btnCust" onclick="toggleEntity('customer')" title="F8"><span class="pk">F8</span>C</button>
-            <div style="position:relative;">
-                <input type="text" class="pos-entity-input" id="entitySearch" placeholder="F7 · CASH SALE" onclick="openEntityDropdown()" autocomplete="off">
+            <div class="entity-dropdown" style="position:relative;">
+                <input type="text" class="pos-entity-input entity-search" id="entitySearch" placeholder="F7 · CASH SALE" onclick="openEntityDropdown()" autocomplete="off">
                 <input type="hidden" id="entityValue" value="">
-                <div class="entity-list" id="entityList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;"></div>
+                <div class="entity-list" id="entityList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:300px;overflow-y:auto;background:rgba(10,20,40,0.95);border:1px solid rgba(80,180,255,0.2);"></div>
             </div>
             <button class="pos-entity-btn R" id="btnSupp" onclick="toggleEntity('supplier')" title="F9">S<span class="pk">F9</span></button>
             <input type="hidden" id="supplierData" value='{supplier_json}'>
@@ -48542,22 +48581,8 @@ def pos_page():
 
     <script>
     /* ═══ F11 FULLSCREEN ORDER MODE ═══ */
-    let f11Mode = false;
-    let f11SelectedRow = 0;
-
-    function toggleF11() {{
-        f11Mode = !f11Mode;
-        document.body.classList.toggle('f11-mode', f11Mode);
-        if (f11Mode) {{
-            renderF11Table();
-            syncF11Buttons();
-            updateF11CustName();
-            document.getElementById('f11Search').value = '';
-            document.getElementById('f11Search').focus();
-        }} else {{
-            document.getElementById('stockSearch').focus();
-        }}
-    }}
+    // f11Mode and f11SelectedRow declared in earlier script block
+    // toggleF11 defined in earlier script block
 
     function renderF11Table() {{
         const tbody = document.getElementById('f11Body');
