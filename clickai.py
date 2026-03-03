@@ -41747,7 +41747,9 @@ def purchase_new():
     
     _po_stock_json = json.dumps([{"id": s.get("id",""), "code": safe_string(s.get("code","")), "desc": safe_string(s.get("description","")), "price": float(s.get("cost_price",0) or 0)} for s in stock])
     
-    content = f''' {{ display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }}
+    content = f'''
+    <style>
+    .po-form-grid {{ display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }}
     .po-main {{ display: flex; flex-direction: column; gap: 15px; }}
     .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; }}
     .po-sidebar .card {{ padding: 16px; margin: 0; }}
