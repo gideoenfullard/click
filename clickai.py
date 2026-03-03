@@ -41745,9 +41745,9 @@ def purchase_new():
     for item in stock:
         stock_options += f'<option value="{item.get("id")}" data-price="{item.get("cost_price", 0)}">{safe_string(item.get("code", ""))} - {safe_string(item.get("description", ""))}</option>'
     
-    content = f'''
-    <style>
-    .po-form-grid {{ display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }}
+    _po_stock_json = json.dumps([{"id": s.get("id",""), "code": safe_string(s.get("code","")), "desc": safe_string(s.get("description","")), "price": float(s.get("cost_price",0) or 0)} for s in stock])
+    
+    content = f''' {{ display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }}
     .po-main {{ display: flex; flex-direction: column; gap: 15px; }}
     .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; }}
     .po-sidebar .card {{ padding: 16px; margin: 0; }}
@@ -41850,7 +41850,7 @@ def purchase_new():
     </form>
     
     <script>
-    const poStockData = {json.dumps([{{"id": s.get("id",""), "code": safe_string(s.get("code","")), "desc": safe_string(s.get("description","")), "price": float(s.get("cost_price",0) or 0)}} for s in stock])};
+    const poStockData = {_po_stock_json};
     
     function poStockSearch(input) {{
         const wrap = input.closest('.po-stock-td');
