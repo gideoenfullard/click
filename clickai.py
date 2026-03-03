@@ -22772,11 +22772,11 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
             var data=await resp.json();
             var reply=data.response||data.error||'Sorry, I had trouble with that.';
             var h=reply;
-            h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
-            h=h.replace(/\*(.+?)\*/g,'<em>$1</em>');
+            h=h.replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>');
+            h=h.replace(/\\*(.+?)\\*/g,'<em>$1</em>');
             h=h.replace(/^- (.+)$/gm,'<li>$1</li>');
-            h=h.replace(/\n\n/g,'</p><p style="margin:6px 0;">');
-            h=h.replace(/\n/g,'<br>');
+            h=h.replace(/\\n\\n/g,'</p><p style="margin:6px 0;">');
+            h=h.replace(/\\n/g,'<br>');
             h='<p style="margin:6px 0;">'+h+'</p>';
             msgsR.innerHTML='<div class="jzm-ai">'+h+'</div>';
             msgsR.scrollTop=msgsR.scrollHeight;
@@ -26783,9 +26783,6 @@ def invoices_page():
             </tbody>
         </table>
     </div>
-    <script>
-    }}
-    </script>
     '''
     
     # -- JARVIS: Invoices HUD header --
@@ -30622,9 +30619,6 @@ def quotes_page():
             </tbody>
         </table>
     </div>
-    <script>
-    }}
-    </script>
     '''
     
     return render_page("Quotes", content, user, "quotes")
@@ -31529,9 +31523,6 @@ def delivery_notes_list():
             </tbody>
         </table>
     </div>
-    <script>
-    }}
-    </script>
     '''
     
     return render_page("Goods Received Notes", content, user, "delivery-notes")
@@ -41642,9 +41633,6 @@ def purchases_page():
             </div>
         </div>
     </div>
-    <script>
-    }}
-    </script>
     '''
     
     return render_page("Purchase Orders", content, user, "purchases")
