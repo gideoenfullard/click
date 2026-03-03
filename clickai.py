@@ -45074,7 +45074,7 @@ def pos_page():
         border: 1px solid rgba(99, 102, 241, 0.2) !important;
         box-shadow: 0 0 30px rgba(99, 102, 241, 0.08), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
         position: relative;
-        overflow: hidden;
+        overflow: visible;
     }
     .pos-cart::before {
         content: '';
@@ -45323,7 +45323,7 @@ def pos_page():
     .f11-search input{width:100%;height:44px;background:rgba(6,16,40,0.6);border:1px solid rgba(80,180,255,0.2);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 16px;outline:none;letter-spacing:0.5px;}
     .f11-search input::placeholder{color:#5a8aaa;}
     .f11-search input:focus{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.04);box-shadow:0 0 12px rgba(0,200,255,0.08);}
-    .f11-dd{display:none;position:absolute;left:20px;right:20px;top:100%;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);border-top:none;max-height:320px;overflow-y:auto;z-index:100;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
+    .f11-dd{display:none;position:absolute;left:0;right:0;top:100%;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);border-top:none;max-height:520px;overflow-y:auto;z-index:100;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
     .f11-dd.show{display:block;}
     .f11-dd-item{display:flex;align-items:center;padding:10px 16px;cursor:pointer;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;gap:12px;}
     .f11-dd-item:hover,.f11-dd-item.sel{background:rgba(0,200,255,0.08);border-left:2px solid #00ccff;}
@@ -48555,7 +48555,6 @@ def pos_page():
     <div class="f11-order-wrap">
         <div class="f11-search">
             <input type="text" id="f11Search" placeholder="Scan barcode or type code / description..." autocomplete="off">
-            <div class="f11-dd" id="f11Dropdown"></div>
         </div>
         <div class="f11-table-wrap">
             <table class="f11-table">
@@ -48629,139 +48628,11 @@ def pos_page():
         el.textContent = (search && search.value) ? search.value : 'Cash Sale';
     }}
 
-    // F11 smart search — live dropdown with arrow key navigation
+    // F11 search — reuses same addToCart logic
     document.addEventListener('DOMContentLoaded', function() {{
         const f11Input = document.getElementById('f11Search');
-        const f11DD = document.getElementById('f11Dropdown');
-        if (!f11Input || !f11DD) return;
-        
-        let f11DDIdx = -1;
-        let f11Matches = [];
-        
-        function f11FilterDD() {{
-            const raw = f11Input.value.trim();
-            let search = raw.toLowerCase();
-            f11DDIdx = -1;
-            f11Matches = [];
-            
-            // Strip quantity prefix for search
-            let qtyPrefix = 1;
-            const starPos = search.indexOf('*');
-            if (starPos > 0) {{
-                const num = parseInt(search.substring(0, starPos), 10);
-                if (num > 0) {{ qtyPrefix = num; search = search.substring(starPos + 1).trim(); }}
-            }}
-            
-            if (!search) {{
-                f11DD.classList.remove('show');
-                f11DD.innerHTML = '';
-                return;
-            }}
-            
-            // Normalize dimensions
-            search = search.replace(/\s*[xX]\s*/g, 'x');
-            
-            const rows = document.querySelectorAll('.stock-row');
-            let html = '';
-            let count = 0;
-            const MAX = 15;
-            
-            rows.forEach(row => {{
-                if (count >= MAX) return;
-                let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*[xX]\s*/g, 'x');
-                if (data.indexOf(search) === -1) return;
-                
-                const id = row.getAttribute('data-id');
-                const code = row.getAttribute('data-code') || '';
-                const desc = row.getAttribute('data-desc') || '';
-                const price = parseFloat(row.getAttribute('data-price')) || 0;
-                const stock = row.getAttribute('data-qty') || '-';
-                
-                f11Matches.push({{ id, code, desc, price, stock, qty: qtyPrefix }});
-                html += '<div class="f11-dd-item" data-midx="' + count + '">' +
-                    '<span class="f11-dd-code">' + code + '</span>' +
-                    '<span class="f11-dd-desc">' + desc + '</span>' +
-                    '<span class="f11-dd-price">R' + price.toFixed(2) + '</span>' +
-                    '<span class="f11-dd-qty">' + stock + '</span>' +
-                    '</div>';
-                count++;
-            }});
-            
-            if (count === 0) {{
-                html = '<div class="f11-dd-empty">No items match "' + search + '"</div>';
-            }}
-            
-            f11DD.innerHTML = html;
-            f11DD.classList.add('show');
-            
-            // Click handlers
-            f11DD.querySelectorAll('.f11-dd-item').forEach(item => {{
-                item.addEventListener('click', function() {{
-                    const idx = parseInt(this.getAttribute('data-midx'));
-                    f11AddMatch(idx);
-                }});
-            }});
-            
-            // Auto-select first
-            if (f11Matches.length > 0) {{
-                f11DDIdx = 0;
-                f11HighlightDD();
-            }}
-        }}
-        
-        function f11HighlightDD() {{
-            f11DD.querySelectorAll('.f11-dd-item').forEach((el, i) => {{
-                el.classList.toggle('sel', i === f11DDIdx);
-                if (i === f11DDIdx) el.scrollIntoView({{ block: 'nearest' }});
-            }});
-        }}
-        
-        function f11AddMatch(idx) {{
-            if (idx < 0 || idx >= f11Matches.length) return;
-            const m = f11Matches[idx];
-            const existing = cart.find(item => item.id === m.id);
-            if (existing) {{ existing.qty += m.qty; }}
-            else {{ cart.push({{ id: m.id, code: m.code, desc: m.desc, price: m.price, qty: m.qty, maxQty: 99999 }}); }}
-            updateCart();
-            renderF11Table();
-            syncF11Buttons();
-            f11SelectedRow = cart.length - 1;
-            renderF11Table();
-            f11Input.value = '';
-            f11DD.classList.remove('show');
-            f11DD.innerHTML = '';
-            f11Matches = [];
-            f11DDIdx = -1;
-            f11Input.focus();
-        }}
-        
-        f11Input.addEventListener('input', f11FilterDD);
-        
+        if (!f11Input) return;
         f11Input.addEventListener('keydown', function(e) {{
-            // Dropdown navigation
-            if (f11DD.classList.contains('show') && f11Matches.length > 0) {{
-                if (e.key === 'ArrowDown') {{
-                    e.preventDefault();
-                    f11DDIdx = Math.min(f11DDIdx + 1, f11Matches.length - 1);
-                    f11HighlightDD();
-                    return;
-                }}
-                if (e.key === 'ArrowUp') {{
-                    e.preventDefault();
-                    f11DDIdx = Math.max(f11DDIdx - 1, 0);
-                    f11HighlightDD();
-                    return;
-                }}
-                if (e.key === 'Enter') {{
-                    e.preventDefault();
-                    if (f11DDIdx >= 0) {{
-                        f11AddMatch(f11DDIdx);
-                    }}
-                    return;
-                }}
-            }}
-            
-            // Enter with no dropdown visible — direct barcode match
             if (e.key === 'Enter') {{
                 e.preventDefault();
                 const raw = f11Input.value.trim();
@@ -48793,22 +48664,14 @@ def pos_page():
                     f11SelectedRow = cart.length - 1;
                     renderF11Table();
                 }} else {{
+                    // Flash search red briefly
                     f11Input.style.borderColor = 'rgba(255,60,60,0.5)';
                     setTimeout(() => {{ f11Input.style.borderColor = ''; }}, 500);
                 }}
                 f11Input.value = '';
             }}
-            
-            // Escape closes dropdown
-            if (e.key === 'Escape') {{
-                f11DD.classList.remove('show');
-                f11DD.innerHTML = '';
-                f11Matches = [];
-                f11DDIdx = -1;
-            }}
-            
-            // Delete selected cart row (only when dropdown closed)
-            if (e.key === 'Delete' && cart.length > 0 && !f11DD.classList.contains('show')) {{
+            // Delete selected row
+            if (e.key === 'Delete' && cart.length > 0) {{
                 e.preventDefault();
                 cart.splice(f11SelectedRow, 1);
                 if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1);
@@ -48816,11 +48679,9 @@ def pos_page():
                 renderF11Table();
                 syncF11Buttons();
             }}
-            // Navigate cart rows (only when dropdown closed)
-            if (!f11DD.classList.contains('show')) {{
-                if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
-                if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
-            }}
+            // Navigate rows
+            if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
+            if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
         }});
     }});
 
