@@ -41746,114 +41746,117 @@ def purchase_new():
         stock_options += f'<option value="{item.get("id")}" data-price="{item.get("cost_price", 0)}">{safe_string(item.get("code", ""))} - {safe_string(item.get("description", ""))}</option>'
     
     _po_stock_json = json.dumps([{"id": s.get("id",""), "code": safe_string(s.get("code","")), "desc": safe_string(s.get("description","")), "price": float(s.get("cost_price",0) or 0)} for s in stock])
-    
+
     content = f'''
     <style>
-    .po-form-grid {{ display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }}
-    .po-main {{ display: flex; flex-direction: column; gap: 15px; }}
-    .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; }}
-    .po-sidebar .card {{ padding: 16px; margin: 0; }}
-    .po-item-row {{ display: grid; grid-template-columns: 1fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
-    .po-item-row input {{ font-size: 13px; padding: 8px 10px; }}
-    .po-item-hdr {{ display: grid; grid-template-columns: 1fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
+    .po-top-actions {{ display: flex; justify-content: center; align-items: center; gap: 30px; padding: 10px 0 15px; position: sticky; top: 60px; z-index: 50; background: var(--bg); }}
+    .po-top-actions .btn {{ padding: 14px 32px; font-size: 15px; font-weight: 700; min-width: 200px; text-align: center; }}
+    .po-main {{ max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }}
+    .po-item-row {{ display: grid; grid-template-columns: 1.2fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+    .po-item-row input, .po-item-row select {{ font-size: 13px; padding: 8px 10px; }}
+    .po-item-hdr {{ display: grid; grid-template-columns: 1.2fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
     .po-stock-td {{ position: relative; }}
+    .po-stock-dd {{ max-height: 350px; }}
     .po-totals {{ display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 2px solid var(--border); }}
     .po-totals-row {{ display: flex; justify-content: space-between; align-items: center; font-size: 14px; }}
     .po-totals-row.grand {{ font-size: 18px; font-weight: 700; color: var(--primary); padding-top: 6px; border-top: 1px solid var(--border); }}
     .po-add-btn {{ width: 100%; padding: 10px; border: 2px dashed var(--border); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-radius: 6px; }}
     .po-add-btn:hover {{ border-color: var(--primary); color: var(--primary); background: rgba(99,102,241,0.05); }}
     .po-rm {{ background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 2px; opacity: 0.5; transition: all 0.15s; }}
-    .po-rm:hover {{ color: var(--red); opacity: 1; }}
-    @media(max-width:900px) {{ .po-form-grid {{ grid-template-columns: 1fr; }} .po-sidebar {{ position: static; }} }}
+    .po-rm:hover {{ color: #ef4444; opacity: 1; }}
+    .po-workflow {{ display: flex; gap: 20px; justify-content: center; font-size: 12px; color: var(--text-muted); padding: 8px 0; }}
+    .po-workflow span {{ opacity: 0.7; }}
     </style>
-    
-    <div style="margin-bottom: 12px;">
-        <a href="/purchases" style="color:var(--text-muted);font-size:13px;">← Back to Purchase Orders</a>
+
+    <div style="margin-bottom: 8px;">
+        <a href="/purchases" style="color:var(--text-muted);font-size:13px;">&larr; Back to Purchase Orders</a>
     </div>
-    
+
     <form method="POST" id="poForm">
-    <div class="po-form-grid">
-        <div class="po-main">
-            <div class="card" style="padding:20px;">
-                <h2 style="margin:0 0 16px 0;">New Purchase Order</h2>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
-                    <div>
-                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Supplier *</label>
-                        <select name="supplier_id" id="supplierSelect" class="form-input" required onchange="updateSupplierEmail()">
-                            {supplier_options}
-                        </select>
-                        <small style="color:var(--text-muted);"><a href="/supplier/new" target="_blank">+ Add new supplier</a></small>
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Supplier Email</label>
-                        <input type="email" name="supplier_email" id="supplierEmail" class="form-input" placeholder="For sending PO">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">PO Date</label>
-                        <input type="date" name="date" class="form-input" value="{today()}">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Expected Delivery</label>
-                        <input type="date" name="expected_date" class="form-input">
-                    </div>
+
+    <div class="po-top-actions">
+        <button type="submit" class="btn btn-primary" style="background:linear-gradient(135deg,rgba(99,102,241,0.9),rgba(16,185,129,0.7));">Create Purchase Order</button>
+        <div style="width:120px;"></div>
+        <a href="/purchases" class="btn btn-secondary">Cancel</a>
+    </div>
+
+    <div class="po-workflow">
+        <span>1. Create PO &rarr; Draft</span>
+        <span>2. Email to supplier &rarr; Sent</span>
+        <span>3. Receive goods (GRV)</span>
+        <span>4. Book supplier invoice</span>
+    </div>
+
+    <div class="po-main">
+        <div class="card" style="padding:20px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                <div>
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;color:var(--text);">Supplier *</label>
+                    <select name="supplier_id" id="supplierSelect" class="form-input" required onchange="updateSupplierEmail()">
+                        {supplier_options}
+                    </select>
+                    <small><a href="/supplier/new" target="_blank" style="color:var(--primary);">+ Add new supplier</a></small>
                 </div>
-            </div>
-            
-            <div class="card" style="padding:20px;">
-                <h3 style="margin:0 0 12px 0;">Line Items</h3>
-                <div class="po-item-hdr">
-                    <span>Stock Item</span><span>Description</span><span>Qty</span><span>Price (excl)</span><span style="text-align:right;">Total</span><span></span>
+                <div>
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;color:var(--text);">Supplier Email</label>
+                    <input type="email" name="supplier_email" id="supplierEmail" class="form-input" placeholder="For sending PO">
                 </div>
-                <div id="itemsBody">
-                    <div class="po-item-row">
-                        <div class="po-stock-td">
-                            <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)">
-                            <input type="hidden" name="item_stock_id[]" value="">
-                            <div class="ssp-dropdown po-stock-dd"></div>
-                        </div>
-                        <input type="text" name="item_desc[]" class="form-input" placeholder="Description" required>
-                        <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
-                        <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
-                        <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
-                        <span></span>
-                    </div>
+                <div>
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;color:var(--text);">PO Date</label>
+                    <input type="date" name="date" class="form-input" value="{today()}">
                 </div>
-                <button type="button" class="po-add-btn" onclick="addRow()" style="margin-top:10px;">+ Add Line Item</button>
-                
-                <div class="po-totals" style="margin-top:16px;">
-                    <div class="po-totals-row"><span>Subtotal</span><span id="subtotal">R0.00</span></div>
-                    <div class="po-totals-row"><span>VAT (15%)</span><span id="vat">R0.00</span></div>
-                    <div class="po-totals-row grand"><span>Total</span><span id="total">R0.00</span></div>
+                <div>
+                    <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;color:var(--text);">Expected Delivery</label>
+                    <input type="date" name="expected_date" class="form-input">
                 </div>
-            </div>
-            
-            <div class="card" style="padding:16px;">
-                <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Notes</label>
-                <textarea name="notes" class="form-input" rows="2" placeholder="Delivery instructions, special requirements..."></textarea>
             </div>
         </div>
-        
-        <div class="po-sidebar">
-            <div class="card" style="background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(16,185,129,0.08));">
-                <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;font-weight:700;">Create Purchase Order</button>
+
+        <div class="card" style="padding:20px;">
+            <h3 style="margin:0 0 12px 0;color:var(--text);">Line Items</h3>
+            <div class="po-item-hdr">
+                <span>Stock Item</span><span>Description</span><span>Qty</span><span>Price (excl)</span><span style="text-align:right;">Total</span><span></span>
             </div>
-            <div class="card">
-                <a href="/purchases" class="btn btn-secondary" style="width:100%;text-align:center;">Cancel</a>
+            <div id="itemsBody">
+                <div class="po-item-row">
+                    <div class="po-stock-td">
+                        <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="Search stock..." autocomplete="off">
+                        <input type="hidden" name="item_stock_id[]" value="">
+                        <div class="ssp-dropdown po-stock-dd"></div>
+                    </div>
+                    <input type="text" name="item_desc[]" class="form-input" placeholder="Description">
+                    <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
+                    <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
+                    <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
+                    <span></span>
+                </div>
             </div>
-            <div class="card" style="font-size:12px;color:var(--text-muted);line-height:1.6;">
-                <div style="font-weight:700;margin-bottom:6px;color:var(--text);font-size:13px;">Workflow</div>
-                <div>1. Create PO &rarr; Draft</div>
-                <div>2. Email to supplier &rarr; Sent</div>
-                <div>3. Receive goods (GRV)</div>
-                <div>4. Book supplier invoice</div>
+            <button type="button" class="po-add-btn" onclick="addRow()" style="margin-top:10px;">+ Add Line Item</button>
+
+            <div class="po-totals" style="margin-top:16px;">
+                <div class="po-totals-row"><span>Subtotal</span><span id="subtotal">R0.00</span></div>
+                <div class="po-totals-row"><span>VAT (15%)</span><span id="vat">R0.00</span></div>
+                <div class="po-totals-row grand"><span>Total</span><span id="total">R0.00</span></div>
             </div>
+        </div>
+
+        <div class="card" style="padding:16px;">
+            <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;color:var(--text);">Notes</label>
+            <textarea name="notes" class="form-input" rows="2" placeholder="Delivery instructions, special requirements..."></textarea>
         </div>
     </div>
     </form>
-    
+
     <script>
     const poStockData = {_po_stock_json};
-    
+
+    document.addEventListener('input', function(e) {{
+        if (e.target.classList.contains('po-stock-search')) poStockSearch(e.target);
+    }});
+    document.addEventListener('focusin', function(e) {{
+        if (e.target.classList.contains('po-stock-search') && e.target.value.trim()) poStockSearch(e.target);
+    }});
+
     function poStockSearch(input) {{
         const wrap = input.closest('.po-stock-td');
         let dd = wrap.querySelector('.po-stock-dd');
@@ -41862,87 +41865,79 @@ def purchase_new():
             dd.className = 'ssp-dropdown po-stock-dd';
             wrap.appendChild(dd);
         }}
-        
-        let q = input.value.toLowerCase().trim().replace(/\s*[xX]\s*/g, 'x');
-        const terms = q.split(/\s+/).filter(t => t.length > 0);
-        
+
+        let q = input.value.toLowerCase().trim().replace(/\\s*[xX]\\s*/g, 'x');
+        const terms = q.split(/\\s+/).filter(t => t.length > 0);
+
+        if (!terms.length) {{ dd.classList.remove('show'); return; }}
+
         let matches = poStockData.filter(s => {{
-            if (!terms.length) return true;
-            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
+            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\\s*[xX]\\s*/g, 'x');
             return terms.every(t => text.includes(t));
-        }}).slice(0, 20);
-        
-        if (!terms.length) {{
-            dd.classList.remove('show');
-            return;
-        }}
-        
+        }}).slice(0, 25);
+
         if (matches.length === 0) {{
-            dd.innerHTML = '<div class="ssp-empty">No stock found</div>';
+            dd.innerHTML = '<div class="ssp-empty" style="padding:12px;color:var(--text-muted);">No stock found</div>';
         }} else {{
             dd.innerHTML = matches.map((s, i) => {{
                 const safeDesc = s.desc.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-                return '<div class="ssp-item" data-idx="' + i + '">' +
-                    (s.code ? '<span class="ssp-code">' + s.code + '</span>' : '') +
-                    '<span class="ssp-desc">' + safeDesc + '</span>' +
-                    (s.price ? '<span class="ssp-price">R' + s.price.toFixed(2) + '</span>' : '') +
+                return '<div class="ssp-item" data-idx="' + i + '" style="padding:8px 12px;cursor:pointer;display:flex;gap:8px;align-items:center;">' +
+                    (s.code ? '<span style="color:var(--primary);font-weight:600;font-size:12px;min-width:90px;">' + s.code + '</span>' : '') +
+                    '<span style="flex:1;color:var(--text);">' + safeDesc + '</span>' +
+                    (s.price ? '<span style="color:#10b981;font-weight:600;font-size:12px;">R' + s.price.toFixed(2) + '</span>' : '') +
                     '</div>';
             }}).join('');
-            
-            // Add click handlers via event delegation
+
             dd.querySelectorAll('.ssp-item').forEach(el => {{
                 el.addEventListener('click', function() {{
                     const idx = parseInt(this.getAttribute('data-idx'));
                     const m = matches[idx];
                     const row = wrap.closest('.po-item-row');
-                    const searchInput = row.querySelector('input[name="item_stock_search[]"]');
-                    const idInput = row.querySelector('input[name="item_stock_id[]"]');
-                    const descInput = row.querySelector('input[name="item_desc[]"]');
-                    const priceInput = row.querySelector('input[name="item_price[]"]');
-                    
-                    if (searchInput) searchInput.value = m.code ? m.code + ' - ' + m.desc : m.desc;
-                    if (idInput) idInput.value = m.id;
-                    if (descInput) descInput.value = m.desc;
-                    if (priceInput && m.price) {{ priceInput.value = m.price.toFixed(2); calculateTotals(); }}
+                    const si = row.querySelector('input[name="item_stock_search[]"]');
+                    const hi = row.querySelector('input[name="item_stock_id[]"]');
+                    const di = row.querySelector('input[name="item_desc[]"]');
+                    const pi = row.querySelector('input[name="item_price[]"]');
+
+                    if (si) si.value = m.code ? m.code + ' - ' + m.desc : m.desc;
+                    if (hi) hi.value = m.id;
+                    if (di) di.value = m.desc;
+                    if (pi && m.price) {{ pi.value = m.price.toFixed(2); calculateTotals(); }}
                     dd.classList.remove('show');
                 }});
             }});
         }}
         dd.classList.add('show');
     }}
-    
+
     document.addEventListener('click', function(e) {{
         if (!e.target.closest('.po-stock-search') && !e.target.closest('.po-stock-dd')) {{
             document.querySelectorAll('.po-stock-dd').forEach(d => d.classList.remove('show'));
         }}
     }});
-    
+
     function updateSupplierEmail() {{
-        const select = document.getElementById('supplierSelect');
-        const option = select.options[select.selectedIndex];
-        document.getElementById('supplierEmail').value = option.dataset.email || '';
+        const sel = document.getElementById('supplierSelect');
+        const opt = sel.options[sel.selectedIndex];
+        document.getElementById('supplierEmail').value = opt.dataset.email || '';
     }}
-    
+
     function addRow() {{
         const body = document.getElementById('itemsBody');
         const row = document.createElement('div');
         row.className = 'po-item-row';
-        row.innerHTML = `
-            <div class="po-stock-td">
-                <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)">
-                <input type="hidden" name="item_stock_id[]" value="">
-                <div class="ssp-dropdown po-stock-dd"></div>
-            </div>
-            <input type="text" name="item_desc[]" class="form-input" placeholder="Description">
-            <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
-            <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
-            <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
-            <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove(); calculateTotals();">✕</button>
-        `;
+        row.innerHTML = '<div class="po-stock-td">' +
+            '<input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="Search stock..." autocomplete="off">' +
+            '<input type="hidden" name="item_stock_id[]" value="">' +
+            '<div class="ssp-dropdown po-stock-dd"></div></div>' +
+            '<input type="text" name="item_desc[]" class="form-input" placeholder="Description">' +
+            '<input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">' +
+            '<input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">' +
+            '<span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>' +
+            '<button type="button" class="po-rm" onclick="this.closest(\\'.po-item-row\\').remove(); calculateTotals();">&#10005;</button>';
         body.appendChild(row);
         row.querySelector('.po-stock-search').focus();
     }}
-    
+
     function calculateTotals() {{
         let subtotal = 0;
         document.querySelectorAll('.po-item-row').forEach(row => {{
@@ -41953,17 +41948,32 @@ def purchase_new():
             const lt = row.querySelector('.line-total');
             if (lt) lt.textContent = 'R' + lineTotal.toFixed(2);
         }});
-        
+
         const vat = subtotal * 0.15;
         document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
         document.getElementById('vat').textContent = 'R' + (vat).toFixed(2);
         document.getElementById('total').textContent = 'R' + (subtotal + vat).toFixed(2);
     }}
-    
+
+    // Strip empty rows before submit
+    document.getElementById('poForm').addEventListener('submit', function(e) {{
+        document.querySelectorAll('.po-item-row').forEach(row => {{
+            const desc = row.querySelector('input[name="item_desc[]"]');
+            const stock = row.querySelector('input[name="item_stock_id[]"]');
+            if ((!desc || !desc.value.trim()) && (!stock || !stock.value.trim())) {{
+                row.remove();
+            }}
+        }});
+        if (!document.querySelectorAll('.po-item-row').length) {{
+            e.preventDefault();
+            alert('Add at least one line item');
+        }}
+    }});
+
     calculateTotals();
     </script>
     '''
-    
+
     return render_page("New Purchase Order", content, user, "purchases")
 
 
