@@ -22353,14 +22353,6 @@ JARVIS_HUD_CSS = '''
 .j-hud-wrap::before{content:'';position:absolute;top:0;left:0;width:24px;height:24px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-wrap::after{content:'';position:absolute;bottom:0;right:0;width:24px;height:24px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-pad{height:16px;}
-/* Non-dashboard: full-width single-column chat */
-.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-center{display:none !important;}
-.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-layout{flex-direction:column;gap:0;padding:0 20px;}
-.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-left,.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-right{flex:none;width:100%;padding:0;}
-.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-msgs{max-height:none;overflow-y:visible;}
-.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-ext.open{max-height:60vh;overflow-y:auto;}
-.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-inp{margin:8px 20px 12px;}
-
 /* Responsive: hide flanks on small screens, shrink reactor */
 @media(max-width:768px){
 .j-hero{flex-wrap:wrap;gap:8px;padding:8px 0 10px;}
@@ -22688,7 +22680,7 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
             right_html += '<div class="j-fln"></div>'
     
     return f'''
-    <div class="j-hud-wrap" data-page="{page_name}">
+    <div class="j-hud-wrap">
         <div class="j-hero" style="padding:14px 20px 0;">
             <div class="j-flank">{left_html}</div>
             <div class="j-cn"></div>
@@ -22837,7 +22829,7 @@ def _jarvis_global_hud(title, content):
         page_name = title.upper().replace(" - CLICK AI", "").strip()
         
         hdr = f'''
-        <div class="j-hud-wrap" data-page="{page_name}">
+        <div class="j-hud-wrap">
             <div class="j-hero" style="padding:10px 20px 0;">
                 <div class="j-cn"></div>
                 <div class="j-rx page" onclick="jzToggle()" style="width:180px;height:180px;z-index:10;">
@@ -41755,8 +41747,11 @@ def purchase_new():
     
     _po_stock_json = json.dumps([{"id": s.get("id",""), "code": safe_string(s.get("code","")), "desc": safe_string(s.get("description","")), "price": float(s.get("cost_price",0) or 0)} for s in stock])
     
-    content = f''' {{ display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }}
-    .po-main {{ display: flex; flex-direction: column; gap: 15px; }}
+    content = f'''
+    <style>
+    .po-top-actions {{ display: flex; justify-content: center; align-items: center; gap: 30px; padding: 10px 0 15px; position: sticky; top: 60px; z-index: 50; background: var(--bg); }}
+    .po-top-actions .btn {{ padding: 14px 32px; font-size: 15px; font-weight: 700; min-width: 200px; text-align: center; }}
+    .po-main {{ max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }}
     .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; }}
     .po-sidebar .card {{ padding: 16px; margin: 0; }}
     .po-item-row {{ display: grid; grid-template-columns: 1fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
