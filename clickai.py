@@ -45331,13 +45331,13 @@ def pos_page():
     .f11-search input{width:100%;height:44px;background:rgba(6,16,40,0.6);border:1px solid rgba(80,180,255,0.2);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 16px;outline:none;letter-spacing:0.5px;}
     .f11-search input::placeholder{color:#5a8aaa;}
     .f11-search input:focus{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.04);box-shadow:0 0 12px rgba(0,200,255,0.08);}
-    .f11-dd{display:none;position:absolute;left:0;right:0;top:100%;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);border-top:none;max-height:520px;overflow-y:auto;z-index:100;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
+    .f11-dd{display:none;position:absolute;left:0;right:0;top:100%;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);border-top:none;max-height:calc(100vh - 200px);overflow-y:auto;z-index:100;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
     .f11-dd.show{display:block;}
-    .f11-dd-item{display:flex;align-items:center;padding:10px 16px;cursor:pointer;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;gap:12px;}
-    .f11-dd-item:hover,.f11-dd-item.sel{background:rgba(0,200,255,0.08);border-left:2px solid #00ccff;}
-    .f11-dd-code{font-family:'Share Tech Mono',monospace;font-size:13px;color:#7abade;min-width:120px;letter-spacing:0.5px;}
-    .f11-dd-desc{flex:1;font-size:14px;color:#d8ecff;font-weight:600;}
-    .f11-dd-price{font-family:'Share Tech Mono',monospace;font-size:13px;color:#00ff88;font-weight:700;min-width:90px;text-align:right;}
+    .f11-dd-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;gap:16px;}
+    .f11-dd-item:hover,.f11-dd-item.sel{background:rgba(0,200,255,0.08);border-left:3px solid #00ccff;}
+    .f11-dd-code{font-family:'Share Tech Mono',monospace;font-size:15px;color:#7abade;min-width:140px;letter-spacing:0.5px;}
+    .f11-dd-desc{flex:1;font-size:16px;color:#d8ecff;font-weight:600;}
+    .f11-dd-price{font-family:'Share Tech Mono',monospace;font-size:15px;color:#00ff88;font-weight:700;min-width:100px;text-align:right;}
     .f11-dd-qty{font-family:'Share Tech Mono',monospace;font-size:11px;color:#5a8aaa;min-width:50px;text-align:right;}
     .f11-dd-empty{padding:16px;text-align:center;color:#5a8aaa;font-size:14px;}
     .f11-table-wrap{flex:1;overflow-y:auto;padding:0 20px;}
@@ -48670,7 +48670,7 @@ def pos_page():
                         price: parseFloat(row.getAttribute('data-price')) || 0,
                         qty: qty
                     }});
-                    if (f11Matches.length >= 20) break;
+                    if (f11Matches.length >= 40) break;
                 }}
             }}
             f11Sel = f11Matches.length > 0 ? 0 : -1;
