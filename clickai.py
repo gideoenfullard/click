@@ -41746,157 +41746,168 @@ def purchase_new():
         stock_options += f'<option value="{item.get("id")}" data-price="{item.get("cost_price", 0)}">{safe_string(item.get("code", ""))} - {safe_string(item.get("description", ""))}</option>'
     
     content = f'''
-    <div style="margin-bottom: 20px;">
-        <a href="/purchases" style="color:var(--text-muted);">← Back to Purchase Orders</a>
+    <style>
+    .po-form-grid {{ display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }}
+    .po-main {{ display: flex; flex-direction: column; gap: 15px; }}
+    .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; }}
+    .po-sidebar .card {{ padding: 16px; margin: 0; }}
+    .po-item-row {{ display: grid; grid-template-columns: 1fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+    .po-item-row input {{ font-size: 13px; padding: 8px 10px; }}
+    .po-item-hdr {{ display: grid; grid-template-columns: 1fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
+    .po-stock-td {{ position: relative; }}
+    .po-totals {{ display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 2px solid var(--border); }}
+    .po-totals-row {{ display: flex; justify-content: space-between; align-items: center; font-size: 14px; }}
+    .po-totals-row.grand {{ font-size: 18px; font-weight: 700; color: var(--primary); padding-top: 6px; border-top: 1px solid var(--border); }}
+    .po-add-btn {{ width: 100%; padding: 10px; border: 2px dashed var(--border); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-radius: 6px; }}
+    .po-add-btn:hover {{ border-color: var(--primary); color: var(--primary); background: rgba(99,102,241,0.05); }}
+    .po-rm {{ background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 2px; opacity: 0.5; transition: all 0.15s; }}
+    .po-rm:hover {{ color: var(--red); opacity: 1; }}
+    @media(max-width:900px) {{ .po-form-grid {{ grid-template-columns: 1fr; }} .po-sidebar {{ position: static; }} }}
+    </style>
+    
+    <div style="margin-bottom: 12px;">
+        <a href="/purchases" style="color:var(--text-muted);font-size:13px;">&larr; Back to Purchase Orders</a>
     </div>
     
-    <div class="card" style="max-width: 900px;">
-        <h2 style="margin: 0 0 20px 0;">New Purchase Order</h2>
-        
-        <form method="POST" id="poForm">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
-                <div>
-                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Supplier *</label>
-                    <select name="supplier_id" id="supplierSelect" class="form-input" required onchange="updateSupplierEmail()">
-                        {supplier_options}
-                    </select>
-                    <small style="color: var(--text-muted);">
-                        <a href="/supplier/new" target="_blank">+ Add new supplier</a>
-                    </small>
-                </div>
-                <div>
-                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Supplier Email</label>
-                    <input type="email" name="supplier_email" id="supplierEmail" class="form-input" placeholder="For sending PO">
-                </div>
-            </div>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
-                <div>
-                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">PO Date</label>
-                    <input type="date" name="date" class="form-input" value="{today()}">
-                </div>
-                <div>
-                    <label style="display: block; margin-bottom: 5px; font-weight: 500;">Expected Delivery</label>
-                    <input type="date" name="expected_date" class="form-input">
+    <form method="POST" id="poForm">
+    <div class="po-form-grid">
+        <div class="po-main">
+            <div class="card" style="padding:20px;">
+                <h2 style="margin:0 0 16px 0;">New Purchase Order</h2>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Supplier *</label>
+                        <select name="supplier_id" id="supplierSelect" class="form-input" required onchange="updateSupplierEmail()">
+                            {supplier_options}
+                        </select>
+                        <small style="color:var(--text-muted);"><a href="/supplier/new" target="_blank">+ Add new supplier</a></small>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Supplier Email</label>
+                        <input type="email" name="supplier_email" id="supplierEmail" class="form-input" placeholder="For sending PO">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">PO Date</label>
+                        <input type="date" name="date" class="form-input" value="{today()}">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Expected Delivery</label>
+                        <input type="date" name="expected_date" class="form-input">
+                    </div>
                 </div>
             </div>
             
-            <hr style="border: none; border-top: 1px solid var(--border); margin: 25px 0;">
-            
-            <h3 style="margin: 0 0 15px 0;">Line Items</h3>
-            
-            <table class="table" id="itemsTable">
-                <thead>
-                    <tr>
-                        <th style="width: 30%;">Stock Item</th>
-                        <th style="width: 30%;">Description *</th>
-                        <th style="width: 12%;">Qty</th>
-                        <th style="width: 15%;">Price (excl)</th>
-                        <th style="width: 13%;">Total</th>
-                    </tr>
-                </thead>
-                <tbody id="itemsBody">
-                    <tr>
-                        <td>
-                            <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="🔍 Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)" style="font-size:13px;">
+            <div class="card" style="padding:20px;">
+                <h3 style="margin:0 0 12px 0;">Line Items</h3>
+                <div class="po-item-hdr">
+                    <span>Stock Item</span><span>Description</span><span>Qty</span><span>Price (excl)</span><span style="text-align:right;">Total</span><span></span>
+                </div>
+                <div id="itemsBody">
+                    <div class="po-item-row">
+                        <div class="po-stock-td">
+                            <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)">
                             <input type="hidden" name="item_stock_id[]" value="">
                             <div class="ssp-dropdown po-stock-dd"></div>
-                        </td>
-                        <td><input type="text" name="item_desc[]" class="form-input" placeholder="Description" required></td>
-                        <td><input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()"></td>
-                        <td><input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()"></td>
-                        <td style="text-align: right; padding-top: 12px;"><span class="line-total">R0.00</span></td>
-                    </tr>
-                </tbody>
-                <tfoot>
-                    <tr>
-                        <td colspan="5">
-                            <button type="button" class="btn btn-secondary" onclick="addRow()" style="font-size: 13px;">+ Add Line</button>
-                        </td>
-                    </tr>
-                    <tr style="background: var(--bg);">
-                        <td colspan="3"></td>
-                        <td style="text-align: right; font-weight: 500;">Subtotal:</td>
-                        <td style="text-align: right;"><span id="subtotal">R0.00</span></td>
-                    </tr>
-                    <tr style="background: var(--bg);">
-                        <td colspan="3"></td>
-                        <td style="text-align: right; font-weight: 500;">VAT (15%):</td>
-                        <td style="text-align: right;"><span id="vat">R0.00</span></td>
-                    </tr>
-                    <tr style="background: var(--bg);">
-                        <td colspan="3"></td>
-                        <td style="text-align: right; font-weight: bold; font-size: 16px;">Total:</td>
-                        <td style="text-align: right; font-weight: bold; font-size: 16px;"><span id="total">R0.00</span></td>
-                    </tr>
-                </tfoot>
-            </table>
-            
-            <div style="margin-top: 20px;">
-                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Notes</label>
-                <textarea name="notes" class="form-input" rows="2" placeholder="Delivery instructions, special requirements, etc."></textarea>
+                        </div>
+                        <input type="text" name="item_desc[]" class="form-input" placeholder="Description" required>
+                        <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
+                        <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
+                        <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
+                        <span></span>
+                    </div>
+                </div>
+                <button type="button" class="po-add-btn" onclick="addRow()" style="margin-top:10px;">+ Add Line Item</button>
+                
+                <div class="po-totals" style="margin-top:16px;">
+                    <div class="po-totals-row"><span>Subtotal</span><span id="subtotal">R0.00</span></div>
+                    <div class="po-totals-row"><span>VAT (15%)</span><span id="vat">R0.00</span></div>
+                    <div class="po-totals-row grand"><span>Total</span><span id="total">R0.00</span></div>
+                </div>
             </div>
             
-            <div style="display: flex; gap: 10px; margin-top: 25px;">
-                <button type="submit" class="btn btn-primary" style="padding: 12px 30px;">GOOD: Create Purchase Order</button>
-                <a href="/purchases" class="btn btn-secondary">Cancel</a>
+            <div class="card" style="padding:16px;">
+                <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Notes</label>
+                <textarea name="notes" class="form-input" rows="2" placeholder="Delivery instructions, special requirements..."></textarea>
             </div>
-        </form>
+        </div>
+        
+        <div class="po-sidebar">
+            <div class="card" style="background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(16,185,129,0.08));">
+                <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;font-weight:700;">Create Purchase Order</button>
+            </div>
+            <div class="card">
+                <a href="/purchases" class="btn btn-secondary" style="width:100%;text-align:center;">Cancel</a>
+            </div>
+            <div class="card" style="font-size:12px;color:var(--text-muted);line-height:1.6;">
+                <div style="font-weight:700;margin-bottom:6px;color:var(--text);font-size:13px;">Workflow</div>
+                <div>1. Create PO &rarr; Draft</div>
+                <div>2. Email to supplier &rarr; Sent</div>
+                <div>3. Receive goods (GRV)</div>
+                <div>4. Book supplier invoice</div>
+            </div>
+        </div>
     </div>
+    </form>
     
     <script>
-    // PO Stock data for smart search
-    const poStockData = {json.dumps([{"id": s.get("id",""), "code": safe_string(s.get("code","")), "desc": safe_string(s.get("description","")), "price": float(s.get("cost_price",0) or 0)} for s in stock])};
+    const poStockData = {json.dumps([{{"id": s.get("id",""), "code": safe_string(s.get("code","")), "desc": safe_string(s.get("description","")), "price": float(s.get("cost_price",0) or 0)}} for s in stock])};
     
     function poStockSearch(input) {{
-        const wrap = input.closest('td');
+        const wrap = input.closest('.po-stock-td');
         let dd = wrap.querySelector('.po-stock-dd');
         if (!dd) {{
             dd = document.createElement('div');
             dd.className = 'ssp-dropdown po-stock-dd';
-            wrap.style.position = 'relative';
             wrap.appendChild(dd);
         }}
         
-        let q = input.value.toLowerCase().trim().replace(/\s*[xX]\s*/g, 'x');
-        const terms = q.split(/\s+/).filter(t => t.length > 0);
+        let q = input.value.toLowerCase().trim().replace(/\\s*[xX]\\s*/g, 'x');
+        const terms = q.split(/\\s+/).filter(t => t.length > 0);
         
         let matches = poStockData.filter(s => {{
             if (!terms.length) return true;
-            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
+            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\\s*[xX]\\s*/g, 'x');
             return terms.every(t => text.includes(t));
         }}).slice(0, 20);
         
-        if (matches.length === 0 && terms.length > 0) {{
+        if (!terms.length) {{
+            dd.classList.remove('show');
+            return;
+        }}
+        
+        if (matches.length === 0) {{
             dd.innerHTML = '<div class="ssp-empty">No stock found</div>';
         }} else {{
-            dd.innerHTML = matches.map(s => `
-                <div class="ssp-item" onclick="poSelectStock(this, '${{s.id}}', '${{s.code}}', '${{s.desc.replace(/'/g, "\\\\'")}}'', ${{s.price}})">
-                    ${{s.code ? '<span class="ssp-code">' + s.code + '</span>' : ''}}
-                    <span class="ssp-desc">${{s.desc}}</span>
-                    ${{s.price ? '<span class="ssp-price">R' + s.price.toFixed(2) + '</span>' : ''}}
-                </div>
-            `).join('');
+            dd.innerHTML = matches.map((s, i) => {{
+                const safeDesc = s.desc.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+                return '<div class="ssp-item" data-idx="' + i + '">' +
+                    (s.code ? '<span class="ssp-code">' + s.code + '</span>' : '') +
+                    '<span class="ssp-desc">' + safeDesc + '</span>' +
+                    (s.price ? '<span class="ssp-price">R' + s.price.toFixed(2) + '</span>' : '') +
+                    '</div>';
+            }}).join('');
+            
+            dd.querySelectorAll('.ssp-item').forEach(el => {{
+                el.addEventListener('click', function() {{
+                    const idx = parseInt(this.getAttribute('data-idx'));
+                    const m = matches[idx];
+                    const row = wrap.closest('.po-item-row');
+                    const searchInput = row.querySelector('input[name="item_stock_search[]"]');
+                    const idInput = row.querySelector('input[name="item_stock_id[]"]');
+                    const descInput = row.querySelector('input[name="item_desc[]"]');
+                    const priceInput = row.querySelector('input[name="item_price[]"]');
+                    
+                    if (searchInput) searchInput.value = m.code ? m.code + ' - ' + m.desc : m.desc;
+                    if (idInput) idInput.value = m.id;
+                    if (descInput) descInput.value = m.desc;
+                    if (priceInput && m.price) {{ priceInput.value = m.price.toFixed(2); calculateTotals(); }}
+                    dd.classList.remove('show');
+                }});
+            }});
         }}
         dd.classList.add('show');
     }}
     
-    function poSelectStock(el, stockId, code, desc, price) {{
-        const row = el.closest('tr');
-        const searchInput = row.querySelector('input[name="item_stock_search[]"]');
-        const idInput = row.querySelector('input[name="item_stock_id[]"]');
-        const descInput = row.querySelector('input[name="item_desc[]"]');
-        const priceInput = row.querySelector('input[name="item_price[]"]');
-        
-        if (searchInput) searchInput.value = code ? code + ' - ' + desc : desc;
-        if (idInput) idInput.value = stockId;
-        if (descInput) descInput.value = desc;
-        if (priceInput) {{ priceInput.value = price; calculateTotals(); }}
-        
-        el.closest('.ssp-dropdown').classList.remove('show');
-    }}
-    
-    // Close PO dropdowns on click outside
     document.addEventListener('click', function(e) {{
         if (!e.target.closest('.po-stock-search') && !e.target.closest('.po-stock-dd')) {{
             document.querySelectorAll('.po-stock-dd').forEach(d => d.classList.remove('show'));
@@ -41906,55 +41917,51 @@ def purchase_new():
     function updateSupplierEmail() {{
         const select = document.getElementById('supplierSelect');
         const option = select.options[select.selectedIndex];
-        const email = option.dataset.email || '';
-        document.getElementById('supplierEmail').value = email;
+        document.getElementById('supplierEmail').value = option.dataset.email || '';
     }}
     
     function addRow() {{
-        const tbody = document.getElementById('itemsBody');
-        const row = document.createElement('tr');
+        const body = document.getElementById('itemsBody');
+        const row = document.createElement('div');
+        row.className = 'po-item-row';
         row.innerHTML = `
-            <td style="position:relative;">
-                <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="🔍 Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)" style="font-size:13px;">
+            <div class="po-stock-td">
+                <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)">
                 <input type="hidden" name="item_stock_id[]" value="">
                 <div class="ssp-dropdown po-stock-dd"></div>
-            </td>
-            <td><input type="text" name="item_desc[]" class="form-input" placeholder="Description"></td>
-            <td><input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()"></td>
-            <td><input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()"></td>
-            <td style="text-align: right; padding-top: 12px;">
-                <span class="line-total">R0.00</span>
-                <button type="button" onclick="this.closest('tr').remove(); calculateTotals();" style="margin-left: 8px; background: none; border: none; color: var(--red); cursor: pointer;">✕</button>
-            </td>
+            </div>
+            <input type="text" name="item_desc[]" class="form-input" placeholder="Description">
+            <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
+            <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
+            <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
+            <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove(); calculateTotals();">&#10005;</button>
         `;
-        tbody.appendChild(row);
+        body.appendChild(row);
+        row.querySelector('.po-stock-search').focus();
     }}
     
     function calculateTotals() {{
         let subtotal = 0;
-        const rows = document.querySelectorAll('#itemsBody tr');
-        
-        rows.forEach(row => {{
-            const qty = parseFloat(row.querySelector('input[name="item_qty[]"]').value) || 0;
-            const price = parseFloat(row.querySelector('input[name="item_price[]"]').value) || 0;
+        document.querySelectorAll('.po-item-row').forEach(row => {{
+            const qty = parseFloat(row.querySelector('input[name="item_qty[]"]')?.value) || 0;
+            const price = parseFloat(row.querySelector('input[name="item_price[]"]')?.value) || 0;
             const lineTotal = qty * price;
             subtotal += lineTotal;
-            row.querySelector('.line-total').textContent = 'R' + lineTotal.toFixed(2);
+            const lt = row.querySelector('.line-total');
+            if (lt) lt.textContent = 'R' + lineTotal.toFixed(2);
         }});
         
         const vat = subtotal * 0.15;
-        const total = subtotal + vat;
-        
         document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
-        document.getElementById('vat').textContent = 'R' + vat.toFixed(2);
-        document.getElementById('total').textContent = 'R' + total.toFixed(2);
+        document.getElementById('vat').textContent = 'R' + (vat).toFixed(2);
+        document.getElementById('total').textContent = 'R' + (subtotal + vat).toFixed(2);
     }}
     
     calculateTotals();
     </script>
     '''
     
-    return render_page("New Purchase Order", content, user, "purchases")
+        return render_page("New Purchase Order", content, user, "purchases")
 
 
 @app.route("/purchase/<po_id>")
@@ -48555,6 +48562,7 @@ def pos_page():
     <div class="f11-order-wrap">
         <div class="f11-search">
             <input type="text" id="f11Search" placeholder="Scan barcode or type code / description..." autocomplete="off">
+            <div class="f11-dd" id="f11Dropdown"></div>
         </div>
         <div class="f11-table-wrap">
             <table class="f11-table">
@@ -48628,60 +48636,81 @@ def pos_page():
         el.textContent = (search && search.value) ? search.value : 'Cash Sale';
     }}
 
-    // F11 search — reuses same addToCart logic
+    // F11 smart search - live dropdown
     document.addEventListener('DOMContentLoaded', function() {{
         const f11Input = document.getElementById('f11Search');
-        if (!f11Input) return;
+        const f11DD = document.getElementById('f11Dropdown');
+        if (!f11Input || !f11DD) return;
+        let f11DDIdx = -1, f11Matches = [];
+        function f11FilterDD() {{
+            const raw = f11Input.value.trim();
+            let search = raw.toLowerCase();
+            f11DDIdx = -1; f11Matches = [];
+            let qtyPrefix = 1;
+            const starPos = search.indexOf('*');
+            if (starPos > 0) {{ const num = parseInt(search.substring(0, starPos), 10); if (num > 0) {{ qtyPrefix = num; search = search.substring(starPos + 1).trim(); }} }}
+            if (!search) {{ f11DD.classList.remove('show'); f11DD.innerHTML = ''; return; }}
+            search = search.replace(/\s*[xX]\s*/g, 'x');
+            const rows = document.querySelectorAll('.stock-row');
+            let html = '', count = 0;
+            rows.forEach(row => {{
+                if (count >= 20) return;
+                let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*[xX]\s*/g, 'x');
+                if (data.indexOf(search) === -1) return;
+                const id = row.getAttribute('data-id'), code = row.getAttribute('data-code') || '';
+                const desc = row.getAttribute('data-desc') || '', price = parseFloat(row.getAttribute('data-price')) || 0;
+                const stock = row.getAttribute('data-qty') || '-';
+                f11Matches.push({{ id, code, desc, price, stock, qty: qtyPrefix }});
+                html += '<div class="f11-dd-item" data-midx="' + count + '"><span class="f11-dd-code">' + code + '</span><span class="f11-dd-desc">' + desc + '</span><span class="f11-dd-price">R' + price.toFixed(2) + '</span><span class="f11-dd-qty">' + stock + '</span></div>';
+                count++;
+            }});
+            if (count === 0) html = '<div class="f11-dd-empty">No items match "' + search + '"</div>';
+            f11DD.innerHTML = html; f11DD.classList.add('show');
+            f11DD.querySelectorAll('.f11-dd-item').forEach(item => {{ item.addEventListener('click', function() {{ f11AddMatch(parseInt(this.getAttribute('data-midx'))); }}); }});
+            if (f11Matches.length > 0) {{ f11DDIdx = 0; f11HlDD(); }}
+        }}
+        function f11HlDD() {{ f11DD.querySelectorAll('.f11-dd-item').forEach((el, i) => {{ el.classList.toggle('sel', i === f11DDIdx); if (i === f11DDIdx) el.scrollIntoView({{ block: 'nearest' }}); }}); }}
+        function f11AddMatch(idx) {{
+            if (idx < 0 || idx >= f11Matches.length) return;
+            const m = f11Matches[idx];
+            const existing = cart.find(item => item.id === m.id);
+            if (existing) {{ existing.qty += m.qty; }} else {{ cart.push({{ id: m.id, code: m.code, desc: m.desc, price: m.price, qty: m.qty, maxQty: 99999 }}); }}
+            updateCart(); renderF11Table(); syncF11Buttons(); f11SelectedRow = cart.length - 1; renderF11Table();
+            f11Input.value = ''; f11DD.classList.remove('show'); f11DD.innerHTML = '';
+            f11Matches = []; f11DDIdx = -1; f11Input.focus();
+        }}
+        f11Input.addEventListener('input', f11FilterDD);
         f11Input.addEventListener('keydown', function(e) {{
+            if (f11DD.classList.contains('show') && f11Matches.length > 0) {{
+                if (e.key === 'ArrowDown') {{ e.preventDefault(); f11DDIdx = Math.min(f11DDIdx + 1, f11Matches.length - 1); f11HlDD(); return; }}
+                if (e.key === 'ArrowUp') {{ e.preventDefault(); f11DDIdx = Math.max(f11DDIdx - 1, 0); f11HlDD(); return; }}
+                if (e.key === 'Enter') {{ e.preventDefault(); if (f11DDIdx >= 0) f11AddMatch(f11DDIdx); return; }}
+            }}
             if (e.key === 'Enter') {{
-                e.preventDefault();
-                const raw = f11Input.value.trim();
-                if (!raw) return;
-                let qty = 1, searchCode = raw;
-                const star = raw.indexOf('*');
-                if (star > 0) {{
-                    const num = parseInt(raw.substring(0, star), 10);
-                    if (num > 0) {{ qty = num; searchCode = raw.substring(star + 1).trim(); }}
-                }}
+                e.preventDefault(); const raw = f11Input.value.trim(); if (!raw) return;
+                let qty = 1, searchCode = raw; const star = raw.indexOf('*');
+                if (star > 0) {{ const num = parseInt(raw.substring(0, star), 10); if (num > 0) {{ qty = num; searchCode = raw.substring(star + 1).trim(); }} }}
                 searchCode = searchCode.toLowerCase().replace(/\s*x\s*/gi, 'x');
-                const rows = document.querySelectorAll('.stock-row');
-                let found = null;
-                for (let row of rows) {{
-                    let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
-                    if (data.indexOf(searchCode) !== -1) {{ found = row; break; }}
-                }}
+                const rows = document.querySelectorAll('.stock-row'); let found = null;
+                for (let row of rows) {{ let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x'); if (data.indexOf(searchCode) !== -1) {{ found = row; break; }} }}
                 if (found) {{
-                    const id = found.getAttribute('data-id');
-                    const code = found.getAttribute('data-code');
-                    const desc = found.getAttribute('data-desc');
-                    const price = parseFloat(found.getAttribute('data-price')) || 0;
+                    const id = found.getAttribute('data-id'), code = found.getAttribute('data-code'), desc = found.getAttribute('data-desc'), price = parseFloat(found.getAttribute('data-price')) || 0;
                     const existing = cart.find(item => item.id === id);
-                    if (existing) {{ existing.qty += qty; }}
-                    else {{ cart.push({{id, code, desc, price, qty: qty, maxQty: 99999}}); }}
-                    updateCart();
-                    renderF11Table();
-                    syncF11Buttons();
-                    f11SelectedRow = cart.length - 1;
-                    renderF11Table();
-                }} else {{
-                    // Flash search red briefly
-                    f11Input.style.borderColor = 'rgba(255,60,60,0.5)';
-                    setTimeout(() => {{ f11Input.style.borderColor = ''; }}, 500);
-                }}
+                    if (existing) {{ existing.qty += qty; }} else {{ cart.push({{id, code, desc, price, qty: qty, maxQty: 99999}}); }}
+                    updateCart(); renderF11Table(); syncF11Buttons(); f11SelectedRow = cart.length - 1; renderF11Table();
+                }} else {{ f11Input.style.borderColor = 'rgba(255,60,60,0.5)'; setTimeout(() => {{ f11Input.style.borderColor = ''; }}, 500); }}
                 f11Input.value = '';
             }}
-            // Delete selected row
-            if (e.key === 'Delete' && cart.length > 0) {{
-                e.preventDefault();
-                cart.splice(f11SelectedRow, 1);
+            if (e.key === 'Escape') {{ f11DD.classList.remove('show'); f11DD.innerHTML = ''; f11Matches = []; f11DDIdx = -1; }}
+            if (e.key === 'Delete' && cart.length > 0 && !f11DD.classList.contains('show')) {{
+                e.preventDefault(); cart.splice(f11SelectedRow, 1);
                 if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1);
-                updateCart();
-                renderF11Table();
-                syncF11Buttons();
+                updateCart(); renderF11Table(); syncF11Buttons();
             }}
-            // Navigate rows
-            if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
-            if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
+            if (!f11DD.classList.contains('show')) {{
+                if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
+                if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
+            }}
         }});
     }});
 
