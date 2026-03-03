@@ -41766,7 +41766,7 @@ def purchase_new():
     </style>
     
     <div style="margin-bottom: 12px;">
-        <a href="/purchases" style="color:var(--text-muted);font-size:13px;">&larr; Back to Purchase Orders</a>
+        <a href="/purchases" style="color:var(--text-muted);font-size:13px;">← Back to Purchase Orders</a>
     </div>
     
     <form method="POST" id="poForm">
@@ -41861,12 +41861,12 @@ def purchase_new():
             wrap.appendChild(dd);
         }}
         
-        let q = input.value.toLowerCase().trim().replace(/\\s*[xX]\\s*/g, 'x');
-        const terms = q.split(/\\s+/).filter(t => t.length > 0);
+        let q = input.value.toLowerCase().trim().replace(/\s*[xX]\s*/g, 'x');
+        const terms = q.split(/\s+/).filter(t => t.length > 0);
         
         let matches = poStockData.filter(s => {{
             if (!terms.length) return true;
-            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\\s*[xX]\\s*/g, 'x');
+            const text = (s.code + ' ' + s.desc).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
             return terms.every(t => text.includes(t));
         }}).slice(0, 20);
         
@@ -41887,6 +41887,7 @@ def purchase_new():
                     '</div>';
             }}).join('');
             
+            // Add click handlers via event delegation
             dd.querySelectorAll('.ssp-item').forEach(el => {{
                 el.addEventListener('click', function() {{
                     const idx = parseInt(this.getAttribute('data-idx'));
@@ -41934,7 +41935,7 @@ def purchase_new():
             <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
             <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
             <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
-            <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove(); calculateTotals();">&#10005;</button>
+            <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove(); calculateTotals();">✕</button>
         `;
         body.appendChild(row);
         row.querySelector('.po-stock-search').focus();
@@ -41961,7 +41962,7 @@ def purchase_new():
     </script>
     '''
     
-        return render_page("New Purchase Order", content, user, "purchases")
+    return render_page("New Purchase Order", content, user, "purchases")
 
 
 @app.route("/purchase/<po_id>")
@@ -48562,7 +48563,6 @@ def pos_page():
     <div class="f11-order-wrap">
         <div class="f11-search">
             <input type="text" id="f11Search" placeholder="Scan barcode or type code / description..." autocomplete="off">
-            <div class="f11-dd" id="f11Dropdown"></div>
         </div>
         <div class="f11-table-wrap">
             <table class="f11-table">
@@ -48636,81 +48636,60 @@ def pos_page():
         el.textContent = (search && search.value) ? search.value : 'Cash Sale';
     }}
 
-    // F11 smart search - live dropdown
+    // F11 search — reuses same addToCart logic
     document.addEventListener('DOMContentLoaded', function() {{
         const f11Input = document.getElementById('f11Search');
-        const f11DD = document.getElementById('f11Dropdown');
-        if (!f11Input || !f11DD) return;
-        let f11DDIdx = -1, f11Matches = [];
-        function f11FilterDD() {{
-            const raw = f11Input.value.trim();
-            let search = raw.toLowerCase();
-            f11DDIdx = -1; f11Matches = [];
-            let qtyPrefix = 1;
-            const starPos = search.indexOf('*');
-            if (starPos > 0) {{ const num = parseInt(search.substring(0, starPos), 10); if (num > 0) {{ qtyPrefix = num; search = search.substring(starPos + 1).trim(); }} }}
-            if (!search) {{ f11DD.classList.remove('show'); f11DD.innerHTML = ''; return; }}
-            search = search.replace(/\s*[xX]\s*/g, 'x');
-            const rows = document.querySelectorAll('.stock-row');
-            let html = '', count = 0;
-            rows.forEach(row => {{
-                if (count >= 20) return;
-                let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*[xX]\s*/g, 'x');
-                if (data.indexOf(search) === -1) return;
-                const id = row.getAttribute('data-id'), code = row.getAttribute('data-code') || '';
-                const desc = row.getAttribute('data-desc') || '', price = parseFloat(row.getAttribute('data-price')) || 0;
-                const stock = row.getAttribute('data-qty') || '-';
-                f11Matches.push({{ id, code, desc, price, stock, qty: qtyPrefix }});
-                html += '<div class="f11-dd-item" data-midx="' + count + '"><span class="f11-dd-code">' + code + '</span><span class="f11-dd-desc">' + desc + '</span><span class="f11-dd-price">R' + price.toFixed(2) + '</span><span class="f11-dd-qty">' + stock + '</span></div>';
-                count++;
-            }});
-            if (count === 0) html = '<div class="f11-dd-empty">No items match "' + search + '"</div>';
-            f11DD.innerHTML = html; f11DD.classList.add('show');
-            f11DD.querySelectorAll('.f11-dd-item').forEach(item => {{ item.addEventListener('click', function() {{ f11AddMatch(parseInt(this.getAttribute('data-midx'))); }}); }});
-            if (f11Matches.length > 0) {{ f11DDIdx = 0; f11HlDD(); }}
-        }}
-        function f11HlDD() {{ f11DD.querySelectorAll('.f11-dd-item').forEach((el, i) => {{ el.classList.toggle('sel', i === f11DDIdx); if (i === f11DDIdx) el.scrollIntoView({{ block: 'nearest' }}); }}); }}
-        function f11AddMatch(idx) {{
-            if (idx < 0 || idx >= f11Matches.length) return;
-            const m = f11Matches[idx];
-            const existing = cart.find(item => item.id === m.id);
-            if (existing) {{ existing.qty += m.qty; }} else {{ cart.push({{ id: m.id, code: m.code, desc: m.desc, price: m.price, qty: m.qty, maxQty: 99999 }}); }}
-            updateCart(); renderF11Table(); syncF11Buttons(); f11SelectedRow = cart.length - 1; renderF11Table();
-            f11Input.value = ''; f11DD.classList.remove('show'); f11DD.innerHTML = '';
-            f11Matches = []; f11DDIdx = -1; f11Input.focus();
-        }}
-        f11Input.addEventListener('input', f11FilterDD);
+        if (!f11Input) return;
         f11Input.addEventListener('keydown', function(e) {{
-            if (f11DD.classList.contains('show') && f11Matches.length > 0) {{
-                if (e.key === 'ArrowDown') {{ e.preventDefault(); f11DDIdx = Math.min(f11DDIdx + 1, f11Matches.length - 1); f11HlDD(); return; }}
-                if (e.key === 'ArrowUp') {{ e.preventDefault(); f11DDIdx = Math.max(f11DDIdx - 1, 0); f11HlDD(); return; }}
-                if (e.key === 'Enter') {{ e.preventDefault(); if (f11DDIdx >= 0) f11AddMatch(f11DDIdx); return; }}
-            }}
             if (e.key === 'Enter') {{
-                e.preventDefault(); const raw = f11Input.value.trim(); if (!raw) return;
-                let qty = 1, searchCode = raw; const star = raw.indexOf('*');
-                if (star > 0) {{ const num = parseInt(raw.substring(0, star), 10); if (num > 0) {{ qty = num; searchCode = raw.substring(star + 1).trim(); }} }}
+                e.preventDefault();
+                const raw = f11Input.value.trim();
+                if (!raw) return;
+                let qty = 1, searchCode = raw;
+                const star = raw.indexOf('*');
+                if (star > 0) {{
+                    const num = parseInt(raw.substring(0, star), 10);
+                    if (num > 0) {{ qty = num; searchCode = raw.substring(star + 1).trim(); }}
+                }}
                 searchCode = searchCode.toLowerCase().replace(/\s*x\s*/gi, 'x');
-                const rows = document.querySelectorAll('.stock-row'); let found = null;
-                for (let row of rows) {{ let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x'); if (data.indexOf(searchCode) !== -1) {{ found = row; break; }} }}
+                const rows = document.querySelectorAll('.stock-row');
+                let found = null;
+                for (let row of rows) {{
+                    let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
+                    if (data.indexOf(searchCode) !== -1) {{ found = row; break; }}
+                }}
                 if (found) {{
-                    const id = found.getAttribute('data-id'), code = found.getAttribute('data-code'), desc = found.getAttribute('data-desc'), price = parseFloat(found.getAttribute('data-price')) || 0;
+                    const id = found.getAttribute('data-id');
+                    const code = found.getAttribute('data-code');
+                    const desc = found.getAttribute('data-desc');
+                    const price = parseFloat(found.getAttribute('data-price')) || 0;
                     const existing = cart.find(item => item.id === id);
-                    if (existing) {{ existing.qty += qty; }} else {{ cart.push({{id, code, desc, price, qty: qty, maxQty: 99999}}); }}
-                    updateCart(); renderF11Table(); syncF11Buttons(); f11SelectedRow = cart.length - 1; renderF11Table();
-                }} else {{ f11Input.style.borderColor = 'rgba(255,60,60,0.5)'; setTimeout(() => {{ f11Input.style.borderColor = ''; }}, 500); }}
+                    if (existing) {{ existing.qty += qty; }}
+                    else {{ cart.push({{id, code, desc, price, qty: qty, maxQty: 99999}}); }}
+                    updateCart();
+                    renderF11Table();
+                    syncF11Buttons();
+                    f11SelectedRow = cart.length - 1;
+                    renderF11Table();
+                }} else {{
+                    // Flash search red briefly
+                    f11Input.style.borderColor = 'rgba(255,60,60,0.5)';
+                    setTimeout(() => {{ f11Input.style.borderColor = ''; }}, 500);
+                }}
                 f11Input.value = '';
             }}
-            if (e.key === 'Escape') {{ f11DD.classList.remove('show'); f11DD.innerHTML = ''; f11Matches = []; f11DDIdx = -1; }}
-            if (e.key === 'Delete' && cart.length > 0 && !f11DD.classList.contains('show')) {{
-                e.preventDefault(); cart.splice(f11SelectedRow, 1);
+            // Delete selected row
+            if (e.key === 'Delete' && cart.length > 0) {{
+                e.preventDefault();
+                cart.splice(f11SelectedRow, 1);
                 if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1);
-                updateCart(); renderF11Table(); syncF11Buttons();
+                updateCart();
+                renderF11Table();
+                syncF11Buttons();
             }}
-            if (!f11DD.classList.contains('show')) {{
-                if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
-                if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
-            }}
+            // Navigate rows
+            if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
+            if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
         }});
     }});
 
