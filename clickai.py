@@ -45331,7 +45331,7 @@ def pos_page():
     .f11-search input{width:100%;height:44px;background:rgba(6,16,40,0.6);border:1px solid rgba(80,180,255,0.2);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 16px;outline:none;letter-spacing:0.5px;}
     .f11-search input::placeholder{color:#5a8aaa;}
     .f11-search input:focus{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.04);box-shadow:0 0 12px rgba(0,200,255,0.08);}
-    .f11-dd{display:none;position:absolute;left:0;right:0;top:100%;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);border-top:none;max-height:calc(100vh - 200px);overflow-y:auto;z-index:100;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
+    .f11-dd{display:none;position:fixed;left:20px;right:20px;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);max-height:calc(100vh - 160px);overflow-y:auto;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
     .f11-dd.show{display:block;}
     .f11-dd-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;gap:16px;}
     .f11-dd-item:hover,.f11-dd-item.sel{background:rgba(0,200,255,0.08);border-left:3px solid #00ccff;}
@@ -48645,6 +48645,12 @@ def pos_page():
         let f11Matches = [];
         let f11Sel = -1;
 
+        function f11ShowDD() {{
+            const rect = f11Input.getBoundingClientRect();
+            f11DD.style.top = (rect.bottom + 2) + 'px';
+            f11DD.classList.add('show');
+        }}
+
         function f11FilterDD() {{
             let raw = f11Input.value.trim();
             if (!raw) {{ f11DD.classList.remove('show'); f11Matches = []; f11Sel = -1; return; }}
@@ -48680,7 +48686,7 @@ def pos_page():
         function f11RenderDD() {{
             if (f11Matches.length === 0) {{
                 f11DD.innerHTML = '<div class="f11-dd-empty">No matches found</div>';
-                f11DD.classList.add('show');
+                f11ShowDD();
                 return;
             }}
             f11DD.innerHTML = f11Matches.map((m, i) =>
@@ -48690,7 +48696,7 @@ def pos_page():
                 '<span class="f11-dd-price">R' + m.price.toFixed(2) + '</span>' +
                 '</div>'
             ).join('');
-            f11DD.classList.add('show');
+            f11ShowDD();
 
             f11DD.querySelectorAll('.f11-dd-item').forEach(el => {{
                 el.addEventListener('click', function() {{
