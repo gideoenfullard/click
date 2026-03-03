@@ -112,18 +112,6 @@ try:
     BUSINESS_GROUPS_LOADED = True
 except ImportError:
     BUSINESS_GROUPS_LOADED = False
-try:
-    from clickai_fraud_guard import FraudGuard
-    FRAUD_GUARD_LOADED = True
-except ImportError:
-    FraudGuard = None
-    FRAUD_GUARD_LOADED = False
-try:
-    from clickai_bolt_pricer import BoltPricer, register_bolt_pricer_routes
-    BOLT_PRICER_LOADED = True
-except ImportError:
-    BoltPricer = None
-    BOLT_PRICER_LOADED = False
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -12260,24 +12248,6 @@ class Actions:
         # BATCH DELETE - all at once!
         ids_to_delete = [r["id"] for r in to_delete]
         
-        # ── FRAUD GUARD: Protect paid/credited invoices from bulk delete ──
-        try:
-            if FraudGuard and table == "invoices":
-                _role = context.get("user_role", "owner")
-                _protected = [r for r in to_delete if r.get("status") in ("paid", "account", "credited")]
-                if _protected and _role not in ("owner", "admin"):
-                    return {"success": False, "message": f"Cannot delete {len(_protected)} paid/credited invoices. Only the business owner can do this. Use credit notes instead."}
-                if _protected and _role in ("owner", "admin"):
-                    _safe = [r for r in to_delete if r.get("status") not in ("paid", "account", "credited")]
-                    if not _safe:
-                        return {"success": False, "message": f"All {len(to_delete)} invoices are paid/credited. Use credit notes to reverse them - this protects your audit trail."}
-                    _skipped = len(to_delete) - len(_safe)
-                    to_delete = _safe
-                    ids_to_delete = [r["id"] for r in to_delete]
-                    logger.warning(f"[FRAUD GUARD] Skipped {_skipped} paid/credited invoices in bulk delete")
-        except Exception as _fg_err:
-            logger.error(f"[FRAUD GUARD] Bulk delete check failed (allowing): {_fg_err}")
-        
         # For stock, try deleting from both tables
         if table in ["stock", "stock_items"]:
             deleted1, failed1 = db.delete_many("stock_items", ids_to_delete, biz_id)
@@ -16658,15 +16628,6 @@ def role_required(*allowed_roles):
             return f(*args, **kwargs)
         return decorated
     return decorator
-
-
-# Register bolt pricer routes (separate module — needs get_user_role)
-try:
-    if BOLT_PRICER_LOADED:
-        register_bolt_pricer_routes(app, db, Auth, get_user_role, login_required)
-        logger.info("[BOLT PRICER] Routes registered ✓")
-except Exception as e:
-    logger.error(f"[BOLT PRICER] Failed to register routes: {e}")
 
 
 # 
@@ -22250,28 +22211,28 @@ def api_health_check():
 JARVIS_HUD_CSS = '''
 <style>
 .j-hero{display:flex;align-items:center;justify-content:center;padding:10px 0 14px;position:relative;gap:0;}
-.j-flank{display:flex;flex-direction:column;gap:5px;width:180px;min-width:0;flex:1;max-width:200px;overflow:hidden;}
-.j-fi{padding:7px 10px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,30,60,0.25);transition:all 0.3s;}
+.j-flank{display:flex;flex-direction:column;gap:5px;width:210px;min-width:210px;}
+.j-fi{padding:9px 14px;border:1px solid rgba(80,180,255,0.1);background:rgba(10,30,60,0.25);transition:all 0.3s;}
 .j-fi:hover{border-color:rgba(80,180,255,0.25);background:rgba(10,30,60,0.4);}
 .j-fi.L{border-left:2px solid rgba(80,180,255,0.3);}
 .j-fi.R{border-right:2px solid rgba(80,180,255,0.3);border-left:none;}
 .j-fi.o.L{border-left-color:rgba(255,170,0,0.4);}.j-fi.o.R{border-right-color:rgba(255,170,0,0.4);}
 .j-fi.r.L{border-left-color:rgba(255,68,102,0.4);}.j-fi.r.R{border-right-color:rgba(255,68,102,0.4);}
 .j-fi.g.L{border-left-color:rgba(0,255,136,0.4);}.j-fi.g.R{border-right-color:rgba(0,255,136,0.4);}
-.j-fr{display:flex;align-items:center;gap:6px;overflow:hidden;}
+.j-fr{display:flex;align-items:center;gap:8px;}
 .j-fd{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
 .j-fd.c{background:#00ccff;box-shadow:0 0 4px #00ccff,0 0 10px rgba(0,204,255,0.3);}
 .j-fd.g{background:#00ff88;box-shadow:0 0 4px #00ff88,0 0 10px rgba(0,255,136,0.3);}
 .j-fd.o{background:#ffaa00;box-shadow:0 0 4px #ffaa00,0 0 10px rgba(255,170,0,0.3);}
 .j-fd.r{background:#ff4466;box-shadow:0 0 4px #ff4466,0 0 10px rgba(255,68,102,0.3);}
 .j-fd.p{background:#aa55ff;box-shadow:0 0 4px #aa55ff;}
-.j-fl{font-family:'Share Tech Mono',monospace;font-size:9px;color:#3a6a90;letter-spacing:0.8px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.j-fv{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3);white-space:nowrap;flex-shrink:0;}
+.j-fl{font-family:'Share Tech Mono',monospace;font-size:10px;color:#3a6a90;letter-spacing:1px;flex:1;}
+.j-fv{font-family:'Orbitron',monospace;font-size:13px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3);}
 .j-fv.o{color:#ffaa00;text-shadow:0 0 8px rgba(255,170,0,0.4);}
 .j-fv.g{color:#00ff88;text-shadow:0 0 8px rgba(0,255,136,0.4);}
 .j-fv.r{color:#ff6688;text-shadow:0 0 8px rgba(255,68,102,0.4);}
 .j-fln{width:100%;height:1px;background:linear-gradient(90deg,transparent,rgba(80,180,255,0.2),transparent);}
-.j-cn{width:20px;height:2px;position:relative;flex-shrink:0;}
+.j-cn{width:30px;height:2px;position:relative;flex-shrink:0;}
 .j-cn::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(80,180,255,0.05),rgba(80,180,255,0.3));}
 .j-cn.R::before{background:linear-gradient(90deg,rgba(80,180,255,0.3),rgba(80,180,255,0.05));}
 .j-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
@@ -22305,15 +22266,14 @@ JARVIS_HUD_CSS = '''
 .j-tl span{font-family:'Share Tech Mono',monospace;font-size:10px;color:#2a5a80;letter-spacing:1.5px;}
 .j-tl span b{color:#4a90bb;font-weight:400;}
 /* Dashboard big reactor */
-.j-rx.big{width:220px;height:220px;}
-.j-rx.big .j-core{inset:58px;}
-.j-rx.big .j-core .j-brand{font-size:18px;letter-spacing:3px;}
-.j-rx.big .j-core .j-sub{font-size:7px;letter-spacing:4px;}
-.j-rx.big .j-core .j-ai{font-size:7px;padding:2px 8px;}
-.j-rx.big .j-hint{bottom:-22px;}
+.j-rx.big{width:280px;height:280px;}
+.j-rx.big .j-core{inset:72px;}
+.j-rx.big .j-core .j-brand{font-size:22px;letter-spacing:4px;}
+.j-rx.big .j-core .j-sub{font-size:8.5px;letter-spacing:5px;}
+.j-rx.big .j-core .j-ai{font-size:8px;padding:3px 10px;}
+.j-rx.big .j-hint{bottom:-26px;}
 /* Page reactor (smaller) */
-.j-rx.page{width:180px;height:180px;}
-.j-rx.page .j-core{inset:48px;}
+.j-rx.page{width:230px;height:230px;}
 /* ═══ ZANE REACTOR EXTENSION CHAT ═══ */
 .j-zane-ext{max-height:0;overflow:hidden;transition:max-height 0.5s cubic-bezier(0.4,0,0.2,1);position:relative;}
 .j-zane-ext.open{max-height:420px;}
@@ -22353,32 +22313,13 @@ JARVIS_HUD_CSS = '''
 .j-hud-wrap::before{content:'';position:absolute;top:0;left:0;width:24px;height:24px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-wrap::after{content:'';position:absolute;bottom:0;right:0;width:24px;height:24px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-pad{height:16px;}
-/* Responsive: hide flanks on small screens, shrink reactor */
-@media(max-width:768px){
-.j-hero{flex-wrap:wrap;gap:8px;padding:8px 0 10px;}
-.j-flank{display:none;}
-.j-cn{display:none;}
-.j-rx.big{width:160px;height:160px;}
-.j-rx.big .j-core{inset:42px;}
-.j-rx.big .j-core .j-brand{font-size:14px;letter-spacing:2px;}
-.j-rx.page{width:140px;height:140px;}
-.j-rx.page .j-core{inset:38px;}
-.j-plbl .j-pn{font-size:10px;letter-spacing:3px;}
-.j-zane-layout{flex-direction:column;}
-.j-zane-center{width:100%;flex-direction:row;flex-wrap:wrap;justify-content:center;gap:6px;}
-.jzc-actions{flex-direction:row;flex-wrap:wrap;gap:4px;}
-.jzc-btn{font-size:10px;padding:5px 8px;}
-}
-@media(max-width:1024px){
-.j-flank{max-width:160px;}
-.j-fv{font-size:10px;}
-.j-fl{font-size:8px;}
-.j-rx.big{width:190px;height:190px;}
-.j-rx.big .j-core{inset:50px;}
-}
 </style>
 '''
 
+# ═══════════════════════════════════════════════════════════════
+# THEME REACTOR SKINS - Override Jarvis colors per theme
+# All themes reuse the .j-* structural classes, just re-skin
+# ═══════════════════════════════════════════════════════════════
 THEME_REACTOR_SKINS = '''<style>
 /* ═══ MIDNIGHT — Purple Holographic ═══ */
 [data-theme="midnight"] .j-hud-wrap{border-color:rgba(139,92,246,0.15);background:linear-gradient(160deg,rgba(20,10,40,0.7),rgba(10,5,30,0.8));border-radius:16px;overflow:hidden;}
@@ -22772,11 +22713,11 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
             var data=await resp.json();
             var reply=data.response||data.error||'Sorry, I had trouble with that.';
             var h=reply;
-            h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
-            h=h.replace(/\*(.+?)\*/g,'<em>$1</em>');
+            h=h.replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>');
+            h=h.replace(/\\*(.+?)\\*/g,'<em>$1</em>');
             h=h.replace(/^- (.+)$/gm,'<li>$1</li>');
-            h=h.replace(/\n\n/g,'</p><p style="margin:6px 0;">');
-            h=h.replace(/\n/g,'<br>');
+            h=h.replace(/\\n\\n/g,'</p><p style="margin:6px 0;">');
+            h=h.replace(/\\n/g,'<br>');
             h='<p style="margin:6px 0;">'+h+'</p>';
             msgsR.innerHTML='<div class="jzm-ai">'+h+'</div>';
             msgsR.scrollTop=msgsR.scrollHeight;
@@ -23521,22 +23462,10 @@ def customer_view(customer_id):
     # Get quotes
     all_quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
     quotes = [q for q in all_quotes if q.get("customer_id") == customer_id]
-    quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
-    
-    # Get credit notes for this customer
-    all_credit_notes = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
-    credit_notes = [cn for cn in all_credit_notes if cn.get("customer_id") == customer_id]
-    credit_notes = sorted(credit_notes, key=lambda x: x.get("date", ""), reverse=True)
-    
-    # Get delivery notes for this customer
-    all_delivery_notes = db.get("delivery_notes", {"business_id": biz_id}) if biz_id else []
-    delivery_notes = [dn for dn in all_delivery_notes if dn.get("customer_id") == customer_id]
-    delivery_notes = sorted(delivery_notes, key=lambda x: x.get("date", ""), reverse=True)
     
     # Get jobs
     all_jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
     jobs = [j for j in all_jobs if j.get("customer_id") == customer_id]
-    jobs = sorted(jobs, key=lambda x: x.get("created_at", ""), reverse=True)
     
     # Get recurring invoices for this customer
     all_recurring = db.get("recurring_invoices", {"business_id": biz_id}) if biz_id else []
@@ -23598,7 +23527,7 @@ def customer_view(customer_id):
     
     # Build sales HTML
     sales_html = ""
-    for s in sales[:200]:
+    for s in sales[:10]:
         method = s.get("payment_method", "cash")
         method_color = {"cash": "#10b981", "card": "#3b82f6", "account": "#f59e0b"}.get(method, "#888")
         sales_html += f'''
@@ -23611,78 +23540,20 @@ def customer_view(customer_id):
         '''
     
     invoices_html = ""
-    for inv in invoices[:200]:
+    for inv in invoices[:10]:
         status = inv.get("status", "outstanding")
-        status_colors = {"paid": "var(--green)", "credited": "var(--red)", "delivered": "#3b82f6", "account": "#f59e0b", "partial_credit": "#f59e0b"}
-        status_color = status_colors.get(status, "var(--orange)")
+        status_color = "var(--green)" if status == "paid" else "var(--orange)"
         invoices_html += f'''
         <tr style="cursor:pointer;" onclick="window.location='/invoice/{inv.get("id")}'">
             <td>{inv.get("invoice_number", "-")}</td>
             <td>{inv.get("date", "-")}</td>
             <td>{money(inv.get("total", 0)) if can_see_balances else "---"}</td>
-            <td style="color:{status_color};">{status.upper()}</td>
-        </tr>
-        '''
-    
-    # Credit notes rows
-    credit_notes_html = ""
-    for cn in credit_notes[:200]:
-        credit_notes_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/credit-note/{cn.get("id")}'">
-            <td>{cn.get("credit_note_number", "-")}</td>
-            <td>{cn.get("date", "-")}</td>
-            <td>{cn.get("invoice_number", "-")}</td>
-            <td style="color:var(--red);">{money(cn.get("total", 0)) if can_see_balances else "---"}</td>
-            <td>{safe_string(cn.get("reason", "-"))[:40]}</td>
-        </tr>
-        '''
-    
-    # Delivery notes rows
-    delivery_notes_html = ""
-    for dn in delivery_notes[:200]:
-        dn_status = dn.get("status", "pending")
-        dn_color = "var(--green)" if dn_status == "delivered" else "var(--orange)"
-        delivery_notes_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/delivery-note/{dn.get("id")}'">
-            <td>{dn.get("dn_number", dn.get("delivery_note_number", "-"))}</td>
-            <td>{dn.get("date", "-")}</td>
-            <td>{dn.get("invoice_number", "-")}</td>
-            <td style="color:{dn_color};">{dn_status.upper()}</td>
-        </tr>
-        '''
-    
-    # Quotes rows
-    quotes_html = ""
-    for q in quotes[:200]:
-        q_status = q.get("status", "draft")
-        q_colors = {"accepted": "var(--green)", "converted": "#3b82f6", "declined": "var(--red)", "expired": "var(--text-muted)"}
-        q_color = q_colors.get(q_status, "var(--orange)")
-        quotes_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/quote/{q.get("id")}'">
-            <td>{q.get("quote_number", "-")}</td>
-            <td>{q.get("date", "-")}</td>
-            <td>{money(q.get("total", 0)) if can_see_balances else "---"}</td>
-            <td style="color:{q_color};">{q_status.upper()}</td>
-        </tr>
-        '''
-    
-    # Jobs rows
-    jobs_html = ""
-    for j in jobs[:200]:
-        j_status = j.get("status", "open")
-        j_colors = {"completed": "var(--green)", "invoiced": "#3b82f6", "cancelled": "var(--red)"}
-        j_color = j_colors.get(j_status, "var(--orange)")
-        jobs_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/job/{j.get("id")}'">
-            <td>{j.get("job_number", "-")}</td>
-            <td>{j.get("title", j.get("description", "-"))[:40]}</td>
-            <td>{money(j.get("total", 0)) if can_see_balances else "---"}</td>
-            <td style="color:{j_color};">{j_status.upper()}</td>
+            <td style="color:{status_color};">{status}</td>
         </tr>
         '''
     
     receipts_html = ""
-    for r in receipts[:200]:
+    for r in receipts[:10]:
         receipts_html += f'''
         <tr>
             <td>{r.get("receipt_number", "-")}</td>
@@ -23830,12 +23701,8 @@ def customer_view(customer_id):
             <div class="stat-label">POS Sales</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">{len(quotes)}</div>
-            <div class="stat-label">Quotes</div>
-        </div>
-        <div class="stat-card" style="border-color:rgba(239,68,68,0.2);">
-            <div class="stat-value" style="color:var(--red);">{len(credit_notes)}</div>
-            <div class="stat-label">Credit Notes</div>
+            <div class="stat-value">{money(total_sales) if can_see_balances else "---"}</div>
+            <div class="stat-label">Sales Total</div>
         </div>
     </div>
     
@@ -23871,58 +23738,6 @@ def customer_view(customer_id):
             </thead>
             <tbody>
                 {receipts_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No payments recorded</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Credit Notes -->
-    <div class="card">
-        <h3 style="margin-bottom:15px;">📕 Credit Notes ({len(credit_notes)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>CN Number</th><th>Date</th><th>Invoice</th><th>Amount</th><th>Reason</th></tr>
-            </thead>
-            <tbody>
-                {credit_notes_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted)'>No credit notes</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Quotes -->
-    <div class="card">
-        <h3 style="margin-bottom:15px;">📝 Quotes ({len(quotes)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>Quote</th><th>Date</th><th>Total</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {quotes_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No quotes</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Delivery Notes -->
-    <div class="card">
-        <h3 style="margin-bottom:15px;">🚚 Delivery Notes ({len(delivery_notes)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>DN Number</th><th>Date</th><th>Invoice</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {delivery_notes_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No delivery notes</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Jobs -->
-    <div class="card">
-        <h3 style="margin-bottom:15px;">🔧 Jobs ({len(jobs)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>Job</th><th>Title</th><th>Value</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {jobs_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No jobs</td></tr>"}
             </tbody>
         </table>
     </div>
@@ -23967,29 +23782,6 @@ def customer_view(customer_id):
     </div>
     
     <script>
-    // Auto-collapse tables with more than 50 rows
-    document.addEventListener('DOMContentLoaded', function() {{
-        document.querySelectorAll('.card table.table tbody').forEach(function(tbody) {{
-            var rows = tbody.querySelectorAll('tr');
-            if (rows.length > 50) {{
-                for (var i = 50; i < rows.length; i++) {{
-                    rows[i].style.display = 'none';
-                    rows[i].classList.add('extra-row');
-                }}
-                var table = tbody.closest('table');
-                var btn = document.createElement('div');
-                btn.style.cssText = 'text-align:center;padding:10px;cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;border-top:1px solid var(--border);margin-top:-1px;';
-                btn.innerHTML = '▼ Show all ' + rows.length + ' records';
-                btn.onclick = function() {{
-                    var extra = tbody.querySelectorAll('.extra-row');
-                    var hidden = extra[0].style.display === 'none';
-                    extra.forEach(function(r) {{ r.style.display = hidden ? '' : 'none'; }});
-                    btn.innerHTML = hidden ? '▲ Show first 50' : '▼ Show all ' + rows.length + ' records';
-                }};
-                table.parentNode.insertBefore(btn, table.nextSibling);
-            }}
-        }});
-    }});
     function showEmailModal() {{
         document.getElementById('emailGroupModal').style.display = 'flex';
     }}
@@ -25646,254 +25438,222 @@ def stock_new():
 
 
 # ═══════════════════════════════════════════════════════════════
-# FULLTECH TOOLS - Bolt Pricer (Type-aware, weight-based)
+# FULLTECH TOOLS - Bolt Weight Calculator & Price Recalculator
 # ═══════════════════════════════════════════════════════════════
 
 @app.route("/fulltech")
 @login_required
 def fulltech_tools():
-    """Fulltech addon tools - type-aware bolt pricing with BoltPricer"""
+    """Fulltech addon tools - bolt pricing, weight calculations"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     
     content = f'''
     <div class="card" style="margin-bottom:20px;">
-        <h2 style="margin:0 0 10px 0;">🔩 Fulltech Bolt Pricer</h2>
-        <p style="color:#888;">v4 — Verified supplier rates (94% binne 20% akkuraatheid). Sets R24/kg, Caps R63/kg, Bolts R30/kg, Studs per-stuk.</p>
+        <h2 style="margin:0 0 10px 0;">🔩 Fulltech Tools</h2>
+        <p style="color:#888;">Weight-based pricing for bolts, nuts, and washers</p>
     </div>
     
-    <!-- SINGLE ITEM CHECK -->
-    <div class="card" style="margin-bottom:20px;">
-        <h3>⚖️ Quick Price Check</h3>
-        <p style="color:#888;margin-bottom:15px;">Type any description — pricer identifies type, material, size and calculates cost</p>
-        <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">
-            <div style="flex:1;min-width:250px;">
-                <label style="display:block;margin-bottom:5px;color:#888;">Description</label>
-                <input type="text" id="checkDesc" class="form-control" placeholder="e.g. CAP SCREW M12X50 S/S" 
-                    style="width:100%;padding:12px;font-size:15px;" 
-                    onkeydown="if(event.key==='Enter')quickCheck()">
-            </div>
-            <button onclick="quickCheck()" class="btn btn-primary" style="padding:12px 24px;">Check Price</button>
-        </div>
-        <div id="quickResult" style="display:none;margin-top:15px;padding:15px;background:rgba(16,185,129,0.08);border-radius:8px;border:1px solid rgba(16,185,129,0.2);font-family:monospace;white-space:pre-line;font-size:14px;"></div>
-    </div>
-    
-    <!-- BULK REPRICING -->
     <div class="card">
-        <h3>🔄 Bulk Reprice All Stock</h3>
-        <p style="color:#888;margin-bottom:20px;">Preview calculated costs for all fasteners, set markup %, then apply</p>
+        <h3>⚖️ Bolt Price Calculator</h3>
+        <p style="color:#888;margin-bottom:20px;">Calculate individual bolt/nut/washer prices based on weight</p>
         
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:15px;margin-bottom:20px;">
-            <div style="background:rgba(168,85,247,0.08);padding:15px;border-radius:8px;border:1px solid rgba(168,85,247,0.2);">
-                <label style="display:block;margin-bottom:5px;color:#a855f7;font-weight:bold;">Update Mode</label>
-                <select id="updateMode" class="form-control" style="width:100%;padding:10px;">
-                    <option value="no_cost_only">A) No Cost Items Only</option>
-                    <option value="all_items" selected>B) All Items (full reprice)</option>
-                </select>
-                <small style="color:#888;">A = safe, B = update all to supplier rates</small>
-            </div>
-            <div style="background:rgba(59,130,246,0.08);padding:15px;border-radius:8px;border:1px solid rgba(59,130,246,0.2);">
-                <label style="display:block;margin-bottom:5px;color:#3b82f6;font-weight:bold;">Markup %</label>
-                <input type="number" id="markupPct" class="form-control" value="30" step="5" min="0" max="200" style="width:100%;padding:10px;font-size:18px;font-weight:bold;text-align:center;">
-                <small style="color:#888;">30% = cost × 1.30</small>
-            </div>
-            <div style="background:rgba(16,185,129,0.08);padding:15px;border-radius:8px;border:1px solid rgba(16,185,129,0.2);">
-                <label style="display:block;margin-bottom:5px;color:#10b981;font-weight:bold;">Update What?</label>
-                <select id="updateTarget" class="form-control" style="width:100%;padding:10px;">
-                    <option value="cost_only">Cost Price Only</option>
-                    <option value="cost_and_sell" selected>Cost + Selling Price</option>
-                    <option value="sell_only">Selling Price Only</option>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin-bottom:20px;">
+            <div>
+                <label style="display:block;margin-bottom:5px;color:#888;">Type</label>
+                <select id="calcType" class="form-control" style="width:100%;padding:10px;">
+                    <option value="bolt">Bolt</option>
+                    <option value="nut">Nut</option>
+                    <option value="washer">Washer</option>
                 </select>
             </div>
-            <div style="background:rgba(251,191,36,0.08);padding:15px;border-radius:8px;border:1px solid rgba(251,191,36,0.2);">
-                <label style="display:block;margin-bottom:5px;color:#fbbf24;font-weight:bold;">Max Change %</label>
-                <input type="number" id="maxChangePct" class="form-control" value="50" step="10" min="10" max="500" style="width:100%;padding:10px;font-size:18px;font-weight:bold;text-align:center;">
-                <small style="color:#888;">Skip items with bigger changes</small>
+            <div>
+                <label style="display:block;margin-bottom:5px;color:#888;">M Size</label>
+                <select id="calcSize" class="form-control" style="width:100%;padding:10px;">
+                    <option value="3">M3</option>
+                    <option value="4">M4</option>
+                    <option value="5">M5</option>
+                    <option value="6" selected>M6</option>
+                    <option value="8">M8</option>
+                    <option value="10">M10</option>
+                    <option value="12">M12</option>
+                    <option value="14">M14</option>
+                    <option value="16">M16</option>
+                    <option value="18">M18</option>
+                    <option value="20">M20</option>
+                    <option value="22">M22</option>
+                    <option value="24">M24</option>
+                    <option value="27">M27</option>
+                    <option value="30">M30</option>
+                </select>
+            </div>
+            <div id="lengthDiv">
+                <label style="display:block;margin-bottom:5px;color:#888;">Length (mm)</label>
+                <input type="number" id="calcLength" class="form-control" value="50" min="5" max="200" style="width:100%;padding:10px;">
+            </div>
+            <div>
+                <label style="display:block;margin-bottom:5px;color:#888;">R/kg</label>
+                <input type="number" id="calcRkg" class="form-control" value="250" step="10" style="width:100%;padding:10px;">
             </div>
         </div>
         
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;">
-            <button onclick="loadPreview()" class="btn btn-primary" id="btnPreview">📊 Preview All Stock</button>
-            <button onclick="applyAll()" class="btn" style="background:#22c55e;" id="btnApply" disabled>✅ Apply Changes</button>
-            <span id="itemCount" style="color:#888;padding:10px;font-size:13px;"></span>
-        </div>
+        <button onclick="calcBoltPrice()" class="btn btn-primary" style="margin-bottom:20px;">Calculate</button>
         
-        <div id="statusMsg" style="display:none;padding:12px;border-radius:8px;margin-bottom:15px;"></div>
-        
-        <!-- STATS -->
-        <div id="statsRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:15px;"></div>
-        
-        <!-- FILTER -->
-        <div id="filterRow" style="display:none;margin-bottom:10px;">
-            <input type="text" id="searchBox" class="form-control" placeholder="Soek... (desc, code, type)" oninput="filterTable()" style="padding:10px;width:100%;max-width:400px;margin-bottom:8px;">
-            <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                <button class="btn btn-sm flt active" data-f="all" onclick="setFlt(this)">All</button>
-                <button class="btn btn-sm flt" data-f="needs" onclick="setFlt(this)">⭐ No Cost</button>
-                <button class="btn btn-sm flt" data-f="bigup" onclick="setFlt(this)">🔴 Big Up</button>
-                <button class="btn btn-sm flt" data-f="bigdown" onclick="setFlt(this)">🔵 Big Down</button>
-            </div>
-        </div>
-        
-        <!-- TABLE -->
-        <div id="tableWrap" style="display:none;max-height:65vh;overflow-y:auto;border-radius:8px;border:1px solid #333;">
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                <thead>
-                    <tr style="background:#1e293b;position:sticky;top:0;">
-                        <th style="padding:8px;text-align:left;cursor:pointer;" onclick="doSort('description')">Description</th>
-                        <th style="padding:8px;text-align:left;cursor:pointer;" onclick="doSort('type_label')">Type</th>
-                        <th style="padding:8px;cursor:pointer;" onclick="doSort('material')">Mat</th>
-                        <th style="padding:8px;text-align:right;cursor:pointer;" onclick="doSort('weight_g')">Weight</th>
-                        <th style="padding:8px;text-align:right;cursor:pointer;" onclick="doSort('rkg')">R/kg</th>
-                        <th style="padding:8px;text-align:right;cursor:pointer;" onclick="doSort('old_cost')">Old Cost</th>
-                        <th style="padding:8px;text-align:right;cursor:pointer;color:#10b981;" onclick="doSort('new_cost')">New Cost</th>
-                        <th style="padding:8px;text-align:right;cursor:pointer;color:#fbbf24;" onclick="doSort('sell_price')">Sell Price</th>
-                        <th style="padding:8px;text-align:right;cursor:pointer;" onclick="doSort('pct_change')">%</th>
-                    </tr>
-                </thead>
-                <tbody id="tBody"></tbody>
-            </table>
+        <div id="calcResult" style="display:none;padding:20px;background:rgba(16,185,129,0.1);border-radius:8px;border:1px solid rgba(16,185,129,0.3);">
         </div>
     </div>
     
-    <style>
-        .flt {{ padding:4px 12px;border-radius:6px;border:1px solid #475569;background:transparent;color:#94a3b8;font-size:12px;cursor:pointer; }}
-        .flt.active {{ background:#3b82f6;color:white;border-color:#3b82f6; }}
-        .stat-box {{ padding:12px;border-radius:8px;background:#1e293b;text-align:center; }}
-        .stat-box .num {{ font-size:22px;font-weight:700; }}
-        .stat-box .lbl {{ font-size:11px;color:#94a3b8;text-transform:uppercase; }}
-    </style>
+    <div class="card" style="margin-top:20px;">
+        <h3>🔄 Bulk Recalculate Stock Prices</h3>
+        <p style="color:#888;margin-bottom:20px;">Recalculate ALL bolt/nut/washer prices in your stock based on weight. Smaller sizes = higher R/kg (more work per kg).</p>
+        
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:15px;margin-bottom:20px;">
+            <div style="background:rgba(239,68,68,0.1);padding:15px;border-radius:8px;border:1px solid rgba(239,68,68,0.3);">
+                <label style="display:block;margin-bottom:5px;color:#ef4444;font-weight:bold;">M3 - M6</label>
+                <input type="number" id="rkgSmall" class="form-control" value="350" step="10" style="width:100%;padding:10px;">
+                <small style="color:#888;">Small fasteners</small>
+            </div>
+            <div style="background:rgba(251,191,36,0.1);padding:15px;border-radius:8px;border:1px solid rgba(251,191,36,0.3);">
+                <label style="display:block;margin-bottom:5px;color:#fbbf24;font-weight:bold;">M8 - M12</label>
+                <input type="number" id="rkgMedium" class="form-control" value="280" step="10" style="width:100%;padding:10px;">
+                <small style="color:#888;">Medium fasteners</small>
+            </div>
+            <div style="background:rgba(16,185,129,0.1);padding:15px;border-radius:8px;border:1px solid rgba(16,185,129,0.3);">
+                <label style="display:block;margin-bottom:5px;color:#10b981;font-weight:bold;">M14 - M20</label>
+                <input type="number" id="rkgLarge" class="form-control" value="220" step="10" style="width:100%;padding:10px;">
+                <small style="color:#888;">Large fasteners</small>
+            </div>
+            <div style="background:rgba(59,130,246,0.1);padding:15px;border-radius:8px;border:1px solid rgba(59,130,246,0.3);">
+                <label style="display:block;margin-bottom:5px;color:#3b82f6;font-weight:bold;">M22+</label>
+                <input type="number" id="rkgXL" class="form-control" value="180" step="10" style="width:100%;padding:10px;">
+                <small style="color:#888;">Extra large</small>
+            </div>
+            <div>
+                <label style="display:block;margin-bottom:5px;color:#888;">Markup %</label>
+                <input type="number" id="bulkMarkup" class="form-control" value="30" step="5" style="width:100%;padding:10px;">
+                <small style="color:#666;">30% = cost × 1.30</small>
+            </div>
+        </div>
+        
+        <button onclick="previewRecalc()" class="btn btn-primary" style="margin-right:10px;">Preview Changes</button>
+        <button onclick="applyRecalc()" class="btn" style="background:#ef4444;" id="applyBtn" disabled>Apply Changes</button>
+        
+        <div id="recalcResult" style="margin-top:20px;"></div>
+    </div>
     
     <script>
-    let allData=[], curFilter='all', sortCol='pct_change', sortDir=-1;
+    document.getElementById('calcType').addEventListener('change', function() {{
+        document.getElementById('lengthDiv').style.display = this.value === 'bolt' ? 'block' : 'none';
+    }});
     
-    function showStatus(msg, ok) {{
-        const el=document.getElementById('statusMsg');
-        el.textContent=msg;
-        el.style.display='block';
-        el.style.background=ok?'rgba(16,185,129,0.15)':'rgba(59,130,246,0.15)';
-        el.style.borderLeft=ok?'4px solid #10b981':'4px solid #3b82f6';
-    }}
-    
-    async function quickCheck() {{
-        const desc=document.getElementById('checkDesc').value.trim();
-        if(!desc) return;
-        const res=await fetch('/api/fulltech/bolt-check',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{description:desc}})}});
-        const d=await res.json();
-        const el=document.getElementById('quickResult');
-        if(d.success) {{
-            const markup=parseFloat(document.getElementById('markupPct').value)||30;
-            const sell=d.cost*(1+markup/100);
-            el.textContent=d.type_label+'  |  '+d.mat_label+'\\nSize: M'+d.m_size+(d.length?'x'+d.length:'')+'  |  Weight: '+d.weight_g+'g\\nR/kg: R'+d.rkg+'  |  Cost: R'+d.cost.toFixed(2)+'\\nMarkup '+markup+'%  →  Sell: R'+sell.toFixed(2);
+    async function calcBoltPrice() {{
+        const type = document.getElementById('calcType').value;
+        const size = document.getElementById('calcSize').value;
+        const length = document.getElementById('calcLength').value;
+        const rkg = document.getElementById('calcRkg').value;
+        
+        const res = await fetch('/api/fulltech/calc-bolt?' + new URLSearchParams({{
+            type, m_size: size, length, rkg
+        }}));
+        const data = await res.json();
+        
+        const div = document.getElementById('calcResult');
+        if (data.success) {{
+            div.innerHTML = `
+                <div style="font-size:24px;font-weight:bold;color:#10b981;margin-bottom:10px;">
+                    R${{data.price.toFixed(2)}}
+                </div>
+                <div style="color:#888;">
+                    ${{type === 'bolt' ? 'M' + size + 'x' + length : type.toUpperCase() + ' M' + size}}<br>
+                    Weight: ${{data.weight_g}}g<br>
+                    @ R${{rkg}}/kg
+                </div>
+            `;
         }} else {{
-            el.textContent='❌ '+d.error;
+            div.innerHTML = `<div style="color:#ef4444;">${{data.error}}</div>`;
         }}
-        el.style.display='block';
+        div.style.display = 'block';
     }}
     
-    async function loadPreview() {{
-        const btn=document.getElementById('btnPreview');
-        btn.disabled=true; btn.textContent='⏳ Loading...';
-        showStatus('Pulling stock and calculating prices...', false);
+    let pendingUpdates = [];
+    
+    async function previewRecalc() {{
+        const rkgSmall = document.getElementById('rkgSmall').value;
+        const rkgMedium = document.getElementById('rkgMedium').value;
+        const rkgLarge = document.getElementById('rkgLarge').value;
+        const rkgXL = document.getElementById('rkgXL').value;
+        const markup = 1 + (parseFloat(document.getElementById('bulkMarkup').value) / 100);
+        
+        document.getElementById('recalcResult').innerHTML = '<div style="text-align:center;padding:20px;">⏳ Analysing stock...</div>';
         
         try {{
-            const res=await fetch('/api/fulltech/bolt-preview');
-            const d=await res.json();
-            if(!d.success) {{ showStatus('Error: '+(d.error||'Unknown'),false); btn.disabled=false; btn.textContent='📊 Preview'; return; }}
+        const res = await fetch('/api/fulltech/preview-recalc?' + new URLSearchParams({{ 
+            rkg_small: rkgSmall, rkg_medium: rkgMedium, rkg_large: rkgLarge, rkg_xl: rkgXL, markup 
+        }}));
+        if (!res.ok) throw new Error('Server error: ' + res.status);
+        const data = await res.json();
+        
+        pendingUpdates = data.updated || [];
+        
+        let html = '<div style="margin-bottom:15px;padding:15px;background:rgba(59,130,246,0.1);border-radius:8px;">';
+        html += `<strong>${{data.updated?.length || 0}}</strong> items will be updated<br>`;
+        html += `<strong>${{data.skipped?.length || 0}}</strong> items skipped (no M-size pattern)<br>`;
+        html += `<strong>${{data.errors?.length || 0}}</strong> errors`;
+        html += '</div>';
+        
+        if (data.updated?.length > 0) {{
+            html += '<table style="width:100%;border-collapse:collapse;font-size:14px;">';
+            html += '<tr style="background:#333;"><th style="padding:10px;text-align:left;">Code</th><th>Type</th><th>Weight</th><th>R/kg</th><th style="text-align:right;">Old Price</th><th style="text-align:right;">New Price</th><th style="text-align:right;">Change</th></tr>';
             
-            allData=d.matched||[];
-            const s=d.stats;
+            data.updated.slice(0, 50).forEach(item => {{
+                const changeColor = item.change > 0 ? '#10b981' : item.change < 0 ? '#ef4444' : '#888';
+                html += `<tr style="border-bottom:1px solid #333;">
+                    <td style="padding:8px;">${{item.code}}</td>
+                    <td style="text-align:center;">${{item.item_type}} M${{item.m_size}}${{item.length ? 'x' + item.length : ''}}</td>
+                    <td style="text-align:center;">${{item.weight_g}}g</td>
+                    <td style="text-align:center;color:#888;">R${{item.rkg}}</td>
+                    <td style="text-align:right;">R${{item.old_price.toFixed(2)}}</td>
+                    <td style="text-align:right;font-weight:bold;">R${{item.new_price.toFixed(2)}}</td>
+                    <td style="text-align:right;color:${{changeColor}};">${{item.change > 0 ? '+' : ''}}R${{item.change.toFixed(2)}}</td>
+                </tr>`;
+            }});
             
-            document.getElementById('statsRow').style.display='grid';
-            document.getElementById('statsRow').innerHTML=`
-                <div class="stat-box"><div class="num">${{s.total_stock}}</div><div class="lbl">Total Stock</div></div>
-                <div class="stat-box"><div class="num" style="color:#a78bfa">${{s.fasteners_matched}}</div><div class="lbl">Fasteners</div></div>
-                <div class="stat-box"><div class="num" style="color:#fbbf24">${{s.changes_needed}}</div><div class="lbl">Changes</div></div>
-                <div class="stat-box"><div class="num" style="color:#38bdf8">${{s.needs_cost_price}}</div><div class="lbl">No Cost Yet</div></div>
-                <div class="stat-box"><div class="num" style="color:#10b981">${{s.calibrated_from}}</div><div class="lbl">Verified Items</div></div>
-                <div class="stat-box"><div class="num">${{s.rate_groups}}</div><div class="lbl">Rate Groups</div></div>
-            `;
+            if (data.updated.length > 50) {{
+                html += `<tr><td colspan="7" style="padding:10px;text-align:center;color:#888;">... and ${{data.updated.length - 50}} more items</td></tr>`;
+            }}
+            html += '</table>';
             
-            document.getElementById('btnApply').disabled=false;
-            document.getElementById('filterRow').style.display='block';
-            document.getElementById('tableWrap').style.display='block';
-            renderTable();
-            showStatus('✅ '+allData.length+' items ready. Adjust markup % and click Apply.', true);
-        }} catch(e) {{ showStatus('Error: '+e.message, false); }}
-        btn.disabled=false; btn.textContent='📊 Refresh';
+            document.getElementById('applyBtn').disabled = false;
+        }}
+        
+        document.getElementById('recalcResult').innerHTML = html;
+        }} catch(err) {{
+            document.getElementById('recalcResult').innerHTML = '<div style="text-align:center;padding:20px;color:#ef4444;">❌ Error: ' + err.message + '<br><br><button onclick="previewRecalc()" class="btn btn-primary">Try Again</button></div>';
+        }}
     }}
     
-    function getMarkup() {{ return parseFloat(document.getElementById('markupPct').value)||30; }}
-    
-    function renderTable() {{
-        const markup=getMarkup();
-        let items=[...allData];
-        const q=document.getElementById('searchBox').value.toLowerCase();
-        if(q) items=items.filter(i=>(i.description||'').toLowerCase().includes(q)||(i.code||'').toLowerCase().includes(q)||(i.type_label||'').toLowerCase().includes(q));
-        if(curFilter==='needs') items=items.filter(i=>!i.has_cost);
-        else if(curFilter==='bigup') items=items.filter(i=>i.pct_change>30);
-        else if(curFilter==='bigdown') items=items.filter(i=>i.pct_change<-30);
-        items.sort((a,b)=>{{ let va=a[sortCol],vb=b[sortCol]; if(typeof va==='string') return va.localeCompare(vb)*sortDir; return((va||0)-(vb||0))*sortDir; }});
-        document.getElementById('itemCount').textContent=items.length+' items';
+    async function applyRecalc() {{
+        if (!confirm('This will update ' + pendingUpdates.length + ' stock prices. Continue?')) return;
         
-        document.getElementById('tBody').innerHTML=items.map(i=>{{
-            const sell=i.new_cost*(1+markup/100);
-            const dc=!i.has_cost?'color:#38bdf8':i.pct_change>25?'color:#ef4444':i.pct_change<-25?'color:#22c55e':'color:#888';
-            const pctStr=i.has_cost?(i.pct_change>=0?'+':'')+i.pct_change.toFixed(0)+'%':'NEW';
-            return `<tr style="border-bottom:1px solid #1e293b;">
-                <td style="padding:6px 8px;"><strong>${{i.description}}</strong></td>
-                <td style="padding:6px;font-size:11px;">${{i.type_label}}</td>
-                <td style="padding:6px;text-align:center;"><span style="padding:1px 6px;border-radius:3px;font-size:11px;background:#334155;">${{i.material}}</span></td>
-                <td style="padding:6px;text-align:right;">${{i.weight_g}}g</td>
-                <td style="padding:6px;text-align:right;color:#888;">R${{i.rkg}}</td>
-                <td style="padding:6px;text-align:right;">${{i.old_cost>0?'R'+i.old_cost.toFixed(2):'—'}}</td>
-                <td style="padding:6px;text-align:right;font-weight:700;color:#10b981;">R${{i.new_cost.toFixed(2)}}</td>
-                <td style="padding:6px;text-align:right;font-weight:700;color:#fbbf24;">R${{sell.toFixed(2)}}</td>
-                <td style="padding:6px;text-align:right;${{dc}};">${{pctStr}}</td>
-            </tr>`;
-        }}).join('');
-    }}
-    
-    document.getElementById('markupPct').addEventListener('input', ()=>{{ if(allData.length) renderTable(); }});
-    function filterTable() {{ renderTable(); }}
-    function setFlt(btn) {{ document.querySelectorAll('.flt').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); curFilter=btn.dataset.f; renderTable(); }}
-    function doSort(col) {{ if(sortCol===col) sortDir*=-1; else {{ sortCol=col; sortDir=1; }} renderTable(); }}
-    
-    async function applyAll() {{
-        const markup=getMarkup();
-        const target=document.getElementById('updateTarget').value;
-        const maxPct=parseFloat(document.getElementById('maxChangePct').value)||50;
-        const mode=document.getElementById('updateMode').value;
+        document.getElementById('applyBtn').disabled = true;
+        document.getElementById('applyBtn').textContent = 'Applying...';
         
-        let toApply;
-        if(mode==='no_cost_only') {{
-            toApply=allData.filter(i=> !i.has_cost);
+        const res = await fetch('/api/fulltech/apply-recalc', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{ updates: pendingUpdates }})
+        }});
+        const data = await res.json();
+        
+        if (data.success) {{
+            alert('✅ Updated ' + data.count + ' stock prices!');
+            location.reload();
         }} else {{
-            toApply=allData.filter(i=> !i.has_cost || Math.abs(i.pct_change)<=maxPct);
+            alert('Error: ' + data.error);
+            document.getElementById('applyBtn').disabled = false;
+            document.getElementById('applyBtn').textContent = 'Apply Changes';
         }}
-        const skipping=allData.length-toApply.length;
-        const modeLabel=mode==='no_cost_only'?'NO COST ONLY':'ALL (max '+maxPct+'% change)';
-        if(!confirm('Mode: '+modeLabel+'\\nApply '+toApply.length+' items (skip '+skipping+')\\nMarkup: '+markup+'%\\nTarget: '+target)) return;
-        
-        const btn=document.getElementById('btnApply');
-        btn.disabled=true; btn.textContent='Applying...';
-        showStatus('Writing to database...', false);
-        
-        const batchSize=50;
-        let ok=0, fail=0;
-        for(let i=0;i<toApply.length;i+=batchSize) {{
-            const batch=toApply.slice(i,i+batchSize).map(it=>({{
-                id:it.id, new_cost:it.new_cost, sell_price:Math.round(it.new_cost*(1+markup/100)*100)/100
-            }}));
-            try {{
-                const res=await fetch('/api/fulltech/bolt-apply',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{items:batch,target:target}})}});
-                const d=await res.json();
-                ok+=(d.updated||0); fail+=(d.failed||0);
-            }} catch(e) {{ fail+=batch.length; }}
-        }}
-        
-        showStatus('✅ Done! '+ok+' updated'+(fail?' ('+fail+' failed)':''), fail===0);
-        btn.disabled=false; btn.textContent='✅ Apply Changes';
     }}
     </script>
     '''
@@ -25901,166 +25661,62 @@ def fulltech_tools():
     return render_page("Fulltech Tools", content, user, "stock")
 
 
-@app.route("/api/fulltech/bolt-check", methods=["POST"])
-@login_required
-def api_fulltech_bolt_check():
-    """Single item price check using BoltPricer v4 verified rates"""
-    data = request.get_json() or {}
-    desc = data.get("description", "")
-    if not BoltPricer:
-        return jsonify({"success": False, "error": "BoltPricer not loaded"})
-    return jsonify(BoltPricer.price(desc))
-
-
-@app.route("/api/fulltech/bolt-preview")
-@login_required
-def api_fulltech_bolt_preview():
-    """Preview bolt repricing using v4 verified supplier rates"""
-    import time as _time
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    if not biz_id:
-        return jsonify({"success": False, "error": "No business"})
-    if not BoltPricer:
-        return jsonify({"success": False, "error": "BoltPricer not loaded"})
-    
-    t0 = _time.time()
-    all_stock = db.get_all_stock(biz_id)
-    
-    matched = []
-    skipped = []
-    no_change = []
-    needs_cost = 0
-    
-    for item in all_stock:
-        desc = item.get("description") or item.get("name") or ""
-        r = BoltPricer.price(desc)
-        if not r.get("success"):
-            skipped.append({"id": item.get("id"), "description": desc, "reason": r.get("error", "")})
-            continue
-        
-        old_cost = float(item.get("cost_price") or item.get("cost") or 0)
-        new_cost = r["cost"]
-        has_cost = old_cost > 0
-        
-        if not has_cost:
-            needs_cost += 1
-        
-        # Check if change is meaningful (>2%)
-        if has_cost and abs(new_cost - old_cost) / old_cost < 0.02:
-            no_change.append({"id": item.get("id"), "description": desc})
-            continue
-        
-        pct = ((new_cost - old_cost) / old_cost * 100) if has_cost and old_cost > 0 else 0
-        
-        matched.append({
-            "id": item.get("id"),
-            "code": item.get("code") or item.get("sku") or "",
-            "description": desc,
-            "item_type": r.get("item_type", ""),
-            "type_label": r.get("type_label", ""),
-            "material": r.get("material", ""),
-            "weight_g": r.get("weight_g", 0),
-            "rkg": r.get("rkg", 0),
-            "old_cost": round(old_cost, 2),
-            "new_cost": round(new_cost, 2),
-            "has_cost": has_cost,
-            "pct_change": round(pct, 1),
-            "pricing_method": r.get("pricing_method", "weight_x_rkg"),
-            "source": "verified",
-        })
-    
-    matched.sort(key=lambda x: abs(x["pct_change"]), reverse=True)
-    elapsed = round(_time.time() - t0, 2)
-    
-    return jsonify({
-        "success": True,
-        "stats": {
-            "total_stock": len(all_stock),
-            "fasteners_matched": len(matched) + len(no_change),
-            "changes_needed": len(matched),
-            "no_change": len(no_change),
-            "not_fasteners": len(skipped),
-            "needs_cost_price": needs_cost,
-            "calibrated_from": 62,
-            "rate_groups": len(BoltPricer.VERIFIED_RKG),
-            "elapsed_seconds": elapsed,
-        },
-        "matched": matched,
-        "skipped": skipped[:50],
-    })
-
-
-@app.route("/api/fulltech/bolt-apply", methods=["POST"])
-@login_required
-def api_fulltech_bolt_apply():
-    """Apply cost + selling price changes"""
-    role = get_user_role()
-    if role not in ("owner", "admin"):
-        return jsonify({"success": False, "error": "Owner/Admin only"})
-    
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    if not biz_id:
-        return jsonify({"success": False, "error": "No business"})
-    
-    data = request.get_json() or {}
-    items = data.get("items", [])
-    target = data.get("target", "cost_and_sell")
-    
-    ok_count = 0
-    fail_count = 0
-    
-    for item in items:
-        item_id = item.get("id")
-        new_cost = item.get("new_cost")
-        sell_price = item.get("sell_price")
-        if not item_id:
-            fail_count += 1
-            continue
-        
-        updates = {}
-        if target in ("cost_only", "cost_and_sell") and new_cost is not None:
-            updates["cost_price"] = round(float(new_cost), 2)
-        if target in ("sell_only", "cost_and_sell") and sell_price is not None:
-            updates["selling_price"] = round(float(sell_price), 2)
-        
-        if not updates:
-            fail_count += 1
-            continue
-        
-        try:
-            success = db.update("stock_items", item_id, updates, business_id=biz_id)
-            if not success:
-                # Try legacy table
-                legacy = {}
-                if "cost_price" in updates:
-                    legacy["cost"] = updates["cost_price"]
-                if "selling_price" in updates:
-                    legacy["price"] = updates["selling_price"]
-                success = db.update("stock", item_id, legacy, business_id=biz_id)
-            if success:
-                ok_count += 1
-            else:
-                fail_count += 1
-        except Exception as e:
-            logger.error(f"[FULLTECH] Bolt apply fail {item_id}: {e}")
-            fail_count += 1
-    
-    return jsonify({"success": True, "updated": ok_count, "failed": fail_count})
-
-
-# Keep old endpoints as aliases for backward compatibility
 @app.route("/api/fulltech/calc-bolt")
 @login_required
 def api_fulltech_calc_bolt():
-    """Legacy endpoint — redirects to BoltPricer"""
+    """Calculate single bolt/nut/washer price"""
     item_type = request.args.get("type", "bolt")
     m_size = int(request.args.get("m_size", 6))
     length = int(request.args.get("length", 50)) if item_type == "bolt" else None
     rkg = float(request.args.get("rkg", 250))
+    
     result = fulltech_addon.calc_bolt_price(m_size, length, rkg, item_type)
     return jsonify(result)
+
+
+@app.route("/api/fulltech/preview-recalc")
+@login_required
+def api_fulltech_preview_recalc():
+    """Preview bulk price recalculation with tiered R/kg"""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    # Tiered R/kg: smaller fasteners cost more per kg
+    rkg_tiers = {
+        "small": float(request.args.get("rkg_small", 350)),   # M3-M6
+        "medium": float(request.args.get("rkg_medium", 280)), # M8-M12
+        "large": float(request.args.get("rkg_large", 220)),   # M14-M20
+        "xl": float(request.args.get("rkg_xl", 180)),         # M22+
+    }
+    markup = float(request.args.get("markup", 1.3))
+    
+    # Get all stock
+    stock = db.get_all_stock(biz_id) or []
+    
+    result = fulltech_addon.bulk_recalc_bolt_prices(stock, rkg_tiers, markup)
+    return jsonify(result)
+
+
+@app.route("/api/fulltech/apply-recalc", methods=["POST"])
+@login_required
+def api_fulltech_apply_recalc():
+    """Apply bulk price recalculation"""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    data = request.get_json()
+    updates = data.get("updates", [])
+    
+    count = 0
+    for item in updates:
+        stock_id = item.get("id")
+        new_price = item.get("new_price")
+        if stock_id and new_price is not None:
+            db.update_stock(stock_id, {"selling_price": new_price}, biz_id)
+            count += 1
+    
+    return jsonify({"success": True, "count": count})
+
 
 # ═══════════════════════════════════════════════════════════════
 # STOCK SEARCH API - Server-side search and pagination for 7000+ items
@@ -27223,16 +26879,6 @@ def invoice_view(invoice_id):
     # Show credit note button - only hide if already fully credited
     cn_btn = "" if status == "credited" else f'<a href="/invoice/{invoice_id}/credit-note" class="btn btn-secondary">Credit Note</a>'
     
-    # ── FRAUD GUARD: Hide credit note button if user not allowed ──
-    try:
-        if FraudGuard and cn_btn:
-            _role = get_user_role()
-            _guard = FraudGuard.can_cancel_invoice(invoice, _role)
-            if not _guard.get("allowed"):
-                cn_btn = f'<span style="color:var(--text-muted);font-size:12px;padding:8px;" title="{_guard.get("reason", "")}">🔒 Credit Note (manager only)</span>'
-    except Exception:
-        pass
-    
     # Delivery note button - hide if already delivered or paid
     dn_btn = "" if status in ("delivered", "paid", "credited") else f'<a href="/invoice/{invoice_id}/create-delivery-note" class="btn btn-secondary">Delivery Note</a>'
     
@@ -27271,11 +26917,7 @@ def invoice_view(invoice_id):
     # Email button - show customer email if available
     email_btn = f'<button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">Email</button>'
     
-    # Show error if redirected back from fraud guard
-    _inv_error = request.args.get("error", "")
-    _inv_error_html = f'<div style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:var(--text);padding:12px 16px;border-radius:8px;margin-bottom:15px;"><strong>⚠</strong> {safe_string(_inv_error)}</div>' if _inv_error else ""
-    
-    content = f'''{_inv_error_html}
+    content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
             <a href="/invoices" style="color:var(--text-muted);">← Back to Invoices</a>
@@ -30118,14 +29760,6 @@ def supplier_view(supplier_id):
     payments = [p for p in all_payments if p.get("supplier_id") == supplier_id]
     payments = sorted(payments, key=lambda x: x.get("date", ""), reverse=True)
     
-    # Get purchase orders for this supplier
-    try:
-        all_pos = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        purchase_orders = [po for po in all_pos if po.get("supplier_id") == supplier_id]
-        purchase_orders = sorted(purchase_orders, key=lambda x: x.get("date", ""), reverse=True)
-    except Exception:
-        purchase_orders = []
-    
     # Get scanned documents for this supplier
     all_scanned_docs = db.get("scanned_documents", {"business_id": biz_id}) if biz_id else []
     scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
@@ -30174,37 +29808,37 @@ def supplier_view(supplier_id):
     
     expenses_html = ""
     if can_see_balances:
-        for e in expenses[:200]:
+        for e in expenses[:10]:
             status = e.get("status", "outstanding")
             status_color = "var(--green)" if status == "paid" else "var(--orange)"
             expenses_html += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/expense/{e.get("id")}'">
+            <tr>
                 <td>{e.get("invoice_number", e.get("reference", "-"))}</td>
                 <td>{e.get("date", "-")}</td>
                 <td>{safe_string(e.get("description", "-"))[:40]}</td>
                 <td>{money(e.get("total", e.get("amount", 0)))}</td>
-                <td style="color:{status_color};">{status.upper()}</td>
+                <td style="color:{status_color};">{status}</td>
             </tr>
             '''
     
     supplier_inv_html = ""
     if can_see_balances:
-        for si in supplier_invoices[:200]:
+        for si in supplier_invoices[:50]:
             si_status = si.get("status", "outstanding")
             si_color = "var(--green)" if si_status == "paid" else "var(--orange)"
             supplier_inv_html += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/supplier-invoice/{si.get("id")}'">
+            <tr>
                 <td>{safe_string(si.get("invoice_number", "-"))}</td>
                 <td>{si.get("date", "-")}</td>
                 <td>{si.get("due_date", "-")}</td>
                 <td>{money(si.get("total", 0))}</td>
-                <td style="color:{si_color};">{si_status.upper()}</td>
+                <td style="color:{si_color};">{si_status}</td>
             </tr>
             '''
     
     payments_html = ""
     if can_see_balances:
-        for p in payments[:200]:
+        for p in payments[:10]:
             payments_html += f'''
             <tr>
                 <td>{p.get("reference", "-")}</td>
@@ -30409,19 +30043,6 @@ def supplier_view(supplier_id):
     ''' if can_see_balances else '') + '''
     </div>
     
-    <!-- Purchase Orders Section -->
-    <div class="card" style="margin-top:20px;">
-        <h3 style="margin-bottom:15px;">📋 Purchase Orders ({len(purchase_orders)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>PO Number</th><th>Date</th><th>Total</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {''.join(f"""<tr style="cursor:pointer;" onclick="window.location='/purchase/{po.get('id')}'"><td>{po.get('po_number', '-')}</td><td>{po.get('date', '-')}</td><td>{money(po.get('total', 0))}</td><td style="color:{'var(--green)' if po.get('status') == 'received' else 'var(--orange)'};">{(po.get('status', 'draft')).upper()}</td></tr>""" for po in purchase_orders[:200]) or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No purchase orders</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
     <!-- Scanned Documents Section -->
     <div class="card" style="margin-top:20px;">
         <h3 style="margin-bottom:15px;">Scanned Documents ({len(scanned_docs)})</h3>
@@ -30441,29 +30062,6 @@ def supplier_view(supplier_id):
     </div>
     
     <script>
-    // Auto-collapse tables with more than 50 rows
-    document.addEventListener('DOMContentLoaded', function() {{
-        document.querySelectorAll('.card table.table tbody').forEach(function(tbody) {{
-            var rows = tbody.querySelectorAll('tr');
-            if (rows.length > 50) {{
-                for (var i = 50; i < rows.length; i++) {{
-                    rows[i].style.display = 'none';
-                    rows[i].classList.add('extra-row');
-                }}
-                var table = tbody.closest('table');
-                var btn = document.createElement('div');
-                btn.style.cssText = 'text-align:center;padding:10px;cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;border-top:1px solid var(--border);margin-top:-1px;';
-                btn.innerHTML = '▼ Show all ' + rows.length + ' records';
-                btn.onclick = function() {{
-                    var extra = tbody.querySelectorAll('.extra-row');
-                    var hidden = extra[0].style.display === 'none';
-                    extra.forEach(function(r) {{ r.style.display = hidden ? '' : 'none'; }});
-                    btn.innerHTML = hidden ? '▲ Show first 50' : '▼ Show all ' + rows.length + ' records';
-                }};
-                table.parentNode.insertBefore(btn, table.nextSibling);
-            }}
-        }});
-    }});
     async function viewScannedDoc(docId) {{
         document.getElementById('scanModal').style.display = 'flex';
         document.getElementById('scanModalContent').innerHTML = '<p>Loading document...</p>';
@@ -45061,301 +44659,6 @@ def pos_page():
     .no-results.show {
         display: block;
     }
-    
-    /* ═══════════════════════════════════════════════════════════════
-       POS REACTOR UPGRADE - Visual enhancements
-       ═══════════════════════════════════════════════════════════════ */
-    
-    /* Animated glow border on search */
-    .pos-search input {
-        border: 2px solid rgba(99, 102, 241, 0.3) !important;
-        animation: searchPulse 3s ease-in-out infinite;
-    }
-    @keyframes searchPulse {
-        0%, 100% { border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 0 15px rgba(99, 102, 241, 0.1); }
-        50% { border-color: rgba(99, 102, 241, 0.6); box-shadow: 0 0 25px rgba(99, 102, 241, 0.3); }
-    }
-    .pos-search input:focus {
-        animation: none !important;
-        border-color: #6366f1 !important;
-        box-shadow: 0 0 40px rgba(99, 102, 241, 0.5), inset 0 0 20px rgba(99, 102, 241, 0.05) !important;
-    }
-    
-    /* Reactor glow on cart panel */
-    .pos-cart {
-        border: 1px solid rgba(99, 102, 241, 0.2) !important;
-        box-shadow: 0 0 30px rgba(99, 102, 241, 0.08), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
-        position: relative;
-        overflow: hidden;
-    }
-    .pos-cart::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0;
-        height: 2px;
-        background: linear-gradient(90deg, transparent, #6366f1, #10b981, #6366f1, transparent);
-        animation: cartTopGlow 4s linear infinite;
-    }
-    @keyframes cartTopGlow {
-        0% { background-position: -200% 0; }
-        100% { background-position: 200% 0; }
-    }
-    .pos-cart::before { background-size: 200% 100%; }
-    
-    /* Stock table reactor styling */
-    .pos-table-wrapper {
-        border: 1px solid rgba(99, 102, 241, 0.15) !important;
-        box-shadow: 0 0 20px rgba(99, 102, 241, 0.05), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
-    }
-    
-    .pos-table thead th {
-        background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(16, 185, 129, 0.08)) !important;
-        text-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
-        letter-spacing: 1.5px !important;
-    }
-    
-    /* Row hover with cyan glow like dashboard */
-    .stock-row:hover {
-        background: linear-gradient(90deg, rgba(6, 182, 212, 0.12), rgba(99, 102, 241, 0.08), transparent) !important;
-        box-shadow: inset 3px 0 0 #06b6d4;
-    }
-    
-    .stock-row:active {
-        background: linear-gradient(90deg, rgba(16, 185, 129, 0.2), rgba(99, 102, 241, 0.1), transparent) !important;
-    }
-    
-    /* Price column glow */
-    .col-price {
-        text-shadow: 0 0 8px rgba(16, 185, 129, 0.4) !important;
-    }
-    
-    /* Code column cyan tint like dashboard */
-    .col-code {
-        color: #06b6d4 !important;
-        text-shadow: 0 0 6px rgba(6, 182, 212, 0.3);
-    }
-    
-    /* QTY button upgrade */
-    .qty-btn {
-        background: linear-gradient(135deg, #6366f1, #06b6d4) !important;
-        box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    .qty-btn:hover {
-        box-shadow: 0 4px 20px rgba(6, 182, 212, 0.5) !important;
-    }
-    
-    /* Header total glow effect */
-    .pos-header-total {
-        text-shadow: 0 0 30px rgba(0, 255, 136, 0.7), 0 0 60px rgba(0, 255, 136, 0.3) !important;
-        font-size: 24px !important;
-    }
-    
-    /* Payment buttons - more vibrant with glow */
-    .pos-pay-btn.cash {
-        box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
-    }
-    .pos-pay-btn.card {
-        box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
-    }
-    .pos-pay-btn.account {
-        box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);
-    }
-    .pos-pay-btn.quote {
-        box-shadow: 0 0 15px rgba(139, 92, 246, 0.3);
-    }
-    .pos-pay-btn.cash:hover {
-        box-shadow: 0 0 25px rgba(16, 185, 129, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
-    }
-    .pos-pay-btn.card:hover {
-        box-shadow: 0 0 25px rgba(59, 130, 246, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
-    }
-    .pos-pay-btn.account:hover {
-        box-shadow: 0 0 25px rgba(245, 158, 11, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
-    }
-    .pos-pay-btn.quote:hover {
-        box-shadow: 0 0 25px rgba(139, 92, 246, 0.5), 0 4px 15px rgba(0,0,0,0.3) !important;
-    }
-    
-    /* Cashier buttons - reactor style */
-    .cashier-btn {
-        text-transform: uppercase !important;
-        letter-spacing: 0.5px !important;
-        font-size: 12px !important;
-    }
-    .cashier-btn.active {
-        box-shadow: 0 0 20px rgba(99, 102, 241, 0.5), 0 0 40px rgba(99, 102, 241, 0.2) !important;
-        animation: activeCashierPulse 2s ease-in-out infinite;
-    }
-    @keyframes activeCashierPulse {
-        0%, 100% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.4); }
-        50% { box-shadow: 0 0 25px rgba(99, 102, 241, 0.6), 0 0 40px rgba(99, 102, 241, 0.2); }
-    }
-    
-    /* Cashier bar reactor border */
-    .cashier-bar {
-        border-bottom: 1px solid rgba(6, 182, 212, 0.2) !important;
-        background: linear-gradient(135deg, rgba(15, 15, 30, 0.95), rgba(20, 20, 45, 0.95)) !important;
-    }
-    
-    /* Cart item hover glow */
-    .cart-item:hover {
-        background: rgba(99, 102, 241, 0.08) !important;
-        box-shadow: inset 2px 0 0 #6366f1;
-    }
-    
-    /* Grand total in cart - reactor green */
-    .pos-total-row.grand span:last-child {
-        text-shadow: 0 0 15px rgba(16, 185, 129, 0.5) !important;
-        font-size: 20px !important;
-    }
-    
-    /* Cart empty state - add subtle animation */
-    .pos-empty-icon {
-        animation: emptyFloat 3s ease-in-out infinite;
-    }
-    @keyframes emptyFloat {
-        0%, 100% { transform: translateY(0); }
-        50% { transform: translateY(-5px); }
-    }
-    
-    /* Header - reactor gradient border bottom */
-    .pos-header {
-        border-bottom: 1px solid transparent !important;
-        background-image: linear-gradient(rgba(30,30,50,0.95), rgba(30,30,50,0.95)), 
-                          linear-gradient(90deg, transparent, rgba(99,102,241,0.4), rgba(6,182,212,0.3), rgba(16,185,129,0.3), transparent) !important;
-        background-origin: border-box !important;
-        background-clip: padding-box, border-box !important;
-    }
-    
-    /* Stock badge upgrades - glow on good stock */
-    .stock-badge:not(.negative):not(.zero):not(.low) {
-        background: rgba(16, 185, 129, 0.15) !important;
-        color: #10b981 !important;
-        border: 1px solid rgba(16, 185, 129, 0.2);
-    }
-    
-    .stock-badge.low {
-        animation: lowStockPulse 2s ease-in-out infinite;
-    }
-    @keyframes lowStockPulse {
-        0%, 100% { background: rgba(245, 158, 11, 0.15); }
-        50% { background: rgba(245, 158, 11, 0.25); }
-    }
-    
-    .stock-badge.negative {
-        animation: negStockPulse 1.5s ease-in-out infinite;
-    }
-    @keyframes negStockPulse {
-        0%, 100% { background: rgba(239, 68, 68, 0.15); }
-        50% { background: rgba(239, 68, 68, 0.3); }
-    }
-    
-    /* Keyboard bar at bottom - reactor style */
-    .keyboard-bar {
-        background: linear-gradient(180deg, rgba(15,15,30,0.95), rgba(10,10,25,0.98)) !important;
-        border-top: 1px solid rgba(6, 182, 212, 0.15) !important;
-        box-shadow: 0 -4px 20px rgba(0,0,0,0.3) !important;
-    }
-    
-    /* Custom button in cart header */
-    .pos-cart-header button, .pos-cart-header .btn {
-        border: 1px solid rgba(99, 102, 241, 0.3) !important;
-    }
-    
-    /* Scan effect on row click */
-    @keyframes rowFlash {
-        0% { background: rgba(16, 185, 129, 0.3); }
-        100% { background: transparent; }
-    }
-    .stock-row.just-added {
-        animation: rowFlash 0.4s ease-out;
-    }
-
-    /* ═══ POS REACTOR HUD ═══ */
-    .pos-reactor-wrap{border:1px solid rgba(80,180,255,0.12);background:rgba(4,12,35,0.5);position:relative;overflow:visible;margin:0;}
-    .pos-reactor-wrap::before{content:'';position:absolute;top:0;left:0;width:20px;height:20px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
-    .pos-reactor-wrap::after{content:'';position:absolute;bottom:0;right:0;width:20px;height:20px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
-    .pos-reactor-hero{display:flex;align-items:center;justify-content:center;padding:10px 20px;position:relative;gap:0;}
-    .pos-btn-flank{display:flex;flex-direction:column;gap:4px;width:180px;flex:1;max-width:200px;}
-    .pos-hud-btn{padding:8px 10px;border:1px solid rgba(80,180,255,0.12);background:rgba(10,30,60,0.3);cursor:pointer;transition:all 0.2s;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:600;color:#a0d8f8;font-size:12px;letter-spacing:0.5px;text-transform:uppercase;}
-    .pos-hud-btn:hover:not(:disabled){border-color:rgba(0,200,255,0.35);background:rgba(0,200,255,0.06);color:#00ddff;text-shadow:0 0 8px rgba(0,200,255,0.3);}
-    .pos-hud-btn:disabled{opacity:0.35;cursor:not-allowed;}
-    .pos-hud-btn .pk,.pos-entity-btn .pk,.f11-btn .pk{font-family:'Share Tech Mono',monospace;font-size:10px;color:#00ccff;padding:2px 6px;border:1px solid rgba(0,200,255,0.3);letter-spacing:0.5px;flex-shrink:0;background:rgba(0,200,255,0.08);text-shadow:0 0 6px rgba(0,200,255,0.4);}
-    .pos-btn-flank.L .pos-hud-btn{border-left:2px solid rgba(80,180,255,0.3);}
-    .pos-btn-flank.R .pos-hud-btn{border-right:2px solid rgba(80,180,255,0.3);flex-direction:row-reverse;}
-    .pos-reactor-cn{width:16px;height:2px;position:relative;flex-shrink:0;}
-    .pos-reactor-cn::before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(80,180,255,0.05),rgba(80,180,255,0.3));}
-    .pos-reactor-cn.R::before{background:linear-gradient(90deg,rgba(80,180,255,0.3),rgba(80,180,255,0.05));}
-    .pos-reactor-cn::after{content:'';position:absolute;right:-2px;top:-2.5px;width:7px;height:7px;border-radius:50%;background:rgba(80,180,255,0.35);box-shadow:0 0 8px rgba(80,180,255,0.4);}
-    .pos-reactor-cn.R::after{left:-2px;right:auto;}
-    .pos-rx{position:relative;flex-shrink:0;width:160px;height:160px;}
-    .pos-rx .j-rg{position:absolute;border-radius:50%;border:1px solid rgba(80,180,255,0.2);}
-    .pos-rx .j-rg.r1{inset:0;border-color:rgba(80,180,255,0.25);border-top-color:rgba(120,210,255,0.65);animation:jspin 8s linear infinite;box-shadow:0 0 25px rgba(80,180,255,0.08);}
-    .pos-rx .j-rg.r2{inset:12px;border-color:rgba(60,160,240,0.15);border-bottom-color:rgba(100,200,255,0.55);animation:jspin 6s linear infinite reverse;}
-    .pos-rx .j-rg.r3{inset:24px;border-color:rgba(80,180,255,0.1);border-top-color:rgba(140,220,255,0.45);animation:jspin 4s linear infinite;}
-    .pos-rx .j-rg.r4{inset:36px;border:2px solid rgba(100,200,255,0.08);border-top-color:rgba(160,230,255,0.5);animation:jspin 12s linear infinite reverse;}
-    .pos-rx .pos-rx-core{position:absolute;inset:42px;border-radius:50%;background:radial-gradient(circle,rgba(120,210,255,0.12) 0%,transparent 100%);border:1px solid rgba(100,200,255,0.2);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 30px rgba(80,180,255,0.1);}
-    .pos-rx .pos-rx-core .j-brand{font-family:'Orbitron',monospace;font-size:13px;font-weight:800;color:#55bbff;text-shadow:0 0 18px rgba(85,187,255,0.6);letter-spacing:2px;}
-    .pos-rx .pos-rx-core .j-sub{font-family:'Share Tech Mono',monospace;font-size:6.5px;color:#4499cc;letter-spacing:3px;margin-top:3px;}
-    .pos-hud-total{font-family:'Orbitron',monospace;font-size:14px;font-weight:700;color:#00ff88;text-shadow:0 0 12px rgba(0,255,136,0.5);margin-top:4px;letter-spacing:1px;}
-    .pos-lbl{position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);text-align:center;z-index:2;}
-    .pos-lbl span{font-family:'Orbitron',monospace;font-size:10px;font-weight:600;color:#5aaadd;letter-spacing:3px;text-shadow:0 0 10px rgba(90,170,221,0.3);}
-    .pos-entity-bar{display:flex;align-items:center;justify-content:center;gap:0;padding:8px 20px;border-top:1px solid rgba(80,180,255,0.06);}
-    .pos-entity-btn{display:flex;align-items:center;justify-content:center;gap:5px;min-width:44px;padding:0 10px;height:36px;border:1px solid rgba(80,180,255,0.15);background:rgba(10,30,60,0.4);color:#a0d8f8;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:14px;cursor:pointer;transition:all 0.2s;letter-spacing:1px;flex-shrink:0;}
-    .pos-entity-btn:hover{border-color:rgba(0,200,255,0.35);color:#00ddff;background:rgba(0,200,255,0.06);}
-    .pos-entity-btn.active{background:rgba(80,180,255,0.12);color:#00ddff;border-color:rgba(0,200,255,0.3);}
-    .pos-entity-btn.L{border-right:none;}
-    .pos-entity-btn.R{border-left:none;}
-    .pos-entity-input{height:36px;width:240px;border:1px solid rgba(80,180,255,0.15);background:rgba(6,16,40,0.5);color:#e0f0ff;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;padding:0 14px;letter-spacing:0.5px;text-align:center;outline:none;}
-    .pos-entity-input::placeholder{color:#4a7a9a;letter-spacing:1px;}
-    .pos-entity-input:focus{border-color:rgba(0,200,255,0.35);background:rgba(0,200,255,0.04);}
-    @keyframes jspin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
-    .entity-list .entity-item{padding:8px 14px;cursor:pointer;color:#a0d8f8;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;}
-    .entity-list .entity-item:hover,.entity-list .entity-item.highlighted{background:rgba(0,200,255,0.06);color:#00ddff;}
-    @media(max-width:1200px){.pos-btn-flank{max-width:160px;}.pos-hud-btn{font-size:11px;padding:6px 8px;}}
-    @media(max-width:900px){.pos-reactor-hero{flex-wrap:wrap;gap:8px;}.pos-btn-flank{flex-direction:row;flex-wrap:wrap;width:100%;max-width:100%;}.pos-rx{width:120px;height:120px;}.pos-rx .pos-rx-core{inset:32px;}.pos-reactor-cn{display:none;}}
-
-    /* ═══ F11 FULLSCREEN MODE ═══ */
-    .f11-header{display:none;padding:8px 20px;background:rgba(4,12,35,0.95);border-bottom:1px solid rgba(80,180,255,0.12);align-items:center;gap:0;justify-content:space-between;}
-    .f11-left{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
-    .f11-btn{padding:9px 14px;border:1px solid rgba(80,180,255,0.12);background:rgba(10,30,60,0.3);cursor:pointer;transition:all 0.2s;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#a0d8f8;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;}
-    .f11-btn:hover{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.08);color:#00eeff;text-shadow:0 0 10px rgba(0,200,255,0.4);}
-    .f11-btn:disabled{opacity:0.35;cursor:not-allowed;}
-    .f11-sep{width:1px;height:30px;background:rgba(80,180,255,0.12);margin:0 8px;flex-shrink:0;}
-    .f11-right{display:flex;align-items:center;gap:14px;}
-    .f11-cust{font-family:'Rajdhani',sans-serif;font-size:15px;color:#a0d8f8;font-weight:700;letter-spacing:0.5px;}
-    .f11-total{font-family:'Orbitron',monospace;font-size:22px;font-weight:800;color:#00ff88;text-shadow:0 0 18px rgba(0,255,136,0.5);letter-spacing:1px;}
-    .f11-exit{padding:9px 14px;border:1px solid rgba(255,80,80,0.2);background:rgba(255,40,40,0.06);cursor:pointer;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#ff8888;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;transition:all 0.2s;}
-    .f11-exit:hover{border-color:rgba(255,80,80,0.4);background:rgba(255,40,40,0.12);color:#ffaaaa;}
-    .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.3);background:rgba(255,40,40,0.08);text-shadow:0 0 6px rgba(255,80,80,0.4);}
-    .f11-order-wrap{display:none;flex:1;overflow:hidden;flex-direction:column;}
-    .f11-search{padding:10px 20px;border-bottom:1px solid rgba(80,180,255,0.06);}
-    .f11-search input{width:100%;height:44px;background:rgba(6,16,40,0.6);border:1px solid rgba(80,180,255,0.2);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 16px;outline:none;letter-spacing:0.5px;}
-    .f11-search input::placeholder{color:#5a8aaa;}
-    .f11-search input:focus{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.04);box-shadow:0 0 12px rgba(0,200,255,0.08);}
-    .f11-table-wrap{flex:1;overflow-y:auto;padding:0 20px;}
-    .f11-table{width:100%;border-collapse:collapse;}
-    .f11-table th{text-align:left;padding:10px 12px;font-family:'Share Tech Mono',monospace;font-size:11px;color:#7abade;letter-spacing:1.5px;border-bottom:2px solid rgba(80,180,255,0.15);position:sticky;top:0;background:#0a0a1a;z-index:2;}
-    .f11-table th.r{text-align:right;}
-    .f11-table td{padding:10px 12px;font-size:15px;font-weight:600;color:#d8ecff;border-bottom:1px solid rgba(80,180,255,0.04);}
-    .f11-table td.r{text-align:right;font-family:'Share Tech Mono',monospace;}
-    .f11-table td.code{color:#7abade;font-family:'Share Tech Mono',monospace;font-size:14px;}
-    .f11-table td.qty{color:#00ff88;font-weight:700;}
-    .f11-table td.tot{color:#00ff88;font-weight:700;}
-    .f11-table tr:hover td{background:rgba(0,200,255,0.04);color:#fff;}
-    .f11-table tr.f11-sel td{background:rgba(80,180,255,0.08);border-bottom:1px solid rgba(0,200,255,0.15);}
-    .f11-table tr.f11-sel td:first-child{border-left:2px solid #00ccff;}
-    .f11-onhand{font-size:12px;color:#5a8aaa;font-family:'Share Tech Mono',monospace;}
-
-    /* F11 state toggle */
-    body.f11-mode .pos-header{display:none !important;}
-    body.f11-mode .pos-reactor-wrap{display:none !important;}
-    body.f11-mode .container{display:none !important;}
-    body.f11-mode .f11-header{display:flex !important;}
-    body.f11-mode .f11-order-wrap{display:flex !important;}
-
     </style>
     '''
     
@@ -45506,13 +44809,13 @@ def pos_page():
     }
     
     function showAddedFeedback(code) {
-        // Reactor flash on the row
+        // Brief flash on the row
         const row = document.querySelector(`tr[data-code="${code}"]`);
         if (row) {
-            row.classList.remove('just-added');
-            void row.offsetWidth; // force reflow
-            row.classList.add('just-added');
-            setTimeout(() => row.classList.remove('just-added'), 500);
+            row.style.background = 'rgba(16, 185, 129, 0.3)';
+            setTimeout(() => {
+                row.style.background = '';
+            }, 200);
         }
     }
     
@@ -45597,7 +44900,6 @@ def pos_page():
             document.getElementById('vatAmount').textContent = 'R0.00';
             document.getElementById('grandTotal').textContent = 'R0.00';
             document.getElementById('headerTotal').textContent = 'R0.00';
-            if (typeof renderF11Table === 'function' && f11Mode) { renderF11Table(); syncF11Buttons(); }
             document.getElementById('btnCash').disabled = true;
             document.getElementById('btnCard').disabled = true;
             // Account/Invoice - enabled if customer selected (will show "cart empty" message)
@@ -45649,8 +44951,6 @@ def pos_page():
         document.getElementById('vatAmount').textContent = 'R' + vat.toFixed(2);
         document.getElementById('grandTotal').textContent = 'R' + grandTotal.toFixed(2);
         document.getElementById('headerTotal').textContent = 'R' + grandTotal.toFixed(2);
-        // Sync F11 view
-        if (typeof renderF11Table === 'function' && f11Mode) { renderF11Table(); syncF11Buttons(); updateF11CustName(); }
         
         document.getElementById('btnCash').disabled = false;
         document.getElementById('btnCard').disabled = false;
@@ -45801,12 +45101,7 @@ def pos_page():
             searchInput.value = '';
             document.getElementById('entityValue').value = '';
         }
-        if (f11Mode) {
-            var f11El = document.getElementById('f11Search');
-            if (f11El) f11El.focus();
-        } else {
-            document.getElementById('stockSearch').focus();
-        }
+        document.getElementById('stockSearch').focus();
     }
     
     function renderEntityList(filter) {
@@ -46733,20 +46028,6 @@ def pos_page():
             return;
         }
         
-        // F11 = Toggle Fullscreen Order Mode
-        if (e.key === 'F11') {
-            e.preventDefault();
-            toggleF11();
-            return;
-        }
-        
-        // ESC in F11 mode = exit fullscreen (if no dropdown/modal open)
-        if (e.key === 'Escape' && f11Mode && !dropdownOpen) {
-            e.preventDefault();
-            toggleF11();
-            return;
-        }
-        
         // === PRINT MODAL KEYBOARD HANDLING ===
         const printModal = document.getElementById('printSlipModal');
         if (printModal && printModal.style.display === 'flex') {
@@ -46861,12 +46142,7 @@ def pos_page():
         
         // Focus search on typing
         if (!isInput && /^[a-zA-Z0-9]$/.test(e.key)) {
-            if (f11Mode) {
-                var f11El = document.getElementById('f11Search');
-                if (f11El) f11El.focus();
-            } else {
-                searchInput.focus();
-            }
+            searchInput.focus();
         }
     }, true);
     
@@ -48457,244 +47733,51 @@ def pos_page():
     </style>
 </head>
 <body>
-    <script>
-    /* ═══ F11 CORE — must be before pos_js ═══ */
-    var f11Mode = false;
-    var f11SelectedRow = 0;
-    
-    function toggleF11() {{
-        f11Mode = !f11Mode;
-        document.body.classList.toggle('f11-mode', f11Mode);
-        if (f11Mode) {{
-            if (typeof renderF11Table === 'function') renderF11Table();
-            if (typeof syncF11Buttons === 'function') syncF11Buttons();
-            if (typeof updateF11CustName === 'function') updateF11CustName();
-            var el = document.getElementById('f11Search');
-            if (el) {{ el.value = ''; el.focus(); }}
-        }} else {{
-            var el = document.getElementById('stockSearch');
-            if (el) el.focus();
-        }}
-    }}
-    </script>
-    <header class="pos-header" style="padding:6px 20px 4px;">
+    <header class="pos-header">
         <div class="pos-header-nav">
+            <span class="pos-logo" onclick="toggleZaneChat()">Click AI</span>
             <a href="/">Dashboard</a>
             <a href="/pos" class="active">POS</a>
             <a href="/pos/history">History</a>
             <a href="/stock">Stock</a>
             <a href="/customers">Customers</a>
-            <span id="offlineIndicator" style="display:none;padding:4px 10px;font-size:11px;font-weight:700;margin-left:8px;cursor:pointer;" onclick="syncOfflineSales()" title="Click to sync when online">
-                <span id="offlineText">🔴 OFFLINE</span>
-                <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;margin-left:4px;font-size:10px;"></span>
-            </span>
-            <span id="onlineIndicator" style="padding:2px 8px;font-size:10px;color:#10b981;display:none;">🟢 Online</span>
         </div>
-    </header>
-
-    <div class="pos-reactor-wrap">
-        <div class="pos-reactor-hero">
-            <div class="pos-btn-flank L">
-                <button class="pos-hud-btn" onclick="completeSale('cash')" id="btnCash" disabled><span class="pk">F1</span>CASH</button>
-                <button class="pos-hud-btn" onclick="completeSale('card')" id="btnCard" disabled><span class="pk">F2</span>CARD</button>
-                <button class="pos-hud-btn" onclick="completeSale('account')" id="btnAccount" disabled><span class="pk">F3</span>ACCOUNT</button>
-                <button class="pos-hud-btn" onclick="createQuote()" id="btnQuote" disabled><span class="pk">F4</span>QUOTE</button>
-            </div>
-            <div class="pos-reactor-cn"></div>
-            <div class="pos-rx">
-                <div class="j-rg r1"></div><div class="j-rg r2"></div><div class="j-rg r3"></div><div class="j-rg r4"></div>
-                <div class="pos-rx-core">
-                    <div class="j-brand">CLICK.AI</div>
-                    <div class="j-sub">// POINT OF SALE</div>
-                    <div class="pos-hud-total" id="headerTotal">R0.00</div>
+        <div class="pos-header-actions">
+            <div class="entity-select-wrapper">
+                <button class="entity-toggle active" id="btnCust" onclick="toggleEntity('customer')" title="F8">C</button>
+                <button class="entity-toggle" id="btnSupp" onclick="toggleEntity('supplier')" title="F9">S</button>
+                <div class="entity-dropdown" id="entityDropdown">
+                    <input type="text" id="entitySearch" class="entity-search" placeholder="Cash Sale" onclick="openEntityDropdown()">
+                    <input type="hidden" id="entityValue" value="">
+                    <div class="entity-list" id="entityList" style="display:none;"></div>
                 </div>
             </div>
-            <div class="pos-reactor-cn R"></div>
-            <div class="pos-btn-flank R">
-                <button class="pos-hud-btn" onclick="createPO()" id="btnPO" disabled>PO<span class="pk">F5</span></button>
-                <button class="pos-hud-btn" onclick="createInvoice()" id="btnInvoice" disabled>INVOICE<span class="pk">F6</span></button>
-                <button class="pos-hud-btn" onclick="createCreditNote()" id="btnCredit" disabled>CREDIT NOTE<span class="pk">F10</span></button>
-                <button class="pos-hud-btn" onclick="toggleF11()">FULLSCREEN<span class="pk">F11</span></button>
-            </div>
-            <div class="pos-lbl"><span>POINT OF SALE</span></div>
-        </div>
-        <div class="pos-entity-bar">
-            <button class="pos-entity-btn L active" id="btnCust" onclick="toggleEntity('customer')" title="F8"><span class="pk">F8</span>C</button>
-            <div class="entity-dropdown" style="position:relative;">
-                <input type="text" class="pos-entity-input entity-search" id="entitySearch" placeholder="F7 · CASH SALE" onclick="openEntityDropdown()" autocomplete="off">
-                <input type="hidden" id="entityValue" value="">
-                <div class="entity-list" id="entityList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:300px;overflow-y:auto;background:rgba(10,20,40,0.95);border:1px solid rgba(80,180,255,0.2);"></div>
-            </div>
-            <button class="pos-entity-btn R" id="btnSupp" onclick="toggleEntity('supplier')" title="F9">S<span class="pk">F9</span></button>
             <input type="hidden" id="supplierData" value='{supplier_json}'>
             <input type="hidden" id="customerData" value='{customer_json}'>
             <input type="hidden" id="posSettings" value='{pos_settings_json}'>
+            <span class="pos-header-total" id="headerTotal">R0.00</span>
+            <span id="offlineIndicator" style="display:none;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;margin-left:8px;cursor:pointer;" onclick="syncOfflineSales()" title="Click to sync when online">
+                <span id="offlineText">🔴 OFFLINE</span>
+                <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;border-radius:3px;margin-left:4px;font-size:10px;"></span>
+            </span>
+            <span id="onlineIndicator" style="padding:2px 8px;border-radius:4px;font-size:10px;color:#10b981;display:none;">🟢 Online</span>
+            <button class="pos-pay-btn cash" onclick="completeSale('cash')" id="btnCash" disabled><span class="key-hint">F1</span> CASH</button>
+            <button class="pos-pay-btn card" onclick="completeSale('card')" id="btnCard" disabled><span class="key-hint">F2</span> CARD</button>
+            <button class="pos-pay-btn account" onclick="completeSale('account')" id="btnAccount" disabled><span class="key-hint">F3</span> ACCOUNT</button>
+            <button class="pos-pay-btn quote" onclick="createQuote()" id="btnQuote" disabled><span class="key-hint">F4</span> QUOTE</button>
+            <button class="pos-pay-btn po" onclick="createPO()" id="btnPO" disabled><span class="key-hint">F5</span> PO</button>
+            <button class="pos-pay-btn invoice" onclick="createInvoice()" id="btnInvoice" disabled style="background:linear-gradient(135deg,#f59e0b,#d97706);"><span class="key-hint">F6</span> INVOICE</button>
+            <button class="pos-pay-btn" onclick="createCreditNote()" id="btnCredit" disabled style="background:linear-gradient(135deg,#ef4444,#dc2626);"><span class="key-hint">F10</span> CREDIT</button>
+            <button class="pos-pay-btn clear" onclick="if(cart.length>0 && confirm('Clear cart?'))clearCart()"><span class="key-hint">ESC</span> CLEAR</button>
         </div>
-    </div>
-
-    <!-- F11 FULLSCREEN HEADER -->
-    <div class="f11-header">
-        <div class="f11-left">
-            <button class="f11-btn" onclick="completeSale('cash')" id="f11Cash" disabled><span class="pk">F1</span>CASH</button>
-            <button class="f11-btn" onclick="completeSale('card')" id="f11Card" disabled><span class="pk">F2</span>CARD</button>
-            <button class="f11-btn" onclick="completeSale('account')" id="f11Account" disabled><span class="pk">F3</span>ACCOUNT</button>
-            <button class="f11-btn" onclick="createQuote()" id="f11Quote" disabled><span class="pk">F4</span>QUOTE</button>
-            <button class="f11-btn" onclick="createPO()" id="f11PO" disabled><span class="pk">F5</span>PO</button>
-            <button class="f11-btn" onclick="createInvoice()" id="f11Invoice" disabled><span class="pk">F6</span>INVOICE</button>
-            <div class="f11-sep"></div>
-            <button class="f11-btn" onclick="showEditCustomerModal()"><span class="pk">F7</span>EDIT</button>
-            <button class="f11-btn" onclick="toggleEntity('customer')"><span class="pk">F8</span>CUST</button>
-            <button class="f11-btn" onclick="toggleEntity('supplier')"><span class="pk">F9</span>SUPP</button>
-            <button class="f11-btn" onclick="createCreditNote()" id="f11Credit" disabled><span class="pk">F10</span>CREDIT</button>
-        </div>
-        <div class="f11-right">
-            <div class="f11-cust" id="f11CustName">Cash Sale</div>
-            <div class="f11-total" id="f11Total">R0.00</div>
-            <button class="f11-exit" onclick="toggleF11()"><span class="pk">F11</span>EXIT</button>
-        </div>
-    </div>
-
-    <!-- F11 ORDER TABLE -->
-    <div class="f11-order-wrap">
-        <div class="f11-search">
-            <input type="text" id="f11Search" placeholder="Scan barcode or type code / description..." autocomplete="off">
-        </div>
-        <div class="f11-table-wrap">
-            <table class="f11-table">
-                <thead><tr>
-                    <th style="width:140px;">CODE</th><th>DESCRIPTION</th>
-                    <th class="r" style="width:60px;">QTY</th><th class="r" style="width:100px;">PRICE</th>
-                    <th class="r" style="width:80px;">DISC</th><th class="r" style="width:110px;">TOTAL</th>
-                    <th style="width:80px;">ON-HAND</th>
-                </tr></thead>
-                <tbody id="f11Body"></tbody>
-            </table>
-        </div>
-    </div>
-
-    <main class="container" style="padding-top:8px;height:calc(100vh - 250px);overflow:hidden;">
+    </header>
+    
+    <main class="container" style="padding-top:20px;height:calc(100vh - 70px);overflow:hidden;">
         {pos_html}
     </main>
     
     {get_zane_chat()}
     {pos_js}
-
-    <script>
-    /* ═══ F11 FULLSCREEN ORDER MODE ═══ */
-    // f11Mode and f11SelectedRow declared in earlier script block
-    // toggleF11 defined in earlier script block
-
-    function renderF11Table() {{
-        const tbody = document.getElementById('f11Body');
-        if (!tbody) return;
-        if (cart.length === 0) {{
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#5a8aaa;font-size:16px;">Scan barcode or type to add items...</td></tr>';
-            document.getElementById('f11Total').textContent = 'R0.00';
-            return;
-        }}
-        let html = '';
-        let grandTotal = 0;
-        cart.forEach((item, idx) => {{
-            const lineTotal = item.price * item.qty;
-            grandTotal += lineTotal;
-            const sel = idx === f11SelectedRow ? ' f11-sel' : '';
-            // Find stock qty
-            const stockRow = document.querySelector('.stock-row[data-id="' + item.id + '"]');
-            const onHand = stockRow ? stockRow.getAttribute('data-qty') : '—';
-            html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();">';
-            html += '<td class="code">' + item.code + '</td>';
-            html += '<td>' + item.desc + '</td>';
-            html += '<td class="r qty">' + item.qty + '</td>';
-            html += '<td class="r">R' + item.price.toFixed(2) + '</td>';
-            html += '<td class="r" style="color:#5a8aaa;">—</td>';
-            html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
-            html += '<td><span class="f11-onhand">' + onHand + '</span></td>';
-            html += '</tr>';
-        }});
-        tbody.innerHTML = html;
-        const vat = Math.round(grandTotal * 0.15 * 100) / 100;
-        document.getElementById('f11Total').textContent = 'R' + (grandTotal + vat).toFixed(2);
-    }}
-
-    function syncF11Buttons() {{
-        const hasItems = cart.length > 0;
-        const hasCust = !!document.getElementById('entityValue').value;
-        ['f11Cash','f11Card'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
-        ['f11Account','f11Invoice','f11Credit'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !(hasItems && hasCust); }});
-        ['f11Quote','f11PO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
-    }}
-
-    function updateF11CustName() {{
-        const el = document.getElementById('f11CustName');
-        if (!el) return;
-        const search = document.getElementById('entitySearch');
-        el.textContent = (search && search.value) ? search.value : 'Cash Sale';
-    }}
-
-    // F11 search — reuses same addToCart logic
-    document.addEventListener('DOMContentLoaded', function() {{
-        const f11Input = document.getElementById('f11Search');
-        if (!f11Input) return;
-        f11Input.addEventListener('keydown', function(e) {{
-            if (e.key === 'Enter') {{
-                e.preventDefault();
-                const raw = f11Input.value.trim();
-                if (!raw) return;
-                let qty = 1, searchCode = raw;
-                const star = raw.indexOf('*');
-                if (star > 0) {{
-                    const num = parseInt(raw.substring(0, star), 10);
-                    if (num > 0) {{ qty = num; searchCode = raw.substring(star + 1).trim(); }}
-                }}
-                searchCode = searchCode.toLowerCase().replace(/\s*x\s*/gi, 'x');
-                const rows = document.querySelectorAll('.stock-row');
-                let found = null;
-                for (let row of rows) {{
-                    let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
-                    if (data.indexOf(searchCode) !== -1) {{ found = row; break; }}
-                }}
-                if (found) {{
-                    const id = found.getAttribute('data-id');
-                    const code = found.getAttribute('data-code');
-                    const desc = found.getAttribute('data-desc');
-                    const price = parseFloat(found.getAttribute('data-price')) || 0;
-                    const existing = cart.find(item => item.id === id);
-                    if (existing) {{ existing.qty += qty; }}
-                    else {{ cart.push({{id, code, desc, price, qty: qty, maxQty: 99999}}); }}
-                    updateCart();
-                    renderF11Table();
-                    syncF11Buttons();
-                    f11SelectedRow = cart.length - 1;
-                    renderF11Table();
-                }} else {{
-                    // Flash search red briefly
-                    f11Input.style.borderColor = 'rgba(255,60,60,0.5)';
-                    setTimeout(() => {{ f11Input.style.borderColor = ''; }}, 500);
-                }}
-                f11Input.value = '';
-            }}
-            // Delete selected row
-            if (e.key === 'Delete' && cart.length > 0) {{
-                e.preventDefault();
-                cart.splice(f11SelectedRow, 1);
-                if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1);
-                updateCart();
-                renderF11Table();
-                syncF11Buttons();
-            }}
-            // Navigate rows
-            if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
-            if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
-        }});
-    }});
-
-    // Hook into updateCart to sync F11 view
-    const _origUpdateCart = typeof updateCart === 'function' ? updateCart : null;
-    // We'll override after pos_js loads — see observer below
-
-    // Sync F11 when entity changes
-    const _origToggleEntity = typeof toggleEntity === 'function' ? toggleEntity : null;
-    </script>
     <script>
     if ('serviceWorker' in navigator) {{
         navigator.serviceWorker.register('/sw.js', {{scope: '/'}})
@@ -50357,15 +49440,6 @@ def api_pos_credit_note():
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
-    
-    # ── FRAUD GUARD: Check role for POS credit notes ──
-    try:
-        if FraudGuard:
-            _role = get_user_role()
-            if _role in ("cashier", "pos_only", "waiter"):
-                return jsonify({"success": False, "error": "Only a manager or owner can issue credit notes from POS. Ask your manager for help."})
-    except Exception:
-        pass
     
     try:
         data = request.get_json()
@@ -67678,17 +66752,6 @@ def create_credit_note(invoice_id):
     logger.info(f"[CREDIT NOTE] Invoice {invoice.get('invoice_number')}: {len(inv_items)} items loaded, type={type(raw_items).__name__}")
     
     if request.method == "POST":
-        # ── FRAUD GUARD: Check if user is allowed to credit this invoice ──
-        try:
-            if FraudGuard:
-                _role = get_user_role()
-                _guard = FraudGuard.can_cancel_invoice(invoice, _role)
-                if not _guard.get("allowed"):
-                    logger.warning(f"[FRAUD GUARD] Credit note BLOCKED for {invoice.get('invoice_number')} - role:{_role} - {_guard.get('reason')}")
-                    return redirect(f"/invoice/{invoice_id}?error=" + urllib.parse.quote(_guard.get("reason", "Not allowed")))
-        except Exception as _fg_err:
-            logger.error(f"[FRAUD GUARD] Check failed (allowing): {_fg_err}")
-        
         reason = request.form.get("reason", "")
         credit_type = request.form.get("credit_type", "full")  # full or partial
         
@@ -67789,33 +66852,9 @@ def create_credit_note(invoice_id):
         else:
             db.update("invoices", invoice_id, {"status": "partial_credit"})
         
-        # ── FRAUD GUARD: Log this credit note action ──
-        try:
-            if FraudGuard:
-                FraudGuard.log_sensitive_action(
-                    db, "INVOICE_CREDIT", invoice, user, biz_id,
-                    reason=reason or "No reason",
-                    details=f"CN {cn_num} for R{float(cn_total):.2f} ({credit_type})"
-                )
-        except Exception:
-            pass
-        
         return redirect(f"/credit-note/{cn_id}")
     
     # GET - build form with line item selection
-    
-    # ── FRAUD GUARD: Check permission before showing form ──
-    _fg_warning = ""
-    try:
-        if FraudGuard:
-            _role = get_user_role()
-            _guard = FraudGuard.can_cancel_invoice(invoice, _role)
-            if not _guard.get("allowed"):
-                return redirect(f"/invoice/{invoice_id}?error=" + urllib.parse.quote(_guard.get("reason", "Not allowed")))
-            if _guard.get("notify_owner"):
-                _fg_warning = '<div style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);padding:12px 16px;border-radius:8px;margin-bottom:15px;color:var(--text);"><strong>⚠ Note:</strong> The business owner will be notified about this credit note.</div>'
-    except Exception:
-        pass
     items_rows_html = ""
     inv_subtotal = Decimal("0")
     for i, item in enumerate(inv_items):
@@ -67843,7 +66882,6 @@ def create_credit_note(invoice_id):
     
     content = f'''
     {error_html}
-    {_fg_warning}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/invoice/{invoice_id}" style="color:var(--text-muted);">← Back to Invoice</a>
     </div>
@@ -69006,9 +68044,6 @@ def scan_page():
                 <button class="btn scan-type-btn" onclick="selectType('bank_statement')" style="padding:20px;background:#059669;color:white;">
                     🏦 Bank Statement
                 </button>
-                <button class="btn scan-type-btn" onclick="selectType('customer_order')" style="padding:20px;background:var(--card);border:2px solid #10b981;">
-                    🛒 Customer Order
-                </button>
                 <button class="btn scan-type-btn" onclick="selectType('other')" style="padding:20px;background:var(--card);border:1px solid var(--border);">
                     [DOC] Other Document
                 </button>
@@ -69125,7 +68160,6 @@ def scan_page():
         'payslip': '[MONEY] Payslip',
         'timesheet': 'Timesheet',
         'bank_statement': '🏦 Bank Statement',
-        'customer_order': '🛒 Customer Order',
         'other': '[DOC] Document'
     };
     
@@ -69134,7 +68168,6 @@ def scan_page():
         'payslip': '#ec4899',
         'timesheet': '#f59e0b',
         'bank_statement': '#059669',
-        'customer_order': '#10b981',
         'other': 'var(--text-muted)'
     };
     
@@ -69264,53 +68297,6 @@ def scan_page():
                     <strong style="font-size:20px;color:var(--primary);">R${(data.total || 0).toFixed(2)}</strong>
                 </div>
             `;
-        } else if (scanType === 'customer_order') {
-            let orderItemsHtml = '';
-            const orderItems = data.items || [];
-            if (orderItems.length > 0) {
-                orderItemsHtml = '<div style="margin:15px 0;max-height:200px;overflow-y:auto;">';
-                orderItems.forEach((item, i) => {
-                    const desc = item.description || 'Item';
-                    const qty = item.qty || item.quantity || 1;
-                    orderItemsHtml += `
-                        <div style="display:flex;justify-content:space-between;padding:8px;background:rgba(16,185,129,0.1);border-radius:6px;margin-bottom:4px;font-size:13px;">
-                            <span style="flex:1;">${i+1}. ${desc.substring(0,40)}${desc.length > 40 ? '...' : ''}</span>
-                            <span style="font-weight:600;color:#10b981;">x${qty}</span>
-                        </div>
-                    `;
-                });
-                orderItemsHtml += '</div>';
-            }
-            html = `
-                <div style="background:rgba(16,185,129,0.15);padding:10px;border-radius:8px;margin-bottom:15px;text-align:center;">
-                    <strong style="color:#10b981;">CUSTOMER ORDER</strong>
-                </div>
-                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-                    <span style="color:var(--text-muted);">Customer</span>
-                    <strong>${data.customer_name || data.customer || 'Unknown'}</strong>
-                </div>
-                ${data.customer_phone || data.phone ? `
-                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-                    <span style="color:var(--text-muted);">Phone</span>
-                    <span>${data.customer_phone || data.phone || ''}</span>
-                </div>` : ''}
-                ${data.order_reference ? `
-                <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-                    <span style="color:var(--text-muted);">Order Ref</span>
-                    <span>${data.order_reference}</span>
-                </div>` : ''}
-                <div style="margin:10px 0;padding-top:10px;border-top:1px solid var(--border);">
-                    <span style="color:var(--text-muted);font-size:12px;">${orderItems.length} ITEMS ORDERED</span>
-                </div>
-                ${orderItemsHtml}
-                ${data.notes ? `
-                <div style="margin-top:10px;padding:8px;background:rgba(245,158,11,0.1);border-radius:6px;font-size:12px;">
-                    <strong>Notes:</strong> ${data.notes}
-                </div>` : ''}
-            `;
-            document.getElementById('saveBtn').innerHTML = 'Save to Order Inbox';
-            document.getElementById('saveBtn').style.background = '#10b981';
-            document.getElementById('saveHint').textContent = 'Order will be saved. Open from inbox to create a quote with your prices.';
         } else if (scanType === 'payslip') {
             html = `
                 <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
@@ -69617,32 +68603,6 @@ Rules:
 - Read EVERY row, even bank charges and small fees
 - Combine multi-line descriptions into one string
 - Date format: YYYY-MM-DD"""
-        elif scan_type == 'customer_order':
-            prompt = """This is a CUSTOMER ORDER / PURCHASE ORDER from a customer who wants to buy from us.
-
-Extract the customer details and ALL items they want to order.
-
-CRITICAL RULES:
-1. Copy item descriptions EXACTLY as printed
-2. Read EVERY item - do not skip any
-3. Get quantities exactly right
-4. If prices are shown, include them (but we will use OUR prices)
-5. Look for customer name, company, phone, email, order number/reference
-
-Return ONLY valid JSON:
-{
-    "customer_name": "Company or person name",
-    "customer_phone": "",
-    "customer_email": "",
-    "order_reference": "Their PO/order number",
-    "date": "YYYY-MM-DD",
-    "items": [
-        {"description": "Exact item name as printed", "qty": 10, "price": 0.00}
-    ],
-    "notes": "Any special instructions, delivery notes etc"
-}
-
-NOTE: Read item descriptions and quantities exactly. Price can be 0 - we will use our own prices."""
         else:
             prompt = """Read this invoice/receipt carefully. Extract ALL line items AND supplier details.
 
@@ -70074,89 +69034,6 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
         return jsonify({"success": False, "error": str(e)})
 
 
-@app.route("/api/scan/create-quote-from-order", methods=["POST"])
-@login_required
-def api_scan_create_quote_from_order():
-    """Create a quote from a scanned customer order"""
-    try:
-        data = request.get_json()
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        customer_name = data.get("customer_name", "Unknown Customer")
-        customer_phone = data.get("customer_phone", "")
-        order_reference = data.get("order_reference", "")
-        items = data.get("items", [])
-        notes = data.get("notes", "")
-        
-        if not items:
-            return jsonify({"success": False, "error": "No items in order"})
-        
-        # Find or create customer
-        customer_id = ""
-        existing_customers = db.get("customers", {"business_id": biz_id}) or []
-        for c in existing_customers:
-            c_name = (c.get("name") or "").lower().strip()
-            if c_name and c_name in customer_name.lower():
-                customer_id = c.get("id", "")
-                customer_name = c.get("name", customer_name)
-                break
-        
-        if not customer_id:
-            customer_id = generate_id()
-            db.save("customers", {"id": customer_id, "business_id": biz_id, "name": customer_name, "phone": customer_phone, "balance": 0, "created_at": now()})
-            logger.info(f"[ORDER→QUOTE] New customer: {customer_name}")
-        
-        # Build quote items with prices from form
-        quote_items = []
-        matched_count = 0
-        unmatched_count = 0
-        for item in items:
-            desc = item.get("description", "Unknown Item")
-            qty = float(item.get("qty") or item.get("quantity") or 1)
-            price = float(item.get("price") or 0)
-            if price > 0:
-                matched_count += 1
-            else:
-                unmatched_count += 1
-            quote_items.append({"description": desc, "qty": qty, "price": price, "total": round(qty * price, 2)})
-        
-        subtotal = sum(item["total"] for item in quote_items)
-        vat = round(subtotal * 0.15, 2)
-        total = round(subtotal + vat, 2)
-        
-        existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
-        quote_num = f"Q-{len(existing_quotes) + 1:05d}"
-        
-        quote = RecordFactory.quote(
-            business_id=biz_id, customer_id=customer_id, customer_name=customer_name,
-            items=quote_items, quote_number=quote_num, date=today(),
-            subtotal=subtotal, vat=vat, total=total, status="draft",
-            notes=f"From order{' ' + order_reference if order_reference else ''}. {notes}".strip(),
-            created_by=user.get("id", "") if user else ""
-        )
-        quote_id = quote["id"]
-        success, err = db.save("quotes", quote)
-        
-        if success:
-            logger.info(f"[ORDER→QUOTE] {quote_num}: {customer_name} R{total:.2f}")
-            try:
-                AuditLog.log("CREATE", "quotes", quote_id, details=f"From scanned order - {customer_name}")
-            except:
-                pass
-            return jsonify({"success": True, "quote_id": quote_id, "quote_number": quote_num,
-                          "message": f"Quote {quote_num} created for {customer_name} - R{total:.2f}",
-                          "stock_matched": matched_count, "stock_unmatched": unmatched_count})
-        else:
-            return jsonify({"success": False, "error": f"Failed to save quote: {str(err)}"})
-    except Exception as e:
-        logger.error(f"[ORDER→QUOTE] Error: {e}")
-        return jsonify({"success": False, "error": str(e)})
-
-
 @app.route("/api/scan/check-duplicate", methods=["POST"])
 @login_required
 def api_scan_check_duplicate():
@@ -70494,12 +69371,6 @@ def api_scan_save_to_inbox():
             except (ValueError, TypeError):
                 _net = 0
             summary = f"{extracted.get('employee_name') or 'Unknown'} - R{_net:.2f}"
-        elif doc_type == "customer_order":
-            customer = extracted.get('customer_name') or extracted.get('customer') or 'Unknown Customer'
-            items = extracted.get('items', [])
-            order_ref = extracted.get('order_reference') or ''
-            ref_str = f" ({order_ref})" if order_ref else ''
-            summary = f"Order from {customer}{ref_str} - {len(items)} items"
         elif doc_type == "timesheet":
             # Handle new format with employees array
             employees = extracted.get('employees', [])
@@ -70646,8 +69517,8 @@ def scan_inbox_page():
     inbox_html = ""
     for item in inbox_items:
         doc_type = item.get("type", "other")
-        type_icon = {"invoice": "[INV]", "payslip": "[MONEY]", "timesheet": "⏱️", "customer_order": "🛒", "other": "[DOC]"}.get(doc_type, "[DOC]")
-        type_color = {"invoice": "var(--primary)", "payslip": "#ec4899", "timesheet": "#f59e0b", "customer_order": "#10b981", "other": "var(--text-muted)"}.get(doc_type, "var(--text-muted)")
+        type_icon = {"invoice": "[INV]", "payslip": "[MONEY]", "timesheet": "⏱️", "other": "[DOC]"}.get(doc_type, "[DOC]")
+        type_color = {"invoice": "var(--primary)", "payslip": "#ec4899", "timesheet": "#f59e0b", "other": "var(--text-muted)"}.get(doc_type, "var(--text-muted)")
         
         # Parse stored data
         try:
@@ -70690,10 +69561,6 @@ def scan_inbox_page():
         <div class="stat-card" style="background:rgba(245,158,11,0.1);border-color:#f59e0b;">
             <div class="stat-value">{type_counts.get("timesheet", 0)}</div>
             <div class="stat-label">Timesheets</div>
-        </div>
-        <div class="stat-card" style="background:rgba(16,185,129,0.1);border-color:#10b981;">
-            <div class="stat-value">{type_counts.get("customer_order", 0)}</div>
-            <div class="stat-label">Orders</div>
         </div>
     </div>
     
@@ -71309,88 +70176,6 @@ def scan_inbox_page():
                     <button class="btn" onclick="processAs('supplier')" style="padding:14px;background:var(--primary);color:white;">📦 Stock Purchase (Credit)</button>
                 </div>
             `;
-        }} else if (type === 'customer_order') {{
-            const orderItems = data.items || [];
-            let orderItemsHtml = '';
-            if (orderItems.length > 0) {{
-                orderItemsHtml = `
-                <div style="margin:15px 0;background:rgba(16,185,129,0.1);border-radius:12px;padding:15px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                        <span style="font-weight:600;color:#10b981;">ORDER ITEMS (${{orderItems.length}})</span>
-                        <span style="font-size:11px;color:var(--text-muted);background:rgba(16,185,129,0.2);padding:3px 8px;border-radius:4px;">
-                            Prices = YOUR selling prices
-                        </span>
-                    </div>
-                    <div style="max-height:350px;overflow-y:auto;">
-                `;
-                orderItems.forEach((item, i) => {{
-                    const desc = item.description || 'Item';
-                    const qty = item.qty || item.quantity || 1;
-                    const stockMatch = matchStock(desc);
-                    let matchBadge = '';
-                    let matchedPrice = 0;
-                    if (stockMatch) {{
-                        matchedPrice = parseFloat(stockMatch.price || stockMatch.selling_price || 0);
-                        matchBadge = `<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">${{stockMatch.code || ''}} MATCHED</span>`;
-                    }} else {{
-                        matchBadge = `<span style="background:#f97316;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">NOT FOUND</span>`;
-                    }}
-                    const lineTotal = (parseFloat(qty) * matchedPrice).toFixed(2);
-                    orderItemsHtml += `
-                    <div class="order-item-row" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;">
-                        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
-                            <div style="flex:1;">
-                                <div style="font-weight:500;margin-bottom:6px;">
-                                    <span style="color:var(--text-muted);">${{i+1}}.</span>
-                                    <input type="text" id="ord_desc_${{i}}" value="${{desc}}" style="border:none;background:transparent;font-weight:500;width:90%;outline:none;font-size:14px;color:#fff;" />
-                                </div>
-                                <div style="display:flex;gap:6px;flex-wrap:wrap;">${{matchBadge}}</div>
-                            </div>
-                            <div style="text-align:right;min-width:140px;">
-                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">
-                                    x<input type="number" id="ord_qty_${{i}}" value="${{qty}}" style="border:none;background:transparent;width:40px;outline:none;text-align:center;color:#fff;" step="1" onchange="recalcOrderTotal()" />
-                                    @ R<input type="number" id="ord_price_${{i}}" value="${{matchedPrice.toFixed(2)}}" style="border:1px solid ${{matchedPrice > 0 ? '#22c55e' : '#f97316'}};background:${{matchedPrice > 0 ? 'transparent' : 'rgba(249,115,22,0.1)'}};width:80px;outline:none;text-align:right;color:#fff;border-radius:4px;padding:2px 4px;" step="0.01" onchange="recalcOrderTotal()" />
-                                </div>
-                                <div style="font-weight:600;color:#10b981;" id="ord_line_${{i}}">R${{lineTotal}}</div>
-                            </div>
-                        </div>
-                    </div>
-                    `;
-                }});
-                orderItemsHtml += '</div></div>';
-            }}
-            formHtml = `
-                <div style="background:rgba(16,185,129,0.15);padding:12px;border-radius:8px;margin-bottom:15px;text-align:center;">
-                    <strong style="color:#10b981;font-size:16px;">🛒 CUSTOMER ORDER → CREATE QUOTE</strong>
-                </div>
-                <div class="modal-field">
-                    <label>Customer Name</label>
-                    <input type="text" id="m_customer" value="${{data.customer_name || data.customer || ''}}">
-                </div>
-                <div class="modal-row">
-                    <div class="modal-field"><label>Phone</label><input type="text" id="m_customer_phone" value="${{data.customer_phone || data.phone || ''}}"></div>
-                    <div class="modal-field"><label>Order Ref</label><input type="text" id="m_order_ref" value="${{data.order_reference || ''}}"></div>
-                </div>
-                ${{orderItemsHtml}}
-                <div class="modal-row" style="margin-top:15px;">
-                    <div class="modal-field"><label>Subtotal (excl VAT)</label><input type="number" step="0.01" id="m_order_subtotal" value="0" readonly style="font-weight:bold;"></div>
-                    <div class="modal-field"><label>VAT (15%)</label><input type="number" step="0.01" id="m_order_vat" value="0" readonly></div>
-                </div>
-                <div class="modal-field">
-                    <label>Total (incl VAT)</label>
-                    <input type="number" step="0.01" id="m_order_total" value="0" readonly style="font-size:20px;font-weight:bold;background:rgba(16,185,129,0.1);border-color:#10b981;">
-                </div>
-                ${{data.notes ? `<div class="modal-field"><label>Notes</label><input type="text" id="m_order_notes" value="${{data.notes || ''}}"></div>` : ''}}
-            `;
-            saveHtml = `
-                <button class="btn" onclick="processAs('create_quote')" style="padding:16px;background:#10b981;color:white;width:100%;font-size:16px;font-weight:bold;">
-                    CREATE QUOTE
-                </button>
-                <div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text-muted);">
-                    Quote will be created as Draft. View it to convert to Invoice.
-                </div>
-            `;
-            setTimeout(() => {{ recalcOrderTotal(); }}, 100);
         }} else if (type === 'payslip') {{
             formHtml = `
                 <div class="modal-field">
@@ -71791,36 +70576,6 @@ def scan_inbox_page():
             }};
             endpoint = '/api/scan/save-timesheet-batch';
             redirect = '/payroll';
-        }} else if (saveType === 'create_quote') {{
-            const quoteItems = [];
-            const orderRows = document.querySelectorAll('.order-item-row');
-            orderRows.forEach((row, i) => {{
-                const descEl = document.getElementById(`ord_desc_${{i}}`);
-                const qtyEl = document.getElementById(`ord_qty_${{i}}`);
-                const priceEl = document.getElementById(`ord_price_${{i}}`);
-                if (descEl) {{
-                    const qty = parseFloat(qtyEl?.value || 1);
-                    const price = parseFloat(priceEl?.value || 0);
-                    quoteItems.push({{
-                        description: descEl.value.trim(),
-                        qty: qty,
-                        price: price,
-                        total: Math.round(qty * price * 100) / 100
-                    }});
-                }}
-            }});
-            payload = {{
-                customer_name: document.getElementById('m_customer')?.value || 'Unknown',
-                customer_phone: document.getElementById('m_customer_phone')?.value || '',
-                order_reference: document.getElementById('m_order_ref')?.value || '',
-                items: quoteItems,
-                subtotal: parseFloat(document.getElementById('m_order_subtotal')?.value || 0),
-                vat: parseFloat(document.getElementById('m_order_vat')?.value || 0),
-                total: parseFloat(document.getElementById('m_order_total')?.value || 0),
-                notes: document.getElementById('m_order_notes')?.value || ''
-            }};
-            endpoint = '/api/scan/create-quote-from-order';
-            redirect = '/quotes';
         }} else if (saveType === 'bank_statement') {{
             // Import bank statement transactions to banking
             const txns = currentItemData.transactions || (currentItemData.extracted && currentItemData.extracted.transactions) || [];
@@ -71880,8 +70635,6 @@ def scan_inbox_page():
                 
                 if (redirect === '/banking' && data.imported > 0) {{
                     window.location = '/banking';
-                }} else if (data.quote_id) {{
-                    window.location = '/quote/' + data.quote_id + '?success=Created+from+order';
                 }} else {{
                     window.location.reload();
                 }}
@@ -71891,27 +70644,6 @@ def scan_inbox_page():
         }} catch(err) {{
             alert(' Error: ' + err.message);
         }}
-    }}
-    
-    function recalcOrderTotal() {{
-        let subtotal = 0;
-        const rows = document.querySelectorAll('.order-item-row');
-        rows.forEach((row, i) => {{
-            const qty = parseFloat(document.getElementById(`ord_qty_${{i}}`)?.value || 0);
-            const price = parseFloat(document.getElementById(`ord_price_${{i}}`)?.value || 0);
-            const lineTotal = qty * price;
-            subtotal += lineTotal;
-            const lineEl = document.getElementById(`ord_line_${{i}}`);
-            if (lineEl) lineEl.textContent = 'R' + lineTotal.toFixed(2);
-        }});
-        const vat = subtotal * 0.15;
-        const total = subtotal + vat;
-        const subEl = document.getElementById('m_order_subtotal');
-        const vatEl = document.getElementById('m_order_vat');
-        const totalEl = document.getElementById('m_order_total');
-        if (subEl) subEl.value = subtotal.toFixed(2);
-        if (vatEl) vatEl.value = vat.toFixed(2);
-        if (totalEl) totalEl.value = total.toFixed(2);
     }}
     
     async function deleteFromInbox() {{
