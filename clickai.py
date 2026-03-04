@@ -48499,16 +48499,28 @@ def pos_page():
         f11Mode = !f11Mode;
         document.body.classList.toggle('f11-mode', f11Mode);
         if (f11Mode) {{
+            try {{ document.documentElement.requestFullscreen(); }} catch(e) {{}}
             if (typeof renderF11Table === 'function') renderF11Table();
             if (typeof syncF11Buttons === 'function') syncF11Buttons();
             if (typeof updateF11CustName === 'function') updateF11CustName();
             var el = document.getElementById('f11Search');
             if (el) {{ el.value = ''; el.focus(); }}
         }} else {{
+            try {{ if(document.fullscreenElement) document.exitFullscreen(); }} catch(e) {{}}
             var el = document.getElementById('stockSearch');
             if (el) el.focus();
         }}
     }}
+    </script>
+    <script>
+    document.addEventListener('fullscreenchange', function() {{
+        if (!document.fullscreenElement && f11Mode) {{
+            f11Mode = false;
+            document.body.classList.remove('f11-mode');
+            var el = document.getElementById('stockSearch');
+            if (el) el.focus();
+        }}
+    }});
     </script>
     <header class="pos-header" style="padding:6px 20px 4px;">
         <div class="pos-header-nav">
