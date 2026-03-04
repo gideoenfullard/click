@@ -46817,7 +46817,6 @@ def pos_page():
                     e.preventDefault();
                     e.stopPropagation();
                     closePrintModal();
-                    location.reload();
                     return;
                 } else if (e.key === '1') {
                     e.preventDefault();
@@ -46833,7 +46832,6 @@ def pos_page():
                     e.preventDefault();
                     e.stopPropagation();
                     closePrintModal();
-                    location.reload();
                     return;
                 }
             }
@@ -47857,21 +47855,62 @@ def pos_page():
     
     function closePrintModal() {
         document.getElementById('printSlipModal').style.display = 'none';
-        posLocked = false;
-        if (navigator.onLine) { location.reload(); } else { clearCartAfterSale(); }
+        afterSaleReset();
     }
     
-    function clearCartAfterSale() {
-        // Reset POS without reloading page (for offline use)
-        try {
-            posItems = [];
-            renderCart();
-            document.getElementById('cartCount').textContent = '0';
-            document.getElementById('cartTotal').textContent = 'R0.00';
-            // Clear customer selection
-            if (typeof selectCustomer === 'function') selectCustomer('', 'Cash Sale');
-        } catch(e) {
-            console.log('[OFFLINE] Cart clear:', e);
+    function afterSaleReset() {
+        // Update stock quantities LOCALLY — no page reload needed
+        if (lastSaleData && lastSaleData.items) {
+            lastSaleData.items.forEach(function(item) {
+                // Find stock row by ID or code
+                var row = document.querySelector('tr[data-id="' + item.stock_id + '"]') || 
+                          document.querySelector('tr[data-code="' + item.code + '"]');
+                if (row) {
+                    var oldQty = parseFloat(row.getAttribute('data-qty')) || 0;
+                    var newQty = oldQty - item.quantity;
+                    row.setAttribute('data-qty', newQty);
+                    
+                    // Update the onclick to pass new qty
+                    var id = row.getAttribute('data-id');
+                    var code = row.getAttribute('data-code');
+                    var desc = row.getAttribute('data-desc');
+                    var price = parseFloat(row.getAttribute('data-price')) || 0;
+                    row.setAttribute('onclick', "addToCart('" + id + "', '" + code + "', '" + desc + "', " + price + ", " + newQty + ")");
+                    
+                    // Update qty badge display
+                    var badgeCell = row.querySelector('.col-stock');
+                    if (badgeCell) {
+                        var cls = '';
+                        var badgeCls = 'stock-badge';
+                        if (newQty < 0) { cls = 'negative'; badgeCls += ' negative'; }
+                        else if (newQty === 0) { cls = 'zero'; badgeCls += ' zero'; }
+                        else if (newQty < 5) { cls = 'low'; badgeCls += ' low'; }
+                        badgeCell.innerHTML = '<span class="' + badgeCls + '">' + Math.round(newQty) + '</span>';
+                        
+                        // Update row class
+                        row.classList.remove('negative', 'zero', 'low');
+                        if (cls) row.classList.add(cls);
+                    }
+                }
+            });
+        }
+        
+        // Clear cart and reset state
+        cart = [];
+        updateCart();
+        posLocked = false;
+        lastSaleData = null;
+        
+        // Focus search for next sale
+        var search = document.getElementById('stockSearch');
+        if (search) { search.value = ''; search.focus(); }
+        
+        // Flash success on reactor
+        var rx = document.querySelector('.pos-rx-core');
+        if (rx) {
+            rx.style.transition = 'box-shadow 0.3s';
+            rx.style.boxShadow = '0 0 40px rgba(16,185,129,0.5)';
+            setTimeout(function() { rx.style.boxShadow = ''; }, 1500);
         }
     }
     
@@ -48274,7 +48313,7 @@ def pos_page():
                     onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
                     onblur="this.style.outline='none';this.style.transform='scale(1)'"
                     style="flex:1;padding:18px;border-radius:8px;border:3px solid #3b82f6;background:#3b82f6;color:white;cursor:pointer;font-weight:bold;font-size:16px;transition:transform 0.1s;">📄 A4 [2]</button>
-                <button id="btnPrintSkip" tabindex="0" onclick="closePrintModal(); if(navigator.onLine){location.reload();}else{clearCartAfterSale();}" 
+                <button id="btnPrintSkip" tabindex="0" onclick="closePrintModal()" 
                     onfocus="this.style.outline='4px solid yellow';this.style.outlineOffset='2px';this.style.transform='scale(1.05)'" 
                     onblur="this.style.outline='none';this.style.transform='scale(1)'"
                     style="flex:1;padding:18px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;transition:transform 0.1s;">✕ Skip [3]</button>
