@@ -22353,6 +22353,13 @@ JARVIS_HUD_CSS = '''
 .j-hud-wrap::before{content:'';position:absolute;top:0;left:0;width:24px;height:24px;border-top:2px solid rgba(100,200,255,0.35);border-left:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-wrap::after{content:'';position:absolute;bottom:0;right:0;width:24px;height:24px;border-bottom:2px solid rgba(100,200,255,0.35);border-right:2px solid rgba(100,200,255,0.35);z-index:5;pointer-events:none;}
 .j-hud-pad{height:16px;}
+/* Non-dashboard: full-width single-column chat */
+.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-center{display:none !important;}
+.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-layout{flex-direction:column;gap:0;padding:0 20px;}
+.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-left,.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-right{flex:none;width:100%;padding:0;}
+.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-msgs{max-height:none;overflow-y:visible;}
+.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-ext.open{max-height:60vh;overflow-y:auto;}
+.j-hud-wrap:not([data-page="Dashboard"]) .j-zane-inp{margin:8px 20px 12px;}
 /* Responsive: hide flanks on small screens, shrink reactor */
 @media(max-width:768px){
 .j-hero{flex-wrap:wrap;gap:8px;padding:8px 0 10px;}
@@ -22680,7 +22687,7 @@ def jarvis_hud_header(page_name, page_count, left_items, right_items, reactor_si
             right_html += '<div class="j-fln"></div>'
     
     return f'''
-    <div class="j-hud-wrap">
+    <div class="j-hud-wrap" data-page="{page_name}">
         <div class="j-hero" style="padding:14px 20px 0;">
             <div class="j-flank">{left_html}</div>
             <div class="j-cn"></div>
@@ -22829,7 +22836,7 @@ def _jarvis_global_hud(title, content):
         page_name = title.upper().replace(" - CLICK AI", "").strip()
         
         hdr = f'''
-        <div class="j-hud-wrap">
+        <div class="j-hud-wrap" data-page="{page_name}">
             <div class="j-hero" style="padding:10px 20px 0;">
                 <div class="j-cn"></div>
                 <div class="j-rx page" onclick="jzToggle()" style="width:180px;height:180px;z-index:10;">
@@ -30664,8 +30671,8 @@ def quote_new():
         vat = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
         total = subtotal + vat
         
-        existing = db.get("quotes", {"business_id": biz_id})
-        quote_num = f"QT{len(existing) + 1:04d}"
+        existing = db.get("quotes", {"business_id": biz_id}) or []
+        quote_num = next_document_number("QT", existing, "quote_number")
         
         quote = RecordFactory.quote(
             business_id=biz_id,
@@ -44378,7 +44385,8 @@ def pos_page():
         display: grid;
         grid-template-columns: 1fr 480px;
         gap: 20px;
-        height: calc(100vh - 140px);
+        height: 100%;
+        min-height: 0;
         padding: 0 20px;
     }
     
@@ -44597,8 +44605,10 @@ def pos_page():
         padding: 20px;
         display: flex;
         flex-direction: column;
-        height: calc(100vh - 140px);
+        height: 100%;
+        min-height: 0;
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
     }
     
     .pos-cart-header {
@@ -45085,7 +45095,7 @@ def pos_page():
         border: 1px solid rgba(99, 102, 241, 0.2) !important;
         box-shadow: 0 0 30px rgba(99, 102, 241, 0.08), 0 8px 32px rgba(0, 0, 0, 0.3) !important;
         position: relative;
-        overflow: visible;
+        overflow: hidden;
     }
     .pos-cart::before {
         content: '';
@@ -45357,12 +45367,15 @@ def pos_page():
     .f11-table tr.f11-sel td:first-child{border-left:2px solid #00ccff;}
     .f11-onhand{font-size:12px;color:#5a8aaa;font-family:'Share Tech Mono',monospace;}
 
-    /* F11 state toggle */
+    /* F11 state toggle — hide ALL page elements, show fixed overlay */
     body.f11-mode .pos-header{display:none !important;}
     body.f11-mode .pos-reactor-wrap{display:none !important;}
     body.f11-mode .container{display:none !important;}
-    body.f11-mode .f11-header{display:flex !important;}
-    body.f11-mode .f11-order-wrap{display:flex !important;}
+    body.f11-mode .cashier-bar{display:none !important;}
+    body.f11-mode .zane-chat{display:none !important;}
+    body.f11-mode .f11-header{display:flex !important;position:fixed !important;top:0;left:0;right:0;z-index:9000;background:rgba(4,12,35,0.98) !important;}
+    body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:52px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;}
+    body.f11-mode{overflow:hidden !important;}
 
     </style>
     '''
@@ -47759,16 +47772,12 @@ def pos_page():
                 if (btn) { btn.focus(); btn.style.outline = '3px solid yellow'; }
             }, 150);
         } else {
-            // Ask if want to print
-            if (confirm('Sale complete: ' + saleNum + '\\n\\nPrint slip?')) {
-                document.getElementById('printSlipModal').style.display = 'flex';
-                setTimeout(() => { 
-                    const btn = document.getElementById('btnPrintThermal');
-                    if (btn) { btn.focus(); btn.style.outline = '3px solid yellow'; }
-                }, 150);
-            } else {
-                if (navigator.onLine) { location.reload(); } else { clearCartAfterSale(); }
-            }
+            // Show print modal directly — no extra confirm needed
+            document.getElementById('printSlipModal').style.display = 'flex';
+            setTimeout(() => { 
+                const btn = document.getElementById('btnPrintThermal');
+                if (btn) { btn.focus(); btn.style.outline = '3px solid yellow'; }
+            }, 150);
         }
     }
     
@@ -47840,22 +47849,16 @@ def pos_page():
                         printFrame.contentWindow.focus();
                         printFrame.contentWindow.print();
                     } catch(e) {}
-                    setTimeout(() => {
-                        closePrintModal();
-                        if (navigator.onLine) { location.reload(); } else { clearCartAfterSale(); }
-                    }, 500);
                 }, 2000);  // Wait 2 seconds between prints
-            } else {
-                setTimeout(() => {
-                    closePrintModal();
-                    if (navigator.onLine) { location.reload(); } else { clearCartAfterSale(); }
-                }, 500);
             }
-        }, 300);
+            // DON'T auto-reload — let user close modal with Skip/Done button
+        }, 600);
     }
     
     function closePrintModal() {
         document.getElementById('printSlipModal').style.display = 'none';
+        posLocked = false;
+        if (navigator.onLine) { location.reload(); } else { clearCartAfterSale(); }
     }
     
     function clearCartAfterSale() {
@@ -48581,7 +48584,7 @@ def pos_page():
         </div>
     </div>
 
-    <main class="container" style="padding-top:8px;height:calc(100vh - 250px);overflow:hidden;">
+    <main class="container" style="padding-top:8px;height:calc(100vh - 250px);overflow:hidden;display:flex;flex-direction:column;">
         {pos_html}
     </main>
     
