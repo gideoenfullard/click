@@ -46099,62 +46099,27 @@ def pos_page():
             return;
         }
         
-        // Build preview of items - prices are EXCL VAT
+        // Calculate totals — prices are EXCL VAT
         let subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
         subtotal = Math.round(subtotal * 100) / 100;
-        const vat = Math.round(subtotal * 0.15 * 100) / 100;  // ADD 15% VAT
+        const vat = Math.round(subtotal * 0.15 * 100) / 100;
         const grandTotal = Math.round((subtotal + vat) * 100) / 100;
         const itemCount = cart.reduce((sum, item) => sum + item.qty, 0);
-        
-        let preview = '═══════════════════════\\n';
-        preview += method.toUpperCase() + ' SALE PREVIEW\\n';
-        preview += '═══════════════════════\\n\\n';
-        preview += 'Customer: ' + customerName + '\\n';
-        preview += '───────────────────────\\n';
-        
-        cart.forEach(item => {
-            const lineTotal = item.price * item.qty;
-            preview += item.qty + 'x ' + item.code + '\\n';
-            preview += '   @ R' + item.price.toFixed(2) + ' = R' + lineTotal.toFixed(2) + '\\n';
-        });
-        
-        preview += '───────────────────────\\n';
-        preview += 'Subtotal: R' + subtotal.toFixed(2) + '\\n';
-        preview += 'VAT (15%): R' + vat.toFixed(2) + '\\n';
-        preview += 'TOTAL: R' + grandTotal.toFixed(2) + ' (' + itemCount + ' items)\\n';
-        preview += '═══════════════════════\\n\\n';
-        preview += 'Proceed with sale?';
-        
-        if (!confirm(preview)) {
-            posLocked = false;
-            return;
-        }
         
         let cashReceived = 0;
         let changeGiven = 0;
         
         if (method === 'cash') {
-            const received = prompt('💵 CASH SALE\\n\\nTotal: R' + grandTotal.toFixed(2) + '\\n\\nCash received:', grandTotal.toFixed(2));
-            
+            const received = prompt('CASH R' + grandTotal.toFixed(2) + ' (' + itemCount + ' items)\\n\\nCash received:', grandTotal.toFixed(2));
             if (received === null) { posLocked = false; return; }
-            
             cashReceived = parseFloat(received);
-            if (isNaN(cashReceived)) {
-                alert('Invalid amount');
-                posLocked = false;
-                return;
-            }
-            
+            if (isNaN(cashReceived) || cashReceived < 0) { alert('Invalid amount'); posLocked = false; return; }
             changeGiven = cashReceived - grandTotal;
-            if (changeGiven < -0.01) {
-                alert('INSUFFICIENT\\n\\nTotal: R' + grandTotal.toFixed(2) + '\\nReceived: R' + cashReceived.toFixed(2) + '\\nShort: R' + Math.abs(changeGiven).toFixed(2));
-                posLocked = false;
-                return;
-            }
-            
-            if (changeGiven >= 0.01) {
-                alert('CHANGE: R' + changeGiven.toFixed(2));
-            }
+            if (changeGiven < -0.01) { alert('Short R' + Math.abs(changeGiven).toFixed(2)); posLocked = false; return; }
+        } else if (method === 'card') {
+            // Card — no prompt needed, just go
+        } else if (method === 'account') {
+            // Account — customer already selected
         }
         
         const items = cart.map(item => ({
@@ -47756,6 +47721,24 @@ def pos_page():
         `;
         
         document.getElementById('slipContent').innerHTML = slipHtml;
+        
+        // Show CHANGE banner if cash sale with change due
+        var changeBanner = document.getElementById('changeBanner');
+        if (!changeBanner) {
+            changeBanner = document.createElement('div');
+            changeBanner.id = 'changeBanner';
+            changeBanner.style.cssText = 'text-align:center;padding:20px;font-size:36px;font-weight:900;border-radius:8px 8px 0 0;display:none;';
+            var modalInner = document.querySelector('#printSlipModal > div');
+            if (modalInner) modalInner.insertBefore(changeBanner, modalInner.firstChild);
+        }
+        if (changeGiven >= 0.01) {
+            changeBanner.style.display = 'block';
+            changeBanner.style.background = '#10b981';
+            changeBanner.style.color = 'white';
+            changeBanner.textContent = 'CHANGE: R' + changeGiven.toFixed(2);
+        } else {
+            changeBanner.style.display = 'none';
+        }
         
         // Check settings for auto behavior
         if (posSettings.auto_print && posSettings.print_format !== 'ask') {
