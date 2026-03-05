@@ -48609,7 +48609,6 @@ def pos_page():
                     <th class="r" style="width:60px;">QTY</th><th class="r" style="width:100px;">PRICE</th>
                     <th class="r" style="width:80px;">DISC</th><th class="r" style="width:110px;">TOTAL</th>
                     <th style="width:80px;">ON-HAND</th>
-                    <th style="width:40px;"></th>
                 </tr></thead>
                 <tbody id="f11Body"></tbody>
             </table>
@@ -48695,7 +48694,6 @@ def pos_page():
             html += '<td class="r" style="color:#5a8aaa;cursor:pointer;" onclick="event.stopPropagation();f11EditDisc(' + idx + ')">' + (item.disc ? item.disc + '%' : '—') + '</td>';
             html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
             html += '<td><span class="f11-onhand">' + onHand + '</span></td>';
-            html += '<td style="text-align:center;"><span style="cursor:pointer;color:#555;font-size:14px;padding:2px 6px;border-radius:4px;transition:all 0.15s;" onmouseover="this.style.color=\'#ef4444\';this.style.background=\'rgba(239,68,68,0.15)\'" onmouseout="this.style.color=\'#555\';this.style.background=\'none\'" onclick="event.stopPropagation();f11DelItem(' + idx + ')">✕</span></td>';
             html += '</tr>';
         }});
         tbody.innerHTML = html;
@@ -48743,13 +48741,6 @@ def pos_page():
         var disc = parseFloat(newDisc);
         if (isNaN(disc) || disc < 0 || disc > 100) {{ alert('Invalid discount (0-100)'); return; }}
         item.disc = disc;
-        updateCart(); renderF11Table(); syncF11Buttons();
-    }}
-
-    function f11DelItem(idx) {{
-        if (idx < 0 || idx >= cart.length) return;
-        cart.splice(idx, 1);
-        if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1);
         updateCart(); renderF11Table(); syncF11Buttons();
     }}
 
@@ -48904,7 +48895,6 @@ def pos_page():
                 if ((e.key === 'q' || e.key === 'Q') && cart.length > 0) {{ e.preventDefault(); f11EditQty(f11SelectedRow); }}
                 if ((e.key === 'p' || e.key === 'P') && cart.length > 0) {{ e.preventDefault(); f11EditPrice(f11SelectedRow); }}
                 if ((e.key === 'd' || e.key === 'D') && cart.length > 0) {{ e.preventDefault(); f11EditDisc(f11SelectedRow); }}
-                if (e.key === 'Delete' && cart.length > 0) {{ e.preventDefault(); f11DelItem(f11SelectedRow); }}
             }}
         }});
     }});
