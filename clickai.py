@@ -46039,7 +46039,7 @@ def pos_page():
             if (search === '') {
                 match = visibleCount < MAX_VISIBLE;
             } else {
-                const tokens = search.split(/\\s+/).filter(t => t.length > 0);
+                const tokens = search.split(/\s+/).filter(t => t.length > 0);
                 match = tokens.every(t => data.indexOf(t) !== -1) && visibleCount < MAX_VISIBLE;
             }
             if (match) {
