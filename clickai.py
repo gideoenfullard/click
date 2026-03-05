@@ -45339,7 +45339,7 @@ def pos_page():
     .f11-exit{padding:9px 14px;border:1px solid rgba(255,80,80,0.2);background:rgba(255,40,40,0.06);cursor:pointer;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#ff8888;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;transition:all 0.2s;}
     .f11-exit:hover{border-color:rgba(255,80,80,0.4);background:rgba(255,40,40,0.12);color:#ffaaaa;}
     .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.3);background:rgba(255,40,40,0.08);text-shadow:0 0 6px rgba(255,80,80,0.4);}
-    .f11-order-wrap{display:none;flex:1;overflow:hidden;flex-direction:column;}
+    .f11-order-wrap{display:none;flex:1;overflow:visible;flex-direction:column;}
     .f11-search{padding:10px 20px;border-bottom:1px solid rgba(80,180,255,0.06);position:relative;}
     .f11-search input{width:100%;height:48px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:18px;font-weight:600;padding:0 16px 0 44px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15),inset 0 0 8px rgba(0,200,255,0.05);}
     .f11-search::before{content:'🔍';position:absolute;left:32px;top:50%;transform:translateY(-50%);font-size:18px;z-index:1;opacity:0.7;}
@@ -45375,7 +45375,7 @@ def pos_page():
     body.f11-mode .cashier-bar{display:none !important;}
     body.f11-mode .zane-chat{display:none !important;}
     body.f11-mode .f11-header{display:flex !important;position:fixed !important;top:0;left:0;right:0;z-index:9000;background:rgba(4,12,35,0.98) !important;}
-    body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:52px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;}
+    body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:52px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;overflow:visible !important;}
     body.f11-mode{overflow:hidden !important;}
 
     </style>
@@ -47793,64 +47793,48 @@ def pos_page():
             @page { size: A4; margin: 20mm; }
         `;
         
-        // Use window.open — more reliable for thermal printers than hidden iframe
-        const printWin = window.open('', 'pos_print', 'width=400,height=600');
-        if (printWin) {
-            printWin.document.write('<!DOCTYPE html><html><head><title>Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>');
-            printWin.document.close();
-            
-            // Wait for content to render, then print
-            const doPrint = function() {
-                try {
-                    printWin.focus();
-                    printWin.print();
-                } catch(e) {
-                    console.log('[POS] Print error:', e);
+        // Use hidden iframe instead of popup (popup blockers won't interfere)
+        let printFrame = document.getElementById('posPrintFrame');
+        if (!printFrame) {
+            printFrame = document.createElement('iframe');
+            printFrame.id = 'posPrintFrame';
+            printFrame.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:none;';
+            document.body.appendChild(printFrame);
+        }
+        
+        const doc = printFrame.contentDocument || printFrame.contentWindow.document;
+        doc.open();
+        doc.write(`<!DOCTYPE html><html><head><title>Slip</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
+        doc.close();
+        
+        // Print after content renders
+        setTimeout(() => {
+            try {
+                printFrame.contentWindow.focus();
+                printFrame.contentWindow.print();
+            } catch(e) {
+                // Fallback: try window.open if iframe print fails
+                const printWin = window.open('', '_blank', 'width=400,height=600');
+                if (printWin) {
+                    printWin.document.write(`<!DOCTYPE html><html><head><title>Slip</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
+                    printWin.document.close();
+                    printWin.onload = function() { printWin.print(); setTimeout(() => printWin.close(), 500); };
+                } else {
+                    alert('Popup blocked — enable popups for this site, or set your thermal printer as default and press Ctrl+P');
                 }
-                // Close window after print dialog closes
-                setTimeout(function() { try { printWin.close(); } catch(e) {} }, 1000);
-            };
-            
-            // Some browsers need onload, others can go immediately
-            if (printWin.document.readyState === 'complete') {
-                setTimeout(doPrint, 300);
-            } else {
-                printWin.onload = function() { setTimeout(doPrint, 300); };
-                // Fallback timer in case onload doesn't fire
-                setTimeout(doPrint, 800);
             }
             
             // Handle duplicates - print 2nd copy for store record
             if (posSettings.print_duplicates) {
-                setTimeout(function() {
-                    const printWin2 = window.open('', 'pos_print2', 'width=400,height=600');
-                    if (printWin2) {
-                        printWin2.document.write('<!DOCTYPE html><html><head><title>Slip Copy</title><style>' + styles + '</style></head><body>' + slipContent + '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body></html>');
-                        printWin2.document.close();
-                        var doPrint2 = function() { try { printWin2.focus(); printWin2.print(); } catch(e) {} setTimeout(function() { try { printWin2.close(); } catch(e) {} }, 1000); };
-                        if (printWin2.document.readyState === 'complete') { setTimeout(doPrint2, 300); } else { printWin2.onload = function() { setTimeout(doPrint2, 300); }; setTimeout(doPrint2, 800); }
-                    }
-                }, 3000);  // Wait 3 seconds between prints
+                setTimeout(() => {
+                    try {
+                        printFrame.contentWindow.focus();
+                        printFrame.contentWindow.print();
+                    } catch(e) {}
+                }, 2000);  // Wait 2 seconds between prints
             }
-        } else {
-            // Popup blocked — fall back to iframe method
-            let printFrame = document.getElementById('posPrintFrame');
-            if (!printFrame) {
-                printFrame = document.createElement('iframe');
-                printFrame.id = 'posPrintFrame';
-                printFrame.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:auto;border:none;';
-                document.body.appendChild(printFrame);
-            }
-            const doc = printFrame.contentDocument || printFrame.contentWindow.document;
-            doc.open();
-            doc.write('<!DOCTYPE html><html><head><title>Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>');
-            doc.close();
-            setTimeout(function() {
-                try { printFrame.contentWindow.focus(); printFrame.contentWindow.print(); } catch(e) {
-                    alert('Print failed — please allow popups for this site, or set your thermal printer as default and press Ctrl+P');
-                }
-            }, 600);
-        }
+            // DON'T auto-reload — let user close modal with Skip/Done button
+        }, 600);
     }
     
     function closePrintModal() {
@@ -48546,8 +48530,6 @@ def pos_page():
             <a href="/pos/history">History</a>
             <a href="/stock">Stock</a>
             <a href="/customers">Customers</a>
-            <a href="/pos/history" onclick="event.preventDefault();window.location='/pos/history?xread=1';" style="color:#00ccff;border:1px solid rgba(0,200,255,0.3);border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;">X-Read</a>
-            <a href="/pos/history" onclick="event.preventDefault();window.location='/pos/history?zread=1';" style="color:#ff8888;border:1px solid rgba(255,80,80,0.3);border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;">Z-Read</a>
             <span id="offlineIndicator" style="display:none;padding:4px 10px;font-size:11px;font-weight:700;margin-left:8px;cursor:pointer;" onclick="syncOfflineSales()" title="Click to sync when online">
                 <span id="offlineText">🔴 OFFLINE</span>
                 <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;margin-left:4px;font-size:10px;"></span>
@@ -48669,7 +48651,7 @@ def pos_page():
             html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();">';
             html += '<td class="code">' + item.code + '</td>';
             html += '<td>' + item.desc + '</td>';
-            html += '<td class="r qty" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;" onclick="event.stopPropagation();f11EditQty(' + idx + ')" title="Click to edit qty">' + item.qty + '</td>';
+            html += '<td class="r qty">' + item.qty + '</td>';
             html += '<td class="r">R' + item.price.toFixed(2) + '</td>';
             html += '<td class="r" style="color:#5a8aaa;">—</td>';
             html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
@@ -48687,24 +48669,6 @@ def pos_page():
         ['f11Cash','f11Card'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
         ['f11Account','f11Invoice','f11Credit'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !(hasItems && hasCust); }});
         ['f11Quote','f11PO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
-    }}
-
-    function updateF11CustName() {{
-
-    function f11EditQty(idx) {{
-        if (idx < 0 || idx >= cart.length) return;
-        var item = cart[idx];
-        var newQty = prompt('Qty for ' + item.code + ':', item.qty);
-        if (newQty === null) return;
-        var qty = parseInt(newQty);
-        if (isNaN(qty) || qty < 0) {{ alert('Invalid qty'); return; }}
-        if (qty === 0) {{ cart.splice(idx, 1); if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1); }}
-        else {{ item.qty = qty; }}
-        updateCart();
-        renderF11Table();
-        syncF11Buttons();
-        var el = document.getElementById('f11Search');
-        if (el) el.focus();
     }}
 
     function updateF11CustName() {{
@@ -48823,9 +48787,6 @@ def pos_page():
             if (!f11DD.classList.contains('show') && !f11Input.value.trim()) {{
                 if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
                 if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
-                if ((e.key === '+' || e.key === '=') && cart.length > 0) {{ e.preventDefault(); cart[f11SelectedRow].qty++; updateCart(); renderF11Table(); syncF11Buttons(); }}
-                if (e.key === '-' && cart.length > 0 && cart[f11SelectedRow].qty > 1) {{ e.preventDefault(); cart[f11SelectedRow].qty--; updateCart(); renderF11Table(); syncF11Buttons(); }}
-                if ((e.key === 'q' || e.key === 'Q') && cart.length > 0) {{ e.preventDefault(); f11EditQty(f11SelectedRow); }}
             }}
         }});
     }});
@@ -48844,6 +48805,7 @@ def pos_page():
             .catch(e => console.log('[SW] Non-critical:', e));
     }}
     </script>
+    <div class="f11-dd" id="f11Dropdown" style="position:fixed;z-index:99999;"></div>
 </body>
 </html>'''
 
