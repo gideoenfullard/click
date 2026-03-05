@@ -44727,6 +44727,22 @@ def pos_page():
         min-width: 70px;
         text-align: right;
     }
+    .cart-del-btn {
+        background: none;
+        border: none;
+        color: #666;
+        font-size: 14px;
+        cursor: pointer;
+        padding: 4px 6px;
+        margin-left: 4px;
+        border-radius: 4px;
+        transition: all 0.15s;
+        line-height: 1;
+    }
+    .cart-del-btn:hover {
+        color: #ef4444;
+        background: rgba(239,68,68,0.15);
+    }
     
     /* ═══ TOTALS ═══ */
     .pos-totals {
@@ -45583,6 +45599,11 @@ def pos_page():
         updateCart();
     }
     
+    function removeFromCart(id) {
+        cart = cart.filter(i => i.id !== id);
+        updateCart();
+    }
+    
     async function setQty(id) {
         const item = cart.find(i => i.id === id);
         if (!item) return;
@@ -45657,6 +45678,7 @@ def pos_page():
                         <button class="cart-qty-btn" onclick="updateQty('${item.id}', 1)">+</button>
                     </div>
                     <div class="cart-item-total">R${lineTotal.toFixed(2)}</div>
+                    <button class="cart-del-btn" onclick="removeFromCart('${item.id}')" title="Remove">✕</button>
                 </div>
             `;
         });
@@ -46004,13 +46026,7 @@ def pos_page():
     }
     
     function filterStock() {
-        // Skip filtering if we're in navigation mode (user used arrows)
-        if (window.isNavigating) {
-            window.isNavigating = false;
-            return;
-        }
-        
-        // Reset original search when user types
+        if (window.isNavigating) { window.isNavigating = false; return; }
         window.originalSearch = null;
         
         const raw = document.getElementById('stockSearch').value;
@@ -46018,11 +46034,10 @@ def pos_page():
         const rows = document.querySelectorAll('.stock-row');
         const noResults = document.getElementById('noResults');
         
-        // Strip quantity prefix
-        if (search.match(/^\\d+\\*\\s*/)) {
-            search = search.replace(/^\\d+\\*\\s*/, '');
+        // Strip quantity prefix (e.g. "5*nut" -> "nut")
+        if (search.match(/^\d+\*\s*/)) {
+            search = search.replace(/^\d+\*\s*/, '');
         }
-        
         // Normalize dimensions
         search = search.replace(/\s*[xX]\s*/g, 'x');
         
@@ -46030,22 +46045,13 @@ def pos_page():
         selectedRowIndex = -1;
         
         if (search === '') {
-            // No search - show first MAX_VISIBLE
-            let visibleCount = 0;
-            rows.forEach((row, index) => {
-                if (visibleCount < MAX_VISIBLE) {
-                    row.style.display = '';
-                    visibleCount++;
-                    if (selectedRowIndex === -1) selectedRowIndex = index;
-                } else {
-                    row.style.display = 'none';
-                }
+            let v = 0;
+            rows.forEach((row, i) => {
+                if (v < MAX_VISIBLE) { row.style.display = ''; v++; if (selectedRowIndex === -1) selectedRowIndex = i; }
+                else { row.style.display = 'none'; }
             });
-            const stockCountEl = document.getElementById('stockCount');
-            if (stockCountEl) {
-                stockCountEl.style.display = '';
-                stockCountEl.textContent = 'Showing ' + visibleCount + ' of ' + rows.length + ' items \u2022 Type to search all';
-            }
+            const el = document.getElementById('stockCount');
+            if (el) { el.style.display = ''; el.textContent = 'Showing ' + v + ' of ' + rows.length + ' items \u2022 Type to search all'; }
             noResults.classList.remove('show');
             rows.forEach(r => r.classList.remove('highlighted'));
             return;
@@ -46053,33 +46059,19 @@ def pos_page():
         
         const tokens = search.split(/\s+/).filter(t => t.length > 0);
         
-        // Two-pass ranking: code/description matches first, then category-only matches
-        // This ensures "nut" shows NUT M12 items before BUSH items that just have "nuts" in category
-        const descMatches = [];
-        const catOnlyMatches = [];
-        
+        // Search ONLY in code + description (not category) to avoid irrelevant matches
+        let visibleCount = 0;
         rows.forEach((row, index) => {
-            row.style.display = 'none';
-            let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*[xX]\s*/g, 'x');
-            if (!tokens.every(t => data.indexOf(t) !== -1)) return;
-            
-            // Check if tokens match in code+description (excluding category)
+            if (visibleCount >= MAX_VISIBLE) { row.style.display = 'none'; return; }
             const codeDesc = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
             if (tokens.every(t => codeDesc.indexOf(t) !== -1)) {
-                descMatches.push({row: row, idx: index});
+                row.style.display = '';
+                visibleCount++;
+                if (selectedRowIndex === -1) selectedRowIndex = index;
             } else {
-                catOnlyMatches.push({row: row, idx: index});
+                row.style.display = 'none';
             }
         });
-        
-        // Show desc matches first, then fill remaining slots with category matches
-        let visibleCount = 0;
-        const ranked = descMatches.concat(catOnlyMatches);
-        for (let i = 0; i < ranked.length && visibleCount < MAX_VISIBLE; i++) {
-            ranked[i].row.style.display = '';
-            visibleCount++;
-            if (selectedRowIndex === -1) selectedRowIndex = ranked[i].idx;
-        }
         
         const stockCountEl = document.getElementById('stockCount');
         if (visibleCount === 0) {
@@ -46087,17 +46079,10 @@ def pos_page():
             if (stockCountEl) stockCountEl.style.display = 'none';
         } else {
             noResults.classList.remove('show');
-            if (stockCountEl) {
-                const totalMatches = descMatches.length + catOnlyMatches.length;
-                stockCountEl.style.display = '';
-                stockCountEl.textContent = 'Showing ' + visibleCount + ' of ' + totalMatches + ' matches';
-            }
+            if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = 'Showing ' + visibleCount + ' matches'; }
         }
-        
-        // Remove highlight when typing
         rows.forEach(r => r.classList.remove('highlighted'));
     }
-    
     function highlightRow() {
         const rows = document.querySelectorAll('.stock-row');
         rows.forEach((row, index) => {
