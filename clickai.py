@@ -45541,10 +45541,10 @@ def pos_page():
         }
     }
     
-    function addBulkToCart(event, id, code, desc, price, stock) {
+    async function addBulkToCart(event, id, code, desc, price, stock) {
         event.stopPropagation();
         
-        const qtyStr = prompt('Enter quantity for ' + code + ':', '10');
+        const qtyStr = await posPrompt('Enter quantity for ' + code + ':', '10');
         if (qtyStr === null) return;
         
         const qty = parseInt(qtyStr);
@@ -45583,11 +45583,11 @@ def pos_page():
         updateCart();
     }
     
-    function setQty(id) {
+    async function setQty(id) {
         const item = cart.find(i => i.id === id);
         if (!item) return;
         
-        const newQty = prompt('Enter quantity:', item.qty);
+        const newQty = await posPrompt('Enter quantity:', item.qty);
         if (newQty === null) return;
         
         const qty = parseInt(newQty);
@@ -45856,14 +45856,14 @@ def pos_page():
         list.innerHTML = html;
     }
     
-    function selectEntity(el) {
+    async function selectEntity(el) {
         const id = el.dataset.id;
         const name = el.dataset.name;
         
         // Handle "Add New" option
         if (id === 'NEW') {
             const entityType = currentEntityType === 'customer' ? 'Customer' : 'Supplier';
-            const newName = prompt('👤 ' + entityType + ' name:');
+            const newName = await posPrompt('👤 ' + entityType + ' name:', '');
             if (newName && newName.trim()) {
                 const endpoint = currentEntityType === 'customer' ? '/api/customer/quick-add' : '/api/supplier/quick-add';
                 fetch(endpoint, {
@@ -46034,7 +46034,15 @@ def pos_page():
             let data = (row.getAttribute('data-search') || '').toLowerCase();
             data = data.replace(/\s*[xX]\s*/g, 'x');
             
-            if ((search === '' && visibleCount < MAX_VISIBLE) || (search !== '' && data.indexOf(search) !== -1 && visibleCount < MAX_VISIBLE)) {
+            // Multi-token AND search: every word must appear somewhere in data
+            let match = false;
+            if (search === '') {
+                match = visibleCount < MAX_VISIBLE;
+            } else {
+                const tokens = search.split(/\\s+/).filter(t => t.length > 0);
+                match = tokens.every(t => data.indexOf(t) !== -1) && visibleCount < MAX_VISIBLE;
+            }
+            if (match) {
                 row.style.display = '';
                 visibleCount++;
                 if (selectedRowIndex === -1) selectedRowIndex = index;
@@ -46114,7 +46122,7 @@ def pos_page():
         let changeGiven = 0;
         
         if (method === 'cash') {
-            const received = prompt('CASH R' + grandTotal.toFixed(2) + ' (' + itemCount + ' items)\\n\\nCash received:', grandTotal.toFixed(2));
+            const received = await posPrompt('CASH R' + grandTotal.toFixed(2) + ' (' + itemCount + ' items) — Cash received:', grandTotal.toFixed(2));
             if (received === null) { posLocked = false; return; }
             cashReceived = parseFloat(received);
             if (isNaN(cashReceived) || cashReceived < 0) { alert('Invalid amount'); posLocked = false; return; }
@@ -48604,6 +48612,48 @@ def pos_page():
     {get_zane_chat()}
     {pos_js}
 
+    <!-- Custom prompt modal (replaces native prompt which breaks F11 fullscreen) -->
+    <div id="posPromptOverlay" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);z-index:99999;align-items:center;justify-content:center;">
+        <div style="background:#1a1a2e;border:1px solid rgba(99,102,241,0.4);border-radius:12px;padding:24px 28px;min-width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+            <div id="posPromptLabel" style="color:#e2e8f0;font-size:15px;font-weight:600;margin-bottom:14px;"></div>
+            <input type="text" id="posPromptInput" style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid rgba(99,102,241,0.4);background:#0f0f23;color:#fff;font-size:16px;outline:none;" />
+            <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+                <button onclick="posPromptCancel()" style="padding:8px 20px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#aaa;cursor:pointer;font-size:14px;">Cancel</button>
+                <button onclick="posPromptOk()" style="padding:8px 20px;border-radius:8px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;cursor:pointer;font-size:14px;font-weight:600;">OK</button>
+            </div>
+        </div>
+    </div>
+    <script>
+    var _posPromptResolve = null;
+    function posPrompt(label, defaultVal) {{
+        return new Promise(function(resolve) {{
+            _posPromptResolve = resolve;
+            document.getElementById('posPromptLabel').textContent = label;
+            var inp = document.getElementById('posPromptInput');
+            inp.value = defaultVal || '';
+            var overlay = document.getElementById('posPromptOverlay');
+            overlay.style.display = 'flex';
+            setTimeout(function() {{ inp.focus(); inp.select(); }}, 50);
+        }});
+    }}
+    function posPromptOk() {{
+        var val = document.getElementById('posPromptInput').value;
+        document.getElementById('posPromptOverlay').style.display = 'none';
+        if (_posPromptResolve) {{ _posPromptResolve(val); _posPromptResolve = null; }}
+    }}
+    function posPromptCancel() {{
+        document.getElementById('posPromptOverlay').style.display = 'none';
+        if (_posPromptResolve) {{ _posPromptResolve(null); _posPromptResolve = null; }}
+    }}
+    document.getElementById('posPromptInput').addEventListener('keydown', function(e) {{
+        if (e.key === 'Enter') {{ e.preventDefault(); posPromptOk(); }}
+        if (e.key === 'Escape') {{ e.preventDefault(); posPromptCancel(); }}
+    }});
+    document.getElementById('posPromptOverlay').addEventListener('click', function(e) {{
+        if (e.target === this) posPromptCancel();
+    }});
+    </script>
+
     <script>
     /* ═══ F11 FULLSCREEN ORDER MODE ═══ */
     // f11Mode and f11SelectedRow declared in earlier script block
@@ -48649,10 +48699,10 @@ def pos_page():
         ['f11Quote','f11PO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
     }}
 
-    function f11EditQty(idx) {{
+    async function f11EditQty(idx) {{
         if (idx < 0 || idx >= cart.length) return;
         var item = cart[idx];
-        var newQty = prompt('Qty for ' + item.code + ':', item.qty);
+        var newQty = await posPrompt('Qty for ' + item.code + ':', item.qty);
         if (newQty === null) return;
         var qty = parseFloat(newQty);
         if (isNaN(qty) || qty < 0) {{ alert('Invalid qty'); return; }}
@@ -48661,10 +48711,10 @@ def pos_page():
         updateCart(); renderF11Table(); syncF11Buttons();
     }}
 
-    function f11EditPrice(idx) {{
+    async function f11EditPrice(idx) {{
         if (idx < 0 || idx >= cart.length) return;
         var item = cart[idx];
-        var newPrice = prompt('Price for ' + item.code + ':', item.price.toFixed(2));
+        var newPrice = await posPrompt('Price for ' + item.code + ':', item.price.toFixed(2));
         if (newPrice === null) return;
         var price = parseFloat(newPrice);
         if (isNaN(price) || price < 0) {{ alert('Invalid price'); return; }}
@@ -48672,11 +48722,11 @@ def pos_page():
         updateCart(); renderF11Table(); syncF11Buttons();
     }}
 
-    function f11EditDisc(idx) {{
+    async function f11EditDisc(idx) {{
         if (idx < 0 || idx >= cart.length) return;
         var item = cart[idx];
         var cur = item.disc || 0;
-        var newDisc = prompt('Discount % for ' + item.code + ':', cur);
+        var newDisc = await posPrompt('Discount % for ' + item.code + ':', cur);
         if (newDisc === null) return;
         var disc = parseFloat(newDisc);
         if (isNaN(disc) || disc < 0 || disc > 100) {{ alert('Invalid discount (0-100)'); return; }}
