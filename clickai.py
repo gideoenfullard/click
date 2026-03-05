@@ -45341,9 +45341,11 @@ def pos_page():
     .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.3);background:rgba(255,40,40,0.08);text-shadow:0 0 6px rgba(255,80,80,0.4);}
     .f11-order-wrap{display:none;flex:1;overflow:hidden;flex-direction:column;}
     .f11-search{padding:10px 20px;border-bottom:1px solid rgba(80,180,255,0.06);position:relative;}
-    .f11-search input{width:100%;height:44px;background:rgba(6,16,40,0.6);border:1px solid rgba(80,180,255,0.2);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 16px;outline:none;letter-spacing:0.5px;}
-    .f11-search input::placeholder{color:#5a8aaa;}
-    .f11-search input:focus{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.04);box-shadow:0 0 12px rgba(0,200,255,0.08);}
+    .f11-search input{width:100%;height:48px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:18px;font-weight:600;padding:0 16px 0 44px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15),inset 0 0 8px rgba(0,200,255,0.05);animation:f11searchPulse 2.5s ease-in-out infinite;}
+    @keyframes f11searchPulse{0%,100%{border-color:rgba(0,200,255,0.5);box-shadow:0 0 12px rgba(0,200,255,0.15);}50%{border-color:rgba(0,220,255,0.8);box-shadow:0 0 24px rgba(0,200,255,0.3);}}
+    .f11-search::before{content:'🔍';position:absolute;left:32px;top:50%;transform:translateY(-50%);font-size:18px;z-index:1;opacity:0.7;}
+    .f11-search input::placeholder{color:#7ab0d0;font-weight:500;}
+    .f11-search input:focus{border-color:rgba(0,220,255,0.8);background:rgba(0,200,255,0.06);box-shadow:0 0 24px rgba(0,200,255,0.3),inset 0 0 8px rgba(0,200,255,0.05);animation:none;}
     .f11-dd{display:none;position:fixed;left:20px;right:20px;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);max-height:calc(100vh - 160px);overflow-y:auto;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
     .f11-dd.show{display:block;}
     .f11-dd-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;gap:16px;}
@@ -45353,6 +45355,8 @@ def pos_page():
     .f11-dd-price{font-family:'Share Tech Mono',monospace;font-size:15px;color:#00ff88;font-weight:700;min-width:100px;text-align:right;}
     .f11-dd-qty{font-family:'Share Tech Mono',monospace;font-size:11px;color:#5a8aaa;min-width:50px;text-align:right;}
     .f11-dd-empty{padding:16px;text-align:center;color:#5a8aaa;font-size:14px;}
+    .f11-dd-related{border-left:2px solid rgba(245,158,11,0.4) !important;}
+    .f11-dd-related .f11-dd-code{color:#f59e0b;}
     .f11-table-wrap{flex:1;overflow-y:auto;padding:0 20px;}
     .f11-table{width:100%;border-collapse:collapse;}
     .f11-table th{text-align:left;padding:10px 12px;font-family:'Share Tech Mono',monospace;font-size:11px;color:#7abade;letter-spacing:1.5px;border-bottom:2px solid rgba(80,180,255,0.15);position:sticky;top:0;background:#0a0a1a;z-index:2;}
@@ -48515,10 +48519,14 @@ def pos_page():
     <script>
     document.addEventListener('fullscreenchange', function() {{
         if (!document.fullscreenElement && f11Mode) {{
-            f11Mode = false;
-            document.body.classList.remove('f11-mode');
-            var el = document.getElementById('stockSearch');
-            if (el) el.focus();
+            // Browser exited fullscreen (prompt/alert can cause this)
+            // but keep our F11 CSS mode active — only ESC/F11 button should exit
+            // Try to re-enter fullscreen after a short delay (dialog may have closed)
+            setTimeout(function() {{
+                if (f11Mode) {{
+                    try {{ document.documentElement.requestFullscreen(); }} catch(e) {{}}
+                }}
+            }}, 300);
         }}
     }});
     </script>
@@ -48641,8 +48649,7 @@ def pos_page():
         let html = '';
         let grandTotal = 0;
         cart.forEach((item, idx) => {{
-            const disc = item.disc || 0;
-            const lineTotal = item.price * item.qty * (1 - disc / 100);
+            const lineTotal = item.price * item.qty;
             grandTotal += lineTotal;
             const sel = idx === f11SelectedRow ? ' f11-sel' : '';
             // Find stock qty
@@ -48681,7 +48688,6 @@ def pos_page():
         if (qty === 0) {{ cart.splice(idx, 1); if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1); }}
         else {{ item.qty = qty; }}
         updateCart(); renderF11Table(); syncF11Buttons();
-        var el = document.getElementById('f11Search'); if (el) el.focus();
     }}
 
     function f11EditPrice(idx) {{
@@ -48693,7 +48699,6 @@ def pos_page():
         if (isNaN(price) || price < 0) {{ alert('Invalid price'); return; }}
         item.price = price;
         updateCart(); renderF11Table(); syncF11Buttons();
-        var el = document.getElementById('f11Search'); if (el) el.focus();
     }}
 
     function f11EditDisc(idx) {{
@@ -48706,7 +48711,6 @@ def pos_page():
         if (isNaN(disc) || disc < 0 || disc > 100) {{ alert('Invalid discount (0-100)'); return; }}
         item.disc = disc;
         updateCart(); renderF11Table(); syncF11Buttons();
-        var el = document.getElementById('f11Search'); if (el) el.focus();
     }}
 
     function updateF11CustName() {{
@@ -48743,6 +48747,8 @@ def pos_page():
             if (!terms.length) {{ f11DD.classList.remove('show'); return; }}
 
             f11Matches = [];
+            var f11Related = [];
+            const companions = ['nut','nuts','moer','washer','washers','ring','spring washer','nylock','nyloc','flat washer','penny washer','lock nut','dome nut','coupling','flange'];
             const rows = document.querySelectorAll('.stock-row');
             for (let row of rows) {{
                 let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
@@ -48753,10 +48759,37 @@ def pos_page():
                         code: row.getAttribute('data-code') || '',
                         desc: row.getAttribute('data-desc') || '',
                         price: parseFloat(row.getAttribute('data-price')) || 0,
-                        qty: qty
+                        qty: qty,
+                        related: false
                     }});
-                    if (f11Matches.length >= 40) break;
+                    if (f11Matches.length >= 30) break;
                 }}
+            }}
+            // Related companion items - if search looks like a size, show nuts/washers/etc
+            var sizeMatch = searchTerm.match(/^m?(\d+)/i);
+            if (sizeMatch && f11Matches.length > 0) {{
+                var sizeNum = sizeMatch[1];
+                var matchedIds = {{}};
+                f11Matches.forEach(function(m) {{ matchedIds[m.id] = true; }});
+                for (let row of rows) {{
+                    if (f11Related.length >= 10) break;
+                    var rid = row.getAttribute('data-id');
+                    if (matchedIds[rid]) continue;
+                    var rdata = (row.getAttribute('data-search') || '').toLowerCase();
+                    if (rdata.indexOf(sizeNum) === -1) continue;
+                    var isComp = false;
+                    for (var ci = 0; ci < companions.length; ci++) {{ if (rdata.indexOf(companions[ci]) !== -1) {{ isComp = true; break; }} }}
+                    if (isComp) {{
+                        f11Related.push({{
+                            el: row, id: rid,
+                            code: row.getAttribute('data-code') || '',
+                            desc: row.getAttribute('data-desc') || '',
+                            price: parseFloat(row.getAttribute('data-price')) || 0,
+                            qty: 1, related: true
+                        }});
+                    }}
+                }}
+                if (f11Related.length > 0) {{ f11Matches = f11Matches.concat(f11Related); }}
             }}
             f11Sel = f11Matches.length > 0 ? 0 : -1;
             f11RenderDD();
@@ -48768,13 +48801,19 @@ def pos_page():
                 f11ShowDD();
                 return;
             }}
-            f11DD.innerHTML = f11Matches.map((m, i) =>
-                '<div class="f11-dd-item' + (i === f11Sel ? ' sel' : '') + '" data-idx="' + i + '">' +
+            var seenRelatedHeader = false;
+            f11DD.innerHTML = f11Matches.map((m, i) => {{
+                var hdr = '';
+                if (m.related && !seenRelatedHeader) {{
+                    seenRelatedHeader = true;
+                    hdr = '<div style="padding:8px 20px;font-size:11px;font-weight:700;color:#f59e0b;letter-spacing:2px;border-top:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.05);">⚡ ALSO NEEDED?</div>';
+                }}
+                return hdr + '<div class="f11-dd-item' + (i === f11Sel ? ' sel' : '') + (m.related ? ' f11-dd-related' : '') + '" data-idx="' + i + '">' +
                 '<span class="f11-dd-code">' + m.code + '</span>' +
                 '<span class="f11-dd-desc">' + m.desc.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>' +
                 '<span class="f11-dd-price">R' + m.price.toFixed(2) + '</span>' +
-                '</div>'
-            ).join('');
+                '</div>';
+            }}).join('');
             f11ShowDD();
 
             f11DD.querySelectorAll('.f11-dd-item').forEach(el => {{
