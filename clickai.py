@@ -45339,12 +45339,11 @@ def pos_page():
     .f11-exit{padding:9px 14px;border:1px solid rgba(255,80,80,0.2);background:rgba(255,40,40,0.06);cursor:pointer;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#ff8888;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;transition:all 0.2s;}
     .f11-exit:hover{border-color:rgba(255,80,80,0.4);background:rgba(255,40,40,0.12);color:#ffaaaa;}
     .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.3);background:rgba(255,40,40,0.08);text-shadow:0 0 6px rgba(255,80,80,0.4);}
-    .f11-order-wrap{display:none;flex:1;overflow:visible;flex-direction:column;}
+    .f11-order-wrap{display:none;flex:1;overflow:hidden;flex-direction:column;}
     .f11-search{padding:10px 20px;border-bottom:1px solid rgba(80,180,255,0.06);position:relative;}
-    .f11-search input{width:100%;height:48px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:18px;font-weight:600;padding:0 16px 0 44px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15),inset 0 0 8px rgba(0,200,255,0.05);}
-    .f11-search::before{content:'🔍';position:absolute;left:32px;top:50%;transform:translateY(-50%);font-size:18px;z-index:1;opacity:0.7;}
-    .f11-search input::placeholder{color:#7ab0d0;font-weight:500;}
-    .f11-search input:focus{border-color:rgba(0,220,255,0.7);background:rgba(0,200,255,0.06);box-shadow:0 0 20px rgba(0,200,255,0.25),inset 0 0 8px rgba(0,200,255,0.05);}
+    .f11-search input{width:100%;height:44px;background:rgba(6,16,40,0.6);border:1px solid rgba(80,180,255,0.2);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 16px;outline:none;letter-spacing:0.5px;}
+    .f11-search input::placeholder{color:#5a8aaa;}
+    .f11-search input:focus{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.04);box-shadow:0 0 12px rgba(0,200,255,0.08);}
     .f11-dd{display:none;position:fixed;left:20px;right:20px;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);max-height:calc(100vh - 160px);overflow-y:auto;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
     .f11-dd.show{display:block;}
     .f11-dd-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;gap:16px;}
@@ -45375,7 +45374,7 @@ def pos_page():
     body.f11-mode .cashier-bar{display:none !important;}
     body.f11-mode .zane-chat{display:none !important;}
     body.f11-mode .f11-header{display:flex !important;position:fixed !important;top:0;left:0;right:0;z-index:9000;background:rgba(4,12,35,0.98) !important;}
-    body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:52px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;overflow:visible !important;}
+    body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:52px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;}
     body.f11-mode{overflow:hidden !important;}
 
     </style>
@@ -48642,7 +48641,8 @@ def pos_page():
         let html = '';
         let grandTotal = 0;
         cart.forEach((item, idx) => {{
-            const lineTotal = item.price * item.qty;
+            const disc = item.disc || 0;
+            const lineTotal = item.price * item.qty * (1 - disc / 100);
             grandTotal += lineTotal;
             const sel = idx === f11SelectedRow ? ' f11-sel' : '';
             // Find stock qty
@@ -48651,9 +48651,9 @@ def pos_page():
             html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();">';
             html += '<td class="code">' + item.code + '</td>';
             html += '<td>' + item.desc + '</td>';
-            html += '<td class="r qty">' + item.qty + '</td>';
-            html += '<td class="r">R' + item.price.toFixed(2) + '</td>';
-            html += '<td class="r" style="color:#5a8aaa;">—</td>';
+            html += '<td class="r qty" style="cursor:pointer;" onclick="event.stopPropagation();f11EditQty(' + idx + ')" title="Click to edit qty">' + item.qty + '</td>';
+            html += '<td class="r" style="cursor:pointer;" onclick="event.stopPropagation();f11EditPrice(' + idx + ')" title="Click to edit price">R' + item.price.toFixed(2) + '</td>';
+            html += '<td class="r" style="color:#5a8aaa;cursor:pointer;" onclick="event.stopPropagation();f11EditDisc(' + idx + ')" title="Click to set discount">' + (item.disc ? item.disc + '%' : '—') + '</td>';
             html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
             html += '<td><span class="f11-onhand">' + onHand + '</span></td>';
             html += '</tr>';
@@ -48669,6 +48669,44 @@ def pos_page():
         ['f11Cash','f11Card'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
         ['f11Account','f11Invoice','f11Credit'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !(hasItems && hasCust); }});
         ['f11Quote','f11PO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
+    }}
+
+    function f11EditQty(idx) {{
+        if (idx < 0 || idx >= cart.length) return;
+        var item = cart[idx];
+        var newQty = prompt('Qty for ' + item.code + ':', item.qty);
+        if (newQty === null) return;
+        var qty = parseFloat(newQty);
+        if (isNaN(qty) || qty < 0) {{ alert('Invalid qty'); return; }}
+        if (qty === 0) {{ cart.splice(idx, 1); if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1); }}
+        else {{ item.qty = qty; }}
+        updateCart(); renderF11Table(); syncF11Buttons();
+        var el = document.getElementById('f11Search'); if (el) el.focus();
+    }}
+
+    function f11EditPrice(idx) {{
+        if (idx < 0 || idx >= cart.length) return;
+        var item = cart[idx];
+        var newPrice = prompt('Price for ' + item.code + ':', item.price.toFixed(2));
+        if (newPrice === null) return;
+        var price = parseFloat(newPrice);
+        if (isNaN(price) || price < 0) {{ alert('Invalid price'); return; }}
+        item.price = price;
+        updateCart(); renderF11Table(); syncF11Buttons();
+        var el = document.getElementById('f11Search'); if (el) el.focus();
+    }}
+
+    function f11EditDisc(idx) {{
+        if (idx < 0 || idx >= cart.length) return;
+        var item = cart[idx];
+        var cur = item.disc || 0;
+        var newDisc = prompt('Discount % for ' + item.code + ':', cur);
+        if (newDisc === null) return;
+        var disc = parseFloat(newDisc);
+        if (isNaN(disc) || disc < 0 || disc > 100) {{ alert('Invalid discount (0-100)'); return; }}
+        item.disc = disc;
+        updateCart(); renderF11Table(); syncF11Buttons();
+        var el = document.getElementById('f11Search'); if (el) el.focus();
     }}
 
     function updateF11CustName() {{
@@ -48787,6 +48825,11 @@ def pos_page():
             if (!f11DD.classList.contains('show') && !f11Input.value.trim()) {{
                 if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
                 if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
+                if ((e.key === '+' || e.key === '=') && cart.length > 0) {{ e.preventDefault(); cart[f11SelectedRow].qty++; updateCart(); renderF11Table(); syncF11Buttons(); }}
+                if (e.key === '-' && cart.length > 0 && cart[f11SelectedRow].qty > 1) {{ e.preventDefault(); cart[f11SelectedRow].qty--; updateCart(); renderF11Table(); syncF11Buttons(); }}
+                if ((e.key === 'q' || e.key === 'Q') && cart.length > 0) {{ e.preventDefault(); f11EditQty(f11SelectedRow); }}
+                if ((e.key === 'p' || e.key === 'P') && cart.length > 0) {{ e.preventDefault(); f11EditPrice(f11SelectedRow); }}
+                if ((e.key === 'd' || e.key === 'D') && cart.length > 0) {{ e.preventDefault(); f11EditDisc(f11SelectedRow); }}
             }}
         }});
     }});
@@ -48805,7 +48848,6 @@ def pos_page():
             .catch(e => console.log('[SW] Non-critical:', e));
     }}
     </script>
-    <div class="f11-dd" id="f11Dropdown" style="position:fixed;z-index:99999;"></div>
 </body>
 </html>'''
 
