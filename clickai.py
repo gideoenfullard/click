@@ -45327,25 +45327,25 @@ def pos_page():
     @media(max-width:900px){.pos-reactor-hero{flex-wrap:wrap;gap:8px;}.pos-btn-flank{flex-direction:row;flex-wrap:wrap;width:100%;max-width:100%;}.pos-rx{width:120px;height:120px;}.pos-rx .pos-rx-core{inset:32px;}.pos-reactor-cn{display:none;}}
 
     /* ═══ F11 FULLSCREEN MODE ═══ */
-    .f11-header{display:none;padding:8px 20px;background:rgba(4,12,35,0.95);border-bottom:1px solid rgba(80,180,255,0.12);align-items:center;gap:0;justify-content:space-between;}
-    .f11-left{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
-    .f11-btn{padding:9px 14px;border:1px solid rgba(80,180,255,0.12);background:rgba(10,30,60,0.3);cursor:pointer;transition:all 0.2s;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#a0d8f8;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;}
-    .f11-btn:hover{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.08);color:#00eeff;text-shadow:0 0 10px rgba(0,200,255,0.4);}
-    .f11-btn:disabled{opacity:0.35;cursor:not-allowed;}
-    .f11-sep{width:1px;height:30px;background:rgba(80,180,255,0.12);margin:0 8px;flex-shrink:0;}
-    .f11-right{display:flex;align-items:center;gap:14px;}
-    .f11-cust{font-family:'Rajdhani',sans-serif;font-size:15px;color:#a0d8f8;font-weight:700;letter-spacing:0.5px;}
-    .f11-total{font-family:'Orbitron',monospace;font-size:22px;font-weight:800;color:#00ff88;text-shadow:0 0 18px rgba(0,255,136,0.5);letter-spacing:1px;}
-    .f11-exit{padding:9px 14px;border:1px solid rgba(255,80,80,0.2);background:rgba(255,40,40,0.06);cursor:pointer;display:flex;align-items:center;gap:8px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#ff8888;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;transition:all 0.2s;}
-    .f11-exit:hover{border-color:rgba(255,80,80,0.4);background:rgba(255,40,40,0.12);color:#ffaaaa;}
-    .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.3);background:rgba(255,40,40,0.08);text-shadow:0 0 6px rgba(255,80,80,0.4);}
+    .f11-header{display:none;padding:2px 6px;background:rgba(4,12,35,0.98);border-bottom:1px solid rgba(80,180,255,0.15);align-items:center;gap:0;justify-content:space-between;height:36px;min-height:36px;max-height:36px;overflow:hidden;}
+    .f11-left{display:flex;align-items:center;gap:1px;flex-wrap:nowrap;overflow:hidden;}
+    .f11-btn{padding:4px 6px;border:1px solid rgba(80,180,255,0.15);background:rgba(10,30,60,0.4);cursor:pointer;transition:all 0.15s;display:inline-flex;align-items:center;gap:3px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#a0d8f8;font-size:10px;letter-spacing:0.2px;text-transform:uppercase;white-space:nowrap;line-height:1;}
+    .f11-btn:hover{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.1);color:#00eeff;}
+    .f11-btn:disabled{opacity:0.3;cursor:not-allowed;}
+    .f11-btn .pk{font-family:'Share Tech Mono',monospace;font-size:8px;color:#00ccff;padding:1px 3px;border:1px solid rgba(0,200,255,0.25);background:rgba(0,200,255,0.06);}
+    .f11-right{display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:auto;padding-left:4px;}
+    .f11-cust{font-family:'Rajdhani',sans-serif;font-size:11px;color:#a0d8f8;font-weight:700;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .f11-total{font-family:'Orbitron',monospace;font-size:16px;font-weight:800;color:#00ff88;text-shadow:0 0 12px rgba(0,255,136,0.5);letter-spacing:0.5px;}
+    .f11-exit{padding:4px 8px;border:1px solid rgba(255,80,80,0.25);background:rgba(255,40,40,0.08);cursor:pointer;display:inline-flex;align-items:center;gap:3px;font-family:'Rajdhani',sans-serif;font-weight:700;color:#ff8888;font-size:10px;text-transform:uppercase;}
+    .f11-exit:hover{border-color:rgba(255,80,80,0.5);background:rgba(255,40,40,0.15);color:#ffaaaa;}
+    .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.25);background:rgba(255,40,40,0.06);font-size:8px;padding:1px 3px;}
     .f11-order-wrap{display:none;flex:1;overflow:hidden;flex-direction:column;}
-    .f11-search{padding:10px 20px;border-bottom:1px solid rgba(80,180,255,0.06);position:relative;}
-    .f11-search input{width:100%;height:48px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:18px;font-weight:600;padding:0 16px 0 44px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15),inset 0 0 8px rgba(0,200,255,0.05);animation:f11searchPulse 2.5s ease-in-out infinite;}
+    .f11-search{padding:6px 12px;border-bottom:1px solid rgba(80,180,255,0.08);position:relative;}
+    .f11-search input{width:100%;height:44px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 14px 0 40px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15);animation:f11searchPulse 2.5s ease-in-out infinite;}
     @keyframes f11searchPulse{0%,100%{border-color:rgba(0,200,255,0.5);box-shadow:0 0 12px rgba(0,200,255,0.15);}50%{border-color:rgba(0,220,255,0.8);box-shadow:0 0 24px rgba(0,200,255,0.3);}}
-    .f11-search::before{content:'🔍';position:absolute;left:32px;top:50%;transform:translateY(-50%);font-size:18px;z-index:1;opacity:0.7;}
+    .f11-search::before{content:'🔍';position:absolute;left:22px;top:50%;transform:translateY(-50%);font-size:16px;z-index:1;opacity:0.7;}
     .f11-search input::placeholder{color:#7ab0d0;font-weight:500;}
-    .f11-search input:focus{border-color:rgba(0,220,255,0.8);background:rgba(0,200,255,0.06);box-shadow:0 0 24px rgba(0,200,255,0.3),inset 0 0 8px rgba(0,200,255,0.05);animation:none;}
+    .f11-search input:focus{border-color:rgba(0,220,255,0.8);background:rgba(0,200,255,0.06);box-shadow:0 0 24px rgba(0,200,255,0.3);animation:none;}
     .f11-dd{display:none;position:fixed;left:20px;right:20px;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);max-height:calc(100vh - 160px);overflow-y:auto;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
     .f11-dd.show{display:block;}
     .f11-dd-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;gap:16px;}
@@ -45355,8 +45355,8 @@ def pos_page():
     .f11-dd-price{font-family:'Share Tech Mono',monospace;font-size:15px;color:#00ff88;font-weight:700;min-width:100px;text-align:right;}
     .f11-dd-qty{font-family:'Share Tech Mono',monospace;font-size:11px;color:#5a8aaa;min-width:50px;text-align:right;}
     .f11-dd-empty{padding:16px;text-align:center;color:#5a8aaa;font-size:14px;}
-    .f11-dd-related{border-left:2px solid rgba(245,158,11,0.4) !important;}
-    .f11-dd-related .f11-dd-code{color:#f59e0b;}
+    .f11-dd-rel{border-left:2px solid rgba(245,158,11,0.4) !important;}
+    .f11-dd-rel .f11-dd-code{color:#f59e0b;}
     .f11-table-wrap{flex:1;overflow-y:auto;padding:0 20px;}
     .f11-table{width:100%;border-collapse:collapse;}
     .f11-table th{text-align:left;padding:10px 12px;font-family:'Share Tech Mono',monospace;font-size:11px;color:#7abade;letter-spacing:1.5px;border-bottom:2px solid rgba(80,180,255,0.15);position:sticky;top:0;background:#0a0a1a;z-index:2;}
@@ -45378,7 +45378,7 @@ def pos_page():
     body.f11-mode .cashier-bar{display:none !important;}
     body.f11-mode .zane-chat{display:none !important;}
     body.f11-mode .f11-header{display:flex !important;position:fixed !important;top:0;left:0;right:0;z-index:9000;background:rgba(4,12,35,0.98) !important;}
-    body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:52px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;}
+    body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:38px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;}
     body.f11-mode{overflow:hidden !important;}
 
     </style>
@@ -48503,10 +48503,17 @@ def pos_page():
         f11Mode = !f11Mode;
         document.body.classList.toggle('f11-mode', f11Mode);
         if (f11Mode) {{
+            // Try browser fullscreen but don't depend on it — works fine without
             try {{ document.documentElement.requestFullscreen(); }} catch(e) {{}}
             if (typeof renderF11Table === 'function') renderF11Table();
             if (typeof syncF11Buttons === 'function') syncF11Buttons();
             if (typeof updateF11CustName === 'function') updateF11CustName();
+            // Measure actual header height and position order-wrap below it
+            setTimeout(function() {{
+                var hdr = document.querySelector('.f11-header');
+                var wrap = document.querySelector('.f11-order-wrap');
+                if (hdr && wrap) {{ wrap.style.top = hdr.offsetHeight + 'px'; }}
+            }}, 50);
             var el = document.getElementById('f11Search');
             if (el) {{ el.value = ''; el.focus(); }}
         }} else {{
@@ -48519,14 +48526,8 @@ def pos_page():
     <script>
     document.addEventListener('fullscreenchange', function() {{
         if (!document.fullscreenElement && f11Mode) {{
-            // Browser exited fullscreen (prompt/alert can cause this)
-            // but keep our F11 CSS mode active — only ESC/F11 button should exit
-            // Try to re-enter fullscreen after a short delay (dialog may have closed)
-            setTimeout(function() {{
-                if (f11Mode) {{
-                    try {{ document.documentElement.requestFullscreen(); }} catch(e) {{}}
-                }}
-            }}, 300);
+            // Browser dropped fullscreen (prompt/alert/permission denied)
+            // Keep F11 CSS mode — it works fine without browser fullscreen
         }}
     }});
     </script>
@@ -48590,15 +48591,14 @@ def pos_page():
         <div class="f11-left">
             <button class="f11-btn" onclick="completeSale('cash')" id="f11Cash" disabled><span class="pk">F1</span>CASH</button>
             <button class="f11-btn" onclick="completeSale('card')" id="f11Card" disabled><span class="pk">F2</span>CARD</button>
-            <button class="f11-btn" onclick="completeSale('account')" id="f11Account" disabled><span class="pk">F3</span>ACCOUNT</button>
-            <button class="f11-btn" onclick="createQuote()" id="f11Quote" disabled><span class="pk">F4</span>QUOTE</button>
+            <button class="f11-btn" onclick="completeSale('account')" id="f11Account" disabled><span class="pk">F3</span>ACC</button>
+            <button class="f11-btn" onclick="createQuote()" id="f11Quote" disabled><span class="pk">F4</span>QTE</button>
             <button class="f11-btn" onclick="createPO()" id="f11PO" disabled><span class="pk">F5</span>PO</button>
-            <button class="f11-btn" onclick="createInvoice()" id="f11Invoice" disabled><span class="pk">F6</span>INVOICE</button>
-            <div class="f11-sep"></div>
+            <button class="f11-btn" onclick="createInvoice()" id="f11Invoice" disabled><span class="pk">F6</span>INV</button>
             <button class="f11-btn" onclick="showEditCustomerModal()"><span class="pk">F7</span>EDIT</button>
             <button class="f11-btn" onclick="toggleEntity('customer')"><span class="pk">F8</span>CUST</button>
             <button class="f11-btn" onclick="toggleEntity('supplier')"><span class="pk">F9</span>SUPP</button>
-            <button class="f11-btn" onclick="createCreditNote()" id="f11Credit" disabled><span class="pk">F10</span>CREDIT</button>
+            <button class="f11-btn" onclick="createCreditNote()" id="f11Credit" disabled><span class="pk">F10</span>CR</button>
         </div>
         <div class="f11-right">
             <div class="f11-cust" id="f11CustName">Cash Sale</div>
@@ -48658,9 +48658,9 @@ def pos_page():
             html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();">';
             html += '<td class="code">' + item.code + '</td>';
             html += '<td>' + item.desc + '</td>';
-            html += '<td class="r qty" style="cursor:pointer;" onclick="event.stopPropagation();f11EditQty(' + idx + ')" title="Click to edit qty">' + item.qty + '</td>';
-            html += '<td class="r" style="cursor:pointer;" onclick="event.stopPropagation();f11EditPrice(' + idx + ')" title="Click to edit price">R' + item.price.toFixed(2) + '</td>';
-            html += '<td class="r" style="color:#5a8aaa;cursor:pointer;" onclick="event.stopPropagation();f11EditDisc(' + idx + ')" title="Click to set discount">' + (item.disc ? item.disc + '%' : '—') + '</td>';
+            html += '<td class="r qty" style="cursor:pointer;" onclick="event.stopPropagation();f11EditQty(' + idx + ')">' + item.qty + '</td>';
+            html += '<td class="r" style="cursor:pointer;" onclick="event.stopPropagation();f11EditPrice(' + idx + ')">R' + item.price.toFixed(2) + '</td>';
+            html += '<td class="r" style="color:#5a8aaa;cursor:pointer;" onclick="event.stopPropagation();f11EditDisc(' + idx + ')">' + (item.disc ? item.disc + '%' : '—') + '</td>';
             html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
             html += '<td><span class="f11-onhand">' + onHand + '</span></td>';
             html += '</tr>';
@@ -48747,49 +48747,35 @@ def pos_page():
             if (!terms.length) {{ f11DD.classList.remove('show'); return; }}
 
             f11Matches = [];
-            var f11Related = [];
             const companions = ['nut','nuts','moer','washer','washers','ring','spring washer','nylock','nyloc','flat washer','penny washer','lock nut','dome nut','coupling','flange'];
             const rows = document.querySelectorAll('.stock-row');
             for (let row of rows) {{
                 let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
                 if (terms.every(t => data.indexOf(t) !== -1)) {{
                     f11Matches.push({{
-                        el: row,
-                        id: row.getAttribute('data-id'),
+                        el: row, id: row.getAttribute('data-id'),
                         code: row.getAttribute('data-code') || '',
                         desc: row.getAttribute('data-desc') || '',
                         price: parseFloat(row.getAttribute('data-price')) || 0,
-                        qty: qty,
-                        related: false
+                        qty: qty, related: false
                     }});
                     if (f11Matches.length >= 30) break;
                 }}
             }}
-            // Related companion items - if search looks like a size, show nuts/washers/etc
             var sizeMatch = searchTerm.match(/^m?(\d+)/i);
             if (sizeMatch && f11Matches.length > 0) {{
-                var sizeNum = sizeMatch[1];
-                var matchedIds = {{}};
-                f11Matches.forEach(function(m) {{ matchedIds[m.id] = true; }});
+                var sizeNum = sizeMatch[1]; var f11Rel = []; var mIds = {{}};
+                f11Matches.forEach(function(m) {{ mIds[m.id] = true; }});
                 for (let row of rows) {{
-                    if (f11Related.length >= 10) break;
-                    var rid = row.getAttribute('data-id');
-                    if (matchedIds[rid]) continue;
-                    var rdata = (row.getAttribute('data-search') || '').toLowerCase();
-                    if (rdata.indexOf(sizeNum) === -1) continue;
-                    var isComp = false;
-                    for (var ci = 0; ci < companions.length; ci++) {{ if (rdata.indexOf(companions[ci]) !== -1) {{ isComp = true; break; }} }}
-                    if (isComp) {{
-                        f11Related.push({{
-                            el: row, id: rid,
-                            code: row.getAttribute('data-code') || '',
-                            desc: row.getAttribute('data-desc') || '',
-                            price: parseFloat(row.getAttribute('data-price')) || 0,
-                            qty: 1, related: true
-                        }});
-                    }}
+                    if (f11Rel.length >= 10) break;
+                    var rid = row.getAttribute('data-id'); if (mIds[rid]) continue;
+                    var rd = (row.getAttribute('data-search') || '').toLowerCase();
+                    if (rd.indexOf(sizeNum) === -1) continue;
+                    var ok = false;
+                    for (var ci = 0; ci < companions.length; ci++) {{ if (rd.indexOf(companions[ci]) !== -1) {{ ok = true; break; }} }}
+                    if (ok) {{ f11Rel.push({{ el: row, id: rid, code: row.getAttribute('data-code') || '', desc: row.getAttribute('data-desc') || '', price: parseFloat(row.getAttribute('data-price')) || 0, qty: 1, related: true }}); }}
                 }}
-                if (f11Related.length > 0) {{ f11Matches = f11Matches.concat(f11Related); }}
+                if (f11Rel.length > 0) {{ f11Matches = f11Matches.concat(f11Rel); }}
             }}
             f11Sel = f11Matches.length > 0 ? 0 : -1;
             f11RenderDD();
@@ -48801,19 +48787,23 @@ def pos_page():
                 f11ShowDD();
                 return;
             }}
-            var seenRelatedHeader = false;
-            f11DD.innerHTML = f11Matches.map((m, i) => {{
+            var seenRH = false;
+            f11DD.innerHTML = f11Matches.map(function(m, i) {{
                 var hdr = '';
-                if (m.related && !seenRelatedHeader) {{
-                    seenRelatedHeader = true;
-                    hdr = '<div style="padding:8px 20px;font-size:11px;font-weight:700;color:#f59e0b;letter-spacing:2px;border-top:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.05);">⚡ ALSO NEEDED?</div>';
-                }}
-                return hdr + '<div class="f11-dd-item' + (i === f11Sel ? ' sel' : '') + (m.related ? ' f11-dd-related' : '') + '" data-idx="' + i + '">' +
+                if (m.related && !seenRH) {{ seenRH = true; hdr = '<div style="padding:5px 16px;font-size:10px;font-weight:700;color:#f59e0b;letter-spacing:2px;border-top:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.05);">⚡ ALSO NEEDED?</div>'; }}
+                return hdr + '<div class="f11-dd-item' + (i === f11Sel ? ' sel' : '') + (m.related ? ' f11-dd-rel' : '') + '" data-idx="' + i + '">' +
+                '<span class="f11-dd-code">' + m.code + '</span>' +
+                '<span class="f11-dd-desc">' + m.desc.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>' +
+                '<span class="f11-dd-price">R' + m.price.toFixed(2) + '</span></div>';
+            }}).join('');
+            f11ShowDD();
+            f11DD.innerHTML = f11Matches.map((m, i) =>
+                '<div class="f11-dd-item' + (i === f11Sel ? ' sel' : '') + '" data-idx="' + i + '">' +
                 '<span class="f11-dd-code">' + m.code + '</span>' +
                 '<span class="f11-dd-desc">' + m.desc.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>' +
                 '<span class="f11-dd-price">R' + m.price.toFixed(2) + '</span>' +
-                '</div>';
-            }}).join('');
+                '</div>'
+            ).join('');
             f11ShowDD();
 
             f11DD.querySelectorAll('.f11-dd-item').forEach(el => {{
