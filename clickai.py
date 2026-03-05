@@ -35324,7 +35324,7 @@ def api_pulse_data():
         # ── Load data IN PARALLEL ──
         # CRITICAL: Don't use 'with' — shutdown(wait=True) blocks until ALL futures
         # complete, so if get_business_users is slow, everything waits.
-        pool = ThreadPoolExecutor(max_workers=7)
+        pool = ThreadPoolExecutor(max_workers=12)
         try:
             f_invoices = pool.submit(db.get, "invoices", {"business_id": biz_id})
             f_sales = pool.submit(db.get, "sales", {"business_id": biz_id})
@@ -35333,6 +35333,11 @@ def api_pulse_data():
             f_suppliers = pool.submit(db.get, "suppliers", {"business_id": biz_id})
             f_stock = pool.submit(db.get_all_stock, biz_id)
             f_users = pool.submit(db.get_business_users, biz_id)
+            f_credit_notes = pool.submit(db.get, "credit_notes", {"business_id": biz_id})
+            f_delivery_notes = pool.submit(db.get, "delivery_notes", {"business_id": biz_id})
+            f_purchase_orders = pool.submit(db.get, "purchase_orders", {"business_id": biz_id})
+            f_jobs = pool.submit(db.get, "jobs", {"business_id": biz_id})
+            f_grvs = pool.submit(db.get, "goods_received", {"business_id": biz_id})
             
             invoices = f_invoices.result(timeout=20) or []
             sales = f_sales.result(timeout=20) or []
@@ -35340,6 +35345,26 @@ def api_pulse_data():
             quotes = f_quotes.result(timeout=20) or []
             suppliers = f_suppliers.result(timeout=20) or []
             stock = f_stock.result(timeout=20) or []
+            try:
+                credit_notes = f_credit_notes.result(timeout=20) or []
+            except Exception:
+                credit_notes = []
+            try:
+                delivery_notes = f_delivery_notes.result(timeout=20) or []
+            except Exception:
+                delivery_notes = []
+            try:
+                purchase_orders = f_purchase_orders.result(timeout=20) or []
+            except Exception:
+                purchase_orders = []
+            try:
+                jobs_list = f_jobs.result(timeout=20) or []
+            except Exception:
+                jobs_list = []
+            try:
+                grvs = f_grvs.result(timeout=20) or []
+            except Exception:
+                grvs = []
             try:
                 team_users = f_users.result(timeout=20) or []
             except Exception:
@@ -35427,8 +35452,8 @@ def api_pulse_data():
                 team_data[uid] = {
                     "name": user_names.get(uid, uid[:8] if uid else "System"),
                     "today": [], "yesterday": [],
-                    "today_totals": {"invoices": 0, "quotes": 0, "sales": 0, "payments": 0, "inv_amt": 0, "q_amt": 0, "s_amt": 0, "p_amt": 0},
-                    "yesterday_totals": {"invoices": 0, "quotes": 0, "sales": 0, "payments": 0, "inv_amt": 0, "q_amt": 0, "s_amt": 0, "p_amt": 0}
+                    "today_totals": {"invoices": 0, "quotes": 0, "sales": 0, "payments": 0, "credit_notes": 0, "delivery_notes": 0, "purchase_orders": 0, "jobs": 0, "grvs": 0, "inv_amt": 0, "q_amt": 0, "s_amt": 0, "p_amt": 0, "cn_amt": 0, "dn_amt": 0, "po_amt": 0, "j_amt": 0, "grv_amt": 0},
+                    "yesterday_totals": {"invoices": 0, "quotes": 0, "sales": 0, "payments": 0, "credit_notes": 0, "delivery_notes": 0, "purchase_orders": 0, "jobs": 0, "grvs": 0, "inv_amt": 0, "q_amt": 0, "s_amt": 0, "p_amt": 0, "cn_amt": 0, "dn_amt": 0, "po_amt": 0, "j_amt": 0, "grv_amt": 0}
                 }
         
         # Make sure ALL team members appear (even if they did nothing)
@@ -35442,7 +35467,7 @@ def api_pulse_data():
             q_date = str(q.get("created_at", ""))[:10]
             if q_date not in (today_str, yesterday_str):
                 continue
-            uid = q.get("created_by", "unknown")
+            uid = q.get("created_by") or "unknown"
             _ensure_team(uid)
             amt = float(q.get("total", 0) or 0)
             cust = q.get("customer_name", "")[:25] or "Customer"
@@ -35460,7 +35485,7 @@ def api_pulse_data():
             inv_date = str(inv.get("date", ""))[:10]
             if inv_date not in (today_str, yesterday_str):
                 continue
-            uid = inv.get("created_by", "unknown")
+            uid = inv.get("created_by") or "unknown"
             _ensure_team(uid)
             amt = float(inv.get("total", 0) or 0)
             cust = inv.get("customer_name", "")[:25] or "Customer"
@@ -35478,7 +35503,7 @@ def api_pulse_data():
             s_date = str(s.get("date", ""))[:10]
             if s_date not in (today_str, yesterday_str):
                 continue
-            uid = s.get("created_by", "unknown")
+            uid = s.get("created_by") or "unknown"
             _ensure_team(uid)
             amt = float(s.get("total", 0) or 0)
             method = s.get("payment_method", "cash")
@@ -35496,7 +35521,7 @@ def api_pulse_data():
             p_date = str(p.get("date", ""))[:10]
             if p_date not in (today_str, yesterday_str):
                 continue
-            uid = p.get("created_by", "unknown")
+            uid = p.get("created_by") or "unknown"
             _ensure_team(uid)
             amt = float(p.get("amount", 0) or 0)
             cust = p.get("customer_name", "")[:25] or "Customer"
@@ -35508,6 +35533,97 @@ def api_pulse_data():
             team_data[uid][f"{day_key}_totals"]["payments"] += 1
             team_data[uid][f"{day_key}_totals"]["p_amt"] += amt
         
+        # Gather credit notes (today + yesterday)
+        for cn in credit_notes:
+            cn_date = str(cn.get("date", cn.get("created_at", "")))[:10]
+            if cn_date not in (today_str, yesterday_str):
+                continue
+            uid = cn.get("created_by") or "unknown"
+            _ensure_team(uid)
+            amt = float(cn.get("total", 0) or 0)
+            cust = (cn.get("customer_name", "") or "")[:25] or "Customer"
+            cn_num = cn.get("credit_note_number", cn.get("number", ""))
+            ts = str(cn.get("created_at", ""))
+            time_str = ts[11:16] if len(ts) > 16 else ""
+            action = {"time": time_str, "sort": ts, "icon": "&#9888;", "color": "#ef4444", "text": f"Credit Note {cn_num} → {cust}", "amount": amt}
+            day_key = "today" if cn_date == today_str else "yesterday"
+            team_data[uid][day_key].append(action)
+            team_data[uid][f"{day_key}_totals"]["credit_notes"] += 1
+            team_data[uid][f"{day_key}_totals"]["cn_amt"] += amt
+        
+        # Gather delivery notes (today + yesterday)
+        for dn in delivery_notes:
+            dn_date = str(dn.get("date", dn.get("created_at", "")))[:10]
+            if dn_date not in (today_str, yesterday_str):
+                continue
+            uid = dn.get("created_by") or "unknown"
+            _ensure_team(uid)
+            amt = float(dn.get("total", 0) or 0)
+            cust = (dn.get("customer_name", "") or "")[:25] or "Customer"
+            dn_num = dn.get("delivery_note_number", dn.get("number", ""))
+            ts = str(dn.get("created_at", ""))
+            time_str = ts[11:16] if len(ts) > 16 else ""
+            action = {"time": time_str, "sort": ts, "icon": "&#128666;", "color": "#8b5cf6", "text": f"Delivery {dn_num} → {cust}", "amount": amt}
+            day_key = "today" if dn_date == today_str else "yesterday"
+            team_data[uid][day_key].append(action)
+            team_data[uid][f"{day_key}_totals"]["delivery_notes"] += 1
+            team_data[uid][f"{day_key}_totals"]["dn_amt"] += amt
+        
+        # Gather purchase orders (today + yesterday)
+        for po in purchase_orders:
+            po_date = str(po.get("date", po.get("created_at", "")))[:10]
+            if po_date not in (today_str, yesterday_str):
+                continue
+            uid = po.get("created_by") or "unknown"
+            _ensure_team(uid)
+            amt = float(po.get("total", 0) or 0)
+            sup = (po.get("supplier_name", "") or "")[:25] or "Supplier"
+            po_num = po.get("po_number", po.get("number", ""))
+            ts = str(po.get("created_at", ""))
+            time_str = ts[11:16] if len(ts) > 16 else ""
+            action = {"time": time_str, "sort": ts, "icon": "&#128230;", "color": "#f97316", "text": f"PO {po_num} → {sup}", "amount": amt}
+            day_key = "today" if po_date == today_str else "yesterday"
+            team_data[uid][day_key].append(action)
+            team_data[uid][f"{day_key}_totals"]["purchase_orders"] += 1
+            team_data[uid][f"{day_key}_totals"]["po_amt"] += amt
+        
+        # Gather job cards (today + yesterday)
+        for job in jobs_list:
+            j_date = str(job.get("date", job.get("created_at", "")))[:10]
+            if j_date not in (today_str, yesterday_str):
+                continue
+            uid = job.get("created_by") or "unknown"
+            _ensure_team(uid)
+            amt = float(job.get("total", job.get("quoted_total", 0)) or 0)
+            cust = (job.get("customer_name", "") or "")[:25] or "Customer"
+            j_num = job.get("job_number", job.get("number", ""))
+            status = job.get("status", "")
+            ts = str(job.get("created_at", ""))
+            time_str = ts[11:16] if len(ts) > 16 else ""
+            action = {"time": time_str, "sort": ts, "icon": "&#128295;", "color": "#06b6d4", "text": f"Job {j_num} → {cust}" + (f" ({status})" if status else ""), "amount": amt}
+            day_key = "today" if j_date == today_str else "yesterday"
+            team_data[uid][day_key].append(action)
+            team_data[uid][f"{day_key}_totals"]["jobs"] += 1
+            team_data[uid][f"{day_key}_totals"]["j_amt"] += amt
+        
+        # Gather GRVs / goods received (today + yesterday)
+        for grv in grvs:
+            g_date = str(grv.get("date", grv.get("created_at", "")))[:10]
+            if g_date not in (today_str, yesterday_str):
+                continue
+            uid = grv.get("created_by") or "unknown"
+            _ensure_team(uid)
+            amt = float(grv.get("total", 0) or 0)
+            sup = (grv.get("supplier_name", "") or "")[:25] or "Supplier"
+            g_num = grv.get("grv_number", grv.get("number", ""))
+            ts = str(grv.get("created_at", ""))
+            time_str = ts[11:16] if len(ts) > 16 else ""
+            action = {"time": time_str, "sort": ts, "icon": "&#128230;", "color": "#14b8a6", "text": f"GRV {g_num} from {sup}", "amount": amt}
+            day_key = "today" if g_date == today_str else "yesterday"
+            team_data[uid][day_key].append(action)
+            team_data[uid][f"{day_key}_totals"]["grvs"] += 1
+            team_data[uid][f"{day_key}_totals"]["grv_amt"] += amt
+        
         # Helper: build day summary
         def _day_summary(totals):
             parts = []
@@ -35515,6 +35631,11 @@ def api_pulse_data():
             if totals["quotes"]: parts.append(f'<span style="color:#f59e0b;">{totals["quotes"]} quotes {fmt(totals["q_amt"])}</span>')
             if totals["sales"]: parts.append(f'<span style="color:#10b981;">{totals["sales"]} sales {fmt(totals["s_amt"])}</span>')
             if totals["payments"]: parts.append(f'<span style="color:#10b981;">{totals["payments"]} pay {fmt(totals["p_amt"])}</span>')
+            if totals.get("credit_notes"): parts.append(f'<span style="color:#ef4444;">{totals["credit_notes"]} CN {fmt(totals["cn_amt"])}</span>')
+            if totals.get("delivery_notes"): parts.append(f'<span style="color:#8b5cf6;">{totals["delivery_notes"]} DN {fmt(totals["dn_amt"])}</span>')
+            if totals.get("purchase_orders"): parts.append(f'<span style="color:#f97316;">{totals["purchase_orders"]} PO {fmt(totals["po_amt"])}</span>')
+            if totals.get("jobs"): parts.append(f'<span style="color:#06b6d4;">{totals["jobs"]} jobs {fmt(totals["j_amt"])}</span>')
+            if totals.get("grvs"): parts.append(f'<span style="color:#14b8a6;">{totals["grvs"]} GRV {fmt(totals["grv_amt"])}</span>')
             return " &bull; ".join(parts) if parts else '<span style="color:#ef4444;">No activity</span>'
         
         # Helper: build action lines
@@ -45494,15 +45615,15 @@ def pos_page():
     <script>
     let cart = [];
     let selectedRowIndex = -1;
-    let currentCashierId = null;
-    let currentCashierName = null;
+    let currentCashierId = '__CURRENT_USER_ID__';
+    let currentCashierName = '__CURRENT_USER_NAME__';
     
     // Initialize cashier - restore from cookie or use active button
-    (function() {
+    document.addEventListener('DOMContentLoaded', function() {
         const savedCashier = document.cookie.split(';').find(c => c.trim().startsWith('pos_cashier='));
         if (savedCashier) {
             const uid = savedCashier.split('=')[1];
-            const btn = document.querySelector(`.cashier-btn[data-uid="${uid}"]`);
+            const btn = document.querySelector('.cashier-btn[data-uid="' + uid + '"]');
             if (btn) {
                 document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
@@ -45516,7 +45637,7 @@ def pos_page():
             currentCashierId = activeBtn.dataset.uid;
             currentCashierName = activeBtn.textContent.trim();
         }
-    })();
+    });
     
     function switchCashier(btn, uid, name) {
         document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
@@ -48471,6 +48592,7 @@ def pos_page():
     })();
     </script>
     '''
+    pos_js = pos_js.replace('__CURRENT_USER_ID__', current_user_id).replace('__CURRENT_USER_NAME__', current_user_name)
     
     return f'''<!DOCTYPE html>
 <html lang="en">
@@ -49793,6 +49915,7 @@ def api_pos_sale():
         default_name = {"cash": "Cash Sale", "card": "Card Sale", "account": "Account Sale"}.get(payment_method, "Sale")
         customer_name = data.get("customer_name") or default_name
         cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
+        logger.info(f"[POS] Sale by cashier_id={cashier_id}, cashier_name={data.get('cashier_name','')}, logged_in_user={user.get('id') if user else 'none'}")
         
         if not items:
             return jsonify({"success": False, "error": "No items in cart"})
