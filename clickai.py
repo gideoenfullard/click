@@ -45615,8 +45615,8 @@ def pos_page():
     <script>
     let cart = [];
     let selectedRowIndex = -1;
-    let currentCashierId = '__CURRENT_USER_ID__';
-    let currentCashierName = '__CURRENT_USER_NAME__';
+    let currentCashierId = null;
+    let currentCashierName = null;
     
     // Initialize cashier - restore from cookie or use active button
     document.addEventListener('DOMContentLoaded', function() {
@@ -48592,7 +48592,8 @@ def pos_page():
     })();
     </script>
     '''
-    pos_js = pos_js.replace('__CURRENT_USER_ID__', current_user_id).replace('__CURRENT_USER_NAME__', current_user_name)
+    _safe_uid = str(current_user_id or '').replace("'", "")
+    _safe_uname = str(current_user_name or 'Me').replace("'", "").replace("\\", "")
     
     return f'''<!DOCTYPE html>
 <html lang="en">
@@ -48746,6 +48747,13 @@ def pos_page():
     
     {get_zane_chat()}
     {pos_js}
+    <script>
+    // Cashier fallback - ensure currentCashierId is never null
+    if (!currentCashierId) {{
+        currentCashierId = '{_safe_uid}';
+        currentCashierName = '{_safe_uname}';
+    }}
+    </script>
 
     <!-- Custom prompt modal (replaces native prompt which breaks F11 fullscreen) -->
     <div id="posPromptOverlay" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.6);z-index:99999;align-items:center;justify-content:center;">
