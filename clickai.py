@@ -21957,7 +21957,7 @@ def api_stock_dedup():
 def service_worker():
     """Service Worker for offline POS capability"""
     sw_js = """
-const CACHE_NAME = 'clickai-pos-v3';
+const CACHE_NAME = 'clickai-pos-v4';
 const OFFLINE_URLS = ['/pos'];
 
 // Install — only cache POS (not all pages — that blocks the single server worker)
@@ -46018,6 +46018,10 @@ def pos_page():
         const rows = document.querySelectorAll('.stock-row');
         const noResults = document.getElementById('noResults');
         
+        // DEBUG - remove after fixing
+        if (search.length > 0 && search.length <= 4) {
+            console.log('[POS-SEARCH] query="' + search + '", rows=' + rows.length);
+        }
         // Strip quantity prefix
         if (search.match(/^\\d+\\*\\s*/)) {
             search = search.replace(/^\\d+\\*\\s*/, '');
@@ -46041,6 +46045,13 @@ def pos_page():
             } else {
                 const tokens = search.split(/\s+/).filter(t => t.length > 0);
                 match = tokens.every(t => data.indexOf(t) !== -1) && visibleCount < MAX_VISIBLE;
+                // DEBUG - log first match/miss for 'nut'
+                if (search === 'nut' && index < 5) {
+                    console.log('[POS-SEARCH] row ' + index + ' data="' + data.substring(0,60) + '" tokens=' + JSON.stringify(tokens) + ' match=' + match);
+                }
+                if (search === 'nut' && match && visibleCount < 3) {
+                    console.log('[POS-SEARCH] MATCH: ' + data.substring(0,60));
+                }
             }
             if (match) {
                 row.style.display = '';
