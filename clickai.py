@@ -45341,9 +45341,10 @@ def pos_page():
     .f11-exit .pk{color:#ff6666;border-color:rgba(255,80,80,0.3);background:rgba(255,40,40,0.08);text-shadow:0 0 6px rgba(255,80,80,0.4);}
     .f11-order-wrap{display:none;flex:1;overflow:hidden;flex-direction:column;}
     .f11-search{padding:10px 20px;border-bottom:1px solid rgba(80,180,255,0.06);position:relative;}
-    .f11-search input{width:100%;height:44px;background:rgba(6,16,40,0.6);border:1px solid rgba(80,180,255,0.2);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:600;padding:0 16px;outline:none;letter-spacing:0.5px;}
-    .f11-search input::placeholder{color:#5a8aaa;}
-    .f11-search input:focus{border-color:rgba(0,200,255,0.4);background:rgba(0,200,255,0.04);box-shadow:0 0 12px rgba(0,200,255,0.08);}
+    .f11-search input{width:100%;height:48px;background:rgba(8,20,50,0.9);border:2px solid rgba(0,200,255,0.5);color:#e8f4ff;font-family:'Rajdhani',sans-serif;font-size:18px;font-weight:600;padding:0 16px 0 44px;outline:none;letter-spacing:0.5px;border-radius:4px;box-shadow:0 0 12px rgba(0,200,255,0.15),inset 0 0 8px rgba(0,200,255,0.05);}
+    .f11-search::before{content:'🔍';position:absolute;left:32px;top:50%;transform:translateY(-50%);font-size:18px;z-index:1;opacity:0.7;}
+    .f11-search input::placeholder{color:#7ab0d0;font-weight:500;}
+    .f11-search input:focus{border-color:rgba(0,220,255,0.7);background:rgba(0,200,255,0.06);box-shadow:0 0 20px rgba(0,200,255,0.25),inset 0 0 8px rgba(0,200,255,0.05);}
     .f11-dd{display:none;position:fixed;left:20px;right:20px;background:rgba(6,14,36,0.98);border:1px solid rgba(80,180,255,0.25);max-height:calc(100vh - 160px);overflow-y:auto;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,0.6);}
     .f11-dd.show{display:block;}
     .f11-dd-item{display:flex;align-items:center;padding:14px 20px;cursor:pointer;border-bottom:1px solid rgba(80,180,255,0.04);transition:all 0.1s;gap:16px;}
@@ -45365,8 +45366,7 @@ def pos_page():
     .f11-table tr:hover td{background:rgba(0,200,255,0.04);color:#fff;}
     .f11-table tr.f11-sel td{background:rgba(80,180,255,0.08);border-bottom:1px solid rgba(0,200,255,0.15);}
     .f11-table tr.f11-sel td:first-child{border-left:2px solid #00ccff;}
-    .f11-qty-btn{{background:rgba(0,200,255,0.1);border:1px solid rgba(80,180,255,0.3);color:#00ccff;width:22px;height:22px;cursor:pointer;font-size:15px;line-height:1;padding:0;margin:0 4px;border-radius:3px;vertical-align:middle;}}
-    .f11-qty-btn:hover{{background:rgba(0,200,255,0.25);border-color:rgba(0,200,255,0.6);color:#fff;}}
+    .f11-onhand{font-size:12px;color:#5a8aaa;font-family:'Share Tech Mono',monospace;}
 
     /* F11 state toggle — hide ALL page elements, show fixed overlay */
     body.f11-mode .pos-header{display:none !important;}
@@ -47793,36 +47793,64 @@ def pos_page():
             @page { size: A4; margin: 20mm; }
         `;
         
-        // Direct window.open — triggered by user click so popup blockers won't interfere
-        const printWin = window.open('', '_blank', 'width=420,height=650');
-        if (!printWin) {
-            alert('Popup blocked — maak asb popups oop vir hierdie site en probeer weer. (Chrome: adresbalk regs > popup allow)');
-            return;
-        }
-        printWin.document.open();
-        printWin.document.write(`<!DOCTYPE html><html><head><title>Slip</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
-        printWin.document.close();
-        
-        // Print after content renders
-        setTimeout(() => {
-            printWin.focus();
-            printWin.print();
-            setTimeout(() => { try { printWin.close(); } catch(e) {} }, 1500);
+        // Use window.open — more reliable for thermal printers than hidden iframe
+        const printWin = window.open('', 'pos_print', 'width=400,height=600');
+        if (printWin) {
+            printWin.document.write('<!DOCTYPE html><html><head><title>Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>');
+            printWin.document.close();
+            
+            // Wait for content to render, then print
+            const doPrint = function() {
+                try {
+                    printWin.focus();
+                    printWin.print();
+                } catch(e) {
+                    console.log('[POS] Print error:', e);
+                }
+                // Close window after print dialog closes
+                setTimeout(function() { try { printWin.close(); } catch(e) {} }, 1000);
+            };
+            
+            // Some browsers need onload, others can go immediately
+            if (printWin.document.readyState === 'complete') {
+                setTimeout(doPrint, 300);
+            } else {
+                printWin.onload = function() { setTimeout(doPrint, 300); };
+                // Fallback timer in case onload doesn't fire
+                setTimeout(doPrint, 800);
+            }
             
             // Handle duplicates - print 2nd copy for store record
             if (posSettings.print_duplicates) {
-                setTimeout(() => {
-                    const pw2 = window.open('', '_blank', 'width=420,height=650');
-                    if (pw2) {
-                        pw2.document.open();
-                        pw2.document.write(`<!DOCTYPE html><html><head><title>Slip Copy</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
-                        pw2.document.close();
-                        setTimeout(() => { pw2.focus(); pw2.print(); setTimeout(() => { try { pw2.close(); } catch(e){} }, 1500); }, 400);
+                setTimeout(function() {
+                    const printWin2 = window.open('', 'pos_print2', 'width=400,height=600');
+                    if (printWin2) {
+                        printWin2.document.write('<!DOCTYPE html><html><head><title>Slip Copy</title><style>' + styles + '</style></head><body>' + slipContent + '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body></html>');
+                        printWin2.document.close();
+                        var doPrint2 = function() { try { printWin2.focus(); printWin2.print(); } catch(e) {} setTimeout(function() { try { printWin2.close(); } catch(e) {} }, 1000); };
+                        if (printWin2.document.readyState === 'complete') { setTimeout(doPrint2, 300); } else { printWin2.onload = function() { setTimeout(doPrint2, 300); }; setTimeout(doPrint2, 800); }
                     }
-                }, 2200);
+                }, 3000);  // Wait 3 seconds between prints
             }
-            // DON'T auto-reload — let user close modal with Skip/Done button
-        }, 400);
+        } else {
+            // Popup blocked — fall back to iframe method
+            let printFrame = document.getElementById('posPrintFrame');
+            if (!printFrame) {
+                printFrame = document.createElement('iframe');
+                printFrame.id = 'posPrintFrame';
+                printFrame.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:auto;border:none;';
+                document.body.appendChild(printFrame);
+            }
+            const doc = printFrame.contentDocument || printFrame.contentWindow.document;
+            doc.open();
+            doc.write('<!DOCTYPE html><html><head><title>Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>');
+            doc.close();
+            setTimeout(function() {
+                try { printFrame.contentWindow.focus(); printFrame.contentWindow.print(); } catch(e) {
+                    alert('Print failed — please allow popups for this site, or set your thermal printer as default and press Ctrl+P');
+                }
+            }, 600);
+        }
     }
     
     function closePrintModal() {
@@ -48494,21 +48522,8 @@ def pos_page():
             if (typeof updateF11CustName === 'function') updateF11CustName();
             var el = document.getElementById('f11Search');
             if (el) {{ el.value = ''; el.focus(); }}
-            // Dynamically set order-wrap top to match actual header height
-            // (header buttons can wrap on smaller screens making it taller than 52px)
-            setTimeout(function() {{
-                var hdr = document.querySelector('.f11-header');
-                var wrap = document.querySelector('.f11-order-wrap');
-                if (hdr && wrap) {{
-                    var hdrH = Math.ceil(hdr.getBoundingClientRect().height);
-                    wrap.style.top = Math.max(52, hdrH + 2) + 'px';
-                }}
-            }}, 60);
         }} else {{
             try {{ if(document.fullscreenElement) document.exitFullscreen(); }} catch(e) {{}}
-            // Reset order-wrap top
-            var wrap = document.querySelector('.f11-order-wrap');
-            if (wrap) wrap.style.top = '';
             var el = document.getElementById('stockSearch');
             if (el) el.focus();
         }}
@@ -48531,6 +48546,8 @@ def pos_page():
             <a href="/pos/history">History</a>
             <a href="/stock">Stock</a>
             <a href="/customers">Customers</a>
+            <a href="/pos/history" onclick="event.preventDefault();window.location='/pos/history?xread=1';" style="color:#00ccff;border:1px solid rgba(0,200,255,0.3);border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;">X-Read</a>
+            <a href="/pos/history" onclick="event.preventDefault();window.location='/pos/history?zread=1';" style="color:#ff8888;border:1px solid rgba(255,80,80,0.3);border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;">Z-Read</a>
             <span id="offlineIndicator" style="display:none;padding:4px 10px;font-size:11px;font-weight:700;margin-left:8px;cursor:pointer;" onclick="syncOfflineSales()" title="Click to sync when online">
                 <span id="offlineText">🔴 OFFLINE</span>
                 <span id="offlineCount" style="display:none;background:rgba(255,255,255,0.2);padding:1px 6px;margin-left:4px;font-size:10px;"></span>
@@ -48649,10 +48666,10 @@ def pos_page():
             // Find stock qty
             const stockRow = document.querySelector('.stock-row[data-id="' + item.id + '"]');
             const onHand = stockRow ? stockRow.getAttribute('data-qty') : '—';
-            html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();document.getElementById(\'f11Search\').focus();">';
+            html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();">';
             html += '<td class="code">' + item.code + '</td>';
             html += '<td>' + item.desc + '</td>';
-            html += '<td class="r qty"><button class="f11-qty-btn" onclick="event.stopPropagation();f11AdjQty(' + idx + ',-1)">−</button>' + item.qty + '<button class="f11-qty-btn" onclick="event.stopPropagation();f11AdjQty(' + idx + ',1)">+</button></td>';
+            html += '<td class="r qty" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;" onclick="event.stopPropagation();f11EditQty(' + idx + ')" title="Click to edit qty">' + item.qty + '</td>';
             html += '<td class="r">R' + item.price.toFixed(2) + '</td>';
             html += '<td class="r" style="color:#5a8aaa;">—</td>';
             html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
@@ -48672,20 +48689,22 @@ def pos_page():
         ['f11Quote','f11PO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
     }}
 
-    function f11AdjQty(idx, delta) {{
+    function updateF11CustName() {{
+
+    function f11EditQty(idx) {{
         if (idx < 0 || idx >= cart.length) return;
-        cart[idx].qty += delta;
-        if (cart[idx].qty <= 0) {{
-            cart.splice(idx, 1);
-            f11SelectedRow = Math.max(0, idx - 1);
-        }} else {{
-            f11SelectedRow = idx;
-        }}
+        var item = cart[idx];
+        var newQty = prompt('Qty for ' + item.code + ':', item.qty);
+        if (newQty === null) return;
+        var qty = parseInt(newQty);
+        if (isNaN(qty) || qty < 0) {{ alert('Invalid qty'); return; }}
+        if (qty === 0) {{ cart.splice(idx, 1); if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1); }}
+        else {{ item.qty = qty; }}
         updateCart();
         renderF11Table();
         syncF11Buttons();
-        var srch = document.getElementById('f11Search');
-        if (srch) srch.focus();
+        var el = document.getElementById('f11Search');
+        if (el) el.focus();
     }}
 
     function updateF11CustName() {{
@@ -48804,6 +48823,9 @@ def pos_page():
             if (!f11DD.classList.contains('show') && !f11Input.value.trim()) {{
                 if (e.key === 'ArrowDown') {{ e.preventDefault(); f11SelectedRow = Math.min(f11SelectedRow + 1, cart.length - 1); renderF11Table(); }}
                 if (e.key === 'ArrowUp') {{ e.preventDefault(); f11SelectedRow = Math.max(f11SelectedRow - 1, 0); renderF11Table(); }}
+                if ((e.key === '+' || e.key === '=') && cart.length > 0) {{ e.preventDefault(); cart[f11SelectedRow].qty++; updateCart(); renderF11Table(); syncF11Buttons(); }}
+                if (e.key === '-' && cart.length > 0 && cart[f11SelectedRow].qty > 1) {{ e.preventDefault(); cart[f11SelectedRow].qty--; updateCart(); renderF11Table(); syncF11Buttons(); }}
+                if ((e.key === 'q' || e.key === 'Q') && cart.length > 0) {{ e.preventDefault(); f11EditQty(f11SelectedRow); }}
             }}
         }});
     }});
@@ -49141,7 +49163,7 @@ def pos_history():
         <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
             <div id="xreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
             <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
-                <button onclick="printXReadSlip()" class="btn btn-primary" style="flex:1;">🖨️ Print X-Read</button>
+                <button onclick="window.print()" class="btn btn-primary" style="flex:1;">🖨️ Print</button>
                 <button onclick="closeModal('xreadModal')" class="btn btn-secondary" style="flex:1;">Close</button>
             </div>
         </div>
@@ -49247,21 +49269,6 @@ def pos_history():
     
     function closeModal(id) {{
         document.getElementById(id).style.display = 'none';
-    }}
-    
-    function _slipPrintWin(html) {{
-        // Shared helper: open print window — user-triggered so popup blocker won't fire
-        const pw = window.open('', '_blank', 'width=420,height=650');
-        if (!pw) {{ alert('Popup blocked. Maak asb popups oop vir hierdie site.'); return; }}
-        pw.document.open();
-        pw.document.write(html);
-        pw.document.close();
-        setTimeout(function() {{ pw.focus(); pw.print(); setTimeout(function(){{ try{{pw.close();}}catch(e){{}} }}, 1500); }}, 400);
-    }}
-    
-    function printXReadSlip() {{
-        const content = document.getElementById('xreadContent').innerHTML;
-        _slipPrintWin('<!DOCTYPE html><html><head><title>X-Read</title><style>body{{font-family:monospace;font-size:14px;padding:20px;color:#000;max-width:80mm;margin:0 auto;}}table{{width:100%;border-collapse:collapse;}}td{{padding:3px 0;}}@media print{{@page{{size:80mm auto;margin:5mm;}}}}</style></head><body>' + content + '</body></html>');
     }}
     
     function printXRead() {{
@@ -49420,15 +49427,19 @@ def pos_history():
         const diff = document.getElementById('cashDiff').textContent;
         const status = document.getElementById('cashStatus').textContent;
         
-        if (confirm('Close day for {date_desc}?\\\\n\\\\n' + status + '\\\\nCounted: ' + counted + '\\\\nDifference: ' + diff + '\\\\n\\\\nThis will mark the day as closed.')) {{
+        if (confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + counted + '\\nDifference: ' + diff + '\\n\\nThis will mark the day as closed.')) {{
+            // Build print content with cash count
             const zContent = document.getElementById('zreadContent').innerHTML;
             const cashHtml = buildCashCountPrintHtml();
-            const styles = 'body{{font-family:monospace;font-size:14px;padding:20px;color:#000;max-width:80mm;margin:0 auto;}}table{{width:100%;border-collapse:collapse;}}td{{padding:3px 0;}}@media print{{@page{{size:80mm auto;margin:5mm;}}}}';
-            const sig = '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div>';
-            _slipPrintWin('<!DOCTYPE html><html><head><title>Z-Read</title><style>' + styles + '</style></head><body>' + zContent + cashHtml + sig + '</body></html>');
+            
+            const printWindow = window.open('', '_blank', 'width=400,height=700');
+            printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + cashHtml + '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div></body></html>');
+            printWindow.document.close();
+            setTimeout(function() {{ printWindow.print(); }}, 300);
             closeModal('zreadModal');
         }}
-    }}    
+    }}
+    
     // Close modal on background click
     document.getElementById('xreadModal').addEventListener('click', function(e) {{
         if (e.target === this) closeModal('xreadModal');
