@@ -45365,7 +45365,8 @@ def pos_page():
     .f11-table tr:hover td{background:rgba(0,200,255,0.04);color:#fff;}
     .f11-table tr.f11-sel td{background:rgba(80,180,255,0.08);border-bottom:1px solid rgba(0,200,255,0.15);}
     .f11-table tr.f11-sel td:first-child{border-left:2px solid #00ccff;}
-    .f11-onhand{font-size:12px;color:#5a8aaa;font-family:'Share Tech Mono',monospace;}
+    .f11-qty-btn{{background:rgba(0,200,255,0.1);border:1px solid rgba(80,180,255,0.3);color:#00ccff;width:22px;height:22px;cursor:pointer;font-size:15px;line-height:1;padding:0;margin:0 4px;border-radius:3px;vertical-align:middle;}}
+    .f11-qty-btn:hover{{background:rgba(0,200,255,0.25);border-color:rgba(0,200,255,0.6);color:#fff;}}
 
     /* F11 state toggle — hide ALL page elements, show fixed overlay */
     body.f11-mode .pos-header{display:none !important;}
@@ -47792,48 +47793,36 @@ def pos_page():
             @page { size: A4; margin: 20mm; }
         `;
         
-        // Use hidden iframe instead of popup (popup blockers won't interfere)
-        let printFrame = document.getElementById('posPrintFrame');
-        if (!printFrame) {
-            printFrame = document.createElement('iframe');
-            printFrame.id = 'posPrintFrame';
-            printFrame.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;border:none;';
-            document.body.appendChild(printFrame);
+        // Direct window.open — triggered by user click so popup blockers won't interfere
+        const printWin = window.open('', '_blank', 'width=420,height=650');
+        if (!printWin) {
+            alert('Popup blocked — maak asb popups oop vir hierdie site en probeer weer. (Chrome: adresbalk regs > popup allow)');
+            return;
         }
-        
-        const doc = printFrame.contentDocument || printFrame.contentWindow.document;
-        doc.open();
-        doc.write(`<!DOCTYPE html><html><head><title>Slip</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
-        doc.close();
+        printWin.document.open();
+        printWin.document.write(`<!DOCTYPE html><html><head><title>Slip</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
+        printWin.document.close();
         
         // Print after content renders
         setTimeout(() => {
-            try {
-                printFrame.contentWindow.focus();
-                printFrame.contentWindow.print();
-            } catch(e) {
-                // Fallback: try window.open if iframe print fails
-                const printWin = window.open('', '_blank', 'width=400,height=600');
-                if (printWin) {
-                    printWin.document.write(`<!DOCTYPE html><html><head><title>Slip</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
-                    printWin.document.close();
-                    printWin.onload = function() { printWin.print(); setTimeout(() => printWin.close(), 500); };
-                } else {
-                    alert('Popup blocked — enable popups for this site, or set your thermal printer as default and press Ctrl+P');
-                }
-            }
+            printWin.focus();
+            printWin.print();
+            setTimeout(() => { try { printWin.close(); } catch(e) {} }, 1500);
             
             // Handle duplicates - print 2nd copy for store record
             if (posSettings.print_duplicates) {
                 setTimeout(() => {
-                    try {
-                        printFrame.contentWindow.focus();
-                        printFrame.contentWindow.print();
-                    } catch(e) {}
-                }, 2000);  // Wait 2 seconds between prints
+                    const pw2 = window.open('', '_blank', 'width=420,height=650');
+                    if (pw2) {
+                        pw2.document.open();
+                        pw2.document.write(`<!DOCTYPE html><html><head><title>Slip Copy</title><style>${styles}</style></head><body>${slipContent}</body></html>`);
+                        pw2.document.close();
+                        setTimeout(() => { pw2.focus(); pw2.print(); setTimeout(() => { try { pw2.close(); } catch(e){} }, 1500); }, 400);
+                    }
+                }, 2200);
             }
             // DON'T auto-reload — let user close modal with Skip/Done button
-        }, 600);
+        }, 400);
     }
     
     function closePrintModal() {
@@ -48505,8 +48494,21 @@ def pos_page():
             if (typeof updateF11CustName === 'function') updateF11CustName();
             var el = document.getElementById('f11Search');
             if (el) {{ el.value = ''; el.focus(); }}
+            // Dynamically set order-wrap top to match actual header height
+            // (header buttons can wrap on smaller screens making it taller than 52px)
+            setTimeout(function() {{
+                var hdr = document.querySelector('.f11-header');
+                var wrap = document.querySelector('.f11-order-wrap');
+                if (hdr && wrap) {{
+                    var hdrH = Math.ceil(hdr.getBoundingClientRect().height);
+                    wrap.style.top = Math.max(52, hdrH + 2) + 'px';
+                }}
+            }}, 60);
         }} else {{
             try {{ if(document.fullscreenElement) document.exitFullscreen(); }} catch(e) {{}}
+            // Reset order-wrap top
+            var wrap = document.querySelector('.f11-order-wrap');
+            if (wrap) wrap.style.top = '';
             var el = document.getElementById('stockSearch');
             if (el) el.focus();
         }}
@@ -48647,10 +48649,10 @@ def pos_page():
             // Find stock qty
             const stockRow = document.querySelector('.stock-row[data-id="' + item.id + '"]');
             const onHand = stockRow ? stockRow.getAttribute('data-qty') : '—';
-            html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();">';
+            html += '<tr class="' + sel + '" onclick="f11SelectedRow=' + idx + ';renderF11Table();document.getElementById(\'f11Search\').focus();">';
             html += '<td class="code">' + item.code + '</td>';
             html += '<td>' + item.desc + '</td>';
-            html += '<td class="r qty">' + item.qty + '</td>';
+            html += '<td class="r qty"><button class="f11-qty-btn" onclick="event.stopPropagation();f11AdjQty(' + idx + ',-1)">−</button>' + item.qty + '<button class="f11-qty-btn" onclick="event.stopPropagation();f11AdjQty(' + idx + ',1)">+</button></td>';
             html += '<td class="r">R' + item.price.toFixed(2) + '</td>';
             html += '<td class="r" style="color:#5a8aaa;">—</td>';
             html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
@@ -48668,6 +48670,22 @@ def pos_page():
         ['f11Cash','f11Card'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
         ['f11Account','f11Invoice','f11Credit'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !(hasItems && hasCust); }});
         ['f11Quote','f11PO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
+    }}
+
+    function f11AdjQty(idx, delta) {{
+        if (idx < 0 || idx >= cart.length) return;
+        cart[idx].qty += delta;
+        if (cart[idx].qty <= 0) {{
+            cart.splice(idx, 1);
+            f11SelectedRow = Math.max(0, idx - 1);
+        }} else {{
+            f11SelectedRow = idx;
+        }}
+        updateCart();
+        renderF11Table();
+        syncF11Buttons();
+        var srch = document.getElementById('f11Search');
+        if (srch) srch.focus();
     }}
 
     function updateF11CustName() {{
@@ -49123,7 +49141,7 @@ def pos_history():
         <div style="background:white;padding:0;border-radius:8px;max-width:400px;width:90%;max-height:90vh;overflow-y:auto;">
             <div id="xreadContent" style="padding:30px;font-family:monospace;font-size:14px;color:#000;"></div>
             <div style="padding:15px;border-top:1px solid #eee;display:flex;gap:10px;">
-                <button onclick="window.print()" class="btn btn-primary" style="flex:1;">🖨️ Print</button>
+                <button onclick="printXReadSlip()" class="btn btn-primary" style="flex:1;">🖨️ Print X-Read</button>
                 <button onclick="closeModal('xreadModal')" class="btn btn-secondary" style="flex:1;">Close</button>
             </div>
         </div>
@@ -49229,6 +49247,21 @@ def pos_history():
     
     function closeModal(id) {{
         document.getElementById(id).style.display = 'none';
+    }}
+    
+    function _slipPrintWin(html) {{
+        // Shared helper: open print window — user-triggered so popup blocker won't fire
+        const pw = window.open('', '_blank', 'width=420,height=650');
+        if (!pw) {{ alert('Popup blocked. Maak asb popups oop vir hierdie site.'); return; }}
+        pw.document.open();
+        pw.document.write(html);
+        pw.document.close();
+        setTimeout(function() {{ pw.focus(); pw.print(); setTimeout(function(){{ try{{pw.close();}}catch(e){{}} }}, 1500); }}, 400);
+    }}
+    
+    function printXReadSlip() {{
+        const content = document.getElementById('xreadContent').innerHTML;
+        _slipPrintWin('<!DOCTYPE html><html><head><title>X-Read</title><style>body{{font-family:monospace;font-size:14px;padding:20px;color:#000;max-width:80mm;margin:0 auto;}}table{{width:100%;border-collapse:collapse;}}td{{padding:3px 0;}}@media print{{@page{{size:80mm auto;margin:5mm;}}}}</style></head><body>' + content + '</body></html>');
     }}
     
     function printXRead() {{
@@ -49387,19 +49420,15 @@ def pos_history():
         const diff = document.getElementById('cashDiff').textContent;
         const status = document.getElementById('cashStatus').textContent;
         
-        if (confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + counted + '\\nDifference: ' + diff + '\\n\\nThis will mark the day as closed.')) {{
-            // Build print content with cash count
+        if (confirm('Close day for {date_desc}?\\\\n\\\\n' + status + '\\\\nCounted: ' + counted + '\\\\nDifference: ' + diff + '\\\\n\\\\nThis will mark the day as closed.')) {{
             const zContent = document.getElementById('zreadContent').innerHTML;
             const cashHtml = buildCashCountPrintHtml();
-            
-            const printWindow = window.open('', '_blank', 'width=400,height=700');
-            printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + cashHtml + '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div></body></html>');
-            printWindow.document.close();
-            setTimeout(function() {{ printWindow.print(); }}, 300);
+            const styles = 'body{{font-family:monospace;font-size:14px;padding:20px;color:#000;max-width:80mm;margin:0 auto;}}table{{width:100%;border-collapse:collapse;}}td{{padding:3px 0;}}@media print{{@page{{size:80mm auto;margin:5mm;}}}}';
+            const sig = '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div>';
+            _slipPrintWin('<!DOCTYPE html><html><head><title>Z-Read</title><style>' + styles + '</style></head><body>' + zContent + cashHtml + sig + '</body></html>');
             closeModal('zreadModal');
         }}
-    }}
-    
+    }}    
     // Close modal on background click
     document.getElementById('xreadModal').addEventListener('click', function(e) {{
         if (e.target === this) closeModal('xreadModal');
