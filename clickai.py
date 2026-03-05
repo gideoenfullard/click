@@ -48583,7 +48583,6 @@ def pos_page():
     <div class="f11-order-wrap">
         <div class="f11-search">
             <input type="text" id="f11Search" placeholder="Scan barcode or type code / description..." autocomplete="off">
-            <div class="f11-dd" id="f11Dropdown"></div>
         </div>
         <div class="f11-table-wrap">
             <table class="f11-table">
@@ -48735,17 +48734,30 @@ def pos_page():
                 }}
             }}
             var sizeMatch = searchTerm.match(/^m?(\d+)/i);
-            if (sizeMatch && f11Matches.length > 0) {{
-                var sizeNum = sizeMatch[1]; var f11Rel = []; var mIds = {{}};
+            // Also trigger companions in REVERSE: if user types "nut", find bolts with matching size
+            var reverseCompanions = ['bolt','bolts','bout','screw','screws','stud','studs','setscrew','hex bolt','cap screw','coach bolt','carriage bolt','anchor bolt'];
+            var isCompanionSearch = companions.some(function(kw) {{ return searchTerm.toLowerCase().indexOf(kw) !== -1; }});
+            if ((sizeMatch || isCompanionSearch) && f11Matches.length > 0) {{
+                var f11Rel = []; var mIds = {{}};
                 f11Matches.forEach(function(m) {{ mIds[m.id] = true; }});
-                for (let row of rows) {{
-                    if (f11Rel.length >= 10) break;
-                    var rid = row.getAttribute('data-id'); if (mIds[rid]) continue;
-                    var rd = (row.getAttribute('data-search') || '').toLowerCase();
-                    if (rd.indexOf(sizeNum) === -1) continue;
-                    var ok = false;
-                    for (var ci = 0; ci < companions.length; ci++) {{ if (rd.indexOf(companions[ci]) !== -1) {{ ok = true; break; }} }}
-                    if (ok) {{ f11Rel.push({{ el: row, id: rid, code: row.getAttribute('data-code') || '', desc: row.getAttribute('data-desc') || '', price: parseFloat(row.getAttribute('data-price')) || 0, qty: 1, related: true }}); }}
+                // Extract size from first matched item if no size in search
+                var sizeNum = sizeMatch ? sizeMatch[1] : null;
+                if (!sizeNum && f11Matches.length > 0) {{
+                    var firstCode = (f11Matches[0].code + ' ' + f11Matches[0].desc).toLowerCase();
+                    var extractSize = firstCode.match(/m?(\d+)/i);
+                    if (extractSize) sizeNum = extractSize[1];
+                }}
+                if (sizeNum) {{
+                    var lookForKws = isCompanionSearch ? reverseCompanions : companions;
+                    for (let row of rows) {{
+                        if (f11Rel.length >= 10) break;
+                        var rid = row.getAttribute('data-id'); if (mIds[rid]) continue;
+                        var rd = (row.getAttribute('data-search') || '').toLowerCase();
+                        if (rd.indexOf(sizeNum) === -1) continue;
+                        var ok = false;
+                        for (var ci = 0; ci < lookForKws.length; ci++) {{ if (rd.indexOf(lookForKws[ci]) !== -1) {{ ok = true; break; }} }}
+                        if (ok) {{ f11Rel.push({{ el: row, id: rid, code: row.getAttribute('data-code') || '', desc: row.getAttribute('data-desc') || '', price: parseFloat(row.getAttribute('data-price')) || 0, qty: 1, related: true }}); }}
+                    }}
                 }}
                 if (f11Rel.length > 0) {{ f11Matches = f11Matches.concat(f11Rel); }}
             }}
@@ -48841,6 +48853,7 @@ def pos_page():
             .catch(e => console.log('[SW] Non-critical:', e));
     }}
     </script>
+    <div class="f11-dd" id="f11Dropdown" style="position:fixed;z-index:99999;"></div>
 </body>
 </html>'''
 
