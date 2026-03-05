@@ -21957,7 +21957,7 @@ def api_stock_dedup():
 def service_worker():
     """Service Worker for offline POS capability"""
     sw_js = """
-const CACHE_NAME = 'clickai-pos-v4';
+const CACHE_NAME = 'clickai-pos-v5';
 const OFFLINE_URLS = ['/pos'];
 
 // Install — only cache POS (not all pages — that blocks the single server worker)
@@ -46018,10 +46018,6 @@ def pos_page():
         const rows = document.querySelectorAll('.stock-row');
         const noResults = document.getElementById('noResults');
         
-        // DEBUG - remove after fixing
-        if (search.length > 0 && search.length <= 4) {
-            console.log('[POS-SEARCH] query="' + search + '", rows=' + rows.length);
-        }
         // Strip quantity prefix
         if (search.match(/^\\d+\\*\\s*/)) {
             search = search.replace(/^\\d+\\*\\s*/, '');
@@ -46030,53 +46026,71 @@ def pos_page():
         // Normalize dimensions
         search = search.replace(/\s*[xX]\s*/g, 'x');
         
-        let visibleCount = 0;
         const MAX_VISIBLE = 100;
         selectedRowIndex = -1;
         
-        rows.forEach((row, index) => {
-            let data = (row.getAttribute('data-search') || '').toLowerCase();
-            data = data.replace(/\s*[xX]\s*/g, 'x');
-            
-            // Multi-token AND search: every word must appear somewhere in data
-            let match = false;
-            if (search === '') {
-                match = visibleCount < MAX_VISIBLE;
-            } else {
-                const tokens = search.split(/\s+/).filter(t => t.length > 0);
-                match = tokens.every(t => data.indexOf(t) !== -1) && visibleCount < MAX_VISIBLE;
-                // DEBUG - log first match/miss for 'nut'
-                if (search === 'nut' && index < 5) {
-                    console.log('[POS-SEARCH] row ' + index + ' data="' + data.substring(0,60) + '" tokens=' + JSON.stringify(tokens) + ' match=' + match);
+        if (search === '') {
+            // No search - show first MAX_VISIBLE
+            let visibleCount = 0;
+            rows.forEach((row, index) => {
+                if (visibleCount < MAX_VISIBLE) {
+                    row.style.display = '';
+                    visibleCount++;
+                    if (selectedRowIndex === -1) selectedRowIndex = index;
+                } else {
+                    row.style.display = 'none';
                 }
-                if (search === 'nut' && match && visibleCount < 3) {
-                    console.log('[POS-SEARCH] MATCH: ' + data.substring(0,60));
-                }
+            });
+            const stockCountEl = document.getElementById('stockCount');
+            if (stockCountEl) {
+                stockCountEl.style.display = '';
+                stockCountEl.textContent = 'Showing ' + visibleCount + ' of ' + rows.length + ' items \u2022 Type to search all';
             }
-            if (match) {
-                row.style.display = '';
-                visibleCount++;
-                if (selectedRowIndex === -1) selectedRowIndex = index;
+            noResults.classList.remove('show');
+            rows.forEach(r => r.classList.remove('highlighted'));
+            return;
+        }
+        
+        const tokens = search.split(/\s+/).filter(t => t.length > 0);
+        
+        // Two-pass ranking: code/description matches first, then category-only matches
+        // This ensures "nut" shows NUT M12 items before BUSH items that just have "nuts" in category
+        const descMatches = [];
+        const catOnlyMatches = [];
+        
+        rows.forEach((row, index) => {
+            row.style.display = 'none';
+            let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*[xX]\s*/g, 'x');
+            if (!tokens.every(t => data.indexOf(t) !== -1)) return;
+            
+            // Check if tokens match in code+description (excluding category)
+            const codeDesc = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
+            if (tokens.every(t => codeDesc.indexOf(t) !== -1)) {
+                descMatches.push({row: row, idx: index});
             } else {
-                row.style.display = 'none';
+                catOnlyMatches.push({row: row, idx: index});
             }
         });
         
-        // Show/hide no results message and update count
+        // Show desc matches first, then fill remaining slots with category matches
+        let visibleCount = 0;
+        const ranked = descMatches.concat(catOnlyMatches);
+        for (let i = 0; i < ranked.length && visibleCount < MAX_VISIBLE; i++) {
+            ranked[i].row.style.display = '';
+            visibleCount++;
+            if (selectedRowIndex === -1) selectedRowIndex = ranked[i].idx;
+        }
+        
         const stockCountEl = document.getElementById('stockCount');
-        if (visibleCount === 0 && search !== '') {
+        if (visibleCount === 0) {
             noResults.classList.add('show');
             if (stockCountEl) stockCountEl.style.display = 'none';
         } else {
             noResults.classList.remove('show');
             if (stockCountEl) {
-                const totalRows = rows.length;
+                const totalMatches = descMatches.length + catOnlyMatches.length;
                 stockCountEl.style.display = '';
-                if (search !== '') {
-                    stockCountEl.textContent = 'Showing ' + visibleCount + ' of ' + totalRows + ' items matching "' + search + '"';
-                } else {
-                    stockCountEl.textContent = 'Showing ' + visibleCount + ' of ' + totalRows + ' items \u2022 Type to search all';
-                }
+                stockCountEl.textContent = 'Showing ' + visibleCount + ' of ' + totalMatches + ' matches';
             }
         }
         
