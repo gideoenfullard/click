@@ -45386,6 +45386,8 @@ def pos_page():
     .f11-table tr.f11-sel td{background:rgba(80,180,255,0.08);border-bottom:1px solid rgba(0,200,255,0.15);}
     .f11-table tr.f11-sel td:first-child{border-left:2px solid #00ccff;}
     .f11-onhand{font-size:12px;color:#5a8aaa;font-family:'Share Tech Mono',monospace;}
+    .f11-del-btn{background:none;border:1px solid rgba(239,68,68,0.2);color:#5a6a7a;font-size:14px;cursor:pointer;padding:3px 7px;border-radius:4px;transition:all 0.15s;line-height:1;font-weight:700;}
+    .f11-del-btn:hover{color:#ef4444;background:rgba(239,68,68,0.15);border-color:rgba(239,68,68,0.4);text-shadow:0 0 8px rgba(239,68,68,0.5);}
 
     /* F11 state toggle — hide ALL page elements, show fixed overlay */
     body.f11-mode .pos-header{display:none !important;}
@@ -48609,7 +48611,7 @@ def pos_page():
                     <th class="r" style="width:60px;">QTY</th><th class="r" style="width:100px;">PRICE</th>
                     <th class="r" style="width:80px;">DISC</th><th class="r" style="width:110px;">TOTAL</th>
                     <th style="width:80px;">ON-HAND</th>
-                    <th style="width:40px;"></th>
+                    <th style="width:44px;"></th>
                 </tr></thead>
                 <tbody id="f11Body"></tbody>
             </table>
@@ -48674,7 +48676,7 @@ def pos_page():
         const tbody = document.getElementById('f11Body');
         if (!tbody) return;
         if (cart.length === 0) {{
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#5a8aaa;font-size:16px;">Scan barcode or type to add items...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#5a8aaa;font-size:16px;">Scan barcode or type to add items...</td></tr>';
             document.getElementById('f11Total').textContent = 'R0.00';
             return;
         }}
@@ -48695,7 +48697,7 @@ def pos_page():
             html += '<td class="r" style="color:#5a8aaa;cursor:pointer;" onclick="event.stopPropagation();f11EditDisc(' + idx + ')">' + (item.disc ? item.disc + '%' : '—') + '</td>';
             html += '<td class="r tot">R' + lineTotal.toFixed(2) + '</td>';
             html += '<td><span class="f11-onhand">' + onHand + '</span></td>';
-            html += '<td style="text-align:center;"><span style="cursor:pointer;color:#555;font-size:14px;padding:2px 6px;border-radius:4px;" onmouseover="this.style.color=\'#ef4444\';this.style.background=\'rgba(239,68,68,0.15)\'" onmouseout="this.style.color=\'#555\';this.style.background=\'none\'" onclick="event.stopPropagation();f11DelItem(' + idx + ')">✕</span></td>';
+            html += '<td style="text-align:center;"><button class="f11-del-btn" onclick="event.stopPropagation();f11RemoveItem(' + idx + ')" title="Remove item">✕</button></td>';
             html += '</tr>';
         }});
         tbody.innerHTML = html;
@@ -48746,7 +48748,7 @@ def pos_page():
         updateCart(); renderF11Table(); syncF11Buttons();
     }}
 
-    function f11DelItem(idx) {{
+    function f11RemoveItem(idx) {{
         if (idx < 0 || idx >= cart.length) return;
         cart.splice(idx, 1);
         if (f11SelectedRow >= cart.length) f11SelectedRow = Math.max(0, cart.length - 1);
@@ -48904,7 +48906,6 @@ def pos_page():
                 if ((e.key === 'q' || e.key === 'Q') && cart.length > 0) {{ e.preventDefault(); f11EditQty(f11SelectedRow); }}
                 if ((e.key === 'p' || e.key === 'P') && cart.length > 0) {{ e.preventDefault(); f11EditPrice(f11SelectedRow); }}
                 if ((e.key === 'd' || e.key === 'D') && cart.length > 0) {{ e.preventDefault(); f11EditDisc(f11SelectedRow); }}
-                if (e.key === 'Delete' && cart.length > 0) {{ e.preventDefault(); f11DelItem(f11SelectedRow); }}
             }}
         }});
     }});
