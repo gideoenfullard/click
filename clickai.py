@@ -4082,6 +4082,14 @@ ZANE_TOOLS = [
         }
     },
     {
+        "name": "fix_expense_categories",
+        "description": "Fix and re-categorize expenses that are incorrectly marked as 'General' or 'General Expenses'. Analyses supplier names and descriptions to assign correct categories. Use when user says 'fix categories', 'herklassifiseer', 're-categorize', or complains about wrong expense categories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
         "name": "get_financial_overview",
         "description": "Get full financial overview: income, expenses, profit/loss, debtors, creditors, stock value. Use for 'how is my business doing' type questions.",
         "input_schema": {
@@ -6364,6 +6372,88 @@ class ZaneToolHandler:
             "by_category": dict(sorted_cats[:10]),
             "expenses": results[:limit]
         }
+    
+    def _tool_fix_expense_categories(self, params: dict) -> dict:
+        """Bulk re-categorize 'General' expenses using smart matching"""
+        try:
+            import requests as _req
+            # Call our own API endpoint
+            resp = _req.post(
+                f"http://localhost:8080/api/expenses/re-categorize",
+                json={},
+                cookies={"session": session.get("_id", "")},
+                headers={"Cookie": f"session={request.cookies.get('session', '')}"},
+                timeout=30
+            )
+            data = resp.json()
+            if data.get("success"):
+                return {
+                    "fixed": data.get("fixed", 0),
+                    "total_general": data.get("total_general", 0),
+                    "message": data.get("message", "Done"),
+                    "changes": data.get("changes", [])[:15]
+                }
+            return {"error": data.get("error", "Failed")}
+        except Exception as e:
+            # Direct call fallback
+            try:
+                biz_id = self.context.get("business_id", "")
+                if not biz_id:
+                    return {"error": "No business selected"}
+                
+                all_expenses = db.get("expenses", {"business_id": biz_id}) or []
+                bad_cats = {"general", "general expenses", "consumables", ""}
+                to_fix = [e for e in all_expenses if (e.get("category") or "").lower().strip() in bad_cats]
+                
+                if not to_fix:
+                    return {"fixed": 0, "message": "No 'General' expenses found — all properly categorized!"}
+                
+                fixed = 0
+                changes = []
+                for exp in to_fix:
+                    supplier_name = (exp.get("supplier_name") or exp.get("supplier") or "").lower()
+                    description = (exp.get("description") or "").lower()
+                    combined = supplier_name + " " + description
+                    old_cat = exp.get("category", "General")
+                    new_cat = None
+                    
+                    if any(x in combined for x in ["pie", "pies", "sandwich", "bread", "milk", "cooldrink", "chips", "snack", "lunch", "food", "kos", "meal"]): new_cat = "Meals — Business"
+                    elif any(x in combined for x in ["diesel", "petrol", "unleaded", "fuel"]): new_cat = "Fuel — Business Vehicle"
+                    elif any(x in combined for x in ["lubricant", "oil ", "grease", "hydraulic"]): new_cat = "Repairs — Equipment / Machinery"
+                    elif any(x in combined for x in ["engen", "shell", "bp ", "caltex", "sasol", "filling station", "garage", "nwk", "nwik", "afgri", "aureus"]): new_cat = "Fuel — Business Vehicle"
+                    elif any(x in combined for x in ["eskom", "city power", "electric"]): new_cat = "Electricity"
+                    elif any(x in combined for x in ["vodacom", "mtn", "cell c", "cellphone"]): new_cat = "Cellphone / Mobile"
+                    elif any(x in combined for x in ["telkom"]): new_cat = "Telephone — Landline"
+                    elif any(x in combined for x in ["rain", "afrihost", "fibre", "wifi", "internet", "mweb"]): new_cat = "Internet / WiFi"
+                    elif any(x in combined for x in ["@it", "it solution", "computer", "laptop", "software", "tricom"]): new_cat = "Computer / IT Expenses"
+                    elif any(x in combined for x in ["pharmacy", "apteek", "clicks", "dischem", "medical"]): new_cat = "Medical — First Aid / Supplies"
+                    elif any(x in combined for x in ["adt", "fidelity", "chubb", "security", "epr "]): new_cat = "Security"
+                    elif any(x in combined for x in ["insurance", "santam", "outsurance"]): new_cat = "Insurance — Business / Contents"
+                    elif any(x in combined for x in ["casual lab", "labour", "wages", "arbeider"]): new_cat = "Casual Labour / Wages"
+                    elif any(x in combined for x in ["workwear", "overall", "ppe ", "protective", "uniform"]): new_cat = "Protective Clothing / Uniforms"
+                    elif any(x in combined for x in ["builders", "cashbuild", "cement", "timber"]): new_cat = "Repairs & Maintenance — Building"
+                    elif any(x in combined for x in ["autozone", "midas", "tyre", "battery"]): new_cat = "Repairs & Maintenance — Vehicles"
+                    elif any(x in combined for x in ["pick n pay", "spar", "superspar", "checkers", "shoprite"]): new_cat = "Consumables / Groceries"
+                    elif any(x in combined for x in ["municipality", "rates", "water"]): new_cat = "Rates & Taxes — Municipal"
+                    elif any(x in combined for x in ["restaurant", "kfc", "nandos", "steers", "wimpy"]): new_cat = "Meals — Business"
+                    elif any(x in combined for x in ["bank charge", "service fee", "monthly fee"]): new_cat = "Bank Charges"
+                    elif any(x in combined for x in ["accountant", "attorney", "legal"]): new_cat = "Professional Fees"
+                    elif any(x in combined for x in ["courier", "postnet", "dhl"]): new_cat = "Courier / Postage"
+                    
+                    if new_cat and new_cat != old_cat:
+                        new_gl = IndustryKnowledge.get_gl_code(new_cat)
+                        db.update("expenses", exp["id"], {"category": new_cat, "category_code": new_gl})
+                        changes.append(f"{exp.get('supplier_name', '?')[:25]}: {old_cat} → {new_cat}")
+                        fixed += 1
+                
+                return {
+                    "fixed": fixed,
+                    "total_general": len(to_fix),
+                    "message": f"Fixed {fixed} of {len(to_fix)} 'General' expenses",
+                    "changes": changes[:15]
+                }
+            except Exception as e2:
+                return {"error": str(e2)[:200]}
     
     def _tool_get_financial_overview(self, params: dict) -> dict:
         """Get financial overview with PRE-CALCULATED insights - Zane doesn't need to do math"""
@@ -32693,6 +32783,113 @@ def api_expenses_sync_offline():
         return jsonify({"success": True, "synced": synced, "errors": errors, "message": msg})
         
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)[:200]})
+
+
+@app.route("/api/expenses/re-categorize", methods=["POST"])
+@login_required
+def api_expenses_recategorize():
+    """Bulk re-categorize expenses that are 'General' or 'General Expenses' using smart matching"""
+    try:
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"})
+        
+        all_expenses = db.get("expenses", {"business_id": biz_id}) or []
+        
+        # Find expenses with bad categories
+        bad_cats = {"general", "general expenses", "consumables", ""}
+        to_fix = [e for e in all_expenses if (e.get("category") or "").lower().strip() in bad_cats]
+        
+        if not to_fix:
+            return jsonify({"success": True, "fixed": 0, "message": "No 'General' expenses found — all look properly categorized!"})
+        
+        fixed = 0
+        changes = []
+        
+        for exp in to_fix:
+            supplier_name = (exp.get("supplier_name") or exp.get("supplier") or "").lower()
+            description = (exp.get("description") or "").lower()
+            combined = supplier_name + " " + description
+            old_cat = exp.get("category", "General")
+            new_cat = None
+            
+            # ═══ ITEM/DESCRIPTION-FIRST MATCHING ═══
+            if any(x in combined for x in ["pie", "pies", "sandwich", "bread", "brood", "milk", "melk", "cooldrink", "cold drink", "chips", "snack", "lunch", "food", "kos", "meal", "eat", "catering"]):
+                new_cat = "Meals — Business"
+            elif any(x in combined for x in ["diesel", "petrol", "unleaded", "fuel", "95 octane", "93 octane", "50ppm"]):
+                new_cat = "Fuel — Business Vehicle"
+            elif any(x in combined for x in ["lubricant", "oil ", "grease", "hydraulic", "coolant"]):
+                new_cat = "Repairs — Equipment / Machinery"
+            # ═══ SUPPLIER-BASED ═══
+            elif any(x in combined for x in ["engen", "shell", "bp ", "caltex", "sasol", "total energies", "filling station", "garage", "petroleum", "nwk", "nwik", "afgri", "puma energy", "aureus"]):
+                new_cat = "Fuel — Business Vehicle"
+            elif any(x in combined for x in ["eskom", "city power", "electric", "prepaid electr", "city of "]):
+                new_cat = "Electricity"
+            elif any(x in combined for x in ["vodacom", "mtn", "cell c", "cellphone", "airtime"]):
+                new_cat = "Cellphone / Mobile"
+            elif any(x in combined for x in ["telkom", "landline"]):
+                new_cat = "Telephone — Landline"
+            elif any(x in combined for x in ["rain", "afrihost", "vumatel", "fibre", "wifi", "internet", "mweb"]):
+                new_cat = "Internet / WiFi"
+            elif any(x in combined for x in ["@it", "it solution", "it rand", "computer", "laptop", "software", "tricom"]):
+                new_cat = "Computer / IT Expenses"
+            elif any(x in combined for x in ["santam", "outsurance", "old mutual", "hollard", "king price", "insurance", "versekering"]):
+                new_cat = "Insurance — Business / Contents"
+            elif any(x in combined for x in ["adt", "fidelity", "chubb", "armed response", "security", "sekuriteit", "epr "]):
+                new_cat = "Security"
+            elif any(x in combined for x in ["pharmacy", "apteek", "clicks", "dischem", "dis-chem", "medical", "first aid"]):
+                new_cat = "Medical — First Aid / Supplies"
+            elif any(x in combined for x in ["pick n pay", "pnp ", "checkers", "spar", "superspar", "woolworths", "shoprite"]):
+                new_cat = "Consumables / Groceries"
+            elif any(x in combined for x in ["builders", "cashbuild", "mica", "cement", "timber", "paint"]):
+                new_cat = "Repairs & Maintenance — Building"
+            elif any(x in combined for x in ["autozone", "midas", "battery", "tyre", "exhaust", "panel beat"]):
+                new_cat = "Repairs & Maintenance — Vehicles"
+            elif any(x in combined for x in ["casual lab", "labour", "wages", "arbeider", "day worker"]):
+                new_cat = "Casual Labour / Wages"
+            elif any(x in combined for x in ["workwear", "overall", "safety boot", "ppe ", "protective", "uniform"]):
+                new_cat = "Protective Clothing / Uniforms"
+            elif any(x in combined for x in ["municipality", "rates", "munisipal", "water", "refuse"]):
+                new_cat = "Rates & Taxes — Municipal"
+            elif any(x in combined for x in ["rent", "huur", "lease"]):
+                new_cat = "Rent"
+            elif any(x in combined for x in ["courier", "postnet", "dhl", "fedex", "aramex"]):
+                new_cat = "Courier / Postage"
+            elif any(x in combined for x in ["stationery", "cartridge", "toner", "waltons"]):
+                new_cat = "Stationery & Office Supplies"
+            elif any(x in combined for x in ["restaurant", "kfc", "nandos", "steers", "mcdonalds", "spur", "wimpy"]):
+                new_cat = "Meals — Business"
+            elif any(x in combined for x in ["yoco", "ikhokha", "snapscan", "eftpos"]):
+                new_cat = "Card Machine Fees"
+            elif any(x in combined for x in ["bank charge", "service fee", "monthly fee"]):
+                new_cat = "Bank Charges"
+            elif any(x in combined for x in ["dstv", "multichoice", "netflix", "showmax"]):
+                new_cat = "DSTV / Streaming"
+            elif any(x in combined for x in ["accountant", "attorney", "legal", "bookkeep"]):
+                new_cat = "Professional Fees — Accounting / Legal"
+            elif any(x in combined for x in ["advertis", "printing", "banner", "flyer", "sign"]):
+                new_cat = "Advertising & Marketing"
+            
+            if new_cat and new_cat != old_cat:
+                new_gl = IndustryKnowledge.get_gl_code(new_cat)
+                db.update("expenses", exp["id"], {"category": new_cat, "category_code": new_gl})
+                changes.append(f"{exp.get('supplier_name', '?')}: {old_cat} → {new_cat}")
+                fixed += 1
+                logger.info(f"[RE-CAT] {exp.get('description', '')[:40]}: {old_cat} → {new_cat} (GL {new_gl})")
+        
+        msg = f"Fixed {fixed} of {len(to_fix)} 'General' expenses"
+        if changes:
+            msg += ":\n" + "\n".join(changes[:20])
+            if len(changes) > 20:
+                msg += f"\n... and {len(changes) - 20} more"
+        
+        logger.info(f"[RE-CAT] Bulk re-categorize: {fixed}/{len(to_fix)} fixed for {biz_id}")
+        return jsonify({"success": True, "fixed": fixed, "total_general": len(to_fix), "message": msg, "changes": changes[:50]})
+        
+    except Exception as e:
+        logger.error(f"[RE-CAT] Error: {e}")
         return jsonify({"success": False, "error": str(e)[:200]})
 
 
@@ -73613,7 +73810,11 @@ def api_scan_suggest_category():
         
         prompt = f"""You are Zane, a bookkeeper for {biz_name}. Look at this invoice and suggest where to book it. Respond in English. Be direct — no filler, no emojis.
 
-CRITICAL RULE: NEVER categorize as "General" or "General Expenses" if you can determine the type from the supplier name or items. Examples:
+CRITICAL RULE: NEVER categorize as "General" or "General Expenses" if you can determine the type from the supplier name or items. 
+
+ITEMS TRUMP SUPPLIER: If someone buys pies and cooldrinks at Engen, that is NOT fuel — it is Meals. If someone buys diesel at Engen, THAT is fuel. Always look at WHAT was bought, not just WHERE.
+
+Examples:
 - Any filling station, garage, petroleum, NWK, Afgri = Fuel
 - Pharmacy, apteek, Clicks, Dis-Chem = Medical / First Aid
 - @IT, IT Solutions, computer, tech = Computer / IT Expenses
@@ -73710,16 +73911,30 @@ def api_scan_save_expense():
         if not biz_id:
             return jsonify({"success": False, "error": "No business selected"})
         
-        # Use Zane's category if provided, otherwise smart-detect from supplier name
+        # Use Zane's category if provided, otherwise smart-detect from ITEMS first, then supplier
         category = data.get("category", "").strip()
         if not category or category.lower() in ("general", "general expenses"):
             supplier_name = data.get("supplier_name", "").lower()
             description = data.get("description", "").lower()
-            combined = supplier_name + " " + description
+            # Build combined text from items + supplier + description for matching
+            items_list = data.get("items") or []
+            items_text = " ".join([str(it.get("description", "")).lower() for it in items_list]) if items_list else ""
+            combined = items_text + " " + supplier_name + " " + description
             
-            # ═══ COMPREHENSIVE SA SUPPLIER → CATEGORY MAPPING ═══
+            # ═══ ITEMS-FIRST CATEGORIZATION — what was bought matters more than where ═══
+            # Food & Meals (even at a fuel station)
+            if any(x in combined for x in ["pie", "pies", "sandwich", "bread", "brood", "milk", "melk", "cooldrink", "cold drink", "chips", "snack", "lunch", "food", "kos", "meal", "eat", "catering"]):
+                category = "Meals — Business"
+            # Fuel & Diesel (item-level check)
+            elif any(x in combined for x in ["diesel", "petrol", "unleaded", "fuel", "95 octane", "93 octane", "50ppm"]):
+                category = "Fuel — Business Vehicle"
+            # Oil & Lubricants (not fuel)
+            elif any(x in combined for x in ["lubricant", "oil ", "grease", "hydraulic", "coolant", "antifreeze"]):
+                category = "Repairs — Equipment / Machinery"
+            
+            # ═══ SUPPLIER-BASED FALLBACK (only if items didn't match above) ═══
             # Fuel & Transport
-            if any(x in combined for x in ["engen", "shell", "bp ", "caltex", "fuel", "petrol", "sasol", "total energies", "filling station", "garage", "diesel", "petroleum", "nwk", "nwik", "afgri", "obaro", "puma energy", "astron"]):
+            elif any(x in combined for x in ["engen", "shell", "bp ", "caltex", "fuel", "petrol", "sasol", "total energies", "filling station", "garage", "diesel", "petroleum", "nwk", "nwik", "afgri", "obaro", "puma energy", "astron"]):
                 category = "Fuel — Business Vehicle"
             # Electricity & Utilities
             elif any(x in combined for x in ["eskom", "city power", "electric", "prepaid electr", "city of ", "tshwane", "ekurhuleni", "mogale", "rand west", "emfuleni"]):
