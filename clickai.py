@@ -46284,7 +46284,7 @@ def pos_page():
         }
         
         const items = cart.map(item => ({
-            stock_id: item.id,
+            stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
             code: item.code,
             description: item.desc,
             quantity: item.qty,
@@ -46381,7 +46381,7 @@ def pos_page():
         
         // Cart has items AND customer selected - create quote with stock items
         const items = cart.map(item => ({
-            stock_id: item.id,
+            stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
             code: item.code,
             description: item.desc,
             quantity: item.qty,
@@ -46492,7 +46492,7 @@ def pos_page():
         }
         
         const items = cart.map(item => ({
-            stock_id: item.id,
+            stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
             code: item.code,
             description: item.desc,
             quantity: item.qty,
@@ -46570,7 +46570,7 @@ def pos_page():
         // Cart has items AND supplier selected - create PO with stock items
         // PO items - NO PRICES (supplier must not see our selling prices)
         const items = cart.map(item => ({
-            stock_id: item.id,
+            stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
             code: item.code,
             description: item.desc,
             qty: item.qty
@@ -46676,7 +46676,7 @@ def pos_page():
         }
         
         const items = cart.map(item => ({
-            stock_id: item.id,
+            stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
             code: item.code,
             description: item.desc,
             quantity: item.qty,
@@ -47679,7 +47679,7 @@ def pos_page():
     
     async function createQuoteWithCustomer(customerId, customerName) {
         const items = cart.map(item => ({
-            stock_id: item.id,
+            stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
             code: item.code,
             description: item.desc,
             quantity: item.qty,
@@ -48730,6 +48730,7 @@ def pos_page():
             <button class="f11-btn" onclick="toggleEntity('customer')"><span class="pk">F8</span>CUST</button>
             <button class="f11-btn" onclick="toggleEntity('supplier')"><span class="pk">F9</span>SUPP</button>
             <button class="f11-btn" onclick="createCreditNote()" id="f11Credit" disabled><span class="pk">F10</span>CR</button>
+            <button class="f11-btn" onclick="showCustomItemModal()" style="border-color:rgba(139,92,246,0.3);color:#c4b5fd;">+ITEM</button>
         </div>
         <div class="f11-right">
             <div class="f11-cust" id="f11CustName">Countersale</div>
@@ -50903,8 +50904,12 @@ def api_pos_purchase_order():
         # Clean items - remove any prices that might have snuck in
         clean_items = []
         for item in items:
+            sid = item.get("stock_id") or ""
+            # Clear fake IDs from custom items
+            if sid.startswith("CUSTOM") or not sid:
+                sid = None
             clean_items.append({
-                "stock_id": item.get("stock_id"),
+                "stock_id": sid,
                 "code": item.get("code", ""),
                 "description": item.get("description", ""),
                 "qty": item.get("qty") or item.get("quantity", 1),
