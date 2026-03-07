@@ -71546,13 +71546,33 @@ def scan_inbox_page():
                 </div>
             `;
             
-            // Show category for expenses
-            if (sugg.category && !sugg.is_stock) {{
-                html += `
-                    <div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">
-                        Category: <strong>${{sugg.category}}</strong>
-                    </div>
-                `;
+            // ═══ MULTI-GL SPLIT DISPLAY ═══
+            if (sugg.is_split && sugg.splits && sugg.splits.length > 1) {{
+                window._zaneSplits = sugg.splits;
+                currentZaneCategory = 'Split';
+                html += `<div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.2);border-radius:8px;padding:12px;margin:10px 0;">`;
+                html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-weight:600;">GL SPLIT:</div>`;
+                sugg.splits.forEach((sp, idx) => {{
+                    html += `
+                        <div class="split-row" style="display:grid;grid-template-columns:2fr 90px 1.5fr;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.06);">
+                            <span style="font-size:13px;color:var(--text);">${{sp.description}}</span>
+                            <input type="number" class="split-amt" value="${{(sp.amount||0).toFixed(2)}}" step="0.01"
+                                style="padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;text-align:right;">
+                            <span style="font-size:11px;color:#8b5cf6;font-weight:600;">${{sp.category}}</span>
+                        </div>`;
+                }});
+                html += `<div style="text-align:right;margin-top:6px;font-size:12px;color:var(--text-muted);">Jy kan bedrae aanpas voor jy save</div>`;
+                html += `</div>`;
+            }} else {{
+                window._zaneSplits = null;
+                // Show category for expenses (single)
+                if (sugg.category && !sugg.is_stock) {{
+                    html += `
+                        <div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">
+                            Category: <strong>${{sugg.category}}</strong>
+                        </div>
+                    `;
+                }}
             }}
             
             if (sugg.vat_warning) {{
@@ -72246,6 +72266,26 @@ def scan_inbox_page():
                 payment_method: payMethod,
                 category: currentZaneCategory || ''  // Zane's AI-picked specific category
             }};
+            // ═══ MULTI-GL: Read split amounts from UI if Zane suggested a split ═══
+            if (window._zaneSplits && currentZaneCategory === 'Split') {{
+                const splitRows = document.querySelectorAll('.split-row');
+                const splits = [];
+                splitRows.forEach((row, idx) => {{
+                    const amtEl = row.querySelector('.split-amt');
+                    const catEl = row.querySelector('span:last-child');
+                    if (amtEl && catEl) {{
+                        const amt = parseFloat(amtEl.value) || 0;
+                        if (amt > 0) {{
+                            splits.push({{
+                                description: window._zaneSplits[idx]?.description || '',
+                                amount: amt,
+                                category: window._zaneSplits[idx]?.category || catEl.textContent.trim()
+                            }});
+                        }}
+                    }}
+                }});
+                if (splits.length > 0) payload.splits = splits;
+            }}
             endpoint = saveType.includes('supplier') ? '/api/scan/save-supplier-invoice' : '/api/scan/save-expense';
             redirect = saveType.includes('supplier') ? '/supplier-invoices' : '/expenses';
         }} else if (saveType === 'payslip') {{
@@ -73390,11 +73430,19 @@ For stock/resale: action="supplier", is_stock=true. For expenses: action="expens
 
 JSON only — pick ONE format:
 Need more info: {{"needs_clarification":true,"question":"[plain language question]","options":[{{"label":"[option]","value":"[short]"}},{{"label":"None of these","value":"manual"}}],"confidence":0.6,"explanation":""}}
-Got enough to book: {{"needs_clarification":false,"action":"expense|supplier","action_label":"Book as Expense|Stock Purchase","category":"[exact from list]","confidence":0.95,"explanation":"[1 sentence]","vat_warning":"","is_stock":false|true}}"""
+Got enough to book (single category): {{"needs_clarification":false,"action":"expense|supplier","action_label":"Book as Expense|Stock Purchase","category":"[exact from list]","confidence":0.95,"explanation":"[1 sentence]","vat_warning":"","is_stock":false|true}}
+Got enough to book (SPLIT — use when items belong to DIFFERENT categories, e.g. cement + drill on one invoice): {{"needs_clarification":false,"action":"expense","action_label":"Book as Expense (Split)","category":"Split","is_split":true,"confidence":0.9,"explanation":"This invoice has items in different categories — I suggest splitting:","splits":[{{"description":"[item or group]","amount":0.00,"category":"[exact from list]"}}],"vat_warning":"","is_stock":false}}
+
+SPLIT RULES:
+- Only use split when items clearly belong to DIFFERENT expense categories
+- If all items are the same type (e.g. all building materials), use single category
+- Split amounts must add up to the invoice subtotal (excl VAT)
+- Group similar items on one line (e.g. "Cement + Sand" → Building Materials)
+- Maximum 5 split lines"""
 
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=300,
+            max_tokens=500,
             messages=[{"role": "user", "content": prompt}]
         )
         
@@ -73539,14 +73587,32 @@ def api_scan_save_expense():
         
         # Create journal entries for GL
         total_amount = float(data.get("total", 0))
+        splits = data.get("splits")  # Multi-GL split from Zane
         
-        # Journal entry: Debit Expense + VAT Input (if claimable), Credit Bank
-        journal_entries = [
-            {"account_code": expense_account, "debit": round(total_amount - vat_claimable, 2), "credit": 0},
-        ]
-        if vat_claimable > 0:
-            journal_entries.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})  # VAT Input
-        journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)})  # Bank
+        if splits and len(splits) > 1:
+            # ═══ MULTI-GL SPLIT: each split line gets its own debit ═══
+            journal_entries = []
+            split_total = 0
+            for sp in splits:
+                sp_amount = float(sp.get("amount", 0))
+                sp_category = sp.get("category", "General Expenses")
+                sp_gl = IndustryKnowledge.get_gl_code(sp_category)
+                journal_entries.append({"account_code": sp_gl, "debit": round(sp_amount, 2), "credit": 0})
+                split_total += sp_amount
+            # VAT Input (if claimable) on the total
+            if vat_claimable > 0:
+                journal_entries.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})
+            # Credit Bank for total (splits + VAT)
+            journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)})
+            logger.info(f"[SCAN SAVE] Multi-GL split: {len(splits)} categories for {desc[:30]}")
+        else:
+            # ═══ SINGLE GL: original flow ═══
+            journal_entries = [
+                {"account_code": expense_account, "debit": round(total_amount - vat_claimable, 2), "credit": 0},
+            ]
+            if vat_claimable > 0:
+                journal_entries.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})
+            journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)})
         
         create_journal_entry(biz_id, data.get("date", today()), desc[:50], f"EXP-{exp_id[:8]}", journal_entries)
         
