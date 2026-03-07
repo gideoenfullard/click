@@ -4082,14 +4082,6 @@ ZANE_TOOLS = [
         }
     },
     {
-        "name": "fix_expense_categories",
-        "description": "Fix and re-categorize expenses that are incorrectly marked as 'General' or 'General Expenses'. Analyses supplier names and descriptions to assign correct categories. Use when user says 'fix categories', 'herklassifiseer', 're-categorize', or complains about wrong expense categories.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    {
         "name": "get_financial_overview",
         "description": "Get full financial overview: income, expenses, profit/loss, debtors, creditors, stock value. Use for 'how is my business doing' type questions.",
         "input_schema": {
@@ -6372,88 +6364,6 @@ class ZaneToolHandler:
             "by_category": dict(sorted_cats[:10]),
             "expenses": results[:limit]
         }
-    
-    def _tool_fix_expense_categories(self, params: dict) -> dict:
-        """Bulk re-categorize 'General' expenses using smart matching"""
-        try:
-            import requests as _req
-            # Call our own API endpoint
-            resp = _req.post(
-                f"http://localhost:8080/api/expenses/re-categorize",
-                json={},
-                cookies={"session": session.get("_id", "")},
-                headers={"Cookie": f"session={request.cookies.get('session', '')}"},
-                timeout=30
-            )
-            data = resp.json()
-            if data.get("success"):
-                return {
-                    "fixed": data.get("fixed", 0),
-                    "total_general": data.get("total_general", 0),
-                    "message": data.get("message", "Done"),
-                    "changes": data.get("changes", [])[:15]
-                }
-            return {"error": data.get("error", "Failed")}
-        except Exception as e:
-            # Direct call fallback
-            try:
-                biz_id = self.context.get("business_id", "")
-                if not biz_id:
-                    return {"error": "No business selected"}
-                
-                all_expenses = db.get("expenses", {"business_id": biz_id}) or []
-                bad_cats = {"general", "general expenses", "consumables", ""}
-                to_fix = [e for e in all_expenses if (e.get("category") or "").lower().strip() in bad_cats]
-                
-                if not to_fix:
-                    return {"fixed": 0, "message": "No 'General' expenses found — all properly categorized!"}
-                
-                fixed = 0
-                changes = []
-                for exp in to_fix:
-                    supplier_name = (exp.get("supplier_name") or exp.get("supplier") or "").lower()
-                    description = (exp.get("description") or "").lower()
-                    combined = supplier_name + " " + description
-                    old_cat = exp.get("category", "General")
-                    new_cat = None
-                    
-                    if any(x in combined for x in ["pie", "pies", "sandwich", "bread", "milk", "cooldrink", "chips", "snack", "lunch", "food", "kos", "meal"]): new_cat = "Meals — Business"
-                    elif any(x in combined for x in ["diesel", "petrol", "unleaded", "fuel"]): new_cat = "Fuel — Business Vehicle"
-                    elif any(x in combined for x in ["lubricant", "oil ", "grease", "hydraulic"]): new_cat = "Repairs — Equipment / Machinery"
-                    elif any(x in combined for x in ["engen", "shell", "bp ", "caltex", "sasol", "filling station", "garage", "nwk", "nwik", "afgri", "aureus"]): new_cat = "Fuel — Business Vehicle"
-                    elif any(x in combined for x in ["eskom", "city power", "electric"]): new_cat = "Electricity"
-                    elif any(x in combined for x in ["vodacom", "mtn", "cell c", "cellphone"]): new_cat = "Cellphone / Mobile"
-                    elif any(x in combined for x in ["telkom"]): new_cat = "Telephone — Landline"
-                    elif any(x in combined for x in ["rain", "afrihost", "fibre", "wifi", "internet", "mweb"]): new_cat = "Internet / WiFi"
-                    elif any(x in combined for x in ["@it", "it solution", "computer", "laptop", "software", "tricom"]): new_cat = "Computer / IT Expenses"
-                    elif any(x in combined for x in ["pharmacy", "apteek", "clicks", "dischem", "medical"]): new_cat = "Medical — First Aid / Supplies"
-                    elif any(x in combined for x in ["adt", "fidelity", "chubb", "security", "epr "]): new_cat = "Security"
-                    elif any(x in combined for x in ["insurance", "santam", "outsurance"]): new_cat = "Insurance — Business / Contents"
-                    elif any(x in combined for x in ["casual lab", "labour", "wages", "arbeider"]): new_cat = "Casual Labour / Wages"
-                    elif any(x in combined for x in ["workwear", "overall", "ppe ", "protective", "uniform"]): new_cat = "Protective Clothing / Uniforms"
-                    elif any(x in combined for x in ["builders", "cashbuild", "cement", "timber"]): new_cat = "Repairs & Maintenance — Building"
-                    elif any(x in combined for x in ["autozone", "midas", "tyre", "battery"]): new_cat = "Repairs & Maintenance — Vehicles"
-                    elif any(x in combined for x in ["pick n pay", "spar", "superspar", "checkers", "shoprite"]): new_cat = "Consumables / Groceries"
-                    elif any(x in combined for x in ["municipality", "rates", "water"]): new_cat = "Rates & Taxes — Municipal"
-                    elif any(x in combined for x in ["restaurant", "kfc", "nandos", "steers", "wimpy"]): new_cat = "Meals — Business"
-                    elif any(x in combined for x in ["bank charge", "service fee", "monthly fee"]): new_cat = "Bank Charges"
-                    elif any(x in combined for x in ["accountant", "attorney", "legal"]): new_cat = "Professional Fees"
-                    elif any(x in combined for x in ["courier", "postnet", "dhl"]): new_cat = "Courier / Postage"
-                    
-                    if new_cat and new_cat != old_cat:
-                        new_gl = IndustryKnowledge.get_gl_code(new_cat)
-                        db.update("expenses", exp["id"], {"category": new_cat, "category_code": new_gl})
-                        changes.append(f"{exp.get('supplier_name', '?')[:25]}: {old_cat} → {new_cat}")
-                        fixed += 1
-                
-                return {
-                    "fixed": fixed,
-                    "total_general": len(to_fix),
-                    "message": f"Fixed {fixed} of {len(to_fix)} 'General' expenses",
-                    "changes": changes[:15]
-                }
-            except Exception as e2:
-                return {"error": str(e2)[:200]}
     
     def _tool_get_financial_overview(self, params: dict) -> dict:
         """Get financial overview with PRE-CALCULATED insights - Zane doesn't need to do math"""
@@ -15404,68 +15314,35 @@ class BankLearning:
                     "times_seen": pattern.get("times_seen", 1)
                 }
         
-        # Common patterns (built-in knowledge — SA business suppliers)
+        # Common patterns (built-in knowledge)
         common = {
-            # Fuel
-            "ENGEN": "Fuel", "SASOL": "Fuel", "SHELL": "Fuel", "BP ": "Fuel",
-            "CALTEX": "Fuel", "TOTAL ENERGIES": "Fuel", "FILLING STATION": "Fuel",
-            "PETROLEUM": "Fuel", "PETROL": "Fuel", "DIESEL": "Fuel",
-            "NWK": "Fuel", "NWIK": "Fuel", "AFGRI": "Fuel", "PUMA ENERGY": "Fuel",
-            "AUREUS": "Fuel", "GARAGE": "Fuel",
-            # Groceries / Stock
-            "MAKRO": "Stock Purchases", "PICK N PAY": "Consumables",
-            "PNP ": "Consumables", "CHECKERS": "Consumables",
-            "WOOLWORTHS": "Consumables", "SPAR ": "Consumables",
-            "SUPERSPAR": "Consumables", "SHOPRITE": "Consumables",
-            # Telecoms
-            "TELKOM": "Telephone", "VODACOM": "Cellphone",
-            "MTN ": "Cellphone", "CELL C": "Cellphone",
-            "RAIN ": "Internet", "AFRIHOST": "Internet", "MWEB": "Internet",
-            # Utilities
-            "ESKOM": "Electricity", "CITY OF": "Municipal",
-            "CITY POWER": "Electricity", "MUNICIPALITY": "Municipal",
-            "MOGALE": "Municipal", "RAND WEST": "Municipal",
-            # SARS & Government
-            "SARS": "Tax Payment", "RECEIVER OF REVENUE": "Tax Payment",
-            "CIPC": "Registration Fees",
-            # Banking
-            "BANK CHARGES": "Bank Charges", "SERVICE FEE": "Bank Charges",
-            "MONTHLY FEE": "Bank Charges", "TRANSACTION FEE": "Bank Charges",
-            "MONTHLY MANAGEMENT": "Bank Charges", "OVERDRAFT": "Bank Charges",
-            # Salaries & Labour
-            "SALARIES": "Salaries", "WAGES": "Wages", "SALARY": "Salaries",
-            "CASUAL LAB": "Casual Labour",
-            # Insurance & Security
-            "INSURANCE": "Insurance", "SANTAM": "Insurance",
-            "OUTSURANCE": "Insurance", "KING PRICE": "Insurance",
-            "ADT": "Security", "FIDELITY": "Security", "EPR ": "Security",
-            "ARMED RESPONSE": "Security", "CHUBB": "Security",
-            # IT & Computers
-            "@IT": "Computer / IT", "IT SOLUTION": "Computer / IT",
-            "MICROSOFT": "Computer / IT", "GOOGLE": "Computer / IT",
-            # Medical
-            "PHARMACY": "Medical", "APTEEK": "Medical",
-            "CLICKS": "Medical", "DISCHEM": "Medical", "DIS-CHEM": "Medical",
-            # Rent
-            "RENT": "Rent", "LEASE": "Rent",
-            # Card Machines
-            "YOCO": "Card Machine Fees", "IKHOKHA": "Card Machine Fees",
-            "EFTPOS": "Card Machine Fees", "SNAPSCAN": "Card Machine Fees",
-            # Courier
-            "COURIER": "Courier / Postage", "POSTNET": "Courier / Postage",
-            "DHL": "Courier / Postage", "FEDEX": "Courier / Postage",
-            "RAM ": "Courier / Postage", "ARAMEX": "Courier / Postage",
-            # Repairs
-            "AUTOZONE": "Vehicle Repairs", "MIDAS": "Vehicle Repairs",
-            "FUCHS": "Equipment Repairs", "LUBRICANT": "Equipment Repairs",
-            "CASTROL": "Equipment Repairs",
-            # Advertising
-            "ADVERTI": "Advertising", "PRINTING": "Advertising",
-            # Entertainment
-            "DSTV": "Streaming", "MULTICHOICE": "Streaming",
-            "NETFLIX": "Streaming", "SHOWMAX": "Streaming",
-            # Building
-            "BUILDERS": "Building Maintenance", "CASHBUILD": "Building Maintenance",
+            "ENGEN": "Fuel",
+            "SASOL": "Fuel",
+            "SHELL": "Fuel",
+            "BP ": "Fuel",
+            "CALTEX": "Fuel",
+            "MAKRO": "Stock Purchases",
+            "PICK N PAY": "Stock Purchases",
+            "PNP ": "Stock Purchases",
+            "CHECKERS": "Stock Purchases",
+            "WOOLWORTHS": "Stock Purchases",
+            "SPAR ": "Stock Purchases",
+            "TELKOM": "Telephone",
+            "VODACOM": "Telephone",
+            "MTN ": "Telephone",
+            "ESKOM": "Electricity",
+            "CITY OF": "Municipal",
+            "MUNICIPALITY": "Municipal",
+            "SARS": "Tax Payment",
+            "SALARIES": "Salaries",
+            "WAGES": "Wages",
+            "RENT": "Rent",
+            "INSURANCE": "Insurance",
+            "SANTAM": "Insurance",
+            "OUTSURANCE": "Insurance",
+            "BANK CHARGES": "Bank Charges",
+            "SERVICE FEE": "Bank Charges",
+            "MONTHLY FEE": "Bank Charges"
         }
         
         for keyword, category in common.items():
@@ -32783,113 +32660,6 @@ def api_expenses_sync_offline():
         return jsonify({"success": True, "synced": synced, "errors": errors, "message": msg})
         
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)[:200]})
-
-
-@app.route("/api/expenses/re-categorize", methods=["POST"])
-@login_required
-def api_expenses_recategorize():
-    """Bulk re-categorize expenses that are 'General' or 'General Expenses' using smart matching"""
-    try:
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-        if not biz_id:
-            return jsonify({"success": False, "error": "No business selected"})
-        
-        all_expenses = db.get("expenses", {"business_id": biz_id}) or []
-        
-        # Find expenses with bad categories
-        bad_cats = {"general", "general expenses", "consumables", ""}
-        to_fix = [e for e in all_expenses if (e.get("category") or "").lower().strip() in bad_cats]
-        
-        if not to_fix:
-            return jsonify({"success": True, "fixed": 0, "message": "No 'General' expenses found — all look properly categorized!"})
-        
-        fixed = 0
-        changes = []
-        
-        for exp in to_fix:
-            supplier_name = (exp.get("supplier_name") or exp.get("supplier") or "").lower()
-            description = (exp.get("description") or "").lower()
-            combined = supplier_name + " " + description
-            old_cat = exp.get("category", "General")
-            new_cat = None
-            
-            # ═══ ITEM/DESCRIPTION-FIRST MATCHING ═══
-            if any(x in combined for x in ["pie", "pies", "sandwich", "bread", "brood", "milk", "melk", "cooldrink", "cold drink", "chips", "snack", "lunch", "food", "kos", "meal", "eat", "catering"]):
-                new_cat = "Meals — Business"
-            elif any(x in combined for x in ["diesel", "petrol", "unleaded", "fuel", "95 octane", "93 octane", "50ppm"]):
-                new_cat = "Fuel — Business Vehicle"
-            elif any(x in combined for x in ["lubricant", "oil ", "grease", "hydraulic", "coolant"]):
-                new_cat = "Repairs — Equipment / Machinery"
-            # ═══ SUPPLIER-BASED ═══
-            elif any(x in combined for x in ["engen", "shell", "bp ", "caltex", "sasol", "total energies", "filling station", "garage", "petroleum", "nwk", "nwik", "afgri", "puma energy", "aureus"]):
-                new_cat = "Fuel — Business Vehicle"
-            elif any(x in combined for x in ["eskom", "city power", "electric", "prepaid electr", "city of "]):
-                new_cat = "Electricity"
-            elif any(x in combined for x in ["vodacom", "mtn", "cell c", "cellphone", "airtime"]):
-                new_cat = "Cellphone / Mobile"
-            elif any(x in combined for x in ["telkom", "landline"]):
-                new_cat = "Telephone — Landline"
-            elif any(x in combined for x in ["rain", "afrihost", "vumatel", "fibre", "wifi", "internet", "mweb"]):
-                new_cat = "Internet / WiFi"
-            elif any(x in combined for x in ["@it", "it solution", "it rand", "computer", "laptop", "software", "tricom"]):
-                new_cat = "Computer / IT Expenses"
-            elif any(x in combined for x in ["santam", "outsurance", "old mutual", "hollard", "king price", "insurance", "versekering"]):
-                new_cat = "Insurance — Business / Contents"
-            elif any(x in combined for x in ["adt", "fidelity", "chubb", "armed response", "security", "sekuriteit", "epr "]):
-                new_cat = "Security"
-            elif any(x in combined for x in ["pharmacy", "apteek", "clicks", "dischem", "dis-chem", "medical", "first aid"]):
-                new_cat = "Medical — First Aid / Supplies"
-            elif any(x in combined for x in ["pick n pay", "pnp ", "checkers", "spar", "superspar", "woolworths", "shoprite"]):
-                new_cat = "Consumables / Groceries"
-            elif any(x in combined for x in ["builders", "cashbuild", "mica", "cement", "timber", "paint"]):
-                new_cat = "Repairs & Maintenance — Building"
-            elif any(x in combined for x in ["autozone", "midas", "battery", "tyre", "exhaust", "panel beat"]):
-                new_cat = "Repairs & Maintenance — Vehicles"
-            elif any(x in combined for x in ["casual lab", "labour", "wages", "arbeider", "day worker"]):
-                new_cat = "Casual Labour / Wages"
-            elif any(x in combined for x in ["workwear", "overall", "safety boot", "ppe ", "protective", "uniform"]):
-                new_cat = "Protective Clothing / Uniforms"
-            elif any(x in combined for x in ["municipality", "rates", "munisipal", "water", "refuse"]):
-                new_cat = "Rates & Taxes — Municipal"
-            elif any(x in combined for x in ["rent", "huur", "lease"]):
-                new_cat = "Rent"
-            elif any(x in combined for x in ["courier", "postnet", "dhl", "fedex", "aramex"]):
-                new_cat = "Courier / Postage"
-            elif any(x in combined for x in ["stationery", "cartridge", "toner", "waltons"]):
-                new_cat = "Stationery & Office Supplies"
-            elif any(x in combined for x in ["restaurant", "kfc", "nandos", "steers", "mcdonalds", "spur", "wimpy"]):
-                new_cat = "Meals — Business"
-            elif any(x in combined for x in ["yoco", "ikhokha", "snapscan", "eftpos"]):
-                new_cat = "Card Machine Fees"
-            elif any(x in combined for x in ["bank charge", "service fee", "monthly fee"]):
-                new_cat = "Bank Charges"
-            elif any(x in combined for x in ["dstv", "multichoice", "netflix", "showmax"]):
-                new_cat = "DSTV / Streaming"
-            elif any(x in combined for x in ["accountant", "attorney", "legal", "bookkeep"]):
-                new_cat = "Professional Fees — Accounting / Legal"
-            elif any(x in combined for x in ["advertis", "printing", "banner", "flyer", "sign"]):
-                new_cat = "Advertising & Marketing"
-            
-            if new_cat and new_cat != old_cat:
-                new_gl = IndustryKnowledge.get_gl_code(new_cat)
-                db.update("expenses", exp["id"], {"category": new_cat, "category_code": new_gl})
-                changes.append(f"{exp.get('supplier_name', '?')}: {old_cat} → {new_cat}")
-                fixed += 1
-                logger.info(f"[RE-CAT] {exp.get('description', '')[:40]}: {old_cat} → {new_cat} (GL {new_gl})")
-        
-        msg = f"Fixed {fixed} of {len(to_fix)} 'General' expenses"
-        if changes:
-            msg += ":\n" + "\n".join(changes[:20])
-            if len(changes) > 20:
-                msg += f"\n... and {len(changes) - 20} more"
-        
-        logger.info(f"[RE-CAT] Bulk re-categorize: {fixed}/{len(to_fix)} fixed for {biz_id}")
-        return jsonify({"success": True, "fixed": fixed, "total_general": len(to_fix), "message": msg, "changes": changes[:50]})
-        
-    except Exception as e:
-        logger.error(f"[RE-CAT] Error: {e}")
         return jsonify({"success": False, "error": str(e)[:200]})
 
 
@@ -73808,54 +73578,34 @@ def api_scan_suggest_category():
         # Build comprehensive category knowledge for Zane
         all_categories = IndustryKnowledge.build_category_list_for_ai()
         
-        prompt = f"""You are Zane, a bookkeeper for {biz_name}. Look at this invoice and suggest where to book it. Respond in English. Be direct — no filler, no emojis.
-
-CRITICAL RULE: NEVER categorize as "General" or "General Expenses" if you can determine the type from the supplier name or items. 
-
-ITEMS TRUMP SUPPLIER: If someone buys pies and cooldrinks at Engen, that is NOT fuel — it is Meals. If someone buys diesel at Engen, THAT is fuel. Always look at WHAT was bought, not just WHERE.
-
-Examples:
-- Any filling station, garage, petroleum, NWK, Afgri = Fuel
-- Pharmacy, apteek, Clicks, Dis-Chem = Medical / First Aid
-- @IT, IT Solutions, computer, tech = Computer / IT Expenses
-- Casual labour, arbeider, day worker = Casual Labour / Wages
-- Workwear, PPE, overall, safety = Protective Clothing / Uniforms
-- Fuchs, Castrol, lubricant = Repairs — Equipment / Machinery
-- SPAR, Pick n Pay, Checkers = Consumables (unless clearly stock for resale)
-If you genuinely cannot determine the category, ASK the user — do NOT default to General.
+        prompt = f"""You are Zane, a bookkeeper for {biz_name}. Look at this invoice and help the user book it correctly. Respond in English. Be direct — no filler, no emojis.
 
 {"IMPORTANT: The supplier '" + supplier_name + "' is the user's OWN business. This is their own stock/inventory for resale." if biz_name and supplier_name and (biz_name.lower() in supplier_name.lower() or supplier_name.lower() in biz_name.lower()) else ""}
 
 Supplier: {supplier_name}, Invoice: {invoice_number}, Amount: R{total}, Items: {items_desc or "not specified"}
-{"THE USER SAYS THIS IS FOR: " + user_answer if user_answer else ""}
+{"THE USER ANSWERED: " + user_answer if user_answer else ""}
 
 Categories:
 {all_categories}
 
-ALWAYS give clickable options. Never decide alone. The user is not an accountant — use plain language they understand.
+{"IMPORTANT: The user has answered your question. If their answer is specific enough, give the FINAL booking. If still ambiguous, ask ONE more question. Do NOT keep asking forever." if user_answer else ""}
 
-{"Their answer might be enough to pick the exact category, OR you might need to drill deeper. Examples:" if user_answer else "Examples:"}
-- Fuel invoice: ask "Own use or for resale?" then if "Own use" ask "Business vehicle, garden equipment, or generator?" then book
-- PPE items: ask "Stock for resale or staff protective clothing?"
-- Building materials: ask "For repairs/maintenance or stock for resale?"
+RULES:
+{"1. This is a FOLLOW-UP. The user already answered. If their answer makes it clear, give the final booking (needs_clarification: false). If still genuinely ambiguous, ask ONE more targeted question." if user_answer else "1. On the FIRST call (no user answer yet), you MUST ALWAYS ask. Never auto-book on first pass. Show what you see, explain your thinking, then give options."}
+2. Show intelligence — mention what items you see, what the supplier is known for
+3. But ALWAYS let the user decide — they know their business better than you
+4. Key question: Is this for OWN USE (expense) or STOCK FOR RESALE (supplier invoice)?
+5. For fuel: warn about no VAT claim on own use
+6. NEVER just say "General Expenses" — if you truly don't know, ask
 
-{"If their answer '" + user_answer + "' is specific enough to pick ONE exact category, give the final answer. If still ambiguous, drill deeper with more options." if user_answer else ""}
-
-Fuel: warn no VAT claim on own use.
-Two action buttons: ORANGE "Book as Expense", BLUE "Stock Purchase (Credit)".
-For stock/resale: action="supplier", is_stock=true. For expenses: action="expense", is_stock=false.
+For stock/resale: action="supplier", is_stock=true
+For expenses: action="expense", is_stock=false
 
 JSON only — pick ONE format:
-Need more info: {{"needs_clarification":true,"question":"[plain language question]","options":[{{"label":"[option]","value":"[short]"}},{{"label":"None of these","value":"manual"}}],"confidence":0.6,"explanation":""}}
-Got enough to book (single category): {{"needs_clarification":false,"action":"expense|supplier","action_label":"Book as Expense|Stock Purchase","category":"[exact from list]","confidence":0.95,"explanation":"[1 sentence]","vat_warning":"","is_stock":false|true}}
-Got enough to book (SPLIT — use when items belong to DIFFERENT categories, e.g. cement + drill on one invoice): {{"needs_clarification":false,"action":"expense","action_label":"Book as Expense (Split)","category":"Split","is_split":true,"confidence":0.9,"explanation":"This invoice has items in different categories — I suggest splitting:","splits":[{{"description":"[item or group]","amount":0.00,"category":"[exact from list]"}}],"vat_warning":"","is_stock":false}}
-
-SPLIT RULES:
-- Only use split when items clearly belong to DIFFERENT expense categories
-- If all items are the same type (e.g. all building materials), use single category
-- Split amounts must add up to the invoice subtotal (excl VAT)
-- Group similar items on one line (e.g. "Cement + Sand" → Building Materials)
-- Maximum 5 split lines"""
+{"FINAL BOOKING (user has answered):" if user_answer else "ASK THE USER (first time):"}
+{{{{\"needs_clarification\":true,\"question\":\"[explain what you see + ask]\",\"options\":[{{{{\"label\":\"[option 1]\",\"value\":\"[short]\"}}}},{{{{\"label\":\"[option 2]\",\"value\":\"[short]\"}}}},{{{{\"label\":\"None of these\",\"value\":\"manual\"}}}}],\"confidence\":0.6,\"explanation\":\"\"}}}}
+{"""FINAL BOOKING format (use when user's answer makes it clear):
+{{"needs_clarification":false,"action":"expense|supplier","action_label":"Book as Expense|Stock Purchase","category":"[exact from list]","confidence":0.95,"explanation":"[1 sentence]","vat_warning":"","is_stock":false|true}}""" if user_answer else "NOTE: You MUST return needs_clarification:true on the first call. NEVER auto-book without asking."}"""
 
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -73911,110 +73661,39 @@ def api_scan_save_expense():
         if not biz_id:
             return jsonify({"success": False, "error": "No business selected"})
         
-        # Use Zane's category if provided, otherwise smart-detect from ITEMS first, then supplier
+        # Use Zane's category if provided, otherwise smart-detect from supplier name
         category = data.get("category", "").strip()
-        if not category or category.lower() in ("general", "general expenses"):
+        if not category:
             supplier_name = data.get("supplier_name", "").lower()
-            description = data.get("description", "").lower()
-            # Build combined text from items + supplier + description for matching
-            items_list = data.get("items") or []
-            items_text = " ".join([str(it.get("description", "")).lower() for it in items_list]) if items_list else ""
-            combined = items_text + " " + supplier_name + " " + description
-            
-            # ═══ ITEMS-FIRST CATEGORIZATION — what was bought matters more than where ═══
-            # Food & Meals (even at a fuel station)
-            if any(x in combined for x in ["pie", "pies", "sandwich", "bread", "brood", "milk", "melk", "cooldrink", "cold drink", "chips", "snack", "lunch", "food", "kos", "meal", "eat", "catering"]):
-                category = "Meals — Business"
-            # Fuel & Diesel (item-level check)
-            elif any(x in combined for x in ["diesel", "petrol", "unleaded", "fuel", "95 octane", "93 octane", "50ppm"]):
+            # Smart supplier → specific category mapping
+            if any(x in supplier_name for x in ["engen", "shell", "bp", "caltex", "fuel", "petrol", "sasol", "total"]):
                 category = "Fuel — Business Vehicle"
-            # Oil & Lubricants (not fuel)
-            elif any(x in combined for x in ["lubricant", "oil ", "grease", "hydraulic", "coolant", "antifreeze"]):
-                category = "Repairs — Equipment / Machinery"
-            
-            # ═══ SUPPLIER-BASED FALLBACK (only if items didn't match above) ═══
-            # Fuel & Transport
-            elif any(x in combined for x in ["engen", "shell", "bp ", "caltex", "fuel", "petrol", "sasol", "total energies", "filling station", "garage", "diesel", "petroleum", "nwk", "nwik", "afgri", "obaro", "puma energy", "astron"]):
-                category = "Fuel — Business Vehicle"
-            # Electricity & Utilities
-            elif any(x in combined for x in ["eskom", "city power", "electric", "prepaid electr", "city of ", "tshwane", "ekurhuleni", "mogale", "rand west", "emfuleni"]):
+            elif any(x in supplier_name for x in ["eskom", "city power", "electric", "prepaid electr"]):
                 category = "Electricity"
-            # Water & Municipal
-            elif any(x in combined for x in ["municipality", "rates", "munisipal", "water", "sewage", "refuse"]):
-                category = "Rates & Taxes — Municipal"
-            # Telecoms
-            elif any(x in combined for x in ["vodacom", "mtn", "cell c", "cellphone", "mobile", "airtime", "data bundle"]):
+            elif any(x in supplier_name for x in ["vodacom", "mtn", "cell c"]):
                 category = "Cellphone / Mobile"
-            elif any(x in combined for x in ["telkom", "landline", "telephone"]):
+            elif any(x in supplier_name for x in ["telkom"]):
                 category = "Telephone — Landline"
-            elif any(x in combined for x in ["rain", "afrihost", "vumatel", "fibre", "wifi", "internet", "webafrica", "mweb", "axxess", "rsaweb", "cool ideas"]):
+            elif any(x in supplier_name for x in ["rain", "afrihost", "vumatel", "fibre"]):
                 category = "Internet / WiFi"
-            # IT & Computers
-            elif any(x in combined for x in ["@it", "it solution", "it rand", "computer", "laptop", "printer", "software", "microsoft", "google workspace", "adobe", "zoom", "hosting", "server", "domain", "tricom"]):
-                category = "Computer / IT Expenses"
-            # Insurance
-            elif any(x in combined for x in ["santam", "outsurance", "old mutual", "discovery insur", "hollard", "king price", "miway", "auto general", "budget insur", "dialdirect", "first for women", "renasa", "mutual & federal", "insurance", "versekering", "broker", "premium"]):
-                category = "Insurance — Business / Contents"
-            # Security
-            elif any(x in combined for x in ["adt", "fidelity", "chubb", "armed response", "security", "sekuriteit", "beveiliging", "protea coin", "g4s", "epr ", "hi-tech"]):
-                category = "Security"
-            # Medical / Health
-            elif any(x in combined for x in ["pharmacy", "apteek", "medical", "doctor", "dr ", "clinic", "hospital", "clicks", "dischem", "dis-chem", "first aid", "medirite"]):
-                category = "Medical — First Aid / Supplies"
-            # Cleaning & Consumables
-            elif any(x in combined for x in ["cleaning", "hygiene", "janitorial", "skoonmaak", "paper", "toilet"]):
-                category = "Cleaning & Hygiene"
-            # Groceries / Consumables (for business use)
-            elif any(x in combined for x in ["pick n pay", "pnp ", "checkers", "spar", "superspar", "woolworths", "shoprite", "food", "kos", "grocery"]):
-                category = "Consumables / Groceries"
-            # Building & Hardware
-            elif any(x in combined for x in ["builders", "cashbuild", "mica", "pennypinchers", "timber", "cement", "bricks", "plumbing", "paint"]):
-                category = "Repairs & Maintenance — Building"
-            # Vehicles & Parts
-            elif any(x in combined for x in ["autozone", "midas", "battery", "tyre", "tire", "exhaust", "brake", "fitment", "panel beat", "car wash", "motor spares"]):
-                category = "Repairs & Maintenance — Vehicles"
-            # Streaming & Subscriptions
-            elif any(x in combined for x in ["multichoice", "dstv", "netflix", "showmax", "spotify", "apple", "subscription"]):
+            elif any(x in supplier_name for x in ["multichoice", "dstv", "netflix", "showmax"]):
                 category = "DSTV / Streaming"
-            # Card Machines & POS
-            elif any(x in combined for x in ["yoco", "ikhokha", "snapscan", "zapper", "eft settlement", "eftpos"]):
+            elif any(x in supplier_name for x in ["santam", "outsurance", "old mutual", "discovery insur", "hollard"]):
+                category = "Insurance — Business / Contents"
+            elif any(x in supplier_name for x in ["adt", "fidelity", "chubb", "armed response"]):
+                category = "Security"
+            elif any(x in supplier_name for x in ["yoco", "ikhokha", "snapscan", "zapper"]):
                 category = "Card Machine Fees"
-            # Banking
-            elif any(x in combined for x in ["absa", "fnb", "nedbank", "standard bank", "capitec", "bank charge", "service fee", "monthly fee", "transaction fee"]) and float(data.get("total", 0)) < 2000:
+            elif any(x in supplier_name for x in ["absa", "fnb", "nedbank", "standard bank", "capitec"]) and float(data.get("total", 0)) < 2000:
                 category = "Bank Charges"
-            # SARS
-            elif any(x in combined for x in ["sars", "receiver of revenue", "tax payment"]):
+            elif any(x in supplier_name for x in ["municipality", "rates", "munisipal"]):
+                category = "Rates & Taxes — Municipal"
+            elif any(x in supplier_name for x in ["sars", "receiver of revenue"]):
                 category = "VAT Payment to SARS"
-            # Labour & Wages
-            elif any(x in combined for x in ["casual lab", "labour", "wages", "arbeider", "werker", "temp staff", "day worker"]):
-                category = "Casual Labour / Wages"
-            # Rent
-            elif any(x in combined for x in ["rent", "huur", "lease", "tenant", "property"]):
-                category = "Rent"
-            # Accounting & Legal
-            elif any(x in combined for x in ["accountant", "rekenmeester", "auditor", "attorney", "prokureur", "lawyer", "legal", "bookkeep", "tax consult", "seta"]):
-                category = "Professional Fees — Accounting / Legal"
-            # Advertising & Marketing
-            elif any(x in combined for x in ["advertis", "advert", "market", "printing", "banner", "flyer", "sign", "pamphlet", "facebook ad", "google ad"]):
-                category = "Advertising & Marketing"
-            # Courier & Postage
-            elif any(x in combined for x in ["courier", "postnet", "post office", "ram ", "dawn wing", "dhl", "fedex", "aramex", "the courier guy", "paxi", "pudo"]):
-                category = "Courier / Postage"
-            # Stationery & Office
-            elif any(x in combined for x in ["stationery", "office", "cartridge", "ink ", "toner", "paper", "waltons"]):
-                category = "Stationery & Office Supplies"
-            # Training
-            elif any(x in combined for x in ["training", "course", "opleiding", "workshop", "seminar", "conference"]):
-                category = "Training & Development"
-            # Protective Clothing / PPE
-            elif any(x in combined for x in ["workwear", "overall", "safety boot", "ppe ", "protective", "uniform"]):
-                category = "Protective Clothing / Uniforms"
-            # Entertainment & Meals
-            elif any(x in combined for x in ["restaurant", "kfc", "nandos", "steers", "mcdonalds", "spur", "wimpy", "debonair", "pizza", "uber eats"]):
-                category = "Meals — Business"
-            # Lubricants & Oils (not fuel)
-            elif any(x in combined for x in ["lubricant", "fuchs", "castrol", "oil ", "grease", "hydraulic"]):
-                category = "Repairs — Equipment / Machinery"
+            elif any(x in supplier_name for x in ["pick n pay", "checkers", "spar", "woolworths", "shoprite"]):
+                category = "Cleaning & Hygiene"
+            elif any(x in supplier_name for x in ["builders", "cashbuild"]):
+                category = "Repairs & Maintenance — Building"
             else:
                 category = "General Expenses"
         
