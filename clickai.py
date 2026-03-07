@@ -15314,35 +15314,68 @@ class BankLearning:
                     "times_seen": pattern.get("times_seen", 1)
                 }
         
-        # Common patterns (built-in knowledge)
+        # Common patterns (built-in knowledge — SA business suppliers)
         common = {
-            "ENGEN": "Fuel",
-            "SASOL": "Fuel",
-            "SHELL": "Fuel",
-            "BP ": "Fuel",
-            "CALTEX": "Fuel",
-            "MAKRO": "Stock Purchases",
-            "PICK N PAY": "Stock Purchases",
-            "PNP ": "Stock Purchases",
-            "CHECKERS": "Stock Purchases",
-            "WOOLWORTHS": "Stock Purchases",
-            "SPAR ": "Stock Purchases",
-            "TELKOM": "Telephone",
-            "VODACOM": "Telephone",
-            "MTN ": "Telephone",
-            "ESKOM": "Electricity",
-            "CITY OF": "Municipal",
-            "MUNICIPALITY": "Municipal",
-            "SARS": "Tax Payment",
-            "SALARIES": "Salaries",
-            "WAGES": "Wages",
-            "RENT": "Rent",
-            "INSURANCE": "Insurance",
-            "SANTAM": "Insurance",
-            "OUTSURANCE": "Insurance",
-            "BANK CHARGES": "Bank Charges",
-            "SERVICE FEE": "Bank Charges",
-            "MONTHLY FEE": "Bank Charges"
+            # Fuel
+            "ENGEN": "Fuel", "SASOL": "Fuel", "SHELL": "Fuel", "BP ": "Fuel",
+            "CALTEX": "Fuel", "TOTAL ENERGIES": "Fuel", "FILLING STATION": "Fuel",
+            "PETROLEUM": "Fuel", "PETROL": "Fuel", "DIESEL": "Fuel",
+            "NWK": "Fuel", "NWIK": "Fuel", "AFGRI": "Fuel", "PUMA ENERGY": "Fuel",
+            "AUREUS": "Fuel", "GARAGE": "Fuel",
+            # Groceries / Stock
+            "MAKRO": "Stock Purchases", "PICK N PAY": "Consumables",
+            "PNP ": "Consumables", "CHECKERS": "Consumables",
+            "WOOLWORTHS": "Consumables", "SPAR ": "Consumables",
+            "SUPERSPAR": "Consumables", "SHOPRITE": "Consumables",
+            # Telecoms
+            "TELKOM": "Telephone", "VODACOM": "Cellphone",
+            "MTN ": "Cellphone", "CELL C": "Cellphone",
+            "RAIN ": "Internet", "AFRIHOST": "Internet", "MWEB": "Internet",
+            # Utilities
+            "ESKOM": "Electricity", "CITY OF": "Municipal",
+            "CITY POWER": "Electricity", "MUNICIPALITY": "Municipal",
+            "MOGALE": "Municipal", "RAND WEST": "Municipal",
+            # SARS & Government
+            "SARS": "Tax Payment", "RECEIVER OF REVENUE": "Tax Payment",
+            "CIPC": "Registration Fees",
+            # Banking
+            "BANK CHARGES": "Bank Charges", "SERVICE FEE": "Bank Charges",
+            "MONTHLY FEE": "Bank Charges", "TRANSACTION FEE": "Bank Charges",
+            "MONTHLY MANAGEMENT": "Bank Charges", "OVERDRAFT": "Bank Charges",
+            # Salaries & Labour
+            "SALARIES": "Salaries", "WAGES": "Wages", "SALARY": "Salaries",
+            "CASUAL LAB": "Casual Labour",
+            # Insurance & Security
+            "INSURANCE": "Insurance", "SANTAM": "Insurance",
+            "OUTSURANCE": "Insurance", "KING PRICE": "Insurance",
+            "ADT": "Security", "FIDELITY": "Security", "EPR ": "Security",
+            "ARMED RESPONSE": "Security", "CHUBB": "Security",
+            # IT & Computers
+            "@IT": "Computer / IT", "IT SOLUTION": "Computer / IT",
+            "MICROSOFT": "Computer / IT", "GOOGLE": "Computer / IT",
+            # Medical
+            "PHARMACY": "Medical", "APTEEK": "Medical",
+            "CLICKS": "Medical", "DISCHEM": "Medical", "DIS-CHEM": "Medical",
+            # Rent
+            "RENT": "Rent", "LEASE": "Rent",
+            # Card Machines
+            "YOCO": "Card Machine Fees", "IKHOKHA": "Card Machine Fees",
+            "EFTPOS": "Card Machine Fees", "SNAPSCAN": "Card Machine Fees",
+            # Courier
+            "COURIER": "Courier / Postage", "POSTNET": "Courier / Postage",
+            "DHL": "Courier / Postage", "FEDEX": "Courier / Postage",
+            "RAM ": "Courier / Postage", "ARAMEX": "Courier / Postage",
+            # Repairs
+            "AUTOZONE": "Vehicle Repairs", "MIDAS": "Vehicle Repairs",
+            "FUCHS": "Equipment Repairs", "LUBRICANT": "Equipment Repairs",
+            "CASTROL": "Equipment Repairs",
+            # Advertising
+            "ADVERTI": "Advertising", "PRINTING": "Advertising",
+            # Entertainment
+            "DSTV": "Streaming", "MULTICHOICE": "Streaming",
+            "NETFLIX": "Streaming", "SHOWMAX": "Streaming",
+            # Building
+            "BUILDERS": "Building Maintenance", "CASHBUILD": "Building Maintenance",
         }
         
         for keyword, category in common.items():
@@ -73580,6 +73613,16 @@ def api_scan_suggest_category():
         
         prompt = f"""You are Zane, a bookkeeper for {biz_name}. Look at this invoice and suggest where to book it. Respond in English. Be direct — no filler, no emojis.
 
+CRITICAL RULE: NEVER categorize as "General" or "General Expenses" if you can determine the type from the supplier name or items. Examples:
+- Any filling station, garage, petroleum, NWK, Afgri = Fuel
+- Pharmacy, apteek, Clicks, Dis-Chem = Medical / First Aid
+- @IT, IT Solutions, computer, tech = Computer / IT Expenses
+- Casual labour, arbeider, day worker = Casual Labour / Wages
+- Workwear, PPE, overall, safety = Protective Clothing / Uniforms
+- Fuchs, Castrol, lubricant = Repairs — Equipment / Machinery
+- SPAR, Pick n Pay, Checkers = Consumables (unless clearly stock for resale)
+If you genuinely cannot determine the category, ASK the user — do NOT default to General.
+
 {"IMPORTANT: The supplier '" + supplier_name + "' is the user's OWN business. This is their own stock/inventory for resale." if biz_name and supplier_name and (biz_name.lower() in supplier_name.lower() or supplier_name.lower() in biz_name.lower()) else ""}
 
 Supplier: {supplier_name}, Invoice: {invoice_number}, Amount: R{total}, Items: {items_desc or "not specified"}
@@ -73669,37 +73712,94 @@ def api_scan_save_expense():
         
         # Use Zane's category if provided, otherwise smart-detect from supplier name
         category = data.get("category", "").strip()
-        if not category:
+        if not category or category.lower() in ("general", "general expenses"):
             supplier_name = data.get("supplier_name", "").lower()
-            # Smart supplier → specific category mapping
-            if any(x in supplier_name for x in ["engen", "shell", "bp", "caltex", "fuel", "petrol", "sasol", "total"]):
+            description = data.get("description", "").lower()
+            combined = supplier_name + " " + description
+            
+            # ═══ COMPREHENSIVE SA SUPPLIER → CATEGORY MAPPING ═══
+            # Fuel & Transport
+            if any(x in combined for x in ["engen", "shell", "bp ", "caltex", "fuel", "petrol", "sasol", "total energies", "filling station", "garage", "diesel", "petroleum", "nwk", "nwik", "afgri", "obaro", "puma energy", "astron"]):
                 category = "Fuel — Business Vehicle"
-            elif any(x in supplier_name for x in ["eskom", "city power", "electric", "prepaid electr"]):
+            # Electricity & Utilities
+            elif any(x in combined for x in ["eskom", "city power", "electric", "prepaid electr", "city of ", "tshwane", "ekurhuleni", "mogale", "rand west", "emfuleni"]):
                 category = "Electricity"
-            elif any(x in supplier_name for x in ["vodacom", "mtn", "cell c"]):
-                category = "Cellphone / Mobile"
-            elif any(x in supplier_name for x in ["telkom"]):
-                category = "Telephone — Landline"
-            elif any(x in supplier_name for x in ["rain", "afrihost", "vumatel", "fibre"]):
-                category = "Internet / WiFi"
-            elif any(x in supplier_name for x in ["multichoice", "dstv", "netflix", "showmax"]):
-                category = "DSTV / Streaming"
-            elif any(x in supplier_name for x in ["santam", "outsurance", "old mutual", "discovery insur", "hollard"]):
-                category = "Insurance — Business / Contents"
-            elif any(x in supplier_name for x in ["adt", "fidelity", "chubb", "armed response"]):
-                category = "Security"
-            elif any(x in supplier_name for x in ["yoco", "ikhokha", "snapscan", "zapper"]):
-                category = "Card Machine Fees"
-            elif any(x in supplier_name for x in ["absa", "fnb", "nedbank", "standard bank", "capitec"]) and float(data.get("total", 0)) < 2000:
-                category = "Bank Charges"
-            elif any(x in supplier_name for x in ["municipality", "rates", "munisipal"]):
+            # Water & Municipal
+            elif any(x in combined for x in ["municipality", "rates", "munisipal", "water", "sewage", "refuse"]):
                 category = "Rates & Taxes — Municipal"
-            elif any(x in supplier_name for x in ["sars", "receiver of revenue"]):
-                category = "VAT Payment to SARS"
-            elif any(x in supplier_name for x in ["pick n pay", "checkers", "spar", "woolworths", "shoprite"]):
+            # Telecoms
+            elif any(x in combined for x in ["vodacom", "mtn", "cell c", "cellphone", "mobile", "airtime", "data bundle"]):
+                category = "Cellphone / Mobile"
+            elif any(x in combined for x in ["telkom", "landline", "telephone"]):
+                category = "Telephone — Landline"
+            elif any(x in combined for x in ["rain", "afrihost", "vumatel", "fibre", "wifi", "internet", "webafrica", "mweb", "axxess", "rsaweb", "cool ideas"]):
+                category = "Internet / WiFi"
+            # IT & Computers
+            elif any(x in combined for x in ["@it", "it solution", "it rand", "computer", "laptop", "printer", "software", "microsoft", "google workspace", "adobe", "zoom", "hosting", "server", "domain", "tricom"]):
+                category = "Computer / IT Expenses"
+            # Insurance
+            elif any(x in combined for x in ["santam", "outsurance", "old mutual", "discovery insur", "hollard", "king price", "miway", "auto general", "budget insur", "dialdirect", "first for women", "renasa", "mutual & federal", "insurance", "versekering", "broker", "premium"]):
+                category = "Insurance — Business / Contents"
+            # Security
+            elif any(x in combined for x in ["adt", "fidelity", "chubb", "armed response", "security", "sekuriteit", "beveiliging", "protea coin", "g4s", "epr ", "hi-tech"]):
+                category = "Security"
+            # Medical / Health
+            elif any(x in combined for x in ["pharmacy", "apteek", "medical", "doctor", "dr ", "clinic", "hospital", "clicks", "dischem", "dis-chem", "first aid", "medirite"]):
+                category = "Medical — First Aid / Supplies"
+            # Cleaning & Consumables
+            elif any(x in combined for x in ["cleaning", "hygiene", "janitorial", "skoonmaak", "paper", "toilet"]):
                 category = "Cleaning & Hygiene"
-            elif any(x in supplier_name for x in ["builders", "cashbuild"]):
+            # Groceries / Consumables (for business use)
+            elif any(x in combined for x in ["pick n pay", "pnp ", "checkers", "spar", "superspar", "woolworths", "shoprite", "food", "kos", "grocery"]):
+                category = "Consumables / Groceries"
+            # Building & Hardware
+            elif any(x in combined for x in ["builders", "cashbuild", "mica", "pennypinchers", "timber", "cement", "bricks", "plumbing", "paint"]):
                 category = "Repairs & Maintenance — Building"
+            # Vehicles & Parts
+            elif any(x in combined for x in ["autozone", "midas", "battery", "tyre", "tire", "exhaust", "brake", "fitment", "panel beat", "car wash", "motor spares"]):
+                category = "Repairs & Maintenance — Vehicles"
+            # Streaming & Subscriptions
+            elif any(x in combined for x in ["multichoice", "dstv", "netflix", "showmax", "spotify", "apple", "subscription"]):
+                category = "DSTV / Streaming"
+            # Card Machines & POS
+            elif any(x in combined for x in ["yoco", "ikhokha", "snapscan", "zapper", "eft settlement", "eftpos"]):
+                category = "Card Machine Fees"
+            # Banking
+            elif any(x in combined for x in ["absa", "fnb", "nedbank", "standard bank", "capitec", "bank charge", "service fee", "monthly fee", "transaction fee"]) and float(data.get("total", 0)) < 2000:
+                category = "Bank Charges"
+            # SARS
+            elif any(x in combined for x in ["sars", "receiver of revenue", "tax payment"]):
+                category = "VAT Payment to SARS"
+            # Labour & Wages
+            elif any(x in combined for x in ["casual lab", "labour", "wages", "arbeider", "werker", "temp staff", "day worker"]):
+                category = "Casual Labour / Wages"
+            # Rent
+            elif any(x in combined for x in ["rent", "huur", "lease", "tenant", "property"]):
+                category = "Rent"
+            # Accounting & Legal
+            elif any(x in combined for x in ["accountant", "rekenmeester", "auditor", "attorney", "prokureur", "lawyer", "legal", "bookkeep", "tax consult", "seta"]):
+                category = "Professional Fees — Accounting / Legal"
+            # Advertising & Marketing
+            elif any(x in combined for x in ["advertis", "advert", "market", "printing", "banner", "flyer", "sign", "pamphlet", "facebook ad", "google ad"]):
+                category = "Advertising & Marketing"
+            # Courier & Postage
+            elif any(x in combined for x in ["courier", "postnet", "post office", "ram ", "dawn wing", "dhl", "fedex", "aramex", "the courier guy", "paxi", "pudo"]):
+                category = "Courier / Postage"
+            # Stationery & Office
+            elif any(x in combined for x in ["stationery", "office", "cartridge", "ink ", "toner", "paper", "waltons"]):
+                category = "Stationery & Office Supplies"
+            # Training
+            elif any(x in combined for x in ["training", "course", "opleiding", "workshop", "seminar", "conference"]):
+                category = "Training & Development"
+            # Protective Clothing / PPE
+            elif any(x in combined for x in ["workwear", "overall", "safety boot", "ppe ", "protective", "uniform"]):
+                category = "Protective Clothing / Uniforms"
+            # Entertainment & Meals
+            elif any(x in combined for x in ["restaurant", "kfc", "nandos", "steers", "mcdonalds", "spur", "wimpy", "debonair", "pizza", "uber eats"]):
+                category = "Meals — Business"
+            # Lubricants & Oils (not fuel)
+            elif any(x in combined for x in ["lubricant", "fuchs", "castrol", "oil ", "grease", "hydraulic"]):
+                category = "Repairs — Equipment / Machinery"
             else:
                 category = "General Expenses"
         
