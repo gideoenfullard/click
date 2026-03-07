@@ -108,6 +108,26 @@ try:
 except ImportError:
     TRANSPORT_KNOWLEDGE_LOADED = False
 try:
+    from clickai_legal_knowledge import get_relevant_legal_knowledge, format_legal_knowledge
+    LEGAL_KNOWLEDGE_LOADED = True
+except ImportError:
+    LEGAL_KNOWLEDGE_LOADED = False
+try:
+    from clickai_tax_strategy_knowledge import get_relevant_tax_strategy, format_tax_strategy
+    TAX_STRATEGY_LOADED = True
+except ImportError:
+    TAX_STRATEGY_LOADED = False
+try:
+    from clickai_hr_knowledge import get_relevant_hr_knowledge, format_hr_knowledge
+    HR_KNOWLEDGE_LOADED = True
+except ImportError:
+    HR_KNOWLEDGE_LOADED = False
+try:
+    from clickai_insurance_knowledge import get_relevant_insurance_knowledge, format_insurance_knowledge
+    INSURANCE_KNOWLEDGE_LOADED = True
+except ImportError:
+    INSURANCE_KNOWLEDGE_LOADED = False
+try:
     from clickai_business_groups import BusinessGroupManager, register_group_routes
     BUSINESS_GROUPS_LOADED = True
 except ImportError:
@@ -8142,6 +8162,46 @@ Settings: /settings (business info, VAT, users, preferences)
             if transport_chunks:
                 prompt += format_transport_knowledge(transport_chunks)
                 logger.info(f"[ZANE-TRANSPORT] Injected {len(transport_chunks)} transport chunk(s)")
+        except Exception:
+            pass
+
+    # === RAG: Inject SA legal knowledge (contracts, labour, BEE, CIPC) ===
+    if LEGAL_KNOWLEDGE_LOADED and user_message:
+        try:
+            legal_chunks = get_relevant_legal_knowledge(user_message, max_chunks=1)
+            if legal_chunks:
+                prompt += format_legal_knowledge(legal_chunks)
+                logger.info(f"[ZANE-LEGAL] Injected legal chunk: {legal_chunks[0]['title']}")
+        except Exception:
+            pass
+
+    # === RAG: Inject tax strategy knowledge (deductions, CGT, entity structures) ===
+    if TAX_STRATEGY_LOADED and user_message:
+        try:
+            tax_chunks = get_relevant_tax_strategy(user_message, max_chunks=1)
+            if tax_chunks:
+                prompt += format_tax_strategy(tax_chunks)
+                logger.info(f"[ZANE-TAX] Injected tax strategy chunk: {tax_chunks[0]['title']}")
+        except Exception:
+            pass
+
+    # === RAG: Inject HR knowledge (BCEA, discipline, leave, hiring) ===
+    if HR_KNOWLEDGE_LOADED and user_message:
+        try:
+            hr_chunks = get_relevant_hr_knowledge(user_message, max_chunks=1)
+            if hr_chunks:
+                prompt += format_hr_knowledge(hr_chunks)
+                logger.info(f"[ZANE-HR] Injected HR chunk: {hr_chunks[0]['title']}")
+        except Exception:
+            pass
+
+    # === RAG: Inject insurance knowledge (cover types, claims, liability) ===
+    if INSURANCE_KNOWLEDGE_LOADED and user_message:
+        try:
+            ins_chunks = get_relevant_insurance_knowledge(user_message, max_chunks=1)
+            if ins_chunks:
+                prompt += format_insurance_knowledge(ins_chunks)
+                logger.info(f"[ZANE-INS] Injected insurance chunk: {ins_chunks[0]['title']}")
         except Exception:
             pass
 
@@ -21144,6 +21204,60 @@ def api_zane_analyze_file():
         
         business = Auth.get_current_business()
         biz_name = business.get("name", "Unknown") if business else "Unknown"
+        biz_id = business.get("id") if business else None
+        
+        # ── Gather BUSINESS CONTEXT for smart analysis ──
+        biz_context = ""
+        try:
+            if biz_id:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=5) as pool:
+                    f_stock = pool.submit(db.get_all_stock, biz_id)
+                    f_emps = pool.submit(db.get, "employees", {"business_id": biz_id})
+                    f_cust = pool.submit(db.get, "customers", {"business_id": biz_id})
+                    f_inv = pool.submit(db.get, "invoices", {"business_id": biz_id})
+                    f_exp = pool.submit(db.get, "expenses", {"business_id": biz_id})
+                
+                stock = f_stock.result(timeout=10) or []
+                emps = f_emps.result(timeout=10) or []
+                custs = f_cust.result(timeout=10) or []
+                invoices = f_inv.result(timeout=10) or []
+                expenses = f_exp.result(timeout=10) or []
+                
+                total_stock_value = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("cost") or s.get("cost_price") or 0) for s in stock)
+                total_stock_selling = sum(float(s.get("qty") or s.get("quantity") or 0) * float(s.get("price") or s.get("selling_price") or 0) for s in stock)
+                stock_count = len(stock)
+                emp_count = len(emps)
+                customer_count = len(custs)
+                monthly_salaries = sum(float(e.get("basic_salary") or 0) for e in emps)
+                
+                # Revenue estimate from last 3 months invoices + sales
+                from datetime import timedelta
+                three_months_ago = (datetime.utcnow() - timedelta(days=90)).strftime("%Y-%m-%d")
+                recent_inv = [i for i in invoices if (i.get("date") or "") >= three_months_ago]
+                recent_exp = [e for e in expenses if (e.get("date") or "") >= three_months_ago]
+                quarterly_revenue = sum(float(i.get("total") or 0) for i in recent_inv)
+                quarterly_expenses = sum(float(e.get("amount") or e.get("total") or 0) for e in recent_exp)
+                monthly_revenue = quarterly_revenue / 3 if quarterly_revenue > 0 else 0
+                monthly_expenses = quarterly_expenses / 3 if quarterly_expenses > 0 else 0
+                
+                total_debtors = sum(float(c.get("balance") or 0) for c in custs if float(c.get("balance") or 0) > 0)
+                
+                biz_context = f"""
+BUSINESS PROFILE FOR {biz_name}:
+- Stock: {stock_count} items, cost value R{total_stock_value:,.0f}, selling value R{total_stock_selling:,.0f}
+- Employees: {emp_count}, total monthly salaries R{monthly_salaries:,.0f}
+- Customers: {customer_count}, outstanding debtors R{total_debtors:,.0f}
+- Est. monthly revenue: R{monthly_revenue:,.0f} (last 3 months avg)
+- Est. monthly expenses: R{monthly_expenses:,.0f} (last 3 months avg)
+- Est. monthly gross profit: R{monthly_revenue - monthly_expenses:,.0f}
+- Annual turnover estimate: R{monthly_revenue * 12:,.0f}
+"""
+                logger.info(f"[ANALYZE] Business context loaded: stock R{total_stock_value:,.0f}, {emp_count} emps, revenue R{monthly_revenue:,.0f}/mo")
+        except Exception as ctx_err:
+            logger.warning(f"[ANALYZE] Business context failed (non-critical): {ctx_err}")
+            biz_context = f"Business: {biz_name} (detailed data unavailable)"
+        
         
         # ── Read file content based on type ──
         file_text = ""
@@ -21181,37 +21295,66 @@ def api_zane_analyze_file():
             client = _anthropic_client
             message = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=4000,
+                max_tokens=6000,
                 messages=[{
                     "role": "user",
                     "content": [
                         {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": base64_data}},
-                        {"type": "text", "text": f"""You are Zane, the AI financial analyst for {biz_name}.
+                        {"type": "text", "text": f"""You are Zane, the senior AI business advisor for {biz_name}. You have a BCom Honours and MBA with 15 years SA SME experience. You are NOT a chatbot — you are the advisor that businesses pay R2,000/hour for.
 
-Analyze this document thoroughly. Identify what type of document it is (Trial Balance, Income Statement, Balance Sheet, Bank Statement, etc).
+STEP 1 — IDENTIFY the document type:
+- Financial: Trial Balance, Income Statement, Balance Sheet, Bank Statement, VAT Return
+- Insurance: Policy schedule, cover summary, renewal notice, claim form
+- Legal: Contract, lease agreement, terms & conditions, employment contract
+- HR: Employment contract, disciplinary notice, CCMA referral, letter of demand
+- Tax: SARS assessment, IRP6, IT14, tax certificate
+- Other: Quote, proposal, letter, report
 
-CRITICAL INSTRUCTION:
-═══════════════════════════════════════════════════════════════════════
-READ the totals exactly as printed on the document.
-DO NOT calculate or add up any numbers yourself!
-If the document shows "Total: R100,000" then report R100,000.
-DO NOT verify the math - just report what is printed.
-═══════════════════════════════════════════════════════════════════════
+STEP 2 — ANALYZE based on type:
 
-Provide your analysis as clean HTML (no markdown). Use:
-- <h4> for section headers
-- <table> with proper <th> and <td> for any data tables
-- <p> for explanations
-- <span class="amount-dr"> for debit amounts, <span class="amount-cr"> for credit amounts
-- <b> for important findings
+FOR INSURANCE POLICIES — This is where you shine. Compare against the ACTUAL business data:
+{biz_context}
 
-Include:
-1. Document type and period
-2. Key totals AS PRINTED on the document (do not calculate)
-3. Any concerns, errors, or unusual items
-4. Recommendations
+Check EVERY one of these:
+- Is stock/contents cover adequate? (compare insured value vs actual R{total_stock_value:,.0f} stock at cost)
+- Is business interruption cover enough? (compare indemnity vs actual monthly gross profit)
+- Is there public liability? (essential for walk-in businesses)
+- Is there employer's liability? (they have {emp_count} employees)
+- Are vehicle values current or outdated?
+- What is the excess per claim? Is it reasonable?
+- Are there dangerous exclusions? (vacancy clause, load shedding, riot/strike)
+- Is the premium reasonable for the cover?
+- What's MISSING that they SHOULD have?
+- What are they paying for that they DON'T need?
+Flag every gap with a RED warning. Flag every saving opportunity with GREEN.
 
-Make it professional but accessible. Use ZAR (R) currency format. Be thorough."""}
+FOR CONTRACTS/LEASES — Review like a lawyer:
+- Identify unfair or one-sided terms
+- Check cancellation clauses and notice periods
+- Highlight penalty clauses and escalation rates
+- Flag missing essential clauses
+- Check CPA/BCEA compliance where applicable
+- Plain language assessment
+- Overall risk rating (Low/Medium/High)
+
+FOR FINANCIAL DOCUMENTS — Analyze as before:
+- Read totals AS PRINTED (do not calculate)
+- Identify concerns, errors, unusual items
+- Compare against business context data
+
+{biz_context}
+
+STEP 3 — OUTPUT as clean HTML:
+Use <h4> for sections, <table> for data, <p> for text.
+Use these styled divs for findings:
+- <div style="background:#fee2e2;border-left:4px solid #ef4444;padding:12px;border-radius:6px;margin:8px 0;"><b>RISK:</b> [finding]</div> for dangers/gaps
+- <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:12px;border-radius:6px;margin:8px 0;"><b>WARNING:</b> [finding]</div> for concerns
+- <div style="background:#d1fae5;border-left:4px solid #10b981;padding:12px;border-radius:6px;margin:8px 0;"><b>SAVING:</b> [finding]</div> for savings/good points
+- <div style="background:#dbeafe;border-left:4px solid #3b82f6;padding:12px;border-radius:6px;margin:8px 0;"><b>TIP:</b> [advice]</div> for recommendations
+
+End with a SUMMARY section: Overall assessment, top 3 actions to take, and estimated financial impact.
+
+Be direct. Be specific. Use actual numbers from both the document AND the business data. This is what makes you worth R2,000/hour — you don't give generic advice, you give advice specific to THIS business."""}
                     ]
                 }]
             )
@@ -36326,6 +36469,36 @@ def reports_page():
         <div class="card" style="cursor:pointer" onclick="window.location='/credit-notes'">
             <h3>Credit Notes</h3>
             <p style="color:var(--text-muted)">View all credit notes</p>
+        </div>
+    </div>
+    
+    <p style="color:var(--text-muted);text-align:center;margin-top:30px;">
+    <h3 style="margin:30px 0 10px 0;color:var(--text-muted);">Zane AI Advisor</h3>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px;">Ask Zane about any of these topics — he has deep SA business knowledge built in:</p>
+    <div class="stats-grid">
+        <div class="card" style="cursor:pointer;border-left:3px solid #6366f1;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
+            <h3 style="font-size:15px;">SA Business Law</h3>
+            <p style="color:var(--text-muted);font-size:12px;">Contracts, CPA, disputes, IP, POPIA</p>
+        </div>
+        <div class="card" style="cursor:pointer;border-left:3px solid #10b981;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
+            <h3 style="font-size:15px;">Tax Strategy</h3>
+            <p style="color:var(--text-muted);font-size:12px;">Deductions, CGT, wear & tear, provisional tax, pay yourself</p>
+        </div>
+        <div class="card" style="cursor:pointer;border-left:3px solid #f59e0b;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
+            <h3 style="font-size:15px;">HR & Labour</h3>
+            <p style="color:var(--text-muted);font-size:12px;">BCEA, discipline, CCMA, leave, hiring, EE Act</p>
+        </div>
+        <div class="card" style="cursor:pointer;border-left:3px solid #ec4899;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
+            <h3 style="font-size:15px;">Insurance</h3>
+            <p style="color:var(--text-muted);font-size:12px;">Cover types, claims, liability, fleet, business interruption</p>
+        </div>
+        <div class="card" style="cursor:pointer;border-left:3px solid #8b5cf6;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
+            <h3 style="font-size:15px;">SARS Compliance</h3>
+            <p style="color:var(--text-muted);font-size:12px;">VAT, PAYE, UIF, SDL, eFiling, returns</p>
+        </div>
+        <div class="card" style="cursor:pointer;border-left:3px solid #14b8a6;" onclick="document.getElementById('jzInput')?.focus();if(typeof jzToggle==='function')jzToggle();">
+            <h3 style="font-size:15px;">BEE & CIPC</h3>
+            <p style="color:var(--text-muted);font-size:12px;">B-BBEE levels, registration, annual returns, compliance</p>
         </div>
     </div>
     
