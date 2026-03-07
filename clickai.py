@@ -45515,7 +45515,11 @@ def pos_page():
 
     /* F11 state toggle — hide ALL page elements, show fixed overlay */
     body.f11-mode .pos-header{display:none !important;}
-    body.f11-mode .pos-reactor-wrap{display:none !important;}
+    body.f11-mode .pos-reactor-wrap{position:fixed !important;top:38px;left:0;right:0;z-index:9100;border:none !important;background:none !important;margin:0 !important;padding:0 !important;pointer-events:none;overflow:visible !important;}
+    body.f11-mode .pos-reactor-wrap::before,body.f11-mode .pos-reactor-wrap::after{display:none !important;}
+    body.f11-mode .pos-reactor-hero{display:none !important;}
+    body.f11-mode .pos-reactor-wrap .pos-lbl{display:none !important;}
+    body.f11-mode .pos-entity-bar{pointer-events:auto;display:none;background:rgba(4,12,35,0.98);border:1px solid rgba(80,180,255,0.2);border-radius:0 0 8px 8px;padding:6px 12px;position:absolute;left:50%;transform:translateX(-50%);z-index:9600;}
     body.f11-mode .container{display:none !important;}
     body.f11-mode .cashier-bar{display:none !important;}
     body.f11-mode .zane-chat{display:none !important;}
@@ -45856,6 +45860,11 @@ def pos_page():
     let lastSupplierName = '';
     
     function toggleEntity(type) {
+        // In F11 mode, show the entity bar (normally hidden)
+        if (f11Mode) {
+            var ebar = document.querySelector('.pos-entity-bar');
+            if (ebar) ebar.style.display = 'flex';
+        }
         const btnCust = document.getElementById('btnCust');
         const btnSupp = document.getElementById('btnSupp');
         const searchInput = document.getElementById('entitySearch');
@@ -45975,6 +45984,10 @@ def pos_page():
             document.getElementById('entityValue').value = '';
         }
         if (f11Mode) {
+            // Hide entity bar overlay in F11 mode
+            var ebar = document.querySelector('.pos-entity-bar');
+            if (ebar) ebar.style.display = 'none';
+            if (typeof updateF11CustName === 'function') updateF11CustName();
             var f11El = document.getElementById('f11Search');
             if (f11El) f11El.focus();
         } else {
@@ -46141,7 +46154,7 @@ def pos_page():
     
     // Close dropdown when clicking outside
     document.addEventListener('click', function(e) {
-        if (dropdownOpen && !e.target.closest('.entity-dropdown')) {
+        if (dropdownOpen && !e.target.closest('.entity-dropdown') && !e.target.closest('.pos-entity-btn') && !e.target.closest('.f11-btn')) {
             closeEntityDropdown(true);
         }
     });
@@ -48695,7 +48708,7 @@ def pos_page():
             <div class="entity-dropdown" style="position:relative;">
                 <input type="text" class="pos-entity-input entity-search" id="entitySearch" placeholder="F7 · CASH SALE" onclick="openEntityDropdown()" autocomplete="off">
                 <input type="hidden" id="entityValue" value="">
-                <div class="entity-list" id="entityList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:300px;overflow-y:auto;background:rgba(10,20,40,0.95);border:1px solid rgba(80,180,255,0.2);"></div>
+                <div class="entity-list" id="entityList" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:9500;max-height:300px;overflow-y:auto;background:rgba(10,20,40,0.95);border:1px solid rgba(80,180,255,0.2);"></div>
             </div>
             <button class="pos-entity-btn R" id="btnSupp" onclick="toggleEntity('supplier')" title="F9">S<span class="pk">F9</span></button>
             <input type="hidden" id="supplierData" value='{supplier_json}'>
