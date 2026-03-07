@@ -45520,36 +45520,8 @@ def pos_page():
     body.f11-mode .cashier-bar{display:none !important;}
     body.f11-mode .zane-chat{display:none !important;}
     body.f11-mode .f11-header{display:flex !important;position:fixed !important;top:0;left:0;right:0;z-index:9000;background:rgba(4,12,35,0.98) !important;}
-    body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:38px;left:0;right:0;bottom:56px;z-index:8999;background:rgba(4,12,35,0.98) !important;}
-    body.f11-mode .f11-action-bar{display:flex !important;}
+    body.f11-mode .f11-order-wrap{display:flex !important;position:fixed !important;top:38px;left:0;right:0;bottom:0;z-index:8999;background:rgba(4,12,35,0.98) !important;}
     body.f11-mode{overflow:hidden !important;}
-
-    /* ═══ F11 BOTTOM ACTION BAR — touch-friendly for staff ═══ */
-    .f11-action-bar{
-        display:none;position:fixed;bottom:0;left:0;right:0;z-index:9001;
-        height:56px;background:rgba(6,14,38,0.98);border-top:1px solid rgba(80,180,255,0.2);
-        align-items:stretch;justify-content:center;gap:0;padding:0;
-        backdrop-filter:blur(12px);
-    }
-    .f11-action-bar .f11-ab{
-        flex:1;max-width:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;
-        gap:2px;border:none;border-right:1px solid rgba(80,180,255,0.08);
-        background:transparent;cursor:pointer;transition:all 0.15s;padding:4px 2px;
-        font-family:'Rajdhani',sans-serif;color:#8ab8d8;
-    }
-    .f11-action-bar .f11-ab:last-child{border-right:none;}
-    .f11-action-bar .f11-ab:hover{background:rgba(0,200,255,0.1);}
-    .f11-action-bar .f11-ab:active{background:rgba(0,200,255,0.2);transform:scale(0.96);}
-    .f11-action-bar .f11-ab:disabled{opacity:0.25;cursor:not-allowed;}
-    .f11-action-bar .f11-ab:disabled:hover{background:transparent;}
-    .f11-action-bar .f11-ab-icon{font-size:20px;line-height:1;}
-    .f11-action-bar .f11-ab-label{font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;white-space:nowrap;}
-    .f11-action-bar .f11-ab-key{font-family:'Share Tech Mono',monospace;font-size:8px;color:#00ccff;opacity:0.6;}
-    .f11-action-bar .f11-ab.cash{color:#10b981;} .f11-action-bar .f11-ab.cash:hover{background:rgba(16,185,129,0.15);}
-    .f11-action-bar .f11-ab.card{color:#3b82f6;} .f11-action-bar .f11-ab.card:hover{background:rgba(59,130,246,0.15);}
-    .f11-action-bar .f11-ab.acct{color:#f59e0b;} .f11-action-bar .f11-ab.acct:hover{background:rgba(245,158,11,0.15);}
-    .f11-action-bar .f11-ab.credit{color:#ef4444;} .f11-action-bar .f11-ab.credit:hover{background:rgba(239,68,68,0.15);}
-    .f11-action-bar .f11-ab.exit-btn{color:#ff6666;background:rgba(255,40,40,0.06);}
 
     </style>
     '''
@@ -48755,21 +48727,6 @@ def pos_page():
 
     <!-- F11 ORDER TABLE -->
     <div class="f11-order-wrap">
-
-    <!-- F11 BOTTOM ACTION BAR — touch-friendly for all staff -->
-    <div class="f11-action-bar">
-        <button class="f11-ab cash" id="f11AbCash" onclick="completeSale('cash')" disabled><span class="f11-ab-icon">💵</span><span class="f11-ab-label">Cash</span><span class="f11-ab-key">F1</span></button>
-        <button class="f11-ab card" id="f11AbCard" onclick="completeSale('card')" disabled><span class="f11-ab-icon">💳</span><span class="f11-ab-label">Card</span><span class="f11-ab-key">F2</span></button>
-        <button class="f11-ab acct" id="f11AbAcct" onclick="completeSale('account')" disabled><span class="f11-ab-icon">📒</span><span class="f11-ab-label">Account</span><span class="f11-ab-key">F3</span></button>
-        <button class="f11-ab" id="f11AbQuote" onclick="createQuote()" disabled><span class="f11-ab-icon">📝</span><span class="f11-ab-label">Quote</span><span class="f11-ab-key">F4</span></button>
-        <button class="f11-ab" id="f11AbPO" onclick="createPO()" disabled><span class="f11-ab-icon">📦</span><span class="f11-ab-label">PO</span><span class="f11-ab-key">F5</span></button>
-        <button class="f11-ab" id="f11AbInv" onclick="createInvoice()" disabled><span class="f11-ab-icon">📄</span><span class="f11-ab-label">Invoice</span><span class="f11-ab-key">F6</span></button>
-        <button class="f11-ab" onclick="showEditCustomerModal()"><span class="f11-ab-icon">✏️</span><span class="f11-ab-label">Edit</span><span class="f11-ab-key">F7</span></button>
-        <button class="f11-ab" onclick="toggleEntity('customer')"><span class="f11-ab-icon">👤</span><span class="f11-ab-label">Customer</span><span class="f11-ab-key">F8</span></button>
-        <button class="f11-ab" onclick="toggleEntity('supplier')"><span class="f11-ab-icon">🏭</span><span class="f11-ab-label">Supplier</span><span class="f11-ab-key">F9</span></button>
-        <button class="f11-ab credit" id="f11AbCredit" onclick="createCreditNote()" disabled><span class="f11-ab-icon">↩️</span><span class="f11-ab-label">Credit</span><span class="f11-ab-key">F10</span></button>
-        <button class="f11-ab exit-btn" onclick="toggleF11()"><span class="f11-ab-icon">✕</span><span class="f11-ab-label">Exit</span><span class="f11-ab-key">F11</span></button>
-    </div>
         <div class="f11-search">
             <input type="text" id="f11Search" placeholder="Scan barcode or type code / description..." autocomplete="off">
         </div>
@@ -48884,9 +48841,9 @@ def pos_page():
     function syncF11Buttons() {{
         const hasItems = cart.length > 0;
         const hasCust = !!document.getElementById('entityValue').value;
-        ['f11Cash','f11Card','f11AbCash','f11AbCard'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
-        ['f11Account','f11Invoice','f11Credit','f11AbAcct','f11AbInv','f11AbCredit'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !(hasItems && hasCust); }});
-        ['f11Quote','f11PO','f11AbQuote','f11AbPO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
+        ['f11Cash','f11Card'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
+        ['f11Account','f11Invoice','f11Credit'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !(hasItems && hasCust); }});
+        ['f11Quote','f11PO'].forEach(id => {{ const el = document.getElementById(id); if(el) el.disabled = !hasItems; }});
     }}
 
     async function f11EditQty(idx) {{
