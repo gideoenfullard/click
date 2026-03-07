@@ -73578,34 +73578,48 @@ def api_scan_suggest_category():
         # Build comprehensive category knowledge for Zane
         all_categories = IndustryKnowledge.build_category_list_for_ai()
         
-        prompt = f"""You are Zane, a bookkeeper for {biz_name}. Look at this invoice and help the user book it correctly. Respond in English. Be direct — no filler, no emojis.
+        # Build JSON examples as plain strings (avoids f-string brace escaping issues)
+        json_ask = '{"needs_clarification":true,"question":"[explain what you see + ask]","options":[{"label":"[option 1]","value":"[short]"},{"label":"[option 2]","value":"[short]"},{"label":"None of these","value":"manual"}],"confidence":0.6,"explanation":""}'
+        json_book = '{"needs_clarification":false,"action":"expense|supplier","action_label":"Book as Expense|Stock Purchase","category":"[exact from list]","confidence":0.95,"explanation":"[1 sentence]","vat_warning":"","is_stock":false|true}'
+        
+        own_biz_note = ""
+        if biz_name and supplier_name and (biz_name.lower() in supplier_name.lower() or supplier_name.lower() in biz_name.lower()):
+            own_biz_note = f"IMPORTANT: The supplier '{supplier_name}' is the user's OWN business. Stock/inventory for resale."
+        
+        user_note = f"THE USER ANSWERED: {user_answer}" if user_answer else ""
+        followup_note = "The user answered. If clear, give FINAL booking (needs_clarification:false). If ambiguous, ask ONE more question." if user_answer else ""
+        
+        if user_answer:
+            rule1 = "1. FOLLOW-UP. User answered. If clear, book it. If still ambiguous, ask ONE more question."
+            json_section = f"If unclear, ASK:\n{json_ask}\n\nIf clear, BOOK:\n{json_book}"
+        else:
+            rule1 = "1. FIRST CALL. You MUST ask. Never auto-book first time. Show what you see, explain, give options."
+            json_section = f"ASK format (MUST use on first call):\n{json_ask}\n\nNOTE: NEVER return needs_clarification:false on first call."
+        
+        prompt = f"""You are Zane, bookkeeper for {biz_name}. Help book this invoice. Be direct, no emojis.
 
-{"IMPORTANT: The supplier '" + supplier_name + "' is the user's OWN business. This is their own stock/inventory for resale." if biz_name and supplier_name and (biz_name.lower() in supplier_name.lower() or supplier_name.lower() in biz_name.lower()) else ""}
+{own_biz_note}
 
 Supplier: {supplier_name}, Invoice: {invoice_number}, Amount: R{total}, Items: {items_desc or "not specified"}
-{"THE USER ANSWERED: " + user_answer if user_answer else ""}
+{user_note}
 
 Categories:
 {all_categories}
 
-{"IMPORTANT: The user has answered your question. If their answer is specific enough, give the FINAL booking. If still ambiguous, ask ONE more question. Do NOT keep asking forever." if user_answer else ""}
+{followup_note}
 
 RULES:
-{"1. This is a FOLLOW-UP. The user already answered. If their answer makes it clear, give the final booking (needs_clarification: false). If still genuinely ambiguous, ask ONE more targeted question." if user_answer else "1. On the FIRST call (no user answer yet), you MUST ALWAYS ask. Never auto-book on first pass. Show what you see, explain your thinking, then give options."}
-2. Show intelligence — mention what items you see, what the supplier is known for
-3. But ALWAYS let the user decide — they know their business better than you
-4. Key question: Is this for OWN USE (expense) or STOCK FOR RESALE (supplier invoice)?
-5. For fuel: warn about no VAT claim on own use
-6. NEVER just say "General Expenses" — if you truly don't know, ask
+{rule1}
+2. Show what items you see and what the supplier is known for
+3. ALWAYS let user decide. They know their business.
+4. Key question: OWN USE (expense) or STOCK FOR RESALE (supplier invoice)?
+5. Fuel own use: warn no VAT claim
+6. NEVER say General Expenses. If unsure, ask.
 
-For stock/resale: action="supplier", is_stock=true
-For expenses: action="expense", is_stock=false
+stock/resale: action=supplier, is_stock=true. expense: action=expense, is_stock=false.
 
-JSON only — pick ONE format:
-{"FINAL BOOKING (user has answered):" if user_answer else "ASK THE USER (first time):"}
-{{{{\"needs_clarification\":true,\"question\":\"[explain what you see + ask]\",\"options\":[{{{{\"label\":\"[option 1]\",\"value\":\"[short]\"}}}},{{{{\"label\":\"[option 2]\",\"value\":\"[short]\"}}}},{{{{\"label\":\"None of these\",\"value\":\"manual\"}}}}],\"confidence\":0.6,\"explanation\":\"\"}}}}
-{"""FINAL BOOKING format (use when user's answer makes it clear):
-{{"needs_clarification":false,"action":"expense|supplier","action_label":"Book as Expense|Stock Purchase","category":"[exact from list]","confidence":0.95,"explanation":"[1 sentence]","vat_warning":"","is_stock":false|true}}""" if user_answer else "NOTE: You MUST return needs_clarification:true on the first call. NEVER auto-book without asking."}"""
+JSON only:
+{json_section}"""
 
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -73613,6 +73627,7 @@ JSON only — pick ONE format:
             messages=[{"role": "user", "content": prompt}]
         )
         
+        ai_response = response.content[0].text
         ai_response = response.content[0].text
         suggestion = extract_json_from_text(ai_response)
         
