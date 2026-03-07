@@ -44331,6 +44331,7 @@ def pos_page():
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
+    _pos_theme = request.cookies.get("clickai_theme", "midnight")
     
     # Get stock, customers, suppliers IN PARALLEL (was sequential — each takes 0.5-2s)
     from concurrent.futures import ThreadPoolExecutor
@@ -48717,7 +48718,7 @@ def pos_page():
     _safe_uname = str(current_user_name or 'Me').replace("'", "").replace("\\", "")
     
     return f'''<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="{_pos_theme}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
