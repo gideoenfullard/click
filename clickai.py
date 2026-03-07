@@ -11282,7 +11282,7 @@ class Actions:
             else:
                 # Cash/Card/EFT sale
                 if payment_method == "cash":
-                    bank_account = "1100"  # Petty Cash for POS cash
+                    bank_account = "1050"  # Cash On Hand for POS cash
                 else:
                     bank_account = "1000"  # Bank for card/EFT
                 create_journal_entry(biz_id, today(), f"Sale - {item.get('description')}", f"SALE-{sale_id[:8]}", [
@@ -11390,7 +11390,7 @@ class Actions:
         
         # Generate job number
         existing = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-        job_num = f"JOB-{len(existing) + 1:04d}"
+        job_num = next_document_number("JOB-", existing, "job_number")
         
         job = RecordFactory.job(
             business_id=biz_id,
@@ -11541,7 +11541,7 @@ class Actions:
         # Generate job card number
         existing_jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
         year = datetime.now().year
-        job_number = f"JC-{year}-{len(existing_jobs) + 1:03d}"
+        job_number = next_document_number(f"JC-{year}-", existing_jobs, "job_number")
         
         # Create job card
         job_id = generate_id()
@@ -26922,7 +26922,7 @@ def invoice_new():
                             db.update("customers", customer_id, {"balance": new_balance})
                 else:
                     # Cash/Card/EFT - Debit Bank/Cash, Credit Sales + VAT
-                    bank_account = "1100" if payment_method == "cash" else "1000"
+                    bank_account = "1050" if payment_method == "cash" else "1000"
                     create_journal_entry(biz_id, today(), f"Invoice {inv_num} - {customer_name} ({payment_method.upper()})", inv_num, [
                         {"account_code": bank_account, "debit": float(total), "credit": 0},
                         {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
@@ -27586,7 +27586,7 @@ def api_invoice_pay(invoice_id):
         # CASH/CARD/EFT = Actual payment received
         # Determine which account to debit
         if payment_method == "cash":
-            bank_account = "1100"  # Petty Cash
+            bank_account = "1050"  # Cash On Hand
             bank_name = "Cash"
         elif payment_method == "card":
             bank_account = "1000"  # Bank
@@ -31380,8 +31380,8 @@ def quote_to_invoice(quote_id):
         return redirect("/quotes?error=Quote+not+found")
     
     # Generate invoice number
-    existing = db.get("invoices", {"business_id": biz_id})
-    inv_num = f"INV{len(existing) + 1:04d}"
+    existing = db.get("invoices", {"business_id": biz_id}) or []
+    inv_num = next_document_number("INV-", existing, "invoice_number")
     
     # Parse quote items
     quote_items = quote.get("items", [])
@@ -31571,8 +31571,8 @@ def delivery_note_new():
             return redirect("/delivery-note/new?error=No+items")
         
         # Generate DN number
-        existing = db.get("delivery_notes", {"business_id": biz_id})
-        dn_num = f"DN{len(existing) + 1:04d}"
+        existing = db.get("delivery_notes", {"business_id": biz_id}) or []
+        dn_num = next_document_number("DN-", existing, "dn_number")
         
         # Get source invoice info
         source_inv_number = ""
@@ -32432,7 +32432,9 @@ def api_expenses_quick_add():
         ]
         if vat_claimable > 0:
             journal_entries.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})
-        journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)})
+        # Credit the correct account based on how it was paid
+        credit_account = {"cash": "1050", "petty": "1100", "eft": "1000", "card": "1000"}.get(payment_method, "1000")
+        journal_entries.append({"account_code": credit_account, "debit": 0, "credit": round(total_amount, 2)})
         
         create_journal_entry(biz_id, expense_date, desc[:50], f"EXP-{expense['id'][:8]}", journal_entries)
         
@@ -37410,6 +37412,7 @@ def api_statement_email(customer_id):
 DEFAULT_ACCOUNTS = [
     # Assets (1000-1999)
     {"code": "1000", "name": "Bank", "type": "asset", "category": "Current Assets"},
+    {"code": "1050", "name": "Cash On Hand", "type": "asset", "category": "Current Assets"},
     {"code": "1100", "name": "Petty Cash", "type": "asset", "category": "Current Assets"},
     {"code": "1200", "name": "Debtors Control", "type": "asset", "category": "Current Assets"},
     {"code": "1300", "name": "Stock", "type": "asset", "category": "Current Assets"},
@@ -39375,7 +39378,7 @@ def api_tb_analyze():
             
             # ASSETS (Debit balances)
             bank = sum(match_account(a, ["1000", "10"], ["bank", "fnb", "standard", "absa", "nedbank", "capitec"]) for a in accounts)
-            cash = sum(match_account(a, ["1100", "11"], ["cash", "petty"]) for a in accounts)
+            cash = sum(match_account(a, ["1050", "1100", "11"], ["cash", "petty", "cash on hand"]) for a in accounts)
             debtors = sum(match_account(a, ["1200", "12"], ["debtor", "receivable", "trade receivable"]) for a in accounts)
             stock = sum(match_account(a, ["1300", "13", "14"], ["stock", "inventory", "goods"]) for a in accounts)
             prepaid = sum(match_account(a, ["1400", "15"], ["prepaid", "prepayment", "advance"]) for a in accounts)
@@ -44397,7 +44400,7 @@ def pos_page():
         '''
     
     # Customer options - sorted alphabetically
-    customer_options = '<option value="">-- Cash Sale --</option>'
+    customer_options = '<option value="">-- Countersale --</option>'
     customer_options += '<option value="NEW" style="color:#10b981;">+ Add New</option>'
     for c in sorted(customers, key=lambda x: (x.get("name") or "").lower()):
         customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name"))}">{safe_string(c.get("name"))}</option>'
@@ -44410,7 +44413,7 @@ def pos_page():
     
     # JSON data for searchable dropdown
     import json
-    customer_list = [{"id": "", "name": "Cash Sale"}] + [{"id": "NEW", "name": "+ Add New"}]
+    customer_list = [{"id": "", "name": "Countersale"}] + [{"id": "NEW", "name": "+ Add New"}]
     customer_list += [{"id": c.get("id"), "name": c.get("name", ""), "address": c.get("address", ""), "phone": c.get("phone", "") or c.get("cell", ""), "vat_number": c.get("vat_number", ""), "email": c.get("email", "")} for c in sorted(customers, key=lambda x: (x.get("name") or "").lower())]
     supplier_list = [{"id": "", "name": "Select Supplier"}] + [{"id": "NEW", "name": "+ Add New"}]
     supplier_list += [{"id": s.get("id"), "name": s.get("name", "")} for s in sorted(suppliers, key=lambda x: (x.get("name") or "").lower())]
@@ -45874,7 +45877,7 @@ def pos_page():
             btnCust.classList.add('active');
             btnSupp.classList.remove('active');
             entityData = window.customerList || [];
-            searchInput.placeholder = 'Cash Sale';
+            searchInput.placeholder = 'Countersale';
             // Update add item button for sales
             if (btnAddItem) {
                 btnAddItem.textContent = '+ Custom';
@@ -46235,7 +46238,7 @@ def pos_page():
         // Use getCurrentCustomer - works even if supplier is selected
         const customer = getCurrentCustomer();
         const customerId = customer.id;
-        const customerName = customer.name || 'Cash Sale';
+        const customerName = customer.name || ('Countersale ' + ({cash:'Cash',card:'Card',account:'Account'}[method]||'') + (currentCashierName ? ' - '+currentCashierName : ''));
         
         if (method === 'account' && !customerId) {
             alert('Warning: Please select a customer for account sale (F8)');
@@ -47786,7 +47789,7 @@ def pos_page():
         loadPosSettings();
         
         // Handle both old string format and new object format
-        const customerName = (typeof customerObj === 'string') ? customerObj : (customerObj.name || 'Cash Sale');
+        const customerName = (typeof customerObj === 'string') ? customerObj : (customerObj.name || 'Countersale');
         const customerAddress = (typeof customerObj === 'object') ? (customerObj.address || '') : '';
         const customerPhone = (typeof customerObj === 'object') ? (customerObj.phone || '') : '';
         const customerVat = (typeof customerObj === 'object') ? (customerObj.vat_number || '') : '';
@@ -47836,7 +47839,7 @@ def pos_page():
             
             <div style="margin-bottom:8px;font-size:13px;">
                 <span style="background:#333;color:white;padding:3px 8px;border-radius:3px;font-size:12px;">${methodLabel}</span>
-                <span style="margin-left:8px;font-size:13px;">${customerName || 'Cash Sale'}</span>
+                <span style="margin-left:8px;font-size:13px;">${customerName || 'Countersale'}</span>
                 ${customerAddress ? '<div style="font-size:11px;color:#666;margin-top:4px;margin-left:4px;">' + customerAddress.replace(/\\n/g, '<br>') + '</div>' : ''}
                 ${customerPhone ? '<div style="font-size:11px;color:#666;margin-left:4px;">Tel: ' + customerPhone + '</div>' : ''}
                 ${customerVat ? '<div style="font-size:11px;color:#666;margin-left:4px;font-weight:bold;">VAT: ' + customerVat + '</div>' : ''}
@@ -48716,7 +48719,7 @@ def pos_page():
             <button class="f11-btn" onclick="createCreditNote()" id="f11Credit" disabled><span class="pk">F10</span>CR</button>
         </div>
         <div class="f11-right">
-            <div class="f11-cust" id="f11CustName">Cash Sale</div>
+            <div class="f11-cust" id="f11CustName">Countersale</div>
             <div class="f11-total" id="f11Total">R0.00</div>
             <button class="f11-exit" onclick="toggleF11()"><span class="pk">F11</span>EXIT</button>
         </div>
@@ -48889,7 +48892,7 @@ def pos_page():
         const el = document.getElementById('f11CustName');
         if (!el) return;
         const search = document.getElementById('entitySearch');
-        el.textContent = (search && search.value) ? search.value : 'Cash Sale';
+        el.textContent = (search && search.value) ? search.value : 'Countersale';
     }}
 
     // F11 smart search with live dropdown
@@ -49151,7 +49154,7 @@ def pos_history():
         
         # Default customer name based on payment method
         pm = s.get("payment_method", "cash").lower()
-        default_name = {"cash": "Cash Sale", "card": "Card Sale", "account": "Account Sale"}.get(pm, "Sale")
+        default_name = {"cash": "Countersale Cash", "card": "Countersale Card", "account": "Countersale Account"}.get(pm, "Countersale")
         
         transactions.append({
             "id": s.get("id"),
@@ -49728,7 +49731,7 @@ def view_sale(sale_id):
             
             <div style="margin-bottom:15px;">
                 <span style="background:{method_color};color:white;padding:4px 12px;border-radius:4px;font-size:12px;">{payment_method}</span>
-                <span style="margin-left:10px;color:#666;">{safe_string(sale.get("customer_name") or ({"CASH": "Cash Sale", "CARD": "Card Sale", "ACCOUNT": "Account Sale"}.get(payment_method, "Sale")))}</span>
+                <span style="margin-left:10px;color:#666;">{safe_string(sale.get("customer_name") or ({"CASH": "Countersale Cash", "CARD": "Countersale Card", "ACCOUNT": "Countersale Account"}.get(payment_method, "Countersale")))}</span>
             </div>
             
             <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
@@ -49919,11 +49922,13 @@ def api_pos_sale():
         items = data.get("items", [])
         customer_id = data.get("customer_id", "")
         payment_method = data.get("payment_method", "cash")
-        # Default customer name based on payment method (not always "Cash")
-        default_name = {"cash": "Cash Sale", "card": "Card Sale", "account": "Account Sale"}.get(payment_method, "Sale")
+        # Build sale label: "Countersale Cash - Piet" or "Countersale Card - Isaac"
+        method_label = {"cash": "Cash", "card": "Card", "account": "Account"}.get(payment_method, "Sale")
+        cashier_display = data.get("cashier_name", "")
+        default_name = f"Countersale {method_label} - {cashier_display}" if cashier_display else f"Countersale {method_label}"
         customer_name = data.get("customer_name") or default_name
         cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
-        logger.info(f"[POS] Sale by cashier_id={cashier_id}, cashier_name={data.get('cashier_name','')}, logged_in_user={user.get('id') if user else 'none'}")
+        logger.info(f"[POS] Sale by cashier_id={cashier_id}, cashier_name={cashier_display}, logged_in_user={user.get('id') if user else 'none'}")
         
         if not items:
             return jsonify({"success": False, "error": "No items in cart"})
@@ -49975,7 +49980,7 @@ def api_pos_sale():
         
         # Determine debit account based on payment method
         if payment_method == "cash":
-            debit_account = "1100"  # Petty Cash (POS cash sales)
+            debit_account = "1050"  # Cash On Hand (POS counter cash)
             debit_name = "Cash"
         elif payment_method == "card":
             debit_account = "1000"  # Bank (card payments go to bank)
@@ -50094,7 +50099,9 @@ def api_pos_sync_offline():
                 items = queued_sale.get("items", [])
                 customer_id = queued_sale.get("customer_id", "")
                 payment_method = queued_sale.get("payment_method", "cash")
-                default_name = {"cash": "Cash Sale", "card": "Card Sale", "account": "Account Sale"}.get(payment_method, "Sale")
+                method_label = {"cash": "Cash", "card": "Card", "account": "Account"}.get(payment_method, "Sale")
+                cashier_display = queued_sale.get("cashier_name", "")
+                default_name = f"Countersale {method_label} - {cashier_display}" if cashier_display else f"Countersale {method_label}"
                 customer_name = queued_sale.get("customer_name") or default_name
                 cashier_id = queued_sale.get("cashier_id") or (user.get("id") if user else None)
                 
@@ -50138,7 +50145,7 @@ def api_pos_sync_offline():
                 
                 # GL entries
                 if payment_method == "cash":
-                    debit_account, debit_name = "1100", "Cash"
+                    debit_account, debit_name = "1050", "Cash"
                 elif payment_method == "card":
                     debit_account, debit_name = "1000", "Card"
                 else:
@@ -50237,7 +50244,7 @@ def api_pos_quote():
         
         # Generate quote number
         existing = db.get("quotes", {"business_id": biz_id}) if biz_id else []
-        quote_num = f"Q-{len(existing) + 1:05d}"
+        quote_num = next_document_number("Q-", existing, "quote_number")
         
         # Create quote using RecordFactory
         user = Auth.get_current_user()
@@ -50368,7 +50375,7 @@ def api_pos_quick_quote():
         
         # Generate quote number
         existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
-        quote_num = f"Q-{len(existing_quotes) + 1:05d}"
+        quote_num = next_document_number("Q-", existing_quotes, "quote_number")
         
         # Create quote
         quote = RecordFactory.quote(
@@ -50747,7 +50754,7 @@ def api_pos_credit_note():
         
         # Generate credit note number
         existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
-        cn_num = f"CN-{len(existing) + 1:05d}"
+        cn_num = next_document_number("CN-", existing, "credit_note_number")
         
         # Create credit note
         cn_id = generate_id()
@@ -60476,7 +60483,7 @@ def api_banking_categorize():
                 # POS cash deposited into bank
                 create_journal_entry(biz_id, txn_date, desc_short, ref, [
                     {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
-                    {"account_code": "1100", "debit": 0, "credit": income_rounded},    # Petty Cash down
+                    {"account_code": "1050", "debit": 0, "credit": income_rounded},    # Cash On Hand down
                 ])
                 
             elif category == "Owner Capital Introduced":
@@ -61219,7 +61226,7 @@ def quote_create_job_card(quote_id):
     # Generate job card number
     existing_jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
     year = datetime.now().year
-    job_number = f"JC-{year}-{len(existing_jobs) + 1:03d}"
+    job_number = next_document_number(f"JC-{year}-", existing_jobs, "job_number")
     
     # Create job card
     job_id = generate_id()
@@ -62668,7 +62675,7 @@ def api_job_card_create_dn(job_id):
         
         # Generate DN number
         existing_dns = db.get("delivery_notes", {"business_id": biz_id}) if biz_id else []
-        dn_number = f"DN-{len(existing_dns) + 1:05d}"
+        dn_number = next_document_number("DN-", existing_dns, "dn_number")
         
         # Create delivery note
         dn_id = generate_id()
@@ -62732,7 +62739,7 @@ def api_job_card_create_both(job_id):
         
         # === CREATE DELIVERY NOTE ===
         existing_dns = db.get("delivery_notes", {"business_id": biz_id}) if biz_id else []
-        dn_number = f"DN-{len(existing_dns) + 1:05d}"
+        dn_number = next_document_number("DN-", existing_dns, "dn_number")
         
         dn = RecordFactory.delivery_note(
             business_id=biz_id,
@@ -67538,7 +67545,7 @@ def api_smart_quote_save():
         
         # Generate quote number
         existing = db.get("quotes", {"business_id": biz_id}) or []
-        quote_num = f"QT{len(existing) + 1:04d}"
+        quote_num = next_document_number("QT", existing, "quote_number")
         
         # Calculate totals
         subtotal = sum(item.get("total", 0) for item in items)
@@ -68092,7 +68099,7 @@ def create_credit_note(invoice_id):
         
         # Generate credit note number
         existing = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
-        cn_num = f"CN-{len(existing) + 1:04d}"
+        cn_num = next_document_number("CN-", existing, "credit_note_number")
         
         cn_id = generate_id()
         credit_note = {
@@ -70483,7 +70490,7 @@ def api_scan_create_quote_from_order():
         total = round(subtotal + vat, 2)
         
         existing_quotes = db.get("quotes", {"business_id": biz_id}) or []
-        quote_num = f"Q-{len(existing_quotes) + 1:05d}"
+        quote_num = next_document_number("Q-", existing_quotes, "quote_number")
         
         quote = RecordFactory.quote(
             business_id=biz_id, customer_id=customer_id, customer_name=customer_name,
