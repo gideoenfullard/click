@@ -1,0 +1,820 @@
+"""
+ClickAI Order Scanner v2 — Order-to-Invoice Pipeline
+Jacqo OCR -> Zane Smart Match (Claude API) -> Jayden Calc -> Draft Invoice
+-> Daphny Notification -> Review Queue -> Approve -> Live Invoice + GL
+
+v2: Zane AI matching, auto email check every 5 min, real-time notifications
+"""
+import json
+import logging
+import base64
+import io
+import time
+import threading
+from decimal import Decimal
+
+logger = logging.getLogger(__name__)
+
+
+def register_order_scanner_routes(app, db, login_required):
+    from flask import request, jsonify, session, redirect
+
+    try:
+        from clickai import (
+            render_page, generate_id, now, today, money, safe_string,
+            create_journal_entry, next_document_number, RecordFactory,
+            VAT_RATE, preprocess_image_for_ocr, extract_json_from_text,
+            _anthropic_client, Auth, EmailScanner
+        )
+    except ImportError:
+        logger.warning("[ORDER SCANNER] Could not import from clickai")
+        return
+
+    logger.info("[ORDER SCANNER] Registering v2 routes (Zane + Auto + Notifications)")
+
+    # ── NOTIFICATIONS ──
+    def send_notification(biz_id, title, message, link=""):
+        try:
+            db.save("notifications", {
+                "id": generate_id(), "business_id": biz_id,
+                "user_role": "reviewer", "title": title,
+                "message": message, "link": link,
+                "read": False, "created_at": now()
+            })
+            logger.info(f"[NOTIFY] {title}: {message}")
+        except Exception as e:
+            logger.warning(f"[NOTIFY] Failed: {e}")
+
+    # ── ZANE SMART MATCH — Claude API does intelligent stock matching ──
+    def zane_smart_match(ocr_items, all_stock, biz_id):
+        if not ocr_items or not all_stock:
+            return None
+
+        stock_lines = []
+        for s in all_stock[:2000]:
+            code = s.get("code", "")
+            desc = s.get("description", "")
+            price = float(s.get("price") or s.get("selling_price") or 0)
+            qty = float(s.get("qty") or s.get("quantity") or 0)
+            sid = s.get("id", "")
+            if code or desc:
+                stock_lines.append(f"{code}|{desc}|R{price:.2f}|qty:{qty:.0f}|id:{sid}")
+
+        stock_text = "\n".join(stock_lines)
+
+        ocr_text = ""
+        for i, item in enumerate(ocr_items):
+            desc = item.get("description", "")
+            qty = item.get("qty", 1)
+            op = float(item.get("order_price") or item.get("price") or 0)
+            ocr_text += f'{i+1}. "{desc}" — qty: {qty}, order price: R{op:.2f}\n'
+
+        prompt = f"""You are Zane, stock matching expert for a South African steel/hardware supplier.
+Match EACH customer order item to the BEST stock item from our database.
+
+CUSTOMER ORDER ITEMS:
+{ocr_text}
+
+STOCK DATABASE (code|description|selling_price|qty_available|id):
+{stock_text}
+
+MATCHING RULES:
+1. Match product type first (tube=tube, bolt=bolt, angle=angle, sheet=sheet, pipe=pipe)
+2. Match dimensions: "25mm" matches "25", "M16x80" matches "M16X80"
+3. Stock code abbreviations: TB=tube, BLT=bolt, NT=nut, WS=washer, AN=angle, PP=pipe, SH=sheet, PL=plate, FL=flange, EL=elbow
+4. SS = stainless steel, could be "304" or "316"
+5. Use OUR selling price, NOT the customer order price
+6. line_total = qty x stock_price
+7. confidence 0-100. If confidence < 60, set matched=false
+
+Return ONLY valid JSON array:
+[
+  {{"order_index": 1, "order_description": "from order", "matched": true, "stock_id": "id", "stock_code": "CODE", "stock_description": "desc", "stock_price": 125.50, "qty": 10, "line_total": 1255.00, "confidence": 95, "flag_reason": ""}},
+  {{"order_index": 2, "order_description": "unknown", "matched": false, "stock_id": "", "stock_code": "", "stock_description": "", "stock_price": 0, "qty": 5, "line_total": 0, "confidence": 0, "flag_reason": "Not found in stock"}}
+]"""
+
+        try:
+            client = _anthropic_client
+            message = client.messages.create(
+                model="claude-sonnet-4-6", max_tokens=4000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = message.content[0].text.strip()
+            matched = extract_json_from_text(raw)
+
+            if matched and isinstance(matched, list):
+                logger.info(f"[ZANE MATCH] {len(matched)} items, {sum(1 for m in matched if m.get('matched'))} matched")
+                stock_by_id = {s.get("id", ""): s for s in all_stock}
+                for item in matched:
+                    sid = item.get("stock_id", "")
+                    if sid and sid in stock_by_id:
+                        item["stock_qty"] = float(stock_by_id[sid].get("qty") or stock_by_id[sid].get("quantity") or 0)
+                    else:
+                        item["stock_qty"] = 0
+                    item["flagged"] = not item.get("matched", False)
+                    if not item.get("flag_reason") and item["flagged"]:
+                        item["flag_reason"] = "Not found in stock"
+                    idx = item.get("order_index", 1) - 1
+                    if 0 <= idx < len(ocr_items):
+                        item["order_price"] = float(ocr_items[idx].get("order_price") or ocr_items[idx].get("price") or 0)
+                    else:
+                        item["order_price"] = 0
+                    item["description"] = item.get("order_description", "")
+                    item["code"] = item.get("stock_code", "")
+                return matched
+            else:
+                logger.warning(f"[ZANE MATCH] Parse failed: {raw[:200]}")
+                return None
+        except Exception as e:
+            logger.error(f"[ZANE MATCH] API failed: {e}")
+            return None
+
+    # ── FALLBACK basic matching if Zane API fails ──
+    def fallback_match(ocr_items, all_stock):
+        results = []
+        for item in ocr_items:
+            desc = (item.get("description") or "").strip()
+            qty = float(item.get("qty") or 1)
+            op = float(item.get("order_price") or item.get("price") or 0)
+            if not desc:
+                continue
+            words = [w.lower() for w in desc.replace('-',' ').replace('/',' ').split() if len(w) > 1]
+            best, best_score = None, 0
+            for s in all_stock:
+                combined = f"{(s.get('code') or '').lower()} {(s.get('description') or '').lower()}"
+                matches = sum(1 for w in words if w in combined)
+                pct = matches / len(words) if words else 0
+                if matches > best_score and pct >= 0.5:
+                    best_score = matches
+                    best = s
+            conf = round((best_score / len(words) * 100) if words else 0)
+            if best and conf >= 50:
+                sp = float(best.get("price") or best.get("selling_price") or 0)
+                results.append({"description": desc, "stock_description": best.get("description",""), "code": best.get("code",""), "stock_id": best.get("id",""), "qty": qty, "stock_price": sp, "order_price": op, "line_total": round(qty*sp,2), "matched": True, "confidence": conf, "flagged": False, "flag_reason": "", "stock_qty": float(best.get("qty") or 0)})
+            else:
+                results.append({"description": desc, "stock_description": "", "code": "", "stock_id": "", "qty": qty, "stock_price": 0, "order_price": op, "line_total": 0, "matched": False, "confidence": conf, "flagged": True, "flag_reason": "Not found in stock", "stock_qty": 0})
+        return results
+
+    def match_customer(name_text, biz_id):
+        if not name_text or not biz_id:
+            return None
+        customers = db.get("customers", {"business_id": biz_id}) or []
+        nl = name_text.lower().strip()
+        for c in customers:
+            if nl == (c.get("name") or "").lower():
+                return c
+        for c in customers:
+            cn = (c.get("name") or "").lower()
+            if nl in cn or cn in nl:
+                return c
+        nw = set(nl.split())
+        for c in customers:
+            cw = set((c.get("name") or "").lower().split())
+            if len(nw & cw) >= min(2, len(nw)):
+                return c
+        return None
+
+    # ── CORE PIPELINE ──
+    def run_order_pipeline(biz_id, user_id, ocr_data, source_type="scan",
+                           source_sender="", source_subject="", source_filename="",
+                           image_data="", customer_hint=""):
+        ocr_items = ocr_data.get("items", [])
+        if not ocr_items:
+            return False, "No items found"
+
+        all_stock = db.get_all_stock(biz_id)
+
+        logger.info(f"[ORDER] Zane matching {len(ocr_items)} items vs {len(all_stock)} stock...")
+        matched_items = zane_smart_match(ocr_items, all_stock, biz_id)
+        if not matched_items:
+            logger.warning("[ORDER] Zane failed, using fallback")
+            matched_items = fallback_match(ocr_items, all_stock)
+        if not matched_items:
+            return False, "Could not match items"
+
+        items_matched = sum(1 for i in matched_items if i.get("matched"))
+        items_flagged = sum(1 for i in matched_items if i.get("flagged"))
+        subtotal = Decimal("0")
+        for item in matched_items:
+            subtotal += Decimal(str(item.get("line_total", 0)))
+        vat_amount = (subtotal * Decimal("0.15")).quantize(Decimal("0.01"))
+        total = subtotal + vat_amount
+
+        customer_name = customer_hint or ocr_data.get("customer_name", "")
+        customer = match_customer(customer_name, biz_id) if customer_name else None
+        if not customer and source_sender and "@" in source_sender:
+            domain = source_sender.split("@")[-1].split(".")[0]
+            if domain and len(domain) > 3:
+                customer = match_customer(domain, biz_id)
+
+        draft_id = generate_id()
+        notes_parts = []
+        if ocr_data.get("customer_ref"):
+            notes_parts.append(f"PO/Ref: {ocr_data['customer_ref']}")
+        if ocr_data.get("delivery_notes"):
+            notes_parts.append(ocr_data["delivery_notes"])
+        if source_sender:
+            notes_parts.append(f"Email: {source_sender}")
+        if source_subject:
+            notes_parts.append(f"Subject: {source_subject}")
+
+        draft = {
+            "id": draft_id, "business_id": biz_id,
+            "source_type": source_type, "source_sender": source_sender,
+            "source_subject": source_subject, "source_filename": source_filename,
+            "original_image": image_data[:500000] if image_data else "",
+            "ocr_raw_text": json.dumps(ocr_data)[:5000],
+            "customer_id": customer.get("id", "") if customer else "",
+            "customer_name": customer.get("name", "") if customer else customer_name,
+            "customer_matched": bool(customer),
+            "items": json.dumps(matched_items),
+            "subtotal": float(subtotal), "vat": float(vat_amount), "total": float(total),
+            "status": "pending_review", "created_at": now(), "created_by": user_id,
+            "notes": "\n".join(notes_parts)
+        }
+
+        success, result = db.save("order_drafts", draft)
+        if success:
+            logger.info(f"[ORDER] Draft {draft_id}: {len(matched_items)} items, {items_matched} matched, {items_flagged} flagged, R{float(total):.2f}")
+            cust_display = customer.get("name") if customer else (customer_name or "Unknown")
+            send_notification(biz_id,
+                "New Order Ready",
+                f"{cust_display} - {len(matched_items)} items, R{float(total):,.2f}" + (f" ({items_flagged} need attention)" if items_flagged else ""),
+                link=f"/orders/review/{draft_id}")
+            return True, {"id": draft_id, "customer_name": draft["customer_name"], "items_total": len(matched_items), "items_matched": items_matched, "items_flagged": items_flagged, "subtotal": float(subtotal), "vat": float(vat_amount), "total": float(total)}
+        return False, f"Save failed: {str(result)[:200]}"
+
+    # ── BACKGROUND EMAIL CHECKER ──
+    class OrderEmailChecker:
+        _running = False
+        _interval = 300
+
+        @classmethod
+        def start(cls):
+            if cls._running:
+                return
+            cls._running = True
+            thread = threading.Thread(target=cls._run_loop, daemon=True)
+            thread.start()
+            logger.info(f"[ORDER EMAIL] Auto-checker started (every {cls._interval//60} min)")
+
+        @classmethod
+        def stop(cls):
+            cls._running = False
+
+        @classmethod
+        def _run_loop(cls):
+            time.sleep(60)
+            while cls._running:
+                try:
+                    cls._check_all()
+                except Exception as e:
+                    logger.error(f"[ORDER EMAIL] Loop error: {e}")
+                for _ in range(cls._interval // 10):
+                    if not cls._running:
+                        break
+                    time.sleep(10)
+
+        @classmethod
+        def _check_all(cls):
+            try:
+                businesses = db.get("businesses", {}) or []
+                for biz in businesses:
+                    biz_id = biz.get("id")
+                    imap_user = biz.get("imap_user")
+                    imap_pass = biz.get("imap_pass")
+                    imap_host = biz.get("imap_host", "imap.gmail.com")
+                    if not imap_user or not imap_pass:
+                        continue
+                    try:
+                        cls._check_one(biz_id, imap_host, imap_user, imap_pass)
+                    except Exception as e:
+                        logger.error(f"[ORDER EMAIL] {biz.get('name','')}: {e}")
+                    time.sleep(2)
+            except Exception as e:
+                logger.error(f"[ORDER EMAIL] {e}")
+
+        @classmethod
+        def _check_one(cls, biz_id, imap_host, imap_user, imap_pass):
+            emails = EmailScanner.fetch_new_emails(imap_host, imap_user, imap_pass)
+            if not emails:
+                return
+            logger.info(f"[ORDER EMAIL] {len(emails)} emails for {biz_id}")
+            order_kw = ["order", "bestelling", "po ", "purchase", "quote request", "kwotasie", "please supply", "lewer asb", "benodig", "need", "require", "rfq", "bestellys"]
+            for email_data in emails:
+                sender = email_data.get("sender", "")
+                subject = email_data.get("subject", "")
+                is_order = any(kw in subject.lower() for kw in order_kw)
+                for att in email_data.get("attachments", []):
+                    try:
+                        processed = EmailScanner.process_attachment(att.get("data"), att.get("filename", "unknown"), att.get("content_type", "application/octet-stream"))
+                        classification = processed.get("classification", "")
+                        extracted = processed.get("extracted_data", {})
+                        if (is_order or classification in ("customer_order", "purchase_order", "quote_request")) and extracted.get("items"):
+                            img = base64.b64encode(att.get("data", b"")).decode("utf-8") if att.get("data") else ""
+                            success, _ = run_order_pipeline(biz_id=biz_id, user_id="auto_email", ocr_data=extracted, source_type="email", source_sender=sender, source_subject=subject, source_filename=att.get("filename",""), image_data=img)
+                            if success:
+                                logger.info(f"[ORDER EMAIL] Auto-processed from {sender}")
+                    except Exception as e:
+                        logger.error(f"[ORDER EMAIL] Attachment error: {e}")
+
+    # ══════════════════════════════════════════════════════════
+    # ROUTES
+    # ══════════════════════════════════════════════════════════
+
+    @app.route("/orders/scan")
+    @login_required
+    def order_scan_page():
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        pending_count = 0
+        if biz_id:
+            try:
+                drafts = db.get("order_drafts", {"business_id": biz_id})
+                pending_count = len([d for d in (drafts or []) if d.get("status") == "pending_review"])
+            except:
+                pass
+
+        content = f'''
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h2>Scan Customer Order</h2>
+                <a href="/orders/review" class="btn btn-secondary" style="padding:8px 16px;">
+                    Review Queue {f'<span style="background:var(--red);color:white;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:5px;">{pending_count}</span>' if pending_count > 0 else ''}
+                </a>
+            </div>
+            <p style="color:var(--text-muted);margin-bottom:20px;">Upload an order — Jacqo reads it, Zane matches stock, Jayden calculates your prices.</p>
+            <div id="step1">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                    <button type="button" class="btn btn-primary" style="padding:30px;font-size:16px;" onclick="document.getElementById('cameraInput').click()">Take Photo</button>
+                    <button type="button" class="btn btn-secondary" style="padding:30px;font-size:16px;" onclick="document.getElementById('fileInput').click()">Upload File</button>
+                </div>
+                <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;" onchange="handleFile(this.files[0])">
+                <input type="file" id="fileInput" accept="image/*,.pdf" style="display:none;" onchange="handleFile(this.files[0])">
+                <div style="text-align:center;padding:30px;border:2px dashed var(--border);border-radius:12px;margin-top:15px;cursor:pointer;" onclick="document.getElementById('fileInput').click()" ondragover="event.preventDefault();this.style.borderColor='var(--primary)'" ondragleave="this.style.borderColor='var(--border)'" ondrop="event.preventDefault();this.style.borderColor='var(--border)';handleFile(event.dataTransfer.files[0])">
+                    <div style="font-size:40px;margin-bottom:10px;">📄</div>
+                    <p style="color:var(--text-muted);">Drag & drop order here</p>
+                    <p style="color:var(--text-muted);font-size:12px;margin-top:5px;">WhatsApp, photos, PDFs, faxes — anything</p>
+                </div>
+            </div>
+            <div id="step2" style="display:none;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                    <span style="background:#f59e0b;padding:5px 12px;border-radius:20px;font-size:13px;color:white;">Customer Order</span>
+                    <button onclick="reset()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;">Start over</button>
+                </div>
+                <img id="previewImg" style="max-width:100%;max-height:300px;border-radius:8px;margin-bottom:15px;display:block;">
+                <div style="margin-bottom:15px;">
+                    <label style="color:var(--text-muted);font-size:13px;">Customer name (optional):</label>
+                    <input type="text" id="customerHint" class="form-input" placeholder="e.g. NDE Engineering" style="margin-top:5px;">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <button class="btn btn-primary" onclick="process()" id="processBtn" style="padding:18px;font-size:16px;">Process Order</button>
+                    <button class="btn btn-secondary" onclick="reset()" style="padding:18px;">Different Photo</button>
+                </div>
+            </div>
+            <div id="step3" style="display:none;text-align:center;padding:40px;">
+                <div id="pAnim" style="font-size:48px;animation:spin 2s linear infinite;">&#x1F440;</div>
+                <p style="margin-top:15px;" id="pWho"><strong style="color:#f59e0b;">Jacqo</strong> is reading...</p>
+                <p style="color:var(--text-muted);font-size:13px;margin-top:10px;" id="pStep">Step 1/3: OCR extraction</p>
+                <style>@keyframes spin {{ 0%{{transform:rotate(0deg)}} 100%{{transform:rotate(360deg)}} }}</style>
+            </div>
+            <div id="step4" style="display:none;text-align:center;padding:20px;">
+                <div style="font-size:48px;margin-bottom:10px;" id="rIcon">&#x2705;</div>
+                <h3 id="rTitle" style="margin-bottom:5px;"></h3>
+                <p id="rMsg" style="color:var(--text-muted);margin-bottom:20px;"></p>
+                <div style="display:grid;gap:10px;max-width:350px;margin:0 auto;">
+                    <a href="/orders/review" class="btn btn-primary" style="padding:15px;text-decoration:none;font-size:16px;">Go to Review Queue</a>
+                    <button class="btn btn-secondary" onclick="reset()" style="padding:15px;">Scan Another</button>
+                </div>
+            </div>
+        </div>
+        <script>
+        let orderFile=null;
+        function goStep(s){{ for(let i=1;i<=4;i++) document.getElementById('step'+i).style.display='none'; document.getElementById('step'+s).style.display='block'; }}
+        function handleFile(f){{ if(!f)return; orderFile=f; const r=new FileReader(); r.onload=e=>{{ document.getElementById('previewImg').src=e.target.result; goStep(2); }}; r.readAsDataURL(f); }}
+        async function process(){{
+            if(!orderFile)return;
+            document.getElementById('processBtn').disabled=true;
+            goStep(3);
+            const steps=[['👀','Jacqo','Step 1/3: Reading document...'],['🧠','Zane','Step 2/3: Matching stock...'],['🧮','Jayden','Step 3/3: Calculating prices...']];
+            let si=0;
+            const timer=setInterval(()=>{{si=Math.min(si+1,2);document.getElementById('pAnim').textContent=steps[si][0];document.getElementById('pWho').innerHTML='<strong style="color:#f59e0b;">'+steps[si][1]+'</strong> is working...';document.getElementById('pStep').textContent=steps[si][2];}},3000);
+            const fd=new FormData(); fd.append('file',orderFile); fd.append('customer_hint',document.getElementById('customerHint').value);
+            try{{
+                const r=await fetch('/api/orders/process',{{method:'POST',body:fd}});
+                const d=await r.json();
+                clearInterval(timer);
+                if(d.success){{
+                    const dr=d.draft;
+                    document.getElementById('rIcon').textContent=dr.items_flagged>0?'⚠️':'✅';
+                    document.getElementById('rTitle').textContent=dr.items_flagged>0?'Draft Created - '+dr.items_flagged+' need attention':'Draft Invoice Created!';
+                    document.getElementById('rMsg').innerHTML='<strong>'+dr.customer_name+'</strong><br>'+dr.items_total+' items, '+dr.items_matched+' matched, R'+parseFloat(dr.total).toFixed(2);
+                    goStep(4);
+                }}else{{
+                    document.getElementById('rIcon').textContent='❌';
+                    document.getElementById('rTitle').textContent='Could Not Process';
+                    document.getElementById('rMsg').textContent=d.error||'Try a clearer photo.';
+                    goStep(4);
+                }}
+            }}catch(e){{clearInterval(timer);document.getElementById('rIcon').textContent='❌';document.getElementById('rTitle').textContent='Error';document.getElementById('rMsg').textContent=e.message;goStep(4);}}
+            document.getElementById('processBtn').disabled=false;
+        }}
+        function reset(){{ orderFile=null; document.getElementById('cameraInput').value=''; document.getElementById('fileInput').value=''; document.getElementById('customerHint').value=''; goStep(1); }}
+        </script>'''
+        return render_page("Scan Customer Order", content, user, "orders")
+
+    @app.route("/api/orders/process", methods=["POST"])
+    @login_required
+    def api_order_process():
+        try:
+            file = request.files.get("file")
+            customer_hint = request.form.get("customer_hint", "").strip()
+            if not file:
+                return jsonify({"success": False, "error": "No file uploaded"})
+            business = Auth.get_current_business()
+            user = Auth.get_current_user()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business selected"})
+
+            file_data = file.read()
+            filename = file.filename.lower() if file.filename else "order.jpg"
+            media_type = "application/pdf" if filename.endswith('.pdf') else ("image/png" if filename.endswith('.png') else "image/jpeg")
+            if media_type.startswith('image/'):
+                file_data = preprocess_image_for_ocr(file_data, filename)
+            if len(file_data) > 3500000 and media_type.startswith('image/'):
+                try:
+                    from PIL import Image as PILImage
+                    img = PILImage.open(io.BytesIO(file_data))
+                    if img.mode in ('RGBA','P'):
+                        img = img.convert('RGB')
+                    img.thumbnail((1800,1800), PILImage.Resampling.LANCZOS)
+                    output = io.BytesIO()
+                    img.save(output, format='JPEG', quality=75, optimize=True)
+                    file_data = output.getvalue()
+                    media_type = "image/jpeg"
+                except:
+                    pass
+            if len(file_data) > 4800000:
+                return jsonify({"success": False, "error": "Image too large."})
+
+            base64_data = base64.b64encode(file_data).decode('utf-8')
+            logger.info(f"[ORDER] Jacqo scanning ({len(file_data)/1024:.0f}KB)")
+
+            prompt = """You are reading a CUSTOMER ORDER (PO, WhatsApp order, fax, handwritten note, email).
+Extract what they want to buy. Return ONLY JSON:
+{
+    "customer_name": "Company name",
+    "customer_ref": "PO number if shown",
+    "delivery_notes": "Any delivery instructions",
+    "items": [
+        {"description": "Item exactly as written", "qty": 10, "order_price": 0.00}
+    ]
+}
+Rules: Copy descriptions EXACTLY. Read ALL items. If no qty, assume 1. If no price, set 0."""
+
+            client = _anthropic_client
+            message = client.messages.create(model="claude-sonnet-4-6", max_tokens=4000,
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                    {"type": "text", "text": prompt}]}])
+            raw_text = message.content[0].text.strip()
+            ocr_data = extract_json_from_text(raw_text)
+            if not ocr_data or not ocr_data.get("items"):
+                return jsonify({"success": False, "error": "Could not read items. Try clearer photo."})
+
+            logger.info(f"[ORDER] Jacqo found {len(ocr_data['items'])} items")
+            success, result = run_order_pipeline(biz_id=biz_id, user_id=user.get("id","") if user else "", ocr_data=ocr_data, source_type="scan", source_filename=filename, image_data=base64_data, customer_hint=customer_hint)
+            if success:
+                return jsonify({"success": True, "draft": result})
+            return jsonify({"success": False, "error": result})
+        except Exception as e:
+            logger.error(f"[ORDER] Error: {e}", exc_info=True)
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/orders/check-emails", methods=["POST"])
+    @login_required
+    def api_order_check_emails():
+        try:
+            business = Auth.get_current_business()
+            user = Auth.get_current_user()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business"})
+            imap_host = business.get("imap_host", "imap.gmail.com")
+            imap_user = business.get("imap_user", "")
+            imap_pass = business.get("imap_pass", "")
+            if not imap_user or not imap_pass:
+                return jsonify({"success": False, "error": "Scanner inbox not configured."})
+
+            emails = EmailScanner.fetch_new_emails(imap_host, imap_user, imap_pass)
+            order_kw = ["order","bestelling","po ","purchase","quote request","kwotasie","please supply","lewer asb","benodig","need","require","rfq"]
+            orders_found = 0
+            for email_data in emails:
+                sender = email_data.get("sender","")
+                subject = email_data.get("subject","")
+                is_order = any(kw in subject.lower() for kw in order_kw)
+                for att in email_data.get("attachments",[]):
+                    try:
+                        processed = EmailScanner.process_attachment(att.get("data"), att.get("filename","unknown"), att.get("content_type","application/octet-stream"))
+                        classification = processed.get("classification","")
+                        extracted = processed.get("extracted_data",{})
+                        if (is_order or classification in ("customer_order","purchase_order","quote_request")) and extracted.get("items"):
+                            img = base64.b64encode(att.get("data",b"")).decode("utf-8") if att.get("data") else ""
+                            s, _ = run_order_pipeline(biz_id=biz_id, user_id=user.get("id","") if user else "", ocr_data=extracted, source_type="email", source_sender=sender, source_subject=subject, source_filename=att.get("filename",""), image_data=img)
+                            if s:
+                                orders_found += 1
+                    except Exception as e:
+                        logger.error(f"[ORDER EMAIL] {e}")
+            return jsonify({"success": True, "orders_found": orders_found, "emails_checked": len(emails)})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/orders/notifications")
+    @login_required
+    def api_order_notifications():
+        try:
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": True, "notifications": [], "count": 0})
+            notifs = db.get("notifications", {"business_id": biz_id}) or []
+            unread = sorted([n for n in notifs if not n.get("read")], key=lambda x: x.get("created_at",""), reverse=True)[:20]
+            return jsonify({"success": True, "notifications": unread, "count": len(unread)})
+        except:
+            return jsonify({"success": True, "notifications": [], "count": 0})
+
+    @app.route("/api/orders/notifications/read", methods=["POST"])
+    @login_required
+    def api_order_notifications_read():
+        try:
+            data = request.get_json()
+            for nid in data.get("ids", []):
+                try:
+                    db.save("notifications", {"id": nid, "read": True})
+                except:
+                    pass
+            return jsonify({"success": True})
+        except:
+            return jsonify({"success": True})
+
+    @app.route("/orders/review")
+    @login_required
+    def order_review_page():
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return render_page("Order Review", "<div class='card'><p>No business selected</p></div>", user, "orders")
+        try:
+            drafts = db.get("order_drafts", {"business_id": biz_id}) or []
+        except:
+            drafts = []
+
+        pending = sorted([d for d in drafts if d.get("status")=="pending_review"], key=lambda x: x.get("created_at",""), reverse=True)
+        saved = sorted([d for d in drafts if d.get("status")=="saved_later"], key=lambda x: x.get("created_at",""), reverse=True)
+        approved = [d for d in drafts if d.get("status")=="approved"]
+        rejected = [d for d in drafts if d.get("status")=="rejected"]
+
+        def row(d, show_st=False):
+            items = json.loads(d.get("items","[]")) if isinstance(d.get("items"), str) else (d.get("items") or [])
+            flagged = len([i for i in items if i.get("flagged")])
+            total_items = len(items)
+            matched = len([i for i in items if i.get("matched")])
+            total = float(d.get("total") or 0)
+            customer = d.get("customer_name") or "Unknown"
+            src = {"scan":"📷","email":"📧","whatsapp":"💬"}.get(d.get("source_type","scan"),"📄")
+            created = d.get("created_at","")[:16].replace("T"," ")
+            sb = ""
+            if show_st:
+                sc = {"approved":"var(--green)","rejected":"var(--red)","saved_later":"#f59e0b"}.get(d.get("status",""),"gray")
+                sl = {"approved":"Approved","rejected":"Rejected","saved_later":"Saved"}.get(d.get("status",""),"")
+                sb = f'<span style="background:{sc};color:white;padding:2px 8px;border-radius:10px;font-size:11px;margin-left:8px;">{sl}</span>'
+            fb = f'<span style="color:var(--red);font-weight:bold;">⚠ {flagged}</span>' if flagged else '<span style="color:var(--green);">✓</span>'
+            il = f' → <a href="/invoice/{d.get("invoice_id","")}" style="color:var(--primary);">{d["invoice_number"]}</a>' if d.get("invoice_number") else ""
+            return f'<tr onclick="window.location=\'/orders/review/{d.get("id")}\'" style="cursor:pointer;"><td>{src}</td><td><strong>{safe_string(customer)}</strong>{sb}{il}</td><td style="text-align:center;">{total_items}</td><td style="text-align:center;">{matched}/{total_items}</td><td style="text-align:center;">{fb}</td><td style="text-align:right;font-weight:bold;">R{total:,.2f}</td><td style="color:var(--text-muted);font-size:12px;">{created}</td></tr>'
+
+        pr = "".join(row(d) for d in pending) or '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);">No orders waiting 🎉</td></tr>'
+        sr = "".join(row(d,True) for d in saved)
+        history = sorted(approved+rejected, key=lambda x: x.get("reviewed_at",x.get("created_at","")), reverse=True)[:20]
+        hr = "".join(row(d,True) for d in history)
+        th = '<thead><tr><th style="width:30px;"></th><th>Customer</th><th style="text-align:center;">Items</th><th style="text-align:center;">Matched</th><th style="text-align:center;">Flags</th><th style="text-align:right;">Total</th><th>Date</th></tr></thead>'
+
+        content = f'''
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                <h2>Order Review Queue</h2>
+                <div style="display:flex;gap:10px;align-items:center;">
+                    <span id="notifBadge" style="display:none;background:var(--red);color:white;padding:4px 10px;border-radius:15px;font-size:12px;cursor:pointer;" onclick="markRead()"></span>
+                    <button class="btn btn-secondary" onclick="checkEmails()" id="checkBtn" style="padding:8px 16px;">📧 Check Emails</button>
+                    <a href="/orders/scan" class="btn btn-primary" style="padding:8px 16px;text-decoration:none;">📦 Scan Order</a>
+                </div>
+            </div>
+            <h3 style="margin-bottom:10px;">Pending Review ({len(pending)})</h3>
+            <div style="overflow-x:auto;margin-bottom:30px;"><table class="data-table" style="width:100%;">{th}<tbody>{pr}</tbody></table></div>
+            {"" if not saved else f'<details style="margin-bottom:30px;"><summary style="cursor:pointer;font-weight:bold;color:var(--text-muted);">Saved for Later ({len(saved)})</summary><div style="overflow-x:auto;margin-top:10px;"><table class="data-table" style="width:100%;">{th}<tbody>{sr}</tbody></table></div></details>'}
+            {"" if not history else f'<details><summary style="cursor:pointer;font-weight:bold;color:var(--text-muted);">History ({len(history)})</summary><div style="overflow-x:auto;margin-top:10px;"><table class="data-table" style="width:100%;">{th}<tbody>{hr}</tbody></table></div></details>'}
+        </div>
+        <script>
+        let notifIds=[];
+        async function checkNotifs(){{ try{{ const r=await fetch('/api/orders/notifications'); const d=await r.json(); const b=document.getElementById('notifBadge'); if(d.count>0){{ b.style.display='inline'; b.textContent='🔔 '+d.count+' new'; notifIds=d.notifications.map(n=>n.id); if(Notification.permission==='granted') new Notification('📦 New Order',{{body:d.notifications[0].message}}); }}else{{ b.style.display='none'; }} }}catch(e){{}} }}
+        async function markRead(){{ if(notifIds.length) {{ await fetch('/api/orders/notifications/read',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{ids:notifIds}})}}); location.reload(); }} }}
+        if('Notification' in window && Notification.permission==='default') Notification.requestPermission();
+        checkNotifs(); setInterval(checkNotifs,30000);
+        setTimeout(()=>location.reload(),120000);
+        async function checkEmails(){{ const b=document.getElementById('checkBtn'); b.innerHTML='⏳ Checking...'; b.disabled=true; try{{ const r=await fetch('/api/orders/check-emails',{{method:'POST'}}); const d=await r.json(); if(d.success&&d.orders_found>0){{ b.innerHTML='✅ '+d.orders_found+' order(s)!'; setTimeout(()=>location.reload(),1500); }}else{{ b.innerHTML='📧 No new'; setTimeout(()=>{{b.innerHTML='📧 Check Emails';b.disabled=false;}},3000); }} }}catch(e){{ alert(e.message); b.innerHTML='📧 Check Emails'; b.disabled=false; }} }}
+        </script>'''
+        return render_page("Order Review Queue", content, user, "orders")
+
+    @app.route("/orders/review/<draft_id>")
+    @login_required
+    def order_review_detail(draft_id):
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        if not biz_id:
+            return render_page("Review","<div class='card'><p>No business</p></div>",user,"orders")
+        try:
+            drafts = db.get("order_drafts", {"id": draft_id})
+            draft = drafts[0] if drafts else None
+        except:
+            draft = None
+        if not draft:
+            return render_page("Review","<div class='card'><p>Not found</p></div>",user,"orders")
+
+        items = json.loads(draft.get("items","[]")) if isinstance(draft.get("items"),str) else (draft.get("items") or [])
+        customers = sorted(db.get("customers",{"business_id":biz_id}) or [], key=lambda x: x.get("name",""))
+        copts = '<option value="">-- Select Customer --</option>'
+        for c in customers:
+            sel = 'selected' if c.get("id")==draft.get("customer_id") else ""
+            copts += f'<option value="{c.get("id")}" {sel}>{safe_string(c.get("name",""))}</option>'
+
+        ihtml = ""
+        for i, item in enumerate(items):
+            fl = item.get("flagged",False)
+            mt = item.get("matched",False)
+            bg = "rgba(239,68,68,0.1)" if fl else ""
+            icon = "⚠️" if fl else "✅"
+            conf = item.get("confidence",0)
+            sq = item.get("stock_qty",0)
+            qn = float(item.get("qty") or 0)
+            sw = f'<span style="color:var(--red);font-size:11px;">⚠ Low ({sq:.0f})</span>' if mt and sq < qn else ""
+            mi = f"<div style='margin-top:4px;'><strong>{safe_string(item.get('code',''))}</strong> {safe_string(item.get('stock_description',''))} <span style='color:var(--green);font-size:11px;'>({conf}%)</span></div>" if mt else f"<div style='margin-top:4px;color:var(--red);'>{safe_string(item.get('flag_reason','Not matched'))}</div>"
+            ihtml += f'<tr style="background:{bg};" data-index="{i}"><td style="text-align:center;">{icon}</td><td><div style="font-size:13px;color:var(--text-muted);">Order: <em>{safe_string(item.get("description",""))}</em></div>{mi}{sw}</td><td style="text-align:center;"><input type="number" class="form-input item-qty" data-index="{i}" value="{item.get("qty",1)}" min="0" step="1" style="width:70px;text-align:center;padding:5px;" onchange="recalcRow({i})"></td><td style="text-align:right;"><input type="number" class="form-input item-price" data-index="{i}" value="{float(item.get("stock_price",0)):.2f}" min="0" step="0.01" style="width:100px;text-align:right;padding:5px;" onchange="recalcRow({i})"></td><td style="text-align:right;font-weight:bold;" class="item-total" data-index="{i}">R{float(item.get("line_total",0)):,.2f}</td><td style="text-align:center;"><button class="btn btn-sm" style="background:var(--red);color:white;padding:4px 8px;font-size:11px;" onclick="removeItem({i})">✕</button></td></tr>'
+
+        oi = draft.get("original_image","")
+        if oi:
+            isrc = oi if oi.startswith("data:") else f"data:image/jpeg;base64,{oi}"
+            img_sec = f'<img src="{isrc}" style="max-width:100%;border-radius:8px;max-height:600px;">'
+        else:
+            img_sec = '<div style="padding:40px;text-align:center;color:var(--text-muted);">No image</div>'
+
+        si = f'<div style="background:rgba(99,102,241,0.1);padding:10px 15px;border-radius:8px;margin-bottom:15px;font-size:13px;">📧 From: <strong>{safe_string(draft.get("source_sender",""))}</strong><br>Subject: {safe_string(draft.get("source_subject",""))}</div>' if draft.get("source_type")=="email" else ""
+
+        content = f'''
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <a href="/orders/review" style="color:var(--text-muted);text-decoration:none;">← Back to Queue</a>
+            <span style="background:#f59e0b;padding:5px 12px;border-radius:20px;font-size:13px;color:white;">{draft.get("status","").replace("_"," ").title()}</span>
+        </div>
+        {si}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;" id="splitView">
+            <div class="card" style="max-height:80vh;overflow-y:auto;"><h3 style="margin-bottom:15px;">📸 Original Order</h3>{img_sec}</div>
+            <div class="card">
+                <h3 style="margin-bottom:15px;">📝 Draft Invoice</h3>
+                <div style="margin-bottom:15px;"><label style="color:var(--text-muted);font-size:13px;">Customer:</label><select id="customerSelect" class="form-input" style="margin-top:5px;">{copts}</select><div style="margin-top:5px;font-size:12px;color:var(--text-muted);">{"✅ Auto-matched" if draft.get("customer_matched") else "⚠ Please select"}</div></div>
+                <div style="margin-bottom:15px;"><label style="color:var(--text-muted);font-size:13px;">Notes / PO Ref:</label><input type="text" id="draftNotes" class="form-input" value="{safe_string(draft.get('notes',''))}" style="margin-top:5px;"></div>
+                <div style="overflow-x:auto;"><table class="data-table" style="width:100%;font-size:13px;"><thead><tr><th style="width:30px;"></th><th>Item</th><th style="text-align:center;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th><th style="width:50px;"></th></tr></thead><tbody>{ihtml}</tbody></table></div>
+                <div style="margin-top:20px;padding:15px;background:var(--bg);border-radius:8px;">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:var(--text-muted);">Subtotal</span><span id="subD">R{float(draft.get("subtotal",0)):,.2f}</span></div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:8px;"><span style="color:var(--text-muted);">VAT 15%</span><span id="vatD">R{float(draft.get("vat",0)):,.2f}</span></div>
+                    <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid var(--border);"><strong>Total</strong><strong style="font-size:20px;color:var(--primary);" id="totD">R{float(draft.get("total",0)):,.2f}</strong></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:20px;">
+                    <button class="btn" style="background:var(--green);color:white;padding:15px;font-size:15px;" onclick="approve()" id="appBtn">✅ Proceed</button>
+                    <button class="btn btn-secondary" style="padding:15px;" onclick="saveLater()">⏸ Later</button>
+                    <button class="btn" style="background:var(--red);color:white;padding:15px;" onclick="reject()">❌ Reject</button>
+                </div>
+            </div>
+        </div>
+        <style>@media(max-width:768px){{#splitView{{grid-template-columns:1fr!important;}}}}</style>
+        <script>
+        const draftId='{draft_id}';
+        let items={json.dumps(items)};
+        function fmt(n){{return'R'+n.toFixed(2).replace(/\\B(?=(\\d{{3}})+(?!\\d))/g,',');}}
+        function recalcRow(i){{const q=parseFloat(document.querySelector(`.item-qty[data-index="${{i}}"]`).value)||0;const p=parseFloat(document.querySelector(`.item-price[data-index="${{i}}"]`).value)||0;items[i].qty=q;items[i].stock_price=p;items[i].line_total=q*p;document.querySelector(`.item-total[data-index="${{i}}"]`).textContent=fmt(q*p);recalc();}}
+        function recalc(){{let s=0;items.forEach(i=>{{if(!i._removed)s+=i.line_total||0;}});document.getElementById('subD').textContent=fmt(s);document.getElementById('vatD').textContent=fmt(s*0.15);document.getElementById('totD').textContent=fmt(s*1.15);}}
+        function removeItem(i){{if(!confirm('Remove?'))return;items[i]._removed=true;document.querySelector(`tr[data-index="${{i}}"]`).style.display='none';recalc();}}
+        async function approve(){{const sel=document.getElementById('customerSelect');if(!sel.value){{alert('Select customer.');return;}}const active=items.filter(i=>!i._removed);if(!active.length){{alert('No items.');return;}}const b=document.getElementById('appBtn');b.innerHTML='⏳...';b.disabled=true;try{{const r=await fetch('/api/orders/approve',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{draft_id:draftId,customer_id:sel.value,customer_name:sel.selectedOptions[0]?.text||'',items:active,notes:document.getElementById('draftNotes').value}})}});const d=await r.json();if(d.success){{alert('✅ Invoice '+d.invoice_number+' created! R'+parseFloat(d.total).toFixed(2));window.location.href='/invoice/'+d.invoice_id;}}else{{alert(d.error||'Failed');b.innerHTML='✅ Proceed';b.disabled=false;}}}}catch(e){{alert(e.message);b.innerHTML='✅ Proceed';b.disabled=false;}}}}
+        async function saveLater(){{await fetch('/api/orders/save-later',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{draft_id:draftId}})}});window.location.href='/orders/review';}}
+        async function reject(){{const reason=prompt('Reason (optional):');if(reason===null)return;await fetch('/api/orders/reject',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{draft_id:draftId,reason:reason}})}});window.location.href='/orders/review';}}
+        </script>'''
+        return render_page("Review Draft Invoice", content, user, "orders")
+
+    @app.route("/api/orders/approve", methods=["POST"])
+    @login_required
+    def api_order_approve():
+        try:
+            data = request.get_json()
+            business = Auth.get_current_business()
+            user = Auth.get_current_user()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business"})
+            draft_id = data.get("draft_id")
+            customer_id = data.get("customer_id","")
+            customer_name = data.get("customer_name","")
+            items_data = data.get("items",[])
+            notes = data.get("notes","")
+            if not customer_id:
+                return jsonify({"success": False, "error": "Select customer"})
+            if not items_data:
+                return jsonify({"success": False, "error": "No items"})
+
+            invoice_items = []
+            subtotal = Decimal("0")
+            for item in items_data:
+                if item.get("_removed"):
+                    continue
+                qty = Decimal(str(item.get("qty") or 1))
+                price = Decimal(str(item.get("stock_price") or 0))
+                lt = (qty * price).quantize(Decimal("0.01"))
+                subtotal += lt
+                invoice_items.append({"code": item.get("code",""), "description": item.get("stock_description") or item.get("description",""), "qty": float(qty), "price": float(price), "total": float(lt)})
+            if subtotal <= 0:
+                return jsonify({"success": False, "error": "Total must be > 0"})
+
+            vat_amount = (subtotal * VAT_RATE).quantize(Decimal("0.01"))
+            total = subtotal + vat_amount
+            existing = db.get("invoices", {"business_id": biz_id}) or []
+            inv_number = next_document_number("INV-", existing, "invoice_number")
+
+            invoice = RecordFactory.invoice(business_id=biz_id, customer_id=customer_id, customer_name=customer_name, items=invoice_items, invoice_number=inv_number, date=today(), subtotal=float(subtotal), vat=float(vat_amount), total=float(total), status="outstanding", notes=notes, created_by=user.get("id","") if user else "")
+            success, result = db.save("invoices", invoice)
+            if not success:
+                return jsonify({"success": False, "error": f"Save failed: {str(result)[:200]}"})
+            invoice_id = invoice["id"]
+            logger.info(f"[ORDER APPROVE] {inv_number}: R{float(total):.2f}")
+
+            all_stock = db.get_all_stock(biz_id)
+            sbc = {s.get("code","").upper(): s for s in all_stock if s.get("code")}
+            for item in invoice_items:
+                code = (item.get("code") or "").upper()
+                if code and code in sbc:
+                    si = sbc[code]
+                    nq = float(si.get("qty") or 0) - float(item.get("qty") or 0)
+                    db.update_stock(si["id"], {"qty": nq, "quantity": nq}, biz_id)
+
+            try:
+                cust = db.get_one("customers", customer_id)
+                if cust:
+                    db.update("customers", customer_id, {"balance": float(cust.get("balance",0)) + float(total)})
+            except:
+                pass
+
+            try:
+                create_journal_entry(biz_id, today(), f"Invoice {inv_number} - {customer_name}", inv_number, [
+                    {"account_code": "1200", "debit": float(total), "credit": 0},
+                    {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
+                    {"account_code": "2100", "debit": 0, "credit": float(vat_amount)}])
+            except Exception as e:
+                logger.error(f"[ORDER APPROVE] GL: {e}")
+
+            try:
+                db.save("order_drafts", {"id": draft_id, "status": "approved", "invoice_id": invoice_id, "invoice_number": inv_number, "reviewed_by": user.get("id","") if user else "", "reviewed_at": now()})
+            except:
+                pass
+
+            return jsonify({"success": True, "invoice_id": invoice_id, "invoice_number": inv_number, "total": float(total)})
+        except Exception as e:
+            logger.error(f"[ORDER APPROVE] {e}", exc_info=True)
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/orders/save-later", methods=["POST"])
+    @login_required
+    def api_order_save_later():
+        try:
+            data = request.get_json()
+            db.save("order_drafts", {"id": data.get("draft_id"), "status": "saved_later"})
+            return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/orders/reject", methods=["POST"])
+    @login_required
+    def api_order_reject():
+        try:
+            data = request.get_json()
+            user = Auth.get_current_user()
+            db.save("order_drafts", {"id": data.get("draft_id"), "status": "rejected", "reject_reason": data.get("reason",""), "reviewed_by": user.get("id","") if user else "", "reviewed_at": now()})
+            return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)})
+
+    # START BACKGROUND CHECKER
+    try:
+        OrderEmailChecker.start()
+    except Exception as e:
+        logger.warning(f"[ORDER EMAIL] Auto-checker failed: {e}")
+
+    logger.info("[ORDER SCANNER] v2 ready - routes + auto email checker + notifications")

@@ -1,0 +1,10 @@
+flask
+gunicorn
+requests
+anthropic
+Pillow
+supabase
+python-dotenv
+pdfplumber
+pandas
+openpyxl
