@@ -60229,9 +60229,9 @@ RULES:
                             data_rows.append([
                                 str(tx.get("date", "")),
                                 str(tx.get("description", "")),
-                                float(tx.get("debit", 0)),
-                                float(tx.get("credit", 0)),
-                                float(tx.get("balance", 0))
+                                str(tx.get("debit", 0)),
+                                str(tx.get("credit", 0)),
+                                str(tx.get("balance", 0))
                             ])
                         
                         date_col = 0
