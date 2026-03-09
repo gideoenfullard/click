@@ -144,6 +144,11 @@ try:
 except ImportError:
     BoltPricer = None
     BOLT_PRICER_LOADED = False
+try:
+    from clickai_cashup import register_cashup_routes
+    CASHUP_LOADED = True
+except ImportError:
+    CASHUP_LOADED = False
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -16727,6 +16732,14 @@ try:
         logger.info("[BOLT PRICER] Routes registered ✓")
 except Exception as e:
     logger.error(f"[BOLT PRICER] Failed to register routes: {e}")
+
+# Register cash up routes (separate module)
+try:
+    if CASHUP_LOADED:
+        register_cashup_routes(app, db, login_required, Auth, generate_id, now, today)
+        logger.info("[CASHUP] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[CASHUP] Failed to register routes: {e}")
 
 
 # 
@@ -42362,6 +42375,10 @@ def purchase_view(po_id):
                     <input type="number" name="receive_{i}" class="form-input" style="width: 80px; text-align: center;" 
                            value="{remaining}" min="0" max="{remaining}" data-index="{i}">
                 </td>
+                <td style="text-align:center;">
+                    <input type="number" name="price_{i}" class="form-input" style="width: 100px; text-align: center;" 
+                           placeholder="0.00" step="0.01" data-price-index="{i}" value="{item.get('price', '')}">
+                </td>
             </tr>
             '''
     
@@ -42437,8 +42454,19 @@ def purchase_view(po_id):
     
     <!-- Receive Goods Modal -->
     <div id="receiveModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
-        <div class="card" style="width: 100%; max-width: 600px; margin: 20px; max-height: 90vh; overflow-y: auto;">
-            <h3 style="margin: 0 0 20px 0;">Receive Goods</h3>
+        <div class="card" style="width: 100%; max-width: 650px; margin: 20px; max-height: 90vh; overflow-y: auto;">
+            <h3 style="margin: 0 0 20px 0;">📦 Receive Goods (GRV)</h3>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:15px;">
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Supplier Invoice Number</label>
+                    <input type="text" id="supplierInvoiceNum" class="form-input" placeholder="e.g. INV-12345" style="width:100%;">
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Date Received</label>
+                    <input type="date" id="receiveDate" class="form-input" value="{today()}" style="width:100%;">
+                </div>
+            </div>
             
             <table class="table">
                 <thead>
@@ -42447,10 +42475,11 @@ def purchase_view(po_id):
                         <th style="text-align: center;">Ordered</th>
                         <th style="text-align: center;">Received</th>
                         <th style="text-align: center;">Receive Now</th>
+                        <th style="text-align: center;">Unit Price</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {receive_items_html or "<tr><td colspan='4' style='text-align:center;color:var(--green);'>All items received!</td></tr>"}
+                    {receive_items_html or "<tr><td colspan='5' style='text-align:center;color:var(--green);'>All items received!</td></tr>"}
                 </tbody>
             </table>
             
@@ -42469,17 +42498,18 @@ def purchase_view(po_id):
         </div>
     </div>
     
-    <!-- Email Input Modal (when supplier has no email) -->
+    <!-- Email Input Modal - supports multiple emails and override -->
     <div id="emailInputModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center;">
         <div class="card" style="width: 100%; max-width: 450px; margin: 20px;">
             <h3 style="margin: 0 0 15px 0;">Email Purchase Order</h3>
-            <p style="color: var(--text-muted); margin-bottom: 15px;">No email on file for this supplier. Enter email address:</p>
+            <p style="color: var(--text-muted); margin-bottom: 10px;">Enter one or more email addresses (comma separated):</p>
             
-            <input type="email" id="supplierEmailInput" class="form-input" placeholder="supplier@example.com" style="width: 100%; margin-bottom: 15px;">
+            <input type="text" id="supplierEmailInput" class="form-input" placeholder="email1@example.com, email2@example.com" 
+                   value="{safe_string(supplier_rec.get('email', '') if supplier_rec else '')}" style="width: 100%; margin-bottom: 15px;">
             
             <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; margin-bottom: 15px;">
                 <input type="checkbox" id="saveSupplierEmail" checked style="width: 18px; height: 18px;">
-                <span>Save this email to supplier record</span>
+                <span>Save email to supplier record</span>
             </label>
             
             <div style="display: flex; gap: 10px;">
@@ -42502,18 +42532,9 @@ def purchase_view(po_id):
     }}
     
     async function emailPO() {{
-        const supplierEmail = '{safe_string(supplier_rec.get("email", "") if supplier_rec else "")}';
-        
-        if (!supplierEmail) {{
-            // Show email input modal
-            document.getElementById('emailInputModal').style.display = 'flex';
-            document.getElementById('supplierEmailInput').focus();
-            return;
-        }}
-        
-        if (!confirm('Send this Purchase Order to ' + supplierEmail + '?')) return;
-        
-        await sendPOEmail(supplierEmail);
+        // Always show modal so user can change/add emails
+        document.getElementById('emailInputModal').style.display = 'flex';
+        document.getElementById('supplierEmailInput').focus();
     }}
     
     async function sendPOEmail(email) {{
@@ -42523,24 +42544,34 @@ def purchase_view(po_id):
             btn.textContent = 'Sending...';
         }}
         
-        const response = await fetch('/api/purchase/{po_id}/email', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{to_email: email}})
-        }});
-        const data = await response.json();
+        // Support multiple emails (comma separated)
+        const emails = email.split(',').map(e => e.trim()).filter(e => e);
+        let successCount = 0;
+        let errors = [];
+        
+        for (const addr of emails) {{
+            const response = await fetch('/api/purchase/{po_id}/email', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{to_email: addr, save_email: document.getElementById('saveSupplierEmail').checked}})
+            }});
+            const data = await response.json();
+            if (data.success) successCount++;
+            else errors.push(addr + ': ' + (data.error || 'failed'));
+        }}
         
         if (btn) {{
             btn.disabled = false;
             btn.textContent = '📧 Send';
         }}
         
-        if (data.success) {{
-            alert('✅ ' + data.message);
+        if (successCount > 0) {{
+            alert('✅ PO sent to ' + successCount + ' address' + (successCount > 1 ? 'es' : ''));
             hideModal('emailInputModal');
             location.reload();
-        }} else {{
-            alert('Error: ' + data.error);
+        }}
+        if (errors.length > 0) {{
+            alert('Some emails failed:\\n' + errors.join('\\n'));
         }}
     }}
     
@@ -42555,6 +42586,7 @@ def purchase_view(po_id):
     async function receiveGoods() {{
         const inputs = document.querySelectorAll('#receiveModal input[name^="receive_"]');
         const quantities = {{}};
+        const prices = {{}};
         
         inputs.forEach(input => {{
             const index = input.dataset.index;
@@ -42564,17 +42596,26 @@ def purchase_view(po_id):
             }}
         }});
         
+        // Collect prices
+        document.querySelectorAll('#receiveModal input[name^="price_"]').forEach(input => {{
+            const index = input.dataset.priceIndex;
+            const price = parseFloat(input.value) || 0;
+            if (price > 0) prices[index] = price;
+        }});
+        
         if (Object.keys(quantities).length === 0) {{
             alert('Please enter quantities to receive');
             return;
         }}
         
         const updateStock = document.getElementById('updateStock').checked;
+        const supplierInvoiceNum = document.getElementById('supplierInvoiceNum').value.trim();
+        const receiveDate = document.getElementById('receiveDate').value;
         
         const response = await fetch('/api/purchase/{po_id}/receive', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{quantities, updateStock}})
+            body: JSON.stringify({{quantities, prices, updateStock, supplier_invoice_number: supplierInvoiceNum, receive_date: receiveDate}})
         }});
         
         const data = await response.json();
@@ -42846,7 +42887,10 @@ def api_po_receive(po_id):
     try:
         data = request.get_json()
         quantities = data.get("quantities", {})
+        prices = data.get("prices", {})
         update_stock = data.get("updateStock", True)
+        supplier_invoice_number = data.get("supplier_invoice_number", "")
+        receive_date = data.get("receive_date", today())
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
@@ -42989,14 +43033,28 @@ def api_po_receive(po_id):
         
         # Build received items list
         received_items = []
+        grv_total = 0
         for idx_str, qty_received in quantities.items():
             idx = int(idx_str)
             if 0 <= idx < len(items) and qty_received > 0:
+                unit_price = prices.get(str(idx), items[idx].get("price", 0)) or 0
+                line_total = round(float(unit_price) * qty_received, 2)
+                grv_total += line_total
+                
+                # Update stock cost price if price was entered
+                if unit_price and items[idx].get("stock_id") and update_stock:
+                    try:
+                        db.update_stock(items[idx]["stock_id"], {"cost_price": float(unit_price)}, biz_id)
+                    except:
+                        pass
+                
                 received_items.append({
                     "description": items[idx].get("description", "-"),
                     "code": items[idx].get("code", ""),
                     "qty_ordered": items[idx].get("qty", 1),
                     "qty_received": qty_received,
+                    "unit_price": float(unit_price),
+                    "line_total": line_total,
                     "stock_id": items[idx].get("stock_id", ""),
                     "stock_code": items[idx].get("stock_code", ""),
                     "stock_name": items[idx].get("stock_name", ""),
@@ -43013,7 +43071,8 @@ def api_po_receive(po_id):
             "po_number": po.get("po_number", ""),
             "supplier_id": po.get("supplier_id", ""),
             "supplier_name": po.get("supplier_name", ""),
-            "date": today(),
+            "supplier_invoice_number": supplier_invoice_number,
+            "date": receive_date or today(),
             "items": json.dumps(received_items),
             "received_by": user.get("name", "") if user else "",
             "notes": data.get("notes", ""),
@@ -48979,6 +49038,7 @@ def pos_page():
                 <button class="pos-hud-btn" onclick="createInvoice()" id="btnInvoice" disabled>INVOICE<span class="pk">F6</span></button>
                 <button class="pos-hud-btn" onclick="createCreditNote()" id="btnCredit" disabled>CREDIT NOTE<span class="pk">F10</span></button>
                 <button class="pos-hud-btn" onclick="toggleF11()">FULLSCREEN<span class="pk">F11</span></button>
+                <button class="pos-hud-btn" onclick="window.location='/cashup'" style="border-color:rgba(0,255,136,0.3);color:#00ff88;">CASH UP<span class="pk">💰</span></button>
             </div>
             <div class="pos-lbl"><span>POINT OF SALE</span></div>
         </div>
