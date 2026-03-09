@@ -29359,7 +29359,7 @@ Return valid JSON only, no other text."""
                 messages=[{
                     "role": "user",
                     "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                        ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": base64_data}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}),
                         {"type": "text", "text": prompt}
                     ]
                 }]
@@ -29911,7 +29911,7 @@ Extract the recurring amount. Return valid JSON only."""
                 messages=[{
                     "role": "user",
                     "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                        ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": base64_data}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}),
                         {"type": "text", "text": prompt}
                     ]
                 }]
@@ -60065,8 +60065,9 @@ def api_banking_import():
                 try:
                     result = subprocess.run(['pdftotext', '-layout', tmp_path, '-'], capture_output=True, text=True, timeout=30)
                     pdf_text = result.stdout.strip()
-                except:
-                    pass
+                    logger.info(f"[BANK IMPORT] pdftotext extracted {len(pdf_text)} chars")
+                except Exception as pdftotext_err:
+                    logger.warning(f"[BANK IMPORT] pdftotext failed: {pdftotext_err}")
                 
                 if not pdf_text:
                     try:
@@ -60076,12 +60077,13 @@ def api_banking_import():
                                 page_text = page.extract_text()
                                 if page_text:
                                     pdf_text += page_text + "\n"
-                    except:
-                        pass
+                        logger.info(f"[BANK IMPORT] pdfplumber extracted {len(pdf_text)} chars")
+                    except Exception as plumber_err:
+                        logger.warning(f"[BANK IMPORT] pdfplumber failed: {plumber_err}")
                 
                 # If text extraction failed (scanned PDF), use Claude AI via images
                 if not pdf_text or len(pdf_text) < 50:
-                    logger.info("[BANK IMPORT] Scanned PDF detected - using AI to read")
+                    logger.info(f"[BANK IMPORT] Scanned PDF detected (text={len(pdf_text) if pdf_text else 0} chars) - using AI to read")
                     
                     try:
                         import base64
@@ -60096,23 +60098,41 @@ def api_banking_import():
                             pil_images = convert_from_path(tmp_path, dpi=200)
                             for img in pil_images:
                                 buf = _io.BytesIO()
-                                img.save(buf, format='JPEG', quality=85)
+                                img.convert('RGB').save(buf, format='JPEG', quality=85)
                                 page_images.append(buf.getvalue())
-                        except ImportError:
-                            # Fallback: use pdfplumber to render pages
-                            import pdfplumber
-                            with pdfplumber.open(tmp_path) as pdf_doc:
+                            logger.info(f"[BANK IMPORT] pdf2image converted {len(page_images)} pages")
+                        except Exception as img_err:
+                            logger.warning(f"[BANK IMPORT] pdf2image failed ({img_err}), trying pdfplumber")
+                            page_images = []
+                            import pdfplumber as _plumber
+                            with _plumber.open(tmp_path) as pdf_doc:
                                 for page in pdf_doc.pages:
                                     page_img = page.to_image(resolution=200)
+                                    pil_img = page_img.annotated if hasattr(page_img, 'annotated') else page_img.original
+                                    pil_img = pil_img.convert('RGB')
                                     buf = _io.BytesIO()
-                                    page_img.save(buf, format='JPEG', quality=85)
+                                    pil_img.save(buf, format='JPEG', quality=85)
                                     page_images.append(buf.getvalue())
+                            logger.info(f"[BANK IMPORT] pdfplumber converted {len(page_images)} pages")
                         
                         for page_num, img_bytes in enumerate(page_images):
+                            
+                            # Safety net: ensure image is RGB before any JPEG operations
+                            try:
+                                _test_img = PILImage.open(_io.BytesIO(img_bytes))
+                                if _test_img.mode != 'RGB':
+                                    logger.info(f"[BANK IMPORT] Page {page_num+1} mode={_test_img.mode}, converting to RGB")
+                                    _test_img = _test_img.convert('RGB')
+                                    buf = _io.BytesIO()
+                                    _test_img.save(buf, format='JPEG', quality=85)
+                                    img_bytes = buf.getvalue()
+                            except Exception as rgb_err:
+                                logger.warning(f"[BANK IMPORT] RGB safety check failed page {page_num+1}: {rgb_err}")
                             
                             # Compress if needed
                             if len(img_bytes) > 3500000:
                                 img = PILImage.open(_io.BytesIO(img_bytes))
+                                img = img.convert('RGB')
                                 quality = 70
                                 max_dim = 1600
                                 while True:
@@ -60168,7 +60188,7 @@ RULES:
                                     "messages": [{
                                         "role": "user",
                                         "content": [
-                                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_img}},
+                                            ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": b64_img}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_img}}),
                                             {"type": "text", "text": prompt}
                                         ]
                                     }]
@@ -65094,7 +65114,7 @@ IMPORTANT:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                        ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": base64_data}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}),
                         {"type": "text", "text": prompt}
                     ]
                 }
@@ -70426,7 +70446,7 @@ If ANY number is not visible on the document, set it to 0. Python handles all ma
                     messages=[{
                         "role": "user",
                         "content": [
-                            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                            ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": base64_data}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}),
                             {"type": "text", "text": prompt}
                         ]
                     }]
@@ -70443,7 +70463,7 @@ If ANY number is not visible on the document, set it to 0. Python handles all ma
                 messages=[{
                     "role": "user",
                     "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                        ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": base64_data}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}),
                         {"type": "text", "text": prompt}
                     ]
                 }]
@@ -70509,7 +70529,7 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                         messages=[{
                             "role": "user",
                             "content": [
-                                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                                ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": base64_data}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}),
                                 {"type": "text", "text": retry_prompt}
                             ]
                         }]
@@ -70587,11 +70607,39 @@ IMPORTANT: Read ALL numbers exactly as printed on the document. Do NOT calculate
                     if items_total > 0:
                         if subtotal == 0 or abs(items_total - subtotal) > 1:
                             logger.info(f"[SCAN] Subtotal mismatch: AI said R{subtotal:.2f}, items add up to R{items_total:.2f} - using items total")
-                            extracted["subtotal"] = round(items_total, 2)
-                            subtotal = items_total
-                            # RECALCULATE VAT and TOTAL from corrected subtotal
-                            extracted["vat"] = round(items_total * 0.15, 2)
-                            extracted["total"] = round(items_total + extracted["vat"], 2)
+                            
+                            # CRITICAL: Detect if line totals are VAT-inclusive (already include VAT)
+                            # If items_total is close to the AI's reported total (within 2%), the line totals are VAT-inclusive
+                            # If items_total + 15% is close to the AI's total, the line totals are ex-VAT
+                            ai_total = float(extracted.get("total", 0))
+                            items_are_vat_inclusive = False
+                            if ai_total > 0:
+                                diff_inclusive = abs(items_total - ai_total) / ai_total  # items_total ≈ total → inclusive
+                                diff_exclusive = abs((items_total * 1.15) - ai_total) / ai_total  # items_total × 1.15 ≈ total → exclusive
+                                if diff_inclusive < 0.03:  # items_total matches total → VAT already included
+                                    items_are_vat_inclusive = True
+                                    logger.info(f"[SCAN] Line totals appear VAT-INCLUSIVE (items_total R{items_total:.2f} ≈ total R{ai_total:.2f})")
+                                elif diff_exclusive < 0.03:
+                                    items_are_vat_inclusive = False
+                                    logger.info(f"[SCAN] Line totals appear EX-VAT (items_total R{items_total:.2f} × 1.15 ≈ total R{ai_total:.2f})")
+                                else:
+                                    # Ambiguous - if vat was already extracted by AI, don't recalculate
+                                    if vat > 0:
+                                        items_are_vat_inclusive = True  # Trust AI's VAT, don't double-calculate
+                                        logger.info(f"[SCAN] Ambiguous VAT situation - AI already extracted VAT R{vat:.2f}, treating as inclusive")
+                            
+                            if items_are_vat_inclusive:
+                                # Back-calculate: line totals include VAT, extract ex-VAT subtotal
+                                extracted["subtotal"] = round(items_total / 1.15, 2)
+                                extracted["vat"] = round(items_total - extracted["subtotal"], 2)
+                                extracted["total"] = round(items_total, 2)
+                            else:
+                                # Line totals are ex-VAT, add VAT on top
+                                extracted["subtotal"] = round(items_total, 2)
+                                extracted["vat"] = round(items_total * 0.15, 2)
+                                extracted["total"] = round(items_total * 1.15, 2)
+                            
+                            subtotal = extracted["subtotal"]
                             vat = extracted["vat"]
                             total = extracted["total"]
                             extracted["_items_total_mismatch"] = True
@@ -74081,7 +74129,7 @@ def api_smart_scan():
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}},
+                    ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": base64_data}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64_data}}),
                     {"type": "text", "text": """Look at this South African business document and:
 
 1. IDENTIFY type (choose ONE): TIMESHEET, RECEIPT, SUPPLIER_INVOICE, CUSTOMER_ORDER, OTHER
