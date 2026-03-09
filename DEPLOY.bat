@@ -7,7 +7,7 @@ echo     GitHub backup + Fly.io deploy
 echo  =============================================
 echo.
 
-cd /d "D:\Click AI\click-main\click-main"
+cd /d "C:\Users\deonf\OneDrive\Desktop\click-main\click-main"
 
 if not exist "clickai.py" (
     color 0C
@@ -44,7 +44,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo  -- STAP 2/3: Push na GitHub --
-git push
+git push origin master
 if %ERRORLEVEL% NEQ 0 (
     color 0C
     echo  [FOUT] Kon nie na GitHub push nie!
@@ -57,7 +57,7 @@ echo.
 echo  -- STAP 3/3: Deploy na Fly.io --
 echo  (2-5 minute, wag net)
 echo.
-fly deploy
+C:\click-main\click-main\flyctl deploy
 if %ERRORLEVEL% NEQ 0 (
     color 0C
     echo.
