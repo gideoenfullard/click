@@ -60280,7 +60280,7 @@ RULES:
                                         "content-type": "application/json"
                                     },
                                     json={
-                                        "model": "claude-haiku-4-5-20241022",
+                                        "model": "claude-haiku-4-5-20251001",
                                         "max_tokens": 8000,
                                         "messages": [{"role": "user", "content": content_parts}]
                                     },
@@ -60288,7 +60288,7 @@ RULES:
                                 )
                                 
                                 if resp.status_code != 200:
-                                    logger.error(f"[BANK IMPORT] Batch {batch_idx+1} API error: {resp.status_code}")
+                                    logger.error(f"[BANK IMPORT] Batch {batch_idx+1} API error: {resp.status_code} - {resp.text[:500]}")
                                     return batch_txns
                                 
                                 ai_result = resp.json()
@@ -60356,10 +60356,23 @@ RULES:
                     transactions = []
                     lines = pdf_text.split('\n')
                     
-                    logger.info(f"[BANK IMPORT] Text PDF: {len(lines)} lines")
+                    logger.info(f"[BANK IMPORT] Text PDF: {len(lines)} lines, first 200 chars: {pdf_text[:200]}")
                     
-                    date_pattern = re.compile(r'(20\d{6})')
+                    # Support multiple SA bank date formats:
+                    # 20240115, 2024/01/15, 2024-01-15, 15/01/2024, 15 Jan 2024
+                    date_patterns = [
+                        re.compile(r'(20\d{2})[/-]?(\d{2})[/-]?(\d{2})'),           # 20240115, 2024/01/15, 2024-01-15
+                        re.compile(r'(\d{2})[/-](\d{2})[/-](20\d{2})'),              # 15/01/2024, 15-01-2024
+                        re.compile(r'(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(20\d{2})', re.IGNORECASE),  # 15 Jan 2024
+                    ]
+                    month_map = {"jan":"01","feb":"02","mar":"03","apr":"04","may":"05","jun":"06",
+                                 "jul":"07","aug":"08","sep":"09","oct":"10","nov":"11","dec":"12"}
                     amount_pattern = re.compile(r'-?[\d,]+\.\d{2}')
+                    
+                    # Only skip headers and footers, NOT transaction types like service fees
+                    skip_words = ['PAGE', 'CURRENT ACCOUNT', 'STATEMENT NUMBER', 'COMPUTER GENERATED', 
+                                  'END OF REPORT', 'VAT REGISTRATION', 'CLOSING BALANCE', 'BALANCE BROUGHT',
+                                  'OPENING BALANCE', 'BROUGHT FORWARD']
                     
                     i = 0
                     while i < len(lines):
@@ -60368,20 +60381,39 @@ RULES:
                             i += 1
                             continue
                         
-                        if any(skip in line.upper() for skip in ['PAGE', 'DETAILS', 'SERVICE FEE', 'CURRENT ACCOUNT', 'STATEMENT', 'STANDARD BANK', 'COMPUTER GENERATED', 'END OF REPORT', 'BRANCH', 'VAT REGISTRATION', 'CLOSING BALANCE', 'BALANCE BROUGHT']):
+                        line_upper = line.upper()
+                        if any(skip in line_upper for skip in skip_words):
                             i += 1
                             continue
                         
-                        date_match = date_pattern.search(line)
-                        if date_match:
-                            raw_date = date_match.group(1)
-                            tx_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
-                            
+                        # Try each date pattern
+                        tx_date = None
+                        for dp_idx, dp in enumerate(date_patterns):
+                            dm = dp.search(line)
+                            if dm:
+                                groups = dm.groups()
+                                if dp_idx == 0:
+                                    # YYYY MM DD
+                                    tx_date = f"{groups[0]}-{groups[1]}-{groups[2]}"
+                                elif dp_idx == 1:
+                                    # DD MM YYYY
+                                    tx_date = f"{groups[2]}-{groups[1]}-{groups[0]}"
+                                elif dp_idx == 2:
+                                    # DD Mon YYYY
+                                    mon = month_map.get(groups[1][:3].lower(), "01")
+                                    tx_date = f"{groups[2]}-{mon}-{groups[0].zfill(2)}"
+                                break
+                        
+                        if tx_date:
                             numbers = amount_pattern.findall(line)
                             
                             if len(numbers) >= 2:
                                 first_num_pos = line.find(numbers[0])
                                 description = line[:first_num_pos].strip()
+                                # Remove leading date/numbers from description
+                                description = re.sub(r'^\d[\d/\-\s]*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s*\d*\s*', '', description, flags=re.IGNORECASE).strip()
+                                description = re.sub(r'^\d{4}[/-]?\d{2}[/-]?\d{2}\s*', '', description).strip()
+                                description = re.sub(r'^\d{1,2}[/-]\d{2}[/-]\d{4}\s*', '', description).strip()
                                 description = re.sub(r'^\d+\s+', '', description).strip()
                                 
                                 if not description:
@@ -60411,6 +60443,8 @@ RULES:
                                 })
                         i += 1
                     
+                    logger.info(f"[BANK IMPORT] Text parser found {len(transactions)} transactions from {len(lines)} lines")
+                    
                     data_rows = []
                     for tx in transactions:
                         data_rows.append([tx["date"], tx["description"], tx["debit"], tx["credit"], tx["balance"]])
@@ -60422,7 +60456,133 @@ RULES:
                     amount_col = None
                     
                     if not data_rows:
-                        return jsonify({"success": False, "error": "Could not parse transactions from PDF text"})
+                        # Text parser failed — fall back to AI reading
+                        logger.warning(f"[BANK IMPORT] Text parser found 0 transactions, falling back to AI image reading")
+                        
+                        # Re-read PDF since we already unlinked tmp_path
+                        # Save again and use AI
+                        import tempfile as _tf2
+                        with _tf2.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp2:
+                            tmp2.write(pdf_bytes)
+                            tmp_path2 = tmp2.name
+                        
+                        try:
+                            import base64
+                            from PIL import Image as PILImage
+                            import io as _io
+                            all_transactions = []
+                            
+                            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                            if not api_key:
+                                os.unlink(tmp_path2)
+                                return jsonify({"success": False, "error": "AI API key not configured"})
+                            
+                            page_images = []
+                            try:
+                                from pdf2image import convert_from_path
+                                pil_images = convert_from_path(tmp_path2, dpi=150)
+                                for img in pil_images:
+                                    buf = _io.BytesIO()
+                                    img.convert('RGB').save(buf, format='JPEG', quality=75)
+                                    page_images.append(buf.getvalue())
+                            except Exception:
+                                import pdfplumber as _plumber
+                                with _plumber.open(tmp_path2) as pdf_doc:
+                                    for page in pdf_doc.pages:
+                                        page_img = page.to_image(resolution=150)
+                                        pil_img = page_img.annotated if hasattr(page_img, 'annotated') else page_img.original
+                                        pil_img = pil_img.convert('RGB')
+                                        buf = _io.BytesIO()
+                                        pil_img.save(buf, format='JPEG', quality=75)
+                                        page_images.append(buf.getvalue())
+                            
+                            os.unlink(tmp_path2)
+                            
+                            if page_images:
+                                # Compress large images
+                                prepared_images = []
+                                for img_bytes in page_images:
+                                    if len(img_bytes) > 2000000:
+                                        img = PILImage.open(_io.BytesIO(img_bytes)).convert('RGB')
+                                        w, h = img.size
+                                        if max(w, h) > 1400:
+                                            ratio = 1400 / max(w, h)
+                                            img = img.resize((int(w*ratio), int(h*ratio)), PILImage.LANCZOS)
+                                        buf = _io.BytesIO()
+                                        img.save(buf, format='JPEG', quality=65)
+                                        img_bytes = buf.getvalue()
+                                    prepared_images.append(img_bytes)
+                                
+                                PAGES_PER_BATCH = 4
+                                _batches = []
+                                for bi in range(0, len(prepared_images), PAGES_PER_BATCH):
+                                    _batches.append(prepared_images[bi:bi + PAGES_PER_BATCH])
+                                
+                                _prompt = """Extract ALL bank transactions from these bank statement page(s).
+
+Return ONLY a valid JSON array, no other text. Each transaction must have:
+- "date": "YYYY-MM-DD" format
+- "description": the transaction description/details
+- "debit": amount as number (money going OUT, positive number) or 0
+- "credit": amount as number (money coming IN, positive number) or 0
+- "balance": the running balance after this transaction
+
+RULES:
+- Payments OUT (debits, purchases, fees) go in "debit" field as POSITIVE numbers
+- Money IN (credits, deposits, settlements) go in "credit" field as POSITIVE numbers
+- Skip "BALANCE BROUGHT FORWARD" and "CLOSING BALANCE" rows
+- Read EVERY transaction row on EVERY page, do not skip any
+- Extract amounts exactly as shown on the statement
+- Include service fees, bank charges etc as debits"""
+                                
+                                import requests as req
+                                
+                                def _fb_process_batch(batch_info):
+                                    bidx, bimgs = batch_info
+                                    content_parts = []
+                                    for ib in bimgs:
+                                        b64 = base64.b64encode(ib).decode('utf-8')
+                                        content_parts.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}})
+                                    content_parts.append({"type": "text", "text": _prompt})
+                                    try:
+                                        resp = req.post("https://api.anthropic.com/v1/messages",
+                                            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                                            json={"model": "claude-haiku-4-5-20251001", "max_tokens": 8000, "messages": [{"role": "user", "content": content_parts}]},
+                                            timeout=90)
+                                        if resp.status_code != 200:
+                                            logger.error(f"[BANK IMPORT] Fallback batch {bidx+1} API error: {resp.status_code} - {resp.text[:300]}")
+                                            return []
+                                        ai_text = "".join(b["text"] for b in resp.json().get("content", []) if b.get("type") == "text")
+                                        import re as _re
+                                        jm = _re.search(r'\[.*\]', ai_text, _re.DOTALL)
+                                        if jm:
+                                            return json.loads(jm.group(0))
+                                    except Exception as e:
+                                        logger.error(f"[BANK IMPORT] Fallback batch {bidx+1} error: {e}")
+                                    return []
+                                
+                                if len(_batches) > 1:
+                                    from concurrent.futures import ThreadPoolExecutor as _TPE
+                                    with _TPE(max_workers=min(len(_batches), 3)) as executor:
+                                        results = list(executor.map(_fb_process_batch, enumerate(_batches)))
+                                    for r in results:
+                                        all_transactions.extend(r)
+                                else:
+                                    all_transactions.extend(_fb_process_batch((0, _batches[0])))
+                                
+                                if all_transactions:
+                                    data_rows = []
+                                    for tx in all_transactions:
+                                        data_rows.append([str(tx.get("date", "")), str(tx.get("description", "")),
+                                                         str(tx.get("debit", 0)), str(tx.get("credit", 0)), str(tx.get("balance", 0))])
+                                    logger.info(f"[BANK IMPORT] AI fallback extracted {len(data_rows)} transactions")
+                                else:
+                                    return jsonify({"success": False, "error": "Could not parse transactions — try uploading a CSV instead"})
+                            else:
+                                return jsonify({"success": False, "error": "Could not convert PDF pages to images"})
+                        except Exception as fb_err:
+                            logger.error(f"[BANK IMPORT] AI fallback error: {fb_err}")
+                            return jsonify({"success": False, "error": f"PDF parsing failed: {str(fb_err)}. Try CSV instead."})
                 
             except Exception as pdf_err:
                 logger.error(f"[BANK IMPORT] PDF parse error: {pdf_err}")
