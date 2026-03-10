@@ -50031,11 +50031,14 @@ def pos_history():
 @app.route("/sale/<sale_id>")
 @login_required
 def view_sale(sale_id):
-    """View individual sale/slip"""
+    """View individual sale/slip - matches POS slip format exactly"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_name = business.get("name", "Business") if business else "Business"
+    biz_phone = business.get("phone", "") if business else ""
+    biz_vat = business.get("vat_number", "") if business else ""
+    slip_footer = business.get("pos_slip_footer", "Thank you for your purchase!") if business else "Thank you for your purchase!"
     
     sale = db.get_one("sales", sale_id)
     if not sale:
@@ -50052,73 +50055,80 @@ def view_sale(sale_id):
     elif not isinstance(items, list):
         items = []
     
+    # Build items HTML exactly like POS slip: qty x description | total
     items_html = ""
     for item in items:
         qty = item.get("quantity") or item.get("qty", 1)
         price = float(item.get("price", 0))
         total = qty * price
-        items_html += f'''
-        <tr>
-            <td>{safe_string(item.get("code", "-"))}</td>
-            <td>{safe_string(item.get("description", "-"))}</td>
-            <td style="text-align:center;">{qty}</td>
-            <td style="text-align:right;">{money(price)}</td>
-            <td style="text-align:right;">{money(total)}</td>
-        </tr>
+        item_name = safe_string(item.get("description") or item.get("code") or "Item")
+        items_html += f'<tr><td style="padding:3px 0;font-size:13px;">{qty}x {item_name}</td><td style="text-align:right;padding:3px 0;font-size:13px;white-space:nowrap;">R{total:.2f}</td></tr>'
+    
+    payment_method = sale.get("payment_method", "cash").lower()
+    method_label = {"cash": "💵 CASH", "card": "💳 CARD", "account": "📒 ACCOUNT"}.get(payment_method, payment_method.upper())
+    customer_name = safe_string(sale.get("customer_name") or {"cash": "Countersale", "card": "Countersale", "account": "Countersale"}.get(payment_method, "Countersale"))
+    
+    # Extract sale date/time
+    sale_date = sale.get("date", "-")
+    sale_time = extract_time(sale.get("created_at", ""))
+    sale_number = sale.get("sale_number", "-")
+    
+    # Cash payment details
+    cash_html = ""
+    cash_received = float(sale.get("cash_received", 0) or 0)
+    change_given = float(sale.get("change_given", 0) or 0)
+    if payment_method == "cash" and cash_received > 0:
+        cash_html = f'''
+            <div style="margin-top:8px;padding:8px;background:#f5f5f5;border-radius:6px;">
+                <div style="display:flex;justify-content:space-between;font-size:14px;padding:2px 0;">
+                    <span>Cash Received</span><span>R{cash_received:.2f}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:18px;font-weight:bold;padding:2px 0;color:#10b981;">
+                    <span>Change</span><span>R{change_given:.2f}</span>
+                </div>
+            </div>
         '''
     
-    payment_method = sale.get("payment_method", "cash").upper()
-    method_color = {"CASH": "#10b981", "CARD": "#3b82f6", "ACCOUNT": "#f59e0b"}.get(payment_method, "#888")
-    
+    # Build slip HTML matching POS format exactly
     content = f'''
     <div style="max-width:500px;margin:0 auto;">
         <a href="/pos/history" style="color:var(--text-muted);display:block;margin-bottom:15px;">← Back to History</a>
         
-        <div id="reprintContent" class="card" style="background:white;color:#000;">
-            <div style="text-align:center;padding-bottom:20px;border-bottom:2px dashed #ccc;margin-bottom:20px;">
-                <h2 style="margin:0;color:#000;">{biz_name}</h2>
-                <p style="color:#666;margin:5px 0;">TAX INVOICE / SLIP</p>
-                <p style="margin:5px 0;"><strong>{sale.get("sale_number", "-")}</strong></p>
-                <p style="color:#666;margin:5px 0;">{sale.get("date", "-")} {extract_time(sale.get("created_at", ""))}</p>
+        <div id="reprintContent" class="card" style="background:white;color:#000;padding:12px;font-family:'Courier New',monospace;font-size:13px;">
+            <div style="text-align:center;border-bottom:2px dashed #000;padding-bottom:8px;margin-bottom:8px;">
+                <div style="font-size:18px;font-weight:bold;">{biz_name}</div>
+                {f'<div style="font-size:12px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
+                {f'<div style="font-size:12px;color:#666;">VAT: {biz_vat}</div>' if biz_vat else ''}
+                <div style="margin-top:6px;font-size:15px;font-weight:bold;">{sale_number}</div>
+                <div style="font-size:12px;color:#666;">{sale_date} {sale_time}</div>
+                {f'<div style="font-size:12px;color:#666;margin-top:2px;">Cashier: {safe_string(sale.get("cashier_name", ""))}</div>' if sale.get("cashier_name") else ''}
             </div>
             
-            <div style="margin-bottom:15px;">
-                <span style="background:{method_color};color:white;padding:4px 12px;border-radius:4px;font-size:12px;">{payment_method}</span>
-                <span style="margin-left:10px;color:#666;">{safe_string(sale.get("customer_name") or ({"CASH": "Countersale Cash", "CARD": "Countersale Card", "ACCOUNT": "Countersale Account"}.get(payment_method, "Countersale")))}</span>
+            <div style="margin-bottom:8px;font-size:13px;">
+                <span style="background:#333;color:white;padding:3px 8px;border-radius:3px;font-size:12px;">{method_label}</span>
+                <span style="margin-left:8px;font-size:13px;">{customer_name}</span>
             </div>
             
-            <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
-                <thead>
-                    <tr style="border-bottom:1px solid #ddd;">
-                        <th style="text-align:left;padding:8px 0;color:#000;">Code</th>
-                        <th style="text-align:left;padding:8px 0;color:#000;">Description</th>
-                        <th style="text-align:center;padding:8px 0;color:#000;">Qty</th>
-                        <th style="text-align:right;padding:8px 0;color:#000;">Price</th>
-                        <th style="text-align:right;padding:8px 0;color:#000;">Total</th>
-                    </tr>
-                </thead>
-                <tbody style="color:#333;">
-                    {items_html}
-                </tbody>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
+                {items_html}
             </table>
             
-            <div style="border-top:2px dashed #ccc;padding-top:15px;">
-                <div style="display:flex;justify-content:space-between;padding:5px 0;color:#666;">
-                    <span>Subtotal</span>
-                    <span>{money(sale.get("subtotal", 0))}</span>
+            <div style="border-top:2px dashed #000;padding-top:6px;">
+                <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                    <span>Subtotal</span><span>R{float(sale.get("subtotal", 0)):.2f}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;padding:5px 0;color:#666;">
-                    <span>VAT (15%)</span>
-                    <span>{money(sale.get("vat", 0))}</span>
+                <div style="display:flex;justify-content:space-between;font-size:13px;color:#666;padding:2px 0;">
+                    <span>VAT (15%)</span><span>R{float(sale.get("vat", 0)):.2f}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;padding:10px 0;font-size:24px;font-weight:bold;color:#000;">
-                    <span>TOTAL</span>
-                    <span>{money(sale.get("total", 0))}</span>
+                <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:bold;margin-top:6px;">
+                    <span>TOTAL</span><span>R{float(sale.get("total", 0)):.2f}</span>
                 </div>
             </div>
             
-            <div style="text-align:center;margin-top:20px;padding-top:20px;border-top:2px dashed #ccc;color:#666;">
-                <p style="margin:5px 0;">Thank you for your purchase!</p>
+            {cash_html}
+            
+            <div style="text-align:center;margin-top:8px;padding-top:8px;border-top:2px dashed #000;font-size:12px;color:#666;">
+                {slip_footer}
             </div>
         </div>
         
@@ -50131,19 +50141,25 @@ def view_sale(sale_id):
     <script>
     function reprintSlip(format) {{
         const slipContent = document.getElementById('reprintContent').innerHTML;
-        const printWin = window.open('', '_blank', 'width=400,height=600');
         
-        const styles = format === 'thermal' ? 
-            'body {{ width: 72mm; margin: 0; padding: 4mm; font-family: Courier New, monospace; font-size: 16px; }} @page {{ size: 80mm auto; margin: 0; }}' :
-            'body {{ width: 210mm; margin: 20mm; font-family: Arial, sans-serif; font-size: 18px; }} @page {{ size: A4; margin: 20mm; }}';
+        const styles = format === 'thermal' ?
+            'body {{ width: 72mm; margin: 0; padding: 4mm; font-family: Courier New, monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }} * {{ font-weight: bold !important; color: #000 !important; background: transparent !important; }} table {{ width: 100%; border-collapse: collapse; }} td {{ font-weight: bold !important; padding: 2px 0; }} @page {{ size: 80mm auto; margin: 0; }} @media print {{ body {{ width: 72mm; }} }}' :
+            'body {{ width: 210mm; margin: 20mm; font-family: Arial, sans-serif; font-size: 18px; color: #000; background: #fff; }} @page {{ size: A4; margin: 20mm; }}';
         
-        printWin.document.write('<!DOCTYPE html><html><head><title>Reprint</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>');
-        printWin.document.close();
+        var fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
         
-        printWin.onload = function() {{
-            printWin.print();
-            setTimeout(function() {{ printWin.close(); }}, 500);
-        }};
+        var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
+        if (printWin) {{
+            printWin.document.open();
+            printWin.document.write(fullHtml);
+            printWin.document.close();
+            var tryPrint = function() {{
+                try {{ printWin.focus(); printWin.print(); }} catch(e) {{ console.log('[POS] Print error:', e); }}
+                setTimeout(function() {{ try {{ printWin.close(); }} catch(e) {{}} }}, 2000);
+            }};
+            if (printWin.document.readyState === 'complete') {{ setTimeout(tryPrint, 400); }}
+            else {{ printWin.onload = function() {{ setTimeout(tryPrint, 200); }}; setTimeout(tryPrint, 1500); }}
+        }}
     }}
     </script>
     '''
