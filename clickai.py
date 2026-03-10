@@ -60048,7 +60048,8 @@ def banking_page():
         // Show loading
         const btn = event.target.closest('label');
         const originalText = btn.innerHTML;
-        btn.innerHTML = '⏳ Importing...';
+        const isPDF = file.name.toLowerCase().endsWith('.pdf');
+        btn.innerHTML = isPDF ? '🤖 AI Reading PDF... (30-60s)' : '⏳ Importing...';
         
         try {{
             const response = await fetch('/api/banking/import', {{
@@ -60167,75 +60168,78 @@ def api_banking_import():
                         import io as _io
                         all_transactions = []
                         
-                        # Convert PDF pages to images using pdf2image (poppler) or pdfplumber fallback
+                        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                        if not api_key:
+                            os.unlink(tmp_path)
+                            return jsonify({"success": False, "error": "AI API key not configured"})
+                        
+                        # Convert PDF pages to images — 150 DPI is enough for bank statements
                         page_images = []
                         try:
                             from pdf2image import convert_from_path
-                            pil_images = convert_from_path(tmp_path, dpi=200)
+                            pil_images = convert_from_path(tmp_path, dpi=150)
                             for img in pil_images:
                                 buf = _io.BytesIO()
-                                img.convert('RGB').save(buf, format='JPEG', quality=85)
+                                img.convert('RGB').save(buf, format='JPEG', quality=75)
                                 page_images.append(buf.getvalue())
-                            logger.info(f"[BANK IMPORT] pdf2image converted {len(page_images)} pages")
+                            logger.info(f"[BANK IMPORT] pdf2image converted {len(page_images)} pages at 150dpi")
                         except Exception as img_err:
                             logger.warning(f"[BANK IMPORT] pdf2image failed ({img_err}), trying pdfplumber")
                             page_images = []
                             import pdfplumber as _plumber
                             with _plumber.open(tmp_path) as pdf_doc:
                                 for page in pdf_doc.pages:
-                                    page_img = page.to_image(resolution=200)
+                                    page_img = page.to_image(resolution=150)
                                     pil_img = page_img.annotated if hasattr(page_img, 'annotated') else page_img.original
                                     pil_img = pil_img.convert('RGB')
                                     buf = _io.BytesIO()
-                                    pil_img.save(buf, format='JPEG', quality=85)
+                                    pil_img.save(buf, format='JPEG', quality=75)
                                     page_images.append(buf.getvalue())
-                            logger.info(f"[BANK IMPORT] pdfplumber converted {len(page_images)} pages")
+                            logger.info(f"[BANK IMPORT] pdfplumber converted {len(page_images)} pages at 150dpi")
                         
+                        # Prepare all page images — compress large ones
+                        prepared_images = []
                         for page_num, img_bytes in enumerate(page_images):
-                            
-                            # Safety net: ensure image is RGB before any JPEG operations
                             try:
                                 _test_img = PILImage.open(_io.BytesIO(img_bytes))
                                 if _test_img.mode != 'RGB':
-                                    logger.info(f"[BANK IMPORT] Page {page_num+1} mode={_test_img.mode}, converting to RGB")
                                     _test_img = _test_img.convert('RGB')
                                     buf = _io.BytesIO()
-                                    _test_img.save(buf, format='JPEG', quality=85)
+                                    _test_img.save(buf, format='JPEG', quality=75)
                                     img_bytes = buf.getvalue()
-                            except Exception as rgb_err:
-                                logger.warning(f"[BANK IMPORT] RGB safety check failed page {page_num+1}: {rgb_err}")
+                            except Exception:
+                                pass
                             
-                            # Compress if needed
-                            if len(img_bytes) > 3500000:
+                            # Compress if over 2MB
+                            if len(img_bytes) > 2000000:
                                 img = PILImage.open(_io.BytesIO(img_bytes))
                                 img = img.convert('RGB')
-                                quality = 70
-                                max_dim = 1600
-                                while True:
-                                    w, h = img.size
-                                    if max(w, h) > max_dim:
-                                        ratio = max_dim / max(w, h)
-                                        img = img.resize((int(w*ratio), int(h*ratio)), PILImage.LANCZOS)
-                                    buf = _io.BytesIO()
-                                    img.save(buf, format='JPEG', quality=quality)
-                                    if buf.tell() < 3500000 or quality <= 30:
-                                        break
-                                    quality -= 10
-                                    max_dim -= 200
+                                w, h = img.size
+                                if max(w, h) > 1400:
+                                    ratio = 1400 / max(w, h)
+                                    img = img.resize((int(w*ratio), int(h*ratio)), PILImage.LANCZOS)
+                                buf = _io.BytesIO()
+                                img.save(buf, format='JPEG', quality=65)
                                 img_bytes = buf.getvalue()
                             
-                            media_type = "image/jpeg"
-                            b64_img = base64.b64encode(img_bytes).decode('utf-8')
-                            
-                            # Send to Claude API
-                            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-                            if not api_key:
-                                os.unlink(tmp_path)
-                                return jsonify({"success": False, "error": "AI API key not configured"})
-                            
-                            prompt = """Extract ALL bank transactions from this bank statement image.
+                            prepared_images.append(img_bytes)
+                        
+                        # ═══════════════════════════════════════════════════════════
+                        # BATCH PAGES INTO GROUPS — send multiple pages per API call
+                        # Each image ~200-600KB at 150dpi, API limit ~20MB
+                        # Batch 4 pages per call to stay safe and fast
+                        # Uses Haiku for OCR — 10x cheaper, just as accurate for data extraction
+                        # ═══════════════════════════════════════════════════════════
+                        PAGES_PER_BATCH = 4
+                        batches = []
+                        for i in range(0, len(prepared_images), PAGES_PER_BATCH):
+                            batches.append(prepared_images[i:i + PAGES_PER_BATCH])
+                        
+                        logger.info(f"[BANK IMPORT] Processing {len(prepared_images)} pages in {len(batches)} batch(es)")
+                        
+                        prompt = """Extract ALL bank transactions from these bank statement page(s).
 
-Return ONLY valid JSON array, no other text. Each transaction must have:
+Return ONLY a valid JSON array, no other text. Each transaction must have:
 - "date": "YYYY-MM-DD" format
 - "description": the transaction description/details
 - "debit": amount as number (money going OUT, positive number) or 0
@@ -60246,52 +60250,73 @@ RULES:
 - Payments OUT (debits, purchases, fees) go in "debit" field as POSITIVE numbers
 - Money IN (credits, deposits, settlements) go in "credit" field as POSITIVE numbers
 - Skip "BALANCE BROUGHT FORWARD" and "CLOSING BALANCE" rows
-- Read EVERY transaction row, do not skip any
+- Read EVERY transaction row on EVERY page, do not skip any
 - Extract amounts exactly as shown on the statement
 - Include service fees, bank charges etc as debits"""
-
-                            import requests as req
-                            resp = req.post(
-                                "https://api.anthropic.com/v1/messages",
-                                headers={
-                                    "x-api-key": api_key,
-                                    "anthropic-version": "2023-06-01",
-                                    "content-type": "application/json"
-                                },
-                                json={
-                                    "model": "claude-sonnet-4-20250514",
-                                    "max_tokens": 8000,
-                                    "messages": [{
-                                        "role": "user",
-                                        "content": [
-                                            ({"type": "document", "source": {"type": "base64", "media_type": media_type, "data": b64_img}} if media_type == "application/pdf" else {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_img}}),
-                                            {"type": "text", "text": prompt}
-                                        ]
-                                    }]
-                                },
-                                timeout=120
-                            )
+                        
+                        import requests as req
+                        
+                        def process_batch(batch_info):
+                            """Process a batch of page images in a single API call"""
+                            batch_idx, batch_imgs = batch_info
+                            batch_txns = []
                             
-                            if resp.status_code != 200:
-                                logger.error(f"[BANK IMPORT] AI API error: {resp.status_code} {resp.text[:200]}")
-                                continue
+                            # Build content array with all page images + prompt
+                            content_parts = []
+                            for img_bytes in batch_imgs:
+                                b64_img = base64.b64encode(img_bytes).decode('utf-8')
+                                content_parts.append({
+                                    "type": "image",
+                                    "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_img}
+                                })
+                            content_parts.append({"type": "text", "text": prompt})
                             
-                            ai_result = resp.json()
-                            ai_text = ""
-                            for block in ai_result.get("content", []):
-                                if block.get("type") == "text":
-                                    ai_text += block["text"]
+                            try:
+                                resp = req.post(
+                                    "https://api.anthropic.com/v1/messages",
+                                    headers={
+                                        "x-api-key": api_key,
+                                        "anthropic-version": "2023-06-01",
+                                        "content-type": "application/json"
+                                    },
+                                    json={
+                                        "model": "claude-haiku-4-5-20241022",
+                                        "max_tokens": 8000,
+                                        "messages": [{"role": "user", "content": content_parts}]
+                                    },
+                                    timeout=90
+                                )
+                                
+                                if resp.status_code != 200:
+                                    logger.error(f"[BANK IMPORT] Batch {batch_idx+1} API error: {resp.status_code}")
+                                    return batch_txns
+                                
+                                ai_result = resp.json()
+                                ai_text = ""
+                                for block in ai_result.get("content", []):
+                                    if block.get("type") == "text":
+                                        ai_text += block["text"]
+                                
+                                import re as _re
+                                json_match = _re.search(r'\[.*\]', ai_text, _re.DOTALL)
+                                if json_match:
+                                    batch_txns = json.loads(json_match.group(0))
+                                    logger.info(f"[BANK IMPORT] Batch {batch_idx+1}: {len(batch_txns)} transactions from {len(batch_imgs)} pages")
+                            except Exception as batch_err:
+                                logger.error(f"[BANK IMPORT] Batch {batch_idx+1} error: {batch_err}")
                             
-                            # Parse JSON from AI response
-                            import re
-                            json_match = re.search(r'\[.*\]', ai_text, re.DOTALL)
-                            if json_match:
-                                try:
-                                    page_txns = json.loads(json_match.group(0))
-                                    all_transactions.extend(page_txns)
-                                    logger.info(f"[BANK IMPORT] Page {page_num + 1}: {len(page_txns)} transactions")
-                                except json.JSONDecodeError as je:
-                                    logger.error(f"[BANK IMPORT] JSON parse error page {page_num + 1}: {je}")
+                            return batch_txns
+                        
+                        # Process batches concurrently if multiple
+                        if len(batches) > 1:
+                            from concurrent.futures import ThreadPoolExecutor as _TPE
+                            with _TPE(max_workers=min(len(batches), 3)) as executor:
+                                results = list(executor.map(process_batch, enumerate(batches)))
+                            for batch_txns in results:
+                                all_transactions.extend(batch_txns)
+                        else:
+                            # Single batch — just call directly
+                            all_transactions.extend(process_batch((0, batches[0])))
                         
                         
                         os.unlink(tmp_path)
