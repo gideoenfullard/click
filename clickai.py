@@ -60280,15 +60280,15 @@ RULES:
                                         "content-type": "application/json"
                                     },
                                     json={
-                                        "model": "claude-haiku-4-5",
-                                        "max_tokens": 16000,
+                                        "model": "claude-haiku-4-5-20241022",
+                                        "max_tokens": 8000,
                                         "messages": [{"role": "user", "content": content_parts}]
                                     },
                                     timeout=90
                                 )
                                 
                                 if resp.status_code != 200:
-                                    logger.error(f"[BANK IMPORT] Batch {batch_idx+1} API error: {resp.status_code} - {resp.text[:500]}")
+                                    logger.error(f"[BANK IMPORT] Batch {batch_idx+1} API error: {resp.status_code}")
                                     return batch_txns
                                 
                                 ai_result = resp.json()
@@ -60297,18 +60297,11 @@ RULES:
                                     if block.get("type") == "text":
                                         ai_text += block["text"]
                                 
-                                logger.info(f"[BANK IMPORT] Batch {batch_idx+1} AI response: {len(ai_text)} chars, first 200: {ai_text[:200]}")
-                                
                                 import re as _re
                                 json_match = _re.search(r'\[.*\]', ai_text, _re.DOTALL)
                                 if json_match:
-                                    try:
-                                        batch_txns = json.loads(json_match.group(0))
-                                        logger.info(f"[BANK IMPORT] Batch {batch_idx+1}: {len(batch_txns)} transactions from {len(batch_imgs)} pages")
-                                    except json.JSONDecodeError as jde:
-                                        logger.error(f"[BANK IMPORT] Batch {batch_idx+1} JSON decode error: {jde} - text around error: {ai_text[max(0,jde.pos-50):jde.pos+50]}")
-                                else:
-                                    logger.error(f"[BANK IMPORT] Batch {batch_idx+1}: No JSON array found in AI response. Full text: {ai_text[:1000]}")
+                                    batch_txns = json.loads(json_match.group(0))
+                                    logger.info(f"[BANK IMPORT] Batch {batch_idx+1}: {len(batch_txns)} transactions from {len(batch_imgs)} pages")
                             except Exception as batch_err:
                                 logger.error(f"[BANK IMPORT] Batch {batch_idx+1} error: {batch_err}")
                             
@@ -60329,8 +60322,7 @@ RULES:
                         os.unlink(tmp_path)
                         
                         if not all_transactions:
-                            logger.error(f"[BANK IMPORT] AI returned 0 transactions from {len(prepared_images)} pages in {len(batches)} batches")
-                            return jsonify({"success": False, "error": "AI could not read any transactions from the PDF — check logs for details"})
+                            return jsonify({"success": False, "error": "AI could not read any transactions from the PDF"})
                         
                         # Convert to standard format
                         data_rows = []
@@ -69796,6 +69788,9 @@ def scan_page():
                 <button class="btn scan-type-btn" onclick="selectType('customer_order')" style="padding:20px;background:var(--card);border:2px solid #10b981;">
                     🛒 Customer Order
                 </button>
+                <button class="btn scan-type-btn" onclick="selectType('clean_copy')" style="padding:20px;background:var(--card);border:2px solid #3b82f6;">
+                    📄 Clean Copy
+                </button>
                 <button class="btn scan-type-btn" onclick="selectType('other')" style="padding:20px;background:var(--card);border:1px solid var(--border);">
                     [DOC] Other Document
                 </button>
@@ -69913,6 +69908,7 @@ def scan_page():
         'timesheet': 'Timesheet',
         'bank_statement': '🏦 Bank Statement',
         'customer_order': '🛒 Customer Order',
+        'clean_copy': '📄 Clean Copy',
         'other': '[DOC] Document'
     };
     
@@ -69922,6 +69918,7 @@ def scan_page():
         'timesheet': '#f59e0b',
         'bank_statement': '#059669',
         'customer_order': '#10b981',
+        'clean_copy': '#3b82f6',
         'other': 'var(--text-muted)'
     };
     
@@ -69953,6 +69950,41 @@ def scan_page():
             goToStep(3);
         };
         reader.readAsDataURL(file);
+    }
+    
+    async function downloadCleanPDF() {
+        if (!extractedData) return;
+        const btn = document.getElementById('saveBtn');
+        btn.innerHTML = 'Generating PDF...';
+        btn.disabled = true;
+        try {
+            const response = await fetch('/api/scan/clean-pdf', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(extractedData)
+            });
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = (extractedData.document_title || 'Clean_Document').replace(/[^a-zA-Z0-9 ]/g, '_') + '.pdf';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                btn.innerHTML = 'Downloaded!';
+                btn.style.background = 'var(--green)';
+            } else {
+                const err = await response.json();
+                alert('Error: ' + (err.error || 'PDF generation failed'));
+                btn.innerHTML = '📄 Download Clean PDF';
+            }
+        } catch(e) {
+            alert('Error: ' + e.message);
+            btn.innerHTML = '📄 Download Clean PDF';
+        }
+        btn.disabled = false;
     }
     
     async function scanDocument() {
@@ -70098,6 +70130,43 @@ def scan_page():
             document.getElementById('saveBtn').innerHTML = 'Save to Order Inbox';
             document.getElementById('saveBtn').style.background = '#10b981';
             document.getElementById('saveHint').textContent = 'Order will be saved. Open from inbox to create a quote with your prices.';
+        } else if (scanType === 'clean_copy') {
+            const title = data.document_title || 'Document';
+            const docType = data.document_type || 'document';
+            const parties = data.parties || [];
+            const keyFields = data.key_fields || [];
+            const sections = data.sections || [];
+            const tables = data.tables || [];
+            
+            let partiesHtml = parties.map(p => 
+                `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+                    <span style="color:var(--text-muted);font-size:12px;">${p.role || ''}</span>
+                    <strong style="font-size:13px;">${p.name || ''}</strong>
+                </div>`
+            ).join('');
+            
+            let fieldsHtml = keyFields.map(f =>
+                `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+                    <span style="color:var(--text-muted);font-size:12px;">${f.label}</span>
+                    <strong style="font-size:13px;">${f.value}</strong>
+                </div>`
+            ).join('');
+            
+            html = `
+                <div style="background:rgba(59,130,246,0.15);padding:12px;border-radius:8px;margin-bottom:15px;text-align:center;">
+                    <strong style="color:#3b82f6;font-size:15px;">${title}</strong>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${docType.toUpperCase()} - ${sections.length} sections found</div>
+                </div>
+                ${partiesHtml ? `<div style="margin-bottom:12px;"><span style="color:var(--text-muted);font-size:11px;">PARTIES</span>${partiesHtml}</div>` : ''}
+                ${fieldsHtml ? `<div style="margin-bottom:12px;"><span style="color:var(--text-muted);font-size:11px;">KEY DETAILS</span>${fieldsHtml}</div>` : ''}
+                <div style="font-size:12px;color:var(--text-muted);margin-top:10px;">
+                    ${sections.length} sections, ${tables.length} tables extracted
+                </div>
+            `;
+            document.getElementById('saveBtn').innerHTML = '📄 Download Clean PDF';
+            document.getElementById('saveBtn').style.background = '#3b82f6';
+            document.getElementById('saveBtn').onclick = function() { downloadCleanPDF(); };
+            document.getElementById('saveHint').textContent = 'AI has read the document. Download a clean, readable PDF copy.';
         } else if (scanType === 'payslip') {
             html = `
                 <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
@@ -70430,6 +70499,53 @@ Return ONLY valid JSON:
 }
 
 NOTE: Read item descriptions and quantities exactly. Price can be 0 - we will use our own prices."""
+        elif scan_type == 'clean_copy':
+            prompt = """You are reading a scanned document that is hard to read. Your job is to extract ALL the text content so it can be reproduced as a clean, readable PDF.
+
+Read the ENTIRE document carefully, page by page. Preserve the structure: headings, numbered clauses, paragraphs, tables, signature blocks.
+
+Return ONLY valid JSON:
+{
+    "document_title": "The main title/heading of the document",
+    "document_type": "contract/agreement/letter/form/report/certificate/other",
+    "date": "YYYY-MM-DD or empty if not found",
+    "parties": [
+        {"role": "Seller/Buyer/Landlord/Tenant/etc", "name": "Full name or company", "id_or_reg": "ID/Reg number if shown"}
+    ],
+    "key_fields": [
+        {"label": "Purchase Price", "value": "R2 300 000"},
+        {"label": "Property Address", "value": "426 Aureus Ext 3, Randfontein"}
+    ],
+    "sections": [
+        {
+            "heading": "Section heading or number (e.g. '1. PURCHASE PRICE')",
+            "content": "Full text content of this section, preserving all detail. Include sub-clauses like 1.1, 1.2 etc."
+        }
+    ],
+    "tables": [
+        {
+            "title": "Table title (e.g. 'Seller Information')",
+            "rows": [
+                {"label": "Full Names", "value": "John Smith"},
+                {"label": "ID Number", "value": "850101 5500 081"}
+            ]
+        }
+    ],
+    "signature_block": {
+        "signed_at": "Place",
+        "date_signed": "YYYY-MM-DD",
+        "signatories": ["Name 1", "Name 2"]
+    }
+}
+
+CRITICAL RULES:
+1. Read EVERY word on EVERY page - do not skip or summarize
+2. If text is hard to read, give your best interpretation with [?] for uncertain words
+3. Preserve numbered clauses (1, 1.1, 1.2, 2, 2.1 etc)
+4. For handwritten text, read it as best you can
+5. Include ALL sections, even boilerplate legal text
+6. Tables/forms: capture every row with label and value
+7. Amounts: include currency symbol and exact figures"""
         else:
             prompt = """Read this invoice/receipt carefully. Extract ALL line items AND supplier details.
 
@@ -71274,6 +71390,186 @@ def api_scan_check_duplicate():
     except Exception as e:
         logger.error(f"[DUPLICATE CHECK] Error: {e}")
         return jsonify({"duplicate": False, "error": str(e)})
+
+
+@app.route("/api/scan/clean-pdf", methods=["POST"])
+@login_required
+def api_scan_clean_pdf():
+    """Generate a clean, readable PDF from extracted document data"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+        
+        import tempfile
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, HRFlowable
+        from reportlab.lib import colors
+        
+        tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        
+        doc = SimpleDocTemplate(tmp_path, pagesize=A4,
+                                leftMargin=20*mm, rightMargin=20*mm,
+                                topMargin=15*mm, bottomMargin=15*mm)
+        
+        styles = getSampleStyleSheet()
+        title_s = ParagraphStyle('CTitle', parent=styles['Title'], fontSize=16, leading=20,
+                                  spaceAfter=3*mm, alignment=TA_CENTER, fontName='Helvetica-Bold')
+        heading_s = ParagraphStyle('CHead', parent=styles['Normal'], fontSize=11, leading=14,
+                                    spaceBefore=5*mm, spaceAfter=2*mm, fontName='Helvetica-Bold')
+        body_s = ParagraphStyle('CBody', parent=styles['Normal'], fontSize=9.5, leading=13,
+                                 alignment=TA_JUSTIFY, spaceAfter=2*mm, fontName='Helvetica')
+        small_s = ParagraphStyle('CSmall', parent=body_s, fontSize=8.5, leading=11,
+                                  textColor=colors.HexColor('#666666'))
+        
+        story = []
+        
+        # Title
+        doc_title = data.get("document_title", "Document")
+        story.append(Paragraph(doc_title.upper(), title_s))
+        
+        # Document type and date
+        doc_type = data.get("document_type", "")
+        doc_date = data.get("date", "")
+        if doc_type or doc_date:
+            meta = []
+            if doc_type:
+                meta.append(doc_type.title())
+            if doc_date:
+                meta.append(f"Date: {doc_date}")
+            story.append(Paragraph(" | ".join(meta), small_s))
+        
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
+        story.append(Spacer(1, 3*mm))
+        
+        # Parties
+        parties = data.get("parties", [])
+        if parties:
+            story.append(Paragraph("PARTIES", heading_s))
+            for p in parties:
+                role = p.get("role", "")
+                name = p.get("name", "")
+                reg = p.get("id_or_reg", "")
+                line = f"<b>{role}:</b> {name}"
+                if reg:
+                    line += f" ({reg})"
+                story.append(Paragraph(line, body_s))
+        
+        # Key fields
+        key_fields = data.get("key_fields", [])
+        if key_fields:
+            story.append(Spacer(1, 2*mm))
+            kf_data = [["Field", "Value"]]
+            for kf in key_fields:
+                kf_data.append([kf.get("label", ""), kf.get("value", "")])
+            kf_table = Table(kf_data, colWidths=[70*mm, 100*mm])
+            kf_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e8e8e8')),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ]))
+            story.append(kf_table)
+            story.append(Spacer(1, 3*mm))
+        
+        # Sections (main content)
+        sections = data.get("sections", [])
+        for sec in sections:
+            heading = sec.get("heading", "")
+            content = sec.get("content", "")
+            if heading:
+                story.append(Paragraph(heading, heading_s))
+            if content:
+                # Replace newlines with <br/> for paragraph formatting
+                content_clean = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                content_clean = content_clean.replace("\n", "<br/>")
+                try:
+                    story.append(Paragraph(content_clean, body_s))
+                except Exception:
+                    # Fallback: split into separate paragraphs
+                    for line in content.split("\n"):
+                        if line.strip():
+                            safe_line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                            try:
+                                story.append(Paragraph(safe_line, body_s))
+                            except Exception:
+                                story.append(Paragraph(safe_line[:200], body_s))
+        
+        # Tables
+        tables = data.get("tables", [])
+        for tbl in tables:
+            tbl_title = tbl.get("title", "")
+            rows = tbl.get("rows", [])
+            if tbl_title:
+                story.append(Paragraph(tbl_title, heading_s))
+            if rows:
+                tbl_data = [["Field", "Value"]]
+                for row in rows:
+                    label = str(row.get("label", ""))
+                    value = str(row.get("value", ""))
+                    tbl_data.append([label, value])
+                t = Table(tbl_data, colWidths=[60*mm, 110*mm])
+                t.setStyle(TableStyle([
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e8e8e8')),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                    ('TOPPADDING', (0, 0), (-1, -1), 3),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 3*mm))
+        
+        # Signature block
+        sig = data.get("signature_block", {})
+        if sig and (sig.get("signed_at") or sig.get("signatories")):
+            story.append(Spacer(1, 5*mm))
+            story.append(HRFlowable(width="100%", thickness=0.5, color=colors.grey))
+            story.append(Paragraph("SIGNATURES", heading_s))
+            if sig.get("signed_at"):
+                story.append(Paragraph(f"Signed at: <b>{sig['signed_at']}</b>", body_s))
+            if sig.get("date_signed"):
+                story.append(Paragraph(f"Date: <b>{sig['date_signed']}</b>", body_s))
+            for name in sig.get("signatories", []):
+                if name:
+                    story.append(Spacer(1, 5*mm))
+                    story.append(Paragraph(f"______________________________", body_s))
+                    story.append(Paragraph(name, small_s))
+        
+        # Footer
+        story.append(Spacer(1, 10*mm))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#cccccc')))
+        story.append(Paragraph("Clean copy generated by ClickAI Document Scanner", small_s))
+        
+        doc.build(story)
+        
+        # Send the PDF file
+        import os
+        response = send_file(tmp_path, mimetype='application/pdf',
+                           download_name=f"{doc_title.replace(' ', '_')[:50]}_Clean.pdf",
+                           as_attachment=True)
+        
+        # Clean up after sending
+        @response.call_on_close
+        def _cleanup():
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"[CLEAN PDF] Error generating PDF: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/scan/save-to-inbox", methods=["POST"])
