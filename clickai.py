@@ -61329,7 +61329,8 @@ def api_banking_delete_all():
         user = Auth.get_current_user()
         if not user:
             return jsonify({"success": False, "error": "Not logged in"})
-        biz_id = user.get("business_id", "")
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
         if not biz_id:
             return jsonify({"success": False, "error": "No business selected"})
         
