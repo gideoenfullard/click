@@ -60259,10 +60259,17 @@ def api_banking_import():
 
 Return ONLY a valid JSON array, no other text. Each transaction must have:
 - "date": "YYYY-MM-DD" format
-- "description": the transaction description/details
+- "description": the FULL transaction description including ALL detail lines (see below)
 - "debit": amount as number (money going OUT, positive number) or 0
 - "credit": amount as number (money coming IN, positive number) or 0
 - "balance": the running balance after this transaction
+
+CRITICAL - DESCRIPTIONS:
+- Each transaction may span MULTIPLE LINES. The first line has the transaction type (e.g. "ELECTRONIC BANKING PAYMENT TO") and the next line(s) have the beneficiary/reference details (e.g. "MAR20 M FULLARD ERY5310:21")
+- You MUST combine ALL lines of a transaction into ONE description string
+- Example: if you see "CREDIT TRANSFER" on one line and "KHUPHUKANI" on the next, the description must be "CREDIT TRANSFER KHUPHUKANI"
+- Example: "ELECTRONIC BANKING PAYMENT TO" + "PRE10 PRESIDENT BOL ERY5310:21" = "ELECTRONIC BANKING PAYMENT TO PRE10 PRESIDENT BOL ERY5310:21"
+- NEVER use generic text like "Transaction" — always use the actual text from the statement
 
 RULES:
 - Payments OUT (debits, purchases, fees) go in "debit" field as POSITIVE numbers
@@ -60270,7 +60277,8 @@ RULES:
 - Skip "BALANCE BROUGHT FORWARD" and "CLOSING BALANCE" rows
 - Read EVERY transaction row on EVERY page, do not skip any
 - Extract amounts exactly as shown on the statement
-- Include service fees, bank charges etc as debits"""
+- Include service fees, bank charges etc as debits
+- The "Page" column number is NOT the date — dates are in the "Date" column in YYYYMMDD format"""
                         
                         import requests as req
                         
