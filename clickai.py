@@ -59593,6 +59593,7 @@ def banking_page():
         <h2 style="margin:0;">🏦 Bank Reconciliation</h2>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <a href="/subscriptions" class="btn btn-secondary">📦 Recurring Expenses</a>
+            <button class="btn btn-secondary" style="background:rgba(239,68,68,0.15);border-color:#ef4444;color:#ef4444;" onclick="deleteAllTransactions()">🗑️ Delete All</button>
             <label class="btn btn-primary" style="cursor:pointer;">
                 📥 Import Statement
                 <input type="file" accept=".csv,.pdf" style="display:none;" onchange="uploadStatement(this.files[0])">
@@ -60039,6 +60040,28 @@ def banking_page():
         // Could be smarter but this works
     }}
     
+    async function deleteAllTransactions() {{
+        const count = {len(all_transactions)};
+        if (!confirm(`⚠️ Delete ALL ${{count}} bank transactions?\\n\\nThis cannot be undone. You can re-import after.`)) return;
+        if (!confirm(`Are you sure? This will delete ${{count}} transactions permanently.`)) return;
+        
+        try {{
+            const response = await fetch('/api/banking/delete-all', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}}
+            }});
+            const data = await response.json();
+            if (data.success) {{
+                alert(`✅ ${{data.message}}`);
+                location.reload();
+            }} else {{
+                alert('❌ ' + data.error);
+            }}
+        }} catch (err) {{
+            alert('❌ Delete failed: ' + err.message);
+        }}
+    }}
+
     async function uploadStatement(file) {{
         if (!file) return;
         
@@ -61296,6 +61319,39 @@ Need more info: {{"needs_clarification":true,"question":"[plain question]","opti
         except:
             cats = ["General Expenses"]
         return jsonify({"success": False, "error": str(e), "all_categories": cats})
+
+
+@app.route("/api/banking/delete-all", methods=["POST"])
+@login_required
+def api_banking_delete_all():
+    """Delete ALL bank transactions for current business — for re-import"""
+    try:
+        user = Auth.get_current_user()
+        if not user:
+            return jsonify({"success": False, "error": "Not logged in"})
+        biz_id = user.get("business_id", "")
+        if not biz_id:
+            return jsonify({"success": False, "error": "No business selected"})
+        
+        # Get all transaction IDs
+        all_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+        if not all_txns:
+            return jsonify({"success": True, "deleted": 0, "message": "No transactions to delete"})
+        
+        ids = [t["id"] for t in all_txns if "id" in t]
+        success_count, failed_count = db.delete_many("bank_transactions", ids, business_id=biz_id)
+        
+        logger.info(f"[BANK DELETE ALL] Deleted {success_count} transactions for business {biz_id} ({failed_count} failed)")
+        
+        return jsonify({
+            "success": True, 
+            "deleted": success_count, 
+            "failed": failed_count,
+            "message": f"Deleted {success_count} bank transactions"
+        })
+    except Exception as e:
+        logger.error(f"[BANK DELETE ALL] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
 
 
 # 
