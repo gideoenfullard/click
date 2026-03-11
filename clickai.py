@@ -30429,6 +30429,20 @@ def supplier_view(supplier_id):
     supplier_name_escaped = safe_string(supplier.get("name", "")).replace("'", "")
     payment_button = f'''<button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Pay {supplier_name_escaped} R';document.getElementById('aiInput').focus();">💰 Record Payment</button>''' if can_see_balances else ""
     
+    # Build purchase orders HTML separately (nested f-strings break in triple-quoted strings)
+    po_html = ""
+    for po in purchase_orders[:200]:
+        po_status = po.get("status", "draft")
+        po_color = "var(--green)" if po_status == "received" else "var(--orange)"
+        po_html += f'''
+        <tr style="cursor:pointer;" onclick="window.location='/purchase/{po.get("id")}'">
+            <td>{po.get("po_number", "-")}</td>
+            <td>{po.get("date", "-")}</td>
+            <td>{money(po.get("total", 0))}</td>
+            <td style="color:{po_color};">{po_status.upper()}</td>
+        </tr>
+        '''
+    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>
@@ -30577,7 +30591,7 @@ def supplier_view(supplier_id):
                 <tr><th>PO Number</th><th>Date</th><th>Total</th><th>Status</th></tr>
             </thead>
             <tbody>
-                {''.join(f"""<tr style="cursor:pointer;" onclick="window.location='/purchase/{po.get('id')}'"><td>{po.get('po_number', '-')}</td><td>{po.get('date', '-')}</td><td>{money(po.get('total', 0))}</td><td style="color:{'var(--green)' if po.get('status') == 'received' else 'var(--orange)'};">{(po.get('status', 'draft')).upper()}</td></tr>""" for po in purchase_orders[:200]) or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No purchase orders</td></tr>"}
+                {po_html if po_html else "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No purchase orders</td></tr>"}
             </tbody>
         </table>
     </div>
