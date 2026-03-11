@@ -30429,7 +30429,7 @@ def supplier_view(supplier_id):
     supplier_name_escaped = safe_string(supplier.get("name", "")).replace("'", "")
     payment_button = f'''<button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Pay {supplier_name_escaped} R';document.getElementById('aiInput').focus();">💰 Record Payment</button>''' if can_see_balances else ""
     
-    # Build purchase orders HTML separately (nested f-strings break in triple-quoted strings)
+    # Build purchase orders HTML separately (avoids nested f-string issues)
     po_html = ""
     for po in purchase_orders[:200]:
         po_status = po.get("status", "draft")
@@ -30580,7 +30580,7 @@ def supplier_view(supplier_id):
             </tbody>
         </table>
     </div>
-    ''' if can_see_balances else '') + '''
+    ''' if can_see_balances else '') + f'''
     </div>
     
     <!-- Purchase Orders Section -->
