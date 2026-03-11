@@ -45977,24 +45977,37 @@ def pos_page():
     let currentCashierId = null;
     let currentCashierName = null;
     
-    // Initialize cashier - restore from cookie or use active button
+    // Initialize cashier - restore from cookie or use logged-in user
     document.addEventListener('DOMContentLoaded', function() {
+        const myUid = '{_safe_uid}';
+        const myName = '{_safe_uname}';
+        
         const savedCashier = document.cookie.split(';').find(c => c.trim().startsWith('pos_cashier='));
         if (savedCashier) {
             const uid = savedCashier.split('=')[1];
             const btn = document.querySelector('.cashier-btn[data-uid="' + uid + '"]');
             if (btn) {
+                // Cookie cashier exists as a valid team member — use it
                 document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 currentCashierId = uid;
                 currentCashierName = btn.textContent.trim();
                 return;
             }
+            // Cookie cashier not found in team — clear stale cookie, fall through to default
+            document.cookie = 'pos_cashier=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
         }
-        const activeBtn = document.querySelector('.cashier-btn.active');
-        if (activeBtn) {
-            currentCashierId = activeBtn.dataset.uid;
-            currentCashierName = activeBtn.textContent.trim();
+        // Default: use the logged-in user's own button, or set their ID directly
+        const myBtn = document.querySelector('.cashier-btn[data-uid="' + myUid + '"]');
+        if (myBtn) {
+            document.querySelectorAll('.cashier-btn').forEach(b => b.classList.remove('active'));
+            myBtn.classList.add('active');
+            currentCashierId = myUid;
+            currentCashierName = myBtn.textContent.trim();
+        } else {
+            // No button for this user — just use their ID
+            currentCashierId = myUid;
+            currentCashierName = myName;
         }
     });
     
@@ -63942,13 +63955,29 @@ def invitation_page(token):
             existing_users = db.get("users", {"email": email})
             
             if existing_users:
-                # User exists - just link to business
+                # User exists - link to business AND update password
                 user = existing_users[0]
                 user_id = user.get("id")
                 
-                # Update user's default business if not set
+                # ALWAYS update password when accepting invite (user chose new password on invite page)
+                pwd_hash = hashlib.sha256(password.encode()).hexdigest()
+                updates = {"encrypted_password": pwd_hash, "updated_at": now()}
+                
+                # Update default business if not set
                 if not user.get("default_business_id"):
-                    user["default_business_id"] = business_id
+                    updates["default_business_id"] = business_id
+                
+                # Update name if we have one from the invite
+                if name:
+                    updates["raw_user_meta_data"] = json.dumps({"full_name": name})
+                
+                try:
+                    db.update("users", user_id, updates)
+                    logger.info(f"[INVITATION] Updated existing user {email}: password reset, biz={business_id}")
+                except Exception as upd_err:
+                    logger.warning(f"[INVITATION] Could not update user {email}: {upd_err}")
+                    # Try full save as fallback
+                    user.update(updates)
                     db.save("users", user)
             else:
                 # Create new user
