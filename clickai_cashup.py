@@ -495,18 +495,15 @@ select.form-input {{
 
     <!-- ═══ ACTION BUTTONS ═══ -->
     <div class="actions">
-        <button class="action-btn" onclick="showPanel('xread')">
-            <span class="btn-icon">📊</span>
-            <span class="btn-label">X-Reading</span>
-        </button>
+        {'<button class="action-btn" onclick="showPanel(&#39;xread&#39;)"><span class="btn-icon">📊</span><span class="btn-label">X-Reading</span></button>' if is_manager else '<div></div>'}
         <button class="action-btn primary" onclick="showPanel('blind')">
             <span class="btn-icon">🔒</span>
             <span class="btn-label">Blind Cash Up</span>
         </button>
     </div>
 
-    <!-- ═══ X-READING PANEL ═══ -->
-    <div class="panel" id="panel-xread">
+    <!-- ═══ X-READING PANEL (managers only) ═══ -->
+    {'<div class="panel" id="panel-xread">' if is_manager else '<div class="panel" id="panel-xread" style="display:none !important;">'}
         <div class="panel-title">X-Reading — Mid-Day Check</div>
         <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">
             Non-destructive reading. Check current till status without closing the shift.
@@ -586,10 +583,10 @@ select.form-input {{
             </div>
         </div>
 
-        <button class="submit-btn green" onclick="submitBlindCashUp()">Submit & Reveal</button>
+        <button class="submit-btn green" onclick="submitBlindCashUp()">{'Submit & Reveal' if is_manager else 'Submit Cash Up'}</button>
 
-        <!-- ═══ SYSTEM REVEAL (shown after submit) ═══ -->
-        <div class="system-reveal" id="systemReveal">
+        <!-- ═══ SYSTEM REVEAL (managers only — shown after submit) ═══ -->
+        <div class="system-reveal" id="systemReveal" {'style="display:none !important;"' if not is_manager else ''}>
             <h3 style="font-family:'Orbitron',monospace; font-size:0.75rem; letter-spacing:3px; color:var(--accent); margin: 20px 0 12px; text-transform:uppercase; text-align:center;">
                 ⚡ System Comparison
             </h3>
@@ -832,6 +829,13 @@ async function submitBlindCashUp() {{
     document.getElementById('systemReveal').classList.add('show');
     document.getElementById('statsRow').style.display = '';
 
+    // Staff: hide reveal and stats, just show confirmation
+    if (!IS_MANAGER) {{
+        document.getElementById('systemReveal').style.display = 'none';
+        document.getElementById('statsRow').style.display = 'none';
+        alert('✅ Cash up submitted! Manager will review the results.');
+    }}
+
     // Save to DB
     try {{
         const resp = await fetch('/api/cashup/save', {{
@@ -882,12 +886,20 @@ function renderHistory() {{
         
         let detail = '';
         if (type === 'x_reading') {{
-            detail = `Total: <span>R${{(h.system_total || 0).toFixed(2)}}</span> | ${{h.sale_count || 0}} sales`;
+            if (IS_MANAGER) {{
+                detail = `Total: <span>R${{(h.system_total || 0).toFixed(2)}}</span> | ${{h.sale_count || 0}} sales`;
+            }} else {{
+                detail = `Saved at ${{time}}`;
+            }}
         }} else if (type === 'blind_cashup') {{
-            const disc = h.total_discrepancy || 0;
-            const discCls = disc > 0.01 ? 'disc-over' : disc < -0.01 ? 'disc-short' : 'disc-match';
-            const discTxt = disc > 0.01 ? '+R' + disc.toFixed(2) + ' over' : disc < -0.01 ? '-R' + Math.abs(disc).toFixed(2) + ' short' : 'Exact match';
-            detail = `Cashier: <span>${{h.cashier_name || '—'}}</span> | Declared: <span>R${{(h.declared_total || 0).toFixed(2)}}</span> | <span class="${{discCls}}">${{discTxt}}</span>`;
+            if (IS_MANAGER) {{
+                const disc = h.total_discrepancy || 0;
+                const discCls = disc > 0.01 ? 'disc-over' : disc < -0.01 ? 'disc-short' : 'disc-match';
+                const discTxt = disc > 0.01 ? '+R' + disc.toFixed(2) + ' over' : disc < -0.01 ? '-R' + Math.abs(disc).toFixed(2) + ' short' : 'Exact match';
+                detail = `Cashier: <span>${{h.cashier_name || '—'}}</span> | Declared: <span>R${{(h.declared_total || 0).toFixed(2)}}</span> | <span class="${{discCls}}">${{discTxt}}</span>`;
+            }} else {{
+                detail = `Cashier: <span>${{h.cashier_name || '—'}}</span> | Declared: <span>R${{(h.declared_total || 0).toFixed(2)}}</span>`;
+            }}
         }}
         
         return `<div class="history-item">
