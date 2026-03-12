@@ -27105,6 +27105,25 @@ def invoice_new():
             except Exception as e:
                 logger.error(f"GL entry failed (non-critical): {e}")
             
+            # === ALLOCATION LOG ===
+            try:
+                if log_allocation:
+                    _bank = "1050" if payment_method == "cash" else "1000"
+                    _gl = [
+                        {"account_code": _bank if payment_method != "account" else "1200", "debit": float(total), "credit": 0},
+                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
+                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
+                    ]
+                    log_allocation(
+                        business_id=biz_id, allocation_type="invoice", source_table="invoices", source_id=invoice_id,
+                        description=f"Invoice {inv_num} - {customer_name}",
+                        amount=float(total), gl_entries=_gl,
+                        customer_name=customer_name, payment_method=payment_method, reference=inv_num,
+                        created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                    )
+            except Exception:
+                pass
+            
             return redirect(f"/invoice/{invoice_id}")
         
         return redirect("/invoice/new?error=Failed+to+save")
@@ -27815,6 +27834,23 @@ def api_invoice_pay(invoice_id):
         db.save("payments", payment)
         
         logger.info(f"[PAYMENT] Invoice {inv_number} marked as PAID ({bank_name}) - R{total:.2f}")
+        
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                log_allocation(
+                    business_id=biz_id, allocation_type="payment", source_table="payments", source_id=payment.get("id", ""),
+                    description=f"Payment received - {inv_number} - {customer_name} ({bank_name})",
+                    amount=total,
+                    gl_entries=[
+                        {"account_code": bank_account, "debit": total, "credit": 0},
+                        {"account_code": "1200", "debit": 0, "credit": total},
+                    ],
+                    customer_name=customer_name, payment_method=payment_method, reference=f"PAY-{inv_number}",
+                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                )
+        except Exception:
+            pass
         
         return jsonify({
             "success": True,
@@ -43178,6 +43214,21 @@ def api_po_receive(po_id):
             if "Could not find" in grv_error:
                 status_msg += " Table needs to be created in Supabase."
         
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                _sm = [{"stock_id": ri.get("stock_id",""), "code": ri.get("stock_code",""), "description": ri.get("description",""), "qty_change": ri.get("qty_received",0)} for ri in received_items if ri.get("stock_id")]
+                log_allocation(
+                    business_id=biz_id, allocation_type="grv", source_table="goods_received", source_id=grv_id,
+                    description=f"GRV {grv_num} from PO {po.get('po_number','')} - {safe_string(po.get('supplier_name',''))}",
+                    amount=0, stock_movements=_sm,
+                    supplier_name=po.get("supplier_name", ""), reference=grv_num,
+                    created_by=user.get("id") if user else "", created_by_name=user.get("name","") if user else "",
+                    extra={"po_number": po.get("po_number",""), "items_received": items_received, "all_received": all_received}
+                )
+        except Exception:
+            pass
+        
         return jsonify({"success": True, "message": status_msg, "all_received": all_received, "grv_id": grv_id, "grv_number": grv_num})
         
     except Exception as e:
@@ -51282,6 +51333,24 @@ def api_pos_credit_note():
         
         logger.info(f"[POS] Credit Note {cn_num} created: -R{total:.2f}")
         AuditLog.log("CREATE", "credit_notes", cn_id, details=f"Credit Note from POS - {customer_name}")
+        
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                log_allocation(
+                    business_id=biz_id, allocation_type="credit_note", source_table="credit_notes", source_id=cn_id,
+                    description=f"POS Credit Note {cn_num} - {customer_name}",
+                    amount=float(total),
+                    gl_entries=[
+                        {"account_code": "1200", "debit": 0, "credit": float(total)},
+                        {"account_code": "4000", "debit": float(subtotal), "credit": 0},
+                        {"account_code": "2100", "debit": float(vat), "credit": 0},
+                    ],
+                    customer_name=customer_name, reference=cn_num,
+                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                )
+        except Exception:
+            pass
         
         return jsonify({
             "success": True,
@@ -68795,6 +68864,25 @@ def create_credit_note(invoice_id):
                     db, "INVOICE_CREDIT", invoice, user, biz_id,
                     reason=reason or "No reason",
                     details=f"CN {cn_num} for R{float(cn_total):.2f} ({credit_type})"
+                )
+        except Exception:
+            pass
+        
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                log_allocation(
+                    business_id=biz_id, allocation_type="credit_note", source_table="credit_notes", source_id=cn_id,
+                    description=f"Credit Note {cn_num} - {credit_type} - reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}",
+                    amount=float(cn_total),
+                    gl_entries=[
+                        {"account_code": "4000", "debit": float(cn_subtotal), "credit": 0},
+                        {"account_code": "2100", "debit": float(cn_vat), "credit": 0},
+                        {"account_code": "1200", "debit": 0, "credit": float(cn_total)},
+                    ],
+                    customer_name=invoice.get("customer_name", ""), reference=cn_num,
+                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else "",
+                    extra={"reason": reason, "credit_type": credit_type, "original_invoice": invoice.get("invoice_number", "")}
                 )
         except Exception:
             pass
