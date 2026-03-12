@@ -882,7 +882,6 @@ def _enforce_role_access():
             '/pos', '/sale/', '/customers', '/customer/', '/stock', '/jobs', '/job/',
             '/suppliers', '/supplier/', '/purchases', '/purchase/',
             '/delivery-notes', '/delivery-note/',
-            '/cashup', '/api/cashup',
             '/api/pos/', '/api/chat', '/api/stock', '/api/customer', '/api/supplier',
             '/api/email', '/api/send',
             '/invoice/', '/quote/',  # Can VIEW individual docs
@@ -47911,6 +47910,8 @@ def pos_page():
         const supplierPhone = document.getElementById('qpSupplierPhone')?.value?.trim() || '';
         const supplierEmail = document.getElementById('qpSupplierEmail')?.value?.trim() || '';
         const supplierVat = document.getElementById('qpSupplierVat')?.value?.trim() || '';
+        const orderedBy = document.getElementById('qpOrderedBy')?.value?.trim() || '';
+        const qpReference = document.getElementById('qpReference')?.value?.trim() || '';
         const notes = document.getElementById('qpNotes').value.trim();
         
         if (!supplierName && !qpSelectedSupplierId) {
@@ -47956,7 +47957,9 @@ def pos_page():
                         vat_number: supplierVat
                     },
                     items: items,
-                    notes: notes
+                    notes: notes,
+                    sales_person: orderedBy,
+                    reference: qpReference
                 })
             });
             
@@ -48641,6 +48644,16 @@ def pos_page():
                     <div>
                         <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
                         <input type="text" id="qpSupplierVat" placeholder="4123456789" 
+                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Ordered By</label>
+                        <input type="text" id="qpOrderedBy" placeholder="Name of person placing order" 
+                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Reference</label>
+                        <input type="text" id="qpReference" placeholder="Quote/ref number" 
                             style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
                     </div>
                 </div>
@@ -50927,6 +50940,8 @@ def api_pos_quick_po():
             "date": today(),
             "items": po_items,
             "notes": notes,
+            "sales_person": data.get("sales_person", ""),
+            "reference": data.get("reference", ""),
             "status": "draft",
             "created_at": now(),
             "created_by": user.get("id") if user else None
