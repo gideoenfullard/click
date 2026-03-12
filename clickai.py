@@ -882,6 +882,7 @@ def _enforce_role_access():
             '/pos', '/sale/', '/customers', '/customer/', '/stock', '/jobs', '/job/',
             '/suppliers', '/supplier/', '/purchases', '/purchase/',
             '/delivery-notes', '/delivery-note/',
+            '/cashup', '/api/cashup',
             '/api/pos/', '/api/chat', '/api/stock', '/api/customer', '/api/supplier',
             '/api/email', '/api/send',
             '/invoice/', '/quote/',  # Can VIEW individual docs
