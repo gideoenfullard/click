@@ -130,7 +130,7 @@ def log_allocation(
         return False
 
 
-def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn, render_page, money, safe_string):
+def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn):
     """Register the /ledger page and API routes"""
     
     global _db, _generate_id, _now, _today
@@ -143,6 +143,12 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
     @login_required
     def ledger_page():
         """Allocation Ledger - Place of Safety"""
+        
+        # Import these at call time (they're defined after module registration in clickai.py)
+        import clickai as _ck
+        render_page = _ck.render_page
+        money = _ck.money
+        safe_string = _ck.safe_string
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
