@@ -149,6 +149,12 @@ try:
     CASHUP_LOADED = True
 except ImportError:
     CASHUP_LOADED = False
+try:
+    from clickai_allocation_log import register_ledger_routes, log_allocation
+    ALLOCATION_LOG_LOADED = True
+except ImportError:
+    log_allocation = None
+    ALLOCATION_LOG_LOADED = False
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -882,6 +888,8 @@ def _enforce_role_access():
             '/pos', '/sale/', '/customers', '/customer/', '/stock', '/jobs', '/job/',
             '/suppliers', '/supplier/', '/purchases', '/purchase/',
             '/delivery-notes', '/delivery-note/',
+            '/cashup', '/api/cashup',
+            '/ledger', '/api/ledger',
             '/api/pos/', '/api/chat', '/api/stock', '/api/customer', '/api/supplier',
             '/api/email', '/api/send',
             '/invoice/', '/quote/',  # Can VIEW individual docs
@@ -16741,6 +16749,14 @@ try:
 except Exception as e:
     logger.error(f"[CASHUP] Failed to register routes: {e}")
 
+# Register allocation ledger routes (separate module)
+try:
+    if ALLOCATION_LOG_LOADED:
+        register_ledger_routes(app, db, login_required, Auth, generate_id, now, today, render_page, money, safe_string)
+        logger.info("[ALLOC LOG] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[ALLOC LOG] Failed to register routes: {e}")
+
 
 # 
 # UI COMPONENTS - Minimal, Zane-centric
@@ -18881,6 +18897,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("expenses", "/expenses", "Expenses"),
             ("banking", "/banking", "Banking"),
             ("reports", "/reports", "Reports"),
+            ("ledger", "/ledger", "Ledger"),
             ("inbox", "/scan-inbox", "Inbox"),
         ]
     else:
@@ -18901,6 +18918,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("banking", "/banking", "Banking"),
             ("payroll", "/payroll", "Payroll"),
             ("reports", "/reports", "Reports"),
+            ("ledger", "/ledger", "Ledger"),
             ("intelligence", "/intelligence", "AI"),
             ("tools", "/tools", "Tools"),
             ("import", "/smart-import", "Import"),
@@ -32609,6 +32627,21 @@ def api_expenses_quick_add():
         create_journal_entry(biz_id, expense_date, desc[:50], f"EXP-{expense['id'][:8]}", journal_entries)
         
         logger.info(f"[EXPENSE QUICK-ADD] {desc} R{total_amount:.2f} cat={category} GL={expense_account}{' (OFFLINE SYNC)' if is_offline else ''}")
+        
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                log_allocation(
+                    business_id=biz_id, allocation_type="manual_expense", source_table="expenses", source_id=expense["id"],
+                    description=desc[:200], amount=total_amount, gl_entries=journal_entries,
+                    category=category, category_code=expense_account,
+                    supplier_name=supplier_display, payment_method=payment_method,
+                    reference=reference_no,
+                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                )
+        except Exception:
+            pass
+        
         return jsonify({"success": True, "id": expense["id"], "message": f"Expense R{total_amount:,.2f} saved"})
         
     except Exception as e:
@@ -47910,8 +47943,6 @@ def pos_page():
         const supplierPhone = document.getElementById('qpSupplierPhone')?.value?.trim() || '';
         const supplierEmail = document.getElementById('qpSupplierEmail')?.value?.trim() || '';
         const supplierVat = document.getElementById('qpSupplierVat')?.value?.trim() || '';
-        const orderedBy = document.getElementById('qpOrderedBy')?.value?.trim() || '';
-        const qpReference = document.getElementById('qpReference')?.value?.trim() || '';
         const notes = document.getElementById('qpNotes').value.trim();
         
         if (!supplierName && !qpSelectedSupplierId) {
@@ -47957,9 +47988,7 @@ def pos_page():
                         vat_number: supplierVat
                     },
                     items: items,
-                    notes: notes,
-                    sales_person: orderedBy,
-                    reference: qpReference
+                    notes: notes
                 })
             });
             
@@ -48644,16 +48673,6 @@ def pos_page():
                     <div>
                         <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">VAT Number</label>
                         <input type="text" id="qpSupplierVat" placeholder="4123456789" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Ordered By</label>
-                        <input type="text" id="qpOrderedBy" placeholder="Name of person placing order" 
-                            style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Reference</label>
-                        <input type="text" id="qpReference" placeholder="Quote/ref number" 
                             style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
                     </div>
                 </div>
@@ -50486,6 +50505,29 @@ def api_pos_sale():
         
         logger.info(f"[POS] Sale {sale_num}: R{total:.2f} ({payment_method}) - GL entries created")
         
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                _stock_moves = []
+                for item in items:
+                    if item.get("stock_id"):
+                        _stock_moves.append({"stock_id": item.get("stock_id"), "code": item.get("code", ""), "description": item.get("description", ""), "qty_change": -int(item.get("quantity", 0))})
+                log_allocation(
+                    business_id=biz_id, allocation_type="pos_sale", source_table="sales", source_id=sale_id,
+                    description=f"POS Sale {sale_num} - {customer_name} ({debit_name})",
+                    amount=float(total),
+                    gl_entries=[
+                        {"account_code": debit_account, "debit": float(total), "credit": 0},
+                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
+                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
+                    ],
+                    stock_movements=_stock_moves,
+                    customer_name=customer_name, payment_method=payment_method, reference=sale_num,
+                    created_by=cashier_id or "", created_by_name=cashier_display or ""
+                )
+        except Exception:
+            pass
+        
         return jsonify({
             "success": True,
             "message": f"R{total:.2f} - {len(items)} items",
@@ -50940,8 +50982,6 @@ def api_pos_quick_po():
             "date": today(),
             "items": po_items,
             "notes": notes,
-            "sales_person": data.get("sales_person", ""),
-            "reference": data.get("reference", ""),
             "status": "draft",
             "created_at": now(),
             "created_by": user.get("id") if user else None
@@ -61045,6 +61085,24 @@ def api_banking_categorize():
                     {"account_code": "1000", "debit": income_rounded, "credit": 0},
                     {"account_code": gl_code, "debit": 0, "credit": income_rounded},
                 ])
+        
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                _is_expense = debit > 0 or amount < 0
+                log_allocation(
+                    business_id=biz_id, allocation_type="bank_categorize", source_table="bank_transactions", source_id=txn_id,
+                    description=f"Bank: {description[:100]} → {category}",
+                    amount=float(debit if debit > 0 else credit if credit > 0 else abs(amount)),
+                    category=category, category_code=gl_code,
+                    ai_reasoning=f"Bank transaction categorized as '{category}' (GL {gl_code}). {'Auto-matched' if txn.get('auto_categorized') else 'Manual review'}. Original desc: {description[:100]}",
+                    ai_confidence="HIGH" if txn.get("auto_categorized") else "",
+                    ai_worker="BankLearning" if txn.get("auto_categorized") else "",
+                    payment_method="eft", reference=f"BNK-{txn_id[:8]}",
+                    created_by=session.get("user_id", ""), created_by_name=""
+                )
+        except Exception:
+            pass
         
         return jsonify({"success": True, "message": f"Categorized as {category}"})
         
@@ -74007,6 +74065,28 @@ def api_scan_save_supplier_invoice():
             db.save("suppliers", {"id": supplier["id"], "balance": new_balance})
         
         logger.info(f"[SCAN SAVE] Supplier invoice saved: {inv_id}, {len(items)} items, {stock_items_matched} matched, {stock_items_created} new, {expenses_booked} expenses")
+        
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                _gl = [
+                    {"account_code": "5100", "debit": round(net_amount, 2), "credit": 0},
+                    {"account_code": "1400", "debit": round(vat_amount, 2), "credit": 0},
+                    {"account_code": "1000" if is_paid else "2000", "debit": 0, "credit": round(total_amount, 2)},
+                ]
+                log_allocation(
+                    business_id=biz_id, allocation_type="scan_supplier_invoice", source_table="supplier_invoices", source_id=inv_id,
+                    description=f"Scanned Invoice - {supplier_name} - {data.get('invoice_number', '')}",
+                    amount=total_amount, gl_entries=_gl,
+                    ai_reasoning=f"Jacqo scanned document. {stock_items_matched} stock matched, {stock_items_created} new stock created, {expenses_booked} service/expense items. Paid={is_paid}.",
+                    ai_confidence="HIGH", ai_worker="Jacqo",
+                    supplier_name=supplier_name, payment_method="eft" if is_paid else "account",
+                    reference=data.get("invoice_number", ""),
+                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                )
+        except Exception:
+            pass
+        
         return jsonify({
             "success": True, 
             "id": inv_id, 
@@ -74276,6 +74356,25 @@ def api_scan_save_expense():
         create_journal_entry(biz_id, data.get("date", today()), desc[:50], f"EXP-{exp_id[:8]}", journal_entries)
         
         logger.info(f"[SCAN SAVE] Expense saved: {exp_id} cat={category} GL={expense_account} for {biz_id}")
+        
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                log_allocation(
+                    business_id=biz_id, allocation_type="scan_expense", source_table="expenses", source_id=exp_id,
+                    description=desc[:200],
+                    amount=total_amount, gl_entries=journal_entries,
+                    ai_reasoning=f"Scanned expense categorized as '{category}' → GL {expense_account}. VAT claimable: R{vat_claimable:.2f}. {'Multi-GL split applied.' if splits and len(splits) > 1 else 'Single GL.'}",
+                    ai_confidence="HIGH" if category != "General Expenses" else "LOW",
+                    ai_worker="Jacqo",
+                    category=category, category_code=expense_account,
+                    supplier_name=data.get("supplier_name", ""), payment_method=payment_method,
+                    reference=data.get("invoice_number", ""),
+                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
+                )
+        except Exception:
+            pass
+        
         return jsonify({
             "success": True, 
             "id": exp_id, 
