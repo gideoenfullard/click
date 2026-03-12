@@ -42043,6 +42043,8 @@ def purchase_new():
             "vat": round(vat, 2),
             "total": round(total, 2),
             "notes": request.form.get("notes", ""),
+            "sales_person": request.form.get("sales_person", ""),
+            "reference": request.form.get("reference", ""),
             "status": "draft",
             "emailed": False,
             "created_at": now()
@@ -42127,6 +42129,14 @@ def purchase_new():
                     <div>
                         <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Expected Delivery</label>
                         <input type="date" name="expected_date" class="form-input">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Sales Person</label>
+                        <input type="text" name="sales_person" class="form-input" placeholder="Sales person name">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Reference</label>
+                        <input type="text" name="reference" class="form-input" placeholder="Your reference / quote number">
                     </div>
                 </div>
             </div>
@@ -42430,6 +42440,8 @@ def purchase_view(po_id):
                 <table style="width:100%;font-size:14px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:130px;">PO Number:</td><td style="padding:4px 0;font-weight:600;">{po.get("po_number", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{po.get("date", "-")}</td></tr>
+                    {f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;">{safe_string(po.get("sales_person"))}</td></tr>' if po.get("sales_person") else ""}
+                    {f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;">{safe_string(po.get("reference"))}</td></tr>' if po.get("reference") else ""}
                     {f'<tr><td style="padding:4px 0;color:#888;">Expected:</td><td style="padding:4px 0;">{po.get("expected_date")}</td></tr>' if po.get("expected_date") else ""}
                     {f'<tr><td style="padding:4px 0;color:#888;">Received:</td><td style="padding:4px 0;">{po.get("received_date")}</td></tr>' if po.get("received_date") else ""}
                 </table>
@@ -68917,11 +68929,61 @@ def view_credit_note(cn_id):
     biz_name = business.get("name", "Business") if business else "Business"
     biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
     
+    # Get customer email for email modal
+    cn_cust_email = ""
+    if cn.get("customer_id"):
+        cn_customer = db.get_one("customers", cn.get("customer_id"))
+        if cn_customer:
+            cn_cust_email = cn_customer.get("email", "")
+    
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/invoices" style="color:var(--text-muted);">← Back to Invoices</a>
-        <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        <div style="display:flex;gap:10px;">
+            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('cnEmailModal').style.display='flex';" style="background:rgba(153,27,27,0.15);color:#991b1b;border-color:#991b1b;">📧 Email</button>
+        </div>
     </div>
+    
+    <!-- CN EMAIL MODAL -->
+    <div id="cnEmailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--card);padding:30px;border-radius:12px;width:90%;max-width:450px;">
+            <h3 style="margin-top:0;">Email Credit Note</h3>
+            <p style="color:var(--text-muted);margin-bottom:20px;">Send credit note <strong>{cn.get("credit_note_number", "")}</strong> to:</p>
+            
+            <input type="email" id="cnEmailTo" value="{cn_cust_email}" placeholder="customer@email.com" 
+                   style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
+            
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="document.getElementById('cnEmailModal').style.display='none'" class="btn btn-secondary">Cancel</button>
+                <button onclick="sendCNEmail()" class="btn btn-primary" style="background:#991b1b;">Send Email</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    async function sendCNEmail() {{
+        const email = document.getElementById('cnEmailTo').value.trim();
+        if (!email || !email.includes('@')) {{ alert('Enter a valid email'); return; }}
+        const btn = event.target;
+        btn.disabled = true; btn.textContent = 'Sending...';
+        try {{
+            const resp = await fetch('/api/credit-note/{cn_id}/email', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{to_email: email}})
+            }});
+            const data = await resp.json();
+            if (data.success) {{
+                document.getElementById('cnEmailModal').style.display='none';
+                alert('Credit note emailed successfully!');
+            }} else {{
+                alert(data.error || 'Failed to send');
+            }}
+        }} catch(e) {{ alert('Error: ' + e.message); }}
+        btn.disabled = false; btn.textContent = 'Send Email';
+    }}
+    </script>
     
     <div class="card" style="background:white;color:#333;padding:0;overflow:hidden;">
         <!-- TOP BAR -->
@@ -68995,6 +69057,122 @@ def view_credit_note(cn_id):
     '''
     
     return render_page(f"Credit Note {cn.get('credit_note_number', '')}", content, user, "invoices")
+
+
+@app.route("/api/credit-note/<cn_id>/email", methods=["POST"])
+@login_required
+def api_credit_note_email(cn_id):
+    """Send credit note via email"""
+    try:
+        data = request.get_json()
+        to_email = data.get("to_email", "").strip()
+        
+        if not to_email or "@" not in to_email:
+            return jsonify({"success": False, "error": "Valid email address required"})
+        
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        cn = db.get_one("credit_notes", cn_id)
+        if not cn:
+            return jsonify({"success": False, "error": "Credit note not found"})
+        
+        biz_name = business.get("name", "Business") if business else "Business"
+        cn_no = cn.get("credit_note_number", "")
+        total = float(cn.get("total", 0))
+        date = cn.get("date", today())
+        cust_name = cn.get("customer_name", "Customer")
+        reason = cn.get("reason", "-")
+        
+        # Parse items
+        raw_items = cn.get("items", [])
+        if isinstance(raw_items, str):
+            try:
+                items = json.loads(raw_items)
+            except:
+                items = []
+        else:
+            items = raw_items if raw_items else []
+        
+        items_html = ""
+        for item in items:
+            qty = item.get("qty") or item.get("quantity") or 1
+            desc = item.get("description") or item.get("desc") or "-"
+            price = float(item.get("price", 0))
+            item_total = float(item.get("total", 0))
+            items_html += f'<tr><td style="padding:8px;border-bottom:1px solid #eee;">{safe_string(desc)}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:center;">{qty}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">R{price:,.2f}</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">R{item_total:,.2f}</td></tr>'
+        
+        subtotal = float(cn.get("subtotal", 0))
+        vat = float(cn.get("vat", 0))
+        
+        subject = f"Credit Note {cn_no} from {biz_name}"
+        
+        body_html = f'''
+        <html>
+        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
+            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #991b1b;padding-bottom:15px;">
+                    <h1 style="color:#333;margin:0;font-size:24px;">{biz_name}</h1>
+                    <div style="text-align:right;">
+                        <h2 style="color:#991b1b;margin:0;">CREDIT NOTE</h2>
+                        <p style="margin:5px 0;font-weight:bold;">{cn_no}</p>
+                    </div>
+                </div>
+                
+                <p>Dear {cust_name},</p>
+                <p>Please find your credit note details below:</p>
+                
+                <div style="background:#fef2f2;padding:10px 15px;border-radius:8px;margin-bottom:20px;">
+                    <strong style="color:#991b1b;">Reason:</strong> {safe_string(reason)}
+                </div>
+                
+                <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+                    <tr style="background:#991b1b;color:white;">
+                        <th style="padding:10px;text-align:left;">Description</th>
+                        <th style="padding:10px;text-align:center;">Qty</th>
+                        <th style="padding:10px;text-align:right;">Price</th>
+                        <th style="padding:10px;text-align:right;">Total</th>
+                    </tr>
+                    {items_html}
+                </table>
+                
+                <table style="width:250px;margin-left:auto;border-collapse:collapse;">
+                    <tr><td style="padding:8px;">Subtotal:</td><td style="padding:8px;text-align:right;">R{subtotal:,.2f}</td></tr>
+                    <tr><td style="padding:8px;">VAT (15%):</td><td style="padding:8px;text-align:right;">R{vat:,.2f}</td></tr>
+                    <tr style="font-weight:bold;font-size:18px;border-top:2px solid #333;">
+                        <td style="padding:10px;">CREDIT TOTAL:</td>
+                        <td style="padding:10px;text-align:right;color:#991b1b;">R{total:,.2f}</td>
+                    </tr>
+                </table>
+                
+                <p style="margin-top:30px;"><strong>Date:</strong> {date}</p>
+                <p><strong>Original Invoice:</strong> {cn.get("invoice_number", "-")}</p>
+                
+                <p style="margin-top:30px;">This credit has been applied to your account.</p>
+                
+                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                <p style="color: #888; font-size: 12px;">
+                    {biz_name}<br>
+                    {business.get("phone", "") if business else ""}<br>
+                    {business.get("email", "") if business else ""}<br>
+                    Sent via Click AI
+                </p>
+            </div>
+        </body>
+        </html>
+        '''
+        
+        body_text = f"Credit Note {cn_no} from {biz_name}\n\nDear {cust_name},\n\nCredit Note #: {cn_no}\nDate: {date}\nReason: {reason}\nCredit Total: R{total:,.2f}\n\nThis credit has been applied to your account.\n\n{biz_name}"
+        
+        success = Email.send(to_email, subject, body_html, body_text, business=business)
+        
+        if success:
+            return jsonify({"success": True, "message": f"Credit note emailed to {to_email}"})
+        else:
+            return jsonify({"success": False, "error": "Failed to send email. Check SMTP settings."})
+    except Exception as e:
+        logger.error(f"[CN EMAIL ERROR] {e}")
+        return jsonify({"success": False, "error": str(e)})
 
 
 @app.route("/credit-notes")
