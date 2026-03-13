@@ -319,6 +319,28 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         # Build a quick ID lookup for linked entries
         alloc_by_id = {a.get("id"): a for a in all_allocs}
         
+        # Build pagination HTML outside the f-string (Python 3.11 can't handle nested f-string comparisons)
+        pagination_html = ""
+        if total_pages > 1:
+            prev_btn = f'<a href="/ledger?page={page-1}&date={date_filter}&type={type_filter}&q={search_q}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">&larr; Prev</a>' if page > 1 else ''
+            next_btn = f'<a href="/ledger?page={page+1}&date={date_filter}&type={type_filter}&q={search_q}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">Next &rarr;</a>' if page < total_pages else ''
+            pagination_html = f'''
+            <div style="display:flex;justify-content:center;gap:8px;margin-top:15px;align-items:center;">
+                {prev_btn}
+                <span style="color:var(--text-muted);font-size:13px;">Page {page} of {total_pages} ({total_count} entries)</span>
+                {next_btn}
+            </div>'''
+        
+        # Build date clear link
+        date_clear_html = f'<a href="/ledger" style="font-size:11px;color:var(--primary);text-decoration:none;">✕ Clear date</a>' if date_filter else '<span style="font-size:11px;color:var(--text-muted);">Showing all</span>'
+        
+        # Build no-results message
+        no_results_msg = f"No allocations found for {date_filter}" if date_filter else "No allocations found"
+        
+        # Build linked pairs badge
+        linked_pairs = linked_count // 2
+        linked_badge_html = f'<span style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">🔗 {linked_pairs} linked pairs</span>' if linked_count > 0 else ''
+        
         # Type icons and colors
         type_config = {
             "pos_sale": ("🛒", "#10b981", "POS Sale"),
@@ -508,7 +530,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                 <span style="background:rgba(139,92,246,0.15);color:#8b5cf6;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">
                     🤖 {ai_count} AI
                 </span>
-                {f'<span style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">🔗 {linked_count // 2} linked pairs</span>' if linked_count > 0 else ''}
+                {linked_badge_html}
                 <span style="font-weight:700;font-size:15px;">
                     {money(total_amount)}
                 </span>
@@ -518,7 +540,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         <div class="card" style="margin-bottom:15px;padding:15px;">
             <form method="GET" action="/ledger" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                 <input type="date" name="date" value="{date_filter}" class="form-input" style="width:auto;" onchange="this.form.submit()">
-                {f'<a href="/ledger" style="font-size:11px;color:var(--primary);text-decoration:none;">✕ Clear date</a>' if date_filter else '<span style="font-size:11px;color:var(--text-muted);">Showing all</span>'}
+                {date_clear_html}
                 <select name="type" class="form-input" style="width:auto;" onchange="this.form.submit()">
                     {type_options}
                 </select>
@@ -541,18 +563,12 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                     </tr>
                 </thead>
                 <tbody>
-                    {rows or f"<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--text-muted);'>No allocations found{f' for {date_filter}' if date_filter else ''}<br><br>Allocations are logged automatically as transactions happen.</td></tr>"}
+                    {rows or f"<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--text-muted);'>{no_results_msg}<br><br>Allocations are logged automatically as transactions happen.</td></tr>"}
                 </tbody>
             </table>
         </div>
         
-        {"" if total_pages <= 1 else f'''
-        <div style="display:flex;justify-content:center;gap:8px;margin-top:15px;align-items:center;">
-            {f'<a href="/ledger?page={page-1}&date={date_filter}&type={type_filter}&q={search_q}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">← Prev</a>' if page > 1 else ''}
-            <span style="color:var(--text-muted);font-size:13px;">Page {page} of {total_pages} ({total_count} entries)</span>
-            {f'<a href="/ledger?page={page+1}&date={date_filter}&type={type_filter}&q={search_q}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">Next →</a>' if page < total_pages else ''}
-        </div>
-        '''}
+        {pagination_html}
         
         <script>
         function toggleDetail(id) {{
