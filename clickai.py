@@ -60812,6 +60812,18 @@ RULES:
                 
                 desc_upper = description.upper()
                 
+                # Skip non-transaction rows (balance lines, headers, etc)
+                skip_phrases = ['BALANCE BROUGHT', 'BROUGHT FORWARD', 'OPENING BALANCE', 
+                               'CLOSING BALANCE', 'BALANCE CARRIED', 'CARRIED FORWARD',
+                               'B/F', 'C/F', 'STATEMENT BALANCE']
+                if any(skip in desc_upper for skip in skip_phrases):
+                    logger.info(f"[BANK] Skipping non-transaction row: {description[:60]}")
+                    continue
+                
+                # Also skip rows with zero amount (just balance lines)
+                if debit == 0 and credit == 0 and amount == 0:
+                    continue
+                
                 # ═══════════════════════════════════════════════════════════════
                 # SMART MATCHING LOGIC
                 # ═══════════════════════════════════════════════════════════════
