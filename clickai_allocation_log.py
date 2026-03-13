@@ -110,6 +110,11 @@ def log_allocation(
         # Use transaction_date if provided, else today
         txn_date = transaction_date or (_today() if _today else "")
         
+        # Store link/date info in extra as well (guaranteed to work even if columns don't exist yet)
+        extra_data = extra or {}
+        extra_data["transaction_date"] = txn_date
+        extra_data["match_key"] = auto_match_key
+        
         record = {
             "id": _generate_id(),
             "business_id": business_id,
@@ -134,15 +139,22 @@ def log_allocation(
             "transaction_date": txn_date,
             "match_key": auto_match_key,
             "linked_id": "",
-            "extra": json.dumps(extra) if extra else "{}",
+            "extra": json.dumps(extra_data),
             "status": "active",
             "created_at": _now()
         }
         
         success, err = _db.save("allocation_log", record)
+        
+        # If save failed (likely missing columns), retry without new fields
         if not success:
-            logger.error(f"[ALLOC LOG] Save failed: {err}")
-            return False
+            logger.warning(f"[ALLOC LOG] First save failed ({err}), retrying without new columns...")
+            for col in ["transaction_date", "match_key", "linked_id"]:
+                record.pop(col, None)
+            success, err = _db.save("allocation_log", record)
+            if not success:
+                logger.error(f"[ALLOC LOG] Retry also failed: {err}")
+                return False
         
         alloc_id = record["id"]
         
@@ -233,10 +245,13 @@ def _try_auto_link(business_id: str, new_id: str, match_key: str, new_type: str,
     
     # Need at least score 10 (match_key match) or 13 (ref + amount) to auto-link
     if best_match and best_score >= 10:
-        # Link both entries to each other
-        _db.save("allocation_log", {"id": new_id, "linked_id": best_match["id"]})
-        _db.save("allocation_log", {"id": best_match["id"], "linked_id": new_id})
-        logger.info(f"[ALLOC LOG] 🔗 AUTO-LINKED: {new_type} ↔ {best_match.get('allocation_type')} | key={match_key} | score={best_score}")
+        # Link both entries to each other (ignore errors if linked_id column doesn't exist yet)
+        try:
+            _db.save("allocation_log", {"id": new_id, "linked_id": best_match["id"]})
+            _db.save("allocation_log", {"id": best_match["id"], "linked_id": new_id})
+            logger.info(f"[ALLOC LOG] AUTO-LINKED: {new_type} <-> {best_match.get('allocation_type')} | key={match_key} | score={best_score}")
+        except Exception as e:
+            logger.warning(f"[ALLOC LOG] Auto-link save failed (column may not exist): {e}")
 
 
 def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn):
@@ -276,6 +291,18 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         
         # Load allocations — ALWAYS load all, never discard
         all_allocs = db.get("allocation_log", {"business_id": biz_id}) or []
+        
+        # Hydrate: if transaction_date/match_key/linked_id missing at top level, read from extra
+        for a in all_allocs:
+            if not a.get("transaction_date") and a.get("extra"):
+                try:
+                    ex = json.loads(a["extra"]) if isinstance(a["extra"], str) else a["extra"]
+                    if ex.get("transaction_date"):
+                        a["transaction_date"] = ex["transaction_date"]
+                    if ex.get("match_key") and not a.get("match_key"):
+                        a["match_key"] = ex["match_key"]
+                except:
+                    pass
         
         # Filter by date ONLY if explicitly chosen (data never disappears)
         if date_filter:

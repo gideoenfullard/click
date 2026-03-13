@@ -11773,6 +11773,8 @@ class Actions:
             "vat": float(vat),
             "total": float(total),
             "status": "draft",
+            "sales_person": data.get("sales_person", ""),
+            "reference": data.get("reference", ""),
             "created_at": now()
         }
         
@@ -22439,8 +22441,8 @@ JARVIS_HUD_CSS = '''
 .j-fd.o{background:#ffaa00;box-shadow:0 0 4px #ffaa00,0 0 10px rgba(255,170,0,0.3);}
 .j-fd.r{background:#ff4466;box-shadow:0 0 4px #ff4466,0 0 10px rgba(255,68,102,0.3);}
 .j-fd.p{background:#aa55ff;box-shadow:0 0 4px #aa55ff;}
-.j-fl{font-family:'Share Tech Mono',monospace;font-size:9px;color:#3a6a90;letter-spacing:0.8px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.j-fv{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#88ccee;text-shadow:0 0 6px rgba(100,180,230,0.3);white-space:nowrap;flex-shrink:0;}
+.j-fl{font-family:'Share Tech Mono',monospace;font-size:9px;color:#7ab8d8;letter-spacing:0.8px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.j-fv{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#b0e0ff;text-shadow:0 0 8px rgba(140,210,255,0.5);white-space:nowrap;flex-shrink:0;}
 .j-fv.o{color:#ffaa00;text-shadow:0 0 8px rgba(255,170,0,0.4);}
 .j-fv.g{color:#00ff88;text-shadow:0 0 8px rgba(0,255,136,0.4);}
 .j-fv.r{color:#ff6688;text-shadow:0 0 8px rgba(255,68,102,0.4);}
@@ -22459,25 +22461,25 @@ JARVIS_HUD_CSS = '''
 .j-rg.r3{inset:28px;border-color:rgba(80,180,255,0.1);border-top-color:rgba(140,220,255,0.45);animation:jspin 4s linear infinite;}
 .j-rg.r4{inset:42px;border:2px solid rgba(100,200,255,0.08);border-top-color:rgba(160,230,255,0.5);border-left-color:rgba(120,210,255,0.3);animation:jspin 12s linear infinite reverse;}
 .j-core{position:absolute;inset:60px;border-radius:50%;background:radial-gradient(circle,rgba(120,210,255,0.12) 0%,rgba(60,160,240,0.04) 60%,transparent 100%);border:1px solid rgba(100,200,255,0.2);display:flex;align-items:center;justify-content:center;flex-direction:column;box-shadow:0 0 30px rgba(80,180,255,0.1),0 0 60px rgba(60,160,240,0.05);transition:all 0.4s;}
-.j-core .j-brand{font-family:'Orbitron',monospace;font-size:17px;font-weight:800;color:#55bbff;text-shadow:0 0 18px rgba(85,187,255,0.6),0 0 45px rgba(85,187,255,0.2);letter-spacing:3px;line-height:1;}
+.j-core .j-brand{font-family:'Orbitron',monospace;font-size:17px;font-weight:800;color:#77ccff;text-shadow:0 0 20px rgba(100,200,255,0.7),0 0 50px rgba(85,187,255,0.3);letter-spacing:3px;line-height:1;}
 .j-core .j-sub{font-family:'Share Tech Mono',monospace;font-size:7.5px;color:#4499cc;letter-spacing:4px;margin-top:4px;opacity:0.9;}
 .j-core .j-ai{margin-top:5px;font-family:'Orbitron',monospace;font-size:7px;font-weight:700;color:#00ccff;letter-spacing:2px;padding:2px 8px;border:1px solid rgba(0,200,255,0.25);text-shadow:0 0 8px rgba(0,200,255,0.5);animation:jpulse 2.5s ease-in-out infinite;}
 @keyframes jpulse{0%,100%{border-color:rgba(0,200,255,0.2);box-shadow:none;}50%{border-color:rgba(0,200,255,0.45);box-shadow:0 0 10px rgba(0,200,255,0.15);}}
 @keyframes jspin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
 .j-hint{position:absolute;bottom:-22px;left:50%;transform:translateX(-50%) translateY(5px);font-family:'Share Tech Mono',monospace;font-size:9px;color:#00ccff;letter-spacing:2px;opacity:0;transition:all 0.3s;white-space:nowrap;text-shadow:0 0 10px rgba(0,200,255,0.5);}
 .j-plbl{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);text-align:center;z-index:2;}
-.j-plbl .j-pn{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#5aaadd;letter-spacing:4px;text-shadow:0 0 10px rgba(90,170,221,0.3);}
-.j-plbl .j-pc{font-family:'Share Tech Mono',monospace;font-size:9px;color:#2a5a80;letter-spacing:2px;margin-top:1px;}
+.j-plbl .j-pn{font-family:'Orbitron',monospace;font-size:11px;font-weight:600;color:#8ad0f0;letter-spacing:4px;text-shadow:0 0 12px rgba(120,200,240,0.5);}
+.j-plbl .j-pc{font-family:'Share Tech Mono',monospace;font-size:9px;color:#6aaacc;letter-spacing:2px;margin-top:1px;}
 .j-ticker{margin:8px 0 14px;padding:10px 18px;border:1px solid rgba(255,160,0,0.2);border-left:3px solid rgba(255,160,0,0.5);background:rgba(255,120,0,0.03);display:flex;align-items:center;gap:14px;}
 .j-ticker b{color:#ffaa00;text-shadow:0 0 10px rgba(255,170,0,0.5);font-size:10px;letter-spacing:1.5px;}
-.j-ticker .jt-msg{color:#8a7040;flex:1;font-size:13px;}
+.j-ticker .jt-msg{color:#bba060;flex:1;font-size:13px;}
 .j-ticker .jt-act{color:#60ccff;font-weight:700;font-size:11px;letter-spacing:1.5px;text-shadow:0 0 8px rgba(96,204,255,0.4);text-decoration:none;}
 .j-tbl{border:1px solid rgba(80,180,255,0.08);background:rgba(6,16,40,0.2);position:relative;overflow:hidden;}
 .j-tbl::before{content:'';position:absolute;top:0;left:0;width:16px;height:16px;border-top:2px solid rgba(100,200,255,0.3);border-left:2px solid rgba(100,200,255,0.3);z-index:2;}
 .j-tbl::after{content:'';position:absolute;bottom:0;right:0;width:16px;height:16px;border-bottom:2px solid rgba(100,200,255,0.3);border-right:2px solid rgba(100,200,255,0.3);z-index:2;}
 .j-tl{padding:12px 0;display:flex;align-items:center;justify-content:center;gap:30px;border-top:1px solid rgba(80,180,255,0.06);margin-top:14px;}
-.j-tl span{font-family:'Share Tech Mono',monospace;font-size:10px;color:#2a5a80;letter-spacing:1.5px;}
-.j-tl span b{color:#4a90bb;font-weight:400;}
+.j-tl span{font-family:'Share Tech Mono',monospace;font-size:10px;color:#6aaacc;letter-spacing:1.5px;}
+.j-tl span b{color:#8ac0dd;font-weight:400;}
 /* Dashboard big reactor */
 .j-rx.big{width:220px;height:220px;}
 .j-rx.big .j-core{inset:58px;}
@@ -42481,6 +42483,12 @@ def purchase_view(po_id):
     biz_phone = business.get("phone", "") if business else ""
     biz_email_addr = business.get("email", "") if business else ""
     
+    # Pre-build sales person and reference rows (always show, with inline edit)
+    sp_val = safe_string(po.get("sales_person", ""))
+    ref_val = safe_string(po.get("reference", ""))
+    sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;"><span id="spDisp">{sp_val or "<i style=color:#ccc>Click to set</i>"}</span> <span class="no-print" style="cursor:pointer;font-size:11px;color:#0f766e;" onclick="inlineEdit(&#39;sales_person&#39;,&#39;spDisp&#39;)">✏️</span></td></tr>'
+    ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;"><span id="refDisp">{ref_val or "<i style=color:#ccc>Click to set</i>"}</span> <span class="no-print" style="cursor:pointer;font-size:11px;color:#0f766e;" onclick="inlineEdit(&#39;reference&#39;,&#39;refDisp&#39;)">✏️</span></td></tr>'
+    
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/purchases" style="color:var(--text-muted);">← Back to Purchase Orders</a>
@@ -42511,8 +42519,8 @@ def purchase_view(po_id):
                 <table style="width:100%;font-size:14px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:130px;">PO Number:</td><td style="padding:4px 0;font-weight:600;">{po.get("po_number", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{po.get("date", "-")}</td></tr>
-                    {f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;">{safe_string(po.get("sales_person"))}</td></tr>' if po.get("sales_person") else ""}
-                    {f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;">{safe_string(po.get("reference"))}</td></tr>' if po.get("reference") else ""}
+                    {sp_row}
+                    {ref_row}
                     {f'<tr><td style="padding:4px 0;color:#888;">Expected:</td><td style="padding:4px 0;">{po.get("expected_date")}</td></tr>' if po.get("expected_date") else ""}
                     {f'<tr><td style="padding:4px 0;color:#888;">Received:</td><td style="padding:4px 0;">{po.get("received_date")}</td></tr>' if po.get("received_date") else ""}
                 </table>
@@ -42617,6 +42625,24 @@ def purchase_view(po_id):
     </div>
     
     <script>
+    async function inlineEdit(field, dispId) {{
+        const disp = document.getElementById(dispId);
+        const current = disp.textContent.trim();
+        const val = prompt(field === 'sales_person' ? 'Sales Person name:' : 'Reference:', current === 'Click to set' ? '' : current);
+        if (val === null) return;
+        try {{
+            const r = await fetch('/api/purchase/{po_id}/status', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{status: '{po.get("status","draft")}', [field]: val}})
+            }});
+            const d = await r.json();
+            if (d.success) {{
+                disp.innerHTML = val || '<i style=color:#ccc>Click to set</i>';
+            }} else alert('Error: ' + (d.error || 'Save failed'));
+        }} catch(e) {{ alert('Error: ' + e.message); }}
+    }}
+    
     async function updatePOStatus(status) {{
         const response = await fetch('/api/purchase/{po_id}/status', {{
             method: 'POST',
@@ -42810,11 +42836,17 @@ def api_po_status(po_id):
             return jsonify({"success": False, "error": "PO not found"})
         
         # Only keep fields that exist in purchase_orders table
-        VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by"}
+        VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by", "sales_person", "reference"}
         clean_po = {k: v for k, v in po.items() if k in VALID_PO_FIELDS}
         
         clean_po["status"] = new_status
         clean_po["updated_at"] = now()
+        
+        # Also update sales_person and reference if provided
+        if "sales_person" in data:
+            clean_po["sales_person"] = data["sales_person"][:100] if data["sales_person"] else ""
+        if "reference" in data:
+            clean_po["reference"] = data["reference"][:100] if data["reference"] else ""
         
         success, err = db.save("purchase_orders", clean_po)
         
@@ -42959,7 +42991,7 @@ Thank you,
             # Update PO status
             po_fresh = db.get_one("purchase_orders", po_id)
             if po_fresh:
-                VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by"}
+                VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by", "sales_person", "reference"}
                 clean_po = {k: v for k, v in po_fresh.items() if k in VALID_PO_FIELDS}
                 clean_po["emailed"] = True
                 clean_po["emailed_at"] = now()
@@ -43101,7 +43133,7 @@ def api_po_receive(po_id):
                 break
         
         # Update PO - clean record and save
-        VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by"}
+        VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by", "sales_person", "reference"}
         clean_po = {k: v for k, v in po.items() if k in VALID_PO_FIELDS}
         
         clean_po["items"] = json.dumps(items)
@@ -51451,6 +51483,8 @@ def api_pos_purchase_order():
             "supplier_name": supplier_name,
             "items": json.dumps(clean_items),
             "status": "draft",
+            "sales_person": data.get("sales_person", ""),
+            "reference": data.get("reference", ""),
             "created_at": now()
         }
         
