@@ -61155,7 +61155,28 @@ def api_banking_categorize():
                                 db.update("customers", cust_id, {"balance": new_bal})
                         except: pass
                 else:
-                    logger.info(f"[BANK] Customer Payment R{income_amount} — no matching invoice found")
+                    logger.info(f"[BANK] Customer Payment R{income_amount} — no matching invoice found, trying to credit customer balance anyway")
+                    # Even without a matching invoice, try to find the customer and reduce their balance
+                    # Search customers by name appearing in bank description
+                    desc_upper = (txn.get("description") or "").upper()
+                    all_customers = db.get("customers", {"business_id": biz_id}) or []
+                    matched_customer = None
+                    for c in all_customers:
+                        cname = (c.get("name") or "").upper().strip()
+                        if cname and len(cname) >= 3 and cname[:6] in desc_upper:
+                            matched_customer = c
+                            break
+                    
+                    if matched_customer:
+                        try:
+                            old_bal = float(matched_customer.get("balance", 0))
+                            new_bal = max(0, old_bal - income_amount)
+                            db.update("customers", matched_customer["id"], {"balance": new_bal})
+                            logger.info(f"[BANK] Credited {matched_customer.get('name')} balance: R{old_bal:.2f} → R{new_bal:.2f} (no invoice matched)")
+                        except Exception as e:
+                            logger.error(f"[BANK] Failed to credit customer balance: {e}")
+                    else:
+                        logger.info(f"[BANK] Could not identify customer from bank description: {desc_upper[:60]}")
                             
             elif category == "POS Deposit":
                 # POS cash deposited into bank
