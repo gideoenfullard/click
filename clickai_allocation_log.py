@@ -55,6 +55,8 @@ def log_allocation(
     reference: str = "",
     created_by: str = "",
     created_by_name: str = "",
+    transaction_date: str = "",
+    match_key: str = "",
     extra: dict = None
 ):
     """
@@ -82,15 +84,32 @@ def log_allocation(
         reference:       Invoice/PO/receipt number
         created_by:      User ID who did this
         created_by_name: User display name
+        transaction_date: The actual business date of the transaction (invoice date, bank date etc)
+        match_key:       Key for linking related entries — e.g. "supplier:Acme:1500.00" or "ref:INV-001"
+                        Used to pair scanned invoices with bank statement entries in the ledger
         extra:           Any additional data to store
     """
-    global _db, _generate_id, _now
+    global _db, _generate_id, _now, _today
     
     if not _db or not _generate_id:
         logger.warning("[ALLOC LOG] Module not initialized — call register_ledger_routes first")
         return False
     
     try:
+        # Build match_key automatically if not provided
+        auto_match_key = match_key
+        if not auto_match_key:
+            amt_str = f"{abs(round(float(amount), 2)):.2f}"
+            if supplier_name:
+                # Normalize: lowercase, strip spaces, just first word for matching
+                s_norm = supplier_name.strip().lower().split()[0] if supplier_name.strip() else ""
+                auto_match_key = f"sup:{s_norm}:{amt_str}"
+            elif reference:
+                auto_match_key = f"ref:{reference.strip().upper()}"
+        
+        # Use transaction_date if provided, else today
+        txn_date = transaction_date or (_today() if _today else "")
+        
         record = {
             "id": _generate_id(),
             "business_id": business_id,
@@ -112,6 +131,9 @@ def log_allocation(
             "reference": reference,
             "created_by": created_by,
             "created_by_name": created_by_name,
+            "transaction_date": txn_date,
+            "match_key": auto_match_key,
+            "linked_id": "",
             "extra": json.dumps(extra) if extra else "{}",
             "status": "active",
             "created_at": _now()
@@ -122,12 +144,99 @@ def log_allocation(
             logger.error(f"[ALLOC LOG] Save failed: {err}")
             return False
         
-        logger.info(f"[ALLOC LOG] {allocation_type} | {reference or source_id[:8]} | R{amount:,.2f} | {ai_worker or created_by_name or 'system'}")
+        alloc_id = record["id"]
+        
+        # ── AUTO-LINK: Try find a matching partner entry ──
+        if auto_match_key:
+            try:
+                _try_auto_link(business_id, alloc_id, auto_match_key, allocation_type, round(float(amount), 2))
+            except Exception as link_err:
+                logger.warning(f"[ALLOC LOG] Auto-link failed (non-critical): {link_err}")
+        
+        logger.info(f"[ALLOC LOG] {allocation_type} | {reference or source_id[:8]} | R{amount:,.2f} | {ai_worker or created_by_name or 'system'} | key={auto_match_key}")
         return True
         
     except Exception as e:
         logger.error(f"[ALLOC LOG] Error: {e}")
         return False
+
+
+def _try_auto_link(business_id: str, new_id: str, match_key: str, new_type: str, new_amount: float):
+    """
+    Try to find and link a partner allocation entry.
+    
+    Logic:
+    - A scanned invoice (scan_supplier_invoice) should link to a bank entry (bank_categorize) and vice versa
+    - Matching is by match_key (supplier+amount) OR by reference (invoice number)
+    - Only links if not already linked
+    """
+    global _db
+    if not _db:
+        return
+    
+    # Define which types can pair with each other
+    pair_types = {
+        "scan_supplier_invoice": ["bank_categorize", "bank_import", "supplier_payment"],
+        "scan_expense":          ["bank_categorize", "bank_import"],
+        "bank_categorize":       ["scan_supplier_invoice", "scan_expense", "manual_expense", "invoice"],
+        "bank_import":           ["scan_supplier_invoice", "scan_expense", "manual_expense"],
+        "supplier_payment":      ["scan_supplier_invoice"],
+        "manual_expense":        ["bank_categorize", "bank_import"],
+        "invoice":               ["bank_categorize", "bank_import", "payment"],
+        "payment":               ["invoice"],
+    }
+    
+    valid_partners = pair_types.get(new_type, [])
+    if not valid_partners:
+        return
+    
+    all_allocs = _db.get("allocation_log", {"business_id": business_id}) or []
+    
+    best_match = None
+    best_score = 0
+    
+    for a in all_allocs:
+        if a.get("id") == new_id:
+            continue
+        if a.get("linked_id"):
+            continue  # Already linked to something else
+        if a.get("allocation_type") not in valid_partners:
+            continue
+        
+        score = 0
+        
+        # Match by match_key (supplier+amount)
+        if match_key and a.get("match_key") == match_key:
+            score += 10
+        
+        # Match by reference (invoice number)
+        a_ref = (a.get("reference") or "").strip().upper()
+        # Check if new entry's reference appears in the other entry's description or reference
+        if a_ref and match_key and a_ref in match_key.upper():
+            score += 5
+        
+        # Amount proximity (within 2% or R10)
+        a_amt = abs(float(a.get("amount", 0)))
+        if a_amt > 0 and new_amount > 0:
+            diff = abs(a_amt - new_amount)
+            pct = diff / max(a_amt, new_amount) if max(a_amt, new_amount) > 0 else 1
+            if diff < 0.02:  # Exact match
+                score += 8
+            elif pct < 0.02:  # Within 2%
+                score += 5
+            elif diff <= 10:  # Within R10
+                score += 3
+        
+        if score > best_score:
+            best_score = score
+            best_match = a
+    
+    # Need at least score 10 (match_key match) or 13 (ref + amount) to auto-link
+    if best_match and best_score >= 10:
+        # Link both entries to each other
+        _db.save("allocation_log", {"id": new_id, "linked_id": best_match["id"]})
+        _db.save("allocation_log", {"id": best_match["id"], "linked_id": new_id})
+        logger.info(f"[ALLOC LOG] 🔗 AUTO-LINKED: {new_type} ↔ {best_match.get('allocation_type')} | key={match_key} | score={best_score}")
 
 
 def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn):
@@ -159,16 +268,21 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         
         # Get filter params
         from flask import request as req
-        date_filter = req.args.get("date", today_fn())
+        date_filter = req.args.get("date", "")  # Empty = show ALL (never hide data)
         type_filter = req.args.get("type", "all")
         search_q = req.args.get("q", "").strip()
+        page = int(req.args.get("page", 1))
+        per_page = 100
         
-        # Load allocations
+        # Load allocations — ALWAYS load all, never discard
         all_allocs = db.get("allocation_log", {"business_id": biz_id}) or []
         
-        # Filter by date
+        # Filter by date ONLY if explicitly chosen (data never disappears)
         if date_filter:
-            all_allocs = [a for a in all_allocs if (a.get("created_at") or "")[:10] == date_filter]
+            all_allocs = [a for a in all_allocs if 
+                (a.get("transaction_date") or "")[:10] == date_filter or
+                (a.get("created_at") or "")[:10] == date_filter
+            ]
         
         # Filter by type
         if type_filter and type_filter != "all":
@@ -187,13 +301,23 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                 sq in (a.get("created_by_name") or "").lower()
             ]
         
-        # Sort newest first
-        all_allocs = sorted(all_allocs, key=lambda x: x.get("created_at", ""), reverse=True)
+        # Sort newest first — prefer transaction_date, fallback to created_at
+        all_allocs = sorted(all_allocs, key=lambda x: x.get("transaction_date") or x.get("created_at", ""), reverse=True)
         
-        # Stats
+        # Stats (on filtered set)
+        total_count = len(all_allocs)
         total_amount = sum(abs(float(a.get("amount", 0))) for a in all_allocs)
         ai_count = sum(1 for a in all_allocs if a.get("ai_worker"))
-        manual_count = len(all_allocs) - ai_count
+        manual_count = total_count - ai_count
+        linked_count = sum(1 for a in all_allocs if a.get("linked_id"))
+        
+        # Pagination
+        start_idx = (page - 1) * per_page
+        page_allocs = all_allocs[start_idx:start_idx + per_page]
+        total_pages = max(1, (total_count + per_page - 1) // per_page)
+        
+        # Build a quick ID lookup for linked entries
+        alloc_by_id = {a.get("id"): a for a in all_allocs}
         
         # Type icons and colors
         type_config = {
@@ -213,7 +337,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         
         # Build rows
         rows = ""
-        for a in all_allocs[:500]:
+        for a in page_allocs:
             atype = a.get("allocation_type", "unknown")
             icon, color, label = type_config.get(atype, ("📋", "#888", atype.replace("_", " ").title()))
             
@@ -226,12 +350,40 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                 conf_color = {"HIGH": "#10b981", "MEDIUM": "#f59e0b", "LOW": "#ef4444"}.get(conf, "#888")
                 ai_badge = f'<span style="background:rgba(139,92,246,0.15);color:#8b5cf6;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:6px;">🤖 {safe_string(a.get("ai_worker", ""))}</span>'
             
+            # Linked badge — show if this entry has a partner
+            linked_badge = ""
+            linked_detail = ""
+            linked_id = a.get("linked_id", "")
+            if linked_id and linked_id in alloc_by_id:
+                partner = alloc_by_id[linked_id]
+                p_type = partner.get("allocation_type", "")
+                p_icon, p_color, p_label = type_config.get(p_type, ("📋", "#888", p_type.replace("_", " ").title()))
+                p_date = (partner.get("transaction_date") or partner.get("created_at", ""))[:10]
+                linked_badge = f'<span style="background:rgba(16,185,129,0.15);color:#10b981;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:4px;" title="Linked to {p_label} from {p_date}">🔗</span>'
+                linked_detail = f"""<div style="margin-bottom:12px;padding:10px;background:rgba(16,185,129,0.08);border-radius:6px;border-left:3px solid #10b981;">
+                    <span style="font-size:10px;color:#10b981;text-transform:uppercase;letter-spacing:1px;font-weight:700;">🔗 Linked Transaction</span>
+                    <div style="margin-top:6px;font-size:12px;display:flex;gap:15px;flex-wrap:wrap;">
+                        <span><b>{p_icon} {p_label}</b></span>
+                        <span>{p_date}</span>
+                        <span>{money(abs(float(partner.get('amount', 0))))}</span>
+                        <span style="color:var(--text-muted);">{safe_string(partner.get('description', '')[:60])}</span>
+                        <a href="#" onclick="toggleDetail('{linked_id}');return false;" style="color:var(--primary);font-size:11px;">View partner →</a>
+                    </div>
+                </div>"""
+            
             # Who
             who = safe_string(a.get("created_by_name") or a.get("ai_worker") or "System")
             
-            # Time
+            # Date + Time — show transaction_date prominently, created_at as secondary
+            txn_date = (a.get("transaction_date") or "")[:10]
             created = a.get("created_at", "")
+            created_date = created[:10] if len(created) >= 10 else ""
             time_str = created[11:16] if len(created) > 16 else ""
+            date_display = txn_date or created_date
+            # Show both if they differ
+            date_note = ""
+            if txn_date and created_date and txn_date != created_date:
+                date_note = f'<br><span style="font-size:9px;color:var(--text-muted);">logged {created_date}</span>'
             
             # GL summary
             gl_summary = ""
@@ -263,12 +415,15 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                 pass
             
             rows += f'''
-            <tr class="alloc-row" onclick="toggleDetail('{a.get("id")}')">
+            <tr class="alloc-row" onclick="toggleDetail('{a.get("id")}')" style="cursor:pointer;{'border-left:3px solid #10b981;' if linked_id else ''}">
                 <td style="padding:10px 8px;white-space:nowrap;">
-                    <span style="font-size:11px;color:var(--text-muted);">{time_str}</span>
+                    <span style="font-size:12px;font-weight:600;">{date_display}</span>
+                    <br><span style="font-size:10px;color:var(--text-muted);">{time_str}</span>
+                    {date_note}
                 </td>
                 <td style="padding:10px 8px;">
                     <span style="background:{color}22;color:{color};padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;">{icon} {label}</span>
+                    {linked_badge}
                 </td>
                 <td style="padding:10px 8px;">
                     <div style="font-weight:600;font-size:13px;">{safe_string(a.get("description", "-")[:60])}</div>
@@ -291,6 +446,8 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
             <tr id="detail_{a.get("id")}" style="display:none;">
                 <td colspan="6" style="padding:0 8px 15px 8px;background:rgba(99,102,241,0.03);">
                     <div style="padding:15px;border-radius:8px;border:1px solid var(--border);margin-top:2px;">
+                        
+                        {linked_detail}
                         
                         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
                             <div>
@@ -342,18 +499,16 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
             <div>
                 <h2 style="margin:0;">📒 Allocation Ledger</h2>
-                <p style="color:var(--text-muted);margin:4px 0 0 0;font-size:13px;">Every transaction allocation — who, what, where, why</p>
+                <p style="color:var(--text-muted);margin:4px 0 0 0;font-size:13px;">Place of Safety — every allocation, forever. Nothing gets deleted.</p>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <span style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">
-                    {len(all_allocs)} entries
+                    {total_count} entries
                 </span>
                 <span style="background:rgba(139,92,246,0.15);color:#8b5cf6;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">
                     🤖 {ai_count} AI
                 </span>
-                <span style="background:rgba(249,115,22,0.15);color:#f97316;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">
-                    ✏️ {manual_count} Manual
-                </span>
+                {f'<span style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">🔗 {linked_count // 2} linked pairs</span>' if linked_count > 0 else ''}
                 <span style="font-weight:700;font-size:15px;">
                     {money(total_amount)}
                 </span>
@@ -363,12 +518,13 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         <div class="card" style="margin-bottom:15px;padding:15px;">
             <form method="GET" action="/ledger" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                 <input type="date" name="date" value="{date_filter}" class="form-input" style="width:auto;" onchange="this.form.submit()">
+                {f'<a href="/ledger" style="font-size:11px;color:var(--primary);text-decoration:none;">✕ Clear date</a>' if date_filter else '<span style="font-size:11px;color:var(--text-muted);">Showing all</span>'}
                 <select name="type" class="form-input" style="width:auto;" onchange="this.form.submit()">
                     {type_options}
                 </select>
-                <input type="text" name="q" value="{safe_string(search_q)}" placeholder="Search..." class="form-input" style="width:200px;">
+                <input type="text" name="q" value="{safe_string(search_q)}" placeholder="Search supplier, ref, category..." class="form-input" style="width:200px;">
                 <button type="submit" class="btn btn-secondary" style="padding:8px 16px;">🔍</button>
-                <a href="/ledger" style="color:var(--text-muted);font-size:12px;margin-left:5px;">Clear</a>
+                <a href="/ledger" style="color:var(--text-muted);font-size:12px;margin-left:5px;">Clear all</a>
             </form>
         </div>
         
@@ -376,8 +532,8 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
             <table style="width:100%;border-collapse:collapse;">
                 <thead>
                     <tr style="border-bottom:2px solid var(--border);">
-                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:60px;">Time</th>
-                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:140px;">Type</th>
+                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:90px;">Date</th>
+                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:150px;">Type</th>
                         <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Description</th>
                         <th style="padding:10px 8px;text-align:right;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:110px;">Amount</th>
                         <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:140px;">By</th>
@@ -385,10 +541,18 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                     </tr>
                 </thead>
                 <tbody>
-                    {rows or f"<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--text-muted);'>No allocations for {date_filter}<br><br>Allocations are logged automatically as transactions happen.</td></tr>"}
+                    {rows or f"<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--text-muted);'>No allocations found{f' for {date_filter}' if date_filter else ''}<br><br>Allocations are logged automatically as transactions happen.</td></tr>"}
                 </tbody>
             </table>
         </div>
+        
+        {"" if total_pages <= 1 else f'''
+        <div style="display:flex;justify-content:center;gap:8px;margin-top:15px;align-items:center;">
+            {f'<a href="/ledger?page={page-1}&date={date_filter}&type={type_filter}&q={search_q}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">← Prev</a>' if page > 1 else ''}
+            <span style="color:var(--text-muted);font-size:13px;">Page {page} of {total_pages} ({total_count} entries)</span>
+            {f'<a href="/ledger?page={page+1}&date={date_filter}&type={type_filter}&q={search_q}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">Next →</a>' if page < total_pages else ''}
+        </div>
+        '''}
         
         <script>
         function toggleDetail(id) {{
