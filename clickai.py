@@ -835,12 +835,13 @@ from flask import Flask, request, redirect, session, jsonify, Response, send_fil
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "click-ai-2-secret-key-change-in-prod")
 
-# Session config - keep users logged in for 90 days (like Sage), auto-renew on each visit
+# Session config - keep users logged in for 90 days, auto-renew on each visit
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=90)
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True  # Renew session on every request
-app.config['SESSION_COOKIE_SECURE'] = False  # Allow HTTP for testing (set True in prod with HTTPS)
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get("FLASK_ENV") == "production"  # Auto HTTPS in prod
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB upload limit
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s: %(message)s')
@@ -911,6 +912,15 @@ def _log_request_time(response):
         # Always print for page requests
         if not request.path.startswith('/api/') and not request.path.startswith('/health'):
             print(f"[TIMING] {request.method} {request.path} = {total_ms}ms [{timing_str}]", flush=True)
+    return response
+
+@app.after_request
+def _trim_session(response):
+    """Keep session lean to prevent 4KB cookie overflow — prevents daily logout bug"""
+    for key in list(session.keys()):
+        if key not in ('user_id', 'business_id', '_permanent', 'show_welcome'):
+            if key.startswith('zane_') or key.startswith('_biz') or key == 'business_name':
+                session.pop(key, None)
     return response
 
 def _t(label):
