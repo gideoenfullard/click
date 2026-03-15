@@ -155,6 +155,11 @@ try:
 except ImportError:
     log_allocation = None
     ALLOCATION_LOG_LOADED = False
+try:
+    from clickai_whatsapp import register_whatsapp_routes
+    WHATSAPP_MODULE_LOADED = True
+except ImportError:
+    WHATSAPP_MODULE_LOADED = False
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -23082,6 +23087,15 @@ def _jarvis_global_hud(title, content):
         return JARVIS_HUD_CSS + THEME_REACTOR_SKINS + hdr + content + tl
     except Exception:
         return content
+
+
+# Register WhatsApp routes (separate module — dormant until toggled on in settings)
+try:
+    if WHATSAPP_MODULE_LOADED:
+        register_whatsapp_routes(app, db, login_required, Auth, generate_id, render_page)
+        logger.info("[WHATSAPP] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[WHATSAPP] Failed to register routes: {e}")
 
 
 @app.route("/dashboard")
