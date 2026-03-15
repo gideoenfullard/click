@@ -1,82 +1,69 @@
 @echo off
+title ClickAI Deploy
 color 0A
-echo.
-echo  =============================================
-echo     CLICKAI - BACKUP + DEPLOY
-echo     GitHub backup + Fly.io deploy
-echo  =============================================
-echo.
-
 cd /d "C:\Users\deonf\OneDrive\Desktop\click-main\click-main"
 
-if not exist "clickai.py" (
-    color 0C
-    echo  [FOUT] clickai.py nie gevind nie!
-    pause
-    exit /b 1
-)
+echo.
+echo ============================================
+echo    CLICKAI DEPLOY
+echo    %date% %time%
+echo ============================================
+echo.
 
-echo  [INFO] Folder: %CD%
+:: ──────────────────────────────────────────────
+:: STAP 1: Check git status
+:: ──────────────────────────────────────────────
+echo [1/5] Checking git status...
+git status --short
 echo.
-echo  Laaste keer clickai.py verander:
-for %%f in (clickai.py) do echo  %%~tf
-echo.
-echo  =============================================
-echo  Hierdie script gaan:
-echo    1. BACKUP na GitHub (safe copy)
-echo    2. DEPLOY na Fly.io (users kry nuwe code)
-echo  =============================================
-echo.
-set /p confirm="Is jy seker? (J/N): "
-if /i not "%confirm%"=="J" (
-    echo  Gekanselleer.
-    pause
-    exit /b 0
-)
 
-echo.
-echo  -- STAP 1/3: Backup na GitHub --
+:: ──────────────────────────────────────────────
+:: STAP 2: Stage all changes
+:: ──────────────────────────────────────────────
+echo [2/5] Staging all changes...
 git add -A
-git commit -m "Update %date% %time:~0,5%"
-if %ERRORLEVEL% NEQ 0 (
-    echo  [NOTA] Niks nuut om te save nie, gaan voort...
-)
-
-echo.
-echo  -- STAP 2/3: Push na GitHub --
-git push origin master
-if %ERRORLEVEL% NEQ 0 (
-    color 0C
-    echo  [FOUT] Kon nie na GitHub push nie!
-    pause
-    exit /b 1
-)
-echo  [OK] GitHub backup klaar
-
-echo.
-echo  -- STAP 3/3: Deploy na Fly.io --
-echo  (2-5 minute, wag net)
-echo.
-C:\click-main\click-main\flyctl deploy
 if %ERRORLEVEL% NEQ 0 (
     color 0C
     echo.
-    echo  [FOUT] Deploy het gefaal!
-    echo  Maar jou code is SAFE op GitHub.
+    echo *** FAILED: git add failed ***
+    echo Check if git is installed and repo is initialized.
+    echo.
     pause
     exit /b 1
 )
+echo     OK
+echo.
 
+:: ──────────────────────────────────────────────
+:: STAP 3: Commit
+:: ──────────────────────────────────────────────
+echo [3/5] Committing...
+git commit -m "deploy %date% %time%"
+if %ERRORLEVEL% NEQ 0 (
+    :: errorlevel 1 from commit usually means "nothing to commit"
+    echo     Nothing new to commit - pushing existing commits...
+)
 echo.
-color 0A
-echo  =============================================
-echo.
-echo     KLAAR!
-echo.
-echo     GitHub:  Backed up
-echo     Fly.io:  Deployed
-echo     Users:   Het die nuwe code
-echo.
-echo  =============================================
-echo.
-pause
+
+:: ──────────────────────────────────────────────
+:: STAP 4: Push to GitHub
+:: ──────────────────────────────────────────────
+echo [4/5] Pushing to GitHub...
+git push origin main 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    color 0C
+    echo.
+    echo ============================================
+    echo    *** GIT PUSH FAILED ***
+    echo ============================================
+    echo.
+    echo Possible fixes:
+    echo   1. Check internet connection
+    echo   2. Run: git pull origin main --rebase
+    echo   3. Check GitHub credentials
+    echo   4. Try: git push origin main --force
+    echo.
+    pause
+    exit /b 1
+)
+e

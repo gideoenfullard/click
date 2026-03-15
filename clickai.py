@@ -49131,6 +49131,10 @@ def pos_page():
     _safe_uid = str(current_user_id or '').replace("'", "")
     _safe_uname = str(current_user_name or 'Me').replace("'", "").replace("\\", "")
     
+    # Fix: pos_js is a plain string, not an f-string, so {_safe_uid} and {_safe_uname}
+    # remain as literal text. Replace them now that the variables are defined.
+    pos_js = pos_js.replace("{_safe_uid}", _safe_uid).replace("{_safe_uname}", _safe_uname)
+    
     return f'''<!DOCTYPE html>
 <html lang="en" data-theme="{_pos_theme}">
 <head>
