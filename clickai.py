@@ -27119,7 +27119,6 @@ def invoice_new():
                         description=f"Invoice {inv_num} - {customer_name}",
                         amount=float(total), gl_entries=_gl,
                         customer_name=customer_name, payment_method=payment_method, reference=inv_num,
-                        transaction_date=today(),
                         created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
                     )
             except Exception:
@@ -27848,7 +27847,6 @@ def api_invoice_pay(invoice_id):
                         {"account_code": "1200", "debit": 0, "credit": total},
                     ],
                     customer_name=customer_name, payment_method=payment_method, reference=f"PAY-{inv_number}",
-                    transaction_date=today(),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
                 )
         except Exception:
@@ -32674,7 +32672,7 @@ def api_expenses_quick_add():
                     description=desc[:200], amount=total_amount, gl_entries=journal_entries,
                     category=category, category_code=expense_account,
                     supplier_name=supplier_display, payment_method=payment_method,
-                    reference=reference_no, transaction_date=expense_date,
+                    reference=reference_no,
                     created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
                 )
         except Exception:
@@ -43225,7 +43223,6 @@ def api_po_receive(po_id):
                     description=f"GRV {grv_num} from PO {po.get('po_number','')} - {safe_string(po.get('supplier_name',''))}",
                     amount=0, stock_movements=_sm,
                     supplier_name=po.get("supplier_name", ""), reference=grv_num,
-                    transaction_date=today(),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name","") if user else "",
                     extra={"po_number": po.get("po_number",""), "items_received": items_received, "all_received": all_received}
                 )
@@ -50577,7 +50574,6 @@ def api_pos_sale():
                     ],
                     stock_movements=_stock_moves,
                     customer_name=customer_name, payment_method=payment_method, reference=sale_num,
-                    transaction_date=today(),
                     created_by=cashier_id or "", created_by_name=cashier_display or ""
                 )
         except Exception:
@@ -51351,7 +51347,6 @@ def api_pos_credit_note():
                         {"account_code": "2100", "debit": float(vat), "credit": 0},
                     ],
                     customer_name=customer_name, reference=cn_num,
-                    transaction_date=today(),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
                 )
         except Exception:
@@ -61172,9 +61167,7 @@ def api_banking_categorize():
                     ai_reasoning=f"Bank transaction categorized as '{category}' (GL {gl_code}). {'Auto-matched' if txn.get('auto_categorized') else 'Manual review'}. Original desc: {description[:100]}",
                     ai_confidence="HIGH" if txn.get("auto_categorized") else "",
                     ai_worker="BankLearning" if txn.get("auto_categorized") else "",
-                    supplier_name=txn.get("supplier_name", "") or description.split()[0][:30] if description else "",
                     payment_method="eft", reference=f"BNK-{txn_id[:8]}",
-                    transaction_date=txn_date,
                     created_by=session.get("user_id", ""), created_by_name=""
                 )
         except Exception:
@@ -68888,7 +68881,6 @@ def create_credit_note(invoice_id):
                         {"account_code": "1200", "debit": 0, "credit": float(cn_total)},
                     ],
                     customer_name=invoice.get("customer_name", ""), reference=cn_num,
-                    transaction_date=today(),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else "",
                     extra={"reason": reason, "credit_type": credit_type, "original_invoice": invoice.get("invoice_number", "")}
                 )
@@ -74178,7 +74170,6 @@ def api_scan_save_supplier_invoice():
                     ai_confidence="HIGH", ai_worker="Jacqo",
                     supplier_name=supplier_name, payment_method="eft" if is_paid else "account",
                     reference=data.get("invoice_number", ""),
-                    transaction_date=data.get("date", today()),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
                 )
         except Exception:
@@ -74467,7 +74458,6 @@ def api_scan_save_expense():
                     category=category, category_code=expense_account,
                     supplier_name=data.get("supplier_name", ""), payment_method=payment_method,
                     reference=data.get("invoice_number", ""),
-                    transaction_date=data.get("date", today()),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
                 )
         except Exception:
