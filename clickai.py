@@ -42181,12 +42181,13 @@ def purchase_new():
     <style>
     .po-top-actions {{ display: flex; justify-content: center; align-items: center; gap: 30px; padding: 10px 0 15px; position: sticky; top: 60px; z-index: 50; background: var(--bg); }}
     .po-top-actions .btn {{ padding: 14px 32px; font-size: 15px; font-weight: 700; min-width: 200px; text-align: center; }}
-    .po-main {{ max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }}
+    .po-form-grid {{ display: grid; grid-template-columns: 1fr 280px; gap: 20px; }}
+    .po-main {{ display: flex; flex-direction: column; gap: 15px; min-width: 0; }}
     .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; }}
     .po-sidebar .card {{ padding: 16px; margin: 0; }}
-    .po-item-row {{ display: grid; grid-template-columns: 2fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+    .po-item-row {{ display: grid; grid-template-columns: 3fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
     .po-item-row input {{ font-size: 13px; padding: 8px 10px; }}
-    .po-item-hdr {{ display: grid; grid-template-columns: 2fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
+    .po-item-hdr {{ display: grid; grid-template-columns: 3fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
     .po-stock-td {{ position: relative; }}
     .po-stock-td .ssp-dropdown {{ position: fixed; z-index: 9999; max-height: 60vh; min-width: 600px; }}
     .po-totals {{ display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 2px solid var(--border); }}
