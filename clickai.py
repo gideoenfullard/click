@@ -48460,70 +48460,54 @@ def pos_page():
         
         var fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
         
-        // ═══ IFRAME-FIRST PRINT (no popup blockers) + FULLSCREEN-AWARE ═══
+        // ═══ EXIT FULLSCREEN FIRST — browsers block print dialog in fullscreen ═══
         var wasFullscreen = !!document.fullscreenElement;
-        
-        function _posPrintViaIframe(html, callback) {
-            var pf = document.getElementById('posPrintFrame');
-            if (!pf) {
-                pf = document.createElement('iframe');
-                pf.id = 'posPrintFrame';
-                pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
-                document.body.appendChild(pf);
-            }
-            var fd = pf.contentDocument || pf.contentWindow.document;
-            fd.open(); fd.write(html); fd.close();
-            setTimeout(function() {
-                try {
-                    pf.contentWindow.focus();
-                    pf.contentWindow.print();
-                } catch(e) {
-                    console.log('[POS] iframe print failed, trying window.open fallback:', e);
-                    var printWin = window.open('', 'pos_slip_print', 'width=400,height=600');
-                    if (printWin) {
-                        printWin.document.open();
-                        printWin.document.write(html);
-                        printWin.document.close();
-                        setTimeout(function() {
-                            try { printWin.focus(); printWin.print(); } catch(e2) {}
-                            setTimeout(function() { try { printWin.close(); } catch(e3) {} }, 2000);
-                        }, 400);
-                    } else {
-                        alert('Print failed — allow popups for this site and retry.');
-                    }
-                }
-                if (callback) setTimeout(callback, 3000);
-            }, 600);
-        }
-        
-        function _posStartPrint() {
-            _posPrintViaIframe(fullHtml, function() {
-                // Store copy (duplicate) — same iframe, sequential, no second popup
-                if (posSettings.print_duplicates) {
-                    var copyHtml = fullHtml.replace('</body>', '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body>');
-                    _posPrintViaIframe(copyHtml, function() {
-                        if (wasFullscreen && typeof f11Mode !== 'undefined' && f11Mode) {
-                            try { document.documentElement.requestFullscreen(); } catch(e) {}
-                        }
-                    });
-                } else {
-                    if (wasFullscreen && typeof f11Mode !== 'undefined' && f11Mode) {
-                        try { document.documentElement.requestFullscreen(); } catch(e) {}
-                    }
-                }
-            });
-        }
-        
-        // Exit fullscreen first (browsers block print dialog in fullscreen)
         if (wasFullscreen) {
-            document.exitFullscreen().then(function() {
-                setTimeout(_posStartPrint, 300);
-            }).catch(function() {
-                _posStartPrint();
-            });
-        } else {
-            _posStartPrint();
+            try { document.exitFullscreen(); } catch(e) {}
         }
+        
+        // Small delay after exiting fullscreen to let browser settle
+        setTimeout(function() {
+            var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
+            if (printWin) {
+                printWin.document.open();
+                printWin.document.write(fullHtml);
+                printWin.document.close();
+                var tryPrint = function() {
+                    try { printWin.focus(); printWin.print(); } catch(e) { console.log('[POS] Print error:', e); }
+                    setTimeout(function() { try { printWin.close(); } catch(e) {} }, 2000);
+                };
+                if (printWin.document.readyState === 'complete') { setTimeout(tryPrint, 400); }
+                else { printWin.onload = function() { setTimeout(tryPrint, 200); }; setTimeout(tryPrint, 1500); }
+                
+                if (posSettings.print_duplicates) {
+                    setTimeout(function() {
+                        var pw2 = window.open('', 'pos_slip_copy', 'width=400,height=600,menubar=no,toolbar=no');
+                        if (pw2) {
+                            pw2.document.open();
+                            pw2.document.write(fullHtml.replace('</body>', '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body>'));
+                            pw2.document.close();
+                            var tp2 = function() { try { pw2.focus(); pw2.print(); } catch(e) {} setTimeout(function() { try { pw2.close(); } catch(e) {} }, 2000); };
+                            if (pw2.document.readyState === 'complete') { setTimeout(tp2, 400); } else { pw2.onload = function() { setTimeout(tp2, 200); }; setTimeout(tp2, 1500); }
+                        }
+                    }, 4000);
+                }
+            } else {
+                // Popup blocked — use iframe fallback
+                var pf = document.getElementById('posPrintFrame');
+                if (!pf) { pf = document.createElement('iframe'); pf.id = 'posPrintFrame'; pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;'; document.body.appendChild(pf); }
+                var fd = pf.contentDocument || pf.contentWindow.document;
+                fd.open(); fd.write(fullHtml); fd.close();
+                setTimeout(function() { try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) { alert('Print failed — allow popups for this site and retry.'); } }, 800);
+            }
+            
+            // Re-enter fullscreen after printing (if was in F11 mode)
+            if (wasFullscreen && typeof f11Mode !== 'undefined' && f11Mode) {
+                setTimeout(function() {
+                    try { document.documentElement.requestFullscreen(); } catch(e) {}
+                }, 6000);
+            }
+        }, wasFullscreen ? 400 : 0);
     }
     
     function closePrintModal() {
