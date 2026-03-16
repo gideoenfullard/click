@@ -31217,13 +31217,13 @@ def quote_view(quote_id):
     # === QUOTE EXPIRY: 7 days from quote date ===
     import datetime
     quote_expired = False
-    days_remaining = 7
+    days_remaining = 30
     expiry_date_str = ""
     try:
         quote_date_str = quote.get("date", "")
         if quote_date_str:
             quote_date = datetime.datetime.strptime(quote_date_str[:10], "%Y-%m-%d").date()
-            expiry_date = quote_date + datetime.timedelta(days=7)
+            expiry_date = quote_date + datetime.timedelta(days=30)
             expiry_date_str = expiry_date.strftime("%Y-%m-%d")
             today_date = datetime.date.today()
             days_remaining = (expiry_date - today_date).days
@@ -31395,7 +31395,7 @@ def quote_view(quote_id):
                 </div>""" if business and business.get("bank_account") else ''}
                 <div style="margin-top:12px;font-size:11px;color:#999;">
                     <p style="margin:2px 0;">Thank you for your business!</p>
-                    <p style="margin:6px 0 2px 0;font-weight:600;color:#555;">Prices valid for 7 days from date of quote.</p>
+                    <p style="margin:6px 0 2px 0;font-weight:600;color:#555;">Prices valid for 30 days from date of quote.</p>
                     {"<p style='margin:2px 0;color:#ef4444;font-weight:700;'>⚠ This quote has expired.</p>" if status == "expired" else f"<p style='margin:2px 0;color:#888;'>({days_remaining} day{'s' if days_remaining != 1 else ''} remaining)</p>" if days_remaining >= 0 and status in ("pending", "draft") else ""}
                 </div>
             </div>
@@ -61176,10 +61176,6 @@ def api_banking_categorize():
                             "date": txn_date,
                             "method": "eft",
                             "reference": ref,
-                            "notes": f"Banking recon: {description[:100]}",
-                            "invoice_id": _matched_s_inv.get("id", "") if _matched_s_inv else "",
-                            "invoice_number": _matched_s_inv.get("invoice_number", "") if _matched_s_inv else "",
-                            "source": "banking_recon",
                             "created_at": now()
                         }
                         db.save("supplier_payments", _sp)
@@ -61332,23 +61328,25 @@ def api_banking_categorize():
                         _receipt_cust_id = matched_customer.get("id", "")
                         _receipt_cust_name = matched_customer.get("name", description[:60])
                     
+                    # Generate receipt number
+                    _existing_receipts = db.get("receipts", {"business_id": biz_id}) or []
+                    _receipt_num = next_document_number("REC-", _existing_receipts, "receipt_number")
+                    
                     _receipt = {
                         "id": generate_id(),
                         "business_id": biz_id,
                         "customer_id": _receipt_cust_id,
                         "customer_name": _receipt_cust_name,
+                        "receipt_number": _receipt_num,
                         "amount": float(income_amount),
                         "date": txn_date,
                         "method": "eft",
                         "reference": ref,
                         "notes": f"Banking recon: {description[:100]}",
-                        "invoice_id": matched_invoice.get("id", "") if matched_invoice else "",
-                        "invoice_number": matched_invoice.get("invoice_number", "") if matched_invoice else "",
-                        "source": "banking_recon",
                         "created_at": now()
                     }
                     db.save("receipts", _receipt)
-                    logger.info(f"[BANK] Created receipt for {_receipt_cust_name} R{income_amount} (customer page)")
+                    logger.info(f"[BANK] Created receipt {_receipt_num} for {_receipt_cust_name} R{income_amount} (customer page)")
                 except Exception as e:
                     logger.error(f"[BANK] Failed to create receipt record: {e}")
                             
