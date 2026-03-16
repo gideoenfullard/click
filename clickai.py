@@ -42183,13 +42183,13 @@ def purchase_new():
     .po-top-actions .btn {{ padding: 14px 32px; font-size: 15px; font-weight: 700; min-width: 200px; text-align: center; }}
     .po-form-grid {{ display: grid; grid-template-columns: 1fr 280px; gap: 20px; }}
     .po-main {{ display: flex; flex-direction: column; gap: 15px; min-width: 0; }}
-    .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; }}
+    .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; align-self: start; }}
     .po-sidebar .card {{ padding: 16px; margin: 0; }}
     .po-item-row {{ display: grid; grid-template-columns: 3fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
     .po-item-row input {{ font-size: 13px; padding: 8px 10px; }}
     .po-item-hdr {{ display: grid; grid-template-columns: 3fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
     .po-stock-td {{ position: relative; }}
-    .po-stock-td .ssp-dropdown {{ position: fixed; z-index: 9999; max-height: 60vh; min-width: 600px; }}
+    .po-stock-td .ssp-dropdown.po-stock-dd {{ position: fixed !important; left: auto !important; right: auto !important; z-index: 9999 !important; max-height: 60vh; min-width: 600px; overflow-y: auto; background: var(--card, #1e1e2e); border: 1px solid var(--border, #333); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }}
     .po-totals {{ display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 2px solid var(--border); }}
     .po-totals-row {{ display: flex; justify-content: space-between; align-items: center; font-size: 14px; }}
     .po-totals-row.grand {{ font-size: 18px; font-weight: 700; color: var(--primary); padding-top: 6px; border-top: 1px solid var(--border); }}
@@ -42197,7 +42197,7 @@ def purchase_new():
     .po-add-btn:hover {{ border-color: var(--primary); color: var(--primary); background: rgba(99,102,241,0.05); }}
     .po-rm {{ background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 2px; opacity: 0.5; transition: all 0.15s; }}
     .po-rm:hover {{ color: var(--red); opacity: 1; }}
-    @media(max-width:900px) {{ .po-form-grid {{ grid-template-columns: 1fr; }} .po-sidebar {{ position: static; }} }}
+    @media(max-width:1100px) {{ .po-form-grid {{ grid-template-columns: 1fr; }} .po-sidebar {{ position: static; }} }}
     </style>
     
     <div style="margin-bottom: 12px;">
