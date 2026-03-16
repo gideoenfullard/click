@@ -42184,10 +42184,11 @@ def purchase_new():
     .po-main {{ max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }}
     .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; }}
     .po-sidebar .card {{ padding: 16px; margin: 0; }}
-    .po-item-row {{ display: grid; grid-template-columns: 1fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+    .po-item-row {{ display: grid; grid-template-columns: 2fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
     .po-item-row input {{ font-size: 13px; padding: 8px 10px; }}
-    .po-item-hdr {{ display: grid; grid-template-columns: 1fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
+    .po-item-hdr {{ display: grid; grid-template-columns: 2fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
     .po-stock-td {{ position: relative; }}
+    .po-stock-td .ssp-dropdown {{ min-width: 350px; }}
     .po-totals {{ display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 2px solid var(--border); }}
     .po-totals-row {{ display: flex; justify-content: space-between; align-items: center; font-size: 14px; }}
     .po-totals-row.grand {{ font-size: 18px; font-weight: 700; color: var(--primary); padding-top: 6px; border-top: 1px solid var(--border); }}
@@ -42649,24 +42650,6 @@ def purchase_view(po_id):
     </div>
     
     <script>
-    async function inlineEdit(field, dispId) {{
-        const disp = document.getElementById(dispId);
-        const current = disp.textContent.trim();
-        const val = prompt(field === 'sales_person' ? 'Sales Person name:' : 'Reference:', current === 'Click to set' ? '' : current);
-        if (val === null) return;
-        try {{
-            const r = await fetch('/api/purchase/{po_id}/status', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{status: '{po.get("status","draft")}', [field]: val}})
-            }});
-            const d = await r.json();
-            if (d.success) {{
-                disp.innerHTML = val || '<i style=color:#ccc>Click to set</i>';
-            }} else alert('Error: ' + (d.error || 'Save failed'));
-        }} catch(e) {{ alert('Error: ' + e.message); }}
-    }}
-    
     async function updatePOStatus(status) {{
         const response = await fetch('/api/purchase/{po_id}/status', {{
             method: 'POST',
@@ -47982,6 +47965,7 @@ def pos_page():
         }
         
         document.getElementById('qpNotes').value = '';
+        if (document.getElementById('qpReference')) document.getElementById('qpReference').value = '';
         document.getElementById('qpLines').innerHTML = '';
         document.getElementById('qpTotalItems').textContent = '0';
         
@@ -48059,6 +48043,7 @@ def pos_page():
         const supplierEmail = document.getElementById('qpSupplierEmail')?.value?.trim() || '';
         const supplierVat = document.getElementById('qpSupplierVat')?.value?.trim() || '';
         const notes = document.getElementById('qpNotes').value.trim();
+        const reference = document.getElementById('qpReference')?.value?.trim() || '';
         
         if (!supplierName && !qpSelectedSupplierId) {
             alert('Please enter a supplier name');
@@ -48103,7 +48088,8 @@ def pos_page():
                         vat_number: supplierVat
                     },
                     items: items,
-                    notes: notes
+                    notes: notes,
+                    reference: reference
                 })
             });
             
@@ -48810,6 +48796,13 @@ def pos_page():
                         <span id="qpTotalItems" style="color:white;font-size:18px;font-weight:bold;margin-left:10px;">0</span>
                     </div>
                 </div>
+            </div>
+            
+            <!-- Reference -->
+            <div style="background:rgba(0,0,0,0.2);padding:15px;border-radius:12px;margin-bottom:15px;">
+                <label style="display:block;margin-bottom:5px;color:white;font-size:13px;">Reference (who is ordering)</label>
+                <input type="text" id="qpReference" placeholder="Name / reference" 
+                    style="width:100%;padding:10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:14px;box-sizing:border-box;">
             </div>
             
             <!-- Notes -->
@@ -51104,6 +51097,7 @@ def api_pos_quick_po():
             "date": today(),
             "items": po_items,
             "notes": notes,
+            "reference": data.get("reference", ""),
             "status": "draft",
             "created_at": now(),
             "created_by": user.get("id") if user else None
