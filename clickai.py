@@ -149,12 +149,6 @@ try:
     CASHUP_LOADED = True
 except ImportError:
     CASHUP_LOADED = False
-try:
-    from clickai_allocation_log import register_ledger_routes, log_allocation
-    ALLOCATION_LOG_LOADED = True
-except ImportError:
-    log_allocation = None
-    ALLOCATION_LOG_LOADED = False
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -888,8 +882,6 @@ def _enforce_role_access():
             '/pos', '/sale/', '/customers', '/customer/', '/stock', '/jobs', '/job/',
             '/suppliers', '/supplier/', '/purchases', '/purchase/',
             '/delivery-notes', '/delivery-note/',
-            '/cashup', '/api/cashup',
-            '/ledger', '/api/ledger',
             '/api/pos/', '/api/chat', '/api/stock', '/api/customer', '/api/supplier',
             '/api/email', '/api/send',
             '/invoice/', '/quote/',  # Can VIEW individual docs
@@ -16749,14 +16741,6 @@ try:
 except Exception as e:
     logger.error(f"[CASHUP] Failed to register routes: {e}")
 
-# Register allocation ledger routes (separate module)
-try:
-    if ALLOCATION_LOG_LOADED:
-        register_ledger_routes(app, db, login_required, Auth, generate_id, now, today)
-        logger.info("[ALLOC LOG] Routes registered ✓")
-except Exception as e:
-    logger.error(f"[ALLOC LOG] Failed to register routes: {e}")
-
 
 # 
 # UI COMPONENTS - Minimal, Zane-centric
@@ -18897,7 +18881,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("expenses", "/expenses", "Expenses"),
             ("banking", "/banking", "Banking"),
             ("reports", "/reports", "Reports"),
-            ("ledger", "/ledger", "Ledger"),
             ("inbox", "/scan-inbox", "Inbox"),
         ]
     else:
@@ -18918,7 +18901,6 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             ("banking", "/banking", "Banking"),
             ("payroll", "/payroll", "Payroll"),
             ("reports", "/reports", "Reports"),
-            ("ledger", "/ledger", "Ledger"),
             ("intelligence", "/intelligence", "AI"),
             ("tools", "/tools", "Tools"),
             ("import", "/smart-import", "Import"),
@@ -27105,25 +27087,6 @@ def invoice_new():
             except Exception as e:
                 logger.error(f"GL entry failed (non-critical): {e}")
             
-            # === ALLOCATION LOG ===
-            try:
-                if log_allocation:
-                    _bank = "1050" if payment_method == "cash" else "1000"
-                    _gl = [
-                        {"account_code": _bank if payment_method != "account" else "1200", "debit": float(total), "credit": 0},
-                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
-                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
-                    ]
-                    log_allocation(
-                        business_id=biz_id, allocation_type="invoice", source_table="invoices", source_id=invoice_id,
-                        description=f"Invoice {inv_num} - {customer_name}",
-                        amount=float(total), gl_entries=_gl,
-                        customer_name=customer_name, payment_method=payment_method, reference=inv_num,
-                        created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
-                    )
-            except Exception:
-                pass
-            
             return redirect(f"/invoice/{invoice_id}")
         
         return redirect("/invoice/new?error=Failed+to+save")
@@ -27834,23 +27797,6 @@ def api_invoice_pay(invoice_id):
         db.save("payments", payment)
         
         logger.info(f"[PAYMENT] Invoice {inv_number} marked as PAID ({bank_name}) - R{total:.2f}")
-        
-        # === ALLOCATION LOG ===
-        try:
-            if log_allocation:
-                log_allocation(
-                    business_id=biz_id, allocation_type="payment", source_table="payments", source_id=payment.get("id", ""),
-                    description=f"Payment received - {inv_number} - {customer_name} ({bank_name})",
-                    amount=total,
-                    gl_entries=[
-                        {"account_code": bank_account, "debit": total, "credit": 0},
-                        {"account_code": "1200", "debit": 0, "credit": total},
-                    ],
-                    customer_name=customer_name, payment_method=payment_method, reference=f"PAY-{inv_number}",
-                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
-                )
-        except Exception:
-            pass
         
         return jsonify({
             "success": True,
@@ -32663,21 +32609,6 @@ def api_expenses_quick_add():
         create_journal_entry(biz_id, expense_date, desc[:50], f"EXP-{expense['id'][:8]}", journal_entries)
         
         logger.info(f"[EXPENSE QUICK-ADD] {desc} R{total_amount:.2f} cat={category} GL={expense_account}{' (OFFLINE SYNC)' if is_offline else ''}")
-        
-        # === ALLOCATION LOG ===
-        try:
-            if log_allocation:
-                log_allocation(
-                    business_id=biz_id, allocation_type="manual_expense", source_table="expenses", source_id=expense["id"],
-                    description=desc[:200], amount=total_amount, gl_entries=journal_entries,
-                    category=category, category_code=expense_account,
-                    supplier_name=supplier_display, payment_method=payment_method,
-                    reference=reference_no,
-                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
-                )
-        except Exception:
-            pass
-        
         return jsonify({"success": True, "id": expense["id"], "message": f"Expense R{total_amount:,.2f} saved"})
         
     except Exception as e:
@@ -43214,21 +43145,6 @@ def api_po_receive(po_id):
             if "Could not find" in grv_error:
                 status_msg += " Table needs to be created in Supabase."
         
-        # === ALLOCATION LOG ===
-        try:
-            if log_allocation:
-                _sm = [{"stock_id": ri.get("stock_id",""), "code": ri.get("stock_code",""), "description": ri.get("description",""), "qty_change": ri.get("qty_received",0)} for ri in received_items if ri.get("stock_id")]
-                log_allocation(
-                    business_id=biz_id, allocation_type="grv", source_table="goods_received", source_id=grv_id,
-                    description=f"GRV {grv_num} from PO {po.get('po_number','')} - {safe_string(po.get('supplier_name',''))}",
-                    amount=0, stock_movements=_sm,
-                    supplier_name=po.get("supplier_name", ""), reference=grv_num,
-                    created_by=user.get("id") if user else "", created_by_name=user.get("name","") if user else "",
-                    extra={"po_number": po.get("po_number",""), "items_received": items_received, "all_received": all_received}
-                )
-        except Exception:
-            pass
-        
         return jsonify({"success": True, "message": status_msg, "all_received": all_received, "grv_id": grv_id, "grv_number": grv_num})
         
     except Exception as e:
@@ -50556,29 +50472,6 @@ def api_pos_sale():
         
         logger.info(f"[POS] Sale {sale_num}: R{total:.2f} ({payment_method}) - GL entries created")
         
-        # === ALLOCATION LOG ===
-        try:
-            if log_allocation:
-                _stock_moves = []
-                for item in items:
-                    if item.get("stock_id"):
-                        _stock_moves.append({"stock_id": item.get("stock_id"), "code": item.get("code", ""), "description": item.get("description", ""), "qty_change": -int(item.get("quantity", 0))})
-                log_allocation(
-                    business_id=biz_id, allocation_type="pos_sale", source_table="sales", source_id=sale_id,
-                    description=f"POS Sale {sale_num} - {customer_name} ({debit_name})",
-                    amount=float(total),
-                    gl_entries=[
-                        {"account_code": debit_account, "debit": float(total), "credit": 0},
-                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
-                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
-                    ],
-                    stock_movements=_stock_moves,
-                    customer_name=customer_name, payment_method=payment_method, reference=sale_num,
-                    created_by=cashier_id or "", created_by_name=cashier_display or ""
-                )
-        except Exception:
-            pass
-        
         return jsonify({
             "success": True,
             "message": f"R{total:.2f} - {len(items)} items",
@@ -51333,24 +51226,6 @@ def api_pos_credit_note():
         
         logger.info(f"[POS] Credit Note {cn_num} created: -R{total:.2f}")
         AuditLog.log("CREATE", "credit_notes", cn_id, details=f"Credit Note from POS - {customer_name}")
-        
-        # === ALLOCATION LOG ===
-        try:
-            if log_allocation:
-                log_allocation(
-                    business_id=biz_id, allocation_type="credit_note", source_table="credit_notes", source_id=cn_id,
-                    description=f"POS Credit Note {cn_num} - {customer_name}",
-                    amount=float(total),
-                    gl_entries=[
-                        {"account_code": "1200", "debit": 0, "credit": float(total)},
-                        {"account_code": "4000", "debit": float(subtotal), "credit": 0},
-                        {"account_code": "2100", "debit": float(vat), "credit": 0},
-                    ],
-                    customer_name=customer_name, reference=cn_num,
-                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
-                )
-        except Exception:
-            pass
         
         return jsonify({
             "success": True,
@@ -61155,24 +61030,6 @@ def api_banking_categorize():
                     {"account_code": gl_code, "debit": 0, "credit": income_rounded},
                 ])
         
-        # === ALLOCATION LOG ===
-        try:
-            if log_allocation:
-                _is_expense = debit > 0 or amount < 0
-                log_allocation(
-                    business_id=biz_id, allocation_type="bank_categorize", source_table="bank_transactions", source_id=txn_id,
-                    description=f"Bank: {description[:100]} → {category}",
-                    amount=float(debit if debit > 0 else credit if credit > 0 else abs(amount)),
-                    category=category, category_code=gl_code,
-                    ai_reasoning=f"Bank transaction categorized as '{category}' (GL {gl_code}). {'Auto-matched' if txn.get('auto_categorized') else 'Manual review'}. Original desc: {description[:100]}",
-                    ai_confidence="HIGH" if txn.get("auto_categorized") else "",
-                    ai_worker="BankLearning" if txn.get("auto_categorized") else "",
-                    payment_method="eft", reference=f"BNK-{txn_id[:8]}",
-                    created_by=session.get("user_id", ""), created_by_name=""
-                )
-        except Exception:
-            pass
-        
         return jsonify({"success": True, "message": f"Categorized as {category}"})
         
     except Exception as e:
@@ -68868,25 +68725,6 @@ def create_credit_note(invoice_id):
         except Exception:
             pass
         
-        # === ALLOCATION LOG ===
-        try:
-            if log_allocation:
-                log_allocation(
-                    business_id=biz_id, allocation_type="credit_note", source_table="credit_notes", source_id=cn_id,
-                    description=f"Credit Note {cn_num} - {credit_type} - reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}",
-                    amount=float(cn_total),
-                    gl_entries=[
-                        {"account_code": "4000", "debit": float(cn_subtotal), "credit": 0},
-                        {"account_code": "2100", "debit": float(cn_vat), "credit": 0},
-                        {"account_code": "1200", "debit": 0, "credit": float(cn_total)},
-                    ],
-                    customer_name=invoice.get("customer_name", ""), reference=cn_num,
-                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else "",
-                    extra={"reason": reason, "credit_type": credit_type, "original_invoice": invoice.get("invoice_number", "")}
-                )
-        except Exception:
-            pass
-        
         return redirect(f"/credit-note/{cn_id}")
     
     # GET - build form with line item selection
@@ -74153,28 +73991,6 @@ def api_scan_save_supplier_invoice():
             db.save("suppliers", {"id": supplier["id"], "balance": new_balance})
         
         logger.info(f"[SCAN SAVE] Supplier invoice saved: {inv_id}, {len(items)} items, {stock_items_matched} matched, {stock_items_created} new, {expenses_booked} expenses")
-        
-        # === ALLOCATION LOG ===
-        try:
-            if log_allocation:
-                _gl = [
-                    {"account_code": "5100", "debit": round(net_amount, 2), "credit": 0},
-                    {"account_code": "1400", "debit": round(vat_amount, 2), "credit": 0},
-                    {"account_code": "1000" if is_paid else "2000", "debit": 0, "credit": round(total_amount, 2)},
-                ]
-                log_allocation(
-                    business_id=biz_id, allocation_type="scan_supplier_invoice", source_table="supplier_invoices", source_id=inv_id,
-                    description=f"Scanned Invoice - {supplier_name} - {data.get('invoice_number', '')}",
-                    amount=total_amount, gl_entries=_gl,
-                    ai_reasoning=f"Jacqo scanned document. {stock_items_matched} stock matched, {stock_items_created} new stock created, {expenses_booked} service/expense items. Paid={is_paid}.",
-                    ai_confidence="HIGH", ai_worker="Jacqo",
-                    supplier_name=supplier_name, payment_method="eft" if is_paid else "account",
-                    reference=data.get("invoice_number", ""),
-                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
-                )
-        except Exception:
-            pass
-        
         return jsonify({
             "success": True, 
             "id": inv_id, 
@@ -74444,25 +74260,6 @@ def api_scan_save_expense():
         create_journal_entry(biz_id, data.get("date", today()), desc[:50], f"EXP-{exp_id[:8]}", journal_entries)
         
         logger.info(f"[SCAN SAVE] Expense saved: {exp_id} cat={category} GL={expense_account} for {biz_id}")
-        
-        # === ALLOCATION LOG ===
-        try:
-            if log_allocation:
-                log_allocation(
-                    business_id=biz_id, allocation_type="scan_expense", source_table="expenses", source_id=exp_id,
-                    description=desc[:200],
-                    amount=total_amount, gl_entries=journal_entries,
-                    ai_reasoning=f"Scanned expense categorized as '{category}' → GL {expense_account}. VAT claimable: R{vat_claimable:.2f}. {'Multi-GL split applied.' if splits and len(splits) > 1 else 'Single GL.'}",
-                    ai_confidence="HIGH" if category != "General Expenses" else "LOW",
-                    ai_worker="Jacqo",
-                    category=category, category_code=expense_account,
-                    supplier_name=data.get("supplier_name", ""), payment_method=payment_method,
-                    reference=data.get("invoice_number", ""),
-                    created_by=user.get("id") if user else "", created_by_name=user.get("name", "") if user else ""
-                )
-        except Exception:
-            pass
-        
         return jsonify({
             "success": True, 
             "id": exp_id, 
