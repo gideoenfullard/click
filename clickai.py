@@ -30849,7 +30849,22 @@ def quotes_page():
     rows = ""
     for q in quotes:
         status = q.get("status", "pending")
-        status_color = "var(--green)" if status == "accepted" else "var(--red)" if status == "declined" else "var(--orange)"
+        # Auto-expire: check if quote is older than 7 days and still pending/draft
+        if status in ("pending", "draft"):
+            try:
+                import datetime
+                _qd = q.get("date", "")
+                if _qd:
+                    _qdate = datetime.datetime.strptime(_qd[:10], "%Y-%m-%d").date()
+                    if (datetime.date.today() - _qdate).days > 7:
+                        status = "expired"
+                        try:
+                            db.update("quotes", q.get("id"), {"status": "expired"})
+                        except:
+                            pass
+            except:
+                pass
+        status_color = "var(--green)" if status == "accepted" else "var(--red)" if status in ("declined", "expired") else "#3b82f6" if status == "converted" else "var(--orange)"
         rows += f'''
         <tr style="cursor:pointer;" onclick="window.location='/quote/{q.get("id")}'">
             <td><strong>{q.get("quote_number", "-")}</strong></td>
@@ -30895,7 +30910,7 @@ def quote_new():
     if request.method == "POST":
         customer_id = request.form.get("customer_id", "")
         customer_name = request.form.get("customer_name", "")
-        valid_days = int(request.form.get("valid_days", 30))
+        valid_days = int(request.form.get("valid_days", 7))
         
         items = []
         descriptions = request.form.getlist("item_desc[]")
@@ -30989,7 +31004,7 @@ def quote_new():
                 </div>
                 <div>
                     <label>Valid For (Days)</label>
-                    <input type="number" name="valid_days" value="30" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <input type="number" name="valid_days" value="7" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
             </div>
             
@@ -31199,8 +31214,39 @@ def quote_view(quote_id):
     if weight:
         weight_info = f'<p style="color:var(--text-muted);margin:10px 0;"> Total Weight: <strong>{float(weight):.1f}kg</strong></p>'
     
+    # === QUOTE EXPIRY: 7 days from quote date ===
+    import datetime
+    quote_expired = False
+    days_remaining = 7
+    expiry_date_str = ""
+    try:
+        quote_date_str = quote.get("date", "")
+        if quote_date_str:
+            quote_date = datetime.datetime.strptime(quote_date_str[:10], "%Y-%m-%d").date()
+            expiry_date = quote_date + datetime.timedelta(days=7)
+            expiry_date_str = expiry_date.strftime("%Y-%m-%d")
+            today_date = datetime.date.today()
+            days_remaining = (expiry_date - today_date).days
+            if days_remaining < 0 and status in ("pending", "draft"):
+                quote_expired = True
+                status = "expired"
+                # Update in DB so it stays expired
+                try:
+                    db.update("quotes", quote_id, {"status": "expired"})
+                except:
+                    pass
+    except:
+        pass
+    
     action_buttons = ""
-    if status in ("pending", "draft"):
+    if status == "expired":
+        action_buttons = f'''
+        <span style="background:#ef4444;color:white;padding:8px 16px;border-radius:8px;font-weight:700;font-size:13px;">⚠ QUOTE EXPIRED</span>
+        <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;margin-left:10px;">
+            <button type="submit" class="btn btn-secondary">➜ Convert to Invoice Anyway</button>
+        </form>
+        '''
+    elif status in ("pending", "draft"):
         action_buttons = f'''
         <form action="/quote/{quote_id}/convert-to-invoice" method="POST" style="display:inline;">
             <button type="submit" class="btn btn-primary">➜ Convert to Invoice</button>
@@ -31288,7 +31334,7 @@ def quote_view(quote_id):
             </div>
             <div style="text-align:right;">
                 <h2 style="margin:0;font-size:20px;font-weight:700;letter-spacing:2px;">QUOTATION</h2>
-                <span style="background:{"#10b981" if status == "accepted" else "#ef4444" if status == "declined" else "rgba(255,255,255,0.2)"};color:white;padding:4px 12px;border-radius:20px;font-size:12px;">
+                <span style="background:{"#10b981" if status == "accepted" else "#ef4444" if status in ("declined", "expired") else "#3b82f6" if status == "converted" else "rgba(255,255,255,0.2)"};color:white;padding:4px 12px;border-radius:20px;font-size:12px;">
                     {status.upper()}
                 </span>
             </div>
@@ -31300,7 +31346,7 @@ def quote_view(quote_id):
                 <table style="width:100%;font-size:11px;color:#333;">
                     <tr><td style="padding:4px 0;color:#888;width:120px;">Number:</td><td style="padding:4px 0;font-weight:600;">{quote.get("quote_number", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{quote.get("date", "-")}</td></tr>
-                    <tr><td style="padding:4px 0;color:#888;">Valid Until:</td><td style="padding:4px 0;">{quote.get("valid_until", "14 days")}</td></tr>
+                    <tr><td style="padding:4px 0;color:#888;">Valid Until:</td><td style="padding:4px 0;{"color:#ef4444;font-weight:600;" if status == "expired" else ""}">{expiry_date_str or "7 days"}{"  ⚠ EXPIRED" if status == "expired" else ""}</td></tr>
                     {f'<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
                 </table>
                 {f'<div style="margin-top:8px;font-size:10px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
@@ -31349,6 +31395,8 @@ def quote_view(quote_id):
                 </div>""" if business and business.get("bank_account") else ''}
                 <div style="margin-top:12px;font-size:11px;color:#999;">
                     <p style="margin:2px 0;">Thank you for your business!</p>
+                    <p style="margin:6px 0 2px 0;font-weight:600;color:#555;">Prices valid for 7 days from date of quote.</p>
+                    {"<p style='margin:2px 0;color:#ef4444;font-weight:700;'>⚠ This quote has expired.</p>" if status == "expired" else f"<p style='margin:2px 0;color:#888;'>({days_remaining} day{'s' if days_remaining != 1 else ''} remaining)</p>" if days_remaining >= 0 and status in ("pending", "draft") else ""}
                 </div>
             </div>
             <table style="width:220px;border-collapse:collapse;">
