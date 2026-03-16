@@ -11788,7 +11788,8 @@ class Actions:
             "vat": float(vat),
             "total": float(total),
             "status": "draft",
-            "notes": data.get("notes", ""),
+            "sales_person": data.get("sales_person", ""),
+            "reference": data.get("reference", ""),
             "created_at": now()
         }
         
@@ -42506,11 +42507,11 @@ def purchase_view(po_id):
     biz_phone = business.get("phone", "") if business else ""
     biz_email_addr = business.get("email", "") if business else ""
     
-    # Pre-build notes row (safe read from existing data)
+    # Pre-build sales person and reference rows (always show, with inline edit)
     sp_val = safe_string(po.get("sales_person", ""))
     ref_val = safe_string(po.get("reference", ""))
-    sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;">{sp_val or "-"}</td></tr>' if sp_val else ""
-    ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;">{ref_val or "-"}</td></tr>' if ref_val else ""
+    sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;"><span id="spDisp">{sp_val or "<i style=color:#ccc>Click to set</i>"}</span> <span class="no-print" style="cursor:pointer;font-size:11px;color:#0f766e;" onclick="inlineEdit(&#39;sales_person&#39;,&#39;spDisp&#39;)">✏️</span></td></tr>'
+    ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;"><span id="refDisp">{ref_val or "<i style=color:#ccc>Click to set</i>"}</span> <span class="no-print" style="cursor:pointer;font-size:11px;color:#0f766e;" onclick="inlineEdit(&#39;reference&#39;,&#39;refDisp&#39;)">✏️</span></td></tr>'
     
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -42865,9 +42866,11 @@ def api_po_status(po_id):
         clean_po["status"] = new_status
         clean_po["updated_at"] = now()
         
-        # Also update notes if provided
-        if "notes" in data:
-            clean_po["notes"] = data["notes"][:500] if data["notes"] else ""
+        # Also update sales_person and reference if provided
+        if "sales_person" in data:
+            clean_po["sales_person"] = data["sales_person"][:100] if data["sales_person"] else ""
+        if "reference" in data:
+            clean_po["reference"] = data["reference"][:100] if data["reference"] else ""
         
         success, err = db.save("purchase_orders", clean_po)
         
@@ -48457,54 +48460,39 @@ def pos_page():
         
         var fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
         
-        // ═══ EXIT FULLSCREEN FIRST — browsers block print dialog in fullscreen ═══
-        var wasFullscreen = !!document.fullscreenElement;
-        if (wasFullscreen) {
-            try { document.exitFullscreen(); } catch(e) {}
-        }
-        
-        // Small delay after exiting fullscreen to let browser settle
-        setTimeout(function() {
-            var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
-            if (printWin) {
-                printWin.document.open();
-                printWin.document.write(fullHtml);
-                printWin.document.close();
-                var tryPrint = function() {
-                    try { printWin.focus(); printWin.print(); } catch(e) { console.log('[POS] Print error:', e); }
-                    setTimeout(function() { try { printWin.close(); } catch(e) {} }, 2000);
-                };
-                if (printWin.document.readyState === 'complete') { setTimeout(tryPrint, 400); }
-                else { printWin.onload = function() { setTimeout(tryPrint, 200); }; setTimeout(tryPrint, 1500); }
-                
-                if (posSettings.print_duplicates) {
-                    setTimeout(function() {
-                        var pw2 = window.open('', 'pos_slip_copy', 'width=400,height=600,menubar=no,toolbar=no');
-                        if (pw2) {
-                            pw2.document.open();
-                            pw2.document.write(fullHtml.replace('</body>', '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body>'));
-                            pw2.document.close();
-                            var tp2 = function() { try { pw2.focus(); pw2.print(); } catch(e) {} setTimeout(function() { try { pw2.close(); } catch(e) {} }, 2000); };
-                            if (pw2.document.readyState === 'complete') { setTimeout(tp2, 400); } else { pw2.onload = function() { setTimeout(tp2, 200); }; setTimeout(tp2, 1500); }
-                        }
-                    }, 4000);
-                }
-            } else {
-                // Popup blocked — use iframe fallback
-                var pf = document.getElementById('posPrintFrame');
-                if (!pf) { pf = document.createElement('iframe'); pf.id = 'posPrintFrame'; pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;'; document.body.appendChild(pf); }
-                var fd = pf.contentDocument || pf.contentWindow.document;
-                fd.open(); fd.write(fullHtml); fd.close();
-                setTimeout(function() { try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) { alert('Print failed — allow popups for this site and retry.'); } }, 800);
-            }
+        // Exit fullscreen before print (browsers block print dialog in fullscreen)
+        if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
+        var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
+        if (printWin) {
+            printWin.document.open();
+            printWin.document.write(fullHtml);
+            printWin.document.close();
+            var tryPrint = function() {
+                try { printWin.focus(); printWin.print(); } catch(e) { console.log('[POS] Print error:', e); }
+                setTimeout(function() { try { printWin.close(); } catch(e) {} }, 2000);
+            };
+            if (printWin.document.readyState === 'complete') { setTimeout(tryPrint, 400); }
+            else { printWin.onload = function() { setTimeout(tryPrint, 200); }; setTimeout(tryPrint, 1500); }
             
-            // Re-enter fullscreen after printing (if was in F11 mode)
-            if (wasFullscreen && typeof f11Mode !== 'undefined' && f11Mode) {
+            if (posSettings.print_duplicates) {
                 setTimeout(function() {
-                    try { document.documentElement.requestFullscreen(); } catch(e) {}
-                }, 6000);
+                    var pw2 = window.open('', 'pos_slip_copy', 'width=400,height=600,menubar=no,toolbar=no');
+                    if (pw2) {
+                        pw2.document.open();
+                        pw2.document.write(fullHtml.replace('</body>', '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body>'));
+                        pw2.document.close();
+                        var tp2 = function() { try { pw2.focus(); pw2.print(); } catch(e) {} setTimeout(function() { try { pw2.close(); } catch(e) {} }, 2000); };
+                        if (pw2.document.readyState === 'complete') { setTimeout(tp2, 400); } else { pw2.onload = function() { setTimeout(tp2, 200); }; setTimeout(tp2, 1500); }
+                    }
+                }, 4000);
             }
-        }, wasFullscreen ? 400 : 0);
+        } else {
+            var pf = document.getElementById('posPrintFrame');
+            if (!pf) { pf = document.createElement('iframe'); pf.id = 'posPrintFrame'; pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;'; document.body.appendChild(pf); }
+            var fd = pf.contentDocument || pf.contentWindow.document;
+            fd.open(); fd.write(fullHtml); fd.close();
+            setTimeout(function() { try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) { alert('Print failed — allow popups for this site and retry.'); } }, 800);
+        }
     }
     
     function closePrintModal() {
@@ -50348,28 +50336,18 @@ def view_sale(sale_id):
         
         var fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
         
-        // ═══ IFRAME-FIRST PRINT (no popup blockers) ═══
-        var pf = document.getElementById('posPrintFrame');
-        if (!pf) {{ pf = document.createElement('iframe'); pf.id = 'posPrintFrame'; pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;'; document.body.appendChild(pf); }}
-        var fd = pf.contentDocument || pf.contentWindow.document;
-        fd.open(); fd.write(fullHtml); fd.close();
-        setTimeout(function() {{
-            try {{
-                pf.contentWindow.focus();
-                pf.contentWindow.print();
-            }} catch(e) {{
-                console.log('[POS] iframe reprint failed, trying window.open:', e);
-                var printWin = window.open('', 'pos_slip_print', 'width=400,height=600');
-                if (printWin) {{
-                    printWin.document.open();
-                    printWin.document.write(fullHtml);
-                    printWin.document.close();
-                    setTimeout(function() {{ try {{ printWin.focus(); printWin.print(); }} catch(e2) {{}} setTimeout(function() {{ try {{ printWin.close(); }} catch(e3) {{}} }}, 2000); }}, 400);
-                }} else {{
-                    alert('Print failed — allow popups for this site and retry.');
-                }}
-            }}
-        }}, 600);
+        var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
+        if (printWin) {{
+            printWin.document.open();
+            printWin.document.write(fullHtml);
+            printWin.document.close();
+            var tryPrint = function() {{
+                try {{ printWin.focus(); printWin.print(); }} catch(e) {{ console.log('[POS] Print error:', e); }}
+                setTimeout(function() {{ try {{ printWin.close(); }} catch(e) {{}} }}, 2000);
+            }};
+            if (printWin.document.readyState === 'complete') {{ setTimeout(tryPrint, 400); }}
+            else {{ printWin.onload = function() {{ setTimeout(tryPrint, 200); }}; setTimeout(tryPrint, 1500); }}
+        }}
     }}
     </script>
     '''
@@ -51535,7 +51513,8 @@ def api_pos_purchase_order():
             "supplier_name": supplier_name,
             "items": json.dumps(clean_items),
             "status": "draft",
-            "notes": data.get("notes", ""),
+            "sales_person": data.get("sales_person", ""),
+            "reference": data.get("reference", ""),
             "created_at": now()
         }
         
