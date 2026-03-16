@@ -42187,9 +42187,8 @@ def purchase_new():
     .po-item-row {{ display: grid; grid-template-columns: 2fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
     .po-item-row input {{ font-size: 13px; padding: 8px 10px; }}
     .po-item-hdr {{ display: grid; grid-template-columns: 2fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
-    .po-stock-td {{ position: static; }}
-    .po-item-row {{ position: relative; }}
-    .po-stock-td .ssp-dropdown {{ position: absolute; left: 0; right: 0; top: 100%; z-index: 999; max-height: 60vh; }}
+    .po-stock-td {{ position: relative; }}
+    .po-stock-td .ssp-dropdown {{ position: fixed; z-index: 9999; max-height: 60vh; min-width: 600px; }}
     .po-totals {{ display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 2px solid var(--border); }}
     .po-totals-row {{ display: flex; justify-content: space-between; align-items: center; font-size: 14px; }}
     .po-totals-row.grand {{ font-size: 18px; font-weight: 700; color: var(--primary); padding-top: 6px; border-top: 1px solid var(--border); }}
@@ -42349,6 +42348,11 @@ def purchase_new():
                 }});
             }});
         }}
+        // Position dropdown below the input (fixed positioning)
+        var rect = input.getBoundingClientRect();
+        dd.style.left = rect.left + 'px';
+        dd.style.top = (rect.bottom + 2) + 'px';
+        dd.style.width = Math.max(rect.width, 600) + 'px';
         dd.classList.add('show');
     }}
     
