@@ -155,11 +155,6 @@ try:
 except ImportError:
     log_allocation = None
     ALLOCATION_LOG_LOADED = False
-try:
-    from clickai_whatsapp import register_whatsapp_routes
-    WHATSAPP_MODULE_LOADED = True
-except ImportError:
-    WHATSAPP_MODULE_LOADED = False
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -840,13 +835,12 @@ from flask import Flask, request, redirect, session, jsonify, Response, send_fil
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "click-ai-2-secret-key-change-in-prod")
 
-# Session config - keep users logged in for 90 days, auto-renew on each visit
+# Session config - keep users logged in for 90 days (like Sage), auto-renew on each visit
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=90)
 app.config['SESSION_REFRESH_EACH_REQUEST'] = True  # Renew session on every request
-app.config['SESSION_COOKIE_SECURE'] = os.environ.get("FLASK_ENV") == "production"  # Auto HTTPS in prod
+app.config['SESSION_COOKIE_SECURE'] = False  # Allow HTTP for testing (set True in prod with HTTPS)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB upload limit
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s: %(message)s')
@@ -917,15 +911,6 @@ def _log_request_time(response):
         # Always print for page requests
         if not request.path.startswith('/api/') and not request.path.startswith('/health'):
             print(f"[TIMING] {request.method} {request.path} = {total_ms}ms [{timing_str}]", flush=True)
-    return response
-
-@app.after_request
-def _trim_session(response):
-    """Keep session lean to prevent 4KB cookie overflow — prevents daily logout bug"""
-    for key in list(session.keys()):
-        if key not in ('user_id', 'business_id', '_permanent', 'show_welcome'):
-            if key.startswith('zane_') or key.startswith('_biz') or key == 'business_name':
-                session.pop(key, None)
     return response
 
 def _t(label):
@@ -23087,15 +23072,6 @@ def _jarvis_global_hud(title, content):
         return JARVIS_HUD_CSS + THEME_REACTOR_SKINS + hdr + content + tl
     except Exception:
         return content
-
-
-# Register WhatsApp routes (separate module — dormant until toggled on in settings)
-try:
-    if WHATSAPP_MODULE_LOADED:
-        register_whatsapp_routes(app, db, login_required, Auth, generate_id, render_page)
-        logger.info("[WHATSAPP] Routes registered ✓")
-except Exception as e:
-    logger.error(f"[WHATSAPP] Failed to register routes: {e}")
 
 
 @app.route("/dashboard")
@@ -48460,8 +48436,6 @@ def pos_page():
         
         var fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
         
-        // Exit fullscreen before print (browsers block print dialog in fullscreen)
-        if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
         var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
         if (printWin) {
             printWin.document.open();
@@ -49132,10 +49106,6 @@ def pos_page():
     '''
     _safe_uid = str(current_user_id or '').replace("'", "")
     _safe_uname = str(current_user_name or 'Me').replace("'", "").replace("\\", "")
-    
-    # Fix: pos_js is a plain string, not an f-string, so {_safe_uid} and {_safe_uname}
-    # remain as literal text. Replace them now that the variables are defined.
-    pos_js = pos_js.replace("{_safe_uid}", _safe_uid).replace("{_safe_uname}", _safe_uname)
     
     return f'''<!DOCTYPE html>
 <html lang="en" data-theme="{_pos_theme}">
@@ -60841,18 +60811,6 @@ RULES:
                     continue
                 
                 desc_upper = description.upper()
-                
-                # Skip non-transaction rows (balance lines, headers, etc)
-                skip_phrases = ['BALANCE BROUGHT', 'BROUGHT FORWARD', 'OPENING BALANCE', 
-                               'CLOSING BALANCE', 'BALANCE CARRIED', 'CARRIED FORWARD',
-                               'B/F', 'C/F', 'STATEMENT BALANCE']
-                if any(skip in desc_upper for skip in skip_phrases):
-                    logger.info(f"[BANK] Skipping non-transaction row: {description[:60]}")
-                    continue
-                
-                # Also skip rows with zero amount (just balance lines)
-                if debit == 0 and credit == 0 and amount == 0:
-                    continue
                 
                 # ═══════════════════════════════════════════════════════════════
                 # SMART MATCHING LOGIC
