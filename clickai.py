@@ -61090,17 +61090,64 @@ def api_banking_categorize():
                         {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
                     ])
                     # Try to match supplier invoice if reference exists
+                    _matched_supplier = None
+                    _matched_s_inv = None
                     match_ref = txn.get("match_reference", "")
                     if match_ref:
                         inv_num = match_ref.split(" - ")[0] if " - " in match_ref else match_ref
                         if inv_num:
                             s_invoices = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_num})
                             if s_invoices:
-                                s_inv = s_invoices[0]
-                                s_inv["status"] = "paid"
-                                s_inv["paid_date"] = txn_date
-                                db.save("supplier_invoices", s_inv)
+                                _matched_s_inv = s_invoices[0]
+                                _matched_s_inv["status"] = "paid"
+                                _matched_s_inv["paid_date"] = txn_date
+                                db.save("supplier_invoices", _matched_s_inv)
                                 logger.info(f"[BANK] Marked supplier invoice {inv_num} as paid")
+                                # Get the supplier from the invoice
+                                if _matched_s_inv.get("supplier_id"):
+                                    _matched_supplier = db.get_one("suppliers", _matched_s_inv["supplier_id"])
+                    
+                    # Try to find supplier by name in bank description
+                    if not _matched_supplier:
+                        _desc_upper = (txn.get("description") or "").upper()
+                        _all_suppliers = db.get("suppliers", {"business_id": biz_id}) or []
+                        for _s in _all_suppliers:
+                            _sname = (_s.get("name") or "").upper().strip()
+                            if _sname and len(_sname) >= 3 and _sname[:6] in _desc_upper:
+                                _matched_supplier = _s
+                                break
+                    
+                    # Create supplier_payments record so it shows on supplier page
+                    try:
+                        _sp = {
+                            "id": generate_id(),
+                            "business_id": biz_id,
+                            "supplier_id": _matched_supplier.get("id", "") if _matched_supplier else "",
+                            "supplier_name": _matched_supplier.get("name", description[:60]) if _matched_supplier else description[:60],
+                            "amount": float(expense_amount),
+                            "date": txn_date,
+                            "method": "eft",
+                            "reference": ref,
+                            "notes": f"Banking recon: {description[:100]}",
+                            "invoice_id": _matched_s_inv.get("id", "") if _matched_s_inv else "",
+                            "invoice_number": _matched_s_inv.get("invoice_number", "") if _matched_s_inv else "",
+                            "source": "banking_recon",
+                            "created_at": now()
+                        }
+                        db.save("supplier_payments", _sp)
+                        logger.info(f"[BANK] Created supplier payment for {_sp['supplier_name']} R{expense_amount} (supplier page)")
+                    except Exception as e:
+                        logger.error(f"[BANK] Failed to create supplier payment record: {e}")
+                    
+                    # Update supplier balance if matched
+                    if _matched_supplier:
+                        try:
+                            _old_bal = float(_matched_supplier.get("balance", 0))
+                            _new_bal = max(0, _old_bal - expense_amount)
+                            db.update("suppliers", _matched_supplier["id"], {"balance": _new_bal})
+                            logger.info(f"[BANK] Reduced {_matched_supplier.get('name')} balance: R{_old_bal:.2f} → R{_new_bal:.2f}")
+                        except Exception as e:
+                            logger.error(f"[BANK] Failed to update supplier balance: {e}")
                 elif category == "VAT Payment to SARS":
                     # Paying VAT liability - NOT an expense!
                     create_journal_entry(biz_id, txn_date, desc_short, ref, [
@@ -61151,6 +61198,7 @@ def api_banking_categorize():
                 ])
                 # Try to mark invoice as paid — multiple matching strategies
                 matched_invoice = None
+                matched_customer = None
                 
                 # Strategy 1: match_reference has invoice number
                 match_ref = txn.get("match_reference", "")
@@ -61224,6 +61272,37 @@ def api_banking_categorize():
                             logger.error(f"[BANK] Failed to credit customer balance: {e}")
                     else:
                         logger.info(f"[BANK] Could not identify customer from bank description: {desc_upper[:60]}")
+                
+                # === CREATE RECEIPT RECORD so it shows on customer page ===
+                try:
+                    _receipt_cust_id = ""
+                    _receipt_cust_name = description[:60]
+                    if matched_invoice:
+                        _receipt_cust_id = matched_invoice.get("customer_id", "")
+                        _receipt_cust_name = matched_invoice.get("customer_name", description[:60])
+                    elif matched_customer:
+                        _receipt_cust_id = matched_customer.get("id", "")
+                        _receipt_cust_name = matched_customer.get("name", description[:60])
+                    
+                    _receipt = {
+                        "id": generate_id(),
+                        "business_id": biz_id,
+                        "customer_id": _receipt_cust_id,
+                        "customer_name": _receipt_cust_name,
+                        "amount": float(income_amount),
+                        "date": txn_date,
+                        "method": "eft",
+                        "reference": ref,
+                        "notes": f"Banking recon: {description[:100]}",
+                        "invoice_id": matched_invoice.get("id", "") if matched_invoice else "",
+                        "invoice_number": matched_invoice.get("invoice_number", "") if matched_invoice else "",
+                        "source": "banking_recon",
+                        "created_at": now()
+                    }
+                    db.save("receipts", _receipt)
+                    logger.info(f"[BANK] Created receipt for {_receipt_cust_name} R{income_amount} (customer page)")
+                except Exception as e:
+                    logger.error(f"[BANK] Failed to create receipt record: {e}")
                             
             elif category == "POS Deposit":
                 # POS cash deposited into bank
