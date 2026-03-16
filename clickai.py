@@ -11788,8 +11788,7 @@ class Actions:
             "vat": float(vat),
             "total": float(total),
             "status": "draft",
-            "sales_person": data.get("sales_person", ""),
-            "reference": data.get("reference", ""),
+            "notes": data.get("notes", ""),
             "created_at": now()
         }
         
@@ -42507,11 +42506,11 @@ def purchase_view(po_id):
     biz_phone = business.get("phone", "") if business else ""
     biz_email_addr = business.get("email", "") if business else ""
     
-    # Pre-build sales person and reference rows (always show, with inline edit)
+    # Pre-build notes row (safe read from existing data)
     sp_val = safe_string(po.get("sales_person", ""))
     ref_val = safe_string(po.get("reference", ""))
-    sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;"><span id="spDisp">{sp_val or "<i style=color:#ccc>Click to set</i>"}</span> <span class="no-print" style="cursor:pointer;font-size:11px;color:#0f766e;" onclick="inlineEdit(&#39;sales_person&#39;,&#39;spDisp&#39;)">✏️</span></td></tr>'
-    ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;"><span id="refDisp">{ref_val or "<i style=color:#ccc>Click to set</i>"}</span> <span class="no-print" style="cursor:pointer;font-size:11px;color:#0f766e;" onclick="inlineEdit(&#39;reference&#39;,&#39;refDisp&#39;)">✏️</span></td></tr>'
+    sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;">{sp_val or "-"}</td></tr>' if sp_val else ""
+    ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;">{ref_val or "-"}</td></tr>' if ref_val else ""
     
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -42866,11 +42865,9 @@ def api_po_status(po_id):
         clean_po["status"] = new_status
         clean_po["updated_at"] = now()
         
-        # Also update sales_person and reference if provided
-        if "sales_person" in data:
-            clean_po["sales_person"] = data["sales_person"][:100] if data["sales_person"] else ""
-        if "reference" in data:
-            clean_po["reference"] = data["reference"][:100] if data["reference"] else ""
+        # Also update notes if provided
+        if "notes" in data:
+            clean_po["notes"] = data["notes"][:500] if data["notes"] else ""
         
         success, err = db.save("purchase_orders", clean_po)
         
@@ -51538,8 +51535,7 @@ def api_pos_purchase_order():
             "supplier_name": supplier_name,
             "items": json.dumps(clean_items),
             "status": "draft",
-            "sales_person": data.get("sales_person", ""),
-            "reference": data.get("reference", ""),
+            "notes": data.get("notes", ""),
             "created_at": now()
         }
         
