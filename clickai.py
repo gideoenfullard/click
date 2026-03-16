@@ -42507,11 +42507,11 @@ def purchase_view(po_id):
     biz_phone = business.get("phone", "") if business else ""
     biz_email_addr = business.get("email", "") if business else ""
     
-    # Pre-build sales person and reference rows (always show, with inline edit)
+    # Pre-build sales person and reference rows (display only, no edit)
     sp_val = safe_string(po.get("sales_person", ""))
     ref_val = safe_string(po.get("reference", ""))
-    sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;"><span id="spDisp">{sp_val or "<i style=color:#ccc>Click to set</i>"}</span> <span class="no-print" style="cursor:pointer;font-size:11px;color:#0f766e;" onclick="inlineEdit(&#39;sales_person&#39;,&#39;spDisp&#39;)">✏️</span></td></tr>'
-    ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;"><span id="refDisp">{ref_val or "<i style=color:#ccc>Click to set</i>"}</span> <span class="no-print" style="cursor:pointer;font-size:11px;color:#0f766e;" onclick="inlineEdit(&#39;reference&#39;,&#39;refDisp&#39;)">✏️</span></td></tr>'
+    sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;">{sp_val}</td></tr>' if sp_val else ""
+    ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;">{ref_val}</td></tr>' if ref_val else ""
     
     content = f'''
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -47088,6 +47088,10 @@ def pos_page():
         }
         
         // Cart has items AND supplier selected - create PO with stock items
+        // Ask for reference name (who is ordering)
+        const poRef = await posPrompt('Reference name for PO (e.g. person ordering):', currentCashierName || '');
+        if (poRef === null) return; // cancelled
+        
         // PO items - NO PRICES (supplier must not see our selling prices)
         const items = cart.map(item => ({
             stock_id: (item.isCustom || item.isPOItem) ? null : item.id,
@@ -47103,7 +47107,8 @@ def pos_page():
                 body: JSON.stringify({
                     items: items,
                     supplier_id: supplierId,
-                    supplier_name: supplierName
+                    supplier_name: supplierName,
+                    reference: poRef
                 })
             });
             
