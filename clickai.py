@@ -43262,7 +43262,7 @@ def purchase_edit(po_id):
     return render_page(f"Edit {po.get('po_number', 'PO')}", content, user, "purchases")
 
 
-
+@app.route("/api/purchase/<po_id>/email", methods=["POST"])
 @login_required
 def api_po_email(po_id):
     """Email PO to supplier - NO PRICES"""
