@@ -622,6 +622,7 @@ const SYS_ACCOUNT = {total_account};
 const SYS_TOTAL = {total_sales};
 const SALE_COUNT = {sale_count};
 const IS_MANAGER = {'true' if is_manager else 'false'};
+const TODAY_DATE = '{today()}';
 const TEAM = {team_json};
 const HISTORY = {cashups_json};
 
@@ -762,6 +763,29 @@ async function submitBlindCashUp() {{
     const cashier = document.getElementById('blindCashier');
     const cashierName = cashier.options[cashier.selectedIndex]?.text || '';
     const cashierId = cashier.value;
+
+    if (!cashierId) {{
+        alert('Please select a cashier first');
+        return;
+    }}
+
+    // ═══ CHECK: Has this cashier already done a blind cashup today? ═══
+    try {{
+        const histResp = await fetch('/api/cashup/history?date=' + encodeURIComponent(TODAY_DATE));
+        const histData = await histResp.json();
+        if (histData.success && histData.cash_ups) {{
+            const existing = histData.cash_ups.filter(c => 
+                c.type === 'blind_cashup' && c.cashier_id === cashierId
+            );
+            if (existing.length > 0) {{
+                alert('⚠ ' + cashierName + ' het reeds vandag \'n blind cashup ingedien.\\n\\nNet een blind cashup per kassier per dag.');
+                return;
+            }}
+        }}
+    }} catch(e) {{
+        console.log('History check failed, proceeding:', e);
+    }}
+
     const floatAmt = parseFloat(document.getElementById('blindFloat').value) || 0;
     const cashCounted = getCashCounted();
     const cardDeclared = parseFloat(document.getElementById('blindCard').value) || 0;
@@ -985,6 +1009,19 @@ function renderHistory() {{
                     "card_discrepancy": data.get("card_discrepancy", 0),
                     "total_discrepancy": data.get("total_discrepancy", 0),
                     "sale_count": data.get("sale_count", 0),
+                })
+
+            elif cashup_type == "z_reading":
+                record.update({
+                    "system_cash": data.get("system_cash", 0),
+                    "system_card": data.get("system_card", 0),
+                    "system_account": data.get("system_account", 0),
+                    "system_total": data.get("system_total", 0),
+                    "sale_count": data.get("sale_count", 0),
+                    "cash_counted": data.get("cash_counted", ""),
+                    "cash_difference": data.get("cash_difference", ""),
+                    "cash_status": data.get("cash_status", ""),
+                    "created_by_name": user.get("name", "") if user else "",
                 })
 
             from flask import jsonify

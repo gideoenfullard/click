@@ -50815,6 +50815,26 @@ def pos_history():
     }}
     
     function printZRead() {{
+        // ═══ CHECK: Has day already been closed with a Z-read? ═══
+        fetch('/api/cashup/history?date=' + '{date_from}')
+            .then(r => r.json())
+            .then(data => {{
+                if (data.success && data.cash_ups) {{
+                    const existing = (data.cash_ups || []).filter(c => c.type === 'z_reading');
+                    if (existing.length > 0) {{
+                        alert('⚠ Dag is reeds afgesluit met n Z-Read.\\n\\nDatum: {date_desc}\\nJy kan nie weer n Z-Read doen nie.');
+                        return;
+                    }}
+                }}
+                _showZReadModal();
+            }})
+            .catch(e => {{
+                console.log('Z-read check failed, proceeding:', e);
+                _showZReadModal();
+            }});
+    }}
+    
+    function _showZReadModal() {{
         // Reset denomination inputs
         document.querySelectorAll('.denom-input').forEach(input => {{ input.value = 0; }});
         document.querySelectorAll('.denom-total').forEach(cell => {{ cell.textContent = 'R0.00'; }});
@@ -50885,22 +50905,47 @@ def pos_history():
         return html;
     }}
     
-    function confirmZRead() {{
+    async function confirmZRead() {{
         const counted = document.getElementById('cashCounted').textContent;
         const diff = document.getElementById('cashDiff').textContent;
         const status = document.getElementById('cashStatus').textContent;
         
-        if (confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + counted + '\\nDifference: ' + diff + '\\n\\nThis will mark the day as closed.')) {{
-            // Build print content with cash count
-            const zContent = document.getElementById('zreadContent').innerHTML;
-            const cashHtml = buildCashCountPrintHtml();
-            
-            const printWindow = window.open('', '_blank', 'width=400,height=700');
-            printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + cashHtml + '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div></body></html>');
-            printWindow.document.close();
-            setTimeout(function() {{ printWindow.print(); }}, 300);
-            closeModal('zreadModal');
+        if (!confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + counted + '\\nDifference: ' + diff + '\\n\\nThis will mark the day as CLOSED.')) return;
+        
+        // ═══ SAVE Z-READ TO DATABASE — marks day as closed ═══
+        try {{
+            const resp = await fetch('/api/cashup/save', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{
+                    type: 'z_reading',
+                    system_cash: {cash_total},
+                    system_card: {card_total},
+                    system_account: {account_total},
+                    system_total: {grand_total},
+                    sale_count: {transaction_count},
+                    cash_counted: counted,
+                    cash_difference: diff,
+                    cash_status: status
+                }})
+            }});
+            const data = await resp.json();
+            if (!data.success) {{
+                alert('Z-Read save failed: ' + (data.error || 'Unknown'));
+            }}
+        }} catch(e) {{
+            console.error('Z-Read save error:', e);
         }}
+        
+        // Build print content with cash count
+        const zContent = document.getElementById('zreadContent').innerHTML;
+        const cashHtml = buildCashCountPrintHtml();
+        
+        const printWindow = window.open('', '_blank', 'width=400,height=700');
+        printWindow.document.write('<html><head><title>Z-Read</title><style>body {{ font-family: monospace; font-size: 14px; padding: 20px; color: #000; max-width: 80mm; margin: 0 auto; }} table {{ width: 100%; border-collapse: collapse; }} td {{ padding: 3px 0; }} @media print {{ @page {{ size: 80mm auto; margin: 5mm; }} }}</style></head><body>' + zContent + cashHtml + '<hr style="border:1px dashed #000;margin:15px 0;"><div style="text-align:center;margin-top:30px;"><div style="border-top:1px solid #000;width:200px;margin:0 auto;padding-top:5px;">Cashier Signature</div></div><div style="text-align:center;color:#666;font-size:11px;margin-top:20px;">*** Z-READ - DAY CLOSED ***</div></body></html>');
+        printWindow.document.close();
+        setTimeout(function() {{ printWindow.print(); }}, 300);
+        closeModal('zreadModal');
     }}
     
     // Close modal on background click
