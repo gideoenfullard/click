@@ -97,7 +97,12 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
         biz_id = business.get("id") if business else None
         biz_name = business.get("name", "Business") if business else "Business"
         user_name = user.get("name", "") if user else ""
-        user_role = user.get("role", "owner") if user else "owner"
+        user_role = "owner"
+        try:
+            import clickai as _ck
+            user_role = _ck.get_user_role()
+        except:
+            user_role = user.get("role", "owner") if user else "owner"
         is_manager = user_role in ("owner", "admin", "manager")
 
         from flask import request as req
