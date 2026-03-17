@@ -45323,7 +45323,7 @@ def pos_page():
         cashier_buttons += f'<button class="cashier-btn {is_active}" data-uid="{cu_id}" onclick="switchCashier(this, &apos;{cu_id}&apos;, &apos;{cu_name}&apos;)">{cu_name}</button>'
     
     # Salesman options for POS quote modal
-    pos_salesman_options = f'<option value="{current_user_id}" data-name="{current_user_name}">{current_user_name} (me)</option>'
+    pos_salesman_options = f'<option value="{current_user_id}" data-name="{current_user_name}" style="color:#000;background:#fff;">{current_user_name} (me)</option>'
     _pos_seen_ids = {current_user_id}
     for cu in cashier_list:
         cu_id = cu.get("id") or ""
@@ -45333,7 +45333,7 @@ def pos_page():
             if " " in cu_name:
                 cu_name = cu_name.split()[0]
             cu_name = cu_name[:12]
-            pos_salesman_options += f'<option value="{cu_id}" data-name="{cu_name}">{cu_name}</option>'
+            pos_salesman_options += f'<option value="{cu_id}" data-name="{cu_name}" style="color:#000;background:#fff;">{cu_name}</option>'
     
     pos_css = '''
     <style>
@@ -49426,7 +49426,7 @@ def pos_page():
             
             <div style="margin-bottom:20px;">
                 <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">🧑‍💼 Salesman</label>
-                <select id="quickQuoteSalesman" style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(16,185,129,0.3);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                <select id="quickQuoteSalesman" style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(16,185,129,0.3);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;-webkit-appearance:menulist;appearance:menulist;">
                     {pos_salesman_options}
                 </select>
             </div>
