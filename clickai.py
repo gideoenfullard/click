@@ -45379,7 +45379,11 @@ def pos_page():
         "business_name": (business.get("name") or business.get("business_name") or "Business") if business else "Business",
         "vat_number": business.get("vat_number", "") if business else "",
         "phone": business.get("phone", "") if business else "",
-        "address": business.get("address", "") if business else ""
+        "address": business.get("address", "") if business else "",
+        "email": business.get("email", "") if business else "",
+        "bank_name": business.get("bank_name", "") if business else "",
+        "bank_account": business.get("bank_account", "") if business else "",
+        "bank_branch": business.get("bank_branch", "") if business else ""
     }
     pos_settings_json = json.dumps(pos_settings).replace("'", "&#39;")
     
@@ -49022,21 +49026,133 @@ def pos_page():
     }
     
     function doPrintSlip(format) {
-        const slipContent = document.getElementById('slipContent').innerHTML;
+        var fullHtml;
         
-        const styles = format === 'thermal' ? `
-            body { width: 72mm; margin: 0; padding: 4mm; font-family: 'Courier New', monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            * { font-weight: bold !important; color: #000 !important; background: transparent !important; }
-            table { width: 100%; border-collapse: collapse; }
-            td { font-weight: bold !important; padding: 2px 0; }
-            @page { size: 80mm auto; margin: 0; }
-            @media print { body { width: 72mm; } }
-        ` : `
-            body { width: 210mm; margin: 20mm; font-family: Arial, sans-serif; font-size: 18px; color: #000; background: #fff; }
-            @page { size: A4; margin: 20mm; }
-        `;
-        
-        var fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
+        if (format === 'a4' && lastSaleData) {
+            // === BUILD FULL A4 TAX INVOICE ===
+            var sd = lastSaleData;
+            var now = new Date();
+            var dateStr = now.toLocaleDateString('en-ZA');
+            var timeStr = now.toLocaleTimeString('en-ZA', {hour:'2-digit', minute:'2-digit'});
+            var methodLabel = {cash:'Cash', card:'Card', account:'Account', eft:'EFT'}[sd.method] || sd.method;
+            
+            var biz = posSettings || {};
+            var bizName = biz.business_name || 'Business';
+            var bizVat = biz.vat_number || '';
+            var bizPhone = biz.phone || '';
+            var bizAddr = (biz.address || '').replace(/\\n/g, '<br>');
+            var bizEmail = biz.email || '';
+            var bizBank = biz.bank_name || '';
+            var bizBankAcc = biz.bank_account || '';
+            var bizBankBranch = biz.bank_branch || '';
+            
+            // Build items rows
+            var itemsRows = '';
+            (sd.items || []).forEach(function(item) {
+                var qty = item.quantity || item.qty || 1;
+                var desc = item.description || item.desc || '-';
+                var price = parseFloat(item.price || 0);
+                var lineTotal = parseFloat(item.total || (qty * price));
+                var vatAmt = Math.round(lineTotal * 0.15 * 100) / 100;
+                var inclTotal = Math.round((lineTotal + vatAmt) * 100) / 100;
+                itemsRows += '<tr style="border-bottom:1px solid #e5e7eb;">' +
+                    '<td style="padding:6px 8px;font-size:12px;">' + desc + '</td>' +
+                    '<td style="text-align:center;padding:6px 8px;font-size:12px;">' + qty + '</td>' +
+                    '<td style="text-align:right;padding:6px 8px;font-size:12px;">R' + price.toFixed(2) + '</td>' +
+                    '<td style="text-align:center;padding:6px 8px;font-size:12px;">15%</td>' +
+                    '<td style="text-align:right;padding:6px 8px;font-size:12px;">R' + lineTotal.toFixed(2) + '</td>' +
+                    '<td style="text-align:right;padding:6px 8px;font-size:12px;font-weight:600;">R' + inclTotal.toFixed(2) + '</td>' +
+                    '</tr>';
+            });
+            
+            var cashierLine = currentCashierName ? '<tr><td style="padding:4px 0;color:#888;">Prepared By:</td><td style="padding:4px 0;font-weight:600;">' + currentCashierName + '</td></tr>' : '';
+            
+            var paymentInfo = '';
+            if (sd.method === 'cash' && sd.cashReceived) {
+                paymentInfo = '<div style="margin-top:10px;font-size:11px;color:#555;">' +
+                    'Cash Received: R' + parseFloat(sd.cashReceived).toFixed(2) +
+                    ' | Change: R' + parseFloat(sd.changeGiven || 0).toFixed(2) + '</div>';
+            }
+            
+            var bankingHtml = '';
+            if (bizBankAcc) {
+                bankingHtml = '<div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fafafa;margin-bottom:10px;">' +
+                    '<div style="font-weight:600;color:#333;margin-bottom:6px;font-size:13px;">Banking Details</div>' +
+                    '<div style="font-size:12px;">Bank: ' + bizBank + '</div>' +
+                    '<div style="font-size:12px;">Account: ' + bizBankAcc + '</div>' +
+                    '<div style="font-size:12px;">Branch: ' + bizBankBranch + '</div></div>';
+            }
+            
+            fullHtml = '<!DOCTYPE html><html><head><title>Tax Invoice</title>' +
+                '<style>' +
+                '* { margin:0; padding:0; box-sizing:border-box; }' +
+                'body { font-family: Arial, Helvetica, sans-serif; color:#333; background:#fff; padding:0; font-size:12px; }' +
+                'table { width:100%; border-collapse:collapse; page-break-inside:auto; }' +
+                'tr { page-break-inside:avoid; }' +
+                'thead { display:table-header-group; }' +
+                '@media print { @page { size:A4; margin:10mm 12mm; } body { padding:0; } }' +
+                '</style></head><body>' +
+                
+                '<div style="background:#1a1a2e;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">' +
+                '<div><h1 style="margin:0;font-size:16px;font-weight:700;letter-spacing:0.5px;">' + bizName + '</h1>' +
+                (bizAddr ? '<p style="margin:4px 0 0 0;font-size:10px;opacity:0.8;">' + bizAddr + '</p>' : '') +
+                '</div>' +
+                '<div style="text-align:right;">' +
+                '<h2 style="margin:0;font-size:20px;font-weight:700;letter-spacing:2px;">TAX INVOICE</h2>' +
+                '<span style="background:#10b981;color:white;padding:4px 12px;border-radius:20px;font-size:11px;">' + methodLabel.toUpperCase() + '</span>' +
+                '</div></div>' +
+                
+                '<div style="padding:10px 25px;display:flex;gap:40px;border-bottom:1px solid #e5e7eb;">' +
+                '<div style="flex:1;border-right:1px solid #e5e7eb;padding-right:25px;">' +
+                '<table style="font-size:11px;color:#333;">' +
+                '<tr><td style="padding:4px 0;color:#888;width:110px;">Number:</td><td style="padding:4px 0;font-weight:600;">' + (sd.saleNum || '-') + '</td></tr>' +
+                '<tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">' + dateStr + ' ' + timeStr + '</td></tr>' +
+                (bizVat ? '<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">' + bizVat + '</td></tr>' : '') +
+                cashierLine +
+                '</table>' +
+                (bizPhone ? '<div style="margin-top:8px;font-size:10px;color:#666;">Tel: ' + bizPhone + '</div>' : '') +
+                '</div>' +
+                '<div style="flex:1;padding-left:25px;">' +
+                '<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600;">Bill To</div>' +
+                '<div style="font-size:13px;font-weight:700;color:#1a1a2e;">' + (sd.customerName || 'Cash Customer') + '</div>' +
+                '</div></div>' +
+                
+                '<div style="padding:0 25px;">' +
+                '<table>' +
+                '<thead><tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">' +
+                '<th style="padding:6px 8px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>' +
+                '<th style="padding:6px 8px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>' +
+                '<th style="padding:6px 8px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>' +
+                '<th style="padding:6px 8px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">VAT %</th>' +
+                '<th style="padding:6px 8px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Total</th>' +
+                '<th style="padding:6px 8px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Incl. Total</th>' +
+                '</tr></thead>' +
+                '<tbody>' + itemsRows + '</tbody>' +
+                '</table></div>' +
+                
+                '<div style="padding:15px 25px;display:flex;justify-content:space-between;align-items:flex-end;">' +
+                '<div style="font-size:12px;color:#666;max-width:55%;">' +
+                bankingHtml +
+                paymentInfo +
+                '<p style="margin:8px 0 2px;font-size:11px;color:#999;">Thank you for your purchase!</p>' +
+                '</div>' +
+                '<table style="width:220px;border-collapse:collapse;">' +
+                '<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Total Exclusive</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R' + parseFloat(sd.subtotal || 0).toFixed(2) + '</td></tr>' +
+                '<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">VAT (15%)</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R' + parseFloat(sd.vat || 0).toFixed(2) + '</td></tr>' +
+                '<tr style="background:#1a1a2e;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">TOTAL</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R' + parseFloat(sd.total || 0).toFixed(2) + '</td></tr>' +
+                '</table></div>' +
+                
+                '</body></html>';
+        } else {
+            // === THERMAL SLIP (existing behavior) ===
+            var slipContent = document.getElementById('slipContent').innerHTML;
+            
+            var styles = format === 'thermal' ? 
+                'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } * { font-weight: bold !important; color: #000 !important; background: transparent !important; } table { width: 100%; border-collapse: collapse; } td { font-weight: bold !important; padding: 2px 0; } @page { size: 80mm auto; margin: 0; } @media print { body { width: 72mm; } }' :
+                'body { width: 210mm; margin: 20mm; font-family: Arial, sans-serif; font-size: 18px; color: #000; background: #fff; } @page { size: A4; margin: 20mm; }';
+            
+            fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
+        }
         
         // Exit fullscreen before print (browsers block print dialog in fullscreen)
         if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
