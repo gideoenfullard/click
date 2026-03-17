@@ -50074,8 +50074,8 @@ def pos_history():
     invoice_total = sum(float(i.get("total", 0)) for i in invoices)
     quote_total = sum(float(q.get("total", 0)) for q in quotes)
     
-    grand_total = cash_total + card_total + account_total + invoice_total
-    transaction_count = len(sales) + len(invoices) + len(quotes)
+    grand_total = cash_total + card_total + account_total
+    transaction_count = len(sales)
     
     # === EXPECTED CASH FOR Z-READ (always TODAY regardless of date filter) ===
     # Cash in drawer = POS cash sales + cash-paid invoices (for today only)
@@ -50282,14 +50282,6 @@ def pos_history():
             <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:20px;border-radius:12px;text-align:center;">
                 <div style="font-size:24px;font-weight:bold;color:white;">{money(account_total)}</div>
                 <div style="color:rgba(255,255,255,0.8);font-size:13px;">📒 Account</div>
-            </div>
-            <div style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);padding:20px;border-radius:12px;text-align:center;">
-                <div style="font-size:24px;font-weight:bold;color:white;">{money(invoice_total)}</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:13px;">📄 Invoices</div>
-            </div>
-            <div style="background:linear-gradient(135deg,#ec4899,#db2777);padding:20px;border-radius:12px;text-align:center;">
-                <div style="font-size:24px;font-weight:bold;color:white;">{money(quote_total)}</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:13px;">📝 Quotes</div>
             </div>
         </div>
         
@@ -50541,13 +50533,11 @@ def pos_history():
 <tr><td>Cash Sales:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
 <tr><td>Card Sales:</td><td style="text-align:right;">{money(card_total)}</td></tr>
 <tr><td>Account Sales:</td><td style="text-align:right;">{money(account_total)}</td></tr>
-<tr><td>Invoices:</td><td style="text-align:right;">{money(invoice_total)}</td></tr>
-<tr><td>Quotes:</td><td style="text-align:right;">{money(quote_total)}</td></tr>
 </table>
 <hr style="border:1px dashed #000;margin:15px 0;">
 <table style="width:100%;border-collapse:collapse;">
 <tr style="font-size:18px;font-weight:bold;">
-<td>GRAND TOTAL:</td>
+<td>TOTAL:</td>
 <td style="text-align:right;">{money(grand_total)}</td>
 </tr>
 <tr><td>Total Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
