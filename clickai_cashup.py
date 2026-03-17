@@ -190,7 +190,7 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
             <h2 style="margin:0;">💰 Cash Up</h2>
             <div style="display:flex;gap:8px;align-items:center;">
                 <input type="date" id="cuDate" value="{view_date}" onchange="window.location='/cashup?date='+this.value+'&tab={tab}'" class="form-input" style="width:auto;">
-                <span style="font-weight:700;">{_money(breakdown["total"])} ({breakdown["count"]} sales)</span>
+                {'<span style="font-weight:700;">' + _money(breakdown["total"]) + ' (' + str(breakdown["count"]) + ' sales)</span>' if is_manager else '<span style="font-weight:700;">' + str(breakdown["count"]) + ' sales</span>'}
             </div>
         </div>
 
