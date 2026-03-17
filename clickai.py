@@ -50550,6 +50550,18 @@ def pos_history():
             <input type="date" id="dateTo" value="{date_to}" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">'''
         zread_buttons_html = '<button onclick="printXRead()" class="btn btn-secondary">X-Read</button><button onclick="printZRead()" class="btn btn-primary">Z-Read (Close Day)</button>'
     
+    # Pre-build Z-read invoice section (avoids nested f-strings in JS template)
+    _zr_inv_section = ""
+    if inv_cash_total or inv_card_total or inv_eft_total:
+        _zr_inv_rows = f'<tr><td>Cash Invoices:</td><td style="text-align:right;">{money(inv_cash_total)}</td></tr>'
+        if inv_card_total:
+            _zr_inv_rows += f'<tr><td>Card Invoices:</td><td style="text-align:right;">{money(inv_card_total)}</td></tr>'
+        if inv_eft_total:
+            _zr_inv_rows += f'<tr><td>EFT Invoices:</td><td style="text-align:right;">{money(inv_eft_total)}</td></tr>'
+        _zr_inv_section = f'<hr style="border:1px dashed #000;margin:12px 0;"><div style="margin-bottom:8px;"><strong>INVOICES (Cash Paid)</strong></div><table style="width:100%;border-collapse:collapse;">{_zr_inv_rows}</table>'
+    
+    _zr_cash_inv_row = f'<tr><td style="font-size:12px;">+ Cash Invoices:</td><td style="text-align:right;font-size:12px;">{money(inv_cash_total)}</td></tr>' if inv_cash_total else ''
+    
     content = f'''
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px;margin-bottom:20px;">
@@ -50875,22 +50887,14 @@ def pos_history():
 <tr style="font-weight:bold;border-top:1px solid #000;"><td>POS Total:</td><td style="text-align:right;">{money(grand_total)}</td></tr>
 <tr><td style="font-size:11px;">Transactions:</td><td style="text-align:right;font-size:11px;">{transaction_count}</td></tr>
 </table>
-{f'''<hr style="border:1px dashed #000;margin:12px 0;">
-<div style="margin-bottom:8px;">
-<strong>INVOICES (Cash Paid)</strong>
-</div>
-<table style="width:100%;border-collapse:collapse;">
-<tr><td>Cash Invoices:</td><td style="text-align:right;">{money(inv_cash_total)}</td></tr>
-{f"<tr><td>Card Invoices:</td><td style='text-align:right;'>{money(inv_card_total)}</td></tr>" if inv_card_total else ""}
-{f"<tr><td>EFT Invoices:</td><td style='text-align:right;'>{money(inv_eft_total)}</td></tr>" if inv_eft_total else ""}
-</table>''' if inv_cash_total or inv_card_total or inv_eft_total else ""}
+{_zr_inv_section}
 <hr style="border:2px solid #000;margin:15px 0;">
 <div style="margin-bottom:8px;">
 <strong>CASH IN DRAWER (Expected)</strong>
 </div>
 <table style="width:100%;border-collapse:collapse;">
 <tr><td style="font-size:12px;">POS Cash Sales:</td><td style="text-align:right;font-size:12px;">{money(cash_total)}</td></tr>
-{f'<tr><td style="font-size:12px;">+ Cash Invoices:</td><td style="text-align:right;font-size:12px;">{money(inv_cash_total)}</td></tr>' if inv_cash_total else ''}
+{_zr_cash_inv_row}
 <tr style="font-size:18px;font-weight:bold;border-top:1px solid #000;">
 <td>EXPECTED CASH:</td>
 <td style="text-align:right;">{money(expected_cash_drawer)}</td>
