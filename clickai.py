@@ -3351,7 +3351,8 @@ class RecordFactory:
             "converted_invoice_id": kwargs.get("converted_invoice_id"),
             "source_invoice_id": kwargs.get("source_invoice_id"),
             "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by")
+            "created_by": kwargs.get("created_by"),
+            "created_by_name": kwargs.get("created_by_name", "")
         }
     
     @staticmethod
@@ -30966,7 +30967,8 @@ def quote_new():
             vat=float(vat),
             total=float(total),
             status="pending",
-            created_by=user.get("id") if user else None
+            created_by=user.get("id") if user else None,
+            created_by_name=user.get("name", "") if user else ""
         )
         quote_id = quote["id"]
         
@@ -31303,12 +31305,10 @@ def quote_view(quote_id):
     biz_vat = business.get("vat_number", "") if business else ""
     
     # Resolve who created this quote
-    created_by_name = ""
-    _cb = quote.get("created_by") or quote.get("created_by_name") or ""
-    if _cb:
-        if " " in str(_cb) or len(str(_cb)) < 30:
-            created_by_name = str(_cb)
-        else:
+    created_by_name = quote.get("created_by_name") or ""
+    if not created_by_name:
+        _cb = quote.get("created_by") or ""
+        if _cb:
             try:
                 team = db.get("team_members", {"business_id": biz_id}) or []
                 for t in team:
