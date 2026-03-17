@@ -31302,6 +31302,26 @@ def quote_view(quote_id):
     biz_email = business.get("email", "") if business else ""
     biz_vat = business.get("vat_number", "") if business else ""
     
+    # Resolve who created this quote
+    created_by_name = ""
+    _cb = quote.get("created_by") or quote.get("created_by_name") or ""
+    if _cb:
+        if " " in str(_cb) or len(str(_cb)) < 30:
+            created_by_name = str(_cb)
+        else:
+            try:
+                team = db.get("team_members", {"business_id": biz_id}) or []
+                for t in team:
+                    if t.get("id") == _cb or t.get("user_id") == _cb:
+                        created_by_name = t.get("name", t.get("email", ""))
+                        break
+                if not created_by_name:
+                    _u = db.get_one("users", _cb)
+                    if _u:
+                        created_by_name = _u.get("name", _u.get("email", ""))
+            except:
+                pass
+    
     # Build customer details section  
     cust_name = safe_string(quote.get("customer_name", "-"))
     cust_phone = customer.get("phone", "") if customer else ""
@@ -31360,6 +31380,7 @@ def quote_view(quote_id):
                     <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{quote.get("date", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Valid Until:</td><td style="padding:4px 0;{"color:#ef4444;font-weight:600;" if status == "expired" else ""}">{expiry_date_str or "7 days"}{"  ⚠ EXPIRED" if status == "expired" else ""}</td></tr>
                     {f'<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
+                    {f'<tr><td style="padding:4px 0;color:#888;">Prepared By:</td><td style="padding:4px 0;font-weight:600;">{created_by_name}</td></tr>' if created_by_name else ''}
                 </table>
                 {f'<div style="margin-top:8px;font-size:10px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
                 {f'<div style="font-size:10px;color:#666;">{biz_email}</div>' if biz_email else ''}
