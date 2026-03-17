@@ -467,26 +467,26 @@ select.form-input {{
     <a href="/" class="back-btn">Dashboard</a>
 </div>
 
-<!-- ═══ SYSTEM STATS (visible to managers, hidden during blind cash up) ═══ -->
-<div class="stats-row" id="statsRow">
+<!-- ═══ SYSTEM STATS (visible to managers only, on X-Reading) ═══ -->
+{'<div class="stats-row" id="statsRow">' if is_manager else '<div class="stats-row" id="statsRow" style="display:none;">'}
     <div class="stat-card cash">
         <div class="stat-label">Cash</div>
-        <div class="stat-value" id="sysCash">R{total_cash:,.2f}</div>
+        <div class="stat-value" id="sysCash">{'R' + f'{total_cash:,.2f}' if is_manager else '—'}</div>
         <div class="stat-sub">{sum(1 for s in sales if s.get('payment_method')=='cash')} sales</div>
     </div>
     <div class="stat-card card">
         <div class="stat-label">Card</div>
-        <div class="stat-value" id="sysCard">R{total_card:,.2f}</div>
+        <div class="stat-value" id="sysCard">{'R' + f'{total_card:,.2f}' if is_manager else '—'}</div>
         <div class="stat-sub">{sum(1 for s in sales if s.get('payment_method')=='card')} sales</div>
     </div>
     <div class="stat-card account">
         <div class="stat-label">Account</div>
-        <div class="stat-value" id="sysAccount">R{total_account:,.2f}</div>
+        <div class="stat-value" id="sysAccount">{'R' + f'{total_account:,.2f}' if is_manager else '—'}</div>
         <div class="stat-sub">{sum(1 for s in sales if s.get('payment_method')=='account')} sales</div>
     </div>
     <div class="stat-card total">
         <div class="stat-label">Total</div>
-        <div class="stat-value">R{total_sales:,.2f}</div>
+        <div class="stat-value">{'R' + f'{total_sales:,.2f}' if is_manager else '—'}</div>
         <div class="stat-sub">{sale_count} sales today</div>
     </div>
 </div>
@@ -644,10 +644,8 @@ document.addEventListener('DOMContentLoaded', () => {{
     buildTeamDropdown();
     renderHistory();
 
-    // Hide stats during blind cash up for non-managers
-    if (!IS_MANAGER) {{
-        document.getElementById('statsRow').style.display = 'none';
-    }}
+    // Hide stats on load for EVERYONE — only show when X-Reading panel is opened
+    document.getElementById('statsRow').style.display = 'none';
 }});
 
 function buildDenomGrid() {{
@@ -684,7 +682,8 @@ function showPanel(id) {{
     activePanel = id;
 
     // Hide system stats when blind cash up is active (for everyone)
-    if (id === 'blind') {{
+    // Only show stats on X-Reading for managers
+    if (id === 'blind' || !IS_MANAGER) {{
         document.getElementById('statsRow').style.display = 'none';
     }} else {{
         document.getElementById('statsRow').style.display = '';
@@ -830,7 +829,7 @@ async function submitBlindCashUp() {{
     `;
 
     document.getElementById('systemReveal').classList.add('show');
-    document.getElementById('statsRow').style.display = '';
+    if (IS_MANAGER) {{ document.getElementById('statsRow').style.display = ''; }}
 
     // Save to DB
     try {{
