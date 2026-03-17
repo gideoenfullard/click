@@ -89,6 +89,11 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
 
         is_manager = user_role in ("owner", "admin", "manager")
 
+        _xread_btn = '''<button class="action-btn" onclick="showPanel('xread')">
+            <span class="btn-icon">📊</span>
+            <span class="btn-label">X-Reading</span>
+        </button>''' if is_manager else ''
+
         html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -495,18 +500,15 @@ select.form-input {{
 
     <!-- ═══ ACTION BUTTONS ═══ -->
     <div class="actions">
-        <button class="action-btn" onclick="showPanel('xread')">
-            <span class="btn-icon">📊</span>
-            <span class="btn-label">X-Reading</span>
-        </button>
+        {_xread_btn}
         <button class="action-btn primary" onclick="showPanel('blind')">
             <span class="btn-icon">🔒</span>
             <span class="btn-label">Blind Cash Up</span>
         </button>
     </div>
 
-    <!-- ═══ X-READING PANEL ═══ -->
-    <div class="panel" id="panel-xread">
+    <!-- ═══ X-READING PANEL (managers only) ═══ -->
+    {'<div class="panel" id="panel-xread">' if is_manager else '<div class="panel" id="panel-xread" style="display:none !important;">'}
         <div class="panel-title">X-Reading — Mid-Day Check</div>
         <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">
             Non-destructive reading. Check current till status without closing the shift.
@@ -514,19 +516,19 @@ select.form-input {{
         <div class="result-box">
             <div class="result-row">
                 <span class="rl">Cash Sales</span>
-                <span class="rv" style="color:var(--green)">R{total_cash:,.2f}</span>
+                <span class="rv" style="color:var(--green)">{'R' + f'{total_cash:,.2f}' if is_manager else '—'}</span>
             </div>
             <div class="result-row">
                 <span class="rl">Card Sales</span>
-                <span class="rv" style="color:var(--orange)">R{total_card:,.2f}</span>
+                <span class="rv" style="color:var(--orange)">{'R' + f'{total_card:,.2f}' if is_manager else '—'}</span>
             </div>
             <div class="result-row">
                 <span class="rl">Account Sales</span>
-                <span class="rv" style="color:var(--accent)">R{total_account:,.2f}</span>
+                <span class="rv" style="color:var(--accent)">{'R' + f'{total_account:,.2f}' if is_manager else '—'}</span>
             </div>
             <div class="result-row total">
                 <span class="rl">Total Sales</span>
-                <span class="rv">R{total_sales:,.2f}</span>
+                <span class="rv">{'R' + f'{total_sales:,.2f}' if is_manager else '—'}</span>
             </div>
             <div class="result-row">
                 <span class="rl">Transactions</span>
