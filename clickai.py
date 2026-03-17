@@ -46692,6 +46692,15 @@ def pos_page():
     
     pos_js = '''
     <script>
+    // === F-KEY INTERCEPTOR (capture phase — fires BEFORE browser defaults like F1=Help) ===
+    document.addEventListener('keydown', function(e) {
+        if (['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11'].includes(e.key)) {
+            e.preventDefault();
+            // Do NOT stopPropagation — let the POS keydown handler still receive it
+        }
+    }, true);  // true = capture phase
+    </script>
+    <script>
     let cart = [];
     let selectedRowIndex = -1;
     let currentCashierId = null;
@@ -49004,6 +49013,7 @@ def pos_page():
         }
         
         // Check settings for auto behavior
+        posLocked = false;  // Sale is committed — unlock POS for next sale
         if (posSettings.auto_print && posSettings.print_format !== 'ask') {
             // Auto print with default format
             document.getElementById('printSlipModal').style.display = 'flex';
