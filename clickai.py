@@ -3323,7 +3323,11 @@ class RecordFactory:
             "paid_date": kwargs.get("paid_date"),
             "job_card_id": kwargs.get("job_card_id"),
             "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", "")
+            "created_by": kwargs.get("created_by", ""),
+            "created_by_name": kwargs.get("created_by_name", ""),
+            "sales_rep": kwargs.get("sales_rep", ""),
+            "salesman": kwargs.get("salesman", ""),
+            "salesman_name": kwargs.get("salesman_name", "")
         }
     
     @staticmethod
@@ -10850,7 +10854,9 @@ class Actions:
             vat=float(vat_amount),
             total=float(total),
             status="outstanding",
-            created_by=context.get("user_id", "")
+            created_by=context.get("user_id", ""),
+            salesman=data.get("salesman_id") or context.get("user_id", ""),
+            salesman_name=data.get("salesman_name", "")
         )
         
         success, result = db.save("invoices", invoice)
@@ -11574,7 +11580,11 @@ class Actions:
             total=quote.get("total", 0),
             status="outstanding",
             source_quote_id=quote.get("id"),
-            created_by=context.get("user_id", "")
+            created_by=context.get("user_id", ""),
+            created_by_name=quote.get("created_by_name", ""),
+            salesman=quote.get("salesman", ""),
+            salesman_name=quote.get("salesman_name", ""),
+            sales_rep=quote.get("salesman_name", "")
         )
         
         success, _ = db.save("invoices", invoice)
@@ -27055,6 +27065,8 @@ def invoice_new():
         customer_id = request.form.get("customer_id", "")
         customer_name = request.form.get("customer_name", "")
         payment_method = request.form.get("payment_method", "account")  # account/cash/card/eft
+        inv_salesman_id = request.form.get("salesman_id", "")
+        inv_salesman_name_form = request.form.get("salesman_name", "")
         
         # Get line items from form
         items = []
@@ -27101,7 +27113,11 @@ def invoice_new():
             total=float(total),
             payment_method=payment_method,
             status="paid" if payment_method in ("cash", "card", "eft") else "outstanding",
-            created_by=user.get("id", "") if user else ""
+            created_by=user.get("id", "") if user else "",
+            created_by_name=user.get("name", "") if user else "",
+            salesman=inv_salesman_id,
+            salesman_name=inv_salesman_name_form,
+            sales_rep=inv_salesman_name_form
         )
         invoice_id = invoice["id"]
         
@@ -27175,6 +27191,7 @@ def invoice_new():
     # GET - show form
     customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
     stock = db.get_all_stock(biz_id)
+    inv_team_members = db.get("team_members", {"business_id": biz_id}) if biz_id else []
     
     # Check if customer_id is passed in URL
     preselect_customer_id = request.args.get("customer_id", "")
@@ -27184,6 +27201,17 @@ def invoice_new():
     for c in sorted(customers, key=lambda x: x.get("name", "")):
         selected = 'selected' if c.get("id") == preselect_customer_id else ''
         customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}" {selected}>{safe_string(c.get("name", ""))}</option>'
+    
+    # Salesman dropdown for invoice
+    inv_salesman_opts = '<option value="">-- Select Salesman --</option>'
+    if user:
+        inv_salesman_opts += f'<option value="{user.get("id", "")}" data-name="{safe_string(user.get("name", ""))}" selected>{safe_string(user.get("name", ""))} (me)</option>'
+    _inv_seen = {user.get("id", "") if user else ""}
+    for tm in sorted(inv_team_members, key=lambda x: x.get("name", "")):
+        tm_uid = tm.get("user_id") or tm.get("id", "")
+        if tm_uid not in _inv_seen:
+            _inv_seen.add(tm_uid)
+            inv_salesman_opts += f'<option value="{tm_uid}" data-name="{safe_string(tm.get("name", ""))}">{safe_string(tm.get("name", ""))}</option>'
     
     # Stock datalist for autocomplete
     stock_options = '<option value="NEW" data-price="0" data-stockid="">+ Add New Stock Item</option>'
@@ -27205,13 +27233,20 @@ def invoice_new():
         <h3 style="margin:0 0 20px 0;">New Invoice</h3>
         
         <form method="POST" id="invoiceForm">
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
                 <div>
                     <label>Customer</label>
                     <select name="customer_id" id="customerSelect" onchange="handleCustomerChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                         {customer_options}
                     </select>
                     <input type="hidden" name="customer_name" id="customerName">
+                </div>
+                <div>
+                    <label>Salesman</label>
+                    <select name="salesman_id" id="invSalesmanSelect" onchange="document.getElementById('invSalesmanName').value=this.options[this.selectedIndex]?.dataset?.name||''" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        {inv_salesman_opts}
+                    </select>
+                    <input type="hidden" name="salesman_name" id="invSalesmanName" value="{safe_string(user.get('name', '')) if user else ''}">
                 </div>
                 <div>
                     <label>Payment Method</label>
@@ -27498,6 +27533,42 @@ def invoice_view(invoice_id):
     biz_email = business.get("email", "") if business else ""
     biz_vat = business.get("vat_number", "") if business else ""
     
+    # Resolve prepared by name
+    inv_prepared_by = invoice.get("created_by_name") or ""
+    if not inv_prepared_by:
+        _icb = invoice.get("created_by") or ""
+        if _icb:
+            try:
+                _iteam = db.get("team_members", {"business_id": biz_id}) or []
+                for t in _iteam:
+                    if t.get("id") == _icb or t.get("user_id") == _icb:
+                        inv_prepared_by = t.get("name", t.get("email", ""))
+                        break
+                if not inv_prepared_by:
+                    _iu = db.get_one("users", _icb)
+                    if _iu:
+                        inv_prepared_by = _iu.get("name", _iu.get("email", ""))
+            except:
+                pass
+    
+    # Resolve salesman name for invoice
+    inv_salesman = invoice.get("salesman_name") or invoice.get("sales_rep") or ""
+    if not inv_salesman:
+        _ism = invoice.get("salesman") or ""
+        if _ism:
+            try:
+                _iteam2 = db.get("team_members", {"business_id": biz_id}) or []
+                for t in _iteam2:
+                    if t.get("id") == _ism or t.get("user_id") == _ism:
+                        inv_salesman = t.get("name", t.get("email", ""))
+                        break
+                if not inv_salesman:
+                    _iu2 = db.get_one("users", _ism)
+                    if _iu2:
+                        inv_salesman = _iu2.get("name", _iu2.get("email", ""))
+            except:
+                pass
+    
     # Build customer details section  
     cust_name = safe_string(invoice.get("customer_name", "-"))
     cust_phone = customer.get("phone", "") if customer else ""
@@ -27568,7 +27639,8 @@ def invoice_view(invoice_id):
                     <tr><td style="padding:4px 0;color:#888;width:120px;">Number:</td><td style="padding:4px 0;font-weight:600;">{invoice.get("invoice_number", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{invoice.get("date", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Due Date:</td><td style="padding:4px 0;">{invoice.get("due_date", "-")}</td></tr>
-                    {f'<tr><td style="padding:4px 0;color:#888;">Sales Rep:</td><td style="padding:4px 0;">{safe_string(invoice.get("sales_rep", ""))}</td></tr>' if invoice.get("sales_rep") else ''}
+                    {f'<tr><td style="padding:4px 0;color:#888;">Prepared By:</td><td style="padding:4px 0;font-weight:600;">{inv_prepared_by}</td></tr>' if inv_prepared_by else ''}
+                    {f'<tr><td style="padding:4px 0;color:#888;">Salesman:</td><td style="padding:4px 0;font-weight:600;">{inv_salesman}</td></tr>' if inv_salesman else ''}
                     {f'<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
                 </table>
                 {f'<div style="margin-top:8px;font-size:13px;color:#666;"><span>Tel: {biz_phone}</span></div>' if biz_phone else ''}
@@ -27995,6 +28067,8 @@ def api_invoice_email(invoice_id):
                 
                 <p style="margin-top:30px;"><strong>Date:</strong> {date}</p>
                 <p><strong>Status:</strong> {status.upper()}</p>
+                {f'<p><strong>Prepared By:</strong> {invoice.get("created_by_name", "")}</p>' if invoice.get("created_by_name") else ''}
+                {f'<p><strong>Salesman:</strong> {invoice.get("salesman_name", "") or invoice.get("sales_rep", "")}</p>' if (invoice.get("salesman_name") or invoice.get("sales_rep")) else ''}
                 
                 {f'<div style="margin-top:20px;padding:15px;background:#f0fdf4;border-radius:8px;"><strong>Banking Details:</strong><br>{business.get("bank_name", "")} | Acc: {business.get("bank_account", "")} | Branch: {business.get("bank_branch", "")}</div>' if business and business.get("bank_account") else ''}
                 
@@ -31792,7 +31866,11 @@ def quote_to_invoice(quote_id):
         status="outstanding",
         source_quote_id=quote_id,
         source_quote_number=quote.get("quote_number"),
-        created_by=user.get("id", "") if user else ""
+        created_by=user.get("id", "") if user else "",
+        created_by_name=quote.get("created_by_name", ""),
+        salesman=quote.get("salesman", ""),
+        salesman_name=quote.get("salesman_name", ""),
+        sales_rep=quote.get("salesman_name", "")
     )
     invoice_id = invoice["id"]
     
@@ -51684,7 +51762,11 @@ def api_pos_invoice():
             total=float(total),
             status="outstanding",
             payment_method="account",
-            created_by=cashier_id
+            created_by=cashier_id,
+            created_by_name=cashier_display,
+            salesman=data.get("salesman_id") or cashier_id,
+            salesman_name=data.get("salesman_name") or cashier_display,
+            sales_rep=data.get("salesman_name") or cashier_display
         )
         invoice_id = invoice["id"]
         
@@ -63965,7 +64047,10 @@ def api_job_card_create_invoice(job_id):
             total=job.get("quote_value", 0),
             status="unpaid",
             job_card_id=job_id,
-            created_by=user.get("id", "") if user else ""
+            created_by=user.get("id", "") if user else "",
+            created_by_name=user.get("name", "") if user else "",
+            salesman=user.get("id", "") if user else "",
+            salesman_name=user.get("name", "") if user else ""
         )
         invoice_id = invoice["id"]
         
@@ -64118,7 +64203,10 @@ def api_job_card_create_both(job_id):
             status="unpaid",
             job_card_id=job_id,
             notes=f"Delivery Note: {dn_number}",
-            created_by=user.get("id", "") if user else ""
+            created_by=user.get("id", "") if user else "",
+            created_by_name=user.get("name", "") if user else "",
+            salesman=user.get("id", "") if user else "",
+            salesman_name=user.get("name", "") if user else ""
         )
         invoice_id = invoice["id"]
         db.save("invoices", invoice)
@@ -81306,7 +81394,10 @@ class RecurringInvoices:
             total=total,
             payment_method="account",
             status="outstanding",
-            notes=f"{recurring.get('notes', '')} [Recurring: {recurring.get('id', '')[:8]}]"
+            notes=f"{recurring.get('notes', '')} [Recurring: {recurring.get('id', '')[:8]}]",
+            salesman=recurring.get("salesman", ""),
+            salesman_name=recurring.get("salesman_name", ""),
+            sales_rep=recurring.get("salesman_name", "")
         )
         invoice_id = invoice["id"]
         invoice["recurring_id"] = recurring.get("id")  # Link back to recurring template
