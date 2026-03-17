@@ -3352,7 +3352,9 @@ class RecordFactory:
             "source_invoice_id": kwargs.get("source_invoice_id"),
             "created_at": kwargs.get("created_at") or now(),
             "created_by": kwargs.get("created_by"),
-            "created_by_name": kwargs.get("created_by_name", "")
+            "created_by_name": kwargs.get("created_by_name", ""),
+            "salesman": kwargs.get("salesman", ""),
+            "salesman_name": kwargs.get("salesman_name", "")
         }
     
     @staticmethod
@@ -11031,7 +11033,9 @@ class Actions:
             vat=float(vat_amount),
             total=float(total),
             status="draft",
-            created_by=context.get("user_id")
+            created_by=context.get("user_id"),
+            salesman=data.get("salesman_id") or context.get("user_id"),
+            salesman_name=data.get("salesman_name", "")
         )
         
         success, _ = db.save("quotes", quote)
@@ -30924,6 +30928,8 @@ def quote_new():
         customer_id = request.form.get("customer_id", "")
         customer_name = request.form.get("customer_name", "")
         valid_days = int(request.form.get("valid_days", 30))
+        salesman_id = request.form.get("salesman_id", "")
+        salesman_name_form = request.form.get("salesman_name", "")
         
         items = []
         descriptions = request.form.getlist("item_desc[]")
@@ -30968,7 +30974,9 @@ def quote_new():
             total=float(total),
             status="pending",
             created_by=user.get("id") if user else None,
-            created_by_name=user.get("name", "") if user else ""
+            created_by_name=user.get("name", "") if user else "",
+            salesman=salesman_id,
+            salesman_name=salesman_name_form
         )
         quote_id = quote["id"]
         
@@ -30982,12 +30990,24 @@ def quote_new():
     # GET - show form
     customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
     stock = db.get_all_stock(biz_id)
+    team_members = db.get("team_members", {"business_id": biz_id}) if biz_id else []
     
     customer_options = '<option value="">-- Select Customer --</option>'
     customer_options += '<option value="WALKIN" style="color:var(--green);">Walk-in Customer (type name below)</option>'
     customer_options += '<option value="NEW" style="color:var(--primary);">+ Add New Customer to System</option>'
     for c in sorted(customers, key=lambda x: x.get("name", "")):
         customer_options += f'<option value="{c.get("id")}" data-name="{safe_string(c.get("name", ""))}">{safe_string(c.get("name", ""))}</option>'
+    
+    # Salesman dropdown from team members + current user
+    salesman_options = '<option value="">-- Select Salesman --</option>'
+    if user:
+        salesman_options += f'<option value="{user.get("id", "")}" data-name="{safe_string(user.get("name", ""))}" selected>{safe_string(user.get("name", ""))} (me)</option>'
+    seen_ids = {user.get("id", "") if user else ""}
+    for tm in sorted(team_members, key=lambda x: x.get("name", "")):
+        tm_uid = tm.get("user_id") or tm.get("id", "")
+        if tm_uid not in seen_ids:
+            seen_ids.add(tm_uid)
+            salesman_options += f'<option value="{tm_uid}" data-name="{safe_string(tm.get("name", ""))}">{safe_string(tm.get("name", ""))}</option>'
     
     stock_options = '<option value="NEW" data-price="0">+ Add New Stock Item</option>'
     for s in stock:
@@ -31004,13 +31024,20 @@ def quote_new():
         <h3 style="margin:0 0 20px 0;">New Quote</h3>
         
         <form method="POST" id="quoteForm">
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;margin-bottom:20px;">
                 <div>
                     <label>Customer</label>
                     <select name="customer_id" id="customerSelect" onchange="handleCustomerChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                         {customer_options}
                     </select>
                     <input type="text" name="customer_name" id="customerName" placeholder="Type walk-in customer name" style="display:none;width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);margin-top:6px;">
+                </div>
+                <div>
+                    <label>Salesman</label>
+                    <select name="salesman_id" id="salesmanSelect" onchange="handleSalesmanChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        {salesman_options}
+                    </select>
+                    <input type="hidden" name="salesman_name" id="salesmanName" value="{safe_string(user.get('name', '')) if user else ''}">
                 </div>
                 <div>
                     <label>Date</label>
@@ -31078,6 +31105,12 @@ def quote_new():
         nameInput.style.display = 'none';
         const name = sel.options[sel.selectedIndex]?.dataset?.name || '';
         nameInput.value = name;
+    }}
+    
+    function handleSalesmanChange() {{
+        const sel = document.getElementById('salesmanSelect');
+        const nameInput = document.getElementById('salesmanName');
+        nameInput.value = sel.options[sel.selectedIndex]?.dataset?.name || '';
     }}
     
     function checkStock(input) {{
@@ -31322,6 +31355,24 @@ def quote_view(quote_id):
             except:
                 pass
     
+    # Resolve salesman name
+    salesman_display = quote.get("salesman_name") or ""
+    if not salesman_display:
+        _sm = quote.get("salesman") or ""
+        if _sm:
+            try:
+                _team = db.get("team_members", {"business_id": biz_id}) or []
+                for t in _team:
+                    if t.get("id") == _sm or t.get("user_id") == _sm:
+                        salesman_display = t.get("name", t.get("email", ""))
+                        break
+                if not salesman_display:
+                    _u = db.get_one("users", _sm)
+                    if _u:
+                        salesman_display = _u.get("name", _u.get("email", ""))
+            except:
+                pass
+    
     # Build customer details section  
     cust_name = safe_string(quote.get("customer_name", "-"))
     cust_phone = customer.get("phone", "") if customer else ""
@@ -31381,6 +31432,7 @@ def quote_view(quote_id):
                     <tr><td style="padding:4px 0;color:#888;">Valid Until:</td><td style="padding:4px 0;{"color:#ef4444;font-weight:600;" if status == "expired" else ""}">{expiry_date_str or "7 days"}{"  ⚠ EXPIRED" if status == "expired" else ""}</td></tr>
                     {f'<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
                     {f'<tr><td style="padding:4px 0;color:#888;">Prepared By:</td><td style="padding:4px 0;font-weight:600;">{created_by_name}</td></tr>' if created_by_name else ''}
+                    {f'<tr><td style="padding:4px 0;color:#888;">Salesman:</td><td style="padding:4px 0;font-weight:600;">{salesman_display}</td></tr>' if salesman_display else ''}
                 </table>
                 {f'<div style="margin-top:8px;font-size:10px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
                 {f'<div style="font-size:10px;color:#666;">{biz_email}</div>' if biz_email else ''}
@@ -31663,6 +31715,8 @@ def api_quote_email(quote_id):
                 
                 <p style="margin-top:30px;"><strong>Date:</strong> {date}</p>
                 <p><strong>Valid Until:</strong> {valid_until}</p>
+                {f'<p><strong>Prepared By:</strong> {quote.get("created_by_name", "")}</p>' if quote.get("created_by_name") else ''}
+                {f'<p><strong>Salesman:</strong> {quote.get("salesman_name", "")}</p>' if quote.get("salesman_name") else ''}
                 
                 <div style="margin-top:20px;padding:15px;background:#eff6ff;border-radius:8px;border-left:4px solid #2563eb;">
                     <strong>To accept this quotation:</strong><br>
@@ -51251,6 +51305,8 @@ def api_pos_quote():
         
         # Create quote using RecordFactory
         user = Auth.get_current_user()
+        pos_salesman_id = data.get("salesman_id") or cashier_id
+        pos_salesman_name = data.get("salesman_name") or cashier_display
         quote = RecordFactory.quote(
             business_id=biz_id,
             customer_id=safe_customer_id,
@@ -51263,7 +51319,9 @@ def api_pos_quote():
             total=float(total),
             status="draft",
             created_by=cashier_id,
-            created_by_name=cashier_display
+            created_by_name=cashier_display,
+            salesman=pos_salesman_id,
+            salesman_name=pos_salesman_name
         )
         quote_id = quote["id"]
         
@@ -51382,6 +51440,8 @@ def api_pos_quick_quote():
         quote_num = next_document_number("Q-", existing_quotes, "quote_number")
         
         # Create quote
+        qq_salesman_id = data.get("salesman_id") or (user.get("id") if user else None)
+        qq_salesman_name = data.get("salesman_name") or (user.get("name", "") if user else "")
         quote = RecordFactory.quote(
             business_id=biz_id,
             customer_id=customer_id,
@@ -51393,7 +51453,10 @@ def api_pos_quick_quote():
             vat=float(vat),
             total=float(total),
             status="draft",
-            created_by=user.get("id") if user else None
+            created_by=user.get("id") if user else None,
+            created_by_name=user.get("name", "") if user else "",
+            salesman=qq_salesman_id,
+            salesman_name=qq_salesman_name
         )
         quote_id = quote["id"]
         
@@ -68850,7 +68913,10 @@ def api_smart_quote_save():
             total=float(total),
             status="pending",
             notes="Created from Smart Quote",
-            created_by=user.get("id") if user else None
+            created_by=user.get("id") if user else None,
+            created_by_name=user.get("name", "") if user else "",
+            salesman=user.get("id") if user else None,
+            salesman_name=user.get("name", "") if user else ""
         )
         quote_id = quote["id"]
         
@@ -71981,7 +72047,10 @@ def api_scan_create_quote_from_order():
             items=quote_items, quote_number=quote_num, date=today(),
             subtotal=subtotal, vat=vat, total=total, status="draft",
             notes=f"From order{' ' + order_reference if order_reference else ''}. {notes}".strip(),
-            created_by=user.get("id", "") if user else ""
+            created_by=user.get("id", "") if user else "",
+            created_by_name=user.get("name", "") if user else "",
+            salesman=user.get("id", "") if user else "",
+            salesman_name=user.get("name", "") if user else ""
         )
         quote_id = quote["id"]
         success, err = db.save("quotes", quote)
