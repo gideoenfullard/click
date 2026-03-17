@@ -181,6 +181,10 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
                 </div>
             </div>'''
 
+        _approve_btns_html = ('<button onclick="approveCashup()" class="btn btn-primary" style="padding:8px 16px;">✅ Approve</button>'
+                              '<button onclick="flagCashup()" class="btn btn-secondary" style="padding:8px 16px;">🚩 Flag</button>') if is_manager else ''
+        _is_manager_js = "true" if is_manager else "false"
+
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
             <h2 style="margin:0;">💰 Cash Up</h2>
@@ -494,7 +498,7 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
                 ${{denomHtml ? '<div style="margin-top:10px;"><span style="font-size:10px;color:var(--text-muted);">DENOMINATIONS:</span><div>' + denomHtml + '</div></div>' : ''}}
                 <div style="margin-top:15px;display:flex;gap:8px;">
                     <button onclick="printSlip('${{c.id}}')" class="btn btn-secondary" style="padding:8px 16px;">🖨️ Print</button>
-                    ${{'{approve_btns}' if '{is_manager_js}' === 'true' else ''}}
+                    {_approve_btns_html}
                 </div>
                 `;
                 panel.style.display = 'block';
@@ -531,8 +535,7 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
             // handled via onclick
         }});
         </script>
-        '''.replace("{is_manager_js}", "true" if is_manager else "false").replace("{approve_btns}", 
-            '<button onclick="approveCashup()" class="btn btn-primary" style="padding:8px 16px;">✅ Approve</button><button onclick="flagCashup()" class="btn btn-secondary" style="padding:8px 16px;">🚩 Flag</button>' if is_manager else '')
+        '''
 
         return _render("Cash Up", content, user)
 
