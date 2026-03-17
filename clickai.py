@@ -50375,18 +50375,29 @@ def pos_history():
     all_quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
     quotes = [q for q in all_quotes if date_from <= (q.get("date") or "") <= date_to]
     
-    # Calculate totals
+    # Calculate totals — POS Sales
     cash_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "cash")
     card_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "card")
     account_total = sum(float(s.get("total", 0)) for s in sales if s.get("payment_method") == "account")
     invoice_total = sum(float(i.get("total", 0)) for i in invoices)
     quote_total = sum(float(q.get("total", 0)) for q in quotes)
     
+    # Calculate totals — Invoices by payment method
+    inv_cash_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") == "cash")
+    inv_card_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") == "card")
+    inv_eft_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") == "eft")
+    inv_account_total = sum(float(i.get("total", 0)) for i in invoices if i.get("payment_method") in ("account", ""))
+    
+    # COMBINED totals — what actually matters for the cash drawer
+    all_cash = cash_total + inv_cash_total
+    all_card = card_total + inv_card_total
+    all_account = account_total + inv_account_total
+    
     grand_total = cash_total + card_total + account_total
     transaction_count = len(sales)
     
-    # === EXPECTED CASH FOR Z-READ (always TODAY regardless of date filter) ===
-    # Cash in drawer = POS cash sales + cash-paid invoices (for today only)
+    # === EXPECTED CASH FOR Z-READ ===
+    # Cash in drawer = ALL cash received today (POS sales + cash-paid invoices)
     today_str = today()
     today_cash_sales = sum(float(s.get("total", 0)) for s in all_sales 
                           if s.get("payment_method") == "cash" and (s.get("date") or "") == today_str)
@@ -50822,7 +50833,7 @@ def pos_history():
                 if (data.success && data.cash_ups) {{
                     const existing = (data.cash_ups || []).filter(c => c.type === 'z_reading');
                     if (existing.length > 0) {{
-                        alert('⚠ Dag is reeds afgesluit met n Z-Read.\\n\\nDatum: {date_desc}\\nJy kan nie weer n Z-Read doen nie.');
+                        alert('Dag is reeds afgesluit met n Z-Read. Jy kan nie weer n Z-Read doen nie.');
                         return;
                     }}
                 }}
@@ -50854,21 +50865,36 @@ def pos_history():
 <span style="font-size:11px;">Printed: ${{new Date().toLocaleTimeString()}}</span>
 </div>
 <hr style="border:1px dashed #000;margin:15px 0;">
-<div style="margin-bottom:15px;">
-<strong>FINAL SALES SUMMARY</strong>
+<div style="margin-bottom:8px;">
+<strong>POS SALES</strong>
 </div>
 <table style="width:100%;border-collapse:collapse;">
-<tr><td>Cash Sales:</td><td style="text-align:right;">{money(cash_total)}</td></tr>
-<tr><td>Card Sales:</td><td style="text-align:right;">{money(card_total)}</td></tr>
-<tr><td>Account Sales:</td><td style="text-align:right;">{money(account_total)}</td></tr>
+<tr><td>Cash (POS):</td><td style="text-align:right;">{money(cash_total)}</td></tr>
+<tr><td>Card (POS):</td><td style="text-align:right;">{money(card_total)}</td></tr>
+<tr><td>Account (POS):</td><td style="text-align:right;">{money(account_total)}</td></tr>
+<tr style="font-weight:bold;border-top:1px solid #000;"><td>POS Total:</td><td style="text-align:right;">{money(grand_total)}</td></tr>
+<tr><td style="font-size:11px;">Transactions:</td><td style="text-align:right;font-size:11px;">{transaction_count}</td></tr>
 </table>
-<hr style="border:1px dashed #000;margin:15px 0;">
+{f'''<hr style="border:1px dashed #000;margin:12px 0;">
+<div style="margin-bottom:8px;">
+<strong>INVOICES (Cash Paid)</strong>
+</div>
 <table style="width:100%;border-collapse:collapse;">
-<tr style="font-size:18px;font-weight:bold;">
-<td>TOTAL:</td>
-<td style="text-align:right;">{money(grand_total)}</td>
+<tr><td>Cash Invoices:</td><td style="text-align:right;">{money(inv_cash_total)}</td></tr>
+{f"<tr><td>Card Invoices:</td><td style='text-align:right;'>{money(inv_card_total)}</td></tr>" if inv_card_total else ""}
+{f"<tr><td>EFT Invoices:</td><td style='text-align:right;'>{money(inv_eft_total)}</td></tr>" if inv_eft_total else ""}
+</table>''' if inv_cash_total or inv_card_total or inv_eft_total else ""}
+<hr style="border:2px solid #000;margin:15px 0;">
+<div style="margin-bottom:8px;">
+<strong>CASH IN DRAWER (Expected)</strong>
+</div>
+<table style="width:100%;border-collapse:collapse;">
+<tr><td style="font-size:12px;">POS Cash Sales:</td><td style="text-align:right;font-size:12px;">{money(cash_total)}</td></tr>
+{f'<tr><td style="font-size:12px;">+ Cash Invoices:</td><td style="text-align:right;font-size:12px;">{money(inv_cash_total)}</td></tr>' if inv_cash_total else ''}
+<tr style="font-size:18px;font-weight:bold;border-top:1px solid #000;">
+<td>EXPECTED CASH:</td>
+<td style="text-align:right;">{money(expected_cash_drawer)}</td>
 </tr>
-<tr><td>Total Transactions:</td><td style="text-align:right;">{transaction_count}</td></tr>
 </table>
         `;
         document.getElementById('zreadContent').innerHTML = content;

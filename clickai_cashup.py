@@ -778,7 +778,7 @@ async function submitBlindCashUp() {{
                 c.type === 'blind_cashup' && c.cashier_id === cashierId
             );
             if (existing.length > 0) {{
-                alert('⚠ ' + cashierName + ' het reeds vandag \'n blind cashup ingedien.\\n\\nNet een blind cashup per kassier per dag.');
+                alert(cashierName + ' het reeds vandag n blind cashup ingedien. Net een per kassier per dag.');
                 return;
             }}
         }}
