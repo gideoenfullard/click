@@ -783,57 +783,7 @@ async function submitBlindCashUp() {{
         if (qty > 0) denomBreakdown[d.label] = qty;
     }});
 
-    // Show the reveal
-    const revealBox = document.getElementById('revealBox');
-    const discClass = (v) => v > 0.01 ? 'over' : v < -0.01 ? 'short' : 'match';
-    const discLabel = (v) => v > 0.01 ? '+R' + v.toFixed(2) + ' OVER' : v < -0.01 ? '-R' + Math.abs(v).toFixed(2) + ' SHORT' : 'EXACT MATCH ✓';
-
-    revealBox.innerHTML = `
-        <div class="result-row">
-            <span class="rl">System Cash Sales</span>
-            <span class="rv" style="color:var(--green)">R${{SYS_CASH.toFixed(2)}}</span>
-        </div>
-        <div class="result-row">
-            <span class="rl">Your Cash Count (minus float)</span>
-            <span class="rv">R${{cashSalesDeclared.toFixed(2)}}</span>
-        </div>
-        <div class="result-row ${{discClass(cashDisc)}}">
-            <span class="rl">Cash Discrepancy</span>
-            <span class="rv">${{discLabel(cashDisc)}}</span>
-        </div>
-        <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
-        <div class="result-row">
-            <span class="rl">System Card Sales</span>
-            <span class="rv" style="color:var(--orange)">R${{SYS_CARD.toFixed(2)}}</span>
-        </div>
-        <div class="result-row">
-            <span class="rl">Your Card Slips</span>
-            <span class="rv">R${{cardDeclared.toFixed(2)}}</span>
-        </div>
-        <div class="result-row ${{discClass(cardDisc)}}">
-            <span class="rl">Card Discrepancy</span>
-            <span class="rv">${{discLabel(cardDisc)}}</span>
-        </div>
-        <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
-        <div class="result-row">
-            <span class="rl">System Account Sales</span>
-            <span class="rv" style="color:var(--accent)">R${{SYS_ACCOUNT.toFixed(2)}}</span>
-        </div>
-        <div class="result-row">
-            <span class="rl">Your Account/Vouchers</span>
-            <span class="rv">R${{accountDeclared.toFixed(2)}}</span>
-        </div>
-        <hr style="border:none;border-top:2px solid var(--border);margin:10px 0">
-        <div class="result-row total ${{discClass(totalDisc)}}">
-            <span class="rl" style="font-size:1rem;">TOTAL DISCREPANCY</span>
-            <span class="rv" style="font-size:1.2rem;">${{discLabel(totalDisc)}}</span>
-        </div>
-    `;
-
-    document.getElementById('systemReveal').classList.add('show');
-    if (IS_MANAGER) {{ document.getElementById('statsRow').style.display = ''; }}
-
-    // Save to DB
+    // ═══ SAVE FIRST — before showing anything ═══
     try {{
         const resp = await fetch('/api/cashup/save', {{
             method: 'POST',
@@ -860,10 +810,82 @@ async function submitBlindCashUp() {{
             }})
         }});
         const data = await resp.json();
-        if (!data.success) console.error('Save failed:', data.error);
+        if (!data.success) {{
+            alert('Save failed: ' + (data.error || 'Unknown error'));
+            return;
+        }}
     }} catch(e) {{
+        alert('Save error — check your connection and try again.');
         console.error('Save error:', e);
+        return;
     }}
+
+    // ═══ DISABLE ALL INPUTS — cashup is locked ═══
+    document.querySelectorAll('#panel-blind input, #panel-blind select').forEach(el => el.disabled = true);
+    document.querySelector('#panel-blind .submit-btn').style.display = 'none';
+
+    // ═══ SHOW RESULT ═══
+    const revealBox = document.getElementById('revealBox');
+    const discClass = (v) => v > 0.01 ? 'over' : v < -0.01 ? 'short' : 'match';
+    const discLabel = (v) => v > 0.01 ? '+R' + v.toFixed(2) + ' OVER' : v < -0.01 ? '-R' + Math.abs(v).toFixed(2) + ' SHORT' : 'EXACT MATCH ✓';
+
+    if (IS_MANAGER) {{
+        // Managers see full comparison
+        revealBox.innerHTML = `
+            <div class="result-row">
+                <span class="rl">System Cash Sales</span>
+                <span class="rv" style="color:var(--green)">R${{SYS_CASH.toFixed(2)}}</span>
+            </div>
+            <div class="result-row">
+                <span class="rl">Your Cash Count (minus float)</span>
+                <span class="rv">R${{cashSalesDeclared.toFixed(2)}}</span>
+            </div>
+            <div class="result-row ${{discClass(cashDisc)}}">
+                <span class="rl">Cash Discrepancy</span>
+                <span class="rv">${{discLabel(cashDisc)}}</span>
+            </div>
+            <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
+            <div class="result-row">
+                <span class="rl">System Card Sales</span>
+                <span class="rv" style="color:var(--orange)">R${{SYS_CARD.toFixed(2)}}</span>
+            </div>
+            <div class="result-row">
+                <span class="rl">Your Card Slips</span>
+                <span class="rv">R${{cardDeclared.toFixed(2)}}</span>
+            </div>
+            <div class="result-row ${{discClass(cardDisc)}}">
+                <span class="rl">Card Discrepancy</span>
+                <span class="rv">${{discLabel(cardDisc)}}</span>
+            </div>
+            <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
+            <div class="result-row">
+                <span class="rl">System Account Sales</span>
+                <span class="rv" style="color:var(--accent)">R${{SYS_ACCOUNT.toFixed(2)}}</span>
+            </div>
+            <div class="result-row">
+                <span class="rl">Your Account/Vouchers</span>
+                <span class="rv">R${{accountDeclared.toFixed(2)}}</span>
+            </div>
+            <hr style="border:none;border-top:2px solid var(--border);margin:10px 0">
+            <div class="result-row total ${{discClass(totalDisc)}}">
+                <span class="rl" style="font-size:1rem;">TOTAL DISCREPANCY</span>
+                <span class="rv" style="font-size:1.2rem;">${{discLabel(totalDisc)}}</span>
+            </div>
+        `;
+        document.getElementById('statsRow').style.display = '';
+    }} else {{
+        // Staff only see confirmation — NO system totals, NO discrepancies
+        revealBox.innerHTML = `
+            <div style="text-align:center;padding:20px;">
+                <div style="font-size:2rem;margin-bottom:10px;">✅</div>
+                <div style="font-size:1.1rem;font-weight:700;color:var(--green);margin-bottom:8px;">Cash Up Submitted</div>
+                <div style="color:var(--text-dim);font-size:0.9rem;">Your declared total: <strong>R${{declaredTotal.toFixed(2)}}</strong></div>
+                <div style="color:var(--text-dim);font-size:0.85rem;margin-top:8px;">Your manager will review the results.</div>
+            </div>
+        `;
+    }}
+
+    document.getElementById('systemReveal').classList.add('show');
 }}
 
 // ═══ HISTORY RENDER ═══
