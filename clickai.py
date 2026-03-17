@@ -3408,14 +3408,35 @@ class RecordFactory:
         vat = float(kwargs.get("vat", 0))
         total = float(kwargs.get("total", subtotal + vat))
         
+        inv_date = kwargs.get("date") or now()[:10]
+        due_date = kwargs.get("due_date")
+        
+        # Auto-calculate due_date from supplier payment_terms if not explicitly set
+        if not due_date and supplier_id:
+            try:
+                supplier_rec = db.get_one("suppliers", supplier_id) if supplier_id else None
+                if supplier_rec:
+                    terms = str(supplier_rec.get("payment_terms", "")).lower().strip()
+                    import re
+                    days_match = re.search(r'(\d+)\s*day', terms)
+                    if days_match:
+                        term_days = int(days_match.group(1))
+                        from datetime import datetime, timedelta
+                        inv_dt = datetime.strptime(str(inv_date)[:10], "%Y-%m-%d")
+                        due_date = (inv_dt + timedelta(days=term_days)).strftime("%Y-%m-%d")
+                    elif "cod" in terms or "cash" in terms:
+                        due_date = str(inv_date)[:10]
+            except Exception:
+                pass
+        
         return {
             "id": kwargs.get("id") or generate_id(),
             "business_id": business_id,
             "supplier_id": supplier_id,
             "supplier_name": supplier_name,
             "invoice_number": kwargs.get("invoice_number", ""),
-            "date": kwargs.get("date") or now()[:10],
-            "due_date": kwargs.get("due_date"),
+            "date": inv_date,
+            "due_date": due_date,
             "subtotal": subtotal,
             "vat": vat,
             "total": total,
@@ -11754,18 +11775,9 @@ class Actions:
                 supplier = s
                 break
         
-        # Generate PO number
+        # Generate PO number using standard next_document_number()
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        max_po = 0
-        for ep in existing:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = next_document_number("PO-", existing, field="po_number")
         
         # Build items
         if not items and description:
@@ -37801,6 +37813,7 @@ DEFAULT_ACCOUNTS = [
     {"code": "6800", "name": "Advertising", "type": "expense", "category": "Operating Expenses"},
     {"code": "6900", "name": "Depreciation", "type": "expense", "category": "Operating Expenses"},
     {"code": "7000", "name": "General Expenses", "type": "expense", "category": "Operating Expenses"},
+    {"code": "7050", "name": "Cash Over/Short", "type": "expense", "category": "Operating Expenses"},
 ]
 
 
@@ -42161,18 +42174,9 @@ def purchase_new():
         vat = subtotal * 0.15
         total = subtotal + vat
         
-        # Generate PO number
+        # Generate PO number using standard next_document_number()
         existing = db.get("purchase_orders", {"business_id": biz_id}) or []
-        max_po = 0
-        for ep in existing:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = next_document_number("PO-", existing, field="po_number")
         
         po_id = generate_id()
         po = {
@@ -42192,6 +42196,7 @@ def purchase_new():
             "reference": request.form.get("reference", ""),
             "status": "draft",
             "emailed": False,
+            "created_by": user.get("id", "") if user else "",
             "created_at": now()
         }
         
@@ -42515,14 +42520,18 @@ def purchase_view(po_id):
     action_buttons = ""
     if status == "draft":
         action_buttons = f'''
+        <button class="btn btn-secondary" onclick="editPO()">✏️ Edit</button>
         <button class="btn btn-secondary" onclick="emailPO()">Email to Supplier</button>
         <button class="btn btn-secondary" onclick="updatePOStatus('sent')">GOOD: Mark as Sent</button>
         <button class="btn btn-primary" onclick="showReceiveModal()">📦 Receive Goods</button>
+        <button class="btn btn-secondary" style="color:var(--red);" onclick="deletePO()">🗑️ Delete</button>
         '''
     elif status == "sent":
         action_buttons = f'''
+        <button class="btn btn-secondary" onclick="editPO()">✏️ Edit</button>
         <button class="btn btn-secondary" onclick="emailPO()">📧 Resend Email</button>
         <button class="btn btn-primary" onclick="showReceiveModal()">Receive Goods</button>
+        <button class="btn btn-secondary" style="color:var(--orange);" onclick="cancelPO()">Cancel PO</button>
         '''
     elif status == "partial":
         action_buttons = f'''
@@ -42649,6 +42658,10 @@ def purchase_view(po_id):
                 <div>
                     <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Date Received</label>
                     <input type="date" id="receiveDate" class="form-input" value="{today()}" style="width:100%;">
+                </div>
+                <div style="grid-column:1/-1;">
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Supplier Name (change if different from PO)</label>
+                    <input type="text" id="grvSupplierName" class="form-input" placeholder="{safe_string(po.get('supplier_name', ''))}" value="{safe_string(po.get('supplier_name', ''))}" style="width:100%;">
                 </div>
             </div>
             
@@ -42795,11 +42808,12 @@ def purchase_view(po_id):
         const updateStock = document.getElementById('updateStock').checked;
         const supplierInvoiceNum = document.getElementById('supplierInvoiceNum').value.trim();
         const receiveDate = document.getElementById('receiveDate').value;
+        const grvSupplierName = document.getElementById('grvSupplierName').value.trim();
         
         const response = await fetch('/api/purchase/{po_id}/receive', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{quantities, prices, updateStock, supplier_invoice_number: supplierInvoiceNum, receive_date: receiveDate}})
+            body: JSON.stringify({{quantities, prices, updateStock, supplier_invoice_number: supplierInvoiceNum, receive_date: receiveDate, supplier_name_override: grvSupplierName}})
         }});
         
         const data = await response.json();
@@ -42875,6 +42889,30 @@ def purchase_view(po_id):
         pw.document.close(); pw.focus();
         setTimeout(() => {{ pw.print(); pw.close(); }}, 250);
     }}
+    
+    function editPO() {{
+        window.location = '/purchase/{po_id}/edit';
+    }}
+    
+    async function deletePO() {{
+        if (!confirm('Are you sure you want to DELETE this Purchase Order?\\n\\nThis cannot be undone.')) return;
+        const response = await fetch('/api/purchase/{po_id}/delete', {{
+            method: 'POST',
+            headers: {{'Content-Type': 'application/json'}}
+        }});
+        const data = await response.json();
+        if (data.success) {{
+            alert('Purchase Order deleted');
+            window.location = '/purchases';
+        }} else {{
+            alert('Error: ' + data.error);
+        }}
+    }}
+    
+    async function cancelPO() {{
+        if (!confirm('Cancel this Purchase Order?\\n\\nStatus will be set to Cancelled.')) return;
+        await updatePOStatus('cancelled');
+    }}
     </script>
     '''
     
@@ -42919,7 +42957,312 @@ def api_po_status(po_id):
         return jsonify({"success": False, "error": str(e)})
 
 
-@app.route("/api/purchase/<po_id>/email", methods=["POST"])
+@app.route("/api/purchase/<po_id>/delete", methods=["POST"])
+@login_required
+def api_po_delete(po_id):
+    """Delete a PO (only draft or cancelled)"""
+    try:
+        po = db.get_one("purchase_orders", po_id)
+        if not po:
+            return jsonify({"success": False, "error": "PO not found"})
+        
+        status = po.get("status", "draft")
+        if status not in ("draft", "cancelled"):
+            return jsonify({"success": False, "error": f"Cannot delete PO with status '{status}'. Only draft or cancelled POs can be deleted."})
+        
+        success = db.delete("purchase_orders", po_id)
+        if success:
+            logger.info(f"[PO] Deleted {po.get('po_number')} (status={status})")
+            return jsonify({"success": True})
+        else:
+            return jsonify({"success": False, "error": "Failed to delete"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route("/purchase/<po_id>/edit", methods=["GET", "POST"])
+@login_required
+def purchase_edit(po_id):
+    """Edit an existing Purchase Order (draft or sent only)"""
+    
+    user = Auth.get_current_user()
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    po = db.get_one("purchase_orders", po_id)
+    if not po:
+        flash("PO not found", "error")
+        return redirect("/purchases")
+    
+    status = po.get("status", "draft")
+    if status not in ("draft", "sent"):
+        flash(f"Cannot edit PO with status '{status}'", "error")
+        return redirect(f"/purchase/{po_id}")
+    
+    if request.method == "POST":
+        supplier_id = request.form.get("supplier_id", "")
+        supplier = db.get_one("suppliers", supplier_id) if supplier_id else None
+        supplier_name = supplier.get("name", "") if supplier else request.form.get("supplier_name", "")
+        
+        items = []
+        descriptions = request.form.getlist("item_desc[]")
+        quantities = request.form.getlist("item_qty[]")
+        prices = request.form.getlist("item_price[]")
+        stock_ids = request.form.getlist("item_stock_id[]")
+        
+        subtotal = 0
+        for i, desc in enumerate(descriptions):
+            if desc.strip():
+                qty = float(quantities[i] or 1)
+                price = float(prices[i] or 0)
+                line_total = qty * price
+                subtotal += line_total
+                items.append({
+                    "description": desc.strip(),
+                    "qty": qty,
+                    "price": price,
+                    "total": line_total,
+                    "stock_id": stock_ids[i] if i < len(stock_ids) else "",
+                    "qty_received": 0
+                })
+        
+        if not items:
+            flash("Please add at least one line item", "error")
+            return redirect(f"/purchase/{po_id}/edit")
+        
+        vat = subtotal * 0.15
+        total = subtotal + vat
+        
+        VALID_PO_FIELDS = {"id", "po_number", "date", "supplier_id", "supplier_name", "items", "notes", "total", "status", "received_date", "created_at", "business_id", "updated_at", "expected_date", "subtotal", "vat", "emailed", "emailed_at", "created_by", "sales_person", "reference"}
+        clean_po = {k: v for k, v in po.items() if k in VALID_PO_FIELDS}
+        
+        clean_po.update({
+            "supplier_id": supplier_id,
+            "supplier_name": supplier_name,
+            "date": request.form.get("date", po.get("date", today())),
+            "expected_date": request.form.get("expected_date", ""),
+            "items": json.dumps(items),
+            "subtotal": round(subtotal, 2),
+            "vat": round(vat, 2),
+            "total": round(total, 2),
+            "notes": request.form.get("notes", ""),
+            "sales_person": request.form.get("sales_person", ""),
+            "reference": request.form.get("reference", ""),
+            "updated_at": now()
+        })
+        
+        success, _ = db.save("purchase_orders", clean_po)
+        if success:
+            flash(f"Purchase Order {po.get('po_number')} updated", "success")
+            return redirect(f"/purchase/{po_id}")
+        else:
+            flash("Failed to update PO", "error")
+            return redirect(f"/purchase/{po_id}/edit")
+    
+    # GET - show edit form (reuse new PO form structure with pre-filled data)
+    suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
+    suppliers = sorted(suppliers, key=lambda x: x.get("name", "").lower())
+    
+    stock = db.get_all_stock(biz_id)
+    stock = sorted(stock, key=lambda x: x.get("description", "").lower())
+    
+    try:
+        existing_items = json.loads(po.get("items", "[]"))
+    except:
+        existing_items = []
+    
+    supplier_options = '<option value="">-- Select Supplier --</option>'
+    for s in suppliers:
+        selected = "selected" if s.get("id") == po.get("supplier_id") else ""
+        supplier_options += f'<option value="{s.get("id")}" data-email="{safe_string(s.get("email", ""))}" {selected}>{safe_string(s.get("name", ""))}</option>'
+    
+    _po_stock_json = json.dumps([{"id": s.get("id",""), "code": safe_string(s.get("code","")), "desc": safe_string(s.get("description","")), "price": float(s.get("cost_price",0) or 0)} for s in stock])
+    
+    # Build pre-filled item rows
+    item_rows_html = ""
+    for idx, item in enumerate(existing_items):
+        item_rows_html += f'''
+        <div class="po-item-row">
+            <div class="po-stock-td">
+                <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)" value="{safe_string(item.get('code', ''))}">
+                <input type="hidden" name="item_stock_id[]" value="{safe_string(item.get('stock_id', ''))}">
+                <div class="ssp-dropdown po-stock-dd"></div>
+            </div>
+            <input type="text" name="item_desc[]" class="form-input" placeholder="Description" required value="{safe_string(item.get('description', ''))}">
+            <input type="number" name="item_qty[]" class="form-input" value="{item.get('qty', 1)}" min="1" step="1" onchange="calculateTotals()">
+            <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()" value="{item.get('price', '')}">
+            <span class="line-total" style="text-align:right;font-weight:600;">R{item.get('total', 0):.2f}</span>
+            <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove();calculateTotals();">&times;</button>
+        </div>
+        '''
+    
+    content = f'''
+    <style>
+    .po-top-actions {{ display: flex; justify-content: center; align-items: center; gap: 30px; padding: 10px 0 15px; position: sticky; top: 60px; z-index: 50; background: var(--bg); }}
+    .po-form-grid {{ display: grid; grid-template-columns: 1fr 280px; gap: 20px; }}
+    .po-main {{ display: flex; flex-direction: column; gap: 15px; min-width: 0; }}
+    .po-sidebar {{ position: sticky; top: 80px; display: flex; flex-direction: column; gap: 12px; align-self: start; }}
+    .po-sidebar .card {{ padding: 16px; margin: 0; }}
+    .po-item-row {{ display: grid; grid-template-columns: 3fr 2fr 70px 100px 90px 30px; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+    .po-item-row input {{ font-size: 13px; padding: 8px 10px; }}
+    .po-item-hdr {{ display: grid; grid-template-columns: 3fr 2fr 70px 100px 90px 30px; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--border); }}
+    .po-stock-td {{ position: relative; }}
+    .po-stock-td .ssp-dropdown.po-stock-dd {{ position: fixed !important; z-index: 9999 !important; max-height: 60vh; min-width: 600px; overflow-y: auto; background: var(--card, #1e1e2e); border: 1px solid var(--border, #333); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }}
+    .po-totals {{ display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 2px solid var(--border); }}
+    .po-totals-row {{ display: flex; justify-content: space-between; align-items: center; font-size: 14px; }}
+    .po-totals-row.grand {{ font-size: 18px; font-weight: 700; color: var(--primary); padding-top: 6px; border-top: 1px solid var(--border); }}
+    .po-add-btn {{ width: 100%; padding: 10px; border: 2px dashed var(--border); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; border-radius: 6px; }}
+    .po-add-btn:hover {{ border-color: var(--primary); color: var(--primary); }}
+    .po-rm {{ background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 2px; opacity: 0.5; }}
+    .po-rm:hover {{ color: var(--red); opacity: 1; }}
+    @media(max-width:1100px) {{ .po-form-grid {{ grid-template-columns: 1fr; }} .po-sidebar {{ position: static; }} }}
+    </style>
+    
+    <div style="margin-bottom: 12px;">
+        <a href="/purchase/{po_id}" style="color:var(--text-muted);font-size:13px;">&larr; Back to PO {safe_string(po.get('po_number', ''))}</a>
+    </div>
+    
+    <form method="POST" id="poForm">
+    <div class="po-form-grid">
+        <div class="po-main">
+            <div class="card" style="padding:20px;">
+                <h2 style="margin:0 0 16px 0;">Edit Purchase Order &mdash; {safe_string(po.get('po_number', ''))}</h2>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Supplier *</label>
+                        <select name="supplier_id" id="supplierSelect" class="form-input" required>
+                            {supplier_options}
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">PO Date</label>
+                        <input type="date" name="date" class="form-input" value="{po.get('date', today())}">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Expected Delivery</label>
+                        <input type="date" name="expected_date" class="form-input" value="{po.get('expected_date', '')}">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Sales Person</label>
+                        <input type="text" name="sales_person" class="form-input" value="{safe_string(po.get('sales_person', ''))}">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Reference</label>
+                        <input type="text" name="reference" class="form-input" value="{safe_string(po.get('reference', ''))}">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card" style="padding:20px;">
+                <h3 style="margin:0 0 12px 0;">Line Items</h3>
+                <div class="po-item-hdr">
+                    <span>Stock Item</span><span>Description</span><span>Qty</span><span>Price (excl)</span><span style="text-align:right;">Total</span><span></span>
+                </div>
+                <div id="itemsBody">
+                    {item_rows_html}
+                </div>
+                <button type="button" class="po-add-btn" onclick="addRow()" style="margin-top:10px;">+ Add Line Item</button>
+                
+                <div class="po-totals" style="margin-top:16px;">
+                    <div class="po-totals-row"><span>Subtotal</span><span id="subtotal">R{po.get('subtotal', 0):.2f}</span></div>
+                    <div class="po-totals-row"><span>VAT (15%)</span><span id="vat">R{po.get('vat', 0):.2f}</span></div>
+                    <div class="po-totals-row grand"><span>Total</span><span id="total">R{po.get('total', 0):.2f}</span></div>
+                </div>
+            </div>
+            
+            <div class="card" style="padding:16px;">
+                <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Notes</label>
+                <textarea name="notes" class="form-input" rows="2">{safe_string(po.get('notes', ''))}</textarea>
+            </div>
+        </div>
+        
+        <div class="po-sidebar">
+            <div class="card" style="background:linear-gradient(135deg,rgba(99,102,241,0.15),rgba(16,185,129,0.08));">
+                <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;font-weight:700;">Save Changes</button>
+            </div>
+            <div class="card">
+                <a href="/purchase/{po_id}" class="btn btn-secondary" style="width:100%;text-align:center;">Cancel</a>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    const poStock = {_po_stock_json};
+    
+    function addRow() {{
+        const body = document.getElementById('itemsBody');
+        const row = document.createElement('div');
+        row.className = 'po-item-row';
+        row.innerHTML = `
+            <div class="po-stock-td">
+                <input type="text" name="item_stock_search[]" class="form-input po-stock-search" placeholder="Search stock..." autocomplete="off" oninput="poStockSearch(this)" onfocus="poStockSearch(this)">
+                <input type="hidden" name="item_stock_id[]" value="">
+                <div class="ssp-dropdown po-stock-dd"></div>
+            </div>
+            <input type="text" name="item_desc[]" class="form-input" placeholder="Description" required>
+            <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
+            <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
+            <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
+            <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove();calculateTotals();">&times;</button>
+        `;
+        body.appendChild(row);
+    }}
+    
+    function calculateTotals() {{
+        const rows = document.querySelectorAll('.po-item-row');
+        let subtotal = 0;
+        rows.forEach(row => {{
+            const qty = parseFloat(row.querySelector('[name="item_qty[]"]')?.value || 0);
+            const price = parseFloat(row.querySelector('[name="item_price[]"]')?.value || 0);
+            const lineTotal = qty * price;
+            subtotal += lineTotal;
+            const lt = row.querySelector('.line-total');
+            if (lt) lt.textContent = 'R' + lineTotal.toFixed(2);
+        }});
+        const vat = subtotal * 0.15;
+        document.getElementById('subtotal').textContent = 'R' + subtotal.toFixed(2);
+        document.getElementById('vat').textContent = 'R' + vat.toFixed(2);
+        document.getElementById('total').textContent = 'R' + (subtotal + vat).toFixed(2);
+    }}
+    
+    function poStockSearch(el) {{
+        const q = el.value.toLowerCase();
+        const dd = el.closest('.po-stock-td').querySelector('.po-stock-dd');
+        if (!q || q.length < 1) {{ dd.innerHTML = ''; dd.style.display = 'none'; return; }}
+        const matches = poStock.filter(s => s.code.toLowerCase().includes(q) || s.desc.toLowerCase().includes(q)).slice(0, 15);
+        if (!matches.length) {{ dd.innerHTML = ''; dd.style.display = 'none'; return; }}
+        const rect = el.getBoundingClientRect();
+        dd.style.top = (rect.bottom + 2) + 'px';
+        dd.style.left = rect.left + 'px';
+        dd.style.display = 'block';
+        dd.innerHTML = matches.map(s => `<div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(255,255,255,0.05);" onmousedown="selectPoStock(this, '${{s.id}}', '${{s.code}}', '${{s.desc}}', ${{s.price}})">${{s.code}} &mdash; ${{s.desc}}</div>`).join('');
+    }}
+    
+    function selectPoStock(el, id, code, desc, price) {{
+        const row = el.closest('.po-stock-td').closest('.po-item-row');
+        row.querySelector('[name="item_stock_search[]"]').value = code;
+        row.querySelector('[name="item_stock_id[]"]').value = id;
+        row.querySelector('[name="item_desc[]"]').value = desc;
+        if (price) row.querySelector('[name="item_price[]"]').value = price.toFixed(2);
+        el.closest('.po-stock-dd').style.display = 'none';
+        calculateTotals();
+    }}
+    
+    document.addEventListener('click', function(e) {{
+        if (!e.target.closest('.po-stock-td')) {{
+            document.querySelectorAll('.po-stock-dd').forEach(d => d.style.display = 'none');
+        }}
+    }});
+    
+    calculateTotals();
+    </script>
+    </form>
+    '''
+    
+    return render_page(f"Edit {po.get('po_number', 'PO')}", content, user, "purchases")
+
+
+
 @login_required
 def api_po_email(po_id):
     """Email PO to supplier - NO PRICES"""
@@ -43081,6 +43424,7 @@ def api_po_receive(po_id):
         update_stock = data.get("updateStock", True)
         supplier_invoice_number = data.get("supplier_invoice_number", "")
         receive_date = data.get("receive_date", today())
+        supplier_name_override = data.get("supplier_name_override", "").strip()
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
@@ -43209,17 +43553,7 @@ def api_po_receive(po_id):
         # CREATE GRV (Goods Received Voucher) document
         grv_id = generate_id()
         existing_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
-        # Find highest existing GRV number to avoid duplicates
-        max_grv = 0
-        for eg in existing_grvs:
-            gn = eg.get("grv_number", "")
-            try:
-                num_part = int(gn.replace("GRV-", ""))
-                if num_part > max_grv:
-                    max_grv = num_part
-            except:
-                pass
-        grv_num = f"GRV-{max_grv + 1:04d}"
+        grv_num = next_document_number("GRV-", existing_grvs, field="grv_number")
         
         # Build received items list
         received_items = []
@@ -43260,7 +43594,7 @@ def api_po_receive(po_id):
             "po_id": po_id,
             "po_number": po.get("po_number", ""),
             "supplier_id": po.get("supplier_id", ""),
-            "supplier_name": po.get("supplier_name", ""),
+            "supplier_name": supplier_name_override or po.get("supplier_name", ""),
             "supplier_invoice_number": supplier_invoice_number,
             "date": receive_date or today(),
             "items": json.dumps(received_items),
@@ -43536,17 +43870,41 @@ def supplier_invoices_page():
     invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
     
     rows = ""
+    from datetime import datetime as _dt
+    _today = _dt.now().date()
     for inv in invoices[:500]:
         status = inv.get("status", "unpaid")
         status_color = "var(--green)" if status == "paid" else "var(--orange)"
         inv_num = safe_string(inv.get("invoice_number", ""))
         pay_btn = "" if status == "paid" else f'<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="paySupplier(\'{inv_num}\')"> Pay</button>'
+        
+        # Calculate aging for unpaid invoices
+        aging_badge = ""
+        due_str = inv.get("due_date", "") or ""
+        if status != "paid" and due_str:
+            try:
+                due_dt = _dt.strptime(str(due_str)[:10], "%Y-%m-%d").date()
+                days_overdue = (_today - due_dt).days
+                if days_overdue > 90:
+                    aging_badge = '<span style="background:#ef4444;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">90+</span>'
+                elif days_overdue > 60:
+                    aging_badge = '<span style="background:#f97316;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">60+</span>'
+                elif days_overdue > 30:
+                    aging_badge = '<span style="background:#eab308;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">30+</span>'
+                elif days_overdue > 0:
+                    aging_badge = f'<span style="background:#f59e0b;color:white;padding:2px 8px;border-radius:10px;font-size:11px;">{days_overdue}d</span>'
+                else:
+                    aging_badge = '<span style="color:var(--green);font-size:11px;">current</span>'
+            except:
+                pass
+        
         rows += f'''
         <tr>
             <td><strong>{inv_num}</strong></td>
             <td>{inv.get("date", "-")}</td>
             <td>{safe_string(inv.get("supplier_name", "-"))}</td>
             <td>{money(inv.get("total", 0))}</td>
+            <td>{due_str or "-"} {aging_badge}</td>
             <td style="color:{status_color};">{status}</td>
             <td>{pay_btn}</td>
         </tr>
@@ -43572,7 +43930,7 @@ def supplier_invoices_page():
         
         <table class="table" id="siTable">
             <thead>
-                <tr><th>Invoice #</th><th>Date</th><th>Supplier</th><th>Amount</th><th>Status</th><th>Action</th></tr>
+                <tr><th>Invoice #</th><th>Date</th><th>Supplier</th><th>Amount</th><th>Due / Aging</th><th>Status</th><th>Action</th></tr>
             </thead>
             <tbody>
                 {rows or "<tr><td colspan='6' style='text-align:center;color:var(--text-muted)'>No supplier invoices</td></tr>"}
@@ -51128,18 +51486,9 @@ def api_pos_quick_po():
                 "qty": qty
             })
         
-        # Generate PO number
+        # Generate PO number using standard next_document_number()
         existing_pos = db.get("purchase_orders", {"business_id": biz_id}) or []
-        max_po = 0
-        for ep in existing_pos:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = next_document_number("PO-", existing_pos, field="po_number")
         
         # Create PO
         po = {
@@ -51527,18 +51876,9 @@ def api_pos_purchase_order():
             if sup:
                 supplier_email = sup.get("email", "")
         
-        # Generate PO number
+        # Generate PO number using standard next_document_number()
         existing = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        max_po = 0
-        for ep in existing:
-            pn = ep.get("po_number", "")
-            try:
-                num_part = int(pn.replace("PO-", "").replace("PO", ""))
-                if num_part > max_po:
-                    max_po = num_part
-            except:
-                pass
-        po_num = f"PO-{max_po + 1:05d}"
+        po_num = next_document_number("PO-", existing, field="po_number")
         
         # Clean items - remove any prices that might have snuck in
         clean_items = []

@@ -50,6 +50,8 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
         sales = db.get("sales", {"business_id": biz_id}) or []
         # Filter by date — check both date field and created_at
         day_sales = [s for s in sales if s.get("date") == d or (s.get("created_at") or "")[:10] == d]
+        # Exclude sales already closed by a Z-reading (so counters start fresh after Z-read)
+        day_sales = [s for s in day_sales if not s.get("z_closed")]
 
         cash_total = sum(float(s.get("total", 0) or 0) for s in day_sales if s.get("payment_method") == "cash")
         card_total = sum(float(s.get("total", 0) or 0) for s in day_sales if s.get("payment_method") == "card")
@@ -607,6 +609,46 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
             success, err = db.save("cash_ups", record)
             if success:
                 logger.info(f"[CASHUP] {cashup_type} saved by {record.get('created_by_name')} | total={record.get('declared_total', record.get('system_total', 0))}")
+                
+                # FIX: Post discrepancy to GL Cash Over/Short control account (7100)
+                if cashup_type == "blind_cashup":
+                    total_disc = float(record.get("total_discrepancy", 0))
+                    if abs(total_disc) > 0.01:
+                        try:
+                            import clickai as _ck
+                            ref = f"CASHUP-{record['id'][:8]}"
+                            cashier_name = record.get("cashier_name", "Cashier")
+                            if total_disc > 0:
+                                # Over = cash more than expected: Debit Cash On Hand, Credit Cash Over/Short
+                                _ck.create_journal_entry(biz_id, today(), f"Cash over - {cashier_name}", ref, [
+                                    {"account_code": "1050", "debit": abs(total_disc), "credit": 0},
+                                    {"account_code": "7050", "debit": 0, "credit": abs(total_disc)},
+                                ])
+                            else:
+                                # Short = cash less than expected: Debit Cash Over/Short, Credit Cash On Hand
+                                _ck.create_journal_entry(biz_id, today(), f"Cash short - {cashier_name}", ref, [
+                                    {"account_code": "7050", "debit": abs(total_disc), "credit": 0},
+                                    {"account_code": "1050", "debit": 0, "credit": abs(total_disc)},
+                                ])
+                            logger.info(f"[CASHUP] GL posted discrepancy R{total_disc:.2f} for {cashier_name}")
+                        except Exception as gl_err:
+                            logger.error(f"[CASHUP] GL posting failed: {gl_err}")
+                
+                # FIX: Z-Reading marks daily POS sales as closed for that date
+                if cashup_type == "z_reading":
+                    try:
+                        z_date = record.get("date", today())
+                        sales = db.get("sales", {"business_id": biz_id}) or []
+                        day_sales = [s for s in sales if s.get("date") == z_date or (s.get("created_at") or "")[:10] == z_date]
+                        closed_count = 0
+                        for s in day_sales:
+                            if not s.get("z_closed"):
+                                db.update("sales", s["id"], {"z_closed": True, "z_reading_id": record["id"]})
+                                closed_count += 1
+                        logger.info(f"[CASHUP] Z-Reading closed {closed_count} sales for {z_date}")
+                    except Exception as z_err:
+                        logger.error(f"[CASHUP] Z-Reading close failed: {z_err}")
+                
                 return jsonify({"success": True, "id": record["id"]})
             else:
                 logger.error(f"[CASHUP] Save failed: {err}")
