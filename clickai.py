@@ -45322,6 +45322,19 @@ def pos_page():
         is_active = "active" if cu_id == current_user_id else ""
         cashier_buttons += f'<button class="cashier-btn {is_active}" data-uid="{cu_id}" onclick="switchCashier(this, &apos;{cu_id}&apos;, &apos;{cu_name}&apos;)">{cu_name}</button>'
     
+    # Salesman options for POS quote modal
+    pos_salesman_options = f'<option value="{current_user_id}" data-name="{current_user_name}">{current_user_name} (me)</option>'
+    _pos_seen_ids = {current_user_id}
+    for cu in cashier_list:
+        cu_id = cu.get("id") or ""
+        if cu_id and cu_id not in _pos_seen_ids:
+            _pos_seen_ids.add(cu_id)
+            cu_name = str(cu.get("name") or cu.get("email") or "Staff").replace("'", "").replace('"', "").replace("&", "")
+            if " " in cu_name:
+                cu_name = cu_name.split()[0]
+            cu_name = cu_name[:12]
+            pos_salesman_options += f'<option value="{cu_id}" data-name="{cu_name}">{cu_name}</option>'
+    
     pos_css = '''
     <style>
     :root {
@@ -48687,6 +48700,11 @@ def pos_page():
         
         const total = items.reduce((sum, item) => sum + item.total, 0);
         
+        // Get salesman from quick quote modal
+        const salesmanSel = document.getElementById('quickQuoteSalesman');
+        const salesmanId = salesmanSel ? salesmanSel.value : currentCashierId;
+        const salesmanName = salesmanSel ? (salesmanSel.options[salesmanSel.selectedIndex]?.dataset?.name || '') : currentCashierName;
+        
         try {
             const response = await fetch('/api/pos/quote', {
                 method: 'POST',
@@ -48695,7 +48713,11 @@ def pos_page():
                     items: items,
                     customer_id: customerId,
                     customer_name: customerName,
-                    total: total
+                    total: total,
+                    cashier_id: currentCashierId,
+                    cashier_name: currentCashierName,
+                    salesman_id: salesmanId,
+                    salesman_name: salesmanName
                 })
             });
             
@@ -49400,6 +49422,13 @@ def pos_page():
                     <input type="text" id="quickCustAddress" placeholder="Street, City, Code" 
                         style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(255,255,255,0.2);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
                 </div>
+            </div>
+            
+            <div style="margin-bottom:20px;">
+                <label style="display:block;margin-bottom:8px;color:white;font-size:16px;font-weight:bold;">🧑‍💼 Salesman</label>
+                <select id="quickQuoteSalesman" style="width:100%;padding:12px;border-radius:8px;border:2px solid rgba(16,185,129,0.3);background:#1a1a2e;color:white;font-size:16px;box-sizing:border-box;">
+                    {pos_salesman_options}
+                </select>
             </div>
             
             <div style="display:flex;gap:15px;">
