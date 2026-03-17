@@ -939,6 +939,7 @@ function renderHistory() {{
     @login_required
     def api_cashup_save():
         """Save a cash up record (x-reading, blind cash up, z-reading)"""
+        from flask import request, jsonify
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
