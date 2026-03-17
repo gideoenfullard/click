@@ -51218,6 +51218,7 @@ def api_pos_quote():
         customer_id = data.get("customer_id", "")
         customer_name = data.get("customer_name", "")
         cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
+        cashier_display = data.get("cashier_name") or (user.get("name", "") if user else "")
         
         # DEBUG LOG
         logger.info(f"[POS QUOTE] Received customer_id: '{customer_id}' name: '{customer_name}'")
@@ -51261,7 +51262,8 @@ def api_pos_quote():
             vat=float(vat),
             total=float(total),
             status="draft",
-            created_by=cashier_id
+            created_by=cashier_id,
+            created_by_name=cashier_display
         )
         quote_id = quote["id"]
         
