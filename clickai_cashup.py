@@ -1,20 +1,17 @@
 """
 ClickAI Cash Up Module
 =======================
-Complete till reconciliation system.
+Blind Cash Up, X-Reading, Z-Reading
+Built as separate module per dev rules.
+Import with try/except in clickai.py
 
-Flow:
-1. Isaac (cashier) does BLIND CASH UP — counts cash by denomination, declares card/account
-   → System does NOT show expected amounts until after submission
-   → Prints a slip
-   → Saved to cash_ups table
-
-2. Daphne (manager) views HISTORY — sees all blind cashups
-   → Compares declared vs system amounts
-   → Can approve/flag discrepancies
-   → Does Z-READING to close the day (locks the day)
-
-3. X-READING — mid-day snapshot (non-destructive, anyone can do)
+Features:
+- X-Reading: Mid-day cash monitoring (non-destructive)
+- Blind Cash Up: Cashier declares amounts BEFORE seeing system totals
+- Z-Reading: End of day close with full reconciliation
+- Float tracking
+- Discrepancy reporting
+- Manager review/approval
 
 DB Table: cash_ups
 """
@@ -30,537 +27,901 @@ logger = logging.getLogger("clickai")
 def register_cashup_routes(app, db, login_required, Auth, generate_id, now, today, render_page=None):
     """Register all cash up routes on the Flask app"""
 
-    # Helper to get render_page from clickai at runtime
-    def _render(title, content, user, active="cashup"):
-        try:
-            import clickai as _ck
-            return _ck.render_page(title, content, user, active)
-        except:
-            return f"<html><body>{content}</body></html>"
-
-    def _money(amt):
-        try:
-            return f"R{float(amt):,.2f}"
-        except:
-            return f"R{amt}"
-
-    def _get_sales_breakdown(biz_id, for_date=None):
-        """Get sales breakdown by payment method for a date"""
-        d = for_date or today()
-        sales = db.get("sales", {"business_id": biz_id}) or []
-        # Filter by date — check both date field and created_at
-        day_sales = [s for s in sales if s.get("date") == d or (s.get("created_at") or "")[:10] == d]
-        # Exclude sales already closed by a Z-reading (so counters start fresh after Z-read)
-        day_sales = [s for s in day_sales if not s.get("z_closed")]
-
-        cash_total = sum(float(s.get("total", 0) or 0) for s in day_sales if s.get("payment_method") == "cash")
-        card_total = sum(float(s.get("total", 0) or 0) for s in day_sales if s.get("payment_method") == "card")
-        acc_total = sum(float(s.get("total", 0) or 0) for s in day_sales if s.get("payment_method") == "account")
-        count = len(day_sales)
-
-        # Per-cashier breakdown
-        cashiers = {}
-        for s in day_sales:
-            cid = s.get("created_by") or "unknown"
-            if cid not in cashiers:
-                cashiers[cid] = {"name": "", "cash": 0, "card": 0, "account": 0, "count": 0}
-            pm = s.get("payment_method", "cash")
-            cashiers[cid][pm] = cashiers[cid].get(pm, 0) + float(s.get("total", 0) or 0)
-            cashiers[cid]["count"] += 1
-            # Try to get cashier name
-            cn = s.get("cashier_name", "")
-            if not cn:
-                notes = s.get("notes", "")
-                if "Cashier:" in notes:
-                    cn = notes.split("Cashier:")[-1].strip()
-            if cn:
-                cashiers[cid]["name"] = cn
-
-        return {
-            "cash": round(cash_total, 2),
-            "card": round(card_total, 2),
-            "account": round(acc_total, 2),
-            "total": round(cash_total + card_total + acc_total, 2),
-            "count": count,
-            "cashiers": cashiers
-        }
-
     # ═══════════════════════════════════════════════════════════════
-    # MAIN CASHUP PAGE
+    # CASH UP PAGE
     # ═══════════════════════════════════════════════════════════════
     @app.route("/cashup")
     @login_required
     def cashup_page():
-        """Cash Up — Blind Cash Up, History, Z-Read"""
+        """Cash Up / Till Reconciliation page"""
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
-        biz_name = business.get("name", "Business") if business else "Business"
-        user_name = user.get("name", "") if user else ""
-        user_role = "owner"
+        user_role = user.get("role", "owner") if user else "owner"
+        _theme = app.config.get("DEFAULT_THEME", "midnight")
         try:
-            import clickai as _ck
-            user_role = _ck.get_user_role()
+            from flask import request as req
+            _theme = req.cookies.get("clickai_theme", _theme)
         except:
-            user_role = user.get("role", "owner") if user else "owner"
-        is_manager = user_role in ("owner", "admin", "manager")
+            pass
 
-        from flask import request as req
-        view_date = req.args.get("date", today())
-        tab = req.args.get("tab", "blind")
+        # Get today's sales breakdown
+        sales = db.get("sales", {"business_id": biz_id, "date": today()}) if biz_id else []
+        sales = sales or []
 
-        breakdown = _get_sales_breakdown(biz_id, view_date)
+        total_cash = sum(float(s.get("total", 0) or 0) for s in sales if s.get("payment_method") == "cash")
+        total_card = sum(float(s.get("total", 0) or 0) for s in sales if s.get("payment_method") == "card")
+        total_account = sum(float(s.get("total", 0) or 0) for s in sales if s.get("payment_method") == "account")
+        total_sales = total_cash + total_card + total_account
+        sale_count = len(sales)
 
-        # Get existing cashups for this date
-        all_cashups = db.get("cash_ups", {"business_id": biz_id}) or []
-        day_cashups = [c for c in all_cashups if c.get("date") == view_date]
-        day_cashups = sorted(day_cashups, key=lambda x: x.get("created_at", ""), reverse=True)
+        # Get cashiers who made sales today
+        cashier_sales = {}
+        for s in sales:
+            cid = s.get("created_by") or "unknown"
+            cname = s.get("customer_name", "").split(" - ")[-1] if " - " in s.get("customer_name", "") else ""
+            # Try to get cashier name from notes
+            notes = s.get("notes", "")
+            if "Cashier:" in notes:
+                cname = notes.split("Cashier:")[-1].strip()
+            if cid not in cashier_sales:
+                cashier_sales[cid] = {"name": cname or cid[:8], "cash": 0, "card": 0, "account": 0, "count": 0}
+            pm = s.get("payment_method", "cash")
+            amt = float(s.get("total", 0) or 0)
+            cashier_sales[cid][pm] = cashier_sales[cid].get(pm, 0) + amt
+            cashier_sales[cid]["count"] += 1
 
-        # Check if day is closed (Z-Read done)
-        z_reads = [c for c in day_cashups if c.get("type") == "z_reading"]
-        day_closed = len(z_reads) > 0
+        # Get previous cash ups for today
+        cash_ups = db.get("cash_ups", {"business_id": biz_id, "date": today()}) if biz_id else []
+        cash_ups = cash_ups or []
 
-        # Build history rows
-        history_html = ""
-        for cu in day_cashups:
-            cu_type = cu.get("type", "?")
-            type_badge = {"blind_cashup": "🔒 Blind", "x_reading": "📊 X-Read", "z_reading": "🔐 Z-Read"}.get(cu_type, cu_type)
-            type_color = {"blind_cashup": "#3b82f6", "x_reading": "#f59e0b", "z_reading": "#10b981"}.get(cu_type, "#888")
-            cu_time = (cu.get("created_at") or "")[-8:-3] if len(cu.get("created_at", "")) > 8 else ""
-            cashier = cu.get("cashier_name") or cu.get("created_by_name") or "—"
-            declared = float(cu.get("declared_total", 0) or cu.get("system_total", 0) or 0)
-            system = float(cu.get("system_total", 0) or 0)
-            disc = float(cu.get("total_discrepancy", 0) or 0)
-            disc_color = "#10b981" if abs(disc) < 1 else "#ef4444" if disc < 0 else "#f59e0b"
-            status = cu.get("status", "pending")
-            status_badge = {"approved": "✅", "flagged": "🚩", "pending": "⏳"}.get(status, "")
-
-            history_html += f'''
-            <tr onclick="showDetail('{cu.get("id")}')" style="cursor:pointer;">
-                <td style="padding:10px 8px;"><span style="font-size:12px;color:var(--text-muted);">{cu_time}</span></td>
-                <td style="padding:10px 8px;"><span style="background:{type_color}22;color:{type_color};padding:3px 10px;border-radius:6px;font-size:12px;font-weight:600;">{type_badge}</span></td>
-                <td style="padding:10px 8px;font-size:13px;">{cashier}</td>
-                <td style="padding:10px 8px;text-align:right;font-weight:600;">{_money(declared)}</td>
-                <td style="padding:10px 8px;text-align:right;font-weight:600;">{_money(system)}</td>
-                <td style="padding:10px 8px;text-align:right;font-weight:700;color:{disc_color};">{_money(disc)}</td>
-                <td style="padding:10px 8px;text-align:center;">{status_badge}</td>
-            </tr>'''
-
-        # SA Rand denominations
-        denoms = [
-            ("R200", 200), ("R100", 100), ("R50", 50), ("R20", 20), ("R10", 10),
-            ("R5", 5), ("R2", 2), ("R1", 1), ("50c", 0.50), ("20c", 0.20), ("10c", 0.10)
-        ]
-
-        denom_rows = ""
-        for label, val in denoms:
-            denom_rows += f'''
-            <tr>
-                <td style="padding:6px 10px;font-weight:600;font-size:14px;">{label}</td>
-                <td style="padding:6px 10px;text-align:center;">
-                    <input type="number" id="d_{label.replace('.','')}" min="0" value="0" 
-                           style="width:70px;text-align:center;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:14px;"
-                           oninput="calcDenoms()">
-                </td>
-                <td style="padding:6px 10px;text-align:right;font-weight:600;" id="dt_{label.replace('.','')}">{_money(0)}</td>
-            </tr>'''
-
-        # Team members for cashier dropdown
+        # Get team members for dropdown
         team = []
         try:
             team = db.get_business_users(biz_id) if biz_id else []
             team = team or []
         except:
             pass
-        cashier_opts = "".join([f'<option value="{t.get("id","")}">{t.get("name", t.get("email",""))}</option>' for t in team])
 
-        closed_banner = ""
-        if day_closed:
-            z = z_reads[0]
-            closed_banner = f'''
-            <div style="background:rgba(16,185,129,0.15);border:1px solid #10b981;border-radius:8px;padding:15px;margin-bottom:15px;display:flex;align-items:center;gap:10px;">
-                <span style="font-size:24px;">🔐</span>
-                <div>
-                    <strong style="color:#10b981;">Day Closed</strong>
-                    <div style="font-size:12px;color:var(--text-muted);">Z-Reading done at {(z.get("created_at") or "")[-8:-3]} by {z.get("created_by_name", "manager")}</div>
-                </div>
-            </div>'''
+        cashiers_json = json.dumps(list(cashier_sales.values()), default=str)
+        cashups_json = json.dumps(cash_ups, default=str)
+        team_json = json.dumps([{"id": t.get("id", ""), "name": t.get("name", t.get("email", ""))} for t in team], default=str)
 
-        _approve_btns_html = ('<button onclick="approveCashup()" class="btn btn-primary" style="padding:8px 16px;">✅ Approve</button>'
-                              '<button onclick="flagCashup()" class="btn btn-secondary" style="padding:8px 16px;">🚩 Flag</button>') if is_manager else ''
-        _is_manager_js = "true" if is_manager else "false"
+        is_manager = user_role in ("owner", "admin", "manager")
 
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px;">
-            <h2 style="margin:0;">💰 Cash Up</h2>
-            <div style="display:flex;gap:8px;align-items:center;">
-                <input type="date" id="cuDate" value="{view_date}" onchange="window.location='/cashup?date='+this.value+'&tab={tab}'" class="form-input" style="width:auto;">
-                {'<span style="font-weight:700;">' + _money(breakdown["total"]) + ' (' + str(breakdown["count"]) + ' sales)</span>' if is_manager and tab != 'blind' else '<span style="font-weight:700;">' + str(breakdown["count"]) + ' sales today</span>'}
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cash Up - ClickAI</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {{
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a25;
+    --border: #2a2a3a;
+    --text: #e0e0e8;
+    --text-dim: #888;
+    --accent: #00d4ff;
+    --accent-glow: rgba(0, 212, 255, 0.15);
+    --green: #00ff88;
+    --green-glow: rgba(0, 255, 136, 0.15);
+    --red: #ff4466;
+    --red-glow: rgba(255, 68, 102, 0.15);
+    --orange: #ffaa00;
+    --orange-glow: rgba(255, 170, 0, 0.15);
+}}
+
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+}}
+
+/* ─── TOP NAV ─── */
+.top-bar {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}}
+.top-bar h1 {{
+    font-family: 'Orbitron', monospace;
+    font-size: 1.1rem;
+    color: var(--accent);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+}}
+.top-bar .back-btn {{
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.9rem;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    transition: all 0.2s;
+}}
+.top-bar .back-btn:hover {{ color: var(--accent); border-color: var(--accent); }}
+
+/* ─── STATS ROW ─── */
+.stats-row {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    padding: 16px 20px;
+}}
+.stat-card {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}}
+.stat-card::before {{
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+}}
+.stat-card.cash::before {{ background: var(--green); }}
+.stat-card.card::before {{ background: var(--orange); }}
+.stat-card.account::before {{ background: var(--accent); }}
+.stat-label {{
+    font-size: 0.7rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-family: 'Orbitron', monospace;
+    margin-bottom: 6px;
+}}
+.stat-value {{
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-family: 'Orbitron', monospace;
+}}
+.stat-card.cash .stat-value {{ color: var(--green); }}
+.stat-card.card .stat-value {{ color: var(--orange); }}
+.stat-card.account .stat-value {{ color: var(--accent); }}
+.stat-card.total .stat-value {{ color: var(--text); }}
+.stat-sub {{
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+}}
+
+/* ─── MAIN CONTENT ─── */
+.main {{
+    padding: 0 20px 100px 20px;
+    max-width: 800px;
+    margin: 0 auto;
+}}
+
+/* ─── ACTION BUTTONS ─── */
+.actions {{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 16px 0;
+}}
+.action-btn {{
+    padding: 18px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}}
+.action-btn:hover {{
+    border-color: var(--accent);
+    background: var(--accent-glow);
+}}
+.action-btn .btn-icon {{
+    font-size: 1.8rem;
+    display: block;
+    margin-bottom: 6px;
+}}
+.action-btn .btn-label {{
+    font-family: 'Orbitron', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}}
+.action-btn.primary {{
+    border-color: var(--green);
+    background: var(--green-glow);
+}}
+.action-btn.primary:hover {{
+    background: rgba(0, 255, 136, 0.25);
+    box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);
+}}
+
+/* ─── PANELS ─── */
+.panel {{
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin: 16px 0;
+    animation: slideIn 0.3s ease;
+}}
+.panel.active {{ display: block; }}
+@keyframes slideIn {{
+    from {{ opacity: 0; transform: translateY(10px); }}
+    to {{ opacity: 1; transform: translateY(0); }}
+}}
+.panel-title {{
+    font-family: 'Orbitron', monospace;
+    font-size: 0.8rem;
+    letter-spacing: 3px;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}}
+
+/* ─── FORM ELEMENTS ─── */
+.form-group {{
+    margin-bottom: 14px;
+}}
+.form-group label {{
+    display: block;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    font-weight: 600;
+}}
+.form-input {{
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 1.1rem;
+    font-weight: 600;
+    transition: border-color 0.2s;
+}}
+.form-input:focus {{
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}}
+.form-input::placeholder {{ color: #555; }}
+select.form-input {{
+    appearance: none;
+    cursor: pointer;
+}}
+
+/* ─── DENOMINATION GRID ─── */
+.denom-grid {{
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 8px;
+    align-items: center;
+}}
+.denom-label {{
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--text-dim);
+    min-width: 70px;
+}}
+.denom-label.note {{ color: var(--green); }}
+.denom-label.coin {{ color: var(--orange); }}
+.denom-input {{
+    width: 80px;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+}}
+.denom-input:focus {{
+    outline: none;
+    border-color: var(--accent);
+}}
+.denom-total {{
+    font-family: 'Orbitron', monospace;
+    font-size: 0.85rem;
+    color: var(--text);
+    min-width: 90px;
+    text-align: right;
+}}
+
+/* ─── RESULT BOX ─── */
+.result-box {{
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 16px;
+}}
+.result-row {{
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    font-size: 0.95rem;
+}}
+.result-row:last-child {{ border-bottom: none; }}
+.result-row .rl {{ color: var(--text-dim); }}
+.result-row .rv {{ font-weight: 700; font-family: 'Orbitron', monospace; font-size: 0.85rem; }}
+.result-row.total {{ border-top: 2px solid var(--border); padding-top: 12px; margin-top: 4px; }}
+.result-row.total .rv {{ font-size: 1.1rem; }}
+.result-row.over .rv {{ color: var(--green); }}
+.result-row.short .rv {{ color: var(--red); }}
+.result-row.match .rv {{ color: var(--green); }}
+
+/* ─── SUBMIT BTN ─── */
+.submit-btn {{
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 6px;
+    font-family: 'Orbitron', monospace;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 16px;
+}}
+.submit-btn.green {{
+    background: var(--green);
+    color: #000;
+}}
+.submit-btn.green:hover {{ box-shadow: 0 0 20px rgba(0, 255, 136, 0.3); }}
+.submit-btn.blue {{
+    background: var(--accent);
+    color: #000;
+}}
+.submit-btn.blue:hover {{ box-shadow: 0 0 20px rgba(0, 212, 255, 0.3); }}
+
+/* ─── HISTORY ─── */
+.history-item {{
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 10px;
+}}
+.history-header {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}}
+.history-type {{
+    font-family: 'Orbitron', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 2px;
+    padding: 3px 10px;
+    border-radius: 3px;
+    text-transform: uppercase;
+}}
+.history-type.xread {{ background: var(--accent-glow); color: var(--accent); }}
+.history-type.blind {{ background: var(--green-glow); color: var(--green); }}
+.history-type.zread {{ background: var(--orange-glow); color: var(--orange); }}
+.history-time {{ font-size: 0.85rem; color: var(--text-dim); }}
+.history-detail {{ font-size: 0.9rem; color: var(--text-dim); }}
+.history-detail span {{ color: var(--text); font-weight: 600; }}
+.disc-over {{ color: var(--green) !important; }}
+.disc-short {{ color: var(--red) !important; }}
+.disc-match {{ color: var(--green) !important; }}
+
+/* ─── HIDDEN TOTALS (for blind cash up) ─── */
+.system-reveal {{
+    display: none;
+    animation: revealSlide 0.5s ease;
+}}
+.system-reveal.show {{ display: block; }}
+@keyframes revealSlide {{
+    from {{ opacity: 0; transform: scale(0.95); }}
+    to {{ opacity: 1; transform: scale(1); }}
+}}
+
+.empty-state {{
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-dim);
+}}
+.empty-state .icon {{ font-size: 2.5rem; margin-bottom: 10px; }}
+
+@media (max-width: 480px) {{
+    .stats-row {{ grid-template-columns: repeat(2, 1fr); }}
+    .actions {{ grid-template-columns: 1fr; }}
+}}
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+    <a href="/pos" class="back-btn">&larr; POS</a>
+    <h1>Cash Up</h1>
+    <a href="/" class="back-btn">Dashboard</a>
+</div>
+
+<!-- ═══ SYSTEM STATS (visible to managers, hidden during blind cash up) ═══ -->
+<div class="stats-row" id="statsRow">
+    <div class="stat-card cash">
+        <div class="stat-label">Cash</div>
+        <div class="stat-value" id="sysCash">R{total_cash:,.2f}</div>
+        <div class="stat-sub">{sum(1 for s in sales if s.get('payment_method')=='cash')} sales</div>
+    </div>
+    <div class="stat-card card">
+        <div class="stat-label">Card</div>
+        <div class="stat-value" id="sysCard">R{total_card:,.2f}</div>
+        <div class="stat-sub">{sum(1 for s in sales if s.get('payment_method')=='card')} sales</div>
+    </div>
+    <div class="stat-card account">
+        <div class="stat-label">Account</div>
+        <div class="stat-value" id="sysAccount">R{total_account:,.2f}</div>
+        <div class="stat-sub">{sum(1 for s in sales if s.get('payment_method')=='account')} sales</div>
+    </div>
+    <div class="stat-card total">
+        <div class="stat-label">Total</div>
+        <div class="stat-value">R{total_sales:,.2f}</div>
+        <div class="stat-sub">{sale_count} sales today</div>
+    </div>
+</div>
+
+<div class="main">
+
+    <!-- ═══ ACTION BUTTONS ═══ -->
+    <div class="actions">
+        <button class="action-btn" onclick="showPanel('xread')">
+            <span class="btn-icon">📊</span>
+            <span class="btn-label">X-Reading</span>
+        </button>
+        <button class="action-btn primary" onclick="showPanel('blind')">
+            <span class="btn-icon">🔒</span>
+            <span class="btn-label">Blind Cash Up</span>
+        </button>
+    </div>
+
+    <!-- ═══ X-READING PANEL ═══ -->
+    <div class="panel" id="panel-xread">
+        <div class="panel-title">X-Reading — Mid-Day Check</div>
+        <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">
+            Non-destructive reading. Check current till status without closing the shift.
+        </p>
+        <div class="result-box">
+            <div class="result-row">
+                <span class="rl">Cash Sales</span>
+                <span class="rv" style="color:var(--green)">R{total_cash:,.2f}</span>
+            </div>
+            <div class="result-row">
+                <span class="rl">Card Sales</span>
+                <span class="rv" style="color:var(--orange)">R{total_card:,.2f}</span>
+            </div>
+            <div class="result-row">
+                <span class="rl">Account Sales</span>
+                <span class="rv" style="color:var(--accent)">R{total_account:,.2f}</span>
+            </div>
+            <div class="result-row total">
+                <span class="rl">Total Sales</span>
+                <span class="rv">R{total_sales:,.2f}</span>
+            </div>
+            <div class="result-row">
+                <span class="rl">Transactions</span>
+                <span class="rv">{sale_count}</span>
+            </div>
+        </div>
+        <button class="submit-btn blue" onclick="saveXReading()">Save X-Reading</button>
+    </div>
+
+    <!-- ═══ BLIND CASH UP PANEL ═══ -->
+    <div class="panel" id="panel-blind">
+        <div class="panel-title">🔒 Blind Cash Up</div>
+        <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">
+            Count your cash, card slips, and vouchers. Enter totals below.<br>
+            System totals are <strong style="color:var(--red)">hidden</strong> until you submit.
+        </p>
+
+        <div class="form-group">
+            <label>Cashier / Till Operator</label>
+            <select class="form-input" id="blindCashier">
+                <option value="">— Select —</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Float Amount (start of day)</label>
+            <input type="number" class="form-input" id="blindFloat" placeholder="e.g. 500.00" step="0.01" value="0">
+        </div>
+
+        <h3 style="font-family:'Orbitron',monospace; font-size:0.7rem; letter-spacing:2px; color:var(--green); margin: 18px 0 12px; text-transform:uppercase;">
+            Cash Denomination Count
+        </h3>
+        <div class="denom-grid" id="denomGrid">
+            <!-- Filled by JS -->
+        </div>
+        <div class="result-box" style="margin-top:12px;">
+            <div class="result-row total">
+                <span class="rl">Total Cash Counted</span>
+                <span class="rv" id="totalCashCounted" style="color:var(--green)">R0.00</span>
             </div>
         </div>
 
-        {closed_banner}
-
-        <!-- TABS -->
-        <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:2px solid var(--border);">
-            <a href="/cashup?date={view_date}&tab=blind" style="padding:10px 20px;font-weight:600;font-size:14px;text-decoration:none;border-bottom:3px solid {'var(--primary)' if tab == 'blind' else 'transparent'};color:{'var(--primary)' if tab == 'blind' else 'var(--text-muted)'};">🔒 Blind Cash Up</a>
-            <a href="/cashup?date={view_date}&tab=history" style="padding:10px 20px;font-weight:600;font-size:14px;text-decoration:none;border-bottom:3px solid {'var(--primary)' if tab == 'history' else 'transparent'};color:{'var(--primary)' if tab == 'history' else 'var(--text-muted)'};">📋 History ({len(day_cashups)})</a>
-            {'<a href="/cashup?date=' + view_date + '&tab=zread" style="padding:10px 20px;font-weight:600;font-size:14px;text-decoration:none;border-bottom:3px solid ' + ("var(--primary)" if tab == "zread" else "transparent") + ';color:' + ("var(--primary)" if tab == "zread" else "var(--text-muted)") + ';">🔐 Close Day</a>' if is_manager else ''}
+        <div class="form-group" style="margin-top:16px;">
+            <label>Card Slips Total</label>
+            <input type="number" class="form-input" id="blindCard" placeholder="Total from card machine" step="0.01" value="0">
         </div>
 
-        <!-- BLIND CASH UP TAB -->
-        <div id="tabBlind" style="display:{'block' if tab == 'blind' else 'none'};">
-            <div class="card" style="margin-bottom:15px;">
-                <h3 style="margin:0 0 15px 0;">🔒 Blind Cash Up</h3>
-                <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">Count your cash by denomination. You will NOT see system totals until after submission.</p>
+        <div class="form-group">
+            <label>Account Sales / Vouchers</label>
+            <input type="number" class="form-input" id="blindAccount" placeholder="Account sales total" step="0.01" value="0">
+        </div>
 
-                <div style="margin-bottom:15px;">
-                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Cashier</label>
-                    <select id="cuCashier" class="form-input" style="width:100%;max-width:300px;">
-                        <option value="{user.get('id','')}">{user_name} (me)</option>
-                        {cashier_opts}
-                    </select>
-                </div>
-
-                <div style="margin-bottom:15px;">
-                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Float Amount (starting cash in till)</label>
-                    <input type="number" id="cuFloat" value="500" step="50" class="form-input" style="width:150px;">
-                </div>
-
-                <h4 style="margin:20px 0 10px;">💵 Cash Denomination Count</h4>
-                <table style="width:100%;max-width:400px;border-collapse:collapse;">
-                    <thead><tr style="border-bottom:2px solid var(--border);">
-                        <th style="text-align:left;padding:6px 10px;font-size:11px;color:var(--text-muted);">NOTE/COIN</th>
-                        <th style="text-align:center;padding:6px 10px;font-size:11px;color:var(--text-muted);">COUNT</th>
-                        <th style="text-align:right;padding:6px 10px;font-size:11px;color:var(--text-muted);">TOTAL</th>
-                    </tr></thead>
-                    <tbody>{denom_rows}</tbody>
-                    <tfoot><tr style="border-top:2px solid var(--border);">
-                        <td colspan="2" style="padding:10px;font-weight:700;font-size:16px;">CASH COUNTED</td>
-                        <td style="padding:10px;text-align:right;font-weight:700;font-size:18px;color:var(--primary);" id="cashCountedTotal">{_money(0)}</td>
-                    </tr></tfoot>
-                </table>
-
-                <h4 style="margin:20px 0 10px;">💳 Other Declarations</h4>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:400px;">
-                    <div>
-                        <label style="font-size:12px;color:var(--text-muted);">Card Total</label>
-                        <input type="number" id="cuCard" value="0" step="0.01" class="form-input" style="width:100%;">
-                    </div>
-                    <div>
-                        <label style="font-size:12px;color:var(--text-muted);">Account Total</label>
-                        <input type="number" id="cuAccount" value="0" step="0.01" class="form-input" style="width:100%;">
-                    </div>
-                </div>
-
-                <div style="margin-top:20px;padding:15px;background:rgba(99,102,241,0.08);border-radius:8px;">
-                    <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700;">
-                        <span>DECLARED TOTAL:</span>
-                        <span id="declaredTotal">{_money(0)}</span>
-                    </div>
-                </div>
-
-                <button onclick="submitBlindCashup()" class="btn btn-primary" style="margin-top:15px;padding:12px 30px;font-size:15px;"
-                    {'disabled style="opacity:0.5;margin-top:15px;padding:12px 30px;font-size:15px;"' if day_closed else ''}>
-                    ✅ Submit Blind Cash Up
-                </button>
+        <div class="result-box">
+            <div class="result-row total">
+                <span class="rl">Your Declared Total</span>
+                <span class="rv" id="declaredTotal" style="font-size:1.2rem;">R0.00</span>
             </div>
         </div>
 
-        <!-- HISTORY TAB -->
-        <div id="tabHistory" style="display:{'block' if tab == 'history' else 'none'};">
-            <div class="card" style="padding:0;overflow-x:auto;">
-                <table style="width:100%;border-collapse:collapse;">
-                    <thead><tr style="border-bottom:2px solid var(--border);">
-                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);">TIME</th>
-                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);">TYPE</th>
-                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);">CASHIER</th>
-                        <th style="padding:10px 8px;text-align:right;font-size:11px;color:var(--text-muted);">DECLARED</th>
-                        <th style="padding:10px 8px;text-align:right;font-size:11px;color:var(--text-muted);">SYSTEM</th>
-                        <th style="padding:10px 8px;text-align:right;font-size:11px;color:var(--text-muted);">DIFF</th>
-                        <th style="padding:10px 8px;text-align:center;font-size:11px;color:var(--text-muted);">STATUS</th>
-                    </tr></thead>
-                    <tbody>
-                        {history_html or '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);">No cash ups for this date</td></tr>'}
-                    </tbody>
-                </table>
-            </div>
+        <button class="submit-btn green" onclick="submitBlindCashUp()">Submit & Reveal</button>
 
-            <!-- Detail panel (shown when row clicked) -->
-            <div id="detailPanel" class="card" style="display:none;margin-top:15px;"></div>
-        </div>
-
-        <!-- Z-READ / CLOSE DAY TAB (manager only) -->
-        <div id="tabZread" style="display:{'block' if tab == 'zread' else 'none'};">
-            <div class="card">
-                <h3 style="margin:0 0 15px;">🔐 Close Day — Z-Reading</h3>
-                {f'<p style="color:#10b981;font-weight:600;">✅ This day is already closed.</p>' if day_closed else f"""
-                <p style="color:var(--text-muted);font-size:13px;margin-bottom:15px;">
-                    This locks the day. No more blind cashups can be submitted after this.<br>
-                    Make sure all cashiers have done their blind cashup first.
-                </p>
-
-                <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:15px;">
-                    <h4 style="margin:0 0 10px;">📊 Day Summary — {view_date}</h4>
-                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin-bottom:15px;">
-                        <div style="text-align:center;padding:15px;background:rgba(16,185,129,0.08);border-radius:8px;">
-                            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Cash Sales</div>
-                            <div style="font-size:20px;font-weight:700;">{_money(breakdown["cash"])}</div>
-                        </div>
-                        <div style="text-align:center;padding:15px;background:rgba(59,130,246,0.08);border-radius:8px;">
-                            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Card Sales</div>
-                            <div style="font-size:20px;font-weight:700;">{_money(breakdown["card"])}</div>
-                        </div>
-                        <div style="text-align:center;padding:15px;background:rgba(245,158,11,0.08);border-radius:8px;">
-                            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Account Sales</div>
-                            <div style="font-size:20px;font-weight:700;">{_money(breakdown["account"])}</div>
-                        </div>
-                    </div>
-                    <div style="text-align:center;padding:10px;font-size:18px;font-weight:700;border-top:2px solid var(--border);">
-                        TOTAL: {_money(breakdown["total"])} &nbsp;•&nbsp; {breakdown["count"]} transactions
-                    </div>
-
-                    <div style="margin-top:15px;">
-                        <strong style="font-size:13px;">Blind Cashups Done:</strong>
-                        <span style="font-weight:700;">{len([c for c in day_cashups if c.get("type") == "blind_cashup"])}</span>
-                    </div>
-                </div>
-
-                <div style="margin-bottom:15px;">
-                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Manager Notes (optional)</label>
-                    <textarea id="zNotes" class="form-input" rows="3" style="width:100%;" placeholder="Any notes about today..."></textarea>
-                </div>
-
-                <button onclick="closeDay()" class="btn btn-primary" style="padding:12px 30px;font-size:15px;background:#10b981;">
-                    🔐 Close Day (Z-Reading)
-                </button>
-                """}
+        <!-- ═══ SYSTEM REVEAL (shown after submit) ═══ -->
+        <div class="system-reveal" id="systemReveal">
+            <h3 style="font-family:'Orbitron',monospace; font-size:0.75rem; letter-spacing:3px; color:var(--accent); margin: 20px 0 12px; text-transform:uppercase; text-align:center;">
+                ⚡ System Comparison
+            </h3>
+            <div class="result-box" id="revealBox">
+                <!-- Filled by JS after submit -->
             </div>
         </div>
+    </div>
 
-        <script>
-        const denoms = {json.dumps([[label, val] for label, val in denoms])};
-        const systemBreakdown = {json.dumps(breakdown)};
+    <!-- ═══ TODAY'S HISTORY ═══ -->
+    <h3 style="font-family:'Orbitron',monospace; font-size:0.7rem; letter-spacing:2px; color:var(--text-dim); margin: 24px 0 12px; text-transform:uppercase;">
+        Today's Cash Ups
+    </h3>
+    <div id="historyList">
+        <div class="empty-state" id="emptyHistory">
+            <div class="icon">🧾</div>
+            <div>No cash ups recorded today</div>
+        </div>
+    </div>
 
-        function calcDenoms() {{
-            let cashTotal = 0;
-            denoms.forEach(([label, val]) => {{
-                const id = label.replace('.','');
-                const count = parseInt(document.getElementById('d_' + id).value) || 0;
-                const lineTotal = count * val;
-                document.getElementById('dt_' + id).textContent = 'R' + lineTotal.toFixed(2);
-                cashTotal += lineTotal;
-            }});
-            document.getElementById('cashCountedTotal').textContent = 'R' + cashTotal.toFixed(2);
-            updateDeclaredTotal();
+</div>
+
+<script>
+// ═══ DATA ═══
+const SYS_CASH = {total_cash};
+const SYS_CARD = {total_card};
+const SYS_ACCOUNT = {total_account};
+const SYS_TOTAL = {total_sales};
+const SALE_COUNT = {sale_count};
+const IS_MANAGER = {'true' if is_manager else 'false'};
+const TEAM = {team_json};
+const HISTORY = {cashups_json};
+
+// SA denominations
+const DENOMINATIONS = [
+    {{ label: 'R200', value: 200, type: 'note' }},
+    {{ label: 'R100', value: 100, type: 'note' }},
+    {{ label: 'R50', value: 50, type: 'note' }},
+    {{ label: 'R20', value: 20, type: 'note' }},
+    {{ label: 'R10', value: 10, type: 'note' }},
+    {{ label: 'R5', value: 5, type: 'coin' }},
+    {{ label: 'R2', value: 2, type: 'coin' }},
+    {{ label: 'R1', value: 1, type: 'coin' }},
+    {{ label: '50c', value: 0.50, type: 'coin' }},
+    {{ label: '20c', value: 0.20, type: 'coin' }},
+    {{ label: '10c', value: 0.10, type: 'coin' }},
+];
+
+// ═══ INIT ═══
+document.addEventListener('DOMContentLoaded', () => {{
+    buildDenomGrid();
+    buildTeamDropdown();
+    renderHistory();
+
+    // Hide stats during blind cash up for non-managers
+    if (!IS_MANAGER) {{
+        document.getElementById('statsRow').style.display = 'none';
+    }}
+}});
+
+function buildDenomGrid() {{
+    const grid = document.getElementById('denomGrid');
+    grid.innerHTML = DENOMINATIONS.map((d, i) => `
+        <div class="denom-label ${{d.type}}">${{d.label}}</div>
+        <input type="number" class="denom-input" id="denom_${{i}}" 
+               data-value="${{d.value}}" placeholder="0" min="0"
+               oninput="updateCashTotal()">
+        <div class="denom-total" id="denomTotal_${{i}}">R0.00</div>
+    `).join('');
+}}
+
+function buildTeamDropdown() {{
+    const sel = document.getElementById('blindCashier');
+    TEAM.forEach(t => {{
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        sel.appendChild(opt);
+    }});
+}}
+
+// ═══ PANELS ═══
+let activePanel = null;
+function showPanel(id) {{
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    const panel = document.getElementById('panel-' + id);
+    if (activePanel === id) {{
+        activePanel = null;
+        return;
+    }}
+    panel.classList.add('active');
+    activePanel = id;
+
+    // Hide system stats when blind cash up is active (for everyone)
+    if (id === 'blind') {{
+        document.getElementById('statsRow').style.display = 'none';
+    }} else {{
+        document.getElementById('statsRow').style.display = '';
+    }}
+}}
+
+// ═══ DENOMINATION COUNTING ═══
+function updateCashTotal() {{
+    let total = 0;
+    DENOMINATIONS.forEach((d, i) => {{
+        const qty = parseInt(document.getElementById('denom_' + i).value) || 0;
+        const lineTotal = qty * d.value;
+        document.getElementById('denomTotal_' + i).textContent = 'R' + lineTotal.toFixed(2);
+        total += lineTotal;
+    }});
+    document.getElementById('totalCashCounted').textContent = 'R' + total.toFixed(2);
+    updateDeclaredTotal();
+}}
+
+function updateDeclaredTotal() {{
+    const cash = getCashCounted();
+    const card = parseFloat(document.getElementById('blindCard').value) || 0;
+    const account = parseFloat(document.getElementById('blindAccount').value) || 0;
+    const floatAmt = parseFloat(document.getElementById('blindFloat').value) || 0;
+    const total = (cash - floatAmt) + card + account;
+    document.getElementById('declaredTotal').textContent = 'R' + total.toFixed(2);
+}}
+
+function getCashCounted() {{
+    let total = 0;
+    DENOMINATIONS.forEach((d, i) => {{
+        const qty = parseInt(document.getElementById('denom_' + i).value) || 0;
+        total += qty * d.value;
+    }});
+    return total;
+}}
+
+// Update declared total when card/account/float changes
+document.addEventListener('input', (e) => {{
+    if (['blindCard', 'blindAccount', 'blindFloat'].includes(e.target.id)) {{
+        updateDeclaredTotal();
+    }}
+}});
+
+// ═══ X-READING SAVE ═══
+async function saveXReading() {{
+    try {{
+        const resp = await fetch('/api/cashup/save', {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{
+                type: 'x_reading',
+                system_cash: SYS_CASH,
+                system_card: SYS_CARD,
+                system_account: SYS_ACCOUNT,
+                system_total: SYS_TOTAL,
+                sale_count: SALE_COUNT
+            }})
+        }});
+        const data = await resp.json();
+        if (data.success) {{
+            alert('X-Reading saved at ' + new Date().toLocaleTimeString());
+            location.reload();
+        }} else {{
+            alert('Error: ' + (data.error || 'Failed'));
         }}
+    }} catch(e) {{
+        alert('Error: ' + e.message);
+    }}
+}}
 
-        function updateDeclaredTotal() {{
-            const cashEl = document.getElementById('cashCountedTotal');
-            const cash = parseFloat(cashEl.textContent.replace('R','').replace(/,/g,'')) || 0;
-            const card = parseFloat(document.getElementById('cuCard').value) || 0;
-            const acc = parseFloat(document.getElementById('cuAccount').value) || 0;
-            document.getElementById('declaredTotal').textContent = 'R' + (cash + card + acc).toFixed(2);
-        }}
+// ═══ BLIND CASH UP ═══
+async function submitBlindCashUp() {{
+    const cashier = document.getElementById('blindCashier');
+    const cashierName = cashier.options[cashier.selectedIndex]?.text || '';
+    const cashierId = cashier.value;
+    const floatAmt = parseFloat(document.getElementById('blindFloat').value) || 0;
+    const cashCounted = getCashCounted();
+    const cardDeclared = parseFloat(document.getElementById('blindCard').value) || 0;
+    const accountDeclared = parseFloat(document.getElementById('blindAccount').value) || 0;
 
-        document.getElementById('cuCard').addEventListener('input', updateDeclaredTotal);
-        document.getElementById('cuAccount').addEventListener('input', updateDeclaredTotal);
+    // Cash sales = cash counted minus the float
+    const cashSalesDeclared = cashCounted - floatAmt;
+    const declaredTotal = cashSalesDeclared + cardDeclared + accountDeclared;
 
-        async function submitBlindCashup() {{
-            // Collect denominations
-            const denomData = {{}};
-            let cashCounted = 0;
-            denoms.forEach(([label, val]) => {{
-                const id = label.replace('.','');
-                const count = parseInt(document.getElementById('d_' + id).value) || 0;
-                denomData[label] = count;
-                cashCounted += count * val;
-            }});
+    // Calculate discrepancies
+    const cashDisc = cashSalesDeclared - SYS_CASH;
+    const cardDisc = cardDeclared - SYS_CARD;
+    const totalDisc = declaredTotal - (SYS_CASH + SYS_CARD + SYS_ACCOUNT);
 
-            const floatAmt = parseFloat(document.getElementById('cuFloat').value) || 0;
-            const cardDeclared = parseFloat(document.getElementById('cuCard').value) || 0;
-            const accDeclared = parseFloat(document.getElementById('cuAccount').value) || 0;
-            const cashDeclared = cashCounted - floatAmt;  // Cash sales = counted - float
-            const declaredTotal = cashDeclared + cardDeclared + accDeclared;
+    // Build denomination breakdown
+    const denomBreakdown = {{}};
+    DENOMINATIONS.forEach((d, i) => {{
+        const qty = parseInt(document.getElementById('denom_' + i).value) || 0;
+        if (qty > 0) denomBreakdown[d.label] = qty;
+    }});
 
-            const cashierSelect = document.getElementById('cuCashier');
-            const cashierName = cashierSelect.options[cashierSelect.selectedIndex].text;
-            const cashierId = cashierSelect.value;
+    // Show the reveal
+    const revealBox = document.getElementById('revealBox');
+    const discClass = (v) => v > 0.01 ? 'over' : v < -0.01 ? 'short' : 'match';
+    const discLabel = (v) => v > 0.01 ? '+R' + v.toFixed(2) + ' OVER' : v < -0.01 ? '-R' + Math.abs(v).toFixed(2) + ' SHORT' : 'EXACT MATCH ✓';
 
-            // System values (NOT shown to cashier before submit)
-            const sysCash = systemBreakdown.cash;
-            const sysCard = systemBreakdown.card;
-            const sysAcc = systemBreakdown.account;
-            const sysTotal = systemBreakdown.total;
+    revealBox.innerHTML = `
+        <div class="result-row">
+            <span class="rl">System Cash Sales</span>
+            <span class="rv" style="color:var(--green)">R${{SYS_CASH.toFixed(2)}}</span>
+        </div>
+        <div class="result-row">
+            <span class="rl">Your Cash Count (minus float)</span>
+            <span class="rv">R${{cashSalesDeclared.toFixed(2)}}</span>
+        </div>
+        <div class="result-row ${{discClass(cashDisc)}}">
+            <span class="rl">Cash Discrepancy</span>
+            <span class="rv">${{discLabel(cashDisc)}}</span>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
+        <div class="result-row">
+            <span class="rl">System Card Sales</span>
+            <span class="rv" style="color:var(--orange)">R${{SYS_CARD.toFixed(2)}}</span>
+        </div>
+        <div class="result-row">
+            <span class="rl">Your Card Slips</span>
+            <span class="rv">R${{cardDeclared.toFixed(2)}}</span>
+        </div>
+        <div class="result-row ${{discClass(cardDisc)}}">
+            <span class="rl">Card Discrepancy</span>
+            <span class="rv">${{discLabel(cardDisc)}}</span>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
+        <div class="result-row">
+            <span class="rl">System Account Sales</span>
+            <span class="rv" style="color:var(--accent)">R${{SYS_ACCOUNT.toFixed(2)}}</span>
+        </div>
+        <div class="result-row">
+            <span class="rl">Your Account/Vouchers</span>
+            <span class="rv">R${{accountDeclared.toFixed(2)}}</span>
+        </div>
+        <hr style="border:none;border-top:2px solid var(--border);margin:10px 0">
+        <div class="result-row total ${{discClass(totalDisc)}}">
+            <span class="rl" style="font-size:1rem;">TOTAL DISCREPANCY</span>
+            <span class="rv" style="font-size:1.2rem;">${{discLabel(totalDisc)}}</span>
+        </div>
+    `;
 
-            const payload = {{
-                type: "blind_cashup",
+    document.getElementById('systemReveal').classList.add('show');
+    document.getElementById('statsRow').style.display = '';
+
+    // Save to DB
+    try {{
+        const resp = await fetch('/api/cashup/save', {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{
+                type: 'blind_cashup',
                 cashier_id: cashierId,
-                cashier_name: cashierName.replace(' (me)',''),
+                cashier_name: cashierName,
                 float_amount: floatAmt,
                 cash_counted: cashCounted,
-                cash_declared: cashDeclared,
+                cash_declared: cashSalesDeclared,
                 card_declared: cardDeclared,
-                account_declared: accDeclared,
+                account_declared: accountDeclared,
                 declared_total: declaredTotal,
-                denominations: denomData,
-                system_cash: sysCash,
-                system_card: sysCard,
-                system_account: sysAcc,
-                system_total: sysTotal,
-                cash_discrepancy: round2(cashDeclared - sysCash),
-                card_discrepancy: round2(cardDeclared - sysCard),
-                total_discrepancy: round2(declaredTotal - sysTotal),
-                sale_count: systemBreakdown.count
-            }};
-
-            try {{
-                const r = await fetch('/api/cashup/save', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify(payload)
-                }});
-                const d = await r.json();
-                if (d.success) {{
-                    // Show result with comparison
-                    const disc = declaredTotal - sysTotal;
-                    const discStr = disc >= 0 ? '+R' + disc.toFixed(2) : '-R' + Math.abs(disc).toFixed(2);
-                    const discColor = Math.abs(disc) < 1 ? '#10b981' : disc < 0 ? '#ef4444' : '#f59e0b';
-
-                    const resultHtml = `
-                    <div style="text-align:center;padding:20px;">
-                        <h3 style="margin-bottom:15px;">✅ Blind Cash Up Submitted</h3>
-                        <table style="width:100%;max-width:350px;margin:0 auto;border-collapse:collapse;text-align:left;">
-                            <tr style="border-bottom:1px solid var(--border);"><td style="padding:8px;">Cash (declared)</td><td style="text-align:right;font-weight:600;">R${{cashDeclared.toFixed(2)}}</td></tr>
-                            <tr style="border-bottom:1px solid var(--border);"><td style="padding:8px;">Cash (system)</td><td style="text-align:right;font-weight:600;">R${{sysCash.toFixed(2)}}</td></tr>
-                            <tr style="border-bottom:1px solid var(--border);"><td style="padding:8px;">Card (declared)</td><td style="text-align:right;font-weight:600;">R${{cardDeclared.toFixed(2)}}</td></tr>
-                            <tr style="border-bottom:1px solid var(--border);"><td style="padding:8px;">Card (system)</td><td style="text-align:right;font-weight:600;">R${{sysCard.toFixed(2)}}</td></tr>
-                            <tr style="border-bottom:2px solid var(--border);"><td style="padding:8px;font-weight:700;">TOTAL</td><td style="text-align:right;font-weight:700;">R${{declaredTotal.toFixed(2)}} vs R${{sysTotal.toFixed(2)}}</td></tr>
-                            <tr><td style="padding:8px;font-weight:700;">DISCREPANCY</td><td style="text-align:right;font-weight:700;font-size:18px;color:${{discColor}};">${{discStr}}</td></tr>
-                        </table>
-                        <div style="margin-top:20px;display:flex;gap:10px;justify-content:center;">
-                            <button onclick="printSlip('${{d.id}}')" class="btn btn-secondary" style="padding:10px 20px;">🖨️ Print Slip</button>
-                            <button onclick="window.location='/cashup?tab=history'" class="btn btn-primary" style="padding:10px 20px;">📋 View History</button>
-                        </div>
-                    </div>`;
-
-                    document.getElementById('tabBlind').innerHTML = '<div class="card">' + resultHtml + '</div>';
-                }} else {{
-                    alert('Error: ' + (d.error || 'Save failed'));
-                }}
-            }} catch(e) {{ alert('Error: ' + e.message); }}
-        }}
-
-        function round2(n) {{ return Math.round(n * 100) / 100; }}
-
-        function printSlip(cashupId) {{
-            // Fetch and print
-            fetch('/api/cashup/slip/' + cashupId)
-                .then(r => r.json())
-                .then(d => {{
-                    if (!d.success) return alert('Error loading slip');
-                    const pw = window.open('', 'cashup_slip', 'width=400,height=600');
-                    pw.document.write(d.html);
-                    pw.document.close();
-                    setTimeout(() => {{ pw.focus(); pw.print(); }}, 300);
-                }});
-        }}
-
-        async function showDetail(id) {{
-            try {{
-                const r = await fetch('/api/cashup/detail/' + id);
-                const d = await r.json();
-                if (!d.success) return;
-                const c = d.cashup;
-                const panel = document.getElementById('detailPanel');
-
-                let denomHtml = '';
-                try {{
-                    const dems = typeof c.denominations === 'string' ? JSON.parse(c.denominations) : c.denominations;
-                    if (dems) {{
-                        Object.entries(dems).forEach(([k, v]) => {{
-                            if (v > 0) denomHtml += '<span style="margin-right:8px;font-size:12px;">' + k + ':' + v + '</span>';
-                        }});
-                    }}
-                }} catch(e) {{}}
-
-                const disc = parseFloat(c.total_discrepancy || 0);
-                const discColor = Math.abs(disc) < 1 ? '#10b981' : disc < 0 ? '#ef4444' : '#f59e0b';
-
-                panel.innerHTML = `
-                <h4 style="margin:0 0 10px;">${{c.type === 'blind_cashup' ? '🔒 Blind Cash Up' : c.type === 'z_reading' ? '🔐 Z-Reading' : '📊 X-Reading'}} Detail</h4>
-                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:15px;">
-                    <div><span style="font-size:10px;color:var(--text-muted);">CASHIER</span><div style="font-weight:600;">${{c.cashier_name || '—'}}</div></div>
-                    <div><span style="font-size:10px;color:var(--text-muted);">TIME</span><div style="font-weight:600;">${{(c.created_at || '').slice(-8,-3)}}</div></div>
-                    <div><span style="font-size:10px;color:var(--text-muted);">FLOAT</span><div style="font-weight:600;">R${{parseFloat(c.float_amount || 0).toFixed(2)}}</div></div>
-                </div>
-                <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                    <tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:6px;">Method</th><th style="text-align:right;padding:6px;">Declared</th><th style="text-align:right;padding:6px;">System</th><th style="text-align:right;padding:6px;">Diff</th></tr>
-                    <tr style="border-bottom:1px solid var(--border);"><td style="padding:6px;">Cash</td><td style="text-align:right;">R${{parseFloat(c.cash_declared||0).toFixed(2)}}</td><td style="text-align:right;">R${{parseFloat(c.system_cash||0).toFixed(2)}}</td><td style="text-align:right;color:${{Math.abs(parseFloat(c.cash_discrepancy||0)) < 1 ? '#10b981' : '#ef4444'}};">R${{parseFloat(c.cash_discrepancy||0).toFixed(2)}}</td></tr>
-                    <tr style="border-bottom:1px solid var(--border);"><td style="padding:6px;">Card</td><td style="text-align:right;">R${{parseFloat(c.card_declared||0).toFixed(2)}}</td><td style="text-align:right;">R${{parseFloat(c.system_card||0).toFixed(2)}}</td><td style="text-align:right;">R${{parseFloat(c.card_discrepancy||0).toFixed(2)}}</td></tr>
-                    <tr style="border-bottom:2px solid var(--border);font-weight:700;"><td style="padding:6px;">TOTAL</td><td style="text-align:right;">R${{parseFloat(c.declared_total||0).toFixed(2)}}</td><td style="text-align:right;">R${{parseFloat(c.system_total||0).toFixed(2)}}</td><td style="text-align:right;color:${{discColor}};font-size:16px;">R${{disc.toFixed(2)}}</td></tr>
-                </table>
-                ${{denomHtml ? '<div style="margin-top:10px;"><span style="font-size:10px;color:var(--text-muted);">DENOMINATIONS:</span><div>' + denomHtml + '</div></div>' : ''}}
-                <div style="margin-top:15px;display:flex;gap:8px;">
-                    <button onclick="printSlip('${{c.id}}')" class="btn btn-secondary" style="padding:8px 16px;">🖨️ Print</button>
-                    {_approve_btns_html}
-                </div>
-                `;
-                panel.style.display = 'block';
-            }} catch(e) {{ console.error(e); }}
-        }}
-
-        async function closeDay() {{
-            if (!confirm('This will CLOSE the day. No more blind cashups can be done for {view_date}.\\n\\nContinue?')) return;
-            const notes = document.getElementById('zNotes') ? document.getElementById('zNotes').value : '';
-            try {{
-                const r = await fetch('/api/cashup/save', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{
-                        type: 'z_reading',
-                        notes: notes,
-                        system_cash: systemBreakdown.cash,
-                        system_card: systemBreakdown.card,
-                        system_account: systemBreakdown.account,
-                        system_total: systemBreakdown.total,
-                        sale_count: systemBreakdown.count
-                    }})
-                }});
-                const d = await r.json();
-                if (d.success) {{
-                    alert('✅ Day closed successfully!');
-                    window.location = '/cashup?date={view_date}&tab=history';
-                }} else alert('Error: ' + (d.error || 'Failed'));
-            }} catch(e) {{ alert('Error: ' + e.message); }}
-        }}
-
-        // Replace template vars in JS
-        document.querySelectorAll('#tabHistory button, #detailPanel button').forEach(b => {{
-            // handled via onclick
+                denominations: denomBreakdown,
+                system_cash: SYS_CASH,
+                system_card: SYS_CARD,
+                system_account: SYS_ACCOUNT,
+                system_total: SYS_CASH + SYS_CARD + SYS_ACCOUNT,
+                cash_discrepancy: cashDisc,
+                card_discrepancy: cardDisc,
+                total_discrepancy: totalDisc,
+                sale_count: SALE_COUNT
+            }})
         }});
-        </script>
-        '''
+        const data = await resp.json();
+        if (!data.success) console.error('Save failed:', data.error);
+    }} catch(e) {{
+        console.error('Save error:', e);
+    }}
+}}
 
-        return _render("Cash Up", content, user)
+// ═══ HISTORY RENDER ═══
+function renderHistory() {{
+    const list = document.getElementById('historyList');
+    if (!HISTORY || HISTORY.length === 0) return;
+
+    document.getElementById('emptyHistory').style.display = 'none';
+
+    const sorted = HISTORY.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    
+    list.innerHTML = sorted.map(h => {{
+        const type = h.type || 'unknown';
+        const typeClass = type === 'x_reading' ? 'xread' : type === 'blind_cashup' ? 'blind' : 'zread';
+        const typeLabel = type === 'x_reading' ? 'X-Read' : type === 'blind_cashup' ? 'Blind Cash Up' : type;
+        const time = h.created_at ? new Date(h.created_at).toLocaleTimeString() : '';
+        
+        let detail = '';
+        if (type === 'x_reading') {{
+            detail = `Total: <span>R${{(h.system_total || 0).toFixed(2)}}</span> | ${{h.sale_count || 0}} sales`;
+        }} else if (type === 'blind_cashup') {{
+            const disc = h.total_discrepancy || 0;
+            const discCls = disc > 0.01 ? 'disc-over' : disc < -0.01 ? 'disc-short' : 'disc-match';
+            const discTxt = disc > 0.01 ? '+R' + disc.toFixed(2) + ' over' : disc < -0.01 ? '-R' + Math.abs(disc).toFixed(2) + ' short' : 'Exact match';
+            detail = `Cashier: <span>${{h.cashier_name || '—'}}</span> | Declared: <span>R${{(h.declared_total || 0).toFixed(2)}}</span> | <span class="${{discCls}}">${{discTxt}}</span>`;
+        }}
+        
+        return `<div class="history-item">
+            <div class="history-header">
+                <span class="history-type ${{typeClass}}">${{typeLabel}}</span>
+                <span class="history-time">${{time}}</span>
+            </div>
+            <div class="history-detail">${{detail}}</div>
+        </div>`;
+    }}).join('');
+}}
+</script>
+
+</body>
+</html>"""
+
+        from flask import make_response
+        resp = make_response(html)
+        return resp
 
 
     # ═══════════════════════════════════════════════════════════════
-    # SAVE CASHUP API
+    # CASH UP SAVE API
     # ═══════════════════════════════════════════════════════════════
     @app.route("/api/cashup/save", methods=["POST"])
     @login_required
     def api_cashup_save():
-        """Save a cash up record"""
+        """Save a cash up record (x-reading, blind cash up, z-reading)"""
         user = Auth.get_current_user()
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
 
         try:
-            from flask import jsonify
-            data = app.current_app if hasattr(app, 'current_app') else None
-            data = __import__('flask').request.json
-
+            data = request.json
             cashup_type = data.get("type", "unknown")
 
             record = {
@@ -568,95 +929,44 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
                 "business_id": biz_id,
                 "date": today(),
                 "type": cashup_type,
-                "status": "pending",
                 "created_by": user.get("id") if user else None,
-                "created_by_name": user.get("name", "") if user else "",
                 "created_at": now(),
             }
 
-            if cashup_type == "blind_cashup":
+            if cashup_type == "x_reading":
+                record.update({
+                    "system_cash": data.get("system_cash", 0),
+                    "system_card": data.get("system_card", 0),
+                    "system_account": data.get("system_account", 0),
+                    "system_total": data.get("system_total", 0),
+                    "sale_count": data.get("sale_count", 0),
+                })
+
+            elif cashup_type == "blind_cashup":
                 record.update({
                     "cashier_id": data.get("cashier_id"),
                     "cashier_name": data.get("cashier_name", ""),
-                    "float_amount": float(data.get("float_amount", 0)),
-                    "cash_counted": float(data.get("cash_counted", 0)),
-                    "cash_declared": float(data.get("cash_declared", 0)),
-                    "card_declared": float(data.get("card_declared", 0)),
-                    "account_declared": float(data.get("account_declared", 0)),
-                    "declared_total": float(data.get("declared_total", 0)),
+                    "float_amount": data.get("float_amount", 0),
+                    "cash_counted": data.get("cash_counted", 0),
+                    "cash_declared": data.get("cash_declared", 0),
+                    "card_declared": data.get("card_declared", 0),
+                    "account_declared": data.get("account_declared", 0),
+                    "declared_total": data.get("declared_total", 0),
                     "denominations": json.dumps(data.get("denominations", {})),
-                    "system_cash": float(data.get("system_cash", 0)),
-                    "system_card": float(data.get("system_card", 0)),
-                    "system_account": float(data.get("system_account", 0)),
-                    "system_total": float(data.get("system_total", 0)),
-                    "cash_discrepancy": float(data.get("cash_discrepancy", 0)),
-                    "card_discrepancy": float(data.get("card_discrepancy", 0)),
-                    "total_discrepancy": float(data.get("total_discrepancy", 0)),
-                    "sale_count": int(data.get("sale_count", 0)),
+                    "system_cash": data.get("system_cash", 0),
+                    "system_card": data.get("system_card", 0),
+                    "system_account": data.get("system_account", 0),
+                    "system_total": data.get("system_total", 0),
+                    "cash_discrepancy": data.get("cash_discrepancy", 0),
+                    "card_discrepancy": data.get("card_discrepancy", 0),
+                    "total_discrepancy": data.get("total_discrepancy", 0),
+                    "sale_count": data.get("sale_count", 0),
                 })
 
-            elif cashup_type == "z_reading":
-                record.update({
-                    "notes": data.get("notes", ""),
-                    "system_cash": float(data.get("system_cash", 0)),
-                    "system_card": float(data.get("system_card", 0)),
-                    "system_account": float(data.get("system_account", 0)),
-                    "system_total": float(data.get("system_total", 0)),
-                    "sale_count": int(data.get("sale_count", 0)),
-                })
-
-            elif cashup_type == "x_reading":
-                record.update({
-                    "system_cash": float(data.get("system_cash", 0)),
-                    "system_card": float(data.get("system_card", 0)),
-                    "system_account": float(data.get("system_account", 0)),
-                    "system_total": float(data.get("system_total", 0)),
-                    "sale_count": int(data.get("sale_count", 0)),
-                })
-
+            from flask import jsonify
             success, err = db.save("cash_ups", record)
             if success:
-                logger.info(f"[CASHUP] {cashup_type} saved by {record.get('created_by_name')} | total={record.get('declared_total', record.get('system_total', 0))}")
-                
-                # FIX: Post discrepancy to GL Cash Over/Short control account (7100)
-                if cashup_type == "blind_cashup":
-                    total_disc = float(record.get("total_discrepancy", 0))
-                    if abs(total_disc) > 0.01:
-                        try:
-                            import clickai as _ck
-                            ref = f"CASHUP-{record['id'][:8]}"
-                            cashier_name = record.get("cashier_name", "Cashier")
-                            if total_disc > 0:
-                                # Over = cash more than expected: Debit Cash On Hand, Credit Cash Over/Short
-                                _ck.create_journal_entry(biz_id, today(), f"Cash over - {cashier_name}", ref, [
-                                    {"account_code": "1050", "debit": abs(total_disc), "credit": 0},
-                                    {"account_code": "7050", "debit": 0, "credit": abs(total_disc)},
-                                ])
-                            else:
-                                # Short = cash less than expected: Debit Cash Over/Short, Credit Cash On Hand
-                                _ck.create_journal_entry(biz_id, today(), f"Cash short - {cashier_name}", ref, [
-                                    {"account_code": "7050", "debit": abs(total_disc), "credit": 0},
-                                    {"account_code": "1050", "debit": 0, "credit": abs(total_disc)},
-                                ])
-                            logger.info(f"[CASHUP] GL posted discrepancy R{total_disc:.2f} for {cashier_name}")
-                        except Exception as gl_err:
-                            logger.error(f"[CASHUP] GL posting failed: {gl_err}")
-                
-                # FIX: Z-Reading marks daily POS sales as closed for that date
-                if cashup_type == "z_reading":
-                    try:
-                        z_date = record.get("date", today())
-                        sales = db.get("sales", {"business_id": biz_id}) or []
-                        day_sales = [s for s in sales if s.get("date") == z_date or (s.get("created_at") or "")[:10] == z_date]
-                        closed_count = 0
-                        for s in day_sales:
-                            if not s.get("z_closed"):
-                                db.update("sales", s["id"], {"z_closed": True, "z_reading_id": record["id"]})
-                                closed_count += 1
-                        logger.info(f"[CASHUP] Z-Reading closed {closed_count} sales for {z_date}")
-                    except Exception as z_err:
-                        logger.error(f"[CASHUP] Z-Reading close failed: {z_err}")
-                
+                logger.info(f"[CASHUP] {cashup_type} saved for biz={biz_id}")
                 return jsonify({"success": True, "id": record["id"]})
             else:
                 logger.error(f"[CASHUP] Save failed: {err}")
@@ -669,119 +979,7 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
 
 
     # ═══════════════════════════════════════════════════════════════
-    # CASHUP DETAIL API
-    # ═══════════════════════════════════════════════════════════════
-    @app.route("/api/cashup/detail/<cashup_id>")
-    @login_required
-    def api_cashup_detail(cashup_id):
-        from flask import jsonify
-        record = db.get_one("cash_ups", cashup_id)
-        if not record:
-            return jsonify({"success": False, "error": "Not found"})
-        return jsonify({"success": True, "cashup": record})
-
-
-    # ═══════════════════════════════════════════════════════════════
-    # PRINT SLIP API
-    # ═══════════════════════════════════════════════════════════════
-    @app.route("/api/cashup/slip/<cashup_id>")
-    @login_required
-    def api_cashup_slip(cashup_id):
-        """Generate printable slip HTML for a cashup"""
-        from flask import jsonify
-
-        business = Auth.get_current_business()
-        biz_name = business.get("name", "Business") if business else "Business"
-
-        record = db.get_one("cash_ups", cashup_id)
-        if not record:
-            return jsonify({"success": False, "error": "Not found"})
-
-        cu_type = record.get("type", "?")
-        type_label = {"blind_cashup": "BLIND CASH UP", "x_reading": "X-READING", "z_reading": "Z-READING"}.get(cu_type, cu_type.upper())
-        cu_date = record.get("date", "")
-        cu_time = (record.get("created_at") or "")[-8:-3]
-        cashier = record.get("cashier_name") or record.get("created_by_name") or ""
-
-        # Denomination breakdown
-        denom_lines = ""
-        try:
-            dems = json.loads(record.get("denominations", "{}")) if isinstance(record.get("denominations"), str) else record.get("denominations", {})
-            for k, v in (dems or {}).items():
-                if int(v) > 0:
-                    denom_lines += f"<tr><td>{k}</td><td style='text-align:center;'>{v}</td></tr>\n"
-        except:
-            pass
-
-        cash_counted = float(record.get("cash_counted", 0))
-        float_amt = float(record.get("float_amount", 0))
-        cash_declared = float(record.get("cash_declared", 0))
-        card_declared = float(record.get("card_declared", 0))
-        acc_declared = float(record.get("account_declared", 0))
-        declared_total = float(record.get("declared_total", 0))
-        sys_cash = float(record.get("system_cash", 0))
-        sys_card = float(record.get("system_card", 0))
-        sys_total = float(record.get("system_total", 0))
-        disc = float(record.get("total_discrepancy", 0))
-
-        slip_html = f"""<!DOCTYPE html>
-<html><head><style>
-body {{ width: 72mm; margin: 0; padding: 4mm; font-family: 'Courier New', monospace; font-size: 12px; color: #000; background: #fff; }}
-table {{ width: 100%; border-collapse: collapse; }}
-td {{ padding: 2px 0; }}
-.center {{ text-align: center; }}
-.right {{ text-align: right; }}
-.bold {{ font-weight: bold; }}
-.line {{ border-top: 1px dashed #000; margin: 4px 0; }}
-.dline {{ border-top: 2px solid #000; margin: 4px 0; }}
-@page {{ size: 80mm auto; margin: 0; }}
-@media print {{ body {{ width: 72mm; }} }}
-</style></head><body>
-<div class="center bold" style="font-size:14px;">{biz_name}</div>
-<div class="center" style="font-size:10px;">━━━━━━━━━━━━━━━━━━━━━━━━</div>
-<div class="center bold" style="font-size:13px;margin:4px 0;">{type_label}</div>
-<div class="line"></div>
-<table>
-<tr><td>Date:</td><td class="right">{cu_date}</td></tr>
-<tr><td>Time:</td><td class="right">{cu_time}</td></tr>
-<tr><td>Cashier:</td><td class="right">{cashier}</td></tr>
-<tr><td>Float:</td><td class="right">R{float_amt:.2f}</td></tr>
-</table>
-<div class="line"></div>
-{f'''<div class="bold">DENOMINATIONS</div>
-<table>{denom_lines}</table>
-<table><tr class="bold"><td>Cash Counted:</td><td class="right">R{cash_counted:.2f}</td></tr></table>
-<div class="line"></div>''' if denom_lines else ''}
-<div class="bold">DECLARED</div>
-<table>
-<tr><td>Cash Sales:</td><td class="right">R{cash_declared:.2f}</td></tr>
-<tr><td>Card Sales:</td><td class="right">R{card_declared:.2f}</td></tr>
-<tr><td>Account Sales:</td><td class="right">R{acc_declared:.2f}</td></tr>
-</table>
-<div class="dline"></div>
-<table><tr class="bold"><td>DECLARED TOTAL:</td><td class="right" style="font-size:14px;">R{declared_total:.2f}</td></tr></table>
-<div class="dline"></div>
-<div class="bold">SYSTEM</div>
-<table>
-<tr><td>Cash Sales:</td><td class="right">R{sys_cash:.2f}</td></tr>
-<tr><td>Card Sales:</td><td class="right">R{sys_card:.2f}</td></tr>
-<tr><td>System Total:</td><td class="right bold">R{sys_total:.2f}</td></tr>
-</table>
-<div class="dline"></div>
-<table><tr class="bold"><td>DISCREPANCY:</td><td class="right" style="font-size:16px;">{"+" if disc >= 0 else ""}R{disc:.2f}</td></tr></table>
-<div class="line"></div>
-<div class="center" style="font-size:10px;margin-top:6px;">
-Sale Count: {record.get("sale_count", 0)}<br>
-Printed: {now()}<br>
-━━━━━━━━━━━━━━━━━━━━━━━━
-</div>
-</body></html>"""
-
-        return jsonify({"success": True, "html": slip_html})
-
-
-    # ═══════════════════════════════════════════════════════════════
-    # CASHUP HISTORY API (for external use / Zane)
+    # CASH UP HISTORY API
     # ═══════════════════════════════════════════════════════════════
     @app.route("/api/cashup/history")
     @login_required
@@ -793,10 +991,7 @@ Printed: {now()}<br>
         from flask import request as req, jsonify
         date_filter = req.args.get("date", today())
 
-        records = db.get("cash_ups", {"business_id": biz_id}) or []
-        day_records = [r for r in records if r.get("date") == date_filter]
-        day_records = sorted(day_records, key=lambda x: x.get("created_at", ""), reverse=True)
-        return jsonify({"success": True, "cash_ups": day_records})
+        records = db.get("cash_ups", {"business_id": biz_id, "date": date_filter}) if biz_id else []
+        return jsonify({"success": True, "cash_ups": records or []})
 
-
-    logger.info("[CASHUP] Cash Up module loaded — routes: /cashup, /api/cashup/save, /api/cashup/detail, /api/cashup/slip, /api/cashup/history")
+    logger.info("[CASHUP] Cash Up module loaded - routes: /cashup, /api/cashup/save, /api/cashup/history")
