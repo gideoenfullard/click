@@ -27112,6 +27112,9 @@ def invoice_new():
         payment_method = request.form.get("payment_method", "account")  # account/cash/card/eft
         inv_salesman_id = request.form.get("salesman_id", "")
         inv_salesman_name_form = request.form.get("salesman_name", "")
+        invoice_date = request.form.get("invoice_date", "") or today()
+        inv_reference = request.form.get("reference", "").strip()
+        inv_delivery_note = request.form.get("delivery_note", "").strip()
         
         # Get line items from form
         items = []
@@ -27152,7 +27155,7 @@ def invoice_new():
             customer_name=customer_name,
             items=items,
             invoice_number=inv_num,
-            date=today(),
+            date=invoice_date,
             subtotal=float(subtotal),
             vat=float(vat),
             total=float(total),
@@ -27162,7 +27165,9 @@ def invoice_new():
             created_by_name=user.get("name", "") if user else "",
             salesman=inv_salesman_id,
             salesman_name=inv_salesman_name_form,
-            sales_rep=inv_salesman_name_form
+            sales_rep=inv_salesman_name_form,
+            reference=inv_reference,
+            delivery_note=inv_delivery_note
         )
         invoice_id = invoice["id"]
         
@@ -27304,7 +27309,17 @@ def invoice_new():
                 </div>
                 <div>
                     <label>Date</label>
-                    <input type="date" value="{today()}" disabled style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <input type="date" name="invoice_date" value="{today()}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+                <div>
+                    <label>Reference</label>
+                    <input type="text" name="reference" placeholder="e.g. PO number, order ref" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div>
+                    <label>Delivery Note No</label>
+                    <input type="text" name="delivery_note" placeholder="e.g. DN-0045" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
             </div>
             
