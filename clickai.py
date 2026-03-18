@@ -51924,6 +51924,7 @@ def api_pos_invoice():
         customer_id = data.get("customer_id", "")
         customer_name = data.get("customer_name", "")
         cashier_id = data.get("cashier_id") or (user.get("id") if user else None)
+        cashier_display = data.get("cashier_name") or (user.get("name", "") if user else "")
         
         if not items:
             return jsonify({"success": False, "error": "No items in cart"})
