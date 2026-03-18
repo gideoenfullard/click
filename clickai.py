@@ -160,6 +160,13 @@ try:
     WHATSAPP_MODULE_LOADED = True
 except ImportError:
     WHATSAPP_MODULE_LOADED = False
+
+try:
+    from clickai_safety_file import register_safety_file_routes
+    SAFETY_FILE_MODULE_LOADED = True
+except ImportError:
+    SAFETY_FILE_MODULE_LOADED = False
+
 import io
 
 # Fulltech Smart Quote addon (optional - only loads if file exists)
@@ -23123,6 +23130,14 @@ try:
         logger.info("[WHATSAPP] Routes registered ✓")
 except Exception as e:
     logger.error(f"[WHATSAPP] Failed to register routes: {e}")
+
+# Register Safety File routes (separate module — dormant until toggled on in settings)
+try:
+    if SAFETY_FILE_MODULE_LOADED:
+        register_safety_file_routes(app, db, login_required, Auth, generate_id, render_page)
+        logger.info("[SAFETY FILE] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[SAFETY FILE] Failed to register routes: {e}")
 
 
 @app.route("/dashboard")
@@ -76137,6 +76152,17 @@ Address: {business.get("address")[:50] if business and business.get("address") e
             <button type="submit" class="btn btn-secondary">💾 Save WhatsApp Settings</button>
             {f'<span style="color:var(--green);margin-left:15px;">GOOD: Connected</span>' if business and business.get('whatsapp_token') else ''}
         </form>
+    </div>
+    
+    <!-- Safety File Settings -->
+    <div class="card" style="margin-top:20px;border-left:4px solid var(--primary);">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <h3 style="margin-bottom:5px;">🛡️ AI Safety File Generator</h3>
+                <p style="color:var(--text-muted);margin:0;">Generate OHS Act-compliant safety files for your business</p>
+            </div>
+            <a href="/settings/safety-files" class="btn btn-primary">⚙️ Configure</a>
+        </div>
     </div>
     
     <!-- POS Settings -->
