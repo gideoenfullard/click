@@ -27516,10 +27516,10 @@ def invoice_view(invoice_id):
     payment_btns = ""
     if status in ("outstanding", "delivered", "account"):
         payment_btns = f'''
-        <button class="btn btn-success" onclick="markPaid('cash')" style="background:var(--green);">💵 Cash</button>
-        <button class="btn btn-primary" onclick="markPaid('card')" style="background:#8b5cf6;">[PAY] Card</button>
-        <button class="btn btn-secondary" onclick="markPaid('eft')">[BANK] EFT</button>
-        <button class="btn btn-warning" onclick="markPaid('account')" style="background:var(--orange);">[FORM] Account</button>
+        <button class="btn btn-success" onclick="markPaid('cash')" style="background:var(--green);"><kbd style="background:rgba(0,0,0,0.2);padding:2px 6px;border-radius:3px;font-size:10px;margin-right:4px;">F1</kbd>💵 Cash</button>
+        <button class="btn btn-primary" onclick="markPaid('card')" style="background:#8b5cf6;"><kbd style="background:rgba(0,0,0,0.2);padding:2px 6px;border-radius:3px;font-size:10px;margin-right:4px;">F2</kbd>💳 Card</button>
+        <button class="btn btn-secondary" onclick="markPaid('eft')"><kbd style="background:rgba(0,0,0,0.2);padding:2px 6px;border-radius:3px;font-size:10px;margin-right:4px;">F3</kbd>🏦 EFT</button>
+        <button class="btn btn-warning" onclick="markPaid('account')" style="background:var(--orange);">📋 Account</button>
         '''
     
     # Show source quote link if exists
@@ -27781,9 +27781,28 @@ def invoice_view(invoice_id):
         }}
     }}
     
-    // Close modal on escape key
+    // Close modal on escape key + F-key interceptor for invoice page
     document.addEventListener('keydown', function(e) {{
+        // Block browser defaults for F1-F11 (F1=Help opens Google-like page)
+        if (['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11'].includes(e.key)) {{
+            e.preventDefault();
+        }}
         if (e.key === 'Escape') closeEmailModal();
+        // F1 = Cash payment (same as POS muscle memory)
+        if (e.key === 'F1' && typeof markPaid === 'function') {{
+            markPaid('cash');
+            return;
+        }}
+        // F2 = Card payment
+        if (e.key === 'F2' && typeof markPaid === 'function') {{
+            markPaid('card');
+            return;
+        }}
+        // F3 = EFT payment
+        if (e.key === 'F3' && typeof markPaid === 'function') {{
+            markPaid('eft');
+            return;
+        }}
     }});
     
     // PRINT FUNCTION - Opens new window for reliable multi-page printing
