@@ -3334,9 +3334,7 @@ class RecordFactory:
             "created_by_name": kwargs.get("created_by_name", ""),
             "sales_rep": kwargs.get("sales_rep", ""),
             "salesman": kwargs.get("salesman", ""),
-            "salesman_name": kwargs.get("salesman_name", ""),
-            "reference": kwargs.get("reference", ""),
-            "delivery_note": kwargs.get("delivery_note", "")
+            "salesman_name": kwargs.get("salesman_name", "")
         }
     
     @staticmethod
@@ -27118,6 +27116,16 @@ def invoice_new():
         inv_reference = request.form.get("reference", "").strip()
         inv_delivery_note = request.form.get("delivery_note", "").strip()
         
+        # FAILSAFE: If customer_name is empty but customer_id is set, look it up
+        if not customer_name and customer_id:
+            try:
+                _cust = db.get_one("customers", customer_id)
+                if _cust:
+                    customer_name = _cust.get("name", "")
+                    logger.info(f"[INVOICE NEW] Resolved customer name: {customer_name}")
+            except Exception:
+                pass
+        
         # Get line items from form
         items = []
         descriptions = request.form.getlist("item_desc[]")
@@ -27377,6 +27385,41 @@ def invoice_new():
         const name = sel.options[sel.selectedIndex]?.dataset?.name || '';
         document.getElementById('customerName').value = name;
     }}
+    
+    // Run on page load to set customer name if pre-selected
+    document.addEventListener('DOMContentLoaded', function() {{
+        handleCustomerChange();
+    }});
+    
+    // Validate form before submit — block zero amount invoices
+    document.getElementById('invoiceForm').addEventListener('submit', function(e) {{
+        // Check customer name is set
+        const custName = document.getElementById('customerName').value.trim();
+        const custSel = document.getElementById('customerSelect').value;
+        if (!custSel || custSel === '') {{
+            e.preventDefault();
+            alert('⚠️ Please select a customer');
+            return false;
+        }}
+        if (!custName) {{
+            // Try to set it from the dropdown
+            handleCustomerChange();
+        }}
+        
+        // Check total is not zero
+        let subtotal = 0;
+        document.querySelectorAll('.row-total').forEach(cell => {{
+            subtotal += parseFloat(cell.textContent.replace('R', '')) || 0;
+        }});
+        if (subtotal <= 0) {{
+            e.preventDefault();
+            if (!confirm('⚠️ Warning: Invoice total is R0.00 — no amount entered.\\n\\nAre you sure you want to create this invoice with zero amount?')) {{
+                return false;
+            }}
+            // If they click OK, re-submit
+            e.target.submit();
+        }}
+    }});
     
     function checkStock(input) {{
         if (input.value === '+ Add New Stock Item') {{
