@@ -27133,6 +27133,7 @@ def invoice_new():
         descriptions = request.form.getlist("item_desc[]")
         quantities = request.form.getlist("item_qty[]")
         prices = request.form.getlist("item_price[]")
+        units = request.form.getlist("item_unit[]")
         
         subtotal = Decimal("0")
         for i, desc in enumerate(descriptions):
@@ -27141,9 +27142,11 @@ def invoice_new():
                 price = Decimal(prices[i] or "0")
                 line_total = qty * price
                 subtotal += line_total
+                unit = units[i] if i < len(units) else "ea"
                 items.append({
                     "description": desc,
                     "quantity": float(qty),
+                    "unit": unit,
                     "price": float(price),
                     "total": float(line_total)
                 })
@@ -27341,9 +27344,10 @@ def invoice_new():
             <table class="table" id="lineItems">
                 <thead>
                     <tr>
-                        <th style="width:45%">Description</th>
-                        <th style="width:12%">Qty</th>
-                        <th style="width:18%">Price (excl)</th>
+                        <th style="width:38%">Description</th>
+                        <th style="width:10%">Qty</th>
+                        <th style="width:10%">Unit</th>
+                        <th style="width:17%">Price (excl)</th>
                         <th style="width:15%">Total</th>
                         <th style="width:10%"></th>
                     </tr>
@@ -27354,7 +27358,21 @@ def invoice_new():
                             <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
                             <input type="hidden" name="item_stock_id[]" value="">
                         </td>
-                        <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                        <td><input type="number" name="item_qty[]" value="1" min="0.01" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                        <td>
+                            <select name="item_unit[]" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
+                                <option value="ea">ea</option>
+                                <option value="kg">kg</option>
+                                <option value="m">m</option>
+                                <option value="m²">m²</option>
+                                <option value="ltr">ltr</option>
+                                <option value="pcs">pcs</option>
+                                <option value="box">box</option>
+                                <option value="set">set</option>
+                                <option value="roll">roll</option>
+                                <option value="length">length</option>
+                            </select>
+                        </td>
                         <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td class="row-total">R0.00</td>
                         <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
@@ -27452,7 +27470,12 @@ def invoice_new():
                 <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
                 <input type="hidden" name="item_stock_id[]" value="">
             </td>
-            <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+            <td><input type="number" name="item_qty[]" value="1" min="0.01" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+            <td>
+                <select name="item_unit[]" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
+                    <option value="ea">ea</option><option value="kg">kg</option><option value="m">m</option><option value="m²">m²</option><option value="ltr">ltr</option><option value="pcs">pcs</option><option value="box">box</option><option value="set">set</option><option value="roll">roll</option><option value="length">length</option>
+                </select>
+            </td>
             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td class="row-total">R0.00</td>
             <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">\u2715</button></td>
@@ -27568,6 +27591,7 @@ def invoice_view(invoice_id):
     for item in items:
         # Handle both qty and quantity field names
         qty = item.get("qty") or item.get("quantity") or 1
+        unit = item.get("unit", "ea") or "ea"
         desc = item.get("description") or item.get("desc") or "-"
         price = float(item.get("price") or item.get("unit_price") or 0)
         total_excl = float(item.get("total") or item.get("line_total") or 0)
@@ -27582,6 +27606,7 @@ def invoice_view(invoice_id):
         <tr style="border-bottom:1px solid #e5e7eb;">
             <td style="padding:4px 6px;font-size:11px;">{safe_string(desc)}</td>
             <td style="text-align:center;padding:4px 6px;font-size:11px;">{qty}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{unit}</td>
             <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(price)}</td>
             <td style="text-align:center;padding:4px 6px;font-size:11px;">{disc:.1f}%</td>
             <td style="text-align:center;padding:4px 6px;font-size:11px;">{vat_rate:.0f}%</td>
@@ -27661,7 +27686,7 @@ def invoice_view(invoice_id):
     # Resolve salesman name for invoice
     inv_salesman = invoice.get("salesman_name") or invoice.get("sales_rep") or ""
     if not inv_salesman:
-        _ism = invoice.get("salesman") or ""
+        _ism = invoice.get("salesman") or invoice.get("created_by") or ""
         if _ism:
             try:
                 _iteam2 = db.get("team_members", {"business_id": biz_id}) or []
@@ -27675,6 +27700,9 @@ def invoice_view(invoice_id):
                         inv_salesman = _iu2.get("name", _iu2.get("email", ""))
             except:
                 pass
+    # Last resort: use created_by_name
+    if not inv_salesman:
+        inv_salesman = invoice.get("created_by_name", "")
     
     # Build customer details section  
     cust_name = safe_string(invoice.get("customer_name", "-"))
@@ -27824,12 +27852,13 @@ def invoice_view(invoice_id):
                 <thead>
                     <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
                         <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Description</th>
-                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>
-                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>
-                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Disc %</th>
-                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">VAT %</th>
-                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Total</th>
-                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Incl. Total</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:50px;">Qty</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:40px;">Unit</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:90px;">Excl. Price</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:50px;">Disc %</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:50px;">VAT %</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:90px;">Excl. Total</th>
+                        <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:90px;">Incl. Total</th>
                     </tr>
                 </thead>
                 <tbody style="color:#333;">
