@@ -909,6 +909,17 @@ def register_safety_file_routes(app, db, login_required, Auth, generate_id, rend
         equipment_list = config.get("equipment", [])
         equipment_tags = "".join(f'<span class="tag" onclick="removeEquip(this)">{e} ✕</span>' for e in equipment_list)
 
+        # Pre-build disabled style (Python 3.11 f-string compat)
+        disabled_style = "pointer-events:none;opacity:0.5;" if not enabled else ""
+        toggle_bg = "rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3)" if enabled else "rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1)"
+        toggle_label = "Active ✅" if enabled else "Inactive"
+        toggle_desc = "Generate safety files from the Safety Files menu" if enabled else "Complete setup below to activate"
+        toggle_checked = "checked" if enabled else ""
+        toggle_knob_bg = "var(--green)" if enabled else "#555"
+        toggle_knob_left = "26px" if enabled else "3px"
+        setup_display = "block" if enabled else "none"
+        preview_display = "block" if industry else "none"
+
         # Chemical list
         chemical_list = config.get("chemicals", [])
         chemical_tags = "".join(f'<span class="tag" onclick="removeChem(this)">{c} ✕</span>' for c in chemical_list)
@@ -924,29 +935,29 @@ def register_safety_file_routes(app, db, login_required, Auth, generate_id, rend
                 <!-- MASTER TOGGLE -->
                 <div style="display:flex;align-items:center;justify-content:space-between;
                             padding:15px;border-radius:10px;margin-bottom:20px;
-                            background:{'rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3)' if enabled else 'rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1)'};\"">
+                            background:{toggle_bg};\"">
                     <div>
-                        <strong>Safety Files {'Active ✅' if enabled else 'Inactive'}</strong><br>
+                        <strong>Safety Files {toggle_label}</strong><br>
                         <small style="color:var(--text-muted);">
-                            {'Generate safety files from the Safety Files menu' if enabled else 'Complete setup below to activate'}
+                            {toggle_desc}
                         </small>
                     </div>
                     <label style="position:relative;display:inline-block;width:50px;height:26px;cursor:pointer;">
                         <input type="checkbox" id="sfEnabled" name="enabled"
-                               {'checked' if enabled else ''}
+                               {toggle_checked}
                                style="opacity:0;width:0;height:0;"
                                onchange="document.getElementById('setupSection').style.display=this.checked?'block':'none'">
                         <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;
-                                     background:{'var(--green)' if enabled else '#555'};border-radius:26px;transition:.3s;">
+                                     background:{toggle_knob_bg};border-radius:26px;transition:.3s;">
                         </span>
-                        <span style="position:absolute;height:20px;width:20px;left:{'26px' if enabled else '3px'};
+                        <span style="position:absolute;height:20px;width:20px;left:{toggle_knob_left};
                                      bottom:3px;background:white;border-radius:50%;transition:.3s;">
                         </span>
                     </label>
                 </div>
 
                 <!-- SETUP SECTION -->
-                <div id="setupSection" style="display:{'block' if enabled else 'none'};">
+                <div id="setupSection" style="display:{setup_display};">
 
                     <!-- INDUSTRY -->
                     <div class="form-group">
@@ -1022,7 +1033,7 @@ def register_safety_file_routes(app, db, login_required, Auth, generate_id, rend
                     </div>
 
                     <!-- INDUSTRY PREVIEW -->
-                    <div id="industryPreview" style="display:{'block' if industry else 'none'};margin-top:20px;
+                    <div id="industryPreview" style="display:{preview_display};margin-top:20px;
                                 padding:15px;border-radius:10px;background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.3);">
                         <strong>Industry Profile Preview</strong>
                         <div id="previewContent" style="margin-top:10px;font-size:0.9em;color:var(--text-muted);">
@@ -1043,10 +1054,10 @@ def register_safety_file_routes(app, db, login_required, Auth, generate_id, rend
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
                 <h3>📄 Generated Safety Files</h3>
                 <div style="display:flex;gap:8px;">
-                    <a href="/safety-files/generate?type=generic" class="btn btn-primary" style="{'':'pointer-events:none;opacity:0.5;' if not enabled else ''}">
+                    <a href="/safety-files/generate?type=generic" class="btn btn-primary" style="{disabled_style}">
                         🏢 Generate Office File
                     </a>
-                    <a href="/safety-files/generate?type=site_specific" class="btn btn-secondary" style="{'':'pointer-events:none;opacity:0.5;' if not enabled else ''}">
+                    <a href="/safety-files/generate?type=site_specific" class="btn btn-secondary" style="{disabled_style}">
                         🏗️ Generate Site File
                     </a>
                 </div>
