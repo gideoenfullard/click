@@ -24305,6 +24305,8 @@ def customer_new():
         category = request.form.get("category", "").strip()
         vat_number = request.form.get("vat_number", "").strip()
         price_list = request.form.get("price_list", "retail").strip()
+        payment_terms = request.form.get("payment_terms", "COD").strip()
+        cc_email = request.form.get("cc_email", "").strip()
         
         # AUTO-GENERATE SMART CODE if not provided (e.g., AFR001 for Afrisam)
         if not code and biz_id and name:
@@ -24348,8 +24350,12 @@ def customer_new():
                 category=category,
                 vat_number=vat_number,
                 price_list=price_list,
+                payment_terms=payment_terms,
                 created_by=user.get("id", "") if user else ""
             )
+            # Save CC email as extra field
+            if cc_email:
+                customer["cc_email"] = cc_email
             customer_id = customer["id"]
             
             success, err = db.save("customers", customer)
@@ -24400,6 +24406,16 @@ def customer_new():
                     <input type="text" name="vat_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                 </div>
                 <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Payment Terms *</label>
+                    <select name="payment_terms" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <option value="COD">COD (Cash on Delivery)</option>
+                        <option value="Current Month">Current Month</option>
+                        <option value="30 Days">30 Days After Statement</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Price List</label>
                     <select name="price_list" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
                         <option value="retail">Retail (Default)</option>
@@ -24407,6 +24423,11 @@ def customer_new():
                         <option value="trade">Trade</option>
                         <option value="vip">VIP/Special</option>
                     </select>
+                </div>
+                <div>
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">CC Email (optional)</label>
+                    <input type="text" name="cc_email" placeholder="extra@email.com, admin@email.com" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <small style="color:var(--text-muted);">Separate multiple with commas</small>
                 </div>
             </div>
             <div style="margin-bottom: 20px;">
@@ -24495,6 +24516,11 @@ def customer_edit(customer_id):
         selected = "selected" if c.get("price_list") == pl else ""
         price_list_options += f'<option value="{pl}" {selected}>{pl.title()}</option>'
     
+    # Pre-build payment terms selected (Python 3.11 f-string compat)
+    pt_cod = "selected" if c.get("payment_terms") == "COD" else ""
+    pt_current = "selected" if c.get("payment_terms") == "Current Month" else ""
+    pt_30 = "selected" if c.get("payment_terms") == "30 Days" else ""
+    
     content = f'''
     <div class="card" style="max-width: 700px;">
         <h2 style="margin-bottom: 20px;">Edit Customer</h2>
@@ -24556,7 +24582,11 @@ def customer_edit(customer_id):
                 </div>
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Payment Terms</label>
-                    <input type="text" name="payment_terms" value="{safe_string(c.get('payment_terms', ''))}" placeholder="e.g. 30 days" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    <select name="payment_terms" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <option value="COD" {pt_cod}>COD (Cash on Delivery)</option>
+                        <option value="Current Month" {pt_current}>Current Month</option>
+                        <option value="30 Days" {pt_30}>30 Days After Statement</option>
+                    </select>
                 </div>
                 <div>
                     <label style="display:block;margin-bottom:5px;font-weight:500;">Sales Rep</label>
@@ -27598,11 +27628,29 @@ def invoice_view(invoice_id):
     # Email button - show customer email if available
     email_btn = f'<button class="btn btn-primary" onclick="showEmailModal()" style="background:#3b82f6;">Email</button>'
     
+    # Pre-build invoice fields for template (Python 3.11 f-string compat)
+    inv_reference = invoice.get("reference", "") or ""
+    inv_delivery_note = invoice.get("delivery_note", "") or ""
+    inv_sales_person = inv_salesman or inv_prepared_by or ""
+    cust_payment_terms = customer.get("payment_terms", "") if customer else ""
+    
+    # Reference row - show if exists, editable area
+    ref_row = f'<tr><td style="padding:4px 0;color:#888;">Reference:</td><td style="padding:4px 0;font-weight:600;">{safe_string(inv_reference)}</td></tr>' if inv_reference else ''
+    dn_row = f'<tr><td style="padding:4px 0;color:#888;">Delivery Note:</td><td style="padding:4px 0;font-weight:600;">{safe_string(inv_delivery_note)}</td></tr>' if inv_delivery_note else ''
+    sp_row = f'<tr><td style="padding:4px 0;color:#888;">Sales Person:</td><td style="padding:4px 0;font-weight:600;">{safe_string(inv_sales_person)}</td></tr>' if inv_sales_person else ''
+    terms_row = f'<tr><td style="padding:4px 0;color:#888;">Payment Terms:</td><td style="padding:4px 0;font-weight:600;">{safe_string(cust_payment_terms)}</td></tr>' if cust_payment_terms else ''
+    
+    # Zero-amount balance warning
+    inv_total = float(invoice.get("total", 0) or 0)
+    zero_warning = ""
+    if inv_total == 0 and status in ("outstanding", "account"):
+        zero_warning = '<div class="no-print" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);padding:12px 16px;border-radius:8px;margin-bottom:15px;display:flex;justify-content:space-between;align-items:center;"><div><strong>⚠️ Warning:</strong> This invoice has a R0.00 balance. No amount has been entered.</div><button class="btn btn-primary" onclick="document.getElementById(\'editFields\').style.display=\'block\';window.scrollTo(0,0);" style="white-space:nowrap;">✏️ Edit Invoice</button></div>'
+    
     # Show error if redirected back from fraud guard
     _inv_error = request.args.get("error", "")
     _inv_error_html = f'<div style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:var(--text);padding:12px 16px;border-radius:8px;margin-bottom:15px;"><strong>⚠</strong> {safe_string(_inv_error)}</div>' if _inv_error else ""
     
-    content = f'''{_inv_error_html}
+    content = f'''{_inv_error_html}{zero_warning}
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <div>
             <a href="/invoices" style="color:var(--text-muted);">← Back to Invoices</a>
@@ -27623,13 +27671,47 @@ def invoice_view(invoice_id):
             <h3 style="margin-top:0;">Email Invoice</h3>
             <p style="color:var(--text-muted);margin-bottom:20px;">Send invoice <strong>{invoice.get("invoice_number", "")}</strong> to:</p>
             
-            <input type="email" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
-                   style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:15px;">
+            <input type="text" id="emailTo" value="{cust_email}" placeholder="customer@email.com" 
+                   style="width:100%;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;margin-bottom:10px;">
+            <small style="color:var(--text-muted);display:block;margin-bottom:15px;">Multiple emails: separate with comma (e.g. john@co.za, admin@co.za)</small>
             
             <div style="display:flex;gap:10px;justify-content:flex-end;">
                 <button onclick="closeEmailModal()" class="btn btn-secondary">Cancel</button>
                 <button onclick="sendInvoiceEmail()" class="btn btn-primary" style="background:#10b981;">Send Email</button>
             </div>
+        </div>
+    </div>
+    
+    <!-- EDIT INVOICE DETAILS (no-print) -->
+    <div class="no-print card" style="margin-bottom:15px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="document.getElementById('editFields').style.display=document.getElementById('editFields').style.display==='none'?'block':'none'">
+            <h3 style="margin:0;">✏️ Edit Invoice Details</h3>
+            <span style="color:var(--text-muted);">▼</span>
+        </div>
+        <div id="editFields" style="display:none;margin-top:15px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Invoice Date</label>
+                    <input type="date" id="editDate" value="{invoice.get('date', '')}" class="form-input">
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Sales Person</label>
+                    <input type="text" id="editSalesPerson" value="{safe_string(inv_sales_person)}" placeholder="e.g. Piet" class="form-input">
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Reference</label>
+                    <input type="text" id="editReference" value="{safe_string(inv_reference)}" placeholder="e.g. PO12345" class="form-input">
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Delivery Note No</label>
+                    <input type="text" id="editDeliveryNote" value="{safe_string(inv_delivery_note)}" placeholder="e.g. DN-0045" class="form-input">
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Due Date</label>
+                    <input type="date" id="editDueDate" value="{invoice.get('due_date', '')}" class="form-input">
+                </div>
+            </div>
+            <button class="btn btn-primary" onclick="saveInvoiceEdits()" style="margin-top:12px;">💾 Save Changes</button>
         </div>
     </div>
     
@@ -27654,8 +27736,10 @@ def invoice_view(invoice_id):
                     <tr><td style="padding:4px 0;color:#888;width:120px;">Number:</td><td style="padding:4px 0;font-weight:600;">{invoice.get("invoice_number", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Date:</td><td style="padding:4px 0;">{invoice.get("date", "-")}</td></tr>
                     <tr><td style="padding:4px 0;color:#888;">Due Date:</td><td style="padding:4px 0;">{invoice.get("due_date", "-")}</td></tr>
-                    {f'<tr><td style="padding:4px 0;color:#888;">Prepared By:</td><td style="padding:4px 0;font-weight:600;">{inv_prepared_by}</td></tr>' if inv_prepared_by else ''}
-                    {f'<tr><td style="padding:4px 0;color:#888;">Salesman:</td><td style="padding:4px 0;font-weight:600;">{inv_salesman}</td></tr>' if inv_salesman else ''}
+                    {sp_row}
+                    {ref_row}
+                    {dn_row}
+                    {terms_row}
                     {f'<tr><td style="padding:4px 0;color:#888;">Our VAT No:</td><td style="padding:4px 0;">{biz_vat}</td></tr>' if biz_vat else ''}
                 </table>
                 {f'<div style="margin-top:8px;font-size:13px;color:#666;"><span>Tel: {biz_phone}</span></div>' if biz_phone else ''}
@@ -27754,6 +27838,33 @@ def invoice_view(invoice_id):
         }}
     }}
     
+    // SAVE INVOICE EDITS (date, sales person, reference, delivery note)
+    async function saveInvoiceEdits() {{
+        const data = {{
+            date: document.getElementById('editDate').value,
+            due_date: document.getElementById('editDueDate').value,
+            sales_person: document.getElementById('editSalesPerson').value.trim(),
+            reference: document.getElementById('editReference').value.trim(),
+            delivery_note: document.getElementById('editDeliveryNote').value.trim()
+        }};
+        
+        try {{
+            const response = await fetch('/api/invoice/{invoice_id}/edit', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify(data)
+            }});
+            const result = await response.json();
+            if (result.success) {{
+                location.reload();
+            }} else {{
+                alert('Error: ' + (result.error || 'Failed to save'));
+            }}
+        }} catch (err) {{
+            alert('Error: ' + err.message);
+        }}
+    }}
+    
     // EMAIL FUNCTIONS
     function showEmailModal() {{
         document.getElementById('emailModal').style.display = 'flex';
@@ -27765,9 +27876,11 @@ def invoice_view(invoice_id):
     }}
     
     async function sendInvoiceEmail() {{
-        const email = document.getElementById('emailTo').value.trim();
-        if (!email || !email.includes('@')) {{
-            alert('Please enter a valid email address');
+        const emailField = document.getElementById('emailTo').value.trim();
+        // Support multiple comma-separated emails
+        const emails = emailField.split(',').map(e => e.trim()).filter(e => e.includes('@'));
+        if (emails.length === 0) {{
+            alert('Please enter at least one valid email address');
             return;
         }}
         
@@ -27779,11 +27892,11 @@ def invoice_view(invoice_id):
             const response = await fetch('/api/invoice/{invoice_id}/email', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{to_email: email}})
+                body: JSON.stringify({{to_email: emails.join(',')}})
             }});
             const result = await response.json();
             if (result.success) {{
-                alert('✅ Invoice emailed to ' + email);
+                alert('✅ Invoice emailed to ' + emails.join(', '));
                 closeEmailModal();
             }} else {{
                 alert('❌ ' + (result.error || 'Failed to send email'));
@@ -28015,14 +28128,48 @@ def api_invoice_pay(invoice_id):
         return jsonify({"success": False, "error": str(e)})
 
 
+@app.route("/api/invoice/<invoice_id>/edit", methods=["POST"])
+@login_required
+def api_invoice_edit(invoice_id):
+    """Edit invoice details — date, sales person, reference, delivery note"""
+    try:
+        data = request.get_json()
+        invoice = db.get_one("invoices", invoice_id)
+        if not invoice:
+            return jsonify({"success": False, "error": "Invoice not found"})
+        
+        updates = {}
+        if data.get("date"):
+            updates["date"] = data["date"]
+        if data.get("due_date"):
+            updates["due_date"] = data["due_date"]
+        if "sales_person" in data:
+            updates["salesman_name"] = data["sales_person"]
+            updates["sales_rep"] = data["sales_person"]
+        if "reference" in data:
+            updates["reference"] = data["reference"]
+        if "delivery_note" in data:
+            updates["delivery_note"] = data["delivery_note"]
+        
+        if updates:
+            db.update("invoices", invoice_id, updates)
+            logger.info(f"[INVOICE EDIT] {invoice.get('invoice_number')}: {list(updates.keys())}")
+        
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"[INVOICE EDIT] Error: {e}")
+        return jsonify({"success": False, "error": str(e)})
+
+
 @app.route("/api/invoice/<invoice_id>/email", methods=["POST"])
 @login_required
 def api_invoice_email(invoice_id):
-    """Send invoice via email"""
+    """Send invoice via email — supports multiple comma-separated addresses"""
     try:
         data = request.get_json()
         to_email = data.get("to_email", "").strip()
         
+        # Support multiple comma-separated emails
         if not to_email or "@" not in to_email:
             return jsonify({"success": False, "error": "Valid email address required"})
         
@@ -52370,6 +52517,7 @@ def api_customer_quick_add():
         email = data.get("email", "").strip()
         vat_number = data.get("vat_number", "").strip()
         address = data.get("address", "").strip()
+        payment_terms = data.get("payment_terms", "COD").strip()
         
         if not name:
             return jsonify({"success": False, "error": "Name required"})
@@ -52382,6 +52530,7 @@ def api_customer_quick_add():
             email=email,
             vat_number=vat_number,
             address=address,
+            payment_terms=payment_terms,
             created_by=user.get("id", "") if user else ""
         )
         customer_id = customer["id"]
