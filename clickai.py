@@ -26650,47 +26650,6 @@ def api_stock_search():
     })
 
 
-@app.route("/api/stock/lookup")
-@login_required
-def api_stock_lookup():
-    """Lightweight JSON stock search for invoice/quote line item typeahead.
-    Returns max 25 items with only the fields needed for the form."""
-    
-    business = Auth.get_current_business()
-    biz_id = business.get("id") if business else None
-    if not biz_id:
-        return jsonify([])
-    
-    query = request.args.get("q", "").strip().lower()
-    if len(query) < 2:
-        return jsonify([])
-    
-    all_stock = db.get_all_stock(biz_id)
-    
-    results = []
-    for s in all_stock:
-        code = str(s.get("code", "")).lower()
-        desc = str(s.get("description", "")).lower()
-        if query in code or query in desc:
-            price = float(s.get("price") or s.get("selling_price") or 0)
-            code_str = s.get("code", "")
-            desc_str = s.get("description", "")
-            label = f"{code_str} - {desc_str}" if code_str else desc_str
-            results.append({
-                "id": s.get("id", ""),
-                "label": label,
-                "desc": desc_str,
-                "code": code_str,
-                "price": price,
-                "unit": s.get("unit", ""),
-                "qty": float(s.get("qty") or s.get("quantity") or 0)
-            })
-            if len(results) >= 25:
-                break
-    
-    return jsonify(results)
-
-
 # Store pending edits temporarily
 _zane_pending_edits = {}
 
@@ -27283,14 +27242,28 @@ def invoice_new():
         
         return redirect("/invoice/new?error=Failed+to+save")
     
-    # GET - show form (no stock loading - uses AJAX typeahead now)
+    # GET - show form (parallel DB calls - was 3 sequential + get_all_stock does 2 more)
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         fut_customers = executor.submit(db.get, "customers", {"business_id": biz_id})
+        fut_stock_items = executor.submit(db.get, "stock_items", {"business_id": biz_id})
+        fut_stock_legacy = executor.submit(db.get, "stock", {"business_id": biz_id})
         fut_team = executor.submit(db.get, "team_members", {"business_id": biz_id})
     
     customers = fut_customers.result() if biz_id else []
     inv_team_members = fut_team.result() if biz_id else []
+    # Merge stock tables (same logic as get_all_stock but parallel)
+    stock = []
+    stock_items_result = fut_stock_items.result() if biz_id else []
+    if stock_items_result:
+        stock.extend(stock_items_result)
+    legacy_result = fut_stock_legacy.result() if biz_id else []
+    if legacy_result:
+        existing_codes = {str(s.get("code", "")).lower() for s in stock if s.get("code")}
+        for s in legacy_result:
+            code = str(s.get("code", "")).lower()
+            if not code or code not in existing_codes:
+                stock.append(s)
     
     # Check if customer_id is passed in URL
     preselect_customer_id = request.args.get("customer_id", "")
@@ -27312,11 +27285,22 @@ def invoice_new():
             _inv_seen.add(tm_uid)
             inv_salesman_opts += f'<option value="{tm_uid}" data-name="{safe_string(tm.get("name", ""))}">{safe_string(tm.get("name", ""))}</option>'
     
+    # Stock datalist for autocomplete
+    stock_options = '<option value="NEW" data-price="0" data-stockid="" data-unit="">+ Add New Stock Item</option>'
+    for s in stock:
+        desc = safe_string(s.get("description", ""))
+        code = safe_string(s.get("code", ""))
+        price = float(s.get("price") or s.get("selling_price") or 0)
+        stock_id = s.get("id", "")
+        qty_avail = float(s.get("qty") or s.get("quantity") or 0)
+        stock_unit = safe_string(s.get("unit", ""))
+        label = f"{code} - {desc}" if code else desc
+        stock_options += f'<option value="{label}" data-price="{price}" data-stockid="{stock_id}" data-desc="{desc}" data-qty="{qty_avail}" data-unit="{stock_unit}">'
+    
     error_msg = request.args.get("error", "")
     error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
     
     content = f'''
-    <style>.stock-dropdown{{position:absolute;top:100%;left:0;right:0;background:var(--card);border:1px solid var(--border);border-radius:6px;max-height:220px;overflow-y:auto;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.3);}}.stock-dd-item{{padding:8px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);}}.stock-dd-item:hover{{background:var(--primary);color:white;}}</style>
     {error_html}
     <div class="card">
         <h3 style="margin:0 0 20px 0;">New Invoice</h3>
@@ -27363,6 +27347,7 @@ def invoice_new():
             </div>
             
             <h4>Line Items</h4>
+            <datalist id="stockList">{stock_options}</datalist>
             
             <table class="table" id="lineItems">
                 <thead>
@@ -27377,10 +27362,9 @@ def invoice_new():
                 </thead>
                 <tbody id="itemRows">
                     <tr>
-                        <td style="position:relative;">
-                            <input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
+                        <td>
+                            <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
                             <input type="hidden" name="item_stock_id[]" value="">
-                            <div class="stock-dropdown" style="display:none;"></div>
                         </td>
                         <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
                         <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
@@ -27423,6 +27407,7 @@ def invoice_new():
     }});
     
     // Validate form before submit — block zero amount invoices
+    let _skipZeroCheck = false;
     document.getElementById('invoiceForm').addEventListener('submit', function(e) {{
         // Check customer name is set
         const custName = document.getElementById('customerName').value.trim();
@@ -27433,83 +27418,56 @@ def invoice_new():
             return false;
         }}
         if (!custName) {{
-            // Try to set it from the dropdown
             handleCustomerChange();
         }}
         
-        // Check total is not zero
-        let subtotal = 0;
-        document.querySelectorAll('.row-total').forEach(cell => {{
-            subtotal += parseFloat(cell.textContent.replace('R', '')) || 0;
-        }});
-        if (subtotal <= 0) {{
-            e.preventDefault();
-            if (!confirm('⚠️ Warning: Invoice total is R0.00 — no amount entered.\\n\\nAre you sure you want to create this invoice with zero amount?')) {{
+        // Check total is not zero (skip if already confirmed)
+        if (!_skipZeroCheck) {{
+            let subtotal = 0;
+            document.querySelectorAll('.row-total').forEach(cell => {{
+                subtotal += parseFloat(cell.textContent.replace('R', '')) || 0;
+            }});
+            if (subtotal <= 0) {{
+                e.preventDefault();
+                if (confirm('⚠️ Warning: Invoice total is R0.00\\n\\nCreate with zero amount?')) {{
+                    _skipZeroCheck = true;
+                    e.target.submit();
+                }}
                 return false;
             }}
-            // If they click OK, re-submit
-            e.target.submit();
         }}
     }});
     
     function checkStock(input) {{
-        // Legacy stub - now handled by stockSearch
-    }}
-    
-    // === AJAX STOCK TYPEAHEAD ===
-    let _searchTimer = null;
-    function stockSearch(input) {{
-        const q = input.value.trim();
-        const dd = input.closest('td').querySelector('.stock-dropdown');
-        if (q.length < 2) {{ dd.style.display = 'none'; return; }}
-        
-        clearTimeout(_searchTimer);
-        _searchTimer = setTimeout(() => {{
-            fetch('/api/stock/lookup?q=' + encodeURIComponent(q))
-            .then(r => r.json())
-            .then(items => {{
-                if (!items.length) {{ dd.style.display = 'none'; return; }}
-                let html = '';
-                for (const s of items) {{
-                    html += `<div class="stock-dd-item" onmousedown="pickStock(this, '${{s.id}}', '${{s.label.replace(/'/g, "\\\\'")}}'', ${{s.price}}, '${{(s.unit||'').replace(/'/g, "\\\\'")}}'')">
-                        <span style="font-weight:600;">${{s.code || ''}}</span> ${{s.desc}} 
-                        <span style="float:right;color:#22c55e;">R${{s.price.toFixed(2)}}</span>
-                        ${{s.unit ? '<span style="color:#888;font-size:11px;margin-left:6px;">' + s.unit + '</span>' : ''}}
-                    </div>`;
-                }}
-                dd.innerHTML = html;
-                dd.style.display = 'block';
-            }});
-        }}, 250);
-    }}
-    
-    function pickStock(el, stockId, label, price, unit) {{
-        const row = el.closest('tr');
-        row.querySelector('input[name="item_desc[]"]').value = label;
-        row.querySelector('input[name="item_stock_id[]"]').value = stockId;
-        const priceInput = row.querySelector('input[name="item_price[]"]');
-        priceInput.value = price;
-        const unitInput = row.querySelector('input[name="item_unit[]"]');
-        if (unitInput && unit) unitInput.value = unit;
-        el.closest('.stock-dropdown').style.display = 'none';
-        calcRow(priceInput);
-    }}
-    
-    // Close dropdowns on click outside
-    document.addEventListener('click', function(e) {{
-        if (!e.target.closest('.stock-dropdown') && !e.target.matches('input[name="item_desc[]"]')) {{
-            document.querySelectorAll('.stock-dropdown').forEach(d => d.style.display = 'none');
+        if (input.value === '+ Add New Stock Item') {{
+            window.open('/stock/new', '_blank');
+            input.value = '';
+            return;
         }}
-    }});
+        const datalist = document.getElementById('stockList');
+        const options = datalist.querySelectorAll('option');
+        const row = input.closest('tr');
+        const stockIdInput = row.querySelector('input[name="item_stock_id[]"]');
+        const unitInput = row.querySelector('input[name="item_unit[]"]');
+        for (let opt of options) {{
+            if (opt.value === input.value) {{
+                const priceInput = row.querySelector('input[name="item_price[]"]');
+                priceInput.value = opt.dataset.price || '';
+                if (stockIdInput) stockIdInput.value = opt.dataset.stockid || '';
+                if (unitInput && opt.dataset.unit) unitInput.value = opt.dataset.unit;
+                calcRow(priceInput);
+                break;
+            }}
+        }}
+    }}
     
     function addRow() {{
         const tbody = document.getElementById('itemRows');
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td style="position:relative;">
-                <input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
+            <td>
+                <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
                 <input type="hidden" name="item_stock_id[]" value="">
-                <div class="stock-dropdown" style="display:none;"></div>
             </td>
             <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
             <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
@@ -31370,14 +31328,28 @@ def quote_new():
         
         return redirect("/quote/new?error=Failed+to+save")
     
-    # GET - show form (no stock loading - uses AJAX typeahead)
+    # GET - show form (parallel DB calls)
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         fut_customers = executor.submit(db.get, "customers", {"business_id": biz_id})
+        fut_stock_items = executor.submit(db.get, "stock_items", {"business_id": biz_id})
+        fut_stock_legacy = executor.submit(db.get, "stock", {"business_id": biz_id})
         fut_team = executor.submit(db.get, "team_members", {"business_id": biz_id})
     
     customers = fut_customers.result() if biz_id else []
     team_members = fut_team.result() if biz_id else []
+    # Merge stock tables (same logic as get_all_stock but parallel)
+    stock = []
+    stock_items_result = fut_stock_items.result() if biz_id else []
+    if stock_items_result:
+        stock.extend(stock_items_result)
+    legacy_result = fut_stock_legacy.result() if biz_id else []
+    if legacy_result:
+        existing_codes = {str(s.get("code", "")).lower() for s in stock if s.get("code")}
+        for s in legacy_result:
+            code = str(s.get("code", "")).lower()
+            if not code or code not in existing_codes:
+                stock.append(s)
     
     customer_options = '<option value="">-- Select Customer --</option>'
     customer_options += '<option value="WALKIN" style="color:var(--green);">Walk-in Customer (type name below)</option>'
@@ -31396,11 +31368,17 @@ def quote_new():
             seen_ids.add(tm_uid)
             salesman_options += f'<option value="{tm_uid}" data-name="{safe_string(tm.get("name", ""))}">{safe_string(tm.get("name", ""))}</option>'
     
+    stock_options = '<option value="NEW" data-price="0" data-unit="">+ Add New Stock Item</option>'
+    for s in stock:
+        desc = safe_string(s.get("description", ""))
+        price = float(s.get("price") or s.get("selling_price") or 0)
+        stock_unit = safe_string(s.get("unit", ""))
+        stock_options += f'<option value="{desc}" data-price="{price}" data-unit="{stock_unit}">'
+    
     error_msg = request.args.get("error", "")
     error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
     
     content = f'''
-    <style>.stock-dropdown{{position:absolute;top:100%;left:0;right:0;background:var(--card);border:1px solid var(--border);border-radius:6px;max-height:220px;overflow-y:auto;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.3);}}.stock-dd-item{{padding:8px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);}}.stock-dd-item:hover{{background:var(--primary);color:white;}}</style>
     {error_html}
     <div class="card">
         <h3 style="margin:0 0 20px 0;">New Quote</h3>
@@ -31432,6 +31410,7 @@ def quote_new():
             </div>
             
             <h4>Line Items</h4>
+            <datalist id="stockList">{stock_options}</datalist>
             
             <table class="table" id="lineItems">
                 <thead>
@@ -31446,11 +31425,7 @@ def quote_new():
                 </thead>
                 <tbody id="itemRows">
                     <tr>
-                        <td style="position:relative;">
-                            <input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
-                            <input type="hidden" name="item_stock_id[]" value="">
-                            <div class="stock-dropdown" style="display:none;"></div>
-                        </td>
+                        <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
                         <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
@@ -31501,65 +31476,31 @@ def quote_new():
     }}
     
     function checkStock(input) {{
-        // Legacy stub - now handled by stockSearch
-    }}
-    
-    // === AJAX STOCK TYPEAHEAD ===
-    let _searchTimer = null;
-    function stockSearch(input) {{
-        const q = input.value.trim();
-        const dd = input.closest('td').querySelector('.stock-dropdown');
-        if (q.length < 2) {{ dd.style.display = 'none'; return; }}
-        
-        clearTimeout(_searchTimer);
-        _searchTimer = setTimeout(() => {{
-            fetch('/api/stock/lookup?q=' + encodeURIComponent(q))
-            .then(r => r.json())
-            .then(items => {{
-                if (!items.length) {{ dd.style.display = 'none'; return; }}
-                let html = '';
-                for (const s of items) {{
-                    html += `<div class="stock-dd-item" onmousedown="pickStock(this, '${{s.id}}', '${{s.label.replace(/'/g, "\\\\'")}}'', ${{s.price}}, '${{(s.unit||'').replace(/'/g, "\\\\'")}}'')">
-                        <span style="font-weight:600;">${{s.code || ''}}</span> ${{s.desc}} 
-                        <span style="float:right;color:#22c55e;">R${{s.price.toFixed(2)}}</span>
-                        ${{s.unit ? '<span style="color:#888;font-size:11px;margin-left:6px;">' + s.unit + '</span>' : ''}}
-                    </div>`;
-                }}
-                dd.innerHTML = html;
-                dd.style.display = 'block';
-            }});
-        }}, 250);
-    }}
-    
-    function pickStock(el, stockId, label, price, unit) {{
-        const row = el.closest('tr');
-        row.querySelector('input[name="item_desc[]"]').value = label;
-        const sidInput = row.querySelector('input[name="item_stock_id[]"]');
-        if (sidInput) sidInput.value = stockId;
-        const priceInput = row.querySelector('input[name="item_price[]"]');
-        priceInput.value = price;
-        const unitInput = row.querySelector('input[name="item_unit[]"]');
-        if (unitInput && unit) unitInput.value = unit;
-        el.closest('.stock-dropdown').style.display = 'none';
-        calcRow(priceInput);
-    }}
-    
-    // Close dropdowns on click outside
-    document.addEventListener('click', function(e) {{
-        if (!e.target.closest('.stock-dropdown') && !e.target.matches('input[name="item_desc[]"]')) {{
-            document.querySelectorAll('.stock-dropdown').forEach(d => d.style.display = 'none');
+        if (input.value === '+ Add New Stock Item') {{
+            window.open('/stock/new', '_blank');
+            input.value = '';
+            return;
         }}
-    }});
+        const datalist = document.getElementById('stockList');
+        const options = datalist.querySelectorAll('option');
+        for (let opt of options) {{
+            if (opt.value === input.value) {{
+                const row = input.closest('tr');
+                const priceInput = row.querySelector('input[name="item_price[]"]');
+                priceInput.value = opt.dataset.price || '';
+                const unitInput = row.querySelector('input[name="item_unit[]"]');
+                if (unitInput && opt.dataset.unit) unitInput.value = opt.dataset.unit;
+                calcRow(priceInput);
+                break;
+            }}
+        }}
+    }}
     
     function addRow() {{
         const tbody = document.getElementById('itemRows');
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td style="position:relative;">
-                <input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
-                <input type="hidden" name="item_stock_id[]" value="">
-                <div class="stock-dropdown" style="display:none;"></div>
-            </td>
+            <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
             <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
