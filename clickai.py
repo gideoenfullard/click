@@ -2102,11 +2102,9 @@ class Email:
     """Email sending functionality"""
     
     @staticmethod
-    def send(to_email: str, subject: str, body_html: str, body_text: str = None, business: dict = None) -> bool:
+    def send(to_email: str, subject: str, body_html: str, body_text: str = None, business: dict = None, attachments: list = None) -> bool:
         """
-        Send an email using either:
-        1. Per-business SMTP settings (from database)
-        2. Global SMTP settings (from environment variables)
+        Send an email. attachments: list of dicts with 'filename', 'content' (bytes or str), 'content_type'
         """
         
         # Start with global settings
@@ -2159,17 +2157,31 @@ class Email:
             return False
         
         try:
-            msg = MIMEMultipart('alternative')
+            msg = MIMEMultipart('mixed')
             msg['Subject'] = subject
             msg['From'] = from_email
             msg['To'] = to_email
             
-            # Plain text version
+            body_part = MIMEMultipart('alternative')
             if body_text:
-                msg.attach(MIMEText(body_text, 'plain'))
+                body_part.attach(MIMEText(body_text, 'plain'))
+            body_part.attach(MIMEText(body_html, 'html'))
+            msg.attach(body_part)
             
-            # HTML version
-            msg.attach(MIMEText(body_html, 'html'))
+            if attachments:
+                from email.mime.base import MIMEBase
+                from email import encoders
+                for att in attachments:
+                    content = att.get('content', b'')
+                    if isinstance(content, str):
+                        content = content.encode('utf-8')
+                    ct = att.get('content_type', 'application/octet-stream')
+                    maintype, subtype = ct.split('/', 1) if '/' in ct else ('application', 'octet-stream')
+                    part = MIMEBase(maintype, subtype)
+                    part.set_payload(content)
+                    encoders.encode_base64(part)
+                    part.add_header('Content-Disposition', 'attachment', filename=att.get('filename', 'document'))
+                    msg.attach(part)
             
             # Send
             logger.info(f"[EMAIL] Attempting to send via {smtp_host}:{smtp_port} as {smtp_user}")
@@ -28479,65 +28491,87 @@ def api_invoice_email(invoice_id):
         
         subject = f"Invoice {inv_no} from {biz_name}"
         
-        body_html = f'''
-        <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
-            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #10b981;padding-bottom:15px;">
-                    <h1 style="color:#333;margin:0;font-size:24px;">{biz_name}</h1>
-                    <div style="text-align:right;">
-                        <h2 style="color:#10b981;margin:0;">INVOICE</h2>
-                        <p style="margin:5px 0;font-weight:bold;">{inv_no}</p>
-                    </div>
-                </div>
-                
-                <p>Dear {cust_name},</p>
-                <p>Please find your invoice details below:</p>
-                
-                <table style="width:100%;border-collapse:collapse;margin:20px 0;">
-                    <tr style="background:#10b981;color:white;">
-                        <th style="padding:10px;text-align:left;">Description</th>
-                        <th style="padding:10px;text-align:center;">Qty</th>
-                        <th style="padding:10px;text-align:right;">Price</th>
-                        <th style="padding:10px;text-align:right;">Total</th>
-                    </tr>
-                    {items_html}
-                </table>
-                
-                <table style="width:250px;margin-left:auto;border-collapse:collapse;">
-                    <tr><td style="padding:8px;">Subtotal:</td><td style="padding:8px;text-align:right;">R{subtotal:,.2f}</td></tr>
-                    <tr><td style="padding:8px;">VAT (15%):</td><td style="padding:8px;text-align:right;">R{vat:,.2f}</td></tr>
-                    <tr style="font-weight:bold;font-size:18px;border-top:2px solid #333;">
-                        <td style="padding:10px;">TOTAL:</td>
-                        <td style="padding:10px;text-align:right;color:#10b981;">R{total:,.2f}</td>
-                    </tr>
-                </table>
-                
-                <p style="margin-top:30px;"><strong>Date:</strong> {date}</p>
-                <p><strong>Status:</strong> {status.upper()}</p>
-                {f'<p><strong>Prepared By:</strong> {invoice.get("created_by_name", "")}</p>' if invoice.get("created_by_name") else ''}
-                {f'<p><strong>Salesman:</strong> {invoice.get("salesman_name", "") or invoice.get("sales_rep", "")}</p>' if (invoice.get("salesman_name") or invoice.get("sales_rep")) else ''}
-                
-                {f'<div style="margin-top:20px;padding:15px;background:#f0fdf4;border-radius:8px;"><strong>Banking Details:</strong><br>{business.get("bank_name", "")} | Acc: {business.get("bank_account", "")} | Branch: {business.get("bank_branch", "")}</div>' if business and business.get("bank_account") else ''}
-                
-                <p style="margin-top:30px;">Thank you for your business!</p>
-                
-                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                <p style="color: #888; font-size: 12px;">
-                    {biz_name}<br>
-                    {business.get("phone", "") if business else ""}<br>
-                    {business.get("email", "") if business else ""}<br>
-                    Sent via Click AI
-                </p>
-            </div>
-        </body>
-        </html>
-        '''
+        biz_phone = business.get("phone", "") if business else ""
+        biz_email_addr = business.get("email", "") if business else ""
+        biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
+        biz_vat = business.get("vat_number", "") if business else ""
+        biz_bank = business.get("bank_name", "") if business else ""
+        biz_bank_acc = business.get("bank_account", "") if business else ""
+        biz_bank_branch = business.get("bank_branch", "") if business else ""
+        payment_method = invoice.get("payment_method", "account")
+        method_label = {"cash": "Cash", "card": "Card", "eft": "EFT", "account": "Account"}.get(payment_method, payment_method)
+        salesman = invoice.get("salesman_name", "") or invoice.get("sales_rep", "")
+        cashier = invoice.get("created_by_name", "")
         
-        body_text = f"Invoice {inv_no} from {biz_name}\n\nDear {cust_name},\n\nInvoice #: {inv_no}\nDate: {date}\nTotal: R{total:,.2f}\nStatus: {status.upper()}\n\nThank you for your business!\n\n{biz_name}"
+        # Short email body
+        body_html = f'''<html><body style="font-family:Arial,sans-serif;font-size:13px;color:#333;">
+        <p>Dear {cust_name},</p>
+        <p>Please find attached Invoice <strong>{inv_no}</strong> for <strong>R{total:,.2f}</strong>.</p>
+        {f'<p><strong>Banking Details:</strong> {biz_bank} | Acc: {biz_bank_acc} | Branch: {biz_bank_branch}</p>' if biz_bank_acc else ''}
+        <p>Thank you for your business!</p>
+        <hr style="border:none;border-top:1px solid #ddd;margin:15px 0 8px;">
+        <p style="color:#999;font-size:10px;">{biz_name} | {biz_phone} | {biz_email_addr}<br>Sent via Click AI</p>
+        </body></html>'''
+        
+        body_text = f"Invoice {inv_no} from {biz_name}\n\nDear {cust_name},\n\nPlease find attached Invoice {inv_no} for R{total:,.2f}.\n\nThank you for your business!\n\n{biz_name}"
+        
+        # Build attachment items
+        att_items = ""
+        for item in items:
+            qty = item.get("qty") or item.get("quantity") or 1
+            desc = safe_string(item.get("description") or item.get("desc") or "-")
+            unit = safe_string(item.get("unit") or "")
+            price = float(item.get("price", 0))
+            total_excl = float(item.get("total", 0)) or round(float(qty) * price, 2)
+            vat_amt = round(total_excl * 0.15, 2)
+            total_incl = round(total_excl + vat_amt, 2)
+            att_items += f'<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:5px 8px;font-size:11px;">{desc}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{unit}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{qty}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{price:,.2f}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">15%</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{total_excl:,.2f}</td><td style="text-align:right;padding:5px 8px;font-size:11px;font-weight:600;">R{total_incl:,.2f}</td></tr>'
+        
+        attachment_html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice {inv_no}</title>
+        <style>body{{font-family:Arial,sans-serif;margin:0;padding:0;color:#333;font-size:12px;}}table{{width:100%;border-collapse:collapse;}}@media print{{@page{{margin:10mm 12mm;}}body{{padding:0;}}}}</style>
+        </head><body>
+        <div style="background:#1a1a2e;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
+            <div><div style="font-size:16px;font-weight:700;">{biz_name}</div>{f'<div style="font-size:10px;opacity:0.8;">{biz_address}</div>' if biz_address else ''}</div>
+            <div style="text-align:right;"><div style="font-size:20px;font-weight:700;letter-spacing:2px;">TAX INVOICE</div><span style="background:#10b981;color:white;padding:4px 12px;border-radius:20px;font-size:11px;">{method_label.upper()}</span></div>
+        </div>
+        <div style="padding:10px 25px;display:flex;gap:40px;border-bottom:1px solid #e5e7eb;">
+            <div style="flex:1;border-right:1px solid #e5e7eb;padding-right:25px;">
+                <table style="font-size:11px;width:auto;"><tr><td style="padding:3px 0;color:#888;width:100px;">Number:</td><td style="font-weight:600;">{inv_no}</td></tr><tr><td style="padding:3px 0;color:#888;">Date:</td><td>{date}</td></tr>{f'<tr><td style="padding:3px 0;color:#888;">Our VAT:</td><td>{biz_vat}</td></tr>' if biz_vat else ''}{f'<tr><td style="padding:3px 0;color:#888;">Salesman:</td><td>{salesman}</td></tr>' if salesman else ''}{f'<tr><td style="padding:3px 0;color:#888;">Prepared By:</td><td>{cashier}</td></tr>' if cashier else ''}</table>
+                {f'<div style="margin-top:6px;font-size:10px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
+            </div>
+            <div style="flex:1;padding-left:25px;">
+                <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600;">Bill To</div>
+                <div style="font-size:13px;font-weight:700;">{safe_string(cust_name)}</div>
+            </div>
+        </div>
+        <div style="padding:0 25px;"><table>
+            <thead><tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
+                <th style="padding:5px 8px;text-align:left;color:#475569;font-size:10px;text-transform:uppercase;">Description</th>
+                <th style="padding:5px 8px;text-align:center;color:#475569;font-size:10px;text-transform:uppercase;">Unit</th>
+                <th style="padding:5px 8px;text-align:center;color:#475569;font-size:10px;text-transform:uppercase;width:50px;">Qty</th>
+                <th style="padding:5px 8px;text-align:right;color:#475569;font-size:10px;text-transform:uppercase;">Price</th>
+                <th style="padding:5px 8px;text-align:center;color:#475569;font-size:10px;text-transform:uppercase;">VAT</th>
+                <th style="padding:5px 8px;text-align:right;color:#475569;font-size:10px;text-transform:uppercase;">Excl</th>
+                <th style="padding:5px 8px;text-align:right;color:#475569;font-size:10px;text-transform:uppercase;">Incl</th>
+            </tr></thead><tbody>{att_items}</tbody>
+        </table></div>
+        <div style="padding:15px 25px;display:flex;justify-content:space-between;align-items:flex-end;">
+            <div style="font-size:11px;color:#666;max-width:55%;">
+                {f'<div style="border:1px solid #e5e7eb;border-radius:6px;padding:10px;background:#fafafa;margin-bottom:8px;font-size:11px;"><strong>Banking Details</strong><br>{biz_bank} | Acc: {biz_bank_acc} | Branch: {biz_bank_branch}</div>' if biz_bank_acc else ''}
+                <p style="margin:4px 0;font-size:10px;color:#999;">Thank you for your business!</p>
+            </div>
+            <table style="width:200px;"><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{subtotal:,.2f}</td></tr><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">VAT (15%)</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{vat:,.2f}</td></tr><tr style="background:#1a1a2e;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">TOTAL</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R{total:,.2f}</td></tr></table>
+        </div>
+        </body></html>'''
+        
+        inv_attachment = {
+            'filename': f'{inv_no}.html',
+            'content': attachment_html,
+            'content_type': 'text/html'
+        }
         
         # Send email
-        success = Email.send(to_email, subject, body_html, body_text, business=business)
+        success = Email.send(to_email, subject, body_html, body_text, business=business, attachments=[inv_attachment])
         
         if success:
             logger.info(f"[EMAIL] Invoice {inv_no} sent to {to_email}")
@@ -32224,68 +32258,74 @@ def api_quote_email(quote_id):
         
         subject = f"Quotation {quote_no} from {biz_name}"
         
-        body_html = f'''
-        <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
-            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #2563eb;padding-bottom:15px;">
-                    <h1 style="color:#333;margin:0;font-size:24px;">{biz_name}</h1>
-                    <div style="text-align:right;">
-                        <h2 style="color:#2563eb;margin:0;">QUOTATION</h2>
-                        <p style="margin:5px 0;font-weight:bold;">{quote_no}</p>
-                    </div>
-                </div>
-                
-                <p>Dear {cust_name},</p>
-                <p>Thank you for your enquiry. Please find our quotation below:</p>
-                
-                <table style="width:100%;border-collapse:collapse;margin:20px 0;">
-                    <tr style="background:#2563eb;color:white;">
-                        <th style="padding:10px;text-align:left;">Description</th>
-                        <th style="padding:10px;text-align:center;">Qty</th>
-                        <th style="padding:10px;text-align:right;">Price</th>
-                        <th style="padding:10px;text-align:right;">Total</th>
-                    </tr>
-                    {items_html}
-                </table>
-                
-                <table style="width:250px;margin-left:auto;border-collapse:collapse;">
-                    <tr><td style="padding:8px;">Subtotal:</td><td style="padding:8px;text-align:right;">R{subtotal:,.2f}</td></tr>
-                    <tr><td style="padding:8px;">VAT (15%):</td><td style="padding:8px;text-align:right;">R{vat:,.2f}</td></tr>
-                    <tr style="font-weight:bold;font-size:18px;border-top:2px solid #333;">
-                        <td style="padding:10px;">TOTAL:</td>
-                        <td style="padding:10px;text-align:right;color:#2563eb;">R{total:,.2f}</td>
-                    </tr>
-                </table>
-                
-                <p style="margin-top:30px;"><strong>Date:</strong> {date}</p>
-                <p><strong>Valid Until:</strong> {valid_until}</p>
-                {f'<p><strong>Prepared By:</strong> {quote.get("created_by_name", "")}</p>' if quote.get("created_by_name") else ''}
-                {f'<p><strong>Salesman:</strong> {quote.get("salesman_name", "")}</p>' if quote.get("salesman_name") else ''}
-                
-                <div style="margin-top:20px;padding:15px;background:#eff6ff;border-radius:8px;border-left:4px solid #2563eb;">
-                    <strong>To accept this quotation:</strong><br>
-                    Reply to this email or contact us directly.
-                </div>
-                
-                <p style="margin-top:30px;">We look forward to hearing from you!</p>
-                
-                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                <p style="color: #888; font-size: 12px;">
-                    {biz_name}<br>
-                    {business.get("phone", "") if business else ""}<br>
-                    {business.get("email", "") if business else ""}<br>
-                    Sent via Click AI
-                </p>
-            </div>
-        </body>
-        </html>
-        '''
+        biz_phone = business.get("phone", "") if business else ""
+        biz_email_addr = business.get("email", "") if business else ""
+        biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
+        biz_vat = business.get("vat_number", "") if business else ""
+        salesman = quote.get("salesman_name", "")
         
-        body_text = f"Quotation {quote_no} from {biz_name}\n\nDear {cust_name},\n\nThank you for your enquiry.\n\nQuote #: {quote_no}\nDate: {date}\nValid Until: {valid_until}\nTotal: R{total:,.2f}\n\nTo accept this quotation, please reply to this email.\n\nWe look forward to hearing from you!\n\n{biz_name}"
+        body_html = f'''<html><body style="font-family:Arial,sans-serif;font-size:13px;color:#333;">
+        <p>Dear {cust_name},</p>
+        <p>Thank you for your enquiry. Please find attached our Quotation <strong>{quote_no}</strong> for <strong>R{total:,.2f}</strong>.</p>
+        <p>Valid until: {valid_until}</p>
+        <p>To accept, please reply to this email or contact us directly.</p>
+        <p>We look forward to hearing from you!</p>
+        <hr style="border:none;border-top:1px solid #ddd;margin:15px 0 8px;">
+        <p style="color:#999;font-size:10px;">{biz_name} | {biz_phone} | {biz_email_addr}<br>Sent via Click AI</p>
+        </body></html>'''
+        
+        body_text = f"Quotation {quote_no} from {biz_name}\n\nDear {cust_name},\n\nPlease find attached our Quotation {quote_no} for R{total:,.2f}.\nValid until: {valid_until}\n\nTo accept, please reply to this email.\n\n{biz_name}"
+        
+        # Build attachment
+        att_items = ""
+        for item in items:
+            qty = item.get("qty") or item.get("quantity") or 1
+            desc = safe_string(item.get("description") or item.get("desc") or "-")
+            price = float(item.get("price", 0))
+            total_excl = float(item.get("total", 0)) or round(float(qty) * price, 2)
+            vat_amt = round(total_excl * 0.15, 2)
+            total_incl = round(total_excl + vat_amt, 2)
+            att_items += f'<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:5px 8px;font-size:11px;">{desc}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{qty}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{price:,.2f}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{total_excl:,.2f}</td><td style="text-align:right;padding:5px 8px;font-size:11px;font-weight:600;">R{total_incl:,.2f}</td></tr>'
+        
+        attachment_html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quotation {quote_no}</title>
+        <style>body{{font-family:Arial,sans-serif;margin:0;padding:0;color:#333;font-size:12px;}}table{{width:100%;border-collapse:collapse;}}@media print{{@page{{margin:10mm 12mm;}}}}</style>
+        </head><body>
+        <div style="background:#1e3a5f;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
+            <div><div style="font-size:16px;font-weight:700;">{biz_name}</div>{f'<div style="font-size:10px;opacity:0.8;">{biz_address}</div>' if biz_address else ''}</div>
+            <div style="text-align:right;"><div style="font-size:20px;font-weight:700;letter-spacing:2px;">QUOTATION</div></div>
+        </div>
+        <div style="padding:10px 25px;display:flex;gap:40px;border-bottom:1px solid #e5e7eb;">
+            <div style="flex:1;">
+                <table style="font-size:11px;width:auto;"><tr><td style="padding:3px 0;color:#888;width:100px;">Quote #:</td><td style="font-weight:600;">{quote_no}</td></tr><tr><td style="padding:3px 0;color:#888;">Date:</td><td>{date}</td></tr><tr><td style="padding:3px 0;color:#888;">Valid Until:</td><td>{valid_until}</td></tr>{f'<tr><td style="padding:3px 0;color:#888;">Salesman:</td><td>{salesman}</td></tr>' if salesman else ''}</table>
+                {f'<div style="margin-top:6px;font-size:10px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
+            </div>
+            <div style="flex:1;">
+                <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600;">Quote To</div>
+                <div style="font-size:13px;font-weight:700;">{safe_string(cust_name)}</div>
+            </div>
+        </div>
+        <div style="padding:0 25px;"><table>
+            <thead><tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
+                <th style="padding:5px 8px;text-align:left;color:#475569;font-size:10px;text-transform:uppercase;">Description</th>
+                <th style="padding:5px 8px;text-align:center;color:#475569;font-size:10px;text-transform:uppercase;width:50px;">Qty</th>
+                <th style="padding:5px 8px;text-align:right;color:#475569;font-size:10px;text-transform:uppercase;">Price</th>
+                <th style="padding:5px 8px;text-align:right;color:#475569;font-size:10px;text-transform:uppercase;">Excl</th>
+                <th style="padding:5px 8px;text-align:right;color:#475569;font-size:10px;text-transform:uppercase;">Incl</th>
+            </tr></thead><tbody>{att_items}</tbody>
+        </table></div>
+        <div style="padding:15px 25px;text-align:right;">
+            <table style="width:200px;margin-left:auto;"><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{subtotal:,.2f}</td></tr><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">VAT (15%)</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{vat:,.2f}</td></tr><tr style="background:#1e3a5f;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">TOTAL</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R{total:,.2f}</td></tr></table>
+        </div>
+        </body></html>'''
+        
+        quote_attachment = {
+            'filename': f'{quote_no}.html',
+            'content': attachment_html,
+            'content_type': 'text/html'
+        }
         
         # Send email
-        success = Email.send(to_email, subject, body_html, body_text, business=business)
+        success = Email.send(to_email, subject, body_html, body_text, business=business, attachments=[quote_attachment])
         
         if success:
             logger.info(f"[EMAIL] Quote {quote_no} sent to {to_email}")
@@ -44022,70 +44062,71 @@ def api_po_email(po_id):
         
         subject = f"Purchase Order {po_number} from {biz_name}"
         
-        body_html = f'''<html><head>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 0; padding: 15px; color: #333; font-size: 13px; }}
-            table {{ border-collapse: collapse; }}
-            @media print {{ body {{ padding: 0; }} }}
-        </style>
-        </head><body>
-        <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom: 2px solid #333; margin-bottom: 12px; padding-bottom: 8px;">
-            <tr>
-                <td valign="top" style="font-size: 12px; color: #333;">
-                    <strong>{biz_name}</strong><br>
-                    {f'{biz_phone}<br>' if biz_phone else ''}{f'{biz_email}' if biz_email else ''}
-                </td>
-                <td valign="top" style="text-align: right;">
-                    <strong style="font-size: 15px; letter-spacing: 1px;">PURCHASE ORDER</strong><br>
-                    <strong>{po_number}</strong>
-                </td>
-            </tr>
-        </table>
-
+        # Short email body
+        body_html = f'''<html><body style="font-family:Arial,sans-serif;font-size:13px;color:#333;">
         <p>Dear {supplier_name},</p>
-        <p>Please find below our purchase order:</p>
-
-        <table width="100%" cellpadding="6" cellspacing="0" style="margin: 10px 0 15px; font-size: 12px;">
-            <tr style="background: #f0f0f0; border-bottom: 2px solid #ccc;">
-                <th style="text-align: left; padding: 6px 8px; font-size: 11px; font-weight: 600;">Code</th>
-                <th style="text-align: left; padding: 6px 8px; font-size: 11px; font-weight: 600;">Description</th>
-                <th style="text-align: center; padding: 6px 8px; font-size: 11px; font-weight: 600; width: 60px;">Qty</th>
-            </tr>
-            {items_html}
-        </table>
-
-        {f'<p><strong>Expected Delivery:</strong> {expected_date}</p>' if expected_date else ''}
-        {f'<p><strong>Notes:</strong> {notes}</p>' if notes else ''}
-
+        <p>Please find attached our Purchase Order <strong>{po_number}</strong>.</p>
         <p>Please confirm receipt of this order and provide your quotation.</p>
         <p>Thank you!</p>
-
-        <hr style="border: none; border-top: 1px solid #ddd; margin: 15px 0 8px;">
-        <p style="color: #999; font-size: 10px;">
-            {biz_name} | {biz_phone} | {biz_email}<br>Sent via Click AI
-        </p>
+        <hr style="border:none;border-top:1px solid #ddd;margin:15px 0 8px;">
+        <p style="color:#999;font-size:10px;">{biz_name} | {biz_phone} | {biz_email}<br>Sent via Click AI</p>
         </body></html>'''
         
-        body_text = f"""Purchase Order {po_number} from {biz_name}
-
-Dear {supplier_name},
-
-Please find below our purchase order:
-
-ITEMS REQUIRED:
-{items_text}
-{f"Expected delivery: {expected_date}" if expected_date else ""}
-{f"Notes: {notes}" if notes else ""}
-
-Please confirm receipt of this order and provide your quotation.
-
-Thank you,
-{biz_name}
-{biz_phone}
-{biz_email}
-"""
+        body_text = f"Purchase Order {po_number} from {biz_name}\n\nDear {supplier_name},\n\nPlease find attached our Purchase Order {po_number}.\n\nPlease confirm receipt and provide your quotation.\n\nThank you,\n{biz_name}\n{biz_phone}\n{biz_email}"
         
-        success = Email.send(supplier_email, subject, body_html, body_text, business=business)
+        # Build PO attachment HTML — matches print layout
+        biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
+        _sup_rec = db.get_one("suppliers", po.get("supplier_id")) if po.get("supplier_id") else None
+        _sup_email = safe_string(_sup_rec.get("email", "")) if _sup_rec else ""
+        _sup_phone = safe_string(_sup_rec.get("phone", "")) if _sup_rec else ""
+        _sup_address = safe_string(_sup_rec.get("address", "")) if _sup_rec else ""
+        sp_val = safe_string(po.get("sales_person", ""))
+        ref_val = safe_string(po.get("reference", ""))
+        
+        att_items = ""
+        for item in items:
+            code = safe_string(item.get('code', ''))
+            desc = safe_string(item.get('description', ''))
+            qty = item.get('qty') or item.get('quantity', 1)
+            att_items += f'<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:6px 10px;font-size:12px;">{code}</td><td style="padding:6px 10px;font-size:12px;">{desc}</td><td style="padding:6px 10px;text-align:center;font-size:12px;font-weight:600;">{qty}</td></tr>'
+        
+        attachment_html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Purchase Order {po_number}</title>
+        <style>body{{font-family:Arial,sans-serif;margin:0;padding:0;color:#333;font-size:12px;}}table{{width:100%;border-collapse:collapse;}}@media print{{@page{{margin:15mm;}}body{{padding:10px;}}}}</style>
+        </head><body>
+        <div style="background:#0f766e;color:white;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;">
+            <div><div style="font-size:14px;font-weight:700;">{biz_name}</div>{f'<div style="font-size:11px;opacity:0.8;">{biz_address}</div>' if biz_address else ''}</div>
+            <div style="text-align:right;"><div style="font-size:16px;font-weight:700;letter-spacing:2px;">PURCHASE ORDER</div></div>
+        </div>
+        <div style="padding:10px 20px;display:flex;gap:40px;border-bottom:1px solid #e5e7eb;">
+            <div style="flex:1;">
+                <table style="font-size:12px;width:auto;"><tr><td style="padding:3px 0;color:#888;width:110px;">PO Number:</td><td style="font-weight:600;">{po_number}</td></tr><tr><td style="padding:3px 0;color:#888;">Date:</td><td>{po.get("date", "-")}</td></tr>{f'<tr><td style="padding:3px 0;color:#888;">Sales Person:</td><td>{sp_val}</td></tr>' if sp_val else ''}{f'<tr><td style="padding:3px 0;color:#888;">Reference:</td><td>{ref_val}</td></tr>' if ref_val else ''}{f'<tr><td style="padding:3px 0;color:#888;">Expected:</td><td>{expected_date}</td></tr>' if expected_date else ''}</table>
+                {f'<div style="margin-top:6px;font-size:11px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}{f'<div style="font-size:11px;color:#666;">{biz_email}</div>' if biz_email else ''}
+            </div>
+            <div style="flex:1;">
+                <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;font-weight:600;">Order To (Supplier)</div>
+                <div style="font-size:14px;font-weight:700;color:#0f766e;">{safe_string(supplier_name)}</div>
+                {f'<div style="font-size:11px;color:#555;">{_sup_email}</div>' if _sup_email else ''}{f'<div style="font-size:11px;color:#555;">{_sup_phone}</div>' if _sup_phone else ''}{f'<div style="font-size:11px;color:#555;">{_sup_address}</div>' if _sup_address else ''}
+            </div>
+        </div>
+        <div style="padding:0 20px;"><table>
+            <thead><tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
+                <th style="padding:5px 10px;text-align:left;color:#475569;font-size:10px;text-transform:uppercase;">Code</th>
+                <th style="padding:5px 10px;text-align:left;color:#475569;font-size:10px;text-transform:uppercase;">Description</th>
+                <th style="padding:5px 10px;text-align:center;color:#475569;font-size:10px;text-transform:uppercase;width:80px;">Qty</th>
+            </tr></thead><tbody>{att_items}</tbody>
+        </table></div>
+        {f'<div style="padding:10px 20px;font-size:11px;color:#666;"><strong>Notes:</strong> {safe_string(notes)}</div>' if notes else ''}
+        <div style="padding:15px 20px;font-size:11px;color:#666;">Please confirm receipt of this order and provide your quotation.<br>Thank you!</div>
+        <div style="padding:5px 20px;font-size:9px;color:#bbb;">Sent via Click AI</div>
+        </body></html>'''
+        
+        po_attachment = {
+            'filename': f'{po_number}.html',
+            'content': attachment_html,
+            'content_type': 'text/html'
+        }
+        
+        success = Email.send(supplier_email, subject, body_html, body_text, business=business, attachments=[po_attachment])
         
         if success:
             # Update PO status
@@ -70783,64 +70824,67 @@ def api_credit_note_email(cn_id):
         
         subject = f"Credit Note {cn_no} from {biz_name}"
         
-        body_html = f'''
-        <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5;">
-            <div style="max-width: 650px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #991b1b;padding-bottom:15px;">
-                    <h1 style="color:#333;margin:0;font-size:24px;">{biz_name}</h1>
-                    <div style="text-align:right;">
-                        <h2 style="color:#991b1b;margin:0;">CREDIT NOTE</h2>
-                        <p style="margin:5px 0;font-weight:bold;">{cn_no}</p>
-                    </div>
-                </div>
-                
-                <p>Dear {cust_name},</p>
-                <p>Please find your credit note details below:</p>
-                
-                <div style="background:#fef2f2;padding:10px 15px;border-radius:8px;margin-bottom:20px;">
-                    <strong style="color:#991b1b;">Reason:</strong> {safe_string(reason)}
-                </div>
-                
-                <table style="width:100%;border-collapse:collapse;margin:20px 0;">
-                    <tr style="background:#991b1b;color:white;">
-                        <th style="padding:10px;text-align:left;">Description</th>
-                        <th style="padding:10px;text-align:center;">Qty</th>
-                        <th style="padding:10px;text-align:right;">Price</th>
-                        <th style="padding:10px;text-align:right;">Total</th>
-                    </tr>
-                    {items_html}
-                </table>
-                
-                <table style="width:250px;margin-left:auto;border-collapse:collapse;">
-                    <tr><td style="padding:8px;">Subtotal:</td><td style="padding:8px;text-align:right;">R{subtotal:,.2f}</td></tr>
-                    <tr><td style="padding:8px;">VAT (15%):</td><td style="padding:8px;text-align:right;">R{vat:,.2f}</td></tr>
-                    <tr style="font-weight:bold;font-size:18px;border-top:2px solid #333;">
-                        <td style="padding:10px;">CREDIT TOTAL:</td>
-                        <td style="padding:10px;text-align:right;color:#991b1b;">R{total:,.2f}</td>
-                    </tr>
-                </table>
-                
-                <p style="margin-top:30px;"><strong>Date:</strong> {date}</p>
-                <p><strong>Original Invoice:</strong> {cn.get("invoice_number", "-")}</p>
-                
-                <p style="margin-top:30px;">This credit has been applied to your account.</p>
-                
-                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                <p style="color: #888; font-size: 12px;">
-                    {biz_name}<br>
-                    {business.get("phone", "") if business else ""}<br>
-                    {business.get("email", "") if business else ""}<br>
-                    Sent via Click AI
-                </p>
+        biz_phone = business.get("phone", "") if business else ""
+        biz_email_addr = business.get("email", "") if business else ""
+        biz_address = safe_string(business.get("address", "")).replace("\n", "<br>") if business else ""
+        orig_inv = cn.get("invoice_number", "-")
+        
+        body_html = f'''<html><body style="font-family:Arial,sans-serif;font-size:13px;color:#333;">
+        <p>Dear {cust_name},</p>
+        <p>Please find attached Credit Note <strong>{cn_no}</strong> for <strong>R{total:,.2f}</strong>.</p>
+        <p>This credit has been applied to your account.</p>
+        <hr style="border:none;border-top:1px solid #ddd;margin:15px 0 8px;">
+        <p style="color:#999;font-size:10px;">{biz_name} | {biz_phone} | {biz_email_addr}<br>Sent via Click AI</p>
+        </body></html>'''
+        
+        body_text = f"Credit Note {cn_no} from {biz_name}\n\nDear {cust_name},\n\nPlease find attached Credit Note {cn_no} for R{total:,.2f}.\n\nThis credit has been applied to your account.\n\n{biz_name}"
+        
+        att_items = ""
+        for item in items:
+            qty = item.get("qty") or item.get("quantity") or 1
+            desc = safe_string(item.get("description") or item.get("desc") or "-")
+            price = float(item.get("price", 0))
+            item_total = float(item.get("total", 0)) or round(float(qty) * price, 2)
+            att_items += f'<tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:5px 8px;font-size:11px;">{desc}</td><td style="text-align:center;padding:5px 8px;font-size:11px;">{qty}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{price:,.2f}</td><td style="text-align:right;padding:5px 8px;font-size:11px;">R{item_total:,.2f}</td></tr>'
+        
+        attachment_html = f'''<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Credit Note {cn_no}</title>
+        <style>body{{font-family:Arial,sans-serif;margin:0;padding:0;color:#333;font-size:12px;}}table{{width:100%;border-collapse:collapse;}}@media print{{@page{{margin:10mm 12mm;}}}}</style>
+        </head><body>
+        <div style="background:#991b1b;color:white;padding:12px 25px;display:flex;justify-content:space-between;align-items:center;">
+            <div><div style="font-size:16px;font-weight:700;">{biz_name}</div>{f'<div style="font-size:10px;opacity:0.8;">{biz_address}</div>' if biz_address else ''}</div>
+            <div style="text-align:right;"><div style="font-size:20px;font-weight:700;letter-spacing:2px;">CREDIT NOTE</div></div>
+        </div>
+        <div style="padding:10px 25px;display:flex;gap:40px;border-bottom:1px solid #e5e7eb;">
+            <div style="flex:1;">
+                <table style="font-size:11px;width:auto;"><tr><td style="padding:3px 0;color:#888;width:110px;">Credit Note #:</td><td style="font-weight:600;">{cn_no}</td></tr><tr><td style="padding:3px 0;color:#888;">Date:</td><td>{date}</td></tr><tr><td style="padding:3px 0;color:#888;">Original Invoice:</td><td>{orig_inv}</td></tr><tr><td style="padding:3px 0;color:#888;">Reason:</td><td>{safe_string(reason)}</td></tr></table>
+                {f'<div style="margin-top:6px;font-size:10px;color:#666;">Tel: {biz_phone}</div>' if biz_phone else ''}
             </div>
-        </body>
-        </html>
-        '''
+            <div style="flex:1;">
+                <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;font-weight:600;">Credit To</div>
+                <div style="font-size:13px;font-weight:700;">{safe_string(cust_name)}</div>
+            </div>
+        </div>
+        <div style="padding:0 25px;"><table>
+            <thead><tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
+                <th style="padding:5px 8px;text-align:left;color:#475569;font-size:10px;text-transform:uppercase;">Description</th>
+                <th style="padding:5px 8px;text-align:center;color:#475569;font-size:10px;text-transform:uppercase;width:50px;">Qty</th>
+                <th style="padding:5px 8px;text-align:right;color:#475569;font-size:10px;text-transform:uppercase;">Price</th>
+                <th style="padding:5px 8px;text-align:right;color:#475569;font-size:10px;text-transform:uppercase;">Total</th>
+            </tr></thead><tbody>{att_items}</tbody>
+        </table></div>
+        <div style="padding:15px 25px;text-align:right;">
+            <table style="width:200px;margin-left:auto;"><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">Subtotal</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{subtotal:,.2f}</td></tr><tr style="border-bottom:1px solid #e5e7eb;"><td style="padding:4px 8px;color:#666;font-size:11px;">VAT (15%)</td><td style="padding:4px 8px;text-align:right;font-size:11px;">R{vat:,.2f}</td></tr><tr style="background:#991b1b;"><td style="padding:8px;color:white;font-size:13px;font-weight:700;">CREDIT</td><td style="padding:8px;text-align:right;color:white;font-size:13px;font-weight:700;">R{total:,.2f}</td></tr></table>
+        </div>
+        <div style="padding:10px 25px;font-size:11px;color:#666;">This credit has been applied to your account.</div>
+        </body></html>'''
         
-        body_text = f"Credit Note {cn_no} from {biz_name}\n\nDear {cust_name},\n\nCredit Note #: {cn_no}\nDate: {date}\nReason: {reason}\nCredit Total: R{total:,.2f}\n\nThis credit has been applied to your account.\n\n{biz_name}"
+        cn_attachment = {
+            'filename': f'{cn_no}.html',
+            'content': attachment_html,
+            'content_type': 'text/html'
+        }
         
-        success = Email.send(to_email, subject, body_html, body_text, business=business)
+        success = Email.send(to_email, subject, body_html, body_text, business=business, attachments=[cn_attachment])
         
         if success:
             return jsonify({"success": True, "message": f"Credit note emailed to {to_email}"})
