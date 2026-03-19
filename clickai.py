@@ -23764,44 +23764,33 @@ def customer_view(customer_id):
     if not customer:
         return redirect("/customers")
     
-    # Get invoices for this customer
-    all_invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
-    invoices = [inv for inv in all_invoices if inv.get("customer_id") == customer_id]
-    invoices = sorted(invoices, key=lambda x: x.get("date", ""), reverse=True)
+    # === PARALLEL DB CALLS with customer_id filter (was 8 sequential full-table loads) ===
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     
-    # Get quotes
-    all_quotes = db.get("quotes", {"business_id": biz_id}) if biz_id else []
-    quotes = [q for q in all_quotes if q.get("customer_id") == customer_id]
-    quotes = sorted(quotes, key=lambda x: x.get("date", ""), reverse=True)
+    def _fetch(table, extra_filters=None):
+        filters = {"business_id": biz_id, "customer_id": customer_id}
+        if extra_filters:
+            filters.update(extra_filters)
+        return db.get(table, filters) if biz_id else []
     
-    # Get credit notes for this customer
-    all_credit_notes = db.get("credit_notes", {"business_id": biz_id}) if biz_id else []
-    credit_notes = [cn for cn in all_credit_notes if cn.get("customer_id") == customer_id]
-    credit_notes = sorted(credit_notes, key=lambda x: x.get("date", ""), reverse=True)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        fut_invoices = executor.submit(_fetch, "invoices")
+        fut_quotes = executor.submit(_fetch, "quotes")
+        fut_credit_notes = executor.submit(_fetch, "credit_notes")
+        fut_delivery_notes = executor.submit(_fetch, "delivery_notes")
+        fut_jobs = executor.submit(_fetch, "jobs")
+        fut_recurring = executor.submit(_fetch, "recurring_invoices")
+        fut_receipts = executor.submit(_fetch, "receipts")
+        fut_sales = executor.submit(_fetch, "sales")
     
-    # Get delivery notes for this customer
-    all_delivery_notes = db.get("delivery_notes", {"business_id": biz_id}) if biz_id else []
-    delivery_notes = [dn for dn in all_delivery_notes if dn.get("customer_id") == customer_id]
-    delivery_notes = sorted(delivery_notes, key=lambda x: x.get("date", ""), reverse=True)
-    
-    # Get jobs
-    all_jobs = db.get("jobs", {"business_id": biz_id}) if biz_id else []
-    jobs = [j for j in all_jobs if j.get("customer_id") == customer_id]
-    jobs = sorted(jobs, key=lambda x: x.get("created_at", ""), reverse=True)
-    
-    # Get recurring invoices for this customer
-    all_recurring = db.get("recurring_invoices", {"business_id": biz_id}) if biz_id else []
-    recurring = [r for r in all_recurring if r.get("customer_id") == customer_id and r.get("status") == "active"]
-    
-    # Get payments/receipts
-    all_receipts = db.get("receipts", {"business_id": biz_id}) if biz_id else []
-    receipts = [r for r in all_receipts if r.get("customer_id") == customer_id]
-    receipts = sorted(receipts, key=lambda x: x.get("date", ""), reverse=True)
-    
-    # Get POS sales for this customer
-    all_sales = db.get("sales", {"business_id": biz_id}) if biz_id else []
-    sales = [s for s in all_sales if s.get("customer_id") == customer_id]
-    sales = sorted(sales, key=lambda x: x.get("date", ""), reverse=True)
+    invoices = sorted(fut_invoices.result(), key=lambda x: x.get("date", ""), reverse=True)
+    quotes = sorted(fut_quotes.result(), key=lambda x: x.get("date", ""), reverse=True)
+    credit_notes = sorted(fut_credit_notes.result(), key=lambda x: x.get("date", ""), reverse=True)
+    delivery_notes = sorted(fut_delivery_notes.result(), key=lambda x: x.get("date", ""), reverse=True)
+    jobs = sorted(fut_jobs.result(), key=lambda x: x.get("created_at", ""), reverse=True)
+    recurring = [r for r in fut_recurring.result() if r.get("status") == "active"]
+    receipts = sorted(fut_receipts.result(), key=lambda x: x.get("date", ""), reverse=True)
+    sales = sorted(fut_sales.result(), key=lambda x: x.get("date", ""), reverse=True)
     
     balance = float(customer.get("balance", 0))
     
@@ -27253,10 +27242,28 @@ def invoice_new():
         
         return redirect("/invoice/new?error=Failed+to+save")
     
-    # GET - show form
-    customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-    stock = db.get_all_stock(biz_id)
-    inv_team_members = db.get("team_members", {"business_id": biz_id}) if biz_id else []
+    # GET - show form (parallel DB calls - was 3 sequential + get_all_stock does 2 more)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        fut_customers = executor.submit(db.get, "customers", {"business_id": biz_id})
+        fut_stock_items = executor.submit(db.get, "stock_items", {"business_id": biz_id})
+        fut_stock_legacy = executor.submit(db.get, "stock", {"business_id": biz_id})
+        fut_team = executor.submit(db.get, "team_members", {"business_id": biz_id})
+    
+    customers = fut_customers.result() if biz_id else []
+    inv_team_members = fut_team.result() if biz_id else []
+    # Merge stock tables (same logic as get_all_stock but parallel)
+    stock = []
+    stock_items_result = fut_stock_items.result() if biz_id else []
+    if stock_items_result:
+        stock.extend(stock_items_result)
+    legacy_result = fut_stock_legacy.result() if biz_id else []
+    if legacy_result:
+        existing_codes = {str(s.get("code", "")).lower() for s in stock if s.get("code")}
+        for s in legacy_result:
+            code = str(s.get("code", "")).lower()
+            if not code or code not in existing_codes:
+                stock.append(s)
     
     # Check if customer_id is passed in URL
     preselect_customer_id = request.args.get("customer_id", "")
@@ -31319,10 +31326,28 @@ def quote_new():
         
         return redirect("/quote/new?error=Failed+to+save")
     
-    # GET - show form
-    customers = db.get("customers", {"business_id": biz_id}) if biz_id else []
-    stock = db.get_all_stock(biz_id)
-    team_members = db.get("team_members", {"business_id": biz_id}) if biz_id else []
+    # GET - show form (parallel DB calls)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        fut_customers = executor.submit(db.get, "customers", {"business_id": biz_id})
+        fut_stock_items = executor.submit(db.get, "stock_items", {"business_id": biz_id})
+        fut_stock_legacy = executor.submit(db.get, "stock", {"business_id": biz_id})
+        fut_team = executor.submit(db.get, "team_members", {"business_id": biz_id})
+    
+    customers = fut_customers.result() if biz_id else []
+    team_members = fut_team.result() if biz_id else []
+    # Merge stock tables (same logic as get_all_stock but parallel)
+    stock = []
+    stock_items_result = fut_stock_items.result() if biz_id else []
+    if stock_items_result:
+        stock.extend(stock_items_result)
+    legacy_result = fut_stock_legacy.result() if biz_id else []
+    if legacy_result:
+        existing_codes = {str(s.get("code", "")).lower() for s in stock if s.get("code")}
+        for s in legacy_result:
+            code = str(s.get("code", "")).lower()
+            if not code or code not in existing_codes:
+                stock.append(s)
     
     customer_options = '<option value="">-- Select Customer --</option>'
     customer_options += '<option value="WALKIN" style="color:var(--green);">Walk-in Customer (type name below)</option>'
