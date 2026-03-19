@@ -26832,6 +26832,48 @@ def api_stock_lookup():
     return jsonify(results)
 
 
+@app.route("/api/pos/stock")
+@login_required
+def api_pos_stock():
+    """POS stock search — multi-word, code+desc only, returns up to 500 items as JSON.
+    Uses the 30s stock cache so it's fast on repeated calls."""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    if not biz_id:
+        return jsonify([])
+    query = request.args.get("q", "").strip().lower()
+    limit = min(int(request.args.get("limit", 500)), 500)
+    
+    all_stock = db.get_all_stock(biz_id)
+    
+    # Multi-word token matching on code + description only (no category)
+    tokens = query.replace("x", "x").split() if query else []
+    
+    results = []
+    for s in all_stock:
+        code = str(s.get("code", "")).lower()
+        desc = str(s.get("description", "")).lower()
+        haystack = code + " " + desc
+        
+        if tokens:
+            if not all(t in haystack for t in tokens):
+                continue
+        
+        price = float(s.get("price") or s.get("selling_price") or 0)
+        qty = float(s.get("qty") or s.get("quantity") or 0)
+        results.append({
+            "id": s.get("id", ""),
+            "code": s.get("code", ""),
+            "desc": s.get("description", ""),
+            "price": price,
+            "qty": qty
+        })
+        if len(results) >= limit:
+            break
+    
+    return jsonify(results)
+
+
 # Store pending edits temporarily
 _zane_pending_edits = {}
 
@@ -45847,50 +45889,9 @@ def pos_page():
     # Sort stock by category then code
     stock = sorted(stock, key=lambda x: (x.get("category") or "ZZZ", x.get("code") or ""))
     
-    # Build stock rows for the table (only first 100 visible for fast render)
+    # Stock rows are now loaded via AJAX (/api/pos/stock) — no more 7MB HTML payload
     stock_rows = ""
     total_stock_count = len(stock)
-    for row_idx, item in enumerate(stock):
-        code = safe_string(item.get("code", ""))
-        desc = safe_string(item.get("description", ""))
-        price = float(item.get("price") or item.get("selling_price") or 0)
-        qty = float(item.get("qty") or item.get("quantity") or 0)
-        category = safe_string(item.get("category", ""))
-        
-        # Stock status styling
-        stock_class = ""
-        stock_badge = ""
-        if qty < 0:
-            stock_class = "negative"
-            stock_badge = f'<span class="stock-badge negative">{qty:.0f}</span>'
-        elif qty == 0:
-            stock_class = "zero"
-            stock_badge = f'<span class="stock-badge zero">0</span>'
-        elif qty < 5:
-            stock_class = "low"
-            stock_badge = f'<span class="stock-badge low">{qty:.0f}</span>'
-        else:
-            stock_badge = f'<span class="stock-badge">{qty:.0f}</span>'
-        
-        row_hidden = ' style="display:none"' if row_idx >= 100 else ''
-        stock_rows += f'''
-        <tr class="stock-row {stock_class}"{row_hidden}
-            data-id="{item.get("id")}"
-            data-code="{code}"
-            data-desc="{desc}"
-            data-price="{price}"
-            data-qty="{qty}"
-            data-search="{code.lower()} {desc.lower()}"
-            onclick="addToCart('{item.get("id")}', '{code}', '{desc}', {price}, {qty})">
-            <td class="col-code">{code}</td>
-            <td class="col-desc">{desc}</td>
-            <td class="col-price">R{price:,.2f}</td>
-            <td class="col-stock">{stock_badge}</td>
-            <td class="col-action">
-                <button class="qty-btn" onclick="addBulkToCart(event, '{item.get("id")}', '{code}', '{desc}', {price}, {qty})" title="Enter quantity">QTY</button>
-            </td>
-        </tr>
-        '''
     
     # Customer options - sorted alphabetically
     customer_options = '<option value="">-- Countersale --</option>'
@@ -47167,7 +47168,7 @@ def pos_page():
             <div class="pos-table-wrapper">
                 <table class="pos-table">
                     <tbody id="stockBody">
-                        {stock_rows if stock_rows else '<tr><td colspan="5" class="pos-empty">No stock items</td></tr>'}
+                        <tr><td colspan="5" class="pos-empty" id="stockLoading">Loading stock...</td></tr>
                     </tbody>
                 </table>
                 <div class="no-results" id="noResults">
@@ -47176,7 +47177,7 @@ def pos_page():
                     <div style="font-size:12px;margin-top:5px;">Try a different search term</div>
                 </div>
                 <div id="stockCount" style="text-align:center;padding:8px;color:var(--text-muted);font-size:12px;">
-                    Showing 100 of {total_stock_count} items &bull; Type to search all
+                    Loading...
                 </div>
             </div>
         </div>
@@ -47804,59 +47805,81 @@ def pos_page():
         updateCart();
     }
     
+    // === AJAX STOCK SEARCH — no more 7MB DOM, loads via API ===
+    var _stockTimer = null;
+    var _stockCache = {};  // client-side cache: {query: [items]}
+    
+    function renderStockRows(items) {
+        var body = document.getElementById('stockBody');
+        var noResults = document.getElementById('noResults');
+        var stockCountEl = document.getElementById('stockCount');
+        if (!items || items.length === 0) {
+            body.innerHTML = '<tr><td colspan="5" class="pos-empty">No items found</td></tr>';
+            noResults.classList.add('show');
+            if (stockCountEl) stockCountEl.style.display = 'none';
+            selectedRowIndex = -1;
+            return;
+        }
+        noResults.classList.remove('show');
+        var html = '';
+        for (var i = 0; i < items.length; i++) {
+            var s = items[i];
+            var q = parseFloat(s.qty) || 0;
+            var cls = q < 0 ? 'negative' : q === 0 ? 'zero' : q < 5 ? 'low' : '';
+            var bcls = 'stock-badge' + (cls ? ' ' + cls : '');
+            var code = (s.code || '').replace(/'/g, '&#39;');
+            var desc = (s.desc || '').replace(/'/g, '&#39;');
+            html += '<tr class="stock-row ' + cls + '" data-id="' + s.id + '" data-code="' + code + '" data-desc="' + desc + '" data-price="' + s.price + '" data-qty="' + q + '" data-search="' + code.toLowerCase() + ' ' + desc.toLowerCase() + '" onclick="addToCart(\'' + s.id + '\',\'' + code + '\',\'' + desc + '\',' + s.price + ',' + q + ')">' +
+                '<td class="col-code">' + (s.code || '') + '</td>' +
+                '<td class="col-desc">' + (s.desc || '') + '</td>' +
+                '<td class="col-price">R' + parseFloat(s.price).toFixed(2) + '</td>' +
+                '<td class="col-stock"><span class="' + bcls + '">' + Math.round(q) + '</span></td>' +
+                '<td class="col-action"><button class="qty-btn" onclick="addBulkToCart(event,\'' + s.id + '\',\'' + code + '\',\'' + desc + '\',' + s.price + ',' + q + ')" title="Enter quantity">QTY</button></td>' +
+                '</tr>';
+        }
+        body.innerHTML = html;
+        selectedRowIndex = 0;
+        if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = items.length + (items.length >= 500 ? '+ items — refine your search' : ' items'); }
+    }
+    
     function filterStock() {
         if (window.isNavigating) { window.isNavigating = false; return; }
         window.originalSearch = null;
         
-        const raw = document.getElementById('stockSearch').value;
-        let search = raw.toLowerCase().trim();
-        const rows = document.querySelectorAll('.stock-row');
-        const noResults = document.getElementById('noResults');
+        var raw = document.getElementById('stockSearch').value;
+        var search = raw.toLowerCase().trim();
         
-        if (search.match(/^\d+\*\s*/)) {
-            search = search.replace(/^\d+\*\s*/, '');
-        }
-        search = search.replace(/\s*[xX]\s*/g, 'x');
+        // Strip qty prefix
+        if (search.match(/^\d+\*\s*/)) { search = search.replace(/^\d+\*\s*/, ''); }
         
-        selectedRowIndex = -1;
-        
-        if (search === '') {
-            let v = 0;
-            rows.forEach((row, i) => {
-                if (v < 500) { row.style.display = ''; v++; if (selectedRowIndex === -1) selectedRowIndex = i; }
-                else { row.style.display = 'none'; }
-            });
-            const el = document.getElementById('stockCount');
-            if (el) { el.style.display = ''; el.textContent = 'Showing ' + v + ' of ' + rows.length + ' items \u2022 Type to search all'; }
-            noResults.classList.remove('show');
-            rows.forEach(r => r.classList.remove('highlighted'));
+        // Check client cache first
+        if (_stockCache[search]) {
+            renderStockRows(_stockCache[search]);
             return;
         }
         
-        const tokens = search.split(/\s+/).filter(t => t.length > 0);
-        
-        let visibleCount = 0;
-        rows.forEach((row, index) => {
-            const haystack = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
-            if (tokens.every(t => haystack.indexOf(t) !== -1)) {
-                row.style.display = '';
-                visibleCount++;
-                if (selectedRowIndex === -1) selectedRowIndex = index;
-            } else {
-                row.style.display = 'none';
-            }
-        });
-        
-        const stockCountEl = document.getElementById('stockCount');
-        if (visibleCount === 0) {
-            noResults.classList.add('show');
-            if (stockCountEl) stockCountEl.style.display = 'none';
-        } else {
-            noResults.classList.remove('show');
-            if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = visibleCount + ' matches'; }
-        }
-        rows.forEach(r => r.classList.remove('highlighted'));
+        // Debounce AJAX call
+        clearTimeout(_stockTimer);
+        _stockTimer = setTimeout(function() {
+            var url = '/api/pos/stock?limit=500';
+            if (search) url += '&q=' + encodeURIComponent(search);
+            fetch(url).then(function(r) { return r.json(); }).then(function(items) {
+                _stockCache[search] = items;
+                // Only render if search hasn't changed while we were fetching
+                var current = document.getElementById('stockSearch').value.toLowerCase().trim().replace(/^\d+\*\s*/, '');
+                if (current === search) {
+                    renderStockRows(items);
+                }
+            }).catch(function(e) {
+                console.log('[POS] Stock search error:', e);
+            });
+        }, search === '' ? 0 : 150);  // no debounce for initial load, 150ms for typing
     }
+    
+    // Load initial stock on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        filterStock();
+    });
     function highlightRow() {
         const rows = document.querySelectorAll('.stock-row');
         rows.forEach((row, index) => {
@@ -49814,6 +49837,9 @@ def pos_page():
         posLocked = false;
         lastSaleData = null;
         
+        // Clear client-side stock cache so next search gets fresh quantities
+        if (typeof _stockCache !== 'undefined') { _stockCache = {}; }
+        
         // === AUTO-RETURN TO FULLSCREEN after print ===
         if (f11Mode && !document.fullscreenElement) {
             try { document.documentElement.requestFullscreen(); } catch(e) {}
@@ -50760,6 +50786,7 @@ def pos_page():
             f11DD.classList.add('show');
         }}
 
+        var _f11Timer = null;
         function f11FilterDD() {{
             let raw = f11Input.value.trim();
             if (!raw) {{ f11DD.classList.remove('show'); f11Matches = []; f11Sel = -1; return; }}
@@ -50769,26 +50796,38 @@ def pos_page():
                 const num = parseInt(raw.substring(0, star), 10);
                 if (num > 0) {{ qty = num; searchTerm = raw.substring(star + 1).trim(); }}
             }}
-            const terms = searchTerm.toLowerCase().replace(/\s*x\s*/gi, 'x').split(/\s+/).filter(t => t.length > 0);
-            if (!terms.length) {{ f11DD.classList.remove('show'); return; }}
+            const search = searchTerm.toLowerCase().trim();
+            if (!search) {{ f11DD.classList.remove('show'); return; }}
 
-            f11Matches = [];
-            const rows = document.querySelectorAll('.stock-row');
-            for (let row of rows) {{
-                let data = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*x\s*/gi, 'x');
-                if (terms.every(t => data.indexOf(t) !== -1)) {{
-                    f11Matches.push({{
-                        el: row, id: row.getAttribute('data-id'),
-                        code: row.getAttribute('data-code') || '',
-                        desc: row.getAttribute('data-desc') || '',
-                        price: parseFloat(row.getAttribute('data-price')) || 0,
-                        qty: qty, related: false
-                    }});
-                    if (f11Matches.length >= 500) break;
-                }}
+            // Check client cache (shared with filterStock)
+            if (typeof _stockCache !== 'undefined' && _stockCache[search]) {{
+                f11Matches = _stockCache[search].map(function(s) {{
+                    return {{ id: s.id, code: s.code || '', desc: s.desc || '', price: parseFloat(s.price) || 0, qty: qty, related: false }};
+                }});
+                f11Sel = f11Matches.length > 0 ? 0 : -1;
+                f11RenderDD();
+                return;
             }}
-            f11Sel = f11Matches.length > 0 ? 0 : -1;
-            f11RenderDD();
+
+            // AJAX with debounce
+            clearTimeout(_f11Timer);
+            _f11Timer = setTimeout(function() {{
+                fetch('/api/pos/stock?limit=500&q=' + encodeURIComponent(search))
+                    .then(function(r) {{ return r.json(); }})
+                    .then(function(items) {{
+                        if (typeof _stockCache !== 'undefined') _stockCache[search] = items;
+                        // Only render if search hasn't changed
+                        var current = f11Input.value.trim();
+                        if (current.indexOf('*') > 0) current = current.substring(current.indexOf('*') + 1).trim();
+                        if (current.toLowerCase() === search) {{
+                            f11Matches = items.map(function(s) {{
+                                return {{ id: s.id, code: s.code || '', desc: s.desc || '', price: parseFloat(s.price) || 0, qty: qty, related: false }};
+                            }});
+                            f11Sel = f11Matches.length > 0 ? 0 : -1;
+                            f11RenderDD();
+                        }}
+                    }}).catch(function(e) {{ console.log('[F11] Search error:', e); }});
+            }}, 150);
         }}
 
         function f11RenderDD() {{
