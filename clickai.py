@@ -17180,6 +17180,17 @@ CSS = """
 [data-theme="light"] .sidebar a.active, [data-theme="light"] .sidebar a:hover { background: rgba(79,70,229,0.08) !important; color: #4f46e5 !important; }
 [data-theme="light"] a { color: #4f46e5; }
 [data-theme="light"] .text-error, [data-theme="light"] .text-red { color: #dc2626 !important; }
+/* Light: white text on ALL blue buttons — fixes unreadable dark-on-dark */
+[data-theme="light"] .btn-primary { color: #ffffff !important; }
+/* Light: blue/purple reactor — the hero piece on dashboard */
+[data-theme="light"] .j-rg.r1 { border-color: rgba(79,70,229,0.3) !important; border-top-color: rgba(99,102,241,0.8) !important; box-shadow: 0 0 30px rgba(79,70,229,0.1) !important; }
+[data-theme="light"] .j-rg.r2 { border-color: rgba(124,58,237,0.2) !important; border-bottom-color: rgba(139,92,246,0.7) !important; }
+[data-theme="light"] .j-rg.r3 { border-color: rgba(59,130,246,0.15) !important; border-top-color: rgba(96,165,250,0.6) !important; }
+[data-theme="light"] .j-rg.r4 { border-color: rgba(124,58,237,0.1) !important; border-top-color: rgba(167,139,250,0.5) !important; }
+[data-theme="light"] .j-core { background: radial-gradient(circle, rgba(79,70,229,0.1) 0%, rgba(124,58,237,0.05) 50%, transparent 100%) !important; border-color: rgba(99,102,241,0.3) !important; box-shadow: 0 0 35px rgba(79,70,229,0.12), 0 0 70px rgba(124,58,237,0.06) !important; }
+[data-theme="light"] .j-core .j-brand { color: #4f46e5 !important; text-shadow: 0 0 20px rgba(79,70,229,0.6), 0 0 50px rgba(99,102,241,0.3) !important; }
+[data-theme="light"] .j-core .j-sub { color: #7c3aed !important; }
+[data-theme="light"] .j-core .j-ai { color: #8b5cf6 !important; border-color: rgba(139,92,246,0.3) !important; text-shadow: 0 0 10px rgba(139,92,246,0.5) !important; }
 
 /* THEME: Slate — Neutral professional dark */
 [data-theme="slate"] {
