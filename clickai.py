@@ -45880,7 +45880,7 @@ def pos_page():
             data-desc="{desc}"
             data-price="{price}"
             data-qty="{qty}"
-            data-search="{code.lower()} {desc.lower()} {category.lower()}"
+            data-search="{code.lower()} {desc.lower()}"
             onclick="addToCart('{item.get("id")}', '{code}', '{desc}', {price}, {qty})">
             <td class="col-code">{code}</td>
             <td class="col-desc">{desc}</td>
@@ -46017,11 +46017,14 @@ def pos_page():
     /* ═══ MAIN LAYOUT ═══ */
     .pos-container {
         display: grid;
-        grid-template-columns: 1fr 480px;
+        grid-template-columns: 1fr;
         gap: 20px;
         height: 100%;
         min-height: 0;
         padding: 0 20px;
+    }
+    .pos-cart {
+        display: none !important;
     }
     
     @media (max-width: 1000px) {
@@ -47810,20 +47813,17 @@ def pos_page():
         const rows = document.querySelectorAll('.stock-row');
         const noResults = document.getElementById('noResults');
         
-        // Strip quantity prefix (e.g. "5*nut" -> "nut")
         if (search.match(/^\d+\*\s*/)) {
             search = search.replace(/^\d+\*\s*/, '');
         }
-        // Normalize dimensions
         search = search.replace(/\s*[xX]\s*/g, 'x');
         
-        const MAX_VISIBLE = 100;
         selectedRowIndex = -1;
         
         if (search === '') {
             let v = 0;
             rows.forEach((row, i) => {
-                if (v < MAX_VISIBLE) { row.style.display = ''; v++; if (selectedRowIndex === -1) selectedRowIndex = i; }
+                if (v < 500) { row.style.display = ''; v++; if (selectedRowIndex === -1) selectedRowIndex = i; }
                 else { row.style.display = 'none'; }
             });
             const el = document.getElementById('stockCount');
@@ -47835,12 +47835,10 @@ def pos_page():
         
         const tokens = search.split(/\s+/).filter(t => t.length > 0);
         
-        // Search ONLY in code + description (not category) to avoid irrelevant matches
         let visibleCount = 0;
         rows.forEach((row, index) => {
-            if (visibleCount >= MAX_VISIBLE) { row.style.display = 'none'; return; }
-            const codeDesc = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
-            if (tokens.every(t => codeDesc.indexOf(t) !== -1)) {
+            const haystack = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
+            if (tokens.every(t => haystack.indexOf(t) !== -1)) {
                 row.style.display = '';
                 visibleCount++;
                 if (selectedRowIndex === -1) selectedRowIndex = index;
@@ -47855,7 +47853,7 @@ def pos_page():
             if (stockCountEl) stockCountEl.style.display = 'none';
         } else {
             noResults.classList.remove('show');
-            if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = 'Showing ' + visibleCount + ' matches'; }
+            if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = visibleCount + ' matches'; }
         }
         rows.forEach(r => r.classList.remove('highlighted'));
     }
@@ -50773,10 +50771,9 @@ def pos_page():
             if (!terms.length) {{ f11DD.classList.remove('show'); return; }}
 
             f11Matches = [];
-            const companions = ['nut','nuts','moer','washer','washers','ring','spring washer','nylock','nyloc','flat washer','penny washer','lock nut','dome nut','coupling','flange'];
             const rows = document.querySelectorAll('.stock-row');
             for (let row of rows) {{
-                let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
+                let data = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*x\s*/gi, 'x');
                 if (terms.every(t => data.indexOf(t) !== -1)) {{
                     f11Matches.push({{
                         el: row, id: row.getAttribute('data-id'),
@@ -50785,36 +50782,8 @@ def pos_page():
                         price: parseFloat(row.getAttribute('data-price')) || 0,
                         qty: qty, related: false
                     }});
-                    if (f11Matches.length >= 30) break;
+                    if (f11Matches.length >= 500) break;
                 }}
-            }}
-            var sizeMatch = searchTerm.match(/^m?(\d+)/i);
-            // Also trigger companions in REVERSE: if user types "nut", find bolts with matching size
-            var reverseCompanions = ['bolt','bolts','bout','screw','screws','stud','studs','setscrew','hex bolt','cap screw','coach bolt','carriage bolt','anchor bolt'];
-            var isCompanionSearch = companions.some(function(kw) {{ return searchTerm.toLowerCase().indexOf(kw) !== -1; }});
-            if ((sizeMatch || isCompanionSearch) && f11Matches.length > 0) {{
-                var f11Rel = []; var mIds = {{}};
-                f11Matches.forEach(function(m) {{ mIds[m.id] = true; }});
-                // Extract size from first matched item if no size in search
-                var sizeNum = sizeMatch ? sizeMatch[1] : null;
-                if (!sizeNum && f11Matches.length > 0) {{
-                    var firstCode = (f11Matches[0].code + ' ' + f11Matches[0].desc).toLowerCase();
-                    var extractSize = firstCode.match(/m?(\d+)/i);
-                    if (extractSize) sizeNum = extractSize[1];
-                }}
-                if (sizeNum) {{
-                    var lookForKws = isCompanionSearch ? reverseCompanions : companions;
-                    for (let row of rows) {{
-                        if (f11Rel.length >= 10) break;
-                        var rid = row.getAttribute('data-id'); if (mIds[rid]) continue;
-                        var rd = (row.getAttribute('data-search') || '').toLowerCase();
-                        if (rd.indexOf(sizeNum) === -1) continue;
-                        var ok = false;
-                        for (var ci = 0; ci < lookForKws.length; ci++) {{ if (rd.indexOf(lookForKws[ci]) !== -1) {{ ok = true; break; }} }}
-                        if (ok) {{ f11Rel.push({{ el: row, id: rid, code: row.getAttribute('data-code') || '', desc: row.getAttribute('data-desc') || '', price: parseFloat(row.getAttribute('data-price')) || 0, qty: 1, related: true }}); }}
-                    }}
-                }}
-                if (f11Rel.length > 0) {{ f11Matches = f11Matches.concat(f11Rel); }}
             }}
             f11Sel = f11Matches.length > 0 ? 0 : -1;
             f11RenderDD();
