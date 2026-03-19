@@ -17180,17 +17180,6 @@ CSS = """
 [data-theme="light"] .sidebar a.active, [data-theme="light"] .sidebar a:hover { background: rgba(79,70,229,0.08) !important; color: #4f46e5 !important; }
 [data-theme="light"] a { color: #4f46e5; }
 [data-theme="light"] .text-error, [data-theme="light"] .text-red { color: #dc2626 !important; }
-/* Light: white text on ALL blue buttons — fixes unreadable dark-on-dark */
-[data-theme="light"] .btn-primary { color: #ffffff !important; }
-/* Light: blue/purple reactor — the hero piece on dashboard */
-[data-theme="light"] .j-rg.r1 { border-color: rgba(79,70,229,0.3) !important; border-top-color: rgba(99,102,241,0.8) !important; box-shadow: 0 0 30px rgba(79,70,229,0.1) !important; }
-[data-theme="light"] .j-rg.r2 { border-color: rgba(124,58,237,0.2) !important; border-bottom-color: rgba(139,92,246,0.7) !important; }
-[data-theme="light"] .j-rg.r3 { border-color: rgba(59,130,246,0.15) !important; border-top-color: rgba(96,165,250,0.6) !important; }
-[data-theme="light"] .j-rg.r4 { border-color: rgba(124,58,237,0.1) !important; border-top-color: rgba(167,139,250,0.5) !important; }
-[data-theme="light"] .j-core { background: radial-gradient(circle, rgba(79,70,229,0.1) 0%, rgba(124,58,237,0.05) 50%, transparent 100%) !important; border-color: rgba(99,102,241,0.3) !important; box-shadow: 0 0 35px rgba(79,70,229,0.12), 0 0 70px rgba(124,58,237,0.06) !important; }
-[data-theme="light"] .j-core .j-brand { color: #4f46e5 !important; text-shadow: 0 0 20px rgba(79,70,229,0.6), 0 0 50px rgba(99,102,241,0.3) !important; }
-[data-theme="light"] .j-core .j-sub { color: #7c3aed !important; }
-[data-theme="light"] .j-core .j-ai { color: #8b5cf6 !important; border-color: rgba(139,92,246,0.3) !important; text-shadow: 0 0 10px rgba(139,92,246,0.5) !important; }
 
 /* THEME: Slate — Neutral professional dark */
 [data-theme="slate"] {
@@ -49566,12 +49555,9 @@ def pos_page():
         if (_btnRow) _btnRow.style.display = 'none';
         
         // Small delay so change banner is visible before print dialog opens
+        // doPrintSlip handles all cleanup after print() returns
         setTimeout(function() {
             doPrintSlip('thermal');
-            // Close the modal after a short delay (print dialog is open by now)
-            setTimeout(function() {
-                closePrintModal();
-            }, 1500);
         }, changeGiven >= 0.01 ? 1200 : 200);  // longer delay if there's change to show
     }
     
@@ -49704,11 +49690,11 @@ def pos_page():
             fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
         }
         
-        // === SILENT THERMAL PRINT via hidden iframe — no popup window, no printer selection ===
+        // === THERMAL PRINT via hidden iframe ===
         // Exit fullscreen before print (browsers block print dialog in fullscreen)
         if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
         
-        // Use hidden iframe — avoids popup blocker and is faster
+        // Use hidden iframe — avoids popup window staying open
         var pf = document.getElementById('posPrintFrame');
         if (!pf) {
             pf = document.createElement('iframe');
@@ -49719,49 +49705,51 @@ def pos_page():
         var fd = pf.contentDocument || pf.contentWindow.document;
         fd.open(); fd.write(fullHtml); fd.close();
         
-        var _returnToFullscreen = function() {
+        function _afterPrint() {
+            // Close the slip modal
+            var modal = document.getElementById('printSlipModal');
+            if (modal) modal.style.display = 'none';
+            var _btnRow = document.getElementById('printButtonRow');
+            if (_btnRow) _btnRow.style.display = 'flex';
+            // Return to fullscreen
             if (f11Mode && !document.fullscreenElement) {
                 try { document.documentElement.requestFullscreen(); } catch(e) {}
             }
-        };
+            // Reset POS for next sale
+            if (typeof afterSaleReset === 'function') afterSaleReset();
+        }
         
-        var _doPrint = function() {
+        function _executePrint() {
             try {
                 pf.contentWindow.focus();
                 pf.contentWindow.print();
+                // print() blocks until user clicks Print or Cancel
+                // When we reach here, dialog is closed — go back to POS immediately
+                _afterPrint();
             } catch(e) {
-                console.log('[POS] Iframe print failed, trying popup:', e);
-                // Fallback to popup if iframe print fails
-                var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
-                if (printWin) {
-                    printWin.document.open();
-                    printWin.document.write(fullHtml);
-                    printWin.document.close();
-                    setTimeout(function() {
-                        try { printWin.focus(); printWin.print(); } catch(e2) {}
-                        setTimeout(function() { try { printWin.close(); } catch(e3) {} _returnToFullscreen(); }, 1500);
-                    }, 400);
-                    return;  // skip the normal fullscreen return below
-                }
+                console.log('[POS] Print error:', e);
+                _afterPrint();
             }
-            // Return to fullscreen after print dialog closes
-            setTimeout(_returnToFullscreen, 500);
-        };
+        }
         
-        if (fd.readyState === 'complete') { setTimeout(_doPrint, 300); }
-        else { pf.onload = function() { setTimeout(_doPrint, 200); }; setTimeout(_doPrint, 1000); }
+        // Wait for iframe content to load, then print
+        if (fd.readyState === 'complete') { setTimeout(_executePrint, 300); }
+        else { pf.onload = function() { setTimeout(_executePrint, 200); }; setTimeout(_executePrint, 1000); }
         
-        // Duplicate copy (store copy)
+        // Duplicate copy (store copy) — fires 3s after first print
         if (posSettings.print_duplicates) {
             setTimeout(function() {
                 var dupHtml = fullHtml.replace('</body>', '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body>');
                 fd.open(); fd.write(dupHtml); fd.close();
-                var _doDup = function() {
+                function _executeDup() {
                     try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) {}
-                    setTimeout(_returnToFullscreen, 500);
-                };
-                if (fd.readyState === 'complete') { setTimeout(_doDup, 300); }
-                else { pf.onload = function() { setTimeout(_doDup, 200); }; setTimeout(_doDup, 1000); }
+                    // Return to fullscreen again after store copy
+                    if (f11Mode && !document.fullscreenElement) {
+                        try { document.documentElement.requestFullscreen(); } catch(e) {}
+                    }
+                }
+                if (fd.readyState === 'complete') { setTimeout(_executeDup, 300); }
+                else { pf.onload = function() { setTimeout(_executeDup, 200); }; setTimeout(_executeDup, 1000); }
             }, 3000);
         }
     }
