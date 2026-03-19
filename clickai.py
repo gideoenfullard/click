@@ -49819,16 +49819,18 @@ def pos_page():
             try { document.documentElement.requestFullscreen(); } catch(e) {}
         }
         
-        // Focus the right search bar depending on mode
-        if (f11Mode) {
-            var f11s = document.getElementById('f11Search');
-            if (f11s) { f11s.value = ''; f11s.focus(); }
-            if (typeof renderF11Table === 'function') renderF11Table();
-            if (typeof syncF11Buttons === 'function') syncF11Buttons();
-        } else {
-            var search = document.getElementById('stockSearch');
-            if (search) { search.value = ''; search.focus(); }
-        }
+        // Focus search bar AFTER fullscreen settles (browser steals focus during fullscreen transition)
+        setTimeout(function() {
+            if (f11Mode) {
+                var f11s = document.getElementById('f11Search');
+                if (f11s) { f11s.value = ''; f11s.focus(); }
+                if (typeof renderF11Table === 'function') renderF11Table();
+                if (typeof syncF11Buttons === 'function') syncF11Buttons();
+            } else {
+                var search = document.getElementById('stockSearch');
+                if (search) { search.value = ''; search.focus(); }
+            }
+        }, 400);
         
         // Flash success on reactor
         var rx = document.querySelector('.pos-rx-core');
