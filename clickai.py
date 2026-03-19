@@ -2370,10 +2370,6 @@ Thank you for your business!
 _stock_cache = {}   # {biz_id: (timestamp, data)}
 _STOCK_CACHE_TTL = 30  # seconds — short enough to stay fresh
 
-# === STOCK CACHE — avoids 2x Supabase calls per typeahead keystroke ===
-_stock_cache = {}   # {biz_id: (timestamp, data)}
-_STOCK_CACHE_TTL = 30  # seconds — short enough to stay fresh
-
 class DB:
     """
     Minimal database layer. Just stores and retrieves.
@@ -45808,7 +45804,7 @@ def pos_page():
             data-desc="{desc}"
             data-price="{price}"
             data-qty="{qty}"
-            data-search="{code.lower()} {desc.lower()} {category.lower()}"
+            data-search="{code.lower()} {desc.lower()}"
             onclick="addToCart('{item.get("id")}', '{code}', '{desc}', {price}, {qty})">
             <td class="col-code">{code}</td>
             <td class="col-desc">{desc}</td>
@@ -47745,13 +47741,12 @@ def pos_page():
         // Normalize dimensions
         search = search.replace(/\s*[xX]\s*/g, 'x');
         
-        const MAX_VISIBLE = 100;
         selectedRowIndex = -1;
         
         if (search === '') {
             let v = 0;
             rows.forEach((row, i) => {
-                if (v < MAX_VISIBLE) { row.style.display = ''; v++; if (selectedRowIndex === -1) selectedRowIndex = i; }
+                if (v < 200) { row.style.display = ''; v++; if (selectedRowIndex === -1) selectedRowIndex = i; }
                 else { row.style.display = 'none'; }
             });
             const el = document.getElementById('stockCount');
@@ -47763,12 +47758,11 @@ def pos_page():
         
         const tokens = search.split(/\s+/).filter(t => t.length > 0);
         
-        // Search ONLY in code + description (not category) to avoid irrelevant matches
+        // Simple, fast search — code + description only, ALL matches shown
         let visibleCount = 0;
         rows.forEach((row, index) => {
-            if (visibleCount >= MAX_VISIBLE) { row.style.display = 'none'; return; }
-            const codeDesc = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
-            if (tokens.every(t => codeDesc.indexOf(t) !== -1)) {
+            const haystack = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
+            if (tokens.every(t => haystack.indexOf(t) !== -1)) {
                 row.style.display = '';
                 visibleCount++;
                 if (selectedRowIndex === -1) selectedRowIndex = index;
@@ -47783,7 +47777,7 @@ def pos_page():
             if (stockCountEl) stockCountEl.style.display = 'none';
         } else {
             noResults.classList.remove('show');
-            if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = 'Showing ' + visibleCount + ' matches'; }
+            if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = visibleCount + ' matches'; }
         }
         rows.forEach(r => r.classList.remove('highlighted'));
     }
@@ -49494,12 +49488,9 @@ def pos_page():
         if (_btnRow) _btnRow.style.display = 'none';
         
         // Small delay so change banner is visible before print dialog opens
+        // After doPrintSlip runs, the _returnToFullscreen callback handles modal close + fullscreen
         setTimeout(function() {
             doPrintSlip('thermal');
-            // Close the modal after a short delay (print dialog is open by now)
-            setTimeout(function() {
-                closePrintModal();
-            }, 1500);
         }, changeGiven >= 0.01 ? 1200 : 200);  // longer delay if there's change to show
     }
     
@@ -49648,18 +49639,26 @@ def pos_page():
         fd.open(); fd.write(fullHtml); fd.close();
         
         var _returnToFullscreen = function() {
+            // Close the print slip modal immediately
+            var modal = document.getElementById('printSlipModal');
+            if (modal) modal.style.display = 'none';
+            var _btnRow = document.getElementById('printButtonRow');
+            if (_btnRow) _btnRow.style.display = 'flex';
+            // Return to fullscreen
             if (f11Mode && !document.fullscreenElement) {
                 try { document.documentElement.requestFullscreen(); } catch(e) {}
             }
+            // Reset for next sale
+            if (typeof afterSaleReset === 'function') afterSaleReset();
         };
         
         var _doPrint = function() {
             try {
                 pf.contentWindow.focus();
                 pf.contentWindow.print();
+                // print() blocks until user presses Enter/Cancel — so when we get here, dialog is done
             } catch(e) {
                 console.log('[POS] Iframe print failed, trying popup:', e);
-                // Fallback to popup if iframe print fails
                 var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
                 if (printWin) {
                     printWin.document.open();
@@ -49667,13 +49666,13 @@ def pos_page():
                     printWin.document.close();
                     setTimeout(function() {
                         try { printWin.focus(); printWin.print(); } catch(e2) {}
-                        setTimeout(function() { try { printWin.close(); } catch(e3) {} _returnToFullscreen(); }, 1500);
+                        setTimeout(function() { try { printWin.close(); } catch(e3) {} _returnToFullscreen(); }, 1000);
                     }, 400);
-                    return;  // skip the normal fullscreen return below
+                    return;
                 }
             }
-            // Return to fullscreen after print dialog closes
-            setTimeout(_returnToFullscreen, 500);
+            // Immediately return to fullscreen and close modal after print dialog closes
+            setTimeout(_returnToFullscreen, 100);
         };
         
         if (fd.readyState === 'complete') { setTimeout(_doPrint, 300); }
@@ -49686,7 +49685,8 @@ def pos_page():
                 fd.open(); fd.write(dupHtml); fd.close();
                 var _doDup = function() {
                     try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) {}
-                    setTimeout(_returnToFullscreen, 500);
+                    // After store copy prints, return to fullscreen immediately
+                    setTimeout(_returnToFullscreen, 100);
                 };
                 if (fd.readyState === 'complete') { setTimeout(_doDup, 300); }
                 else { pf.onload = function() { setTimeout(_doDup, 200); }; setTimeout(_doDup, 1000); }
@@ -50702,10 +50702,10 @@ def pos_page():
             if (!terms.length) {{ f11DD.classList.remove('show'); return; }}
 
             f11Matches = [];
-            const companions = ['nut','nuts','moer','washer','washers','ring','spring washer','nylock','nyloc','flat washer','penny washer','lock nut','dome nut','coupling','flange'];
             const rows = document.querySelectorAll('.stock-row');
             for (let row of rows) {{
-                let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
+                // Search code + description only — no category
+                let data = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*x\s*/gi, 'x');
                 if (terms.every(t => data.indexOf(t) !== -1)) {{
                     f11Matches.push({{
                         el: row, id: row.getAttribute('data-id'),
@@ -50714,36 +50714,8 @@ def pos_page():
                         price: parseFloat(row.getAttribute('data-price')) || 0,
                         qty: qty, related: false
                     }});
-                    if (f11Matches.length >= 30) break;
+                    if (f11Matches.length >= 50) break;
                 }}
-            }}
-            var sizeMatch = searchTerm.match(/^m?(\d+)/i);
-            // Also trigger companions in REVERSE: if user types "nut", find bolts with matching size
-            var reverseCompanions = ['bolt','bolts','bout','screw','screws','stud','studs','setscrew','hex bolt','cap screw','coach bolt','carriage bolt','anchor bolt'];
-            var isCompanionSearch = companions.some(function(kw) {{ return searchTerm.toLowerCase().indexOf(kw) !== -1; }});
-            if ((sizeMatch || isCompanionSearch) && f11Matches.length > 0) {{
-                var f11Rel = []; var mIds = {{}};
-                f11Matches.forEach(function(m) {{ mIds[m.id] = true; }});
-                // Extract size from first matched item if no size in search
-                var sizeNum = sizeMatch ? sizeMatch[1] : null;
-                if (!sizeNum && f11Matches.length > 0) {{
-                    var firstCode = (f11Matches[0].code + ' ' + f11Matches[0].desc).toLowerCase();
-                    var extractSize = firstCode.match(/m?(\d+)/i);
-                    if (extractSize) sizeNum = extractSize[1];
-                }}
-                if (sizeNum) {{
-                    var lookForKws = isCompanionSearch ? reverseCompanions : companions;
-                    for (let row of rows) {{
-                        if (f11Rel.length >= 10) break;
-                        var rid = row.getAttribute('data-id'); if (mIds[rid]) continue;
-                        var rd = (row.getAttribute('data-search') || '').toLowerCase();
-                        if (rd.indexOf(sizeNum) === -1) continue;
-                        var ok = false;
-                        for (var ci = 0; ci < lookForKws.length; ci++) {{ if (rd.indexOf(lookForKws[ci]) !== -1) {{ ok = true; break; }} }}
-                        if (ok) {{ f11Rel.push({{ el: row, id: rid, code: row.getAttribute('data-code') || '', desc: row.getAttribute('data-desc') || '', price: parseFloat(row.getAttribute('data-price')) || 0, qty: 1, related: true }}); }}
-                    }}
-                }}
-                if (f11Rel.length > 0) {{ f11Matches = f11Matches.concat(f11Rel); }}
             }}
             f11Sel = f11Matches.length > 0 ? 0 : -1;
             f11RenderDD();
