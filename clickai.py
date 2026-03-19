@@ -2370,6 +2370,10 @@ Thank you for your business!
 _stock_cache = {}   # {biz_id: (timestamp, data)}
 _STOCK_CACHE_TTL = 30  # seconds — short enough to stay fresh
 
+# === STOCK CACHE — avoids 2x Supabase calls per typeahead keystroke ===
+_stock_cache = {}   # {biz_id: (timestamp, data)}
+_STOCK_CACHE_TTL = 30  # seconds — short enough to stay fresh
+
 class DB:
     """
     Minimal database layer. Just stores and retrieves.
@@ -17190,6 +17194,66 @@ CSS = """
 [data-theme="slate"] input, [data-theme="slate"] select, [data-theme="slate"] textarea,
 [data-theme="slate"] .form-input { background: #0f172a !important; border-color: #334155 !important; }
 
+/* THEME: Mono — Clean black & white, blue buttons, reactor is the star */
+[data-theme="mono"] {
+    --bg: #000000; --card: #111111; --border: #2a2a2a;
+    --text: #ffffff; --text-muted: #888888;
+    --primary: #2563eb; --primary-glow: rgba(37,99,235,0.2);
+    --green: #ffffff; --red: #ffffff; --orange: #ffffff;
+    --surface: #0a0a0a;
+}
+[data-theme="mono"] body { font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; }
+[data-theme="mono"] .header { background: #000000 !important; border-bottom: 1px solid #1a1a1a !important; }
+[data-theme="mono"] .card { background: #111111 !important; border: 1px solid #222222 !important; box-shadow: none !important; }
+[data-theme="mono"] .btn-primary { background: #2563eb !important; color: #ffffff !important; border: none !important; box-shadow: none !important; font-weight: 600; }
+[data-theme="mono"] .btn-primary:hover { background: #3b82f6 !important; }
+[data-theme="mono"] .btn-secondary { background: #1a1a1a !important; color: #ffffff !important; border: 1px solid #333 !important; }
+[data-theme="mono"] .stat-card { background: #111111 !important; border: 1px solid #222 !important; }
+[data-theme="mono"] .stat-card.green, [data-theme="mono"] .stat-card.blue,
+[data-theme="mono"] .stat-card.purple, [data-theme="mono"] .stat-card.orange,
+[data-theme="mono"] .stat-card.red { background: #111111 !important; border-color: #222 !important; }
+[data-theme="mono"] .stat-value { color: #ffffff !important; text-shadow: none !important; }
+[data-theme="mono"] .stat-label { color: #888 !important; }
+[data-theme="mono"] .table thead th { background: #0a0a0a !important; color: #888 !important; border-bottom: 1px solid #222 !important; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+[data-theme="mono"] .table tbody tr { border-bottom: 1px solid #1a1a1a !important; }
+[data-theme="mono"] .table tbody tr:hover { background: #0a0a0a !important; }
+[data-theme="mono"] input, [data-theme="mono"] select, [data-theme="mono"] textarea,
+[data-theme="mono"] .form-input { background: #0a0a0a !important; border: 1px solid #2a2a2a !important; color: #ffffff !important; }
+[data-theme="mono"] input:focus, [data-theme="mono"] select:focus, [data-theme="mono"] textarea:focus,
+[data-theme="mono"] .form-input:focus { border-color: #2563eb !important; box-shadow: 0 0 0 2px rgba(37,99,235,0.15) !important; }
+[data-theme="mono"] a { color: #ffffff; }
+[data-theme="mono"] a:hover { color: #cccccc; }
+[data-theme="mono"] .nav a { color: #888 !important; }
+[data-theme="mono"] .nav a:hover, [data-theme="mono"] .nav a.active { color: #fff !important; }
+[data-theme="mono"] .sidebar a { color: #888 !important; }
+[data-theme="mono"] .sidebar a.active, [data-theme="mono"] .sidebar a:hover { background: #1a1a1a !important; color: #fff !important; }
+[data-theme="mono"] .progress-fill { background: linear-gradient(90deg, #2563eb, #7c3aed) !important; }
+/* Mono reactor — the ONLY colour on the page. Vivid blue-purple hero glow */
+[data-theme="mono"] .j-rg.r1 { border-color: rgba(37,99,235,0.35) !important; border-top-color: rgba(59,130,246,0.85) !important; box-shadow: 0 0 35px rgba(37,99,235,0.15) !important; }
+[data-theme="mono"] .j-rg.r2 { border-color: rgba(124,58,237,0.25) !important; border-bottom-color: rgba(139,92,246,0.75) !important; }
+[data-theme="mono"] .j-rg.r3 { border-color: rgba(37,99,235,0.15) !important; border-top-color: rgba(96,165,250,0.65) !important; }
+[data-theme="mono"] .j-rg.r4 { border-color: rgba(124,58,237,0.12) !important; border-top-color: rgba(167,139,250,0.55) !important; }
+[data-theme="mono"] .j-core { background: radial-gradient(circle, rgba(37,99,235,0.15) 0%, rgba(124,58,237,0.08) 50%, transparent 100%) !important; border-color: rgba(59,130,246,0.3) !important; box-shadow: 0 0 40px rgba(37,99,235,0.15), 0 0 80px rgba(124,58,237,0.08) !important; }
+[data-theme="mono"] .j-core .j-brand { color: #60a5fa !important; text-shadow: 0 0 25px rgba(96,165,250,0.8), 0 0 60px rgba(59,130,246,0.4) !important; }
+[data-theme="mono"] .j-core .j-sub { color: #7c3aed !important; }
+[data-theme="mono"] .j-core .j-ai { color: #a78bfa !important; border-color: rgba(167,139,250,0.35) !important; text-shadow: 0 0 12px rgba(167,139,250,0.6) !important; }
+/* Mono POS reactor */
+[data-theme="mono"] .pos-rx .j-rg.r1 { border-color: rgba(37,99,235,0.35) !important; border-top-color: rgba(59,130,246,0.85) !important; box-shadow: 0 0 30px rgba(37,99,235,0.12) !important; }
+[data-theme="mono"] .pos-rx .j-rg.r2 { border-color: rgba(124,58,237,0.2) !important; border-bottom-color: rgba(139,92,246,0.7) !important; }
+[data-theme="mono"] .pos-rx .j-rg.r3 { border-color: rgba(37,99,235,0.12) !important; border-top-color: rgba(96,165,250,0.6) !important; }
+[data-theme="mono"] .pos-rx .j-rg.r4 { border-color: rgba(124,58,237,0.1) !important; border-top-color: rgba(167,139,250,0.5) !important; }
+[data-theme="mono"] .pos-rx-core { background: radial-gradient(circle, rgba(37,99,235,0.12) 0%, rgba(124,58,237,0.06) 50%, transparent 100%) !important; border-color: rgba(59,130,246,0.25) !important; box-shadow: 0 0 35px rgba(37,99,235,0.12), 0 0 70px rgba(124,58,237,0.06) !important; }
+[data-theme="mono"] .pos-rx-core .j-brand { color: #60a5fa !important; text-shadow: 0 0 20px rgba(96,165,250,0.7) !important; }
+[data-theme="mono"] .pos-rx-core .j-sub { color: #7c3aed !important; }
+/* Mono: keep status colours functional but muted */
+[data-theme="mono"] .stat-card.green .stat-value { color: #ffffff !important; }
+[data-theme="mono"] .stat-card.red .stat-value { color: #ffffff !important; }
+[data-theme="mono"] .stat-card.orange .stat-value { color: #ffffff !important; }
+/* Mono tags / badges — only blue allowed */
+[data-theme="mono"] .badge, [data-theme="mono"] .tag { background: #1a1a1a !important; color: #fff !important; border: 1px solid #333 !important; }
+[data-theme="mono"] .badge-green, [data-theme="mono"] .badge-success { background: #1a1a1a !important; color: #fff !important; }
+[data-theme="mono"] .badge-red, [data-theme="mono"] .badge-danger { background: #1a1a1a !important; color: #fff !important; }
+
 /* THEME: Jarvis — Iron Man HUD holographic */
 [data-theme="jarvis"] {
     --bg: #000810; --card: rgba(8,20,45,0.6); --border: rgba(80,180,255,0.2);
@@ -19085,6 +19149,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
                     <button class="theme-option {'active' if _user_theme=='emerald' else ''}" onclick="setTheme('emerald')"><span class="theme-dot" style="background:#10b981;"></span> Emerald</button>
                     <button class="theme-option {'active' if _user_theme=='sunset' else ''}" onclick="setTheme('sunset')"><span class="theme-dot" style="background:#f59e0b;"></span> Sunset</button>
                     <button class="theme-option {'active' if _user_theme=='slate' else ''}" onclick="setTheme('slate')"><span class="theme-dot" style="background:#3b82f6;"></span> Slate</button>
+                    <button class="theme-option {'active' if _user_theme=='mono' else ''}" onclick="setTheme('mono')"><span class="theme-dot" style="background:#000;border:2px solid #fff;"></span> Mono</button>
                     <button class="theme-option {'active' if _user_theme=='jarvis' else ''}" onclick="setTheme('jarvis')"><span class="theme-dot" style="background:#00ccff;border-color:rgba(0,204,255,0.5);box-shadow:0 0 6px rgba(0,204,255,0.4);"></span> Jarvis</button>
                     <button class="theme-option {'active' if _user_theme=='light' else ''}" onclick="setTheme('light')"><span class="theme-dot" style="background:#e2e5ea;border-color:#999;"></span> Light</button>
                 </div>
@@ -45804,7 +45869,7 @@ def pos_page():
             data-desc="{desc}"
             data-price="{price}"
             data-qty="{qty}"
-            data-search="{code.lower()} {desc.lower()}"
+            data-search="{code.lower()} {desc.lower()} {category.lower()}"
             onclick="addToCart('{item.get("id")}', '{code}', '{desc}', {price}, {qty})">
             <td class="col-code">{code}</td>
             <td class="col-desc">{desc}</td>
@@ -47741,12 +47806,13 @@ def pos_page():
         // Normalize dimensions
         search = search.replace(/\s*[xX]\s*/g, 'x');
         
+        const MAX_VISIBLE = 100;
         selectedRowIndex = -1;
         
         if (search === '') {
             let v = 0;
             rows.forEach((row, i) => {
-                if (v < 200) { row.style.display = ''; v++; if (selectedRowIndex === -1) selectedRowIndex = i; }
+                if (v < MAX_VISIBLE) { row.style.display = ''; v++; if (selectedRowIndex === -1) selectedRowIndex = i; }
                 else { row.style.display = 'none'; }
             });
             const el = document.getElementById('stockCount');
@@ -47758,11 +47824,12 @@ def pos_page():
         
         const tokens = search.split(/\s+/).filter(t => t.length > 0);
         
-        // Simple, fast search — code + description only, ALL matches shown
+        // Search ONLY in code + description (not category) to avoid irrelevant matches
         let visibleCount = 0;
         rows.forEach((row, index) => {
-            const haystack = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
-            if (tokens.every(t => haystack.indexOf(t) !== -1)) {
+            if (visibleCount >= MAX_VISIBLE) { row.style.display = 'none'; return; }
+            const codeDesc = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*[xX]\s*/g, 'x');
+            if (tokens.every(t => codeDesc.indexOf(t) !== -1)) {
                 row.style.display = '';
                 visibleCount++;
                 if (selectedRowIndex === -1) selectedRowIndex = index;
@@ -47777,7 +47844,7 @@ def pos_page():
             if (stockCountEl) stockCountEl.style.display = 'none';
         } else {
             noResults.classList.remove('show');
-            if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = visibleCount + ' matches'; }
+            if (stockCountEl) { stockCountEl.style.display = ''; stockCountEl.textContent = 'Showing ' + visibleCount + ' matches'; }
         }
         rows.forEach(r => r.classList.remove('highlighted'));
     }
@@ -49488,9 +49555,12 @@ def pos_page():
         if (_btnRow) _btnRow.style.display = 'none';
         
         // Small delay so change banner is visible before print dialog opens
-        // After doPrintSlip runs, the _returnToFullscreen callback handles modal close + fullscreen
         setTimeout(function() {
             doPrintSlip('thermal');
+            // Close the modal after a short delay (print dialog is open by now)
+            setTimeout(function() {
+                closePrintModal();
+            }, 1500);
         }, changeGiven >= 0.01 ? 1200 : 200);  // longer delay if there's change to show
     }
     
@@ -49639,26 +49709,18 @@ def pos_page():
         fd.open(); fd.write(fullHtml); fd.close();
         
         var _returnToFullscreen = function() {
-            // Close the print slip modal immediately
-            var modal = document.getElementById('printSlipModal');
-            if (modal) modal.style.display = 'none';
-            var _btnRow = document.getElementById('printButtonRow');
-            if (_btnRow) _btnRow.style.display = 'flex';
-            // Return to fullscreen
             if (f11Mode && !document.fullscreenElement) {
                 try { document.documentElement.requestFullscreen(); } catch(e) {}
             }
-            // Reset for next sale
-            if (typeof afterSaleReset === 'function') afterSaleReset();
         };
         
         var _doPrint = function() {
             try {
                 pf.contentWindow.focus();
                 pf.contentWindow.print();
-                // print() blocks until user presses Enter/Cancel — so when we get here, dialog is done
             } catch(e) {
                 console.log('[POS] Iframe print failed, trying popup:', e);
+                // Fallback to popup if iframe print fails
                 var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
                 if (printWin) {
                     printWin.document.open();
@@ -49666,13 +49728,13 @@ def pos_page():
                     printWin.document.close();
                     setTimeout(function() {
                         try { printWin.focus(); printWin.print(); } catch(e2) {}
-                        setTimeout(function() { try { printWin.close(); } catch(e3) {} _returnToFullscreen(); }, 1000);
+                        setTimeout(function() { try { printWin.close(); } catch(e3) {} _returnToFullscreen(); }, 1500);
                     }, 400);
-                    return;
+                    return;  // skip the normal fullscreen return below
                 }
             }
-            // Immediately return to fullscreen and close modal after print dialog closes
-            setTimeout(_returnToFullscreen, 100);
+            // Return to fullscreen after print dialog closes
+            setTimeout(_returnToFullscreen, 500);
         };
         
         if (fd.readyState === 'complete') { setTimeout(_doPrint, 300); }
@@ -49685,8 +49747,7 @@ def pos_page():
                 fd.open(); fd.write(dupHtml); fd.close();
                 var _doDup = function() {
                     try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) {}
-                    // After store copy prints, return to fullscreen immediately
-                    setTimeout(_returnToFullscreen, 100);
+                    setTimeout(_returnToFullscreen, 500);
                 };
                 if (fd.readyState === 'complete') { setTimeout(_doDup, 300); }
                 else { pf.onload = function() { setTimeout(_doDup, 200); }; setTimeout(_doDup, 1000); }
@@ -50702,10 +50763,10 @@ def pos_page():
             if (!terms.length) {{ f11DD.classList.remove('show'); return; }}
 
             f11Matches = [];
+            const companions = ['nut','nuts','moer','washer','washers','ring','spring washer','nylock','nyloc','flat washer','penny washer','lock nut','dome nut','coupling','flange'];
             const rows = document.querySelectorAll('.stock-row');
             for (let row of rows) {{
-                // Search code + description only — no category
-                let data = ((row.getAttribute('data-code') || '') + ' ' + (row.getAttribute('data-desc') || '')).toLowerCase().replace(/\s*x\s*/gi, 'x');
+                let data = (row.getAttribute('data-search') || '').toLowerCase().replace(/\s*x\s*/gi, 'x');
                 if (terms.every(t => data.indexOf(t) !== -1)) {{
                     f11Matches.push({{
                         el: row, id: row.getAttribute('data-id'),
@@ -50714,8 +50775,36 @@ def pos_page():
                         price: parseFloat(row.getAttribute('data-price')) || 0,
                         qty: qty, related: false
                     }});
-                    if (f11Matches.length >= 50) break;
+                    if (f11Matches.length >= 30) break;
                 }}
+            }}
+            var sizeMatch = searchTerm.match(/^m?(\d+)/i);
+            // Also trigger companions in REVERSE: if user types "nut", find bolts with matching size
+            var reverseCompanions = ['bolt','bolts','bout','screw','screws','stud','studs','setscrew','hex bolt','cap screw','coach bolt','carriage bolt','anchor bolt'];
+            var isCompanionSearch = companions.some(function(kw) {{ return searchTerm.toLowerCase().indexOf(kw) !== -1; }});
+            if ((sizeMatch || isCompanionSearch) && f11Matches.length > 0) {{
+                var f11Rel = []; var mIds = {{}};
+                f11Matches.forEach(function(m) {{ mIds[m.id] = true; }});
+                // Extract size from first matched item if no size in search
+                var sizeNum = sizeMatch ? sizeMatch[1] : null;
+                if (!sizeNum && f11Matches.length > 0) {{
+                    var firstCode = (f11Matches[0].code + ' ' + f11Matches[0].desc).toLowerCase();
+                    var extractSize = firstCode.match(/m?(\d+)/i);
+                    if (extractSize) sizeNum = extractSize[1];
+                }}
+                if (sizeNum) {{
+                    var lookForKws = isCompanionSearch ? reverseCompanions : companions;
+                    for (let row of rows) {{
+                        if (f11Rel.length >= 10) break;
+                        var rid = row.getAttribute('data-id'); if (mIds[rid]) continue;
+                        var rd = (row.getAttribute('data-search') || '').toLowerCase();
+                        if (rd.indexOf(sizeNum) === -1) continue;
+                        var ok = false;
+                        for (var ci = 0; ci < lookForKws.length; ci++) {{ if (rd.indexOf(lookForKws[ci]) !== -1) {{ ok = true; break; }} }}
+                        if (ok) {{ f11Rel.push({{ el: row, id: rid, code: row.getAttribute('data-code') || '', desc: row.getAttribute('data-desc') || '', price: parseFloat(row.getAttribute('data-price')) || 0, qty: 1, related: true }}); }}
+                    }}
+                }}
+                if (f11Rel.length > 0) {{ f11Matches = f11Matches.concat(f11Rel); }}
             }}
             f11Sel = f11Matches.length > 0 ? 0 : -1;
             f11RenderDD();
