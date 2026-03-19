@@ -2366,6 +2366,14 @@ Thank you for your business!
 # DATABASE - Simple wrapper around Supabase
 # 
 
+# === STOCK CACHE — avoids 2x Supabase calls per typeahead keystroke ===
+_stock_cache = {}   # {biz_id: (timestamp, data)}
+_STOCK_CACHE_TTL = 30  # seconds — short enough to stay fresh
+
+# === STOCK CACHE — avoids 2x Supabase calls per typeahead keystroke ===
+_stock_cache = {}   # {biz_id: (timestamp, data)}
+_STOCK_CACHE_TTL = 30  # seconds — short enough to stay fresh
+
 class DB:
     """
     Minimal database layer. Just stores and retrieves.
@@ -2399,10 +2407,16 @@ class DB:
         """Get stock from BOTH tables (stock + stock_items) merged.
         stock_items is the newer table used by imports.
         stock is the legacy table used by older features.
-        Returns combined list with normalized field names."""
+        Returns combined list with normalized field names.
+        CACHED for 30s to avoid 2x Supabase calls per typeahead keystroke."""
         items = []
         if not business_id:
             return items
+        # Check cache first
+        now = time.time()
+        cached = _stock_cache.get(business_id)
+        if cached and (now - cached[0]) < _STOCK_CACHE_TTL:
+            return cached[1]
         # Newer table first
         stock_items = self.get("stock_items", {"business_id": business_id})
         if stock_items:
@@ -2416,6 +2430,7 @@ class DB:
                 code = str(s.get("code", "")).lower()
                 if not code or code not in existing_codes:
                     items.append(s)
+        _stock_cache[business_id] = (now, items)
         return items
     
     def get_one_stock(self, stock_id: str):
@@ -2528,6 +2543,9 @@ class DB:
         FIX: Convert qty to int before sending. Also only sends qty fields
         if they were explicitly in updates (prevents wiping qty on price changes).
         """
+        # Invalidate stock cache on any stock update
+        if biz_id:
+            _stock_cache.pop(biz_id, None)
         
         logger.info(f"[STOCK UPDATE] === START === stock_id={stock_id}, updates={updates}, biz_id={biz_id}")
         
@@ -2648,6 +2666,10 @@ class DB:
     
     def save_stock(self, record: dict):
         """Save stock item to stock_items (preferred table)"""
+        # Invalidate stock cache
+        _biz = record.get("business_id")
+        if _biz:
+            _stock_cache.pop(_biz, None)
         return self.save("stock_items", record)
     
     def count(self, table: str, filters: dict = None) -> int:
@@ -19358,12 +19380,22 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         
         // === NAVIGATION: show modal on click ===
         let isNavigating = false;
+        let _progressTimeout = null;
         
         function showProgress() {{
             if (isNavigating) return;
             isNavigating = true;
             document.body.classList.add('navigating');
             modal.classList.add('active');
+            // Safety net: auto-hide after 15s in case navigation fails
+            _progressTimeout = setTimeout(hideProgress, 15000);
+        }}
+        
+        function hideProgress() {{
+            isNavigating = false;
+            document.body.classList.remove('navigating');
+            modal.classList.remove('active');
+            if (_progressTimeout) {{ clearTimeout(_progressTimeout); _progressTimeout = null; }}
         }}
         
         // Intercept all internal link clicks
@@ -19383,9 +19415,15 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
             showProgress();
         }});
         
-        // Intercept form submissions
-        document.addEventListener('submit', function() {{
-            showProgress();
+        // Intercept form submissions — but NOT if another listener called preventDefault()
+        document.addEventListener('submit', function(e) {{
+            // Use setTimeout(0) so other listeners (like the zero-amount check) 
+            // have a chance to call preventDefault() first
+            setTimeout(function() {{
+                if (!e.defaultPrevented) {{
+                    showProgress();
+                }}
+            }}, 0);
         }});
         
         // Catch onclick="window.location=..." navigation
@@ -27431,13 +27469,27 @@ def invoice_new():
             }});
             if (subtotal <= 0) {{
                 e.preventDefault();
-                if (confirm('⚠️ Warning: Invoice total is R0.00\\n\\nCreate with zero amount?')) {{
+                if (confirm('⚠️ Invoice total is R0.00\\n\\nAre you sure you want to create a zero-amount invoice?')) {{
                     _skipZeroCheck = true;
+                    // Show loading state so user knows it is working
+                    const btn = e.target.querySelector('button[type="submit"]');
+                    if (btn) {{ btn.disabled = true; btn.textContent = 'Creating...'; }}
                     e.target.submit();
+                }} else {{
+                    // User cancelled — flash the total red so they know what to fix
+                    const tot = document.getElementById('total');
+                    if (tot) {{
+                        tot.style.color = 'var(--red)';
+                        tot.style.transition = 'color 0.3s';
+                        setTimeout(() => {{ tot.style.color = 'var(--green)'; }}, 2000);
+                    }}
                 }}
                 return false;
             }}
         }}
+        // Normal submit — show loading state
+        const btn = e.target.querySelector('button[type="submit"]');
+        if (btn) {{ btn.disabled = true; btn.textContent = 'Creating...'; }}
     }});
     
     function checkStock(input) {{ /* stub */ }}
