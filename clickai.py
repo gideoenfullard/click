@@ -44005,7 +44005,7 @@ def api_po_email(po_id):
             code = item.get('code', '')
             desc = item.get('description', '')
             qty = item.get('qty') or item.get('quantity', 1)
-            items_html += f'<tr><td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:11px;">{code}</td><td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:11px;">{desc}</td><td style="padding:5px 8px;border-bottom:1px solid #eee;text-align:center;font-size:11px;">{qty}</td></tr>'
+            items_html += f'<tr style="border-bottom:1px solid #e0e0e0;"><td style="padding:6px 8px;">{code}</td><td style="padding:6px 8px;">{desc}</td><td style="padding:6px 8px;text-align:center;">{qty}</td></tr>'
         
         # Plain text version
         items_text = ""
@@ -44022,53 +44022,49 @@ def api_po_email(po_id):
         
         subject = f"Purchase Order {po_number} from {biz_name}"
         
-        body_html = f'''
-        <html>
-        <body style="font-family: Arial, sans-serif; padding: 10px; background: #fff; margin: 0;">
-            <div style="max-width: 600px; margin: 0 auto; background: white; padding: 20px;">
-                <div style="border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-end;">
-                    <div>
-                        <div style="font-size: 11px; color: #666;">{biz_name}</div>
-                        {f'<div style="font-size:10px;color:#888;">{biz_phone}</div>' if biz_phone else ''}
-                        {f'<div style="font-size:10px;color:#888;">{biz_email}</div>' if biz_email else ''}
-                    </div>
-                    <div style="text-align: right;">
-                        <h1 style="margin: 0; font-size: 18px; font-weight: 700; color: #333;">PURCHASE ORDER</h1>
-                        <p style="margin: 2px 0 0; font-size: 14px; font-weight: 600;">{po_number}</p>
-                    </div>
-                </div>
-                
-                <p style="font-size: 12px; margin: 0 0 5px;">Dear {supplier_name},</p>
-                <p style="font-size: 12px; margin: 0 0 15px;">Please find below our purchase order:</p>
-                
-                <table style="width: 100%; border-collapse: collapse; margin: 0 0 15px;">
-                    <thead>
-                        <tr style="background: #333; color: white;">
-                            <th style="padding: 6px 8px; text-align: left; font-size: 10px; font-weight: 600;">Code</th>
-                            <th style="padding: 6px 8px; text-align: left; font-size: 10px; font-weight: 600;">Description</th>
-                            <th style="padding: 6px 8px; text-align: center; font-size: 10px; font-weight: 600; width: 60px;">Qty</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {items_html}
-                    </tbody>
-                </table>
-                
-                {f'<p style="font-size:11px;margin:0 0 3px;"><strong>Expected Delivery:</strong> {expected_date}</p>' if expected_date else ''}
-                {f'<p style="font-size:11px;margin:0 0 3px;"><strong>Notes:</strong> {notes}</p>' if notes else ''}
-                
-                <p style="font-size: 12px; margin: 15px 0 5px;">Please confirm receipt of this order and provide your quotation.</p>
-                <p style="font-size: 12px; margin: 0;">Thank you!</p>
-                
-                <hr style="border: none; border-top: 1px solid #ddd; margin: 15px 0 10px;">
-                <p style="color: #999; font-size: 9px; margin: 0;">
-                    {biz_name} | {biz_phone} | {biz_email}<br>
-                    Sent via Click AI
-                </p>
-            </div>
-        </body>
-        </html>
-        '''
+        body_html = f'''<html><head>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 15px; color: #333; font-size: 13px; }}
+            table {{ border-collapse: collapse; }}
+            @media print {{ body {{ padding: 0; }} }}
+        </style>
+        </head><body>
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom: 2px solid #333; margin-bottom: 12px; padding-bottom: 8px;">
+            <tr>
+                <td valign="top" style="font-size: 12px; color: #333;">
+                    <strong>{biz_name}</strong><br>
+                    {f'{biz_phone}<br>' if biz_phone else ''}{f'{biz_email}' if biz_email else ''}
+                </td>
+                <td valign="top" style="text-align: right;">
+                    <strong style="font-size: 15px; letter-spacing: 1px;">PURCHASE ORDER</strong><br>
+                    <strong>{po_number}</strong>
+                </td>
+            </tr>
+        </table>
+
+        <p>Dear {supplier_name},</p>
+        <p>Please find below our purchase order:</p>
+
+        <table width="100%" cellpadding="6" cellspacing="0" style="margin: 10px 0 15px; font-size: 12px;">
+            <tr style="background: #f0f0f0; border-bottom: 2px solid #ccc;">
+                <th style="text-align: left; padding: 6px 8px; font-size: 11px; font-weight: 600;">Code</th>
+                <th style="text-align: left; padding: 6px 8px; font-size: 11px; font-weight: 600;">Description</th>
+                <th style="text-align: center; padding: 6px 8px; font-size: 11px; font-weight: 600; width: 60px;">Qty</th>
+            </tr>
+            {items_html}
+        </table>
+
+        {f'<p><strong>Expected Delivery:</strong> {expected_date}</p>' if expected_date else ''}
+        {f'<p><strong>Notes:</strong> {notes}</p>' if notes else ''}
+
+        <p>Please confirm receipt of this order and provide your quotation.</p>
+        <p>Thank you!</p>
+
+        <hr style="border: none; border-top: 1px solid #ddd; margin: 15px 0 8px;">
+        <p style="color: #999; font-size: 10px;">
+            {biz_name} | {biz_phone} | {biz_email}<br>Sent via Click AI
+        </p>
+        </body></html>'''
         
         body_text = f"""Purchase Order {po_number} from {biz_name}
 
