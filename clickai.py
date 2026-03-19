@@ -27133,6 +27133,7 @@ def invoice_new():
         descriptions = request.form.getlist("item_desc[]")
         quantities = request.form.getlist("item_qty[]")
         prices = request.form.getlist("item_price[]")
+        units = request.form.getlist("item_unit[]")
         
         subtotal = Decimal("0")
         for i, desc in enumerate(descriptions):
@@ -27141,8 +27142,10 @@ def invoice_new():
                 price = Decimal(prices[i] or "0")
                 line_total = qty * price
                 subtotal += line_total
+                unit_val = units[i].strip() if i < len(units) else ""
                 items.append({
                     "description": desc,
+                    "unit": unit_val,
                     "quantity": float(qty),
                     "price": float(price),
                     "total": float(line_total)
@@ -27276,15 +27279,16 @@ def invoice_new():
             inv_salesman_opts += f'<option value="{tm_uid}" data-name="{safe_string(tm.get("name", ""))}">{safe_string(tm.get("name", ""))}</option>'
     
     # Stock datalist for autocomplete
-    stock_options = '<option value="NEW" data-price="0" data-stockid="">+ Add New Stock Item</option>'
+    stock_options = '<option value="NEW" data-price="0" data-stockid="" data-unit="">+ Add New Stock Item</option>'
     for s in stock:
         desc = safe_string(s.get("description", ""))
         code = safe_string(s.get("code", ""))
         price = float(s.get("price") or s.get("selling_price") or 0)
         stock_id = s.get("id", "")
         qty_avail = float(s.get("qty") or s.get("quantity") or 0)
+        stock_unit = safe_string(s.get("unit", ""))
         label = f"{code} - {desc}" if code else desc
-        stock_options += f'<option value="{label}" data-price="{price}" data-stockid="{stock_id}" data-desc="{desc}" data-qty="{qty_avail}">'
+        stock_options += f'<option value="{label}" data-price="{price}" data-stockid="{stock_id}" data-desc="{desc}" data-qty="{qty_avail}" data-unit="{stock_unit}">'
     
     error_msg = request.args.get("error", "")
     error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
@@ -27341,9 +27345,10 @@ def invoice_new():
             <table class="table" id="lineItems">
                 <thead>
                     <tr>
-                        <th style="width:45%">Description</th>
-                        <th style="width:12%">Qty</th>
-                        <th style="width:18%">Price (excl)</th>
+                        <th style="width:38%">Description</th>
+                        <th style="width:10%">Unit</th>
+                        <th style="width:10%">Qty</th>
+                        <th style="width:17%">Price (excl)</th>
                         <th style="width:15%">Total</th>
                         <th style="width:10%"></th>
                     </tr>
@@ -27354,6 +27359,7 @@ def invoice_new():
                             <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
                             <input type="hidden" name="item_stock_id[]" value="">
                         </td>
+                        <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
                         <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td class="row-total">R0.00</td>
@@ -27433,11 +27439,13 @@ def invoice_new():
         const options = datalist.querySelectorAll('option');
         const row = input.closest('tr');
         const stockIdInput = row.querySelector('input[name="item_stock_id[]"]');
+        const unitInput = row.querySelector('input[name="item_unit[]"]');
         for (let opt of options) {{
             if (opt.value === input.value) {{
                 const priceInput = row.querySelector('input[name="item_price[]"]');
                 priceInput.value = opt.dataset.price || '';
                 if (stockIdInput) stockIdInput.value = opt.dataset.stockid || '';
+                if (unitInput && opt.dataset.unit) unitInput.value = opt.dataset.unit;
                 calcRow(priceInput);
                 break;
             }}
@@ -27452,6 +27460,7 @@ def invoice_new():
                 <input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" oninput="checkStock(this)" placeholder="Type to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);">
                 <input type="hidden" name="item_stock_id[]" value="">
             </td>
+            <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
             <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td class="row-total">R0.00</td>
@@ -27569,6 +27578,7 @@ def invoice_view(invoice_id):
         # Handle both qty and quantity field names
         qty = item.get("qty") or item.get("quantity") or 1
         desc = item.get("description") or item.get("desc") or "-"
+        unit = item.get("unit") or item.get("uom") or ""
         price = float(item.get("price") or item.get("unit_price") or 0)
         total_excl = float(item.get("total") or item.get("line_total") or 0)
         # If no line total, calculate
@@ -27581,6 +27591,7 @@ def invoice_view(invoice_id):
         items_html += f'''
         <tr style="border-bottom:1px solid #e5e7eb;">
             <td style="padding:4px 6px;font-size:11px;">{safe_string(desc)}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{safe_string(unit)}</td>
             <td style="text-align:center;padding:4px 6px;font-size:11px;">{qty}</td>
             <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(price)}</td>
             <td style="text-align:center;padding:4px 6px;font-size:11px;">{disc:.1f}%</td>
@@ -27824,6 +27835,7 @@ def invoice_view(invoice_id):
                 <thead>
                     <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
                         <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Description</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:50px;">Unit</th>
                         <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>
                         <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>
                         <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Disc %</th>
@@ -31252,6 +31264,7 @@ def quote_new():
         descriptions = request.form.getlist("item_desc[]")
         quantities = request.form.getlist("item_qty[]")
         prices = request.form.getlist("item_price[]")
+        units = request.form.getlist("item_unit[]")
         
         subtotal = Decimal("0")
         for i, desc in enumerate(descriptions):
@@ -31260,8 +31273,10 @@ def quote_new():
                 price = Decimal(prices[i] or "0")
                 line_total = qty * price
                 subtotal += line_total
+                unit_val = units[i].strip() if i < len(units) else ""
                 items.append({
                     "description": desc,
+                    "unit": unit_val,
                     "quantity": float(qty),
                     "price": float(price),
                     "total": float(line_total)
@@ -31326,11 +31341,12 @@ def quote_new():
             seen_ids.add(tm_uid)
             salesman_options += f'<option value="{tm_uid}" data-name="{safe_string(tm.get("name", ""))}">{safe_string(tm.get("name", ""))}</option>'
     
-    stock_options = '<option value="NEW" data-price="0">+ Add New Stock Item</option>'
+    stock_options = '<option value="NEW" data-price="0" data-unit="">+ Add New Stock Item</option>'
     for s in stock:
         desc = safe_string(s.get("description", ""))
         price = float(s.get("price") or s.get("selling_price") or 0)
-        stock_options += f'<option value="{desc}" data-price="{price}">'
+        stock_unit = safe_string(s.get("unit", ""))
+        stock_options += f'<option value="{desc}" data-price="{price}" data-unit="{stock_unit}">'
     
     error_msg = request.args.get("error", "")
     error_html = f'<div style="background:var(--red);color:white;padding:10px;border-radius:8px;margin-bottom:15px;">{error_msg}</div>' if error_msg else ""
@@ -31372,9 +31388,10 @@ def quote_new():
             <table class="table" id="lineItems">
                 <thead>
                     <tr>
-                        <th style="width:45%">Description</th>
-                        <th style="width:12%">Qty</th>
-                        <th style="width:18%">Price</th>
+                        <th style="width:38%">Description</th>
+                        <th style="width:10%">Unit</th>
+                        <th style="width:10%">Qty</th>
+                        <th style="width:17%">Price</th>
                         <th style="width:15%">Total</th>
                         <th style="width:10%"></th>
                     </tr>
@@ -31382,6 +31399,7 @@ def quote_new():
                 <tbody id="itemRows">
                     <tr>
                         <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                        <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
                         <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                         <td class="row-total">R0.00</td>
@@ -31443,6 +31461,8 @@ def quote_new():
                 const row = input.closest('tr');
                 const priceInput = row.querySelector('input[name="item_price[]"]');
                 priceInput.value = opt.dataset.price || '';
+                const unitInput = row.querySelector('input[name="item_unit[]"]');
+                if (unitInput && opt.dataset.unit) unitInput.value = opt.dataset.unit;
                 calcRow(priceInput);
                 break;
             }}
@@ -31454,6 +31474,7 @@ def quote_new():
         const row = document.createElement('tr');
         row.innerHTML = `
             <td><input type="text" name="item_desc[]" list="stockList" onchange="checkStock(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+            <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
             <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
             <td class="row-total">R0.00</td>
@@ -31557,9 +31578,11 @@ def quote_view(quote_id):
         vat_rate = 15.0
         vat_amount = round(total_excl * vat_rate / 100, 2)
         total_incl = round(total_excl + vat_amount, 2)
+        unit = item.get("unit") or item.get("uom") or ""
         items_html += f'''
         <tr style="border-bottom:1px solid #e5e7eb;">
             <td style="padding:4px 6px;font-size:11px;">{safe_string(desc)}</td>
+            <td style="text-align:center;padding:4px 6px;font-size:11px;">{safe_string(unit)}</td>
             <td style="text-align:center;padding:4px 6px;font-size:11px;">{qty}</td>
             <td style="text-align:right;padding:4px 6px;font-size:11px;">{money(price)}</td>
             <td style="text-align:center;padding:4px 6px;font-size:11px;">{disc:.1f}%</td>
@@ -31772,6 +31795,7 @@ def quote_view(quote_id):
                 <thead>
                     <tr style="background:#f1f5f9;border-bottom:2px solid #cbd5e1;">
                         <th style="padding:5px 6px;text-align:left;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;">Description</th>
+                        <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:50px;">Unit</th>
                         <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Qty</th>
                         <th style="padding:5px 6px;text-align:right;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:100px;">Excl. Price</th>
                         <th style="padding:5px 6px;text-align:center;color:#475569;font-weight:600;font-size:10px;text-transform:uppercase;width:60px;">Disc %</th>
@@ -32215,8 +32239,8 @@ def delivery_notes_list():
     
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-        <h2>Goods Received Notes (GRN)</h2>
-        <a href="/delivery-note/new" class="btn btn-primary">+ New GRN</a>
+        <h2>Delivery Notes</h2>
+        <a href="/delivery-note/new" class="btn btn-primary">+ New Delivery Note</a>
     </div>
     
     <div class="card" style="padding:0;overflow:hidden;">
@@ -32240,7 +32264,7 @@ def delivery_notes_list():
     </div>
     '''
     
-    return render_page("Goods Received Notes", content, user, "delivery-notes")
+    return render_page("Delivery Notes", content, user, "delivery-notes")
 
 
 @app.route("/delivery-note/new", methods=["GET", "POST"])
