@@ -49485,25 +49485,22 @@ def pos_page():
         
         // Check settings for auto behavior
         posLocked = false;  // Sale is committed — unlock POS for next sale
-        if (posSettings.auto_print && posSettings.print_format !== 'ask') {
-            // Auto print with default format
-            document.getElementById('printSlipModal').style.display = 'flex';
-            setTimeout(() => doPrintSlip(posSettings.print_format), 100);
-        } else if (posSettings.auto_print) {
-            // Show print dialog
-            document.getElementById('printSlipModal').style.display = 'flex';
-            setTimeout(() => { 
-                const btn = document.getElementById('btnPrintThermal');
-                if (btn) { btn.focus(); btn.style.outline = '3px solid yellow'; }
-            }, 150);
-        } else {
-            // Show print modal directly — no extra confirm needed
-            document.getElementById('printSlipModal').style.display = 'flex';
-            setTimeout(() => { 
-                const btn = document.getElementById('btnPrintThermal');
-                if (btn) { btn.focus(); btn.style.outline = '3px solid yellow'; }
-            }, 150);
-        }
+        
+        // === ALWAYS AUTO-PRINT THERMAL — no format selection needed ===
+        // Show the modal briefly (for change banner visibility), then auto-fire thermal
+        document.getElementById('printSlipModal').style.display = 'flex';
+        // Hide the button row — we're going straight to thermal
+        var _btnRow = document.getElementById('printButtonRow');
+        if (_btnRow) _btnRow.style.display = 'none';
+        
+        // Small delay so change banner is visible before print dialog opens
+        setTimeout(function() {
+            doPrintSlip('thermal');
+            // Close the modal after a short delay (print dialog is open by now)
+            setTimeout(function() {
+                closePrintModal();
+            }, 1500);
+        }, changeGiven >= 0.01 ? 1200 : 200);  // longer delay if there's change to show
     }
     
     function doPrintSlip(format) {
@@ -49635,43 +49632,73 @@ def pos_page():
             fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
         }
         
+        // === SILENT THERMAL PRINT via hidden iframe — no popup window, no printer selection ===
         // Exit fullscreen before print (browsers block print dialog in fullscreen)
         if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
-        var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
-        if (printWin) {
-            printWin.document.open();
-            printWin.document.write(fullHtml);
-            printWin.document.close();
-            var tryPrint = function() {
-                try { printWin.focus(); printWin.print(); } catch(e) { console.log('[POS] Print error:', e); }
-                setTimeout(function() { try { printWin.close(); } catch(e) {} }, 2000);
-            };
-            if (printWin.document.readyState === 'complete') { setTimeout(tryPrint, 400); }
-            else { printWin.onload = function() { setTimeout(tryPrint, 200); }; setTimeout(tryPrint, 1500); }
-            
-            if (posSettings.print_duplicates) {
-                setTimeout(function() {
-                    var pw2 = window.open('', 'pos_slip_copy', 'width=400,height=600,menubar=no,toolbar=no');
-                    if (pw2) {
-                        pw2.document.open();
-                        pw2.document.write(fullHtml.replace('</body>', '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body>'));
-                        pw2.document.close();
-                        var tp2 = function() { try { pw2.focus(); pw2.print(); } catch(e) {} setTimeout(function() { try { pw2.close(); } catch(e) {} }, 2000); };
-                        if (pw2.document.readyState === 'complete') { setTimeout(tp2, 400); } else { pw2.onload = function() { setTimeout(tp2, 200); }; setTimeout(tp2, 1500); }
-                    }
-                }, 4000);
+        
+        // Use hidden iframe — avoids popup blocker and is faster
+        var pf = document.getElementById('posPrintFrame');
+        if (!pf) {
+            pf = document.createElement('iframe');
+            pf.id = 'posPrintFrame';
+            pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
+            document.body.appendChild(pf);
+        }
+        var fd = pf.contentDocument || pf.contentWindow.document;
+        fd.open(); fd.write(fullHtml); fd.close();
+        
+        var _returnToFullscreen = function() {
+            if (f11Mode && !document.fullscreenElement) {
+                try { document.documentElement.requestFullscreen(); } catch(e) {}
             }
-        } else {
-            var pf = document.getElementById('posPrintFrame');
-            if (!pf) { pf = document.createElement('iframe'); pf.id = 'posPrintFrame'; pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;'; document.body.appendChild(pf); }
-            var fd = pf.contentDocument || pf.contentWindow.document;
-            fd.open(); fd.write(fullHtml); fd.close();
-            setTimeout(function() { try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) { alert('Print failed — allow popups for this site and retry.'); } }, 800);
+        };
+        
+        var _doPrint = function() {
+            try {
+                pf.contentWindow.focus();
+                pf.contentWindow.print();
+            } catch(e) {
+                console.log('[POS] Iframe print failed, trying popup:', e);
+                // Fallback to popup if iframe print fails
+                var printWin = window.open('', 'pos_slip_print', 'width=400,height=600,menubar=no,toolbar=no,location=no,status=no');
+                if (printWin) {
+                    printWin.document.open();
+                    printWin.document.write(fullHtml);
+                    printWin.document.close();
+                    setTimeout(function() {
+                        try { printWin.focus(); printWin.print(); } catch(e2) {}
+                        setTimeout(function() { try { printWin.close(); } catch(e3) {} _returnToFullscreen(); }, 1500);
+                    }, 400);
+                    return;  // skip the normal fullscreen return below
+                }
+            }
+            // Return to fullscreen after print dialog closes
+            setTimeout(_returnToFullscreen, 500);
+        };
+        
+        if (fd.readyState === 'complete') { setTimeout(_doPrint, 300); }
+        else { pf.onload = function() { setTimeout(_doPrint, 200); }; setTimeout(_doPrint, 1000); }
+        
+        // Duplicate copy (store copy)
+        if (posSettings.print_duplicates) {
+            setTimeout(function() {
+                var dupHtml = fullHtml.replace('</body>', '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body>');
+                fd.open(); fd.write(dupHtml); fd.close();
+                var _doDup = function() {
+                    try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) {}
+                    setTimeout(_returnToFullscreen, 500);
+                };
+                if (fd.readyState === 'complete') { setTimeout(_doDup, 300); }
+                else { pf.onload = function() { setTimeout(_doDup, 200); }; setTimeout(_doDup, 1000); }
+            }, 3000);
         }
     }
     
     function closePrintModal() {
         document.getElementById('printSlipModal').style.display = 'none';
+        // Show the button row again in case someone opens it manually later
+        var _btnRow = document.getElementById('printButtonRow');
+        if (_btnRow) _btnRow.style.display = 'flex';
         afterSaleReset();
     }
     
@@ -49718,9 +49745,21 @@ def pos_page():
         posLocked = false;
         lastSaleData = null;
         
-        // Focus search for next sale
-        var search = document.getElementById('stockSearch');
-        if (search) { search.value = ''; search.focus(); }
+        // === AUTO-RETURN TO FULLSCREEN after print ===
+        if (f11Mode && !document.fullscreenElement) {
+            try { document.documentElement.requestFullscreen(); } catch(e) {}
+        }
+        
+        // Focus the right search bar depending on mode
+        if (f11Mode) {
+            var f11s = document.getElementById('f11Search');
+            if (f11s) { f11s.value = ''; f11s.focus(); }
+            if (typeof renderF11Table === 'function') renderF11Table();
+            if (typeof syncF11Buttons === 'function') syncF11Buttons();
+        } else {
+            var search = document.getElementById('stockSearch');
+            if (search) { search.value = ''; search.focus(); }
+        }
         
         // Flash success on reactor
         var rx = document.querySelector('.pos-rx-core');
@@ -50375,6 +50414,17 @@ def pos_page():
     document.addEventListener('fullscreenchange', function() {{
         // DO NOTHING — browser fullscreen may drop due to prompt/alert/permissions
         // but our F11 CSS mode must stay active. Only toggleF11() can exit F11.
+    }});
+    
+    // === POS FORCE FULLSCREEN ON LOAD ===
+    // POS must always run in fullscreen mode for cashiers
+    document.addEventListener('DOMContentLoaded', function() {{
+        // Small delay to let the page render first, then auto-enter F11
+        setTimeout(function() {{
+            if (!f11Mode) {{
+                toggleF11();
+            }}
+        }}, 300);
     }});
     </script>
     <header class="pos-header" style="padding:6px 20px 4px;">
