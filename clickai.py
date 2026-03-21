@@ -8412,8 +8412,8 @@ Respond in the same language the user uses.
         except Exception:
             pass
 
-  # Final reminder - models pay attention to end of prompt
-    prompt += "\n\nREMINDER: Absolutely NO emojis in your response. Zero. Use plain text only." 
+    # Final reminder - models pay attention to end of prompt
+    prompt += "\n\nREMINDER: Absolutely NO emojis in your response. Zero. Use plain text only."
     
     return prompt
 
