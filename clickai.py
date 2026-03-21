@@ -128,6 +128,11 @@ try:
 except ImportError:
     INSURANCE_KNOWLEDGE_LOADED = False
 try:
+    from clickai_financial_advisor_knowledge import get_relevant_financial_advisor_knowledge, format_financial_advisor_knowledge
+    FINANCIAL_ADVISOR_KNOWLEDGE_LOADED = True
+except ImportError:
+    FINANCIAL_ADVISOR_KNOWLEDGE_LOADED = False
+try:
     from clickai_business_groups import BusinessGroupManager, register_group_routes
     BUSINESS_GROUPS_LOADED = True
 except ImportError:
@@ -8397,8 +8402,18 @@ Respond in the same language the user uses.
         except Exception as e:
             logger.error(f"[ZANE-GROUP] Group context error: {e}")
 
-    # Final reminder - models pay attention to end of prompt
-    prompt += "\n\nREMINDER: Absolutely NO emojis in your response. Zero. Use plain text only."
+    # === RAG: Inject financial advisor knowledge (personal finance, CGT, debt, cash flow) ===
+    if FINANCIAL_ADVISOR_KNOWLEDGE_LOADED and user_message:
+        try:
+            fa_chunks = get_relevant_financial_advisor_knowledge(user_message, max_chunks=2)
+            if fa_chunks:
+                prompt += format_financial_advisor_knowledge(fa_chunks)
+                logger.info(f"[ZANE-FA] Injected financial advisor chunk: {fa_chunks[0]['title']}")
+        except Exception:
+            pass
+
+  # Final reminder - models pay attention to end of prompt
+    prompt += "\n\nREMINDER: Absolutely NO emojis in your response. Zero. Use plain text only." 
     
     return prompt
 
