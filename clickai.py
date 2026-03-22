@@ -45919,6 +45919,60 @@ ${content}
             alert('Error generating report: ' + e.message);
         }
     }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // TB Q&A CHAT — works for any TB analyzed on this page
+    // ═══════════════════════════════════════════════════════════════
+    window._tbQaHistory = window._tbQaHistory || [];
+    
+    async function tbQaSend() {
+        const input = document.getElementById('tbQaInput');
+        const chatBox = document.getElementById('tbQaChatHistory');
+        if (!input || !chatBox) { console.warn('Q&A elements not found'); return; }
+        const question = input.value.trim();
+        if (!question) return;
+        
+        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
+        input.value = '';
+        
+        const thinkId = 'think_' + Date.now();
+        chatBox.innerHTML += '<div id="' + thinkId + '" style="margin:10px 0;padding:10px 14px;color:var(--text-muted);font-size:13px;"><span class="loading-dots">Zane is thinking</span>...</div>';
+        chatBox.scrollTop = chatBox.scrollHeight;
+        
+        const payload = window._tbInsightsPayload || null;
+        const langEl = document.getElementById('reportLang') || document.getElementById('smartLang');
+        const lang = langEl ? langEl.value : 'en';
+        
+        window._tbQaHistory.push({role: 'user', content: question});
+        
+        try {
+            const response = await fetch('/api/reports/qa', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    question: question,
+                    report_type: 'tb',
+                    report_data: payload,
+                    insights_payload: payload,
+                    history: window._tbQaHistory.slice(-10),
+                    lang: lang
+                })
+            });
+            const data = await response.json();
+            const thinkEl = document.getElementById(thinkId);
+            if (data.success && data.answer) {
+                window._tbQaHistory.push({role: 'assistant', content: data.answer});
+                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:14px 16px;border-radius:10px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);font-size:14px;line-height:1.7;"><strong style="color:#10b981;">Zane:</strong><br>' + data.answer + '</div>';
+            } else {
+                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Kon nie antwoord nie: ' + (data.error || 'Unknown error') + '</div>';
+            }
+        } catch (err) {
+            const thinkEl = document.getElementById(thinkId);
+            if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Fout: ' + err.message + '</div>';
+        }
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+    window.tbQaSend = tbQaSend;
     </script>
     '''
     
