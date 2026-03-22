@@ -40423,14 +40423,18 @@ def api_tb_analyze():
                 net_cr = cr - dr  # Liabilities are credit balances
                 
                 if "current liabilit" in cat and "non-current" not in cat or "bedryfslas" in cat and "nie-bedryfs" not in cat:
-                    if any(kw in name for kw in ["creditor", "payable", "trade payable", "krediteur"]):
-                        creditors += net_cr
-                    elif any(kw in name for kw in ["vat output", "output vat", "vat payable", "btw uitset", "vat control", "vat / tax"]):
+                    # IMPORTANT: Specific matches FIRST, generic "payable"/"creditor" LAST
+                    # Otherwise "VAT Payable" matches "payable" and lands in creditors
+                    if any(kw in name for kw in ["vat output", "output vat", "vat payable", "btw uitset", "vat control", "vat / tax"]):
                         vat_output += net_cr
                     elif "paye" in name or "pay as you earn" in name:
                         paye += net_cr
                     elif "uif" in name or "unemployment" in name:
                         uif += net_cr
+                    elif any(kw in name for kw in ["taxation", "tax payable", "belasting", "sars"]):
+                        other_liabilities += net_cr
+                    elif any(kw in name for kw in ["creditor", "payable", "trade payable", "krediteur"]):
+                        creditors += net_cr
                     else:
                         other_liabilities += net_cr
                 
@@ -40727,9 +40731,10 @@ def api_tb_analyze():
 <tr><td style="padding:4px 8px;">{L["capital"]}</td><td style="text-align:right;font-family:monospace;">R {capital:,.2f}</td></tr>
 <tr><td style="padding:4px 8px;">{L["retained_earnings"]}</td><td style="text-align:right;font-family:monospace;">R {retained:,.2f}</td></tr>
 <tr><td style="padding:4px 8px;">{L["less_drawings"]}</td><td style="text-align:right;font-family:monospace;">(R {drawings:,.2f})</td></tr>
-<tr style="background:rgba(139,92,246,0.2);"><td style="padding:6px;"><strong>{L["total_equity"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_equity:,.2f}</strong></td></tr>
+<tr><td style="padding:4px 8px;font-style:italic;">{"Netto Wins/Verlies" if lang == "af" else "Net Profit/Loss"}</td><td style="text-align:right;font-family:monospace;font-style:italic;">R {net_profit:,.2f}</td></tr>
+<tr style="background:rgba(139,92,246,0.2);"><td style="padding:6px;"><strong>{L["total_equity"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_equity + net_profit:,.2f}</strong></td></tr>
 
-<tr style="background:rgba(16,185,129,0.3);"><td style="padding:8px;"><strong>{L["liab_plus_equity"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_liabilities + total_equity:,.2f}</strong></td></tr>
+<tr style="background:rgba(16,185,129,0.3);"><td style="padding:8px;"><strong>{L["liab_plus_equity"]}</strong></td><td style="text-align:right;font-family:monospace;"><strong>R {total_liabilities + total_equity + net_profit:,.2f}</strong></td></tr>
 </table>
 </div>
 </div>
