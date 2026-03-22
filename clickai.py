@@ -39685,7 +39685,7 @@ ${{content}}
         if (!question) return;
         
         // Show user message
-        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replace(/</g, '&lt;') + '</div>';
+        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
         input.value = '';
         
         // Show thinking indicator
@@ -41556,15 +41556,24 @@ def api_reports_qa():
         
         if report_type == "tb" and report_data:
             # Trial Balance — use the full insights payload
+            # Safe float conversion (payload values may be strings from JSON)
+            def _f(key, default=0):
+                try:
+                    return float(report_data.get(key, default) or default)
+                except (ValueError, TypeError):
+                    return float(default)
+            
+            _tb_liabilities = _f('current_liabilities') + _f('long_term_liabilities')
+            _tb_vat = _f('vat_position')
             report_context = f"""TRIAL BALANCE SUMMARY:
-- Debits: R{report_data.get('total_debit', 0):,.2f} | Credits: R{report_data.get('total_credit', 0):,.2f}
-- Assets: R{report_data.get('total_assets', 0):,.2f} (Current R{report_data.get('current_assets', 0):,.2f}, Fixed R{report_data.get('fixed_assets_net', 0):,.2f})
-- Bank/Cash: R{report_data.get('bank_cash', 0):,.2f} | Debtors: R{report_data.get('debtors', 0):,.2f} | Stock: R{report_data.get('stock', 0):,.2f}
-- Liabilities: R{report_data.get('current_liabilities', 0) + report_data.get('long_term_liabilities', 0):,.2f} | Equity: R{report_data.get('total_equity', 0):,.2f}
-- Sales: R{report_data.get('net_sales', 0):,.2f} | GP: R{report_data.get('gross_profit', 0):,.2f} ({report_data.get('gp_margin', 0)}%) | Net: R{report_data.get('net_profit', 0):,.2f} ({report_data.get('np_margin', 0)}%)
-- Current Ratio: {report_data.get('current_ratio', 0):.2f} | Quick: {report_data.get('quick_ratio', 0):.2f} | Debt/Equity: {report_data.get('debt_equity', 0):.2f}
-- Debtor Days: {report_data.get('debtor_days', 0):.0f} | Creditor Days: {report_data.get('creditor_days', 0):.0f} | Stock Days: {report_data.get('stock_days', 0):.0f}
-- VAT: R{abs(report_data.get('vat_position', 0)):,.2f} {'PAYABLE' if report_data.get('vat_position', 0) > 0 else 'REFUND'}"""
+- Debits: R{_f('total_debit'):,.2f} | Credits: R{_f('total_credit'):,.2f}
+- Assets: R{_f('total_assets'):,.2f} (Current R{_f('current_assets'):,.2f}, Fixed R{_f('fixed_assets_net'):,.2f})
+- Bank/Cash: R{_f('bank_cash'):,.2f} | Debtors: R{_f('debtors'):,.2f} | Stock: R{_f('stock'):,.2f}
+- Liabilities: R{_tb_liabilities:,.2f} | Equity: R{_f('total_equity'):,.2f}
+- Sales: R{_f('net_sales'):,.2f} | GP: R{_f('gross_profit'):,.2f} ({report_data.get('gp_margin', 0)}%) | Net: R{_f('net_profit'):,.2f} ({report_data.get('np_margin', 0)}%)
+- Current Ratio: {_f('current_ratio'):,.2f} | Quick: {_f('quick_ratio'):,.2f} | Debt/Equity: {_f('debt_equity'):,.2f}
+- Debtor Days: {_f('debtor_days'):,.0f} | Creditor Days: {_f('creditor_days'):,.0f} | Stock Days: {_f('stock_days'):,.0f}
+- VAT: R{abs(_tb_vat):,.2f} {'PAYABLE' if _tb_vat > 0 else 'REFUND'}"""
             if report_data.get('accounts_text'):
                 acct_text = str(report_data.get('accounts_text', ''))
                 if len(acct_text) > 3000:
@@ -42691,7 +42700,7 @@ def report_pnl():
         const question = input.value.trim();
         if (!question) return;
         
-        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replace(/</g, '&lt;') + '</div>';
+        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
         input.value = '';
         
         const thinkId = 'think_' + Date.now();
@@ -42957,7 +42966,7 @@ def report_balance_sheet():
         const question = input.value.trim();
         if (!question) return;
         
-        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replace(/</g, '&lt;') + '</div>';
+        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
         input.value = '';
         
         const thinkId = 'think_' + Date.now();
@@ -45439,7 +45448,7 @@ def report_cashflow():
         const question = input.value.trim();
         if (!question) return;
         
-        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replace(/</g, '&lt;') + '</div>';
+        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
         input.value = '';
         
         const thinkId = 'think_' + Date.now();
