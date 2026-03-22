@@ -39332,6 +39332,9 @@ def report_tb():
                 content.innerHTML = data.analysis;
                 dateSpan.innerHTML = 'Analyzed: ' + new Date().toLocaleString();
                 
+                // Store insights payload for Q&A chat to use later
+                window._tbInsightsPayload = data.insights_payload || null;
+                
                 // STEP 2: Load Zane's AI insights in BACKGROUND
                 const insightBox = document.getElementById('aiInsightsContent');
                 if (insightBox) {{
@@ -39460,6 +39463,9 @@ def report_tb():
             if (analyzeData.success) {{
                 content.innerHTML = analyzeData.analysis;
                 dateSpan.innerHTML = 'Analyzed: ' + new Date().toLocaleString() + ' (from ' + file.name + ')';
+                
+                // Store insights payload for Q&A chat to use later
+                window._tbInsightsPayload = analyzeData.insights_payload || null;
                 
                 // Async load Zane's insights
                 const insightBox = document.getElementById('aiInsightsContent');
@@ -45890,7 +45896,7 @@ ${content}
             // Fire async insights fetch for TB analysis (after DOM has the placeholder)
             if (window._tbInsightsPayload) {
                 const _payload = window._tbInsightsPayload;
-                window._tbInsightsPayload = null;
+                // NOTE: Do NOT null _tbInsightsPayload here — the Q&A chat needs it later
                 setTimeout(() => {
                     const insightBox = document.getElementById('aiInsightsContent');
                     if (insightBox) {
