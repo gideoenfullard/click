@@ -1713,8 +1713,16 @@ def get_steel_weight(size: str, length_m: float) -> tuple:
     
     return None, None
 
-def get_steel_context() -> str:
-    """Get steel context for Zane - includes Fulltech pricing if available"""
+def _is_owner_business(biz_name: str = "") -> bool:
+    """Check if this is one of the owner's internal businesses (not a client).
+    Uses business name matching. Fulltech-specific tools and pricing
+    should ONLY be available to these businesses, never to client businesses."""
+    name = (biz_name or "").lower()
+    return "fulltech" in name or "steel supplier" in name
+
+
+def get_steel_context(biz_name: str = "") -> str:
+    """Get steel context for Zane - includes Fulltech pricing ONLY for owner businesses"""
     base_context = """
 STEEL KNOWLEDGE:
 You know South African steel sizes and weights. Common items:
@@ -1734,8 +1742,8 @@ When quoting steel:
 Example: "100m of 50x50 tube" = 100m x 2.42kg/m = 242kg
 """
     
-    # Add Fulltech specific pricing if available
-    if FULLTECH_ENABLED:
+    # Add Fulltech specific pricing ONLY for owner businesses
+    if FULLTECH_ENABLED and _is_owner_business(biz_name):
         try:
             brushing_context = """
 
@@ -9308,7 +9316,7 @@ When user is on /pos page:
 5. Be brief and helpful - they're busy selling!
 6. If they created a customer and it "disappeared" - explain: "Your customer selection is still there! Just click the Customer button (F8) to see them. The cart being empty just means you need to add items."
 
-{get_steel_context()}
+{get_steel_context(biz_name)}
 
 ## SOUTH AFRICAN BUSINESS KNOWLEDGE
 
@@ -26110,6 +26118,12 @@ def fulltech_tools():
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     
+    # Owner businesses only — block client access
+    biz_name = (business.get("name", "") if business else "").lower()
+    if not _is_owner_business(biz_name):
+        flash("This tool is not available for your business", "error")
+        return redirect("/tools")
+    
     content = f'''
     <div class="card" style="margin-bottom:20px;">
         <h2 style="margin:0 0 10px 0;">🔩 Fulltech Bolt Pricer</h2>
@@ -26358,6 +26372,9 @@ def fulltech_tools():
 @login_required
 def api_fulltech_bolt_check():
     """Single item price check using BoltPricer v4 verified rates"""
+    biz = Auth.get_current_business()
+    if not _is_owner_business(biz.get("name", "") if biz else ""):
+        return jsonify({"success": False, "error": "Not available"}), 403
     data = request.get_json() or {}
     desc = data.get("description", "")
     if not BoltPricer:
@@ -26371,6 +26388,8 @@ def api_fulltech_bolt_preview():
     """Preview bolt repricing using v4 verified supplier rates"""
     import time as _time
     business = Auth.get_current_business()
+    if not _is_owner_business(business.get("name", "") if business else ""):
+        return jsonify({"success": False, "error": "Not available"}), 403
     biz_id = business.get("id") if business else None
     if not biz_id:
         return jsonify({"success": False, "error": "No business"})
@@ -26453,6 +26472,8 @@ def api_fulltech_bolt_apply():
         return jsonify({"success": False, "error": "Owner/Admin only"})
     
     business = Auth.get_current_business()
+    if not _is_owner_business(business.get("name", "") if business else ""):
+        return jsonify({"success": False, "error": "Not available"}), 403
     biz_id = business.get("id") if business else None
     if not biz_id:
         return jsonify({"success": False, "error": "No business"})
@@ -26508,6 +26529,9 @@ def api_fulltech_bolt_apply():
 @login_required
 def api_fulltech_calc_bolt():
     """Legacy endpoint — redirects to BoltPricer"""
+    biz = Auth.get_current_business()
+    if not _is_owner_business(biz.get("name", "") if biz else ""):
+        return jsonify({"success": False, "error": "Not available"}), 403
     item_type = request.args.get("type", "bolt")
     m_size = int(request.args.get("m_size", 6))
     length = int(request.args.get("length", 50)) if item_type == "bolt" else None
@@ -69201,7 +69225,7 @@ def coil_calculator():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if "fulltech" not in biz_name:
+    if not _is_owner_business(biz_name):
         return redirect("/tools")
     
     result_html = ""
@@ -69406,7 +69430,7 @@ def tube_prices():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if "fulltech" not in biz_name:
+    if not _is_owner_business(biz_name):
         return redirect("/tools")
     
     result_html = ""
@@ -69657,7 +69681,7 @@ def sheet_pieces():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if "fulltech" not in biz_name:
+    if not _is_owner_business(biz_name):
         return redirect("/tools")
     
     # Load custom prices from business settings
@@ -69831,7 +69855,7 @@ def smart_quote():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if "fulltech" not in biz_name:
+    if not _is_owner_business(biz_name):
         return redirect("/tools")
     
     # Handle AJAX price calculation
@@ -70586,7 +70610,7 @@ def price_editor():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if "fulltech" not in biz_name:
+    if not _is_owner_business(biz_name):
         return redirect("/tools")
     
     # Handle price updates via AJAX
@@ -70839,7 +70863,7 @@ def tools_page():
     # Fulltech tools - only show for Fulltech business
     fulltech_tools = ""
     biz_name = (business.get("name", "") if business else "").lower()
-    is_fulltech = "fulltech" in biz_name
+    is_fulltech = _is_owner_business(biz_name)
     
     if is_fulltech and FULLTECH_ENABLED:
         fulltech_tools = '''
