@@ -3505,6 +3505,7 @@ class RecordFactory:
             "total": total,
             "status": kwargs.get("status", "outstanding"),
             "notes": kwargs.get("notes", ""),
+            "po_id": kwargs.get("po_id", ""),
             "items": kwargs.get("items", ""),
             "scanned": kwargs.get("scanned", False),
             "created_at": kwargs.get("created_at") or now(),
@@ -30943,7 +30944,7 @@ def supplier_new():
 @app.route("/supplier/<supplier_id>")
 @login_required
 def supplier_view(supplier_id):
-    """Supplier detail with full history"""
+    """Supplier detail with full history — accordion chain: PO → GRV → Invoice"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -30957,118 +30958,196 @@ def supplier_view(supplier_id):
     if not supplier:
         return redirect("/suppliers")
     
-    # Get expenses/bills for this supplier (only if can see balances)
+    # ── Fetch ALL related data for this supplier ──
     all_expenses = db.get("expenses", {"business_id": biz_id}) if biz_id and can_see_balances else []
-    expenses = [e for e in all_expenses if e.get("supplier_id") == supplier_id]
-    expenses = sorted(expenses, key=lambda x: x.get("date", ""), reverse=True)
+    expenses = sorted([e for e in all_expenses if e.get("supplier_id") == supplier_id], key=lambda x: x.get("date", ""), reverse=True)
     
-    # Get supplier invoices (imported from Sage etc)
     all_supplier_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id and can_see_balances else []
-    supplier_invoices = [si for si in all_supplier_invoices if si.get("supplier_id") == supplier_id]
-    supplier_invoices = sorted(supplier_invoices, key=lambda x: x.get("date", ""), reverse=True)
+    supplier_invoices = sorted([si for si in all_supplier_invoices if si.get("supplier_id") == supplier_id], key=lambda x: x.get("date", ""), reverse=True)
     
-    # Get payments to supplier (only if can see balances)
     all_payments = db.get("supplier_payments", {"business_id": biz_id}) if biz_id and can_see_balances else []
-    payments = [p for p in all_payments if p.get("supplier_id") == supplier_id]
-    payments = sorted(payments, key=lambda x: x.get("date", ""), reverse=True)
+    payments = sorted([p for p in all_payments if p.get("supplier_id") == supplier_id], key=lambda x: x.get("date", ""), reverse=True)
     
-    # Get purchase orders for this supplier
     try:
         all_pos = db.get("purchase_orders", {"business_id": biz_id}) if biz_id else []
-        purchase_orders = [po for po in all_pos if po.get("supplier_id") == supplier_id]
-        purchase_orders = sorted(purchase_orders, key=lambda x: x.get("date", ""), reverse=True)
+        purchase_orders = sorted([po for po in all_pos if po.get("supplier_id") == supplier_id], key=lambda x: x.get("date", ""), reverse=True)
     except Exception:
         purchase_orders = []
     
-    # Get scanned documents for this supplier
+    # Get GRVs for this supplier
+    try:
+        all_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
+        grvs = sorted([g for g in all_grvs if g.get("supplier_id") == supplier_id], key=lambda x: x.get("date", ""), reverse=True)
+    except Exception:
+        grvs = []
+    
     all_scanned_docs = db.get("scanned_documents", {"business_id": biz_id}) if biz_id else []
-    scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
-    scanned_docs = sorted(scanned_docs, key=lambda x: x.get("created_at", ""), reverse=True)
+    scanned_docs = sorted([d for d in all_scanned_docs if d.get("supplier_id") == supplier_id], key=lambda x: x.get("created_at", ""), reverse=True)
     
     balance = float(supplier.get("balance", 0)) if can_see_balances else 0
     
-    # Stats - only if can see balances
+    # Stats
     total_billed = sum(float(e.get("total", e.get("amount", 0))) for e in expenses) if can_see_balances else 0
     total_paid = sum(float(p.get("amount", 0)) for p in payments) if can_see_balances else 0
     
-    # YTD Stats - spending at this supplier
-    import datetime
-    now_dt = datetime.datetime.now()
-    # SA financial year: March to February
-    if now_dt.month >= 3:
-        fy_year = now_dt.year
-        ytd_start = f"{now_dt.year}-03-01"
-    else:
-        fy_year = now_dt.year - 1
-        ytd_start = f"{now_dt.year - 1}-03-01"
-    fy_label = f"Mar {fy_year} - Feb {fy_year + 1}"
+    # ── Build GRV and Invoice indexes by po_id ──
+    grvs_by_po = {}
+    for g in grvs:
+        pid = g.get("po_id", "")
+        if pid:
+            grvs_by_po.setdefault(pid, []).append(g)
     
-    # Combine expenses + supplier_invoices for full picture
-    ytd_expenses = [e for e in expenses if (e.get("date") or "") >= ytd_start]
-    ytd_exp_total = sum(float(e.get("total", e.get("amount", 0))) for e in ytd_expenses)
-    ytd_si = [si for si in supplier_invoices if (si.get("date") or "") >= ytd_start]
-    ytd_si_total = sum(float(si.get("total", 0)) for si in ytd_si)
-    ytd_spend = ytd_exp_total + ytd_si_total
+    # Link supplier invoices to POs — check po_id field, or parse notes "From PO: PO-00236"
+    invoices_by_po = {}
+    unlinked_invoices = []
+    for si in supplier_invoices:
+        linked_po_id = si.get("po_id", "")
+        if not linked_po_id:
+            notes = si.get("notes", "")
+            if "From PO:" in notes:
+                try:
+                    po_num_from_notes = notes.split("From PO:")[1].strip().split()[0]
+                    for po in purchase_orders:
+                        if po.get("po_number") == po_num_from_notes:
+                            linked_po_id = po.get("id")
+                            break
+                except Exception:
+                    pass
+        if linked_po_id:
+            invoices_by_po.setdefault(linked_po_id, []).append(si)
+        else:
+            unlinked_invoices.append(si)
     
-    # Previous financial year comparison
-    prev_fy_start = f"{fy_year - 1}-03-01"
-    prev_fy_end = f"{fy_year}-02-28"
-    prev_expenses = [e for e in expenses if prev_fy_start <= (e.get("date") or "") <= prev_fy_end]
-    prev_exp_total = sum(float(e.get("total", e.get("amount", 0))) for e in prev_expenses)
-    prev_si = [si for si in supplier_invoices if prev_fy_start <= (si.get("date") or "") <= prev_fy_end]
-    prev_spend = prev_exp_total + sum(float(si.get("total", 0)) for si in prev_si)
+    # Also treat expenses without PO link as unlinked
+    unlinked_expenses = expenses  # expenses are standalone bills
     
-    ytd_growth = ""
-    if prev_spend > 0 and can_see_balances:
-        pct = ((ytd_spend - prev_spend) / prev_spend) * 100
-        if pct > 0:
-            ytd_growth = f'<span style="color:var(--red);font-size:12px;">▲ {pct:.0f}% vs prev FY</span>'
-        elif pct < 0:
-            ytd_growth = f'<span style="color:var(--green);font-size:12px;">▼ {abs(pct):.0f}% vs prev FY</span>'
+    # ── Build accordion chains per PO ──
+    chains_html = ""
+    for po in purchase_orders:
+        po_id = po.get("id", "")
+        po_num = po.get("po_number", "-")
+        po_date = po.get("date", "-")
+        po_status = po.get("status", "draft")
+        po_total = float(po.get("total", 0) or 0)
+        
+        status_colors = {"draft": "var(--text-muted)", "sent": "var(--orange)", "partial": "#3b82f6", "received": "var(--green)", "cancelled": "var(--red)"}
+        sc = status_colors.get(po_status, "var(--text-muted)")
+        
+        # GRVs for this PO
+        po_grvs = grvs_by_po.get(po_id, [])
+        # Invoices for this PO
+        po_invoices = invoices_by_po.get(po_id, [])
+        
+        # Count child docs for badge
+        child_count = len(po_grvs) + len(po_invoices)
+        child_badge = f' <span style="background:var(--primary);color:white;border-radius:10px;padding:1px 8px;font-size:10px;margin-left:6px;">{child_count}</span>' if child_count else ""
+        
+        # Build GRV rows
+        grv_rows = ""
+        for g in po_grvs:
+            g_num = g.get("grv_number", "-")
+            g_date = g.get("date", "-")
+            g_by = safe_string(g.get("received_by", "-"))
+            g_inv_num = safe_string(g.get("supplier_invoice_number", ""))
+            g_inv_label = f' <span style="color:var(--text-muted);font-size:11px;">| Ref: {g_inv_num}</span>' if g_inv_num else ""
+            grv_rows += f'''<a href="/grv/{g.get("id")}" style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(59,130,246,0.06);border-radius:6px;margin:4px 0;text-decoration:none;color:var(--text);border-left:3px solid #3b82f6;">
+                <span style="font-size:16px;">📦</span>
+                <span style="font-weight:600;font-size:13px;">{g_num}</span>
+                <span style="color:var(--text-muted);font-size:12px;">{g_date}</span>
+                <span style="color:var(--text-muted);font-size:12px;">by {g_by}</span>
+                {g_inv_label}
+            </a>'''
+        
+        # Build Invoice rows
+        inv_rows = ""
+        if can_see_balances:
+            for si in po_invoices:
+                si_num = safe_string(si.get("invoice_number", "-"))
+                si_date = si.get("date", "-")
+                si_total = float(si.get("total", 0) or 0)
+                si_status = si.get("status", "outstanding")
+                si_color = "var(--green)" if si_status == "paid" else "var(--orange)"
+                inv_rows += f'''<a href="/supplier-invoice/{si.get("id")}" style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:rgba(249,115,22,0.06);border-radius:6px;margin:4px 0;text-decoration:none;color:var(--text);border-left:3px solid var(--orange);">
+                    <span style="font-size:16px;">📄</span>
+                    <span style="font-weight:600;font-size:13px;">{si_num}</span>
+                    <span style="color:var(--text-muted);font-size:12px;">{si_date}</span>
+                    <span style="font-weight:600;font-size:13px;">{money(si_total)}</span>
+                    <span style="color:{si_color};font-size:11px;font-weight:600;">{si_status.upper()}</span>
+                </a>'''
+        
+        # Chain content (GRVs + Invoices inside the accordion)
+        chain_inner = ""
+        if grv_rows or inv_rows:
+            chain_inner = f'<div style="padding:8px 0 4px 20px;">{grv_rows}{inv_rows}</div>'
+        else:
+            chain_inner = '<div style="padding:8px 0 4px 20px;color:var(--text-muted);font-size:12px;font-style:italic;">No GRV or invoice linked yet</div>'
+        
+        total_display = f'<span style="font-weight:600;margin-left:auto;padding-right:10px;">{money(po_total)}</span>' if can_see_balances else ""
+        
+        chains_html += f'''
+        <div class="sv-chain" style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden;">
+            <div class="sv-chain-hdr" onclick="this.classList.toggle('open');this.nextElementSibling.style.display=this.classList.contains('open')?'block':'none';"
+                 style="display:flex;align-items:center;gap:10px;padding:12px 15px;cursor:pointer;background:var(--bg);transition:background 0.15s;">
+                <span class="sv-arrow" style="font-size:10px;color:var(--text-muted);transition:transform 0.2s;">▶</span>
+                <a href="/purchase/{po_id}" onclick="event.stopPropagation();" style="font-weight:700;color:var(--primary);text-decoration:none;font-size:14px;">{po_num}</a>
+                <span style="color:var(--text-muted);font-size:12px;">{po_date}</span>
+                <span style="color:{sc};font-size:11px;font-weight:700;background:rgba(0,0,0,0.05);padding:2px 8px;border-radius:4px;">{po_status.upper()}</span>
+                {child_badge}
+                {total_display}
+            </div>
+            <div class="sv-chain-body" style="display:none;padding:4px 15px 12px;border-top:1px solid var(--border);">
+                {chain_inner}
+            </div>
+        </div>
+        '''
     
-    expenses_html = ""
+    # ── Unlinked Transactions (Sage imports, standalone invoices/expenses) ──
+    unlinked_html = ""
     if can_see_balances:
-        for e in expenses[:200]:
-            status = e.get("status", "outstanding")
-            status_color = "var(--green)" if status == "paid" else "var(--orange)"
-            expenses_html += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/expense/{e.get("id")}'">
-                <td>{e.get("invoice_number", e.get("reference", "-"))}</td>
-                <td>{e.get("date", "-")}</td>
-                <td>{safe_string(e.get("description", "-"))[:40]}</td>
-                <td>{money(e.get("total", e.get("amount", 0)))}</td>
-                <td style="color:{status_color};">{status.upper()}</td>
-            </tr>
-            '''
-    
-    supplier_inv_html = ""
-    if can_see_balances:
-        for si in supplier_invoices[:200]:
+        for si in unlinked_invoices:
+            si_num = safe_string(si.get("invoice_number", "-"))
+            si_date = si.get("date", "-")
+            si_total = float(si.get("total", 0) or 0)
             si_status = si.get("status", "outstanding")
             si_color = "var(--green)" if si_status == "paid" else "var(--orange)"
-            supplier_inv_html += f'''
-            <tr style="cursor:pointer;" onclick="window.location='/supplier-invoice/{si.get("id")}'">
-                <td>{safe_string(si.get("invoice_number", "-"))}</td>
-                <td>{si.get("date", "-")}</td>
-                <td>{si.get("due_date", "-")}</td>
-                <td>{money(si.get("total", 0))}</td>
-                <td style="color:{si_color};">{si_status.upper()}</td>
-            </tr>
-            '''
+            unlinked_html += f'''
+            <a href="/supplier-invoice/{si.get("id")}" style="display:flex;align-items:center;gap:10px;padding:10px 15px;background:var(--bg);border-radius:6px;margin-bottom:4px;text-decoration:none;color:var(--text);border-left:3px solid var(--orange);">
+                <span style="font-size:16px;">📄</span>
+                <span style="font-weight:600;font-size:13px;">{si_num}</span>
+                <span style="color:var(--text-muted);font-size:12px;">{si_date}</span>
+                <span style="font-weight:600;font-size:13px;">{money(si_total)}</span>
+                <span style="color:{si_color};font-size:11px;font-weight:600;">{si_status.upper()}</span>
+            </a>'''
+        
+        for e in unlinked_expenses:
+            e_ref = safe_string(e.get("invoice_number", e.get("reference", "-")))
+            e_date = e.get("date", "-")
+            e_total = float(e.get("total", e.get("amount", 0)) or 0)
+            e_status = e.get("status", "outstanding")
+            e_color = "var(--green)" if e_status == "paid" else "var(--orange)"
+            unlinked_html += f'''
+            <a href="/expense/{e.get("id")}" style="display:flex;align-items:center;gap:10px;padding:10px 15px;background:var(--bg);border-radius:6px;margin-bottom:4px;text-decoration:none;color:var(--text);border-left:3px solid #8b5cf6;">
+                <span style="font-size:16px;">🧾</span>
+                <span style="font-weight:600;font-size:13px;">{e_ref}</span>
+                <span style="color:var(--text-muted);font-size:12px;">{e_date}</span>
+                <span style="font-weight:600;font-size:13px;">{money(e_total)}</span>
+                <span style="color:{e_color};font-size:11px;font-weight:600;">{e_status.upper()}</span>
+            </a>'''
     
+    # ── Payments ──
     payments_html = ""
     if can_see_balances:
         for p in payments[:200]:
             payments_html += f'''
-            <tr>
-                <td>{p.get("reference", "-")}</td>
-                <td>{p.get("date", "-")}</td>
-                <td style="color:var(--green);">{money(p.get("amount", 0))}</td>
-                <td>{p.get("method", "-")}</td>
-            </tr>
-            '''
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 15px;background:var(--bg);border-radius:6px;margin-bottom:4px;border-left:3px solid var(--green);">
+                <span style="font-size:16px;">💰</span>
+                <span style="font-weight:600;font-size:13px;">{safe_string(p.get("reference", "-"))}</span>
+                <span style="color:var(--text-muted);font-size:12px;">{p.get("date", "-")}</span>
+                <span style="font-weight:600;font-size:13px;color:var(--green);">{money(p.get("amount", 0))}</span>
+                <span style="color:var(--text-muted);font-size:12px;">{p.get("method", "-")}</span>
+            </div>'''
     
-    # Build scanned documents HTML - hide amounts for staff
+    # ── Scanned Documents ──
     scanned_docs_html = ""
     for doc in scanned_docs[:20]:
         doc_date = doc.get("date", doc.get("created_at", "")[:10] if doc.get("created_at") else "-")
@@ -31083,70 +31162,63 @@ def supplier_view(supplier_id):
         </div>
         '''
     
-    # Balance display - hidden for staff
+    # ── Balance display ──
     balance_display = money(balance) if can_see_balances else "---"
-    balance_section = f'''
-            <div style="text-align:right;">
-                <p style="color:var(--text-muted);margin:0;font-size:12px;">WE OWE</p>
-                <p style="font-size:28px;font-weight:bold;margin:0;color:{"var(--orange)" if balance > 0 else "var(--green)"};">
-                    {balance_display}
-                </p>
+    balance_color = "var(--orange)" if balance > 0 else "var(--green)"
+    
+    # ── Stats ──
+    stats_html = ""
+    if can_see_balances:
+        stats_html = f'''
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:12px;margin:15px 0;">
+            <div style="background:var(--bg);padding:14px;border-radius:8px;text-align:center;border:1px solid var(--border);">
+                <div style="font-size:22px;font-weight:700;color:var(--orange);">{money(balance)}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">WE OWE</div>
             </div>
-    ''' if can_see_balances else ''
+            <div style="background:var(--bg);padding:14px;border-radius:8px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;">{len(purchase_orders)}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Purchase Orders</div>
+            </div>
+            <div style="background:var(--bg);padding:14px;border-radius:8px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;">{len(grvs)}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">GRVs</div>
+            </div>
+            <div style="background:var(--bg);padding:14px;border-radius:8px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;">{len(supplier_invoices)}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Invoices</div>
+            </div>
+            <div style="background:var(--bg);padding:14px;border-radius:8px;text-align:center;">
+                <div style="font-size:22px;font-weight:700;color:var(--green);">{money(total_paid)}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Total Paid</div>
+            </div>
+        </div>
+        '''
     
-    # Stats section - hidden for staff
-    stats_section = f'''
-    <div class="stats-grid">
-        <div class="stat-card" style="border:2px solid var(--orange);background:rgba(249,115,22,0.08);">
-            <div class="stat-value" style="color:var(--orange);">{money(ytd_spend)}</div>
-            <div class="stat-label">YTD Spend</div>
-            <div style="font-size:10px;color:var(--text-muted);">{fy_label}</div>
-            {ytd_growth}
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{money(total_billed)}</div>
-            <div class="stat-label">Total Billed</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value" style="color:var(--green);">{money(total_paid)}</div>
-            <div class="stat-label">Total Paid</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{len(expenses)}</div>
-    ''' if can_see_balances else f'''
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-value">{len(scanned_docs)}</div>
-    '''
-    
-    # Build payment button separately (can't have backslashes in f-string)
+    # ── Payment button ──
     supplier_name_escaped = safe_string(supplier.get("name", "")).replace("'", "")
     payment_button = f'''<button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Pay {supplier_name_escaped} R';document.getElementById('aiInput').focus();">💰 Record Payment</button>''' if can_see_balances else ""
     
-    # Build purchase orders HTML separately (avoids nested f-string issues)
-    po_html = ""
-    for po in purchase_orders[:200]:
-        po_status = po.get("status", "draft")
-        po_color = "var(--green)" if po_status == "received" else "var(--orange)"
-        po_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/purchase/{po.get("id")}'">
-            <td>{po.get("po_number", "-")}</td>
-            <td>{po.get("date", "-")}</td>
-            <td>{money(po.get("total", 0))}</td>
-            <td style="color:{po_color};">{po_status.upper()}</td>
-        </tr>
-        '''
-    
+    # ── Build main content ──
     content = f'''
+    <style>
+    .sv-chain-hdr:hover {{ background: rgba(99,102,241,0.05) !important; }}
+    .sv-chain-hdr.open .sv-arrow {{ transform: rotate(90deg); }}
+    .sv-section-hdr {{ display:flex;align-items:center;gap:8px;padding:12px 0 8px;font-size:15px;font-weight:700;color:var(--text);cursor:pointer;user-select:none; }}
+    .sv-section-hdr:hover {{ color:var(--primary); }}
+    .sv-section-hdr .sv-arrow {{ font-size:10px;color:var(--text-muted);transition:transform 0.2s; }}
+    .sv-section-hdr.open .sv-arrow {{ transform: rotate(90deg); }}
+    </style>
+    
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>
         <div style="display:flex;gap:10px;">
             <a href="/supplier/{supplier_id}/edit" class="btn btn-secondary">✏️ Edit</a>
-            <a href="/purchase/new?supplier_id={supplier_id}" class="btn btn-secondary">New PO</a>
+            <a href="/purchase/new?supplier_id={supplier_id}" class="btn btn-secondary">+ New PO</a>
             {payment_button}
         </div>
     </div>
     
+    <!-- SUPPLIER INFO CARD -->
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:start;">
             <div style="flex:1;">
@@ -31155,13 +31227,12 @@ def supplier_view(supplier_id):
                     Code: {safe_string(supplier.get("code", "-"))}
                 </p>
             </div>
-            {balance_section}
+            {"<div style='text-align:right;'><p style='color:var(--text-muted);margin:0;font-size:12px;'>WE OWE</p><p style='font-size:28px;font-weight:bold;margin:0;color:" + balance_color + ";'>" + balance_display + "</p></div>" if can_see_balances else ""}
         </div>
         
-        <!-- Contact Details Grid -->
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:15px;margin-top:20px;padding-top:15px;border-top:1px solid var(--border);">
             <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">CONTACT PERSON</span>
+                <span style="color:var(--text-muted);font-size:11px;display:block;">CONTACT</span>
                 <span style="font-size:14px;">{safe_string(supplier.get("contact_name", "-"))}</span>
             </div>
             <div>
@@ -31169,200 +31240,103 @@ def supplier_view(supplier_id):
                 <span style="font-size:14px;">{safe_string(supplier.get("phone", "-"))}</span>
             </div>
             <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">CELL</span>
-                <span style="font-size:14px;">{safe_string(supplier.get("cell", "-"))}</span>
-            </div>
-            <div>
                 <span style="color:var(--text-muted);font-size:11px;display:block;">EMAIL</span>
                 <span style="font-size:14px;">{safe_string(supplier.get("email", "-"))}</span>
-            </div>
-            <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">FAX</span>
-                <span style="font-size:14px;">{safe_string(supplier.get("fax", "-"))}</span>
-            </div>
-            <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">WEBSITE</span>
-                <span style="font-size:14px;">{safe_string(supplier.get("website", "-"))}</span>
-            </div>
-        </div>
-        
-        <!-- Address -->
-        <div style="margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
-            <span style="color:var(--text-muted);font-size:11px;display:block;">ADDRESS</span>
-            <span style="font-size:14px;">{safe_string(supplier.get("address", "-"))}</span>
-        </div>
-        
-        <!-- Financial Details Grid -->
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:15px;margin-top:15px;padding-top:15px;border-top:1px solid var(--border);">
-            <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">VAT NUMBER</span>
-                <span style="font-size:14px;">{safe_string(supplier.get("vat_number", "-"))}</span>
-            </div>
-            <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">CREDIT LIMIT</span>
-                <span style="font-size:14px;">{money(supplier.get("credit_limit", 0)) if can_see_balances else "---"}</span>
-            </div>
-            <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">DISCOUNT %</span>
-                <span style="font-size:14px;">{supplier.get("discount_percentage", 0) or 0}%</span>
             </div>
             <div>
                 <span style="color:var(--text-muted);font-size:11px;display:block;">PAYMENT TERMS</span>
                 <span style="font-size:14px;">{safe_string(supplier.get("payment_terms", "-"))}</span>
             </div>
-            <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">CATEGORY</span>
-                <span style="font-size:14px;">{safe_string(supplier.get("category", "-"))}</span>
+        </div>
+    </div>
+    
+    {stats_html}
+    
+    <!-- ═══ PURCHASE CHAIN (PO → GRV → Invoice) ═══ -->
+    <div class="card" style="margin-top:15px;">
+        <div class="sv-section-hdr open" onclick="this.classList.toggle('open');document.getElementById('svChains').style.display=this.classList.contains('open')?'block':'none';">
+            <span class="sv-arrow">▶</span>
+            <span>📋 Purchase Orders ({len(purchase_orders)})</span>
+        </div>
+        <div id="svChains" style="display:block;">
+            {chains_html if chains_html else '<p style="color:var(--text-muted);text-align:center;padding:20px 0;font-size:13px;">No purchase orders yet — <a href="/purchase/new?supplier_id=' + supplier_id + '">Create one</a></p>'}
+        </div>
+    </div>
+    '''
+    
+    # Unlinked section (only if there are unlinked items)
+    if unlinked_html:
+        content += f'''
+    <div class="card" style="margin-top:15px;">
+        <div class="sv-section-hdr open" onclick="this.classList.toggle('open');document.getElementById('svUnlinked').style.display=this.classList.contains('open')?'block':'none';">
+            <span class="sv-arrow">▶</span>
+            <span>📄 Invoices &amp; Expenses — Not linked to PO ({len(unlinked_invoices) + len(unlinked_expenses)})</span>
+        </div>
+        <div id="svUnlinked" style="display:block;">
+            {unlinked_html}
+        </div>
+    </div>
+        '''
+    
+    # Payments section
+    if payments_html:
+        content += f'''
+    <div class="card" style="margin-top:15px;">
+        <div class="sv-section-hdr open" onclick="this.classList.toggle('open');document.getElementById('svPayments').style.display=this.classList.contains('open')?'block':'none';">
+            <span class="sv-arrow">▶</span>
+            <span>💰 Payments ({len(payments)})</span>
+        </div>
+        <div id="svPayments" style="display:block;">
+            {payments_html}
+        </div>
+    </div>
+        '''
+    
+    # Scanned documents
+    if scanned_docs:
+        content += f'''
+    <div class="card" style="margin-top:15px;">
+        <div class="sv-section-hdr" onclick="this.classList.toggle('open');document.getElementById('svScanned').style.display=this.classList.contains('open')?'block':'none';">
+            <span class="sv-arrow">▶</span>
+            <span>📎 Scanned Documents ({len(scanned_docs)})</span>
+        </div>
+        <div id="svScanned" style="display:none;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(200px, 1fr));gap:15px;padding-top:10px;">
+                {scanned_docs_html}
             </div>
-            <div>
-                <span style="color:var(--text-muted);font-size:11px;display:block;">VAT TYPE</span>
-                <span style="font-size:14px;">{safe_string(supplier.get("vat_type", "-"))}</span>
-            </div>
-        </div>
-        
-        <!-- Notes -->
-        {"<div style='margin-top:15px;padding-top:15px;border-top:1px solid var(--border);'><span style='color:var(--text-muted);font-size:11px;display:block;'>NOTES</span><p style='font-size:14px;margin:5px 0;background:var(--bg);padding:10px;border-radius:6px;'>" + safe_string(supplier.get("notes")) + "</p></div>" if supplier.get("notes") else ""}
-        
-        <!-- Extra Data (Sage User Fields) -->
-        {"<div style='margin-top:15px;padding-top:15px;border-top:1px solid var(--border);'><span style='color:var(--text-muted);font-size:11px;display:block;margin-bottom:10px;'>ADDITIONAL INFO</span>" + format_extra_data(supplier.get("extra_data")) + "</div>" if supplier.get("extra_data") else ""}
-    </div>
-    
-    {stats_section}
-            <div class="stat-label">Bills/Expenses</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{len(payments)}</div>
-            <div class="stat-label">Payments Made</div>
         </div>
     </div>
+        '''
     
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
-        <div class="card">
-            <h3 style="margin-bottom:15px;">Recent Bills/Expenses</h3>
-            <table class="table">
-                <thead>
-                    <tr><th>Reference</th><th>Date</th><th>Description</th><th>Amount</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                    {expenses_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted);'>No expenses yet</td></tr>"}
-                </tbody>
-            </table>
-        </div>
-        
-        <div class="card">
-            <h3 style="margin-bottom:15px;">Payments Made</h3>
-            <table class="table">
-                <thead>
-                    <tr><th>Reference</th><th>Date</th><th>Amount</th><th>Method</th></tr>
-                </thead>
-                <tbody>
-                    {payments_html or "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);'>No payments yet</td></tr>"}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    
-    ''' + (f'''
-    <div class="card" style="margin-top:20px;">
-        <h3 style="margin-bottom:15px;">Invoices ({len(supplier_invoices)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>Invoice #</th><th>Date</th><th>Due Date</th><th>Amount</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {supplier_inv_html or "<tr><td colspan='5' style='text-align:center;color:var(--text-muted);'>No invoices</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    ''' if can_see_balances else '') + f'''
-    </div>
-    
-    <!-- Purchase Orders Section -->
-    <div class="card" style="margin-top:20px;">
-        <h3 style="margin-bottom:15px;">📋 Purchase Orders ({len(purchase_orders)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>PO Number</th><th>Date</th><th>Total</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-                {po_html if po_html else "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No purchase orders</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- Scanned Documents Section -->
-    <div class="card" style="margin-top:20px;">
-        <h3 style="margin-bottom:15px;">Scanned Documents ({len(scanned_docs)})</h3>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(200px, 1fr));gap:15px;">
-            {scanned_docs_html if scanned_docs else '<p style="color:var(--text-muted);text-align:center;">No scanned documents yet</p>'}
-        </div>
-    </div>
-    
-    <!-- Modal for viewing scanned document -->
+    # Scanned doc modal
+    content += '''
     <div id="scanModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;align-items:center;justify-content:center;">
         <div style="background:var(--card);border-radius:12px;max-width:90%;max-height:90%;overflow:auto;position:relative;">
             <button onclick="closeScanModal()" style="position:absolute;top:10px;right:10px;background:var(--red);color:white;border:none;border-radius:50%;width:30px;height:30px;cursor:pointer;font-size:18px;">×</button>
-            <div id="scanModalContent" style="padding:20px;text-align:center;">
-                <p>Loading...</p>
-            </div>
+            <div id="scanModalContent" style="padding:20px;text-align:center;"><p>Loading...</p></div>
         </div>
     </div>
     
     <script>
-    // Auto-collapse tables with more than 50 rows
-    document.addEventListener('DOMContentLoaded', function() {{
-        document.querySelectorAll('.card table.table tbody').forEach(function(tbody) {{
-            var rows = tbody.querySelectorAll('tr');
-            if (rows.length > 50) {{
-                for (var i = 50; i < rows.length; i++) {{
-                    rows[i].style.display = 'none';
-                    rows[i].classList.add('extra-row');
-                }}
-                var table = tbody.closest('table');
-                var btn = document.createElement('div');
-                btn.style.cssText = 'text-align:center;padding:10px;cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;border-top:1px solid var(--border);margin-top:-1px;';
-                btn.innerHTML = '▼ Show all ' + rows.length + ' records';
-                btn.onclick = function() {{
-                    var extra = tbody.querySelectorAll('.extra-row');
-                    var hidden = extra[0].style.display === 'none';
-                    extra.forEach(function(r) {{ r.style.display = hidden ? '' : 'none'; }});
-                    btn.innerHTML = hidden ? '▲ Show first 50' : '▼ Show all ' + rows.length + ' records';
-                }};
-                table.parentNode.insertBefore(btn, table.nextSibling);
-            }}
-        }});
-    }});
-    async function viewScannedDoc(docId) {{
+    async function viewScannedDoc(docId) {
         document.getElementById('scanModal').style.display = 'flex';
         document.getElementById('scanModalContent').innerHTML = '<p>Loading document...</p>';
-        
-        try {{
+        try {
             const response = await fetch('/api/scanned-document/' + docId);
             const data = await response.json();
-            
-            if (data.success && data.image_data) {{
+            if (data.success && data.image_data) {
                 document.getElementById('scanModalContent').innerHTML = `
-                    <img src="data:image/jpeg;base64,${{data.image_data}}" style="max-width:100%;max-height:80vh;" />
-                    <div style="margin-top:15px;">
-                        <p><strong>${{data.reference || 'Document'}}</strong></p>
-                        <p style="color:var(--text-muted);">${{data.date || ''}}</p>
-                    </div>
-                `;
-            }} else {{
+                    <img src="data:image/jpeg;base64,${data.image_data}" style="max-width:100%;max-height:80vh;" />
+                    <div style="margin-top:15px;"><p><strong>${data.reference || 'Document'}</strong></p></div>`;
+            } else {
                 document.getElementById('scanModalContent').innerHTML = '<p style="color:var(--red);">Document image not available</p>';
-            }}
-        }} catch(e) {{
+            }
+        } catch(e) {
             document.getElementById('scanModalContent').innerHTML = '<p style="color:var(--red);">Error loading document</p>';
-        }}
-    }}
-    
-    function closeScanModal() {{
-        document.getElementById('scanModal').style.display = 'none';
-    }}
-    
-    document.getElementById('scanModal').addEventListener('click', function(e) {{
-        if (e.target === this) closeScanModal();
-    }});
+        }
+    }
+    function closeScanModal() { document.getElementById('scanModal').style.display = 'none'; }
+    document.getElementById('scanModal').addEventListener('click', function(e) { if (e.target === this) closeScanModal(); });
     </script>
     '''
     
@@ -43815,6 +43789,8 @@ def purchase_view(po_id):
         remaining = qty_ordered - qty_received
         
         if remaining > 0:
+            po_price = item.get('price', 0) or 0
+            po_price_str = f"{float(po_price):.2f}" if po_price else ""
             receive_items_html += f'''
             <tr>
                 <td>{safe_string(item.get("description", "-"))}</td>
@@ -43825,8 +43801,12 @@ def purchase_view(po_id):
                            value="{remaining}" min="0" max="{remaining}" data-index="{i}">
                 </td>
                 <td style="text-align:center;">
-                    <input type="number" name="price_{i}" class="form-input" style="width: 100px; text-align: center;" 
-                           placeholder="0.00" step="0.01" data-price-index="{i}" value="{item.get('price', '')}">
+                    <div style="position:relative;">
+                        <input type="number" name="price_{i}" class="form-input grv-price-input" style="width: 110px; text-align: center; font-weight:700; font-size:14px;" 
+                               placeholder="0.00" step="0.01" data-price-index="{i}" data-po-price="{po_price_str}" value="{po_price_str}"
+                               oninput="checkPriceChange(this)">
+                        <div class="grv-price-warn" style="display:none;color:#ef4444;font-size:10px;font-weight:700;position:absolute;bottom:-14px;left:0;right:0;text-align:center;">⚠️ DIFFERS FROM PO</div>
+                    </div>
                 </td>
             </tr>
             '''
@@ -43936,7 +43916,7 @@ def purchase_view(po_id):
                         <th style="text-align: center;">Ordered</th>
                         <th style="text-align: center;">Received</th>
                         <th style="text-align: center;">Receive Now</th>
-                        <th style="text-align: center;">Unit Price</th>
+                        <th style="text-align: center; color: var(--orange); font-size: 13px;">⚠️ Unit Price<br><span style="font-weight:400;font-size:10px;color:var(--text-muted);">(excl VAT — from PO)</span></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -44038,6 +44018,24 @@ def purchase_view(po_id):
     
     function showReceiveModal() {{
         document.getElementById('receiveModal').style.display = 'flex';
+        // Initial check on all price inputs
+        document.querySelectorAll('.grv-price-input').forEach(inp => checkPriceChange(inp));
+    }}
+    
+    function checkPriceChange(input) {{
+        const poPrice = parseFloat(input.dataset.poPrice) || 0;
+        const currentVal = parseFloat(input.value) || 0;
+        const warn = input.parentElement.querySelector('.grv-price-warn');
+        if (!warn) return;
+        if (Math.abs(currentVal - poPrice) > 0.005 && poPrice > 0) {{
+            input.style.border = '2px solid #ef4444';
+            input.style.background = 'rgba(239,68,68,0.08)';
+            warn.style.display = 'block';
+        }} else {{
+            input.style.border = '';
+            input.style.background = '';
+            warn.style.display = 'none';
+        }}
     }}
     
     function hideModal(id) {{
@@ -44998,7 +44996,8 @@ def api_po_create_invoice(po_id):
                 total=total,
                 items=json.dumps(invoice_items),
                 status="unpaid",
-                notes=f"From PO: {po.get('po_number', '')}"
+                notes=f"From PO: {po.get('po_number', '')}",
+                po_id=po_id
             )
             
             success, _ = db.save("supplier_invoices", invoice)
