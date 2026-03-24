@@ -35546,6 +35546,23 @@ def grv_view(grv_id):
     if not grv:
         return redirect("/grv")
     
+    biz_id = business.get("id") if business else None
+    
+    # Check if a supplier invoice already exists for this GRV
+    grv_has_invoice = False
+    if biz_id:
+        try:
+            all_sinv = db.get("supplier_invoices", {"business_id": biz_id}) or []
+            for si in all_sinv:
+                si_notes = str(si.get("notes", ""))
+                si_ref = str(si.get("reference", ""))
+                grv_num_str = grv.get("grv_number", "")
+                if grv_num_str and (grv_num_str in si_notes or grv_num_str in si_ref):
+                    grv_has_invoice = True
+                    break
+        except Exception:
+            pass
+    
     try:
         items = json.loads(grv.get("items", "[]"))
     except:
@@ -35567,6 +35584,7 @@ def grv_view(grv_id):
         <a href="/grv" style="color:var(--text-muted);">← Back to GRV List</a>
         <div style="display:flex;gap:10px;">
             <a href="/purchase/{grv.get("po_id", "")}" class="btn btn-secondary">📋 View PO</a>
+            {f'<a href="/grv/{grv_id}/create-invoice" class="btn btn-primary">📄 Create Supplier Invoice</a>' if not grv_has_invoice else '<span style="color:var(--green);font-size:13px;font-weight:600;">✅ Invoice Created</span>'}
             <button onclick="window.print()" class="btn btn-secondary">🖨️ Print</button>
         </div>
     </div>
@@ -35703,6 +35721,219 @@ def grv_view(grv_id):
     '''
     
     return render_page(f"GRV {grv.get('grv_number', '')}", content, user, "purchases")
+
+
+@app.route("/grv/<grv_id>/create-invoice", methods=["GET", "POST"])
+@login_required
+def grv_create_invoice(grv_id):
+    """Create supplier invoice from GRV — the missing link: GRV → Ledger → Creditors → Aging → GL → TB"""
+    try:
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+
+        grv = db.get_one("goods_received", grv_id)
+        if not grv:
+            flash("GRV not found", "error")
+            return redirect("/grv")
+
+        try:
+            grv_items = json.loads(grv.get("items", "[]")) if isinstance(grv.get("items"), str) else (grv.get("items") or [])
+        except Exception:
+            grv_items = []
+
+        if request.method == "POST":
+            inv_number = request.form.get("invoice_number", "").strip()
+            inv_date = request.form.get("date", today())
+
+            if not inv_number:
+                inv_number = (grv.get("grv_number", "") or "").replace("GRV-", "SINV-")
+
+            # Check for duplicate invoice number
+            existing = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_number}) if biz_id else []
+            if existing:
+                flash(f"Invoice {inv_number} already exists", "error")
+                return redirect(f"/grv/{grv_id}")
+
+            # Build invoice items from form
+            invoice_items = []
+            subtotal = 0
+            descriptions = request.form.getlist("item_desc[]")
+            quantities = request.form.getlist("item_qty[]")
+            prices = request.form.getlist("item_price[]")
+
+            for i, desc in enumerate(descriptions):
+                if desc.strip():
+                    qty = float(quantities[i] or 0)
+                    price = float(prices[i] or 0)
+                    line_total = qty * price
+                    subtotal += line_total
+                    invoice_items.append({
+                        "description": desc.strip(),
+                        "quantity": qty,
+                        "unit_price": price,
+                        "line_total": round(line_total, 2)
+                    })
+
+            vat = round(subtotal * 0.15, 2)
+            total = round(subtotal + vat, 2)
+
+            invoice = RecordFactory.supplier_invoice(
+                business_id=biz_id,
+                supplier_id=grv.get("supplier_id", ""),
+                supplier_name=grv.get("supplier_name", ""),
+                invoice_number=inv_number,
+                date=inv_date,
+                due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+                subtotal=subtotal,
+                vat=vat,
+                total=total,
+                items=json.dumps(invoice_items),
+                status="unpaid",
+                notes=f"From GRV: {grv.get('grv_number', '')}"
+            )
+
+            success, _ = db.save("supplier_invoices", invoice)
+
+            if success:
+                # === GL ENTRIES — the critical missing link ===
+                try:
+                    create_journal_entry(biz_id, inv_date, f"Supplier Invoice {inv_number} - {grv.get('supplier_name', '')}", inv_number, [
+                        {"account_code": "5100", "debit": float(subtotal), "credit": 0},
+                        {"account_code": "1400", "debit": float(vat), "credit": 0},
+                        {"account_code": "2000", "debit": 0, "credit": float(total)},
+                    ])
+
+                    # Update supplier balance
+                    if grv.get("supplier_id"):
+                        supplier = db.get_one("suppliers", grv.get("supplier_id"))
+                        if supplier:
+                            new_balance = float(supplier.get("balance") or 0) + float(total)
+                            db.update("suppliers", grv.get("supplier_id"), {"balance": new_balance})
+                except Exception as e:
+                    logger.error(f"[GRV] GL entry failed for GRV invoice: {e}")
+
+                # === ALLOCATION LOG ===
+                try:
+                    if log_allocation:
+                        log_allocation(
+                            business_id=biz_id, allocation_type="grv_to_invoice",
+                            source_table="supplier_invoices", source_id=invoice["id"],
+                            description=f"Supplier Invoice {inv_number} from GRV {grv.get('grv_number', '')} - {grv.get('supplier_name', '')}",
+                            amount=total,
+                            gl_entries=[
+                                {"account": "5100", "debit": float(subtotal)},
+                                {"account": "1400", "debit": float(vat)},
+                                {"account": "2000", "credit": float(total)},
+                            ],
+                            supplier_name=grv.get("supplier_name", ""),
+                            reference=inv_number,
+                            transaction_date=inv_date,
+                            created_by=user.get("id") if user else "",
+                            created_by_name=user.get("name", "") if user else "",
+                            extra={"grv_number": grv.get("grv_number", ""), "grv_id": grv_id}
+                        )
+                except Exception:
+                    pass
+
+                flash(f"Supplier invoice {inv_number} created — {money(total)}", "success")
+                return redirect("/supplier-invoices")
+
+            flash("Failed to create supplier invoice", "error")
+            return redirect(f"/grv/{grv_id}")
+
+        # === GET — show form with items from GRV ===
+        items_html = ""
+        for i, item in enumerate(grv_items):
+            desc = item.get("description") or item.get("code") or "-"
+            qty = item.get("qty_received") or item.get("quantity") or item.get("qty", 1)
+            price = item.get("unit_price") or item.get("cost_price") or item.get("price", "")
+
+            items_html += f'''
+            <tr>
+                <td><input type="text" name="item_desc[]" class="form-input" value="{safe_string(str(desc))}" style="width:100%;"></td>
+                <td><input type="number" name="item_qty[]" class="form-input" value="{qty}" step="any" style="width:80px;text-align:center;" onchange="calcTotals()"></td>
+                <td><input type="number" name="item_price[]" class="form-input" value="{price}" step="0.01" placeholder="0.00" style="width:120px;text-align:right;" onchange="calcTotals()"></td>
+                <td style="text-align:right;" class="line-total">R 0.00</td>
+            </tr>
+            '''
+
+        suggested_inv = grv.get("supplier_invoice_number", "") or (grv.get("grv_number", "") or "").replace("GRV-", "SINV-")
+
+        content = f'''
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <a href="/grv/{grv_id}" style="color:var(--text-muted);">&#8592; Back to GRV {grv.get("grv_number", "")}</a>
+        </div>
+
+        <div class="card">
+            <h2 style="margin:0 0 5px 0;">&#128196; Create Supplier Invoice from GRV</h2>
+            <p style="color:var(--text-muted);margin:0 0 20px 0;">GRV: {grv.get("grv_number", "")} &mdash; {safe_string(grv.get("supplier_name", ""))}</p>
+
+            <form method="POST">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:20px;">
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Invoice Number (from supplier)</label>
+                        <input type="text" name="invoice_number" class="form-input" value="{safe_string(suggested_inv)}" placeholder="Supplier invoice number" required>
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Date</label>
+                        <input type="date" name="date" class="form-input" value="{today()}">
+                    </div>
+                </div>
+
+                <h3 style="margin:0 0 10px 0;">Line Items &mdash; Enter/Verify Prices</h3>
+                <table style="width:100%;" id="invoiceTable">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left;">Description</th>
+                            <th style="width:80px;text-align:center;">Qty</th>
+                            <th style="width:120px;text-align:right;">Unit Price</th>
+                            <th style="width:120px;text-align:right;">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {items_html}
+                    </tbody>
+                    <tfoot>
+                        <tr><td colspan="3" style="text-align:right;font-weight:bold;">Subtotal:</td><td style="text-align:right;" id="subtotal">R 0.00</td></tr>
+                        <tr><td colspan="3" style="text-align:right;color:var(--text-muted);">VAT (15%):</td><td style="text-align:right;" id="vat">R 0.00</td></tr>
+                        <tr><td colspan="3" style="text-align:right;font-weight:bold;font-size:18px;">Total:</td><td style="text-align:right;font-weight:bold;font-size:18px;" id="total">R 0.00</td></tr>
+                    </tfoot>
+                </table>
+
+                <div style="display:flex;gap:10px;margin-top:20px;">
+                    <button type="submit" class="btn btn-primary">&#10003; Create Supplier Invoice</button>
+                    <a href="/grv/{grv_id}" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+
+        <script>
+        function calcTotals() {{{{
+            const rows = document.querySelectorAll('#invoiceTable tbody tr');
+            let subtotal = 0;
+            rows.forEach(row => {{{{
+                const qty = parseFloat(row.querySelector('input[name="item_qty[]"]').value) || 0;
+                const price = parseFloat(row.querySelector('input[name="item_price[]"]').value) || 0;
+                const lineTotal = qty * price;
+                subtotal += lineTotal;
+                row.querySelector('.line-total').textContent = 'R ' + lineTotal.toFixed(2);
+            }}}});
+            const vat = subtotal * 0.15;
+            document.getElementById('subtotal').textContent = 'R ' + subtotal.toFixed(2);
+            document.getElementById('vat').textContent = 'R ' + vat.toFixed(2);
+            document.getElementById('total').textContent = 'R ' + (subtotal + vat).toFixed(2);
+        }}}}
+        calcTotals();
+        </script>
+        '''
+
+        return render_page(f"Create Invoice from {grv.get('grv_number', '')}", content, user, "purchases")
+
+    except Exception as e:
+        logger.error(f"[GRV] Create invoice failed: {e}")
+        flash(str(e), "error")
+        return redirect(f"/grv/{grv_id}")
 
 
 @app.route("/pulse")
