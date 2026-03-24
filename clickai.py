@@ -35867,6 +35867,23 @@ def grv_new():
                             ))
                         except: pass
             
+            # === ALLOCATION LOG for standalone GRV ===
+            try:
+                if log_allocation:
+                    _sm = [{"stock_id": "", "code": it.get("code",""), "description": it.get("description",""), "qty_change": it.get("quantity",0)} for it in items]
+                    grv_total = sum(float(it.get("cost_price",0)) * float(it.get("quantity",0)) for it in items)
+                    log_allocation(
+                        business_id=biz_id, allocation_type="grv", source_table="goods_received", source_id=grv_id,
+                        description=f"GRV {grv_num} - {safe_string(supplier_name)}",
+                        amount=round(grv_total, 2), stock_movements=_sm,
+                        supplier_name=supplier_name, reference=grv_num,
+                        transaction_date=today(),
+                        created_by=user.get("id") if user else "", created_by_name=user.get("name","") if user else "",
+                        extra={"items_count": len(items), "standalone": True}
+                    )
+            except Exception:
+                pass
+            
             flash(f"GRV {grv_num} created — {len(items)} items received from {supplier_name}", "success")
             return redirect(f"/grv/{grv_id}")
         
