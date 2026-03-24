@@ -30729,6 +30729,7 @@ def suppliers_page():
         <h2 style="margin:0;">Suppliers (<span id="supplierCount">{total_suppliers}</span>)</h2>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
             <a href="/supplier-invoices" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">📋 Supplier Invoices</a>
+            <a href="/purchases" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">🛒 Purchases / GRV</a>
             <input type="text" id="supplierSearch" placeholder="🔍 Search name, code, phone..." 
                 oninput="filterSuppliers()" 
                 style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:250px;">
@@ -30980,6 +30981,14 @@ def supplier_view(supplier_id):
     except Exception:
         purchase_orders = []
     
+    # Get GRVs for this supplier
+    try:
+        all_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
+        supplier_grvs = [g for g in all_grvs if g.get("supplier_id") == supplier_id]
+        supplier_grvs = sorted(supplier_grvs, key=lambda x: x.get("date", ""), reverse=True)
+    except Exception:
+        supplier_grvs = []
+    
     # Get scanned documents for this supplier
     all_scanned_docs = db.get("scanned_documents", {"business_id": biz_id}) if biz_id else []
     scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
@@ -31137,6 +31146,29 @@ def supplier_view(supplier_id):
         </tr>
         '''
     
+    # Build GRV rows HTML for this supplier
+    grv_rows_html = ""
+    for g in supplier_grvs[:200]:
+        g_status = g.get("status", "received")
+        g_color = "var(--green)" if g_status == "received" else "var(--orange)"
+        g_total = 0
+        try:
+            g_items = json.loads(g.get("items", "[]")) if isinstance(g.get("items"), str) else (g.get("items") or [])
+            g_total = sum(float(i.get("line_total", 0) or 0) for i in g_items)
+        except Exception:
+            pass
+        inv_btn = f'<a href="/grv/{g.get("id")}/create-invoice" class="btn btn-primary" style="padding:4px 10px;font-size:11px;" onclick="event.stopPropagation();">📄 Create Invoice</a>'
+        grv_rows_html += f'''
+        <tr style="cursor:pointer;" onclick="window.location='/grv/{g.get("id")}'">
+            <td>{g.get("grv_number", "-")}</td>
+            <td>{g.get("date", "-")}</td>
+            <td>{g.get("po_number", "-")}</td>
+            <td>{money(g_total)}</td>
+            <td style="color:{g_color};">{g_status.upper()}</td>
+            <td>{inv_btn}</td>
+        </tr>
+        '''
+    
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>
@@ -31286,6 +31318,19 @@ def supplier_view(supplier_id):
             </thead>
             <tbody>
                 {po_html if po_html else "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No purchase orders</td></tr>"}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- GRV Section -->
+    <div class="card" style="margin-top:20px;">
+        <h3 style="margin-bottom:15px;">📦 Goods Received ({len(supplier_grvs)})</h3>
+        <table class="table">
+            <thead>
+                <tr><th>GRV #</th><th>Date</th><th>PO #</th><th>Total</th><th>Status</th><th>Invoice</th></tr>
+            </thead>
+            <tbody>
+                {grv_rows_html if grv_rows_html else "<tr><td colspan='6' style='text-align:center;color:var(--text-muted)'>No GRVs yet</td></tr>"}
             </tbody>
         </table>
     </div>
