@@ -400,6 +400,7 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
             "journal_entry": ("📒", "#64748b", "Journal Entry"),
             "supplier_payment": ("💳", "#0ea5e9", "Supplier Payment"),
             "grv": ("📦", "#0f766e", "GRV"),
+            "grv_to_invoice": ("📦📄", "#065f46", "GRV → Invoice"),
             "invoice": ("📄", "#10b981", "Invoice"),
         }
         
