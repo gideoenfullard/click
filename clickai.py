@@ -35846,7 +35846,20 @@ def grv_new():
                     if matched:
                         current_qty = float(matched.get("qty") or matched.get("quantity") or 0)
                         new_qty = current_qty + item["quantity"]
-                        db.update_stock(matched["id"], {"qty": new_qty, "quantity": new_qty}, biz_id)
+                        update_fields = {"qty": new_qty, "quantity": new_qty}
+                        # Update cost price and selling price (only UP) from GRV
+                        new_cost = float(item.get("cost_price") or 0)
+                        if new_cost > 0:
+                            old_cost = float(matched.get("cost_price") or matched.get("cost") or 0)
+                            old_sell = float(matched.get("selling_price") or matched.get("price") or 0)
+                            update_fields["cost_price"] = new_cost
+                            # Only adjust selling price UP — preserve markup % when cost increases
+                            if new_cost > old_cost and old_cost > 0 and old_sell > 0:
+                                markup_pct = (old_sell / old_cost) - 1
+                                new_sell = round(new_cost * (1 + markup_pct), 2)
+                                if new_sell > old_sell:
+                                    update_fields["selling_price"] = new_sell
+                        db.update_stock(matched["id"], update_fields, biz_id)
                         try:
                             db.save("stock_movements", RecordFactory.stock_movement(
                                 business_id=biz_id, stock_id=matched["id"], movement_type="in",
@@ -45260,9 +45273,24 @@ def api_po_receive(po_id):
                 grv_total += line_total
                 
                 # Update stock cost price if price was entered
+                # Rule: selling price only goes UP (when cost increases), never DOWN
                 if unit_price and items[idx].get("stock_id") and update_stock:
                     try:
-                        db.update_stock(items[idx]["stock_id"], {"cost_price": float(unit_price)}, biz_id)
+                        new_cost = float(unit_price)
+                        _stk = db.get_one_stock(items[idx]["stock_id"])
+                        old_cost = float(_stk.get("cost_price") or _stk.get("cost") or 0) if _stk else 0
+                        old_sell = float(_stk.get("selling_price") or _stk.get("price") or 0) if _stk else 0
+                        update_fields = {"cost_price": new_cost}
+                        # Only adjust selling price UP — preserve markup % when cost increases
+                        if new_cost > old_cost and old_cost > 0 and old_sell > 0:
+                            markup_pct = (old_sell / old_cost) - 1  # e.g. 0.3 = 30%
+                            new_sell = round(new_cost * (1 + markup_pct), 2)
+                            if new_sell > old_sell:
+                                update_fields["selling_price"] = new_sell
+                                logger.info(f"[GRV PRICE] {items[idx].get('code','?')}: cost R{old_cost}→R{new_cost}, sell R{old_sell}→R{new_sell} (markup {markup_pct*100:.1f}%)")
+                        elif new_cost <= old_cost:
+                            logger.info(f"[GRV PRICE] {items[idx].get('code','?')}: cost R{old_cost}→R{new_cost} (down/same), sell stays R{old_sell}")
+                        db.update_stock(items[idx]["stock_id"], update_fields, biz_id)
                     except:
                         pass
                 
