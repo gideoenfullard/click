@@ -19252,6 +19252,20 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     
     {get_page_help(active)}
     
+    <!-- Floating Back Button — only shows when there's history to go back to -->
+    <div id="backBtn" onclick="history.back()" title="Go Back"
+         style="display:none;position:fixed;bottom:145px;right:20px;width:44px;height:44px;border-radius:50%;background:var(--card);color:var(--text-muted);align-items:center;justify-content:center;font-size:18px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.3);z-index:998;border:1px solid var(--border);">
+        ←
+    </div>
+    <script>
+    (function(){{
+        var bb=document.getElementById('backBtn');
+        if(bb && document.referrer && document.referrer.indexOf(location.host)!==-1){{
+            bb.style.display='flex';
+        }}
+    }})();
+    </script>
+    
     {get_zane_proactive_tip(active)}
     
     <script>
@@ -45389,7 +45403,7 @@ def api_po_receive(po_id):
                 log_allocation(
                     business_id=biz_id, allocation_type="grv", source_table="goods_received", source_id=grv_id,
                     description=f"GRV {grv_num} from PO {po.get('po_number','')} - {safe_string(po.get('supplier_name',''))}",
-                    amount=0, stock_movements=_sm,
+                    amount=round(grv_total, 2), stock_movements=_sm,
                     supplier_name=po.get("supplier_name", ""), reference=grv_num,
                     transaction_date=today(),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name","") if user else "",
