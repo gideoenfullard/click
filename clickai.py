@@ -45146,7 +45146,7 @@ def api_po_receive(po_id):
                 log_allocation(
                     business_id=biz_id, allocation_type="grv", source_table="goods_received", source_id=grv_id,
                     description=f"GRV {grv_num} from PO {po.get('po_number','')} - {safe_string(po.get('supplier_name',''))}",
-                    amount=0, stock_movements=_sm,
+                    amount=grv_total, stock_movements=_sm,
                     supplier_name=po.get("supplier_name", ""), reference=grv_num,
                     transaction_date=today(),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name","") if user else "",
