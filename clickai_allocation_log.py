@@ -254,6 +254,25 @@ def _try_auto_link(business_id: str, new_id: str, match_key: str, new_type: str,
             logger.warning(f"[ALLOC LOG] Auto-link save failed (column may not exist): {e}")
 
 
+# URL mapping: source_table → actual Flask route prefix
+_SOURCE_URL_MAP = {
+    "goods_received": "grv",
+    "purchase_orders": "purchase",
+    "sales": "sale",
+    "invoices": "invoice",
+    "supplier_invoices": "supplier-invoice",
+    "credit_notes": "credit-note",
+    "delivery_notes": "delivery-note",
+}
+
+def _source_url(a):
+    """Build correct URL path from allocation record's source_table + source_id"""
+    table = a.get("source_table", "")
+    sid = a.get("source_id", "")
+    prefix = _SOURCE_URL_MAP.get(table, table.replace("_", "-"))
+    return f"{prefix}/{sid}"
+
+
 def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn):
     """Register the /ledger page and API routes"""
     
@@ -463,6 +482,19 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
             except:
                 pass
             
+            # Parse extra data for PO links etc
+            extra_data = {}
+            try:
+                _ex = a.get("extra", "{}")
+                extra_data = json.loads(_ex) if isinstance(_ex, str) else (_ex or {})
+            except:
+                pass
+            
+            # Pre-build links (avoid nested f-string issues on Python 3.11)
+            _src_url = _source_url(a)
+            _po_id = extra_data.get("po_id", "")
+            _po_link_html = f'<a href="/purchase/{_po_id}" style="font-size:11px;color:var(--primary);text-decoration:none;">📋 View PO</a>' if _po_id else ""
+            
             rows += f'''
             <tr class="alloc-row" onclick="toggleDetail('{a.get("id")}')" style="cursor:pointer;{'border-left:3px solid #10b981;' if linked_id else ''}">
                 <td style="padding:10px 8px;white-space:nowrap;">
@@ -530,8 +562,9 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                         </div>""" if stock_summary else ""}
                         
                         <div style="display:flex;gap:8px;margin-top:10px;">
-                            <a href="/{a.get('source_table','').replace('_','-')}/{a.get('source_id','')}" 
+                            <a href="/{_src_url}" 
                                style="font-size:11px;color:var(--primary);text-decoration:none;">📄 View Source Document</a>
+                            {_po_link_html}
                         </div>
                     </div>
                 </td>

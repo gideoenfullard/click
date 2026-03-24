@@ -45393,7 +45393,7 @@ def api_po_receive(po_id):
                     supplier_name=po.get("supplier_name", ""), reference=grv_num,
                     transaction_date=today(),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name","") if user else "",
-                    extra={"po_number": po.get("po_number",""), "items_received": items_received, "all_received": all_received}
+                    extra={"po_id": po_id, "po_number": po.get("po_number",""), "items_received": items_received, "all_received": all_received}
                 )
         except Exception:
             pass
