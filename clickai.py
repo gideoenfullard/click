@@ -26737,6 +26737,35 @@ def api_stock_adjust():
         )
         db.save("stock_movements", movement)
         
+        # --- GL Journal Entry for stock adjustment ---
+        # Use item cost_price to calculate GL value
+        cost_price = float(item.get("cost_price", 0) or item.get("cost", 0) or 0)
+        gl_amount = abs(movement_qty) * cost_price
+        
+        if gl_amount > 0:
+            try:
+                item_name = item.get("name", item.get("description", "Stock item"))
+                item_code = item.get("code", "")
+                ref_label = f"Stock Adj: {item_code} - {item_name}" if item_code else f"Stock Adj: {item_name}"
+                
+                if movement_qty > 0:
+                    # Stock IN: DR 1300 Stock (asset increases), CR 5000 COGS (cost reversal / adjustment)
+                    gl_entries = [
+                        {"account_code": "1300", "debit": gl_amount, "credit": 0},
+                        {"account_code": "5000", "debit": 0, "credit": gl_amount},
+                    ]
+                else:
+                    # Stock OUT: DR 5000 COGS (expense), CR 1300 Stock (asset decreases)
+                    gl_entries = [
+                        {"account_code": "5000", "debit": gl_amount, "credit": 0},
+                        {"account_code": "1300", "debit": 0, "credit": gl_amount},
+                    ]
+                
+                create_journal_entry(biz_id, today(), f"{note or 'Stock adjustment'} ({current_qty} → {new_qty})", ref_label, gl_entries)
+                logger.info(f"[STOCK ADJ] GL posted: {ref_label} R{gl_amount:.2f} movement_qty={movement_qty}")
+            except Exception as gl_err:
+                logger.error(f"[STOCK ADJ] GL entry failed (non-critical): {gl_err}")
+        
         flash(f"Stock adjusted: {current_qty} → {new_qty}", "success")
     else:
         flash("Failed to adjust stock", "error")
@@ -35410,6 +35439,7 @@ def grv_new():
         
         if success:
             # Book stock in if requested
+            grv_gl_total = 0.0
             if add_stock:
                 all_stock = db.get_all_stock(biz_id)
                 for item in items:
@@ -35430,6 +35460,21 @@ def grv_new():
                                 quantity=item["quantity"], reference=f"GRV {grv_num}"
                             ))
                         except: pass
+                        # Accumulate GL value
+                        cost_price = float(item.get("cost_price", 0) or 0)
+                        grv_gl_total += item["quantity"] * cost_price
+            
+            # --- GL Journal Entry for GRV stock received ---
+            if grv_gl_total > 0:
+                try:
+                    grv_gl_entries = [
+                        {"account_code": "1300", "debit": grv_gl_total, "credit": 0},   # DR Stock (asset in)
+                        {"account_code": "5000", "debit": 0, "credit": grv_gl_total},   # CR COGS / Purchases
+                    ]
+                    create_journal_entry(biz_id, today(), f"GRV {grv_num} stock received from {supplier_name}", f"GRV {grv_num}", grv_gl_entries)
+                    logger.info(f"[GRV] GL posted: GRV {grv_num} R{grv_gl_total:.2f}")
+                except Exception as gl_err:
+                    logger.error(f"[GRV] GL entry failed (non-critical): {gl_err}")
             
             flash(f"GRV {grv_num} created — {len(items)} items received from {supplier_name}", "success")
             return redirect(f"/grv/{grv_id}")
@@ -44415,6 +44460,19 @@ def api_po_receive(po_id):
                 )
         except Exception:
             pass
+        
+        # --- GL Journal Entry for PO stock received ---
+        try:
+            if grv_total > 0 and update_stock:
+                po_gl_entries = [
+                    {"account_code": "1300", "debit": grv_total, "credit": 0},   # DR Stock (asset in)
+                    {"account_code": "5000", "debit": 0, "credit": grv_total},   # CR COGS / Purchases
+                ]
+                sup_name = supplier_name_override or po.get("supplier_name", "")
+                create_journal_entry(biz_id, receive_date or today(), f"PO {po.get('po_number','')} received from {sup_name}", f"GRV {grv_num}", po_gl_entries)
+                logger.info(f"[PO RECEIVE] GL posted: GRV {grv_num} R{grv_total:.2f}")
+        except Exception as gl_err:
+            logger.error(f"[PO RECEIVE] GL entry failed (non-critical): {gl_err}")
         
         return jsonify({"success": True, "message": status_msg, "all_received": all_received, "grv_id": grv_id, "grv_number": grv_num})
         
