@@ -38894,9 +38894,25 @@ def _report_gl_inner(user, biz_id):
     accounts_html = ""
     total_debit_all = 0
     total_credit_all = 0
+    coa_codes_shown = set()  # Track codes shown from COA to avoid duplication with journals
     
     if coa:
-        # Use imported chart of accounts with real balances
+        # Pre-load ALL journals for merging with COA
+        _all_journals_for_merge = db.get("journals", {"business_id": biz_id}) or []
+        _journal_by_code = {}
+        for _jl in _all_journals_for_merge:
+            _ac = _jl.get("account_code", "")
+            if not _ac:
+                continue
+            _dr = float(_jl.get("debit", 0) or 0)
+            _cr = float(_jl.get("credit", 0) or 0)
+            if _dr == 0 and _cr == 0:
+                continue
+            if _ac not in _journal_by_code:
+                _journal_by_code[_ac] = []
+            _journal_by_code[_ac].append(_jl)
+        
+        # Use imported chart of accounts with real balances + merged journals
         for acc in coa:
             if not acc.get("is_active", True):
                 continue
@@ -38923,28 +38939,56 @@ def _report_gl_inner(user, biz_id):
                     balance_debit = 0
                     balance_credit = abs(opening)
             else:
+                balance_debit = 0
+                balance_credit = 0
+            
+            # Merge journal entries for this code
+            code_journals = _journal_by_code.get(code, [])
+            j_dr = sum(float(j.get("debit", 0) or 0) for j in code_journals)
+            j_cr = sum(float(j.get("credit", 0) or 0) for j in code_journals)
+            combined_debit = balance_debit + j_dr
+            combined_credit = balance_credit + j_cr
+            
+            if combined_debit == 0 and combined_credit == 0:
                 continue
             
-            total_debit_all += balance_debit
-            total_credit_all += balance_credit
+            coa_codes_shown.add(code)
+            total_debit_all += combined_debit
+            total_credit_all += combined_credit
             
-            debit_display = money(balance_debit) if balance_debit else "-"
-            credit_display = money(balance_credit) if balance_credit else "-"
-            debit_color = "var(--green)" if balance_debit else "var(--text-muted)"
-            credit_color = "var(--red)" if balance_credit else "var(--text-muted)"
+            debit_display = money(combined_debit) if combined_debit else "-"
+            credit_display = money(combined_credit) if combined_credit else "-"
+            debit_color = "var(--green)" if combined_debit else "var(--text-muted)"
+            credit_color = "var(--red)" if combined_credit else "var(--text-muted)"
             
+            # Build journal detail rows if any
+            detail_html = ""
+            if code_journals:
+                sorted_j = sorted(code_journals, key=lambda x: x.get("date", ""), reverse=True)
+                j_rows = ""
+                for _j in sorted_j:
+                    _jdr = money(float(_j.get("debit", 0) or 0)) if float(_j.get("debit", 0) or 0) else "-"
+                    _jcr = money(float(_j.get("credit", 0) or 0)) if float(_j.get("credit", 0) or 0) else "-"
+                    j_rows += f'<tr><td>{_j.get("date","-")}</td><td>{safe_string(_j.get("description","-"))}</td><td>{safe_string(_j.get("reference","-"))}</td><td style="text-align:right;color:var(--green);">{_jdr}</td><td style="text-align:right;color:var(--red);">{_jcr}</td></tr>'
+                ob_label = f"Sage Opening Balance: DR {money(balance_debit)} / CR {money(balance_credit)}" if (balance_debit or balance_credit) else ""
+                detail_html = f'''<div style="padding:0 10px 8px 10px;">
+                    <div style="font-size:11px;color:var(--text-muted);padding:4px 0;">{ob_label} | {len(code_journals)} GL journal entries</div>
+                    <table class="table" style="font-size:11px;"><thead><tr><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{j_rows}</tbody></table>
+                </div>'''
+            else:
+                detail_html = f'<div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">Opening Balance: {money(opening)} | Category: {safe_string(category)}</div>'
+            
+            j_count_label = f" + {len(code_journals)} journals" if code_journals else ""
             accounts_html += f'''
             <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
                 <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
                     <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                        <span><strong>{safe_string(code)}</strong> - {safe_string(name)} <span style="color:var(--text-muted);font-size:11px;">({safe_string(category)})</span></span>
+                        <span><strong>{safe_string(code)}</strong> - {safe_string(name)} <span style="color:var(--text-muted);font-size:11px;">({safe_string(category)}{j_count_label})</span></span>
                         <span style="text-align:right;color:{debit_color};">{debit_display}</span>
                         <span style="text-align:right;color:{credit_color};">{credit_display}</span>
                     </div>
                 </summary>
-                <div style="padding:8px 12px;font-size:12px;color:var(--text-muted);">
-                    Opening Balance: {money(opening)} | Category: {safe_string(category)}
-                </div>
+                {detail_html}
             </details>
             '''
     elif opening_entries:
@@ -39223,6 +39267,8 @@ def _report_gl_inner(user, biz_id):
                 pass
         
         for code in sorted(journal_by_acc.keys()):
+            if code in coa_codes_shown:
+                continue  # Already merged into COA section above
             entries = sorted(journal_by_acc[code], key=lambda x: x.get("date", ""), reverse=True)
             td = sum(e.get("debit", 0) for e in entries)
             tc = sum(e.get("credit", 0) for e in entries)
@@ -39260,40 +39306,8 @@ def _report_gl_inner(user, biz_id):
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
         <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-        <div style="display:flex;gap:8px;">
-            <button class="btn btn-secondary" onclick="runGlMigrate();" id="btnMigrate" title="Migrate old ClickAI GL codes to Sage codes">🔄 Migrate GL Codes</button>
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
-        </div>
+        <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
     </div>
-    <div id="migrateResult" style="display:none;margin-bottom:10px;padding:10px;border-radius:6px;font-size:13px;"></div>
-    <script>
-    async function runGlMigrate() {{
-        if (!confirm('This will migrate old ClickAI GL codes to Sage codes. Continue?')) return;
-        const btn = document.getElementById('btnMigrate');
-        const res = document.getElementById('migrateResult');
-        btn.disabled = true; btn.textContent = '⏳ Migrating...';
-        try {{
-            const r = await fetch('/api/gl-migrate', {{method:'POST'}});
-            const d = await r.json();
-            if (d.success) {{
-                res.style.display = 'block';
-                res.style.background = 'rgba(0,200,0,0.15)';
-                res.innerHTML = '✅ ' + d.message;
-                setTimeout(() => location.reload(), 1500);
-            }} else {{
-                res.style.display = 'block';
-                res.style.background = 'rgba(200,200,0,0.15)';
-                res.innerHTML = '⚠️ ' + (d.message || d.error || JSON.stringify(d));
-                btn.disabled = false; btn.textContent = '🔄 Migrate GL Codes';
-            }}
-        }} catch(e) {{
-            res.style.display = 'block';
-            res.style.background = 'rgba(200,0,0,0.15)';
-            res.innerHTML = '❌ Error: ' + e.message;
-            btn.disabled = false; btn.textContent = '🔄 Migrate GL Codes';
-        }}
-    }}
-    </script>
     
     <h2 style="margin-bottom:4px;">📒 General Ledger</h2>
     <p style="color:var(--text-muted);margin-bottom:15px;font-size:13px;">{source_label} — Click on an account to see details</p>
@@ -78429,17 +78443,19 @@ def api_gl_migrate():
             migration_map[default_code] = {"new_code": sage_code, "role": role}
     
     # Manual mappings for codes NOT in CLICKAI_DEFAULTS but clearly belong to a Sage range
-    # These use the actual Sage codes from the imported COA
+    # e.g. "4400" was used for salaries before migration, Sage uses "4400/000"
     _manual_extras = {
         "4400": ("4400/000", "salaries_manual"),
-        "4001": ("1000/000", "sales_credit"),
-        "4002": ("1000/000", "sales_card"),
-        "4003": ("1000/000", "sales_eft"),
-        "5002": ("2000/000", "purchases_hardware"),
+        "4001": ("4000", "sales_other"),
+        "4002": ("4000", "sales_services"),
+        "4003": ("4000", "sales_misc"),
+        "5002": ("5100", "purchases_other"),
     }
-    # Add manual extras (no COA validation needed — these are known Sage codes)
+    # Only add if the target code actually exists in COA (validate)
+    coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+    coa_codes = set(str(a.get("account_code", "") or a.get("code", "")).strip() for a in coa)
     for old_code, (new_code, role_label) in _manual_extras.items():
-        if old_code not in migration_map:
+        if old_code not in migration_map and new_code in coa_codes:
             migration_map[old_code] = {"new_code": new_code, "role": role_label}
     
     if not migration_map:
