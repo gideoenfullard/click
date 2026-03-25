@@ -44005,7 +44005,10 @@ def purchase_view(po_id):
                 </td>
                 <td style="text-align:center;">
                     <input type="number" name="price_{i}" class="form-input" style="width: 100px; text-align: center;" 
-                           placeholder="0.00" step="0.01" data-price-index="{i}" value="{item.get('price', '')}">
+                           placeholder="0.00" step="0.01" data-price-index="{i}" value="{item.get('price', '')}"
+                           data-original-price="{item.get('price', '')}"
+                           onchange="handlePriceChange(this)"
+                           onfocus="this.select()">
                 </td>
             </tr>
             '''
@@ -44223,7 +44226,33 @@ def purchase_view(po_id):
         document.getElementById(id).style.display = 'none';
     }}
     
+    function handlePriceChange(input) {{
+        const original = parseFloat(input.dataset.originalPrice) || 0;
+        const current = parseFloat(input.value) || 0;
+        if (original > 0 && current !== original) {{
+            input.style.border = '2px solid #ef4444';
+            input.style.background = 'rgba(239,68,68,0.15)';
+            if (!confirm('Are you sure you want to change the unit price from ' + original.toFixed(2) + ' to ' + current.toFixed(2) + '?')) {{
+                input.value = original;
+                input.style.border = '';
+                input.style.background = '';
+            }}
+        }} else {{
+            input.style.border = '';
+            input.style.background = '';
+        }}
+    }}
+    
     async function receiveGoods() {{
+        const supplierInvoiceNum = document.getElementById('supplierInvoiceNum').value.trim();
+        if (!supplierInvoiceNum) {{
+            if (!confirm('⚠️ No Supplier Invoice Number entered!\\n\\nAre you sure you want to continue without a supplier invoice number?')) {{
+                document.getElementById('supplierInvoiceNum').focus();
+                document.getElementById('supplierInvoiceNum').style.border = '2px solid #ef4444';
+                return;
+            }}
+        }}
+        
         const inputs = document.querySelectorAll('#receiveModal input[name^="receive_"]');
         const quantities = {{}};
         const prices = {{}};
@@ -44249,7 +44278,6 @@ def purchase_view(po_id):
         }}
         
         const updateStock = document.getElementById('updateStock').checked;
-        const supplierInvoiceNum = document.getElementById('supplierInvoiceNum').value.trim();
         const receiveDate = document.getElementById('receiveDate').value;
         const grvSupplierName = document.getElementById('grvSupplierName').value.trim();
         
