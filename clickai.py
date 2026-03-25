@@ -35748,6 +35748,16 @@ def grv_create_invoice(grv_id):
             if not inv_number:
                 inv_number = (grv.get("grv_number", "") or "").replace("GRV-", "SINV-")
 
+            # Check if a supplier invoice already exists for this GRV
+            all_sinv = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+            grv_num = grv.get("grv_number", "")
+            for _si in all_sinv:
+                _notes = str(_si.get("notes", ""))
+                _ref = str(_si.get("reference", ""))
+                if grv_num and grv_num in _notes:
+                    flash(f"⚠️ A supplier invoice ({_si.get('invoice_number', '?')}) already exists for {grv_num}. Cannot create duplicate.", "error")
+                    return redirect(f"/grv/{grv_id}")
+
             # Check for duplicate invoice number
             existing = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_number}) if biz_id else []
             if existing:
@@ -45165,6 +45175,17 @@ def api_po_create_invoice(po_id):
             
             if not inv_number:
                 inv_number = po.get("po_number", "").replace("PO", "SI").replace("po", "si")
+            
+            # Check if a supplier invoice already exists for this PO
+            all_sinv = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+            po_num = po.get("po_number", "")
+            for _si in all_sinv:
+                _notes = str(_si.get("notes", ""))
+                _ref = str(_si.get("reference", ""))
+                _po_ref = str(_si.get("po_number", ""))
+                if (po_num and po_num in _notes) or (po_num and po_num in _ref) or (po_num and po_num == _po_ref):
+                    flash(f"⚠️ A supplier invoice ({_si.get('invoice_number', '?')}) already exists for {po_num}. Cannot create duplicate.", "error")
+                    return redirect(f"/purchase/{po_id}")
             
             existing = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_number})
             if existing:
