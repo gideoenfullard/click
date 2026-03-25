@@ -39156,19 +39156,44 @@ def _report_gl_inner(user, biz_id):
             "1200": "Debtors Control", "1300": "Stock", "1400": "VAT Input",
             "1500": "Equipment", "1600": "Vehicles", "1700": "Accumulated Depreciation",
             "2000": "Creditors Control", "2100": "VAT Output", "2200": "PAYE Payable",
-            "2300": "UIF Payable", "2400": "Loan",
+            "2300": "UIF/Loan Payable", "2400": "Loan",
             "3000": "Capital", "3100": "Retained Earnings", "3200": "Drawings",
-            "4000": "Sales", "4001": "Sales - Other", "4002": "Sales - Services",
-            "4003": "Sales - Misc", "4100": "Service Revenue",
-            "4200": "Interest Received", "4300": "Discount Received",
-            "4400": "Salaries & Wages",
-            "5000": "Cost of Goods Sold", "5001": "Purchases - Direct", "5002": "Purchases - Other",
-            "5100": "Purchases", "5200": "Carriage Inward",
-            "6000": "Salaries & Wages", "6100": "Rent", "6200": "Electricity & Water",
-            "6300": "Telephone & Internet", "6400": "Insurance", "6500": "Fuel",
-            "6600": "Repairs & Maintenance", "6700": "Bank Charges",
-            "6800": "Advertising", "6900": "Depreciation", "7000": "General Expenses",
-            "7050": "Cash Short/Over",
+            "4000": "Sales - Cash", "4001": "Sales - Credit", "4002": "Sales - Card Machine",
+            "4003": "Sales - Online/EFT", "4100": "Service Revenue",
+            "4200": "Rental Income", "4300": "Commission Received",
+            "4400": "Interest Received", "4900": "Sundry Income",
+            "5000": "Stock Purchases - General", "5001": "Stock Purchases - Steel",
+            "5002": "Stock Purchases - Hardware", "5003": "Stock Purchases - Paint",
+            "5004": "Stock Purchases - Electrical", "5005": "Stock Purchases - Plumbing",
+            "5010": "Stock Purchases - Food & Beverage", "5100": "Delivery/Freight",
+            "5200": "Import Duties", "5300": "Packaging", "5400": "Direct Labour",
+            "6100": "Rent - Business Premises", "6110": "Rates & Taxes - Municipal",
+            "6111": "Rates & Taxes - Property", "6120": "Electricity", "6121": "Water",
+            "6130": "Repairs & Maintenance - Building", "6140": "Cleaning & Hygiene",
+            "6141": "Garden & Grounds Maintenance", "6150": "Security",
+            "6200": "Salaries - Management", "6201": "Wages - Staff",
+            "6202": "Wages - Casual/Temp", "6210": "PAYE/UIF/SDL Payment",
+            "6220": "Provident Fund", "6230": "Staff Welfare & Training",
+            "6240": "Recruitment Costs", "6250": "Protective Clothing/Uniforms",
+            "6510": "Fuel - Business Vehicle", "6515": "Fuel - Equipment",
+            "6520": "Vehicle Repairs & Service", "6530": "Vehicle Insurance",
+            "6540": "Vehicle Licence & Registration", "6550": "Tolls & Parking",
+            "6560": "Vehicle Lease/Finance", "6600": "Stationery & Printing",
+            "6610": "Postage & Courier", "6620": "Telephone - Landline",
+            "6621": "Cellphone/Mobile", "6622": "Internet/WiFi",
+            "6630": "Software Subscription", "6640": "Computer Equipment & Repairs",
+            "6700": "Accounting Fees", "6710": "Legal Fees", "6720": "Consulting Fees",
+            "6800": "Insurance - Business", "6900": "Advertising - Print",
+            "6901": "Advertising - Online", "6910": "Signage & Branding",
+            "6920": "Promotional Materials", "6930": "Website Costs",
+            "6940": "Sponsorships & Donations",
+            "7000": "General Expenses", "7050": "Cash Short/Over",
+            "7100": "Bank Charges", "7110": "Card Machine Fees",
+            "7120": "Interest Paid - Overdraft", "7200": "Entertainment",
+            "7210": "Travel - Local", "7300": "Membership & Subscriptions",
+            "7400": "Repairs - Equipment/Machinery", "7500": "Depreciation",
+            "7600": "Bad Debts Written Off", "7900": "Sundry Expenses",
+            "7999": "General Expenses (Uncategorised)",
         }
         for code, name in _default_names.items():
             if code not in acc_name_map:
@@ -39378,18 +39403,19 @@ def report_tb():
         n = acc.get("account_name", "") or acc.get("name", "")
         if c and n and c not in account_names:
             account_names[c] = n
-    # Fallback default names for unmigrated ClickAI codes
-    _dflt = {"1000": "Bank", "1050": "Cash On Hand", "1100": "Petty Cash",
-             "1200": "Debtors Control", "1300": "Stock", "1400": "VAT Input",
-             "2000": "Creditors Control", "2100": "VAT Output",
-             "3200": "Drawings", "4000": "Sales", "4001": "Sales - Other",
-             "4002": "Sales - Services", "4003": "Sales - Misc",
-             "4400": "Salaries & Wages", "5000": "Cost of Goods Sold",
-             "5002": "Purchases - Other", "5100": "Purchases",
-             "6000": "Salaries & Wages", "7050": "Cash Short/Over"}
-    for c, n in _dflt.items():
-        if c not in account_names:
-            account_names[c] = n
+    # Fallback default names from BOOKING_CATEGORIES for all ClickAI GL codes
+    try:
+        for _grp in IndustryKnowledge.BOOKING_CATEGORIES.values():
+            for _cat_name, _gl_code in _grp.get("items", []):
+                if _gl_code and _gl_code not in account_names:
+                    account_names[_gl_code] = _cat_name
+    except Exception:
+        pass
+    # Extra defaults not in BOOKING_CATEGORIES
+    for _c, _n in {"1200": "Debtors Control", "1400": "VAT Input", "1300": "Stock",
+                    "2000": "Creditors Control", "2200": "PAYE Payable", "3100": "Retained Earnings"}.items():
+        if _c not in account_names:
+            account_names[_c] = _n
     
     if all_journals:
         logger.info(f"[TB] Processing {len(all_journals)} GL journal lines into TB")
