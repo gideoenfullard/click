@@ -1713,16 +1713,8 @@ def get_steel_weight(size: str, length_m: float) -> tuple:
     
     return None, None
 
-def _is_owner_business(biz_name: str = "") -> bool:
-    """Check if this is one of the owner's internal businesses (not a client).
-    Uses business name matching. Fulltech-specific tools and pricing
-    should ONLY be available to these businesses, never to client businesses."""
-    name = (biz_name or "").lower()
-    return "fulltech" in name or "steel supplier" in name
-
-
-def get_steel_context(biz_name: str = "") -> str:
-    """Get steel context for Zane - includes Fulltech pricing ONLY for owner businesses"""
+def get_steel_context() -> str:
+    """Get steel context for Zane - includes Fulltech pricing if available"""
     base_context = """
 STEEL KNOWLEDGE:
 You know South African steel sizes and weights. Common items:
@@ -1742,8 +1734,8 @@ When quoting steel:
 Example: "100m of 50x50 tube" = 100m x 2.42kg/m = 242kg
 """
     
-    # Add Fulltech specific pricing ONLY for owner businesses
-    if FULLTECH_ENABLED and _is_owner_business(biz_name):
+    # Add Fulltech specific pricing if available
+    if FULLTECH_ENABLED:
         try:
             brushing_context = """
 
@@ -6126,10 +6118,11 @@ class ZaneToolHandler:
         }
     
     def _tool_get_creditors(self, params: dict) -> dict:
-        """Get creditors with aging analysis — includes supplier invoices + supplier balances (POs excluded as they are orders, not debt)"""
+        """Get creditors with aging analysis — includes supplier invoices + outstanding POs + supplier balances"""
         limit = params.get("limit", 20)
         suppliers = self.db.get("suppliers", {"business_id": self.biz_id}) or []
         supplier_invoices = self.db.get("supplier_invoices", {"business_id": self.biz_id}) or []
+        purchase_orders = self.db.get("purchase_orders", {"business_id": self.biz_id}) or []
         
         today = datetime.now().date()
         supplier_aging = {}
@@ -6170,11 +6163,63 @@ class ZaneToolHandler:
             else:
                 sa["days_90_plus"] += amount
         
-        # === SOURCE 2: Enrich with supplier contact info (phone) — no balance addition ===
+        # === SOURCE 2: Outstanding POs (sent/partial) not yet invoiced ===
+        sinv_po_refs = set()
+        for si in supplier_invoices:
+            _ref = si.get("po_number") or si.get("reference") or ""
+            if _ref:
+                sinv_po_refs.add(_ref.strip().upper())
+        
+        for po in purchase_orders:
+            if po.get("status") not in ("sent", "partial"):
+                continue
+            po_num = (po.get("po_number") or "").strip().upper()
+            if po_num and po_num in sinv_po_refs:
+                continue  # Already has a supplier invoice
+            
+            supp_name = po.get("supplier_name", "Unknown")
+            amount = float(po.get("total", 0) or 0)
+            
+            po_date = po.get("date", "")
+            if po_date:
+                try:
+                    po_dt = datetime.strptime(str(po_date)[:10], "%Y-%m-%d").date()
+                    days_old = (today - po_dt).days
+                except:
+                    days_old = 0
+            else:
+                days_old = 0
+            
+            if supp_name not in supplier_aging:
+                supplier_aging[supp_name] = {
+                    "name": supp_name, "phone": "",
+                    "total": 0, "current": 0, "days_30": 0, "days_60": 0, "days_90_plus": 0
+                }
+            
+            sa = supplier_aging[supp_name]
+            sa["total"] += amount
+            
+            if days_old <= 30:
+                sa["current"] += amount
+            elif days_old <= 60:
+                sa["days_30"] += amount
+            elif days_old <= 90:
+                sa["days_60"] += amount
+            else:
+                sa["days_90_plus"] += amount
+        
+        # === SOURCE 3: Suppliers with balance but no invoices/POs ===
         for s in suppliers:
             name = s.get("name", "")
-            if name in supplier_aging:
-                supplier_aging[name]["phone"] = s.get("phone", "")
+            balance = float(s.get("balance", 0) or 0)
+            if balance > 0:
+                if name in supplier_aging:
+                    supplier_aging[name]["phone"] = s.get("phone", "")
+                else:
+                    supplier_aging[name] = {
+                        "name": name, "phone": s.get("phone", ""),
+                        "total": balance, "current": balance, "days_30": 0, "days_60": 0, "days_90_plus": 0
+                    }
         
         creditors = list(supplier_aging.values())
         creditors.sort(key=lambda x: x["total"], reverse=True)
@@ -9263,7 +9308,7 @@ When user is on /pos page:
 5. Be brief and helpful - they're busy selling!
 6. If they created a customer and it "disappeared" - explain: "Your customer selection is still there! Just click the Customer button (F8) to see them. The cart being empty just means you need to add items."
 
-{get_steel_context(biz_name)}
+{get_steel_context()}
 
 ## SOUTH AFRICAN BUSINESS KNOWLEDGE
 
@@ -13171,9 +13216,8 @@ class Context:
         # Debtors (from same customer load)
         total_debtors = sum(float(c.get("balance", 0) or 0) for c in customers if float(c.get("balance", 0) or 0) > 0)
         
-        # Creditors — from unpaid supplier invoices
-        _sinv_for_pulse = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        total_creditors = sum(float(si.get("total", 0) or 0) for si in _sinv_for_pulse if si.get("status") != "paid")
+        # Creditors
+        total_creditors = sum(float(s.get("balance", 0) or 0) for s in suppliers if float(s.get("balance", 0) or 0) > 0)
         
         # Sales
         today_str = today()
@@ -13374,9 +13418,7 @@ class Context:
         total_debtors = sum(float(c.get("balance", 0) or 0) for c in debtors)
         
         creditors = [s for s in suppliers if float(s.get("balance", 0) or 0) > 0]
-        _sinv_for_pulse2 = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        _unpaid_sinv = [si for si in _sinv_for_pulse2 if si.get("status") != "paid"]
-        total_creditors = sum(float(si.get("total", 0) or 0) for si in _unpaid_sinv)
+        total_creditors = sum(float(s.get("balance", 0) or 0) for s in creditors)
         
         today_sales = sum(float(s.get("total", 0) or 0) for s in sales if s.get("date") == today())
         total_sales = sum(float(s.get("total", 0) or 0) for s in sales)
@@ -13396,14 +13438,8 @@ class Context:
         # Summaries for reports (compact, not full records)
         customers_summary = [{"name": c.get("name"), "balance": c.get("balance", 0), "phone": c.get("phone", "")} 
                             for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
-        suppliers_summary = []
-        _sinv_by_supplier = {}
-        for si in _unpaid_sinv:
-            sname = si.get("supplier_name", "Unknown")
-            _sinv_by_supplier[sname] = _sinv_by_supplier.get(sname, 0) + float(si.get("total", 0) or 0)
-        for sname, sbal in sorted(_sinv_by_supplier.items(), key=lambda x: -x[1]):
-            _sup_rec = next((s for s in suppliers if s.get("name", "").lower() == sname.lower()), {})
-            suppliers_summary.append({"name": sname, "balance": sbal, "phone": _sup_rec.get("phone", "")})
+        suppliers_summary = [{"name": s.get("name"), "balance": s.get("balance", 0), "phone": s.get("phone", "")} 
+                            for s in sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
         
         return {
             "business_id": biz_id,
@@ -26074,12 +26110,6 @@ def fulltech_tools():
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     
-    # Owner businesses only — block client access
-    biz_name = (business.get("name", "") if business else "").lower()
-    if not _is_owner_business(biz_name):
-        flash("This tool is not available for your business", "error")
-        return redirect("/tools")
-    
     content = f'''
     <div class="card" style="margin-bottom:20px;">
         <h2 style="margin:0 0 10px 0;">🔩 Fulltech Bolt Pricer</h2>
@@ -26328,9 +26358,6 @@ def fulltech_tools():
 @login_required
 def api_fulltech_bolt_check():
     """Single item price check using BoltPricer v4 verified rates"""
-    biz = Auth.get_current_business()
-    if not _is_owner_business(biz.get("name", "") if biz else ""):
-        return jsonify({"success": False, "error": "Not available"}), 403
     data = request.get_json() or {}
     desc = data.get("description", "")
     if not BoltPricer:
@@ -26344,8 +26371,6 @@ def api_fulltech_bolt_preview():
     """Preview bolt repricing using v4 verified supplier rates"""
     import time as _time
     business = Auth.get_current_business()
-    if not _is_owner_business(business.get("name", "") if business else ""):
-        return jsonify({"success": False, "error": "Not available"}), 403
     biz_id = business.get("id") if business else None
     if not biz_id:
         return jsonify({"success": False, "error": "No business"})
@@ -26428,8 +26453,6 @@ def api_fulltech_bolt_apply():
         return jsonify({"success": False, "error": "Owner/Admin only"})
     
     business = Auth.get_current_business()
-    if not _is_owner_business(business.get("name", "") if business else ""):
-        return jsonify({"success": False, "error": "Not available"}), 403
     biz_id = business.get("id") if business else None
     if not biz_id:
         return jsonify({"success": False, "error": "No business"})
@@ -26485,9 +26508,6 @@ def api_fulltech_bolt_apply():
 @login_required
 def api_fulltech_calc_bolt():
     """Legacy endpoint — redirects to BoltPricer"""
-    biz = Auth.get_current_business()
-    if not _is_owner_business(biz.get("name", "") if biz else ""):
-        return jsonify({"success": False, "error": "Not available"}), 403
     item_type = request.args.get("type", "bolt")
     m_size = int(request.args.get("m_size", 6))
     length = int(request.args.get("length", 50)) if item_type == "bolt" else None
@@ -30628,24 +30648,13 @@ def suppliers_page():
         suppliers = []
     
     total_suppliers = len(suppliers)
-    
-    # Calculate real balances from unpaid supplier invoices (not suppliers.balance)
-    _sinv_for_suplist = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-    _sup_real_balances = {}
-    for si in _sinv_for_suplist:
-        if si.get("status") == "paid":
-            continue
-        sid = si.get("supplier_id", "")
-        _sup_real_balances[sid] = _sup_real_balances.get(sid, 0) + float(si.get("total", 0) or 0)
-    
-    total_owed = sum(_sup_real_balances.values()) if can_see_balances else 0
-    creditors_count = len([v for v in _sup_real_balances.values() if v > 0])
+    creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
+    total_owed = sum(float(s.get("balance", 0)) for s in creditors) if can_see_balances else 0
     
     # Build rows - COMPACT VIEW (details on View page)
     suppliers_html = ""
     for s in suppliers:
-        sup_id = s.get("id")
-        balance = _sup_real_balances.get(sup_id, 0)
+        balance = float(s.get("balance", 0) or 0)
         balance_color = "var(--orange)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
         balance_display = money(balance) if can_see_balances else "---"
         sup_id = s.get("id")
@@ -30687,7 +30696,7 @@ def suppliers_page():
     if total_owed > 0 and can_see_balances:
         summary_html = f'''
         <div style="background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.3); padding:10px 15px; border-radius: 8px; margin-bottom: 15px;font-size:13px;">
-            <strong>{creditors_count} suppliers</strong> - we owe a total of <strong style="color: var(--orange);">{money(total_owed)}</strong>
+            <strong>{len(creditors)} suppliers</strong> - we owe a total of <strong style="color: var(--orange);">{money(total_owed)}</strong>
         </div>
         '''
     
@@ -30696,7 +30705,6 @@ def suppliers_page():
         <h2 style="margin:0;">Suppliers (<span id="supplierCount">{total_suppliers}</span>)</h2>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
             <a href="/supplier-invoices" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">📋 Supplier Invoices</a>
-            <a href="/purchases" class="btn btn-secondary" style="font-size:12px;padding:6px 12px;">🛒 Purchases / GRV</a>
             <input type="text" id="supplierSearch" placeholder="🔍 Search name, code, phone..." 
                 oninput="filterSuppliers()" 
                 style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);width:250px;">
@@ -30754,16 +30762,11 @@ def suppliers_page():
     
     # -- JARVIS: Suppliers HUD header --
     if has_reactor_hud():
-        _with_bal = creditors_count
-        _in_credit = 0  # Credit balances not tracked via invoices
+        _with_bal = len(creditors)
+        _in_credit = len([s for s in suppliers if float(s.get("balance", 0) or 0) < 0])
         _j_alert = ""
         if _with_bal > 5 and can_see_balances:
-            _top3_items = sorted(_sup_real_balances.items(), key=lambda x: -x[1])[:3]
-            _top3_names = []
-            for _sid, _sbal in _top3_items:
-                _srec = next((s for s in suppliers if s.get("id") == _sid), {})
-                _top3_names.append(f"{safe_string(_srec.get('name','-')[:20])} ({money(_sbal)})")
-            _top3 = ", ".join(_top3_names)
+            _top3 = ", ".join([f"{safe(s.get('name','-')[:20])} ({money(float(s.get('balance',0)))})" for s in sorted(creditors, key=lambda x: -float(x.get('balance',0)))[:3]])
             _j_alert = f'<div class="j-ticker"><b>&#9888; CREDITORS</b><span class="jt-msg">{_with_bal} suppliers with balance &mdash; {_top3}</span><a href="/supplier-invoices" class="jt-act">VIEW INVOICES &rarr;</a></div>'
         
         _hud = jarvis_hud_header(
@@ -30953,20 +30956,12 @@ def supplier_view(supplier_id):
     except Exception:
         purchase_orders = []
     
-    # Get GRVs for this supplier
-    try:
-        all_grvs = db.get("goods_received", {"business_id": biz_id}) if biz_id else []
-        supplier_grvs = [g for g in all_grvs if g.get("supplier_id") == supplier_id]
-        supplier_grvs = sorted(supplier_grvs, key=lambda x: x.get("date", ""), reverse=True)
-    except Exception:
-        supplier_grvs = []
-    
     # Get scanned documents for this supplier
     all_scanned_docs = db.get("scanned_documents", {"business_id": biz_id}) if biz_id else []
     scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
     scanned_docs = sorted(scanned_docs, key=lambda x: x.get("created_at", ""), reverse=True)
     
-    balance = sum(float(si.get("total", 0) or 0) for si in supplier_invoices if si.get("status") != "paid") if can_see_balances else 0
+    balance = float(supplier.get("balance", 0)) if can_see_balances else 0
     
     # Stats - only if can see balances
     total_billed = sum(float(e.get("total", e.get("amount", 0))) for e in expenses) if can_see_balances else 0
@@ -31115,29 +31110,6 @@ def supplier_view(supplier_id):
             <td>{po.get("date", "-")}</td>
             <td>{money(po.get("total", 0))}</td>
             <td style="color:{po_color};">{po_status.upper()}</td>
-        </tr>
-        '''
-    
-    # Build GRV rows HTML for this supplier
-    grv_rows_html = ""
-    for g in supplier_grvs[:200]:
-        g_status = g.get("status", "received")
-        g_color = "var(--green)" if g_status == "received" else "var(--orange)"
-        g_total = 0
-        try:
-            g_items = json.loads(g.get("items", "[]")) if isinstance(g.get("items"), str) else (g.get("items") or [])
-            g_total = sum(float(i.get("line_total", 0) or 0) for i in g_items)
-        except Exception:
-            pass
-        inv_btn = f'<a href="/grv/{g.get("id")}/create-invoice" class="btn btn-primary" style="padding:4px 10px;font-size:11px;" onclick="event.stopPropagation();">📄 Create Invoice</a>'
-        grv_rows_html += f'''
-        <tr style="cursor:pointer;" onclick="window.location='/grv/{g.get("id")}'">
-            <td>{g.get("grv_number", "-")}</td>
-            <td>{g.get("date", "-")}</td>
-            <td>{g.get("po_number", "-")}</td>
-            <td>{money(g_total)}</td>
-            <td style="color:{g_color};">{g_status.upper()}</td>
-            <td>{inv_btn}</td>
         </tr>
         '''
     
@@ -31290,19 +31262,6 @@ def supplier_view(supplier_id):
             </thead>
             <tbody>
                 {po_html if po_html else "<tr><td colspan='4' style='text-align:center;color:var(--text-muted)'>No purchase orders</td></tr>"}
-            </tbody>
-        </table>
-    </div>
-    
-    <!-- GRV Section -->
-    <div class="card" style="margin-top:20px;">
-        <h3 style="margin-bottom:15px;">📦 Goods Received ({len(supplier_grvs)})</h3>
-        <table class="table">
-            <thead>
-                <tr><th>GRV #</th><th>Date</th><th>PO #</th><th>Total</th><th>Status</th><th>Invoice</th></tr>
-            </thead>
-            <tbody>
-                {grv_rows_html if grv_rows_html else "<tr><td colspan='6' style='text-align:center;color:var(--text-muted)'>No GRVs yet</td></tr>"}
             </tbody>
         </table>
     </div>
@@ -35563,23 +35522,6 @@ def grv_view(grv_id):
     if not grv:
         return redirect("/grv")
     
-    biz_id = business.get("id") if business else None
-    
-    # Check if a supplier invoice already exists for this GRV
-    grv_has_invoice = False
-    if biz_id:
-        try:
-            all_sinv = db.get("supplier_invoices", {"business_id": biz_id}) or []
-            for si in all_sinv:
-                si_notes = str(si.get("notes", ""))
-                si_ref = str(si.get("reference", ""))
-                grv_num_str = grv.get("grv_number", "")
-                if grv_num_str and (grv_num_str in si_notes or grv_num_str in si_ref):
-                    grv_has_invoice = True
-                    break
-        except Exception:
-            pass
-    
     try:
         items = json.loads(grv.get("items", "[]"))
     except:
@@ -35601,7 +35543,6 @@ def grv_view(grv_id):
         <a href="/grv" style="color:var(--text-muted);">← Back to GRV List</a>
         <div style="display:flex;gap:10px;">
             <a href="/purchase/{grv.get("po_id", "")}" class="btn btn-secondary">📋 View PO</a>
-            {f'<a href="/grv/{grv_id}/create-invoice" class="btn btn-primary">📄 Create Supplier Invoice</a>' if not grv_has_invoice else '<span style="color:var(--green);font-size:13px;font-weight:600;">✅ Invoice Created</span>'}
             <button onclick="window.print()" class="btn btn-secondary">🖨️ Print</button>
         </div>
     </div>
@@ -35738,229 +35679,6 @@ def grv_view(grv_id):
     '''
     
     return render_page(f"GRV {grv.get('grv_number', '')}", content, user, "purchases")
-
-
-@app.route("/grv/<grv_id>/create-invoice", methods=["GET", "POST"])
-@login_required
-def grv_create_invoice(grv_id):
-    """Create supplier invoice from GRV — the missing link: GRV → Ledger → Creditors → Aging → GL → TB"""
-    try:
-        user = Auth.get_current_user()
-        business = Auth.get_current_business()
-        biz_id = business.get("id") if business else None
-
-        grv = db.get_one("goods_received", grv_id)
-        if not grv:
-            flash("GRV not found", "error")
-            return redirect("/grv")
-
-        try:
-            grv_items = json.loads(grv.get("items", "[]")) if isinstance(grv.get("items"), str) else (grv.get("items") or [])
-        except Exception:
-            grv_items = []
-
-        if request.method == "POST":
-            inv_number = request.form.get("invoice_number", "").strip()
-            inv_date = request.form.get("date", today())
-
-            if not inv_number:
-                inv_number = (grv.get("grv_number", "") or "").replace("GRV-", "SINV-")
-
-            # Check if a supplier invoice already exists for this GRV
-            all_sinv = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-            grv_num = grv.get("grv_number", "")
-            for _si in all_sinv:
-                _notes = str(_si.get("notes", ""))
-                _ref = str(_si.get("reference", ""))
-                if grv_num and grv_num in _notes:
-                    flash(f"⚠️ A supplier invoice ({_si.get('invoice_number', '?')}) already exists for {grv_num}. Cannot create duplicate.", "error")
-                    return redirect(f"/grv/{grv_id}")
-
-            # Check for duplicate invoice number
-            existing = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_number}) if biz_id else []
-            if existing:
-                flash(f"Invoice {inv_number} already exists", "error")
-                return redirect(f"/grv/{grv_id}")
-
-            # Build invoice items from form
-            invoice_items = []
-            subtotal = 0
-            descriptions = request.form.getlist("item_desc[]")
-            quantities = request.form.getlist("item_qty[]")
-            prices = request.form.getlist("item_price[]")
-
-            for i, desc in enumerate(descriptions):
-                if desc.strip():
-                    qty = float(quantities[i] or 0)
-                    price = float(prices[i] or 0)
-                    line_total = qty * price
-                    subtotal += line_total
-                    invoice_items.append({
-                        "description": desc.strip(),
-                        "quantity": qty,
-                        "unit_price": price,
-                        "line_total": round(line_total, 2)
-                    })
-
-            vat = round(subtotal * 0.15, 2)
-            total = round(subtotal + vat, 2)
-
-            invoice = RecordFactory.supplier_invoice(
-                business_id=biz_id,
-                supplier_id=grv.get("supplier_id", ""),
-                supplier_name=grv.get("supplier_name", ""),
-                invoice_number=inv_number,
-                date=inv_date,
-                due_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-                subtotal=subtotal,
-                vat=vat,
-                total=total,
-                items=json.dumps(invoice_items),
-                status="unpaid",
-                notes=f"From GRV: {grv.get('grv_number', '')}"
-            )
-
-            success, _ = db.save("supplier_invoices", invoice)
-
-            if success:
-                # === GL ENTRIES — the critical missing link ===
-                try:
-                    create_journal_entry(biz_id, inv_date, f"Supplier Invoice {inv_number} - {grv.get('supplier_name', '')}", inv_number, [
-                        {"account_code": "5100", "debit": float(subtotal), "credit": 0},
-                        {"account_code": "1400", "debit": float(vat), "credit": 0},
-                        {"account_code": "2000", "debit": 0, "credit": float(total)},
-                    ])
-
-                    # Update supplier balance
-                    if grv.get("supplier_id"):
-                        supplier = db.get_one("suppliers", grv.get("supplier_id"))
-                        if supplier:
-                            new_balance = float(supplier.get("balance") or 0) + float(total)
-                            db.update("suppliers", grv.get("supplier_id"), {"balance": new_balance})
-                except Exception as e:
-                    logger.error(f"[GRV] GL entry failed for GRV invoice: {e}")
-
-                # === ALLOCATION LOG ===
-                try:
-                    if log_allocation:
-                        log_allocation(
-                            business_id=biz_id, allocation_type="grv_to_invoice",
-                            source_table="supplier_invoices", source_id=invoice["id"],
-                            description=f"Supplier Invoice {inv_number} from GRV {grv.get('grv_number', '')} - {grv.get('supplier_name', '')}",
-                            amount=total,
-                            gl_entries=[
-                                {"account": "5100", "debit": float(subtotal)},
-                                {"account": "1400", "debit": float(vat)},
-                                {"account": "2000", "credit": float(total)},
-                            ],
-                            supplier_name=grv.get("supplier_name", ""),
-                            reference=inv_number,
-                            transaction_date=inv_date,
-                            created_by=user.get("id") if user else "",
-                            created_by_name=user.get("name", "") if user else "",
-                            extra={"grv_number": grv.get("grv_number", ""), "grv_id": grv_id}
-                        )
-                except Exception:
-                    pass
-
-                flash(f"Supplier invoice {inv_number} created — {money(total)}", "success")
-                return redirect("/supplier-invoices")
-
-            flash("Failed to create supplier invoice", "error")
-            return redirect(f"/grv/{grv_id}")
-
-        # === GET — show form with items from GRV ===
-        items_html = ""
-        for i, item in enumerate(grv_items):
-            desc = item.get("description") or item.get("code") or "-"
-            qty = item.get("qty_received") or item.get("quantity") or item.get("qty", 1)
-            price = item.get("unit_price") or item.get("cost_price") or item.get("price", "")
-
-            items_html += f'''
-            <tr>
-                <td><input type="text" name="item_desc[]" class="form-input" value="{safe_string(str(desc))}" style="width:100%;"></td>
-                <td><input type="number" name="item_qty[]" class="form-input" value="{qty}" step="any" style="width:80px;text-align:center;" onchange="calcTotals()"></td>
-                <td><input type="number" name="item_price[]" class="form-input" value="{price}" step="0.01" placeholder="0.00" style="width:120px;text-align:right;" onchange="calcTotals()"></td>
-                <td style="text-align:right;" class="line-total">R 0.00</td>
-            </tr>
-            '''
-
-        suggested_inv = grv.get("supplier_invoice_number", "") or (grv.get("grv_number", "") or "").replace("GRV-", "SINV-")
-
-        content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-            <a href="/grv/{grv_id}" style="color:var(--text-muted);">&#8592; Back to GRV {grv.get("grv_number", "")}</a>
-        </div>
-
-        <div class="card">
-            <h2 style="margin:0 0 5px 0;">&#128196; Create Supplier Invoice from GRV</h2>
-            <p style="color:var(--text-muted);margin:0 0 20px 0;">GRV: {grv.get("grv_number", "")} &mdash; {safe_string(grv.get("supplier_name", ""))}</p>
-
-            <form method="POST">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:20px;">
-                    <div>
-                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Invoice Number (from supplier)</label>
-                        <input type="text" name="invoice_number" class="form-input" value="{safe_string(suggested_inv)}" placeholder="Supplier invoice number" required>
-                    </div>
-                    <div>
-                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Date</label>
-                        <input type="date" name="date" class="form-input" value="{today()}">
-                    </div>
-                </div>
-
-                <h3 style="margin:0 0 10px 0;">Line Items &mdash; Enter/Verify Prices</h3>
-                <table style="width:100%;" id="invoiceTable">
-                    <thead>
-                        <tr>
-                            <th style="text-align:left;">Description</th>
-                            <th style="width:80px;text-align:center;">Qty</th>
-                            <th style="width:120px;text-align:right;">Unit Price</th>
-                            <th style="width:120px;text-align:right;">Total</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {items_html}
-                    </tbody>
-                    <tfoot>
-                        <tr><td colspan="3" style="text-align:right;font-weight:bold;">Subtotal:</td><td style="text-align:right;" id="subtotal">R 0.00</td></tr>
-                        <tr><td colspan="3" style="text-align:right;color:var(--text-muted);">VAT (15%):</td><td style="text-align:right;" id="vat">R 0.00</td></tr>
-                        <tr><td colspan="3" style="text-align:right;font-weight:bold;font-size:18px;">Total:</td><td style="text-align:right;font-weight:bold;font-size:18px;" id="total">R 0.00</td></tr>
-                    </tfoot>
-                </table>
-
-                <div style="display:flex;gap:10px;margin-top:20px;">
-                    <button type="submit" class="btn btn-primary">&#10003; Create Supplier Invoice</button>
-                    <a href="/grv/{grv_id}" class="btn btn-secondary">Cancel</a>
-                </div>
-            </form>
-        </div>
-
-        <script>
-        function calcTotals() {{{{
-            const rows = document.querySelectorAll('#invoiceTable tbody tr');
-            let subtotal = 0;
-            rows.forEach(row => {{{{
-                const qty = parseFloat(row.querySelector('input[name="item_qty[]"]').value) || 0;
-                const price = parseFloat(row.querySelector('input[name="item_price[]"]').value) || 0;
-                const lineTotal = qty * price;
-                subtotal += lineTotal;
-                row.querySelector('.line-total').textContent = 'R ' + lineTotal.toFixed(2);
-            }}}});
-            const vat = subtotal * 0.15;
-            document.getElementById('subtotal').textContent = 'R ' + subtotal.toFixed(2);
-            document.getElementById('vat').textContent = 'R ' + vat.toFixed(2);
-            document.getElementById('total').textContent = 'R ' + (subtotal + vat).toFixed(2);
-        }}}}
-        calcTotals();
-        </script>
-        '''
-
-        return render_page(f"Create Invoice from {grv.get('grv_number', '')}", content, user, "purchases")
-
-    except Exception as e:
-        logger.error(f"[GRV] Create invoice failed: {e}")
-        flash(str(e), "error")
-        return redirect(f"/grv/{grv_id}")
 
 
 @app.route("/pulse")
@@ -36679,8 +36397,7 @@ def api_pulse_data():
         # Cash position
         outstanding_invoices = [inv for inv in invoices if inv.get("status") != "paid"]
         total_owed_to_us = sum(float(inv.get("total", 0) or 0) for inv in outstanding_invoices)
-        _sinv_for_dash = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-        total_we_owe = sum(float(si.get("total", 0) or 0) for si in _sinv_for_dash if si.get("status") != "paid")
+        total_we_owe = sum(float(s.get("balance", 0) or 0) for s in suppliers)
         
         # ── Aging analysis ──
         customer_aging = {}
@@ -37980,41 +37697,24 @@ def report_creditors():
     biz_id = business.get("id") if business else None
     
     suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-    suppliers_by_id = {s.get("id"): s for s in suppliers}
-    suppliers_by_name = {s.get("name", "").lower(): s for s in suppliers}
+    creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
+    creditors = sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)
     
-    # Get all unpaid supplier invoices — this is the SINGLE SOURCE OF TRUTH for creditors
+    # Get all unpaid supplier invoices
     all_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
     unpaid_invoices = [inv for inv in all_invoices if inv.get("status") != "paid"]
     
-    # Build creditors from unpaid invoices (not from suppliers.balance)
-    creditor_totals = {}
-    for inv in unpaid_invoices:
-        sup_id = inv.get("supplier_id", "")
-        sup_name = inv.get("supplier_name", "Unknown")
-        key = sup_id or sup_name
-        if key not in creditor_totals:
-            # Try to find supplier record for contact info
-            sup_record = suppliers_by_id.get(sup_id) or suppliers_by_name.get(sup_name.lower()) or {}
-            creditor_totals[key] = {
-                "id": sup_id,
-                "name": sup_record.get("name", sup_name),
-                "phone": sup_record.get("phone", ""),
-                "total": 0,
-                "invoices": []
-            }
-        creditor_totals[key]["total"] += float(inv.get("total", 0) or inv.get("amount", 0) or 0)
-        creditor_totals[key]["invoices"].append(inv)
-    
-    creditors_list = sorted(creditor_totals.values(), key=lambda x: x["total"], reverse=True)
-    total_owing = sum(c["total"] for c in creditors_list)
+    total_owing = sum(float(s.get("balance", 0)) for s in creditors)
     
     # Build accordion rows
     creditors_html = ""
-    for c in creditors_list:
-        sup_id = c["id"]
-        balance = c["total"]
-        sup_invoices = sorted(c["invoices"], key=lambda x: x.get("date", ""))
+    for s in creditors:
+        sup_id = s.get("id")
+        balance = float(s.get("balance", 0))
+        
+        # Get unpaid invoices for this supplier
+        sup_invoices = [inv for inv in unpaid_invoices if inv.get("supplier_id") == sup_id]
+        sup_invoices = sorted(sup_invoices, key=lambda x: x.get("date", ""))
         
         # Calculate aging for each invoice
         from datetime import datetime
@@ -38055,8 +37755,8 @@ def report_creditors():
         <details style="background:var(--card);border-radius:6px;margin-bottom:4px;" {"open" if balance > 10000 else ""}>
             <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
                 <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                    <span><strong>{safe_string(c.get("name", "-"))}</strong> <span style="color:var(--text-muted);font-size:11px;">({len(sup_invoices)} invoices)</span></span>
-                    <span style="text-align:center;color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
+                    <span><strong>{safe_string(s.get("name", "-"))}</strong> <span style="color:var(--text-muted);font-size:11px;">({len(sup_invoices)} invoices)</span></span>
+                    <span style="text-align:center;color:var(--text-muted);">{safe_string(s.get("phone", ""))}</span>
                     <span style="text-align:right;color:var(--orange);font-weight:bold;">{money(balance)}</span>
                 </div>
             </summary>
@@ -38100,7 +37800,7 @@ def report_creditors():
     
     <div class="stat-card orange" style="margin-bottom:15px;">
         <div class="stat-value">{money(total_owing)}</div>
-        <div class="stat-label">Total Owed to {len(creditors_list)} suppliers</div>
+        <div class="stat-label">Total Owed to {len(creditors)} suppliers</div>
     </div>
     
     {header_row}
@@ -38123,13 +37823,15 @@ def report_creditors_aging():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Get supplier invoices and suppliers (POs are orders, not debt — excluded from aging)
+    # Get ALL sources of supplier debt
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         f_sinv = pool.submit(db.get, "supplier_invoices", {"business_id": biz_id}) if biz_id else None
+        f_po = pool.submit(db.get, "purchase_orders", {"business_id": biz_id}) if biz_id else None
         f_sup = pool.submit(db.get, "suppliers", {"business_id": biz_id}) if biz_id else None
     
     supplier_invoices = (f_sinv.result() if f_sinv else []) or []
+    purchase_orders = (f_po.result() if f_po else []) or []
     suppliers = (f_sup.result() if f_sup else []) or []
     supplier_map = {s.get("id"): s for s in suppliers}
     
@@ -38175,6 +37877,72 @@ def report_creditors_aging():
         
         aging_data[key]["total"] += amount
     
+    # === SOURCE 2: Outstanding purchase orders (sent/partial — not yet invoiced) ===
+    # Track which POs already have a matching supplier invoice to avoid double-counting
+    sinv_po_refs = set()
+    for si in supplier_invoices:
+        _ref = si.get("po_number") or si.get("reference") or ""
+        if _ref:
+            sinv_po_refs.add(_ref.strip().upper())
+    
+    outstanding_pos = [po for po in purchase_orders if po.get("status") in ("sent", "partial")]
+    for po in outstanding_pos:
+        po_num = (po.get("po_number") or "").strip().upper()
+        # Skip if this PO already has a supplier invoice
+        if po_num and po_num in sinv_po_refs:
+            continue
+        
+        supp_id = po.get("supplier_id")
+        supp_name = po.get("supplier_name", "Unknown")
+        key = supp_id or supp_name
+        if not key or key == "Unknown":
+            continue
+        
+        if key not in aging_data:
+            supp = supplier_map.get(supp_id, {}) if supp_id else {}
+            aging_data[key] = {
+                "name": supp.get("name") or supp_name,
+                "current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0
+            }
+        
+        try:
+            po_date = datetime.strptime(po.get("date", today()), "%Y-%m-%d").date()
+        except:
+            po_date = today_date
+        
+        days_old = (today_date - po_date).days
+        amount = float(po.get("total", 0) or 0)
+        
+        if days_old <= 30:
+            aging_data[key]["current"] += amount
+        elif days_old <= 60:
+            aging_data[key]["d30"] += amount
+        elif days_old <= 90:
+            aging_data[key]["d60"] += amount
+        elif days_old <= 120:
+            aging_data[key]["d90"] += amount
+        else:
+            aging_data[key]["d120"] += amount
+        
+        aging_data[key]["total"] += amount
+    
+    # === SOURCE 3: Suppliers with balance > 0 but no invoices/POs in aging ===
+    for s in suppliers:
+        sup_id = s.get("id")
+        name = s.get("name", "")
+        balance = float(s.get("balance", 0) or 0)
+        if balance <= 0:
+            continue
+        key = sup_id or name
+        if not key:
+            continue
+        if key not in aging_data:
+            # Supplier has a balance but no individual invoices — put into current bucket
+            aging_data[key] = {
+                "name": name,
+                "current": balance, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": balance
+            }
+    
     sorted_aging = sorted(aging_data.values(), key=lambda x: x["total"], reverse=True)
     
     totals = {"current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0}
@@ -38219,7 +37987,7 @@ def report_creditors_aging():
                 </tr>
             </thead>
             <tbody>
-                {rows or "<tr><td colspan='7' style='text-align:center;color:var(--text-muted)'>No outstanding creditors</td></tr>"}
+                {rows or "<tr><td colspan='7' style='text-align:center;color:var(--text-muted)'>No outstanding purchases</td></tr>"}
             </tbody>
             <tfoot style="font-weight:bold;background:rgba(255,255,255,0.05);">
                 <tr>
@@ -39299,9 +39067,8 @@ def report_tb():
             if debtors_total > 0:
                 add_account("1200", "Debtors Control", debit=debtors_total)
             
-            # Creditors Control - from unpaid supplier invoices (not suppliers.balance)
-            _sinv_for_tb = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-            creditors_total = sum(float(si.get("total", 0) or 0) for si in _sinv_for_tb if si.get("status") != "paid")
+            # Creditors Control - from supplier balances
+            creditors_total = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
             if creditors_total > 0:
                 add_account("3000", "Creditors Control", credit=creditors_total)
             
@@ -39565,9 +39332,6 @@ def report_tb():
                 content.innerHTML = data.analysis;
                 dateSpan.innerHTML = 'Analyzed: ' + new Date().toLocaleString();
                 
-                // Store insights payload for Q&A chat to use later
-                window._tbInsightsPayload = data.insights_payload || null;
-                
                 // STEP 2: Load Zane's AI insights in BACKGROUND
                 const insightBox = document.getElementById('aiInsightsContent');
                 if (insightBox) {{
@@ -39696,9 +39460,6 @@ def report_tb():
             if (analyzeData.success) {{
                 content.innerHTML = analyzeData.analysis;
                 dateSpan.innerHTML = 'Analyzed: ' + new Date().toLocaleString() + ' (from ' + file.name + ')';
-                
-                // Store insights payload for Q&A chat to use later
-                window._tbInsightsPayload = analyzeData.insights_payload || null;
                 
                 // Async load Zane's insights
                 const insightBox = document.getElementById('aiInsightsContent');
@@ -39911,62 +39672,6 @@ ${{content}}
     if (window.location.search.includes('auto_analyze=1')) {{
         setTimeout(() => analyzeWithZane(), 500);
     }}
-    
-    // ═══════════════════════════════════════════════════════════════
-    // TB Q&A CHAT — Ask Zane follow-up questions about the report
-    // ═══════════════════════════════════════════════════════════════
-    window._tbQaHistory = [];
-    
-    async function tbQaSend() {{
-        const input = document.getElementById('tbQaInput');
-        const chatBox = document.getElementById('tbQaChatHistory');
-        const question = input.value.trim();
-        if (!question) return;
-        
-        // Show user message
-        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
-        input.value = '';
-        
-        // Show thinking indicator
-        const thinkId = 'think_' + Date.now();
-        chatBox.innerHTML += '<div id="' + thinkId + '" style="margin:10px 0;padding:10px 14px;color:var(--text-muted);font-size:13px;"><span class="loading-dots">Zane is thinking</span>...</div>';
-        chatBox.scrollTop = chatBox.scrollHeight;
-        
-        // Get the insights_payload from the last analysis
-        const payload = window._tbInsightsPayload || null;
-        const lang = document.getElementById('reportLang') ? document.getElementById('reportLang').value : 'en';
-        
-        // Add to history
-        window._tbQaHistory.push({{role: 'user', content: question}});
-        
-        try {{
-            const response = await fetch('/api/reports/tb/qa', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{
-                    question: question,
-                    insights_payload: payload,
-                    history: window._tbQaHistory.slice(-10),
-                    lang: lang
-                }})
-            }});
-            
-            const data = await response.json();
-            const thinkEl = document.getElementById(thinkId);
-            
-            if (data.success && data.answer) {{
-                window._tbQaHistory.push({{role: 'assistant', content: data.answer}});
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:14px 16px;border-radius:10px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);font-size:14px;line-height:1.7;"><strong style="color:#10b981;">Zane:</strong><br>' + data.answer + '</div>';
-            }} else {{
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Kon nie antwoord nie: ' + (data.error || 'Unknown error') + '</div>';
-            }}
-        }} catch (err) {{
-            const thinkEl = document.getElementById(thinkId);
-            if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Fout: ' + err.message + '</div>';
-        }}
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }}
-    window.tbQaSend = tbQaSend;
     </script>
     '''
     
@@ -40377,12 +40082,6 @@ def api_tb_analyze():
                 "zane_insight": "Zane's Insight",
                 "loading_insight": "Loading professional insight...",
                 "calculations_by": "All calculations by Python | Figures verified | Generated",
-                "qa_title": "Ask Zane About This Report",
-                "qa_placeholder": "e.g. How would R14M in property change the picture? What should I do about the overdraft?",
-                "qa_send": "Ask",
-                "qa_thinking": "Zane is thinking...",
-                "qa_disclaimer": "AI-Generated Analysis — Not Financial Advice",
-                "qa_disclaimer_text": "This report is generated by artificial intelligence for informational purposes only. It does not constitute financial, tax, legal or accounting advice. No business decisions should be made solely on the basis of this report. Always consult a qualified accountant, tax practitioner or financial advisor before acting on any information presented here. ClickAI and its AI assistant Zane accept no liability for decisions made based on this analysis.",
                 "red_flags": "RED FLAGS",
                 "no_critical": "NO CRITICAL ISSUES",
                 "all_ratios_ok": "All ratios within acceptable limits.",
@@ -40514,12 +40213,6 @@ def api_tb_analyze():
                 "zane_insight": "Zane se Insig",
                 "loading_insight": "Laai professionele insig...",
                 "calculations_by": "Alle berekeninge gedoen deur Python | Syfers geverifieer | Gegenereer",
-                "qa_title": "Vra Zane Oor Hierdie Verslag",
-                "qa_placeholder": "bv. Hoe sal R14M in eiendom die prentjie verander? Wat moet ek doen oor die oortrekking?",
-                "qa_send": "Vra",
-                "qa_thinking": "Zane dink...",
-                "qa_disclaimer": "KI-Gegenereerde Analise — Nie Finansiële Advies Nie",
-                "qa_disclaimer_text": "Hierdie verslag is deur kunsmatige intelligensie gegenereer slegs vir inligtingsdoeleindes. Dit is nie finansiële, belasting-, regs- of rekeningkundige advies nie. Geen besigheidsbesluite moet uitsluitlik op grond van hierdie verslag geneem word nie. Raadpleeg altyd 'n gekwalifiseerde rekenmeester, belastingpraktisyn of finansiële adviseur voordat u op enige inligting hierin vervat optree. ClickAI en sy KI-assistent Zane aanvaar geen aanspreeklikheid vir besluite gebaseer op hierdie analise nie.",
                 "red_flags": "ROOI VLAE",
                 "no_critical": "GEEN KRITIEKE PROBLEME",
                 "all_ratios_ok": "Alle verhoudinge binne aanvaarbare perke.",
@@ -41116,20 +40809,6 @@ def api_tb_analyze():
 <div id="aiInsightsContent" style="min-height:100px;color:rgba(255,255,255,0.9);font-size:14px;line-height:1.7;">
 <p style="color:var(--text-muted);">{L["loading_insight"]}</p>
 </div>
-</div>
-
-<div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.2);border-radius:12px;padding:20px 25px;margin-top:20px;">
-<h3 style="color:#8b5cf6;margin-top:0;margin-bottom:15px;font-size:18px;">💬 {L["qa_title"]}</h3>
-<div id="tbQaChatHistory" style="max-height:400px;overflow-y:auto;margin-bottom:15px;"></div>
-<div style="display:flex;gap:10px;">
-<input type="text" id="tbQaInput" placeholder="{L["qa_placeholder"]}" style="flex:1;padding:12px 16px;border-radius:8px;border:1px solid rgba(139,92,246,0.3);background:rgba(0,0,0,0.2);color:var(--text);font-size:14px;" onkeydown="if(event.key==='Enter')tbQaSend()">
-<button onclick="tbQaSend()" style="padding:12px 24px;border-radius:8px;border:none;background:#8b5cf6;color:white;font-weight:600;cursor:pointer;font-size:14px;white-space:nowrap;">{L["qa_send"]}</button>
-</div>
-</div>
-
-<div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:16px 20px;margin-top:20px;">
-<p style="margin:0 0 8px 0;font-weight:700;color:#f59e0b;font-size:14px;">⚠️ {L["qa_disclaimer"]}</p>
-<p style="margin:0;color:var(--text-muted);font-size:12px;line-height:1.6;">{L["qa_disclaimer_text"]}</p>
 </div>
 
 <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:20px 0;">
@@ -41748,269 +41427,6 @@ RULES: Use EXACT Python figures. Don't question account codes. Write clean HTML 
             
     except Exception as e:
         logger.warning(f"[TB INSIGHTS] Failed: {e}")
-        return jsonify({"success": False, "error": str(e)[:200]})
-
-
-# ═══════════════════════════════════════════════════════════════
-# UNIVERSAL REPORT Q&A — Ask Zane about ANY report
-# ═══════════════════════════════════════════════════════════════
-
-@app.route("/api/reports/qa", methods=["POST"])
-@app.route("/api/reports/tb/qa", methods=["POST"])
-@login_required
-def api_reports_qa():
-    """
-    Universal report Q&A — Ask Zane follow-up questions about any report.
-    Supports: TB, P&L, Balance Sheet, Cash Flow, VAT, Aging, etc.
-    
-    POST body:
-    {
-        "question": "My 2 properties aren't on the books, how would that change the picture?",
-        "report_type": "tb" | "pnl" | "balance_sheet" | "cashflow" | "vat" | "aging",
-        "report_data": { ... summary numbers from the frontend ... },
-        "insights_payload": { ... optional, for TB backward compat ... },
-        "history": [ {role, content}, ... ],
-        "lang": "en" | "af"
-    }
-    """
-    
-    business = Auth.get_current_business()
-    biz_name = business.get("name", "Business") if business else "Business"
-    user = Auth.get_current_user()
-    user_name = user.get("name", "User") if user else "User"
-    
-    try:
-        posted = request.get_json() or {}
-        question = (posted.get("question") or "").strip()
-        if not question:
-            return jsonify({"success": False, "error": "No question provided"})
-        
-        report_type = posted.get("report_type", "tb")
-        report_data = posted.get("report_data") or posted.get("insights_payload") or {}
-        history = posted.get("history") or []
-        lang = posted.get("lang", "en")
-        
-        # ─── Build report context summary ───
-        report_context = ""
-        
-        if report_type == "tb" and report_data:
-            # Trial Balance — use the full insights payload
-            # Safe float conversion (payload values may be strings from JSON)
-            def _f(key, default=0):
-                try:
-                    return float(report_data.get(key, default) or default)
-                except (ValueError, TypeError):
-                    return float(default)
-            
-            _tb_liabilities = _f('current_liabilities') + _f('long_term_liabilities')
-            _tb_vat = _f('vat_position')
-            report_context = f"""TRIAL BALANCE SUMMARY:
-- Debits: R{_f('total_debit'):,.2f} | Credits: R{_f('total_credit'):,.2f}
-- Assets: R{_f('total_assets'):,.2f} (Current R{_f('current_assets'):,.2f}, Fixed R{_f('fixed_assets_net'):,.2f})
-- Bank/Cash: R{_f('bank_cash'):,.2f} | Debtors: R{_f('debtors'):,.2f} | Stock: R{_f('stock'):,.2f}
-- Liabilities: R{_tb_liabilities:,.2f} | Equity: R{_f('total_equity'):,.2f}
-- Sales: R{_f('net_sales'):,.2f} | GP: R{_f('gross_profit'):,.2f} ({report_data.get('gp_margin', 0)}%) | Net: R{_f('net_profit'):,.2f} ({report_data.get('np_margin', 0)}%)
-- Current Ratio: {_f('current_ratio'):,.2f} | Quick: {_f('quick_ratio'):,.2f} | Debt/Equity: {_f('debt_equity'):,.2f}
-- Debtor Days: {_f('debtor_days'):,.0f} | Creditor Days: {_f('creditor_days'):,.0f} | Stock Days: {_f('stock_days'):,.0f}
-- VAT: R{abs(_tb_vat):,.2f} {'PAYABLE' if _tb_vat > 0 else 'REFUND'}"""
-            if report_data.get('accounts_text'):
-                acct_text = str(report_data.get('accounts_text', ''))
-                if len(acct_text) > 3000:
-                    acct_text = acct_text[:3000] + "\n... (truncated)"
-                report_context += f"\n\nDETAILED ACCOUNTS:\n{acct_text}"
-        
-        elif report_type == "pnl" and report_data:
-            report_context = f"""INCOME STATEMENT (P&L) SUMMARY:
-- Period: {report_data.get('period_label', 'Current')}
-- Revenue: R{report_data.get('total_revenue', 0):,.2f} (Invoices: R{report_data.get('invoice_income', 0):,.2f}, Cash/POS: R{report_data.get('sales_income', 0):,.2f})
-- Cost of Sales: R{report_data.get('cost_of_sales', 0):,.2f}
-- Gross Profit: R{report_data.get('gross_profit', 0):,.2f} ({report_data.get('gross_margin', 0):.1f}%)
-- Total Expenses: R{report_data.get('total_expenses', 0):,.2f}
-- Net Profit: R{report_data.get('net_profit', 0):,.2f} ({report_data.get('net_margin', 0):.1f}%)"""
-            if report_data.get('expense_breakdown'):
-                report_context += "\n- Expense Breakdown: " + str(report_data.get('expense_breakdown', ''))
-        
-        elif report_type == "balance_sheet" and report_data:
-            report_context = f"""BALANCE SHEET SUMMARY:
-- Bank: R{report_data.get('bank_balance', 0):,.2f}
-- Debtors: R{report_data.get('total_debtors', 0):,.2f}
-- Stock: R{report_data.get('stock_value', 0):,.2f}
-- VAT Receivable: R{report_data.get('vat_receivable', 0):,.2f}
-- Total Current Assets: R{report_data.get('total_current_assets', 0):,.2f}
-- Total Assets: R{report_data.get('total_assets', 0):,.2f}
-- Creditors: R{report_data.get('total_creditors', 0):,.2f}
-- VAT Payable: R{report_data.get('vat_payable', 0):,.2f}
-- Total Liabilities: R{report_data.get('total_liabilities', 0):,.2f}
-- Retained Earnings: R{report_data.get('retained_earnings', 0):,.2f}
-- Total Equity: R{report_data.get('total_equity', 0):,.2f}
-- Balanced: {'YES' if report_data.get('is_balanced') else 'NO (diff: R' + str(report_data.get('balance_diff', 0)) + ')'}"""
-        
-        elif report_type == "cashflow" and report_data:
-            report_context = f"""CASH FLOW STATEMENT SUMMARY:
-- Period: {report_data.get('period_label', 'Current')}
-- Cash from Debtors: R{report_data.get('cash_from_debtors', 0):,.2f}
-- Cash Sales: R{report_data.get('cash_sales', 0):,.2f}
-- Card Sales: R{report_data.get('card_sales', 0):,.2f}
-- Total Cash In: R{report_data.get('total_cash_in', 0):,.2f}
-- Payments to Suppliers: R{report_data.get('cash_to_creditors', 0):,.2f}
-- Operating Expenses: R{report_data.get('cash_to_expenses', 0):,.2f}
-- Salaries: R{report_data.get('cash_to_employees', 0):,.2f}
-- Total Cash Out: R{report_data.get('total_cash_out', 0):,.2f}
-- Net Operating Cash: R{report_data.get('net_operating', 0):,.2f}"""
-        
-        elif report_type == "vat" and report_data:
-            report_context = f"""VAT REPORT SUMMARY:
-- Period: {report_data.get('period_label', 'Current')}
-- Output VAT (Sales): R{report_data.get('output_vat', 0):,.2f}
-- Input VAT (Purchases): R{report_data.get('input_vat', 0):,.2f}
-- Net VAT: R{report_data.get('net_vat', 0):,.2f} {'PAYABLE' if report_data.get('net_vat', 0) > 0 else 'REFUND'}"""
-        
-        elif report_type == "aging" and report_data:
-            report_context = f"""AGING REPORT SUMMARY:
-- Total Outstanding: R{report_data.get('total_outstanding', 0):,.2f}
-- Current (0-30 days): R{report_data.get('current', 0):,.2f}
-- 30-60 days: R{report_data.get('days_30', 0):,.2f}
-- 60-90 days: R{report_data.get('days_60', 0):,.2f}
-- 90+ days: R{report_data.get('days_90', 0):,.2f}"""
-        
-        else:
-            # Generic — just pass whatever data we got
-            if report_data:
-                report_context = f"REPORT DATA:\n{json.dumps(report_data, indent=2, default=str)[:3000]}"
-            else:
-                report_context = "No report data available — answer from general financial knowledge."
-        
-        # ─── Inject financial advisor RAG knowledge ───
-        fa_knowledge = ""
-        if FINANCIAL_ADVISOR_KNOWLEDGE_LOADED:
-            try:
-                combined_text = question + " " + str(report_data.get('accounts_text', ''))
-                fa_chunks = get_relevant_financial_advisor_knowledge(combined_text, max_chunks=3)
-                if fa_chunks:
-                    fa_knowledge = format_financial_advisor_knowledge(fa_chunks)
-            except Exception:
-                pass
-        
-        # ─── Build the system prompt ───
-        report_type_labels = {
-            "tb": "Trial Balance",
-            "pnl": "Income Statement (P&L)",
-            "balance_sheet": "Balance Sheet",
-            "cashflow": "Cash Flow Statement",
-            "vat": "VAT Report",
-            "aging": "Debtors Aging Report",
-        }
-        report_label = report_type_labels.get(report_type, "Financial Report")
-        
-        if lang == "af":
-            system_prompt = f"""Jy is Zane, ClickAI se senior finansiele adviseur. Jy gesels met {safe_string(user_name)} van {safe_string(biz_name)}.
-
-Hulle het sopas die {report_label} gekyk en wil nou vrae vra.
-
-{report_context}
-{fa_knowledge}
-
-REELS:
-- Antwoord in Afrikaans
-- Gebruik die verslag se werklike syfers in jou antwoord — moenie getalle uitdink nie
-- As die gebruiker scenario's noem (bv. "ek het 2 eiendomme wat nie in die boeke wys nie") — bereken die impak met konkrete syfers
-- Wees prakties en SA-spesifiek (SARS, CGT, VAT reëls)
-- Skryf skoon HTML met <strong> vir klem en <br> vir paragrawe
-- GEEN emojis — ooit
-- Hou antwoorde bondig maar volledig (200-500 woorde)
-- As jy nie seker is nie, sê so — moenie gis nie
-- Jy is 'n vertroulike adviseur, nie 'n robot nie — praat direk en eerlik"""
-        else:
-            system_prompt = f"""You are Zane, ClickAI's senior financial advisor. You are chatting with {safe_string(user_name)} from {safe_string(biz_name)}.
-
-They have just viewed the {report_label} and want to ask questions about it.
-
-{report_context}
-{fa_knowledge}
-
-RULES:
-- Answer in English
-- Use the report's ACTUAL figures in your answer — never invent numbers
-- If the user mentions scenarios (e.g. "I have 2 properties not on the books") — calculate the impact with concrete numbers
-- Be practical and SA-specific (SARS, CGT, VAT rules)
-- Write clean HTML with <strong> for emphasis and <br> for paragraphs
-- NO emojis — ever
-- Keep answers concise but complete (200-500 words)
-- If you're unsure, say so — never guess
-- You are a trusted advisor, not a robot — speak directly and honestly"""
-        
-        # ─── Build messages with history ───
-        messages = []
-        for h in history[-8:]:  # Last 8 messages for context
-            role = h.get("role", "user")
-            content = h.get("content", "")
-            if role in ("user", "assistant") and content:
-                messages.append({"role": role, "content": content[:2000]})
-        
-        # Ensure last message is the current question
-        if not messages or messages[-1].get("content") != question:
-            messages.append({"role": "user", "content": question})
-        
-        # Ensure messages alternate correctly
-        cleaned_messages = []
-        last_role = None
-        for msg in messages:
-            if msg["role"] == last_role:
-                continue  # Skip duplicate roles
-            cleaned_messages.append(msg)
-            last_role = msg["role"]
-        
-        # Must start with user
-        if cleaned_messages and cleaned_messages[0]["role"] != "user":
-            cleaned_messages = cleaned_messages[1:]
-        
-        if not cleaned_messages:
-            cleaned_messages = [{"role": "user", "content": question}]
-        
-        if not ANTHROPIC_API_KEY:
-            return jsonify({"success": False, "error": "No API key configured"})
-        
-        logger.info(f"[REPORT-QA] {report_type} question from {user_name}: {question[:80]}...")
-        
-        client = _anthropic_client
-        message = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4000,
-            system=system_prompt,
-            messages=cleaned_messages
-        )
-        
-        if message.content and message.content[0].text:
-            answer = message.content[0].text
-            
-            import re as _re
-            # Strip raw HTML/body tags
-            answer = _re.sub(r'</?html[^>]*>', '', answer)
-            answer = _re.sub(r'</?body[^>]*>', '', answer)
-            
-            # Clean up markdown-style formatting
-            answer = _re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#a78bfa;">\1</strong>', answer)
-            answer = _re.sub(r'^### (.+)$', r'<h4 style="color:#a78bfa;margin:14px 0 6px 0;font-size:14px;">\1</h4>', answer, flags=_re.MULTILINE)
-            answer = _re.sub(r'^## (.+)$', r'<h3 style="color:#10b981;margin:16px 0 8px 0;font-size:15px;">\1</h3>', answer, flags=_re.MULTILINE)
-            answer = _re.sub(r'^- (.+)$', r'<div style="margin:4px 0 4px 16px;">• \1</div>', answer, flags=_re.MULTILINE)
-            answer = _re.sub(r'^\d+\. (.+)$', r'<div style="margin:4px 0 4px 16px;padding-left:8px;border-left:2px solid rgba(139,92,246,0.3);">\1</div>', answer, flags=_re.MULTILINE)
-            
-            # Paragraph spacing
-            answer = _re.sub(r'\n{3,}', '<br><br>', answer)
-            answer = _re.sub(r'\n\n', '<br><br>', answer)
-            answer = _re.sub(r'(?<!>)\n(?!<)', '<br>', answer)
-            
-            # Strip light backgrounds
-            answer = _re.sub(r'background[-\w]*:\s*#?(?:fff|ffffff|white|fafafa|f5f5f5)[^;"]*;?', '', answer, flags=_re.IGNORECASE)
-            answer = _re.sub(r'color:\s*#?(?:000|000000|333|222|444)[^;"]*;?', 'color:rgba(255,255,255,0.9);', answer, flags=_re.IGNORECASE)
-            
-            logger.info(f"[REPORT-QA] Answer generated: {len(answer)} chars")
-            return jsonify({"success": True, "answer": answer})
-        else:
-            return jsonify({"success": False, "error": "AI returned empty response"})
-    
-    except Exception as e:
-        logger.warning(f"[REPORT-QA] Failed: {e}")
         return jsonify({"success": False, "error": str(e)[:200]})
 
 
@@ -42908,73 +42324,6 @@ def report_pnl():
             </div>
         </div>
     </div>
-    
-    <!-- REPORT Q&A — Ask Zane about this P&L -->
-    <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.2);border-radius:12px;padding:20px 25px;margin-top:20px;">
-    <h3 style="color:#8b5cf6;margin-top:0;margin-bottom:15px;font-size:18px;">Vra Zane Oor Hierdie Verslag</h3>
-    <p style="color:var(--text-muted);font-size:12px;margin-bottom:15px;">Bv. "Hoekom is my marge so laag?" of "Wat as ek R50k meer omset kry?"</p>
-    <div id="reportQaChatHistory" style="max-height:400px;overflow-y:auto;margin-bottom:15px;"></div>
-    <div style="display:flex;gap:10px;">
-    <input type="text" id="reportQaInput" placeholder="Vra Zane oor hierdie Income Statement..." style="flex:1;padding:12px 16px;border-radius:8px;border:1px solid rgba(139,92,246,0.3);background:rgba(0,0,0,0.2);color:var(--text);font-size:14px;" onkeydown="if(event.key==='Enter')reportQaSend()">
-    <button onclick="reportQaSend()" style="padding:12px 24px;border-radius:8px;border:none;background:#8b5cf6;color:white;font-weight:600;cursor:pointer;font-size:14px;white-space:nowrap;">Stuur</button>
-    </div>
-    </div>
-    <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:14px 18px;margin-top:12px;">
-    <p style="margin:0;font-weight:600;color:#f59e0b;font-size:13px;">Disclaimer</p>
-    <p style="margin:4px 0 0 0;color:var(--text-muted);font-size:11px;line-height:1.5;">Zane is 'n AI-adviseur, nie 'n geregistreerde rekenmeester nie. Bevestig belangrike besluite altyd met jou rekenmeester of belastingpraktisyn.</p>
-    </div>
-    '''
-
-    # Build report data JSON for Q&A (outside the f-string to avoid nested issues)
-    _pnl_qa_data = json.dumps({"report_type": "pnl", "period_label": period_label, "total_revenue": total_revenue, "invoice_income": invoice_income, "sales_income": sales_income, "cost_of_sales": cost_of_sales, "gross_profit": gross_profit, "gross_margin": round(gross_margin, 1), "total_expenses": total_expenses, "net_profit": net_profit, "net_margin": round(net_margin, 1), "expense_breakdown": {k: round(v, 2) for k, v in expense_categories.items()}}, default=str)
-    
-    content += f'''
-    <script>
-    window._reportQaHistory = [];
-    window._reportData = {_pnl_qa_data};
-    
-    async function reportQaSend() {{
-        const input = document.getElementById('reportQaInput');
-        const chatBox = document.getElementById('reportQaChatHistory');
-        const question = input.value.trim();
-        if (!question) return;
-        
-        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
-        input.value = '';
-        
-        const thinkId = 'think_' + Date.now();
-        chatBox.innerHTML += '<div id="' + thinkId + '" style="margin:10px 0;padding:10px 14px;color:var(--text-muted);font-size:13px;"><span class="loading-dots">Zane dink</span>...</div>';
-        chatBox.scrollTop = chatBox.scrollHeight;
-        
-        window._reportQaHistory.push({{role: 'user', content: question}});
-        
-        try {{
-            const response = await fetch('/api/reports/qa', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{
-                    question: question,
-                    report_type: window._reportData.report_type,
-                    report_data: window._reportData,
-                    history: window._reportQaHistory.slice(-10),
-                    lang: 'af'
-                }})
-            }});
-            const data = await response.json();
-            const thinkEl = document.getElementById(thinkId);
-            if (data.success && data.answer) {{
-                window._reportQaHistory.push({{role: 'assistant', content: data.answer}});
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:14px 16px;border-radius:10px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);font-size:14px;line-height:1.7;"><strong style="color:#10b981;">Zane:</strong><br>' + data.answer + '</div>';
-            }} else {{
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Kon nie antwoord nie: ' + (data.error || 'Unknown error') + '</div>';
-            }}
-        }} catch (err) {{
-            const thinkEl = document.getElementById(thinkId);
-            if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Fout: ' + err.message + '</div>';
-        }}
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }}
-    </script>
     '''
     
     return render_page("Income Statement", content, user, "reports")
@@ -43035,8 +42384,7 @@ def report_balance_sheet():
     # LIABILITIES
     # Current Liabilities
     suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-    _sinv_for_bs = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-    total_creditors = sum(float(si.get("total", 0) or 0) for si in _sinv_for_bs if si.get("status") != "paid")
+    total_creditors = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
     
     # VAT Payable (output VAT from sales)
     invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
@@ -43176,72 +42524,6 @@ def report_balance_sheet():
             {f'<div style="color:var(--red);margin-top:10px;">Difference: {money(balance_diff)} - Please review entries</div>' if not is_balanced else ''}
         </div>
     </div>
-    
-    <!-- REPORT Q&A — Ask Zane about this Balance Sheet -->
-    <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.2);border-radius:12px;padding:20px 25px;margin-top:20px;">
-    <h3 style="color:#8b5cf6;margin-top:0;margin-bottom:15px;font-size:18px;">Vra Zane Oor Hierdie Verslag</h3>
-    <p style="color:var(--text-muted);font-size:12px;margin-bottom:15px;">Bv. "Ek het 2 eiendomme wat nie in die boeke wys nie" of "Is my working capital genoeg?"</p>
-    <div id="reportQaChatHistory" style="max-height:400px;overflow-y:auto;margin-bottom:15px;"></div>
-    <div style="display:flex;gap:10px;">
-    <input type="text" id="reportQaInput" placeholder="Vra Zane oor hierdie Balance Sheet..." style="flex:1;padding:12px 16px;border-radius:8px;border:1px solid rgba(139,92,246,0.3);background:rgba(0,0,0,0.2);color:var(--text);font-size:14px;" onkeydown="if(event.key==='Enter')reportQaSend()">
-    <button onclick="reportQaSend()" style="padding:12px 24px;border-radius:8px;border:none;background:#8b5cf6;color:white;font-weight:600;cursor:pointer;font-size:14px;white-space:nowrap;">Stuur</button>
-    </div>
-    </div>
-    <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:14px 18px;margin-top:12px;">
-    <p style="margin:0;font-weight:600;color:#f59e0b;font-size:13px;">Disclaimer</p>
-    <p style="margin:4px 0 0 0;color:var(--text-muted);font-size:11px;line-height:1.5;">Zane is 'n AI-adviseur, nie 'n geregistreerde rekenmeester nie. Bevestig belangrike besluite altyd met jou rekenmeester of belastingpraktisyn.</p>
-    </div>
-    '''
-
-    _bs_qa_data = json.dumps({"report_type": "balance_sheet", "bank_balance": bank_balance, "total_debtors": total_debtors, "stock_value": stock_value, "vat_receivable": vat_receivable, "total_current_assets": total_current_assets, "total_assets": total_assets, "total_creditors": total_creditors, "vat_payable": vat_payable, "bank_overdraft": bank_overdraft, "total_current_liabilities": total_current_liabilities, "total_liabilities": total_liabilities, "previous_retained": previous_retained, "net_profit": net_profit, "retained_earnings": retained_earnings, "total_equity": total_equity, "is_balanced": is_balanced, "balance_diff": balance_diff}, default=str)
-    
-    content += f'''
-    <script>
-    window._reportQaHistory = [];
-    window._reportData = {_bs_qa_data};
-    
-    async function reportQaSend() {{
-        const input = document.getElementById('reportQaInput');
-        const chatBox = document.getElementById('reportQaChatHistory');
-        const question = input.value.trim();
-        if (!question) return;
-        
-        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
-        input.value = '';
-        
-        const thinkId = 'think_' + Date.now();
-        chatBox.innerHTML += '<div id="' + thinkId + '" style="margin:10px 0;padding:10px 14px;color:var(--text-muted);font-size:13px;"><span class="loading-dots">Zane dink</span>...</div>';
-        chatBox.scrollTop = chatBox.scrollHeight;
-        
-        window._reportQaHistory.push({{role: 'user', content: question}});
-        
-        try {{
-            const response = await fetch('/api/reports/qa', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{
-                    question: question,
-                    report_type: window._reportData.report_type,
-                    report_data: window._reportData,
-                    history: window._reportQaHistory.slice(-10),
-                    lang: 'af'
-                }})
-            }});
-            const data = await response.json();
-            const thinkEl = document.getElementById(thinkId);
-            if (data.success && data.answer) {{
-                window._reportQaHistory.push({{role: 'assistant', content: data.answer}});
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:14px 16px;border-radius:10px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);font-size:14px;line-height:1.7;"><strong style="color:#10b981;">Zane:</strong><br>' + data.answer + '</div>';
-            }} else {{
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Kon nie antwoord nie: ' + (data.error || 'Unknown error') + '</div>';
-            }}
-        }} catch (err) {{
-            const thinkEl = document.getElementById(thinkId);
-            if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Fout: ' + err.message + '</div>';
-        }}
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }}
-    </script>
     '''
     
     return render_page("Balance Sheet", content, user, "reports")
@@ -44036,10 +43318,7 @@ def purchase_view(po_id):
                 </td>
                 <td style="text-align:center;">
                     <input type="number" name="price_{i}" class="form-input" style="width: 100px; text-align: center;" 
-                           placeholder="0.00" step="0.01" data-price-index="{i}" value="{item.get('price', '')}"
-                           data-original-price="{item.get('price', '')}"
-                           onchange="handlePriceChange(this)"
-                           onfocus="this.select()">
+                           placeholder="0.00" step="0.01" data-price-index="{i}" value="{item.get('price', '')}">
                 </td>
             </tr>
             '''
@@ -44257,33 +43536,7 @@ def purchase_view(po_id):
         document.getElementById(id).style.display = 'none';
     }}
     
-    function handlePriceChange(input) {{
-        const original = parseFloat(input.dataset.originalPrice) || 0;
-        const current = parseFloat(input.value) || 0;
-        if (original > 0 && current !== original) {{
-            input.style.border = '2px solid #ef4444';
-            input.style.background = 'rgba(239,68,68,0.15)';
-            if (!confirm('Are you sure you want to change the unit price from ' + original.toFixed(2) + ' to ' + current.toFixed(2) + '?')) {{
-                input.value = original;
-                input.style.border = '';
-                input.style.background = '';
-            }}
-        }} else {{
-            input.style.border = '';
-            input.style.background = '';
-        }}
-    }}
-    
     async function receiveGoods() {{
-        const supplierInvoiceNum = document.getElementById('supplierInvoiceNum').value.trim();
-        if (!supplierInvoiceNum) {{
-            if (!confirm('⚠️ No Supplier Invoice Number entered!\\n\\nAre you sure you want to continue without a supplier invoice number?')) {{
-                document.getElementById('supplierInvoiceNum').focus();
-                document.getElementById('supplierInvoiceNum').style.border = '2px solid #ef4444';
-                return;
-            }}
-        }}
-        
         const inputs = document.querySelectorAll('#receiveModal input[name^="receive_"]');
         const quantities = {{}};
         const prices = {{}};
@@ -44309,6 +43562,7 @@ def purchase_view(po_id):
         }}
         
         const updateStock = document.getElementById('updateStock').checked;
+        const supplierInvoiceNum = document.getElementById('supplierInvoiceNum').value.trim();
         const receiveDate = document.getElementById('receiveDate').value;
         const grvSupplierName = document.getElementById('grvSupplierName').value.trim();
         
@@ -45153,7 +44407,7 @@ def api_po_receive(po_id):
                 log_allocation(
                     business_id=biz_id, allocation_type="grv", source_table="goods_received", source_id=grv_id,
                     description=f"GRV {grv_num} from PO {po.get('po_number','')} - {safe_string(po.get('supplier_name',''))}",
-                    amount=grv_total, stock_movements=_sm,
+                    amount=0, stock_movements=_sm,
                     supplier_name=po.get("supplier_name", ""), reference=grv_num,
                     transaction_date=today(),
                     created_by=user.get("id") if user else "", created_by_name=user.get("name","") if user else "",
@@ -45196,17 +44450,6 @@ def api_po_create_invoice(po_id):
             
             if not inv_number:
                 inv_number = po.get("po_number", "").replace("PO", "SI").replace("po", "si")
-            
-            # Check if a supplier invoice already exists for this PO
-            all_sinv = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
-            po_num = po.get("po_number", "")
-            for _si in all_sinv:
-                _notes = str(_si.get("notes", ""))
-                _ref = str(_si.get("reference", ""))
-                _po_ref = str(_si.get("po_number", ""))
-                if (po_num and po_num in _notes) or (po_num and po_num in _ref) or (po_num and po_num == _po_ref):
-                    flash(f"⚠️ A supplier invoice ({_si.get('invoice_number', '?')}) already exists for {po_num}. Cannot create duplicate.", "error")
-                    return redirect(f"/purchase/{po_id}")
             
             existing = db.get("supplier_invoices", {"business_id": biz_id, "invoice_number": inv_number})
             if existing:
@@ -45697,72 +44940,6 @@ def report_cashflow():
             </div>
         </div>
     </div>
-    
-    <!-- REPORT Q&A — Ask Zane about this Cash Flow -->
-    <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.2);border-radius:12px;padding:20px 25px;margin-top:20px;">
-    <h3 style="color:#8b5cf6;margin-top:0;margin-bottom:15px;font-size:18px;">Vra Zane Oor Hierdie Verslag</h3>
-    <p style="color:var(--text-muted);font-size:12px;margin-bottom:15px;">Bv. "Hoekom is my cash flow negatief?" of "Hoe kan ek meer cash inbring?"</p>
-    <div id="reportQaChatHistory" style="max-height:400px;overflow-y:auto;margin-bottom:15px;"></div>
-    <div style="display:flex;gap:10px;">
-    <input type="text" id="reportQaInput" placeholder="Vra Zane oor hierdie Cash Flow..." style="flex:1;padding:12px 16px;border-radius:8px;border:1px solid rgba(139,92,246,0.3);background:rgba(0,0,0,0.2);color:var(--text);font-size:14px;" onkeydown="if(event.key==='Enter')reportQaSend()">
-    <button onclick="reportQaSend()" style="padding:12px 24px;border-radius:8px;border:none;background:#8b5cf6;color:white;font-weight:600;cursor:pointer;font-size:14px;white-space:nowrap;">Stuur</button>
-    </div>
-    </div>
-    <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:14px 18px;margin-top:12px;">
-    <p style="margin:0;font-weight:600;color:#f59e0b;font-size:13px;">Disclaimer</p>
-    <p style="margin:4px 0 0 0;color:var(--text-muted);font-size:11px;line-height:1.5;">Zane is 'n AI-adviseur, nie 'n geregistreerde rekenmeester nie. Bevestig belangrike besluite altyd met jou rekenmeester of belastingpraktisyn.</p>
-    </div>
-    '''
-
-    _cf_qa_data = json.dumps({"report_type": "cashflow", "period_label": period_label, "cash_from_debtors": cash_from_debtors, "cash_sales": cash_sales, "card_sales": card_sales, "total_cash_in": total_cash_in, "cash_to_creditors": cash_to_creditors, "cash_to_expenses": cash_to_expenses, "cash_to_employees": cash_to_employees, "total_cash_out": total_cash_out, "net_operating": net_operating}, default=str)
-    
-    content += f'''
-    <script>
-    window._reportQaHistory = [];
-    window._reportData = {_cf_qa_data};
-    
-    async function reportQaSend() {{
-        const input = document.getElementById('reportQaInput');
-        const chatBox = document.getElementById('reportQaChatHistory');
-        const question = input.value.trim();
-        if (!question) return;
-        
-        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
-        input.value = '';
-        
-        const thinkId = 'think_' + Date.now();
-        chatBox.innerHTML += '<div id="' + thinkId + '" style="margin:10px 0;padding:10px 14px;color:var(--text-muted);font-size:13px;"><span class="loading-dots">Zane dink</span>...</div>';
-        chatBox.scrollTop = chatBox.scrollHeight;
-        
-        window._reportQaHistory.push({{role: 'user', content: question}});
-        
-        try {{
-            const response = await fetch('/api/reports/qa', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{
-                    question: question,
-                    report_type: window._reportData.report_type,
-                    report_data: window._reportData,
-                    history: window._reportQaHistory.slice(-10),
-                    lang: 'af'
-                }})
-            }});
-            const data = await response.json();
-            const thinkEl = document.getElementById(thinkId);
-            if (data.success && data.answer) {{
-                window._reportQaHistory.push({{role: 'assistant', content: data.answer}});
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:14px 16px;border-radius:10px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);font-size:14px;line-height:1.7;"><strong style="color:#10b981;">Zane:</strong><br>' + data.answer + '</div>';
-            }} else {{
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Kon nie antwoord nie: ' + (data.error || 'Unknown error') + '</div>';
-            }}
-        }} catch (err) {{
-            const thinkEl = document.getElementById(thinkId);
-            if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Fout: ' + err.message + '</div>';
-        }}
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }}
-    </script>
     '''
     
     return render_page("Cash Flow", content, user, "reports")
@@ -46169,7 +45346,7 @@ ${content}
             // Fire async insights fetch for TB analysis (after DOM has the placeholder)
             if (window._tbInsightsPayload) {
                 const _payload = window._tbInsightsPayload;
-                // NOTE: Do NOT null _tbInsightsPayload here — the Q&A chat needs it later
+                window._tbInsightsPayload = null;
                 setTimeout(() => {
                     const insightBox = document.getElementById('aiInsightsContent');
                     if (insightBox) {
@@ -46198,60 +45375,6 @@ ${content}
             alert('Error generating report: ' + e.message);
         }
     }
-    
-    // ═══════════════════════════════════════════════════════════════
-    // TB Q&A CHAT — works for any TB analyzed on this page
-    // ═══════════════════════════════════════════════════════════════
-    window._tbQaHistory = window._tbQaHistory || [];
-    
-    async function tbQaSend() {
-        const input = document.getElementById('tbQaInput');
-        const chatBox = document.getElementById('tbQaChatHistory');
-        if (!input || !chatBox) { console.warn('Q&A elements not found'); return; }
-        const question = input.value.trim();
-        if (!question) return;
-        
-        chatBox.innerHTML += '<div style="margin:10px 0;padding:10px 14px;border-radius:10px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.25);font-size:14px;"><strong style="color:#a78bfa;">Jy:</strong> ' + question.replaceAll('<', '&lt;') + '</div>';
-        input.value = '';
-        
-        const thinkId = 'think_' + Date.now();
-        chatBox.innerHTML += '<div id="' + thinkId + '" style="margin:10px 0;padding:10px 14px;color:var(--text-muted);font-size:13px;"><span class="loading-dots">Zane is thinking</span>...</div>';
-        chatBox.scrollTop = chatBox.scrollHeight;
-        
-        const payload = window._tbInsightsPayload || null;
-        const langEl = document.getElementById('reportLang') || document.getElementById('smartLang');
-        const lang = langEl ? langEl.value : 'en';
-        
-        window._tbQaHistory.push({role: 'user', content: question});
-        
-        try {
-            const response = await fetch('/api/reports/qa', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    question: question,
-                    report_type: 'tb',
-                    report_data: payload,
-                    insights_payload: payload,
-                    history: window._tbQaHistory.slice(-10),
-                    lang: lang
-                })
-            });
-            const data = await response.json();
-            const thinkEl = document.getElementById(thinkId);
-            if (data.success && data.answer) {
-                window._tbQaHistory.push({role: 'assistant', content: data.answer});
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:14px 16px;border-radius:10px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);font-size:14px;line-height:1.7;"><strong style="color:#10b981;">Zane:</strong><br>' + data.answer + '</div>';
-            } else {
-                if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Kon nie antwoord nie: ' + (data.error || 'Unknown error') + '</div>';
-            }
-        } catch (err) {
-            const thinkEl = document.getElementById(thinkId);
-            if (thinkEl) thinkEl.outerHTML = '<div style="margin:10px 0;padding:10px 14px;color:#f97316;font-size:13px;">Fout: ' + err.message + '</div>';
-        }
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }
-    window.tbQaSend = tbQaSend;
     </script>
     '''
     
@@ -69474,7 +68597,7 @@ def coil_calculator():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if not _is_owner_business(biz_name):
+    if "fulltech" not in biz_name:
         return redirect("/tools")
     
     result_html = ""
@@ -69679,7 +68802,7 @@ def tube_prices():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if not _is_owner_business(biz_name):
+    if "fulltech" not in biz_name:
         return redirect("/tools")
     
     result_html = ""
@@ -69930,7 +69053,7 @@ def sheet_pieces():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if not _is_owner_business(biz_name):
+    if "fulltech" not in biz_name:
         return redirect("/tools")
     
     # Load custom prices from business settings
@@ -70104,7 +69227,7 @@ def smart_quote():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if not _is_owner_business(biz_name):
+    if "fulltech" not in biz_name:
         return redirect("/tools")
     
     # Handle AJAX price calculation
@@ -70859,7 +69982,7 @@ def price_editor():
     
     # Fulltech only
     biz_name = (business.get("name", "") if business else "").lower()
-    if not _is_owner_business(biz_name):
+    if "fulltech" not in biz_name:
         return redirect("/tools")
     
     # Handle price updates via AJAX
@@ -71112,7 +70235,7 @@ def tools_page():
     # Fulltech tools - only show for Fulltech business
     fulltech_tools = ""
     biz_name = (business.get("name", "") if business else "").lower()
-    is_fulltech = _is_owner_business(biz_name)
+    is_fulltech = "fulltech" in biz_name
     
     if is_fulltech and FULLTECH_ENABLED:
         fulltech_tools = '''
