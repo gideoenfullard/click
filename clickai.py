@@ -39142,6 +39142,38 @@ def _report_gl_inner(user, biz_id):
         all_accounts_list = db.get("accounts", {"business_id": biz_id}) or []
         acc_name_map = {a.get("code"): a.get("name", f"Account {a.get('code')}") for a in all_accounts_list}
         
+        # Enrich name map from chart_of_accounts (Sage import has proper names)
+        if coa:
+            for acc in coa:
+                c = str(acc.get("account_code", "") or acc.get("code", "")).strip()
+                n = acc.get("account_name", "") or acc.get("name", "")
+                if c and n and c not in acc_name_map:
+                    acc_name_map[c] = n
+        
+        # Fallback: ClickAI default code → friendly name (so "1200" shows "Debtors Control" not "Account 1200")
+        _default_names = {
+            "1000": "Bank", "1050": "Cash On Hand", "1100": "Petty Cash",
+            "1200": "Debtors Control", "1300": "Stock", "1400": "VAT Input",
+            "1500": "Equipment", "1600": "Vehicles", "1700": "Accumulated Depreciation",
+            "2000": "Creditors Control", "2100": "VAT Output", "2200": "PAYE Payable",
+            "2300": "UIF Payable", "2400": "Loan",
+            "3000": "Capital", "3100": "Retained Earnings", "3200": "Drawings",
+            "4000": "Sales", "4001": "Sales - Other", "4002": "Sales - Services",
+            "4003": "Sales - Misc", "4100": "Service Revenue",
+            "4200": "Interest Received", "4300": "Discount Received",
+            "4400": "Salaries & Wages",
+            "5000": "Cost of Goods Sold", "5001": "Purchases - Direct", "5002": "Purchases - Other",
+            "5100": "Purchases", "5200": "Carriage Inward",
+            "6000": "Salaries & Wages", "6100": "Rent", "6200": "Electricity & Water",
+            "6300": "Telephone & Internet", "6400": "Insurance", "6500": "Fuel",
+            "6600": "Repairs & Maintenance", "6700": "Bank Charges",
+            "6800": "Advertising", "6900": "Depreciation", "7000": "General Expenses",
+            "7050": "Cash Short/Over",
+        }
+        for code, name in _default_names.items():
+            if code not in acc_name_map:
+                acc_name_map[code] = name
+        
         # Group journals by account_code
         journal_by_acc = {}
         for jl in all_journals_gl:
@@ -39337,9 +39369,27 @@ def report_tb():
     # created by create_journal_entry() throughout the system
     # ═══════════════════════════════════════════════════════════════
     all_journals = db.get("journals", {"business_id": biz_id}) or []
-    # Get account names from accounts table
+    # Get account names from accounts table + chart_of_accounts + defaults
     all_accounts = db.get("accounts", {"business_id": biz_id}) or []
     account_names = {a.get("code"): a.get("name", f"Account {a.get('code')}") for a in all_accounts}
+    # Enrich from chart_of_accounts (Sage imported names)
+    for acc in (db.get("chart_of_accounts", {"business_id": biz_id}) or []):
+        c = str(acc.get("account_code", "") or acc.get("code", "")).strip()
+        n = acc.get("account_name", "") or acc.get("name", "")
+        if c and n and c not in account_names:
+            account_names[c] = n
+    # Fallback default names for unmigrated ClickAI codes
+    _dflt = {"1000": "Bank", "1050": "Cash On Hand", "1100": "Petty Cash",
+             "1200": "Debtors Control", "1300": "Stock", "1400": "VAT Input",
+             "2000": "Creditors Control", "2100": "VAT Output",
+             "3200": "Drawings", "4000": "Sales", "4001": "Sales - Other",
+             "4002": "Sales - Services", "4003": "Sales - Misc",
+             "4400": "Salaries & Wages", "5000": "Cost of Goods Sold",
+             "5002": "Purchases - Other", "5100": "Purchases",
+             "6000": "Salaries & Wages", "7050": "Cash Short/Over"}
+    for c, n in _dflt.items():
+        if c not in account_names:
+            account_names[c] = n
     
     if all_journals:
         logger.info(f"[TB] Processing {len(all_journals)} GL journal lines into TB")
@@ -55200,10 +55250,17 @@ Return ONLY the JSON, nothing else."""
                         row_data['debit'] = bal if bal > 0 else 0
                         row_data['credit'] = abs(bal) if bal < 0 else 0
                     
-                    # Skip "System Account" summary rows (keep only "Account Balance" detail rows)
+                    # Skip "System Account" summary rows UNLESS they are key accounts
+                    # (Trade Receivables, Trade Payables, VAT accounts are often System Accounts in Sage
+                    #  but are critical for the GL map to find debtors/creditors/vat codes)
                     source = str(row_data.get('source', '')).strip()
                     if source == 'System Account':
-                        continue  # Skip totals, only import individual accounts
+                        sa_name = str(row_data.get('account_name', '')).lower()
+                        _keep_keywords = ['receivable', 'payable', 'debtor', 'creditor',
+                                          'vat input', 'vat output', 'input vat', 'output vat',
+                                          'vat control', 'tax control', 'taxation']
+                        if not any(kw in sa_name for kw in _keep_keywords):
+                            continue  # Skip totals/summaries, only keep key system accounts
                     
                     # Skip empty/total rows (last row has no name, just totals)
                     if not row_data.get('account_name'):
@@ -78312,6 +78369,21 @@ def api_gl_migrate():
         default_code = CLICKAI_DEFAULTS.get(role)
         if default_code and default_code != sage_code:
             migration_map[default_code] = {"new_code": sage_code, "role": role}
+    
+    # Manual mappings for codes NOT in CLICKAI_DEFAULTS but clearly belong to a Sage range
+    # e.g. "4400" was used for salaries before migration, Sage uses "4400/000"
+    _manual_extras = {
+        "4400": ("4400/000", "salaries_manual"),
+        "4001": ("4000", "sales_other"),
+        "4002": ("4000", "sales_services"),
+        "4003": ("4000", "sales_misc"),
+        "5002": ("5100", "purchases_other"),
+    }
+    # Only add if the target code actually exists in COA (validate)
+    coa_codes = set(str(a.get("account_code", "") or a.get("code", "")).strip() for a in coa)
+    for old_code, (new_code, role_label) in _manual_extras.items():
+        if old_code not in migration_map and new_code in coa_codes:
+            migration_map[old_code] = {"new_code": new_code, "role": role_label}
     
     if not migration_map:
         return jsonify({"message": "Nothing to migrate — COA codes match ClickAI defaults.", "gl_map": gl_map})
