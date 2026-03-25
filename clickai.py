@@ -38998,6 +38998,67 @@ def _report_gl_inner(user, biz_id):
             </details>
             '''
     
+    # ═══════════════════════════════════════════════════════════════
+    # MERGE ALL GL JOURNALS (from create_journal_entry throughout system)
+    # This includes: stock adjustments, GRVs, PO receives, banking,
+    # payments, payroll, invoice GL entries, etc.
+    # ═══════════════════════════════════════════════════════════════
+    all_journals_gl = db.get("journals", {"business_id": biz_id}) or []
+    if all_journals_gl:
+        logger.info(f"[GL] Merging {len(all_journals_gl)} journal lines into GL report")
+        all_accounts_list = db.get("accounts", {"business_id": biz_id}) or []
+        acc_name_map = {a.get("code"): a.get("name", f"Account {a.get('code')}") for a in all_accounts_list}
+        
+        # Group journals by account_code
+        journal_by_acc = {}
+        for jl in all_journals_gl:
+            try:
+                acc_code = jl.get("account_code", "")
+                if not acc_code:
+                    continue
+                debit = float(jl.get("debit", 0) or 0)
+                credit = float(jl.get("credit", 0) or 0)
+                if debit == 0 and credit == 0:
+                    continue
+                if acc_code not in journal_by_acc:
+                    journal_by_acc[acc_code] = []
+                journal_by_acc[acc_code].append({
+                    "date": jl.get("date", "-"),
+                    "description": jl.get("description", "-"),
+                    "ref": jl.get("reference", "-"),
+                    "debit": debit,
+                    "credit": credit
+                })
+            except:
+                pass
+        
+        for code in sorted(journal_by_acc.keys()):
+            entries = sorted(journal_by_acc[code], key=lambda x: x.get("date", ""), reverse=True)
+            td = sum(e.get("debit", 0) for e in entries)
+            tc = sum(e.get("credit", 0) for e in entries)
+            acc_name = acc_name_map.get(code, f"Account {code}")
+            total_debit_all += td
+            total_credit_all += tc
+            trans_rows = ""
+            for e in entries:
+                dr_display = money(e["debit"]) if e.get("debit") else "-"
+                cr_display = money(e["credit"]) if e.get("credit") else "-"
+                trans_rows += f'<tr><td>{e.get("date","-")}</td><td>{safe_string(e.get("description","-"))}</td><td>{safe_string(e.get("ref","-"))}</td><td style="text-align:right;color:var(--green);">{dr_display}</td><td style="text-align:right;color:var(--red);">{cr_display}</td></tr>'
+            accounts_html += f'''
+            <details style="background:var(--card);border-radius:6px;margin-bottom:4px;">
+                <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
+                    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
+                        <span><strong>{code}</strong> - {safe_string(acc_name)} <span style="color:var(--text-muted);font-size:11px;">(GL Journals: {len(entries)})</span></span>
+                        <span style="text-align:right;color:var(--green);">{money(td)}</span>
+                        <span style="text-align:right;color:var(--red);">{money(tc)}</span>
+                    </div>
+                </summary>
+                <div style="padding:0 10px 8px 10px;">
+                    <table class="table" style="font-size:11px;"><thead><tr><th>Date</th><th>Description</th><th>Ref</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th></tr></thead><tbody>{trans_rows}</tbody></table>
+                </div>
+            </details>
+            '''
+    
     if not accounts_html:
         accounts_html = '<div class="card" style="text-align:center;padding:40px;"><p>No accounts found. Import your Chart of Accounts or create transactions.</p></div>'
     
