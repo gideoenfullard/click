@@ -6170,18 +6170,11 @@ class ZaneToolHandler:
             else:
                 sa["days_90_plus"] += amount
         
-        # === SOURCE 2: Suppliers with balance but no invoices ===
+        # === SOURCE 2: Enrich with supplier contact info (phone) — no balance addition ===
         for s in suppliers:
             name = s.get("name", "")
-            balance = float(s.get("balance", 0) or 0)
-            if balance > 0:
-                if name in supplier_aging:
-                    supplier_aging[name]["phone"] = s.get("phone", "")
-                else:
-                    supplier_aging[name] = {
-                        "name": name, "phone": s.get("phone", ""),
-                        "total": balance, "current": balance, "days_30": 0, "days_60": 0, "days_90_plus": 0
-                    }
+            if name in supplier_aging:
+                supplier_aging[name]["phone"] = s.get("phone", "")
         
         creditors = list(supplier_aging.values())
         creditors.sort(key=lambda x: x["total"], reverse=True)
@@ -13178,8 +13171,9 @@ class Context:
         # Debtors (from same customer load)
         total_debtors = sum(float(c.get("balance", 0) or 0) for c in customers if float(c.get("balance", 0) or 0) > 0)
         
-        # Creditors
-        total_creditors = sum(float(s.get("balance", 0) or 0) for s in suppliers if float(s.get("balance", 0) or 0) > 0)
+        # Creditors — from unpaid supplier invoices
+        _sinv_for_pulse = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+        total_creditors = sum(float(si.get("total", 0) or 0) for si in _sinv_for_pulse if si.get("status") != "paid")
         
         # Sales
         today_str = today()
@@ -13380,7 +13374,9 @@ class Context:
         total_debtors = sum(float(c.get("balance", 0) or 0) for c in debtors)
         
         creditors = [s for s in suppliers if float(s.get("balance", 0) or 0) > 0]
-        total_creditors = sum(float(s.get("balance", 0) or 0) for s in creditors)
+        _sinv_for_pulse2 = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+        _unpaid_sinv = [si for si in _sinv_for_pulse2 if si.get("status") != "paid"]
+        total_creditors = sum(float(si.get("total", 0) or 0) for si in _unpaid_sinv)
         
         today_sales = sum(float(s.get("total", 0) or 0) for s in sales if s.get("date") == today())
         total_sales = sum(float(s.get("total", 0) or 0) for s in sales)
@@ -13400,8 +13396,14 @@ class Context:
         # Summaries for reports (compact, not full records)
         customers_summary = [{"name": c.get("name"), "balance": c.get("balance", 0), "phone": c.get("phone", "")} 
                             for c in sorted(debtors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
-        suppliers_summary = [{"name": s.get("name"), "balance": s.get("balance", 0), "phone": s.get("phone", "")} 
-                            for s in sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)]
+        suppliers_summary = []
+        _sinv_by_supplier = {}
+        for si in _unpaid_sinv:
+            sname = si.get("supplier_name", "Unknown")
+            _sinv_by_supplier[sname] = _sinv_by_supplier.get(sname, 0) + float(si.get("total", 0) or 0)
+        for sname, sbal in sorted(_sinv_by_supplier.items(), key=lambda x: -x[1]):
+            _sup_rec = next((s for s in suppliers if s.get("name", "").lower() == sname.lower()), {})
+            suppliers_summary.append({"name": sname, "balance": sbal, "phone": _sup_rec.get("phone", "")})
         
         return {
             "business_id": biz_id,
@@ -30626,13 +30628,24 @@ def suppliers_page():
         suppliers = []
     
     total_suppliers = len(suppliers)
-    creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
-    total_owed = sum(float(s.get("balance", 0)) for s in creditors) if can_see_balances else 0
+    
+    # Calculate real balances from unpaid supplier invoices (not suppliers.balance)
+    _sinv_for_suplist = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+    _sup_real_balances = {}
+    for si in _sinv_for_suplist:
+        if si.get("status") == "paid":
+            continue
+        sid = si.get("supplier_id", "")
+        _sup_real_balances[sid] = _sup_real_balances.get(sid, 0) + float(si.get("total", 0) or 0)
+    
+    total_owed = sum(_sup_real_balances.values()) if can_see_balances else 0
+    creditors_count = len([v for v in _sup_real_balances.values() if v > 0])
     
     # Build rows - COMPACT VIEW (details on View page)
     suppliers_html = ""
     for s in suppliers:
-        balance = float(s.get("balance", 0) or 0)
+        sup_id = s.get("id")
+        balance = _sup_real_balances.get(sup_id, 0)
         balance_color = "var(--orange)" if balance > 0 else "var(--green)" if balance < 0 else "var(--text-muted)"
         balance_display = money(balance) if can_see_balances else "---"
         sup_id = s.get("id")
@@ -30674,7 +30687,7 @@ def suppliers_page():
     if total_owed > 0 and can_see_balances:
         summary_html = f'''
         <div style="background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.3); padding:10px 15px; border-radius: 8px; margin-bottom: 15px;font-size:13px;">
-            <strong>{len(creditors)} suppliers</strong> - we owe a total of <strong style="color: var(--orange);">{money(total_owed)}</strong>
+            <strong>{creditors_count} suppliers</strong> - we owe a total of <strong style="color: var(--orange);">{money(total_owed)}</strong>
         </div>
         '''
     
@@ -30741,11 +30754,16 @@ def suppliers_page():
     
     # -- JARVIS: Suppliers HUD header --
     if has_reactor_hud():
-        _with_bal = len(creditors)
-        _in_credit = len([s for s in suppliers if float(s.get("balance", 0) or 0) < 0])
+        _with_bal = creditors_count
+        _in_credit = 0  # Credit balances not tracked via invoices
         _j_alert = ""
         if _with_bal > 5 and can_see_balances:
-            _top3 = ", ".join([f"{safe(s.get('name','-')[:20])} ({money(float(s.get('balance',0)))})" for s in sorted(creditors, key=lambda x: -float(x.get('balance',0)))[:3]])
+            _top3_items = sorted(_sup_real_balances.items(), key=lambda x: -x[1])[:3]
+            _top3_names = []
+            for _sid, _sbal in _top3_items:
+                _srec = next((s for s in suppliers if s.get("id") == _sid), {})
+                _top3_names.append(f"{safe_string(_srec.get('name','-')[:20])} ({money(_sbal)})")
+            _top3 = ", ".join(_top3_names)
             _j_alert = f'<div class="j-ticker"><b>&#9888; CREDITORS</b><span class="jt-msg">{_with_bal} suppliers with balance &mdash; {_top3}</span><a href="/supplier-invoices" class="jt-act">VIEW INVOICES &rarr;</a></div>'
         
         _hud = jarvis_hud_header(
@@ -30948,7 +30966,7 @@ def supplier_view(supplier_id):
     scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
     scanned_docs = sorted(scanned_docs, key=lambda x: x.get("created_at", ""), reverse=True)
     
-    balance = float(supplier.get("balance", 0)) if can_see_balances else 0
+    balance = sum(float(si.get("total", 0) or 0) for si in supplier_invoices if si.get("status") != "paid") if can_see_balances else 0
     
     # Stats - only if can see balances
     total_billed = sum(float(e.get("total", e.get("amount", 0))) for e in expenses) if can_see_balances else 0
@@ -36661,7 +36679,8 @@ def api_pulse_data():
         # Cash position
         outstanding_invoices = [inv for inv in invoices if inv.get("status") != "paid"]
         total_owed_to_us = sum(float(inv.get("total", 0) or 0) for inv in outstanding_invoices)
-        total_we_owe = sum(float(s.get("balance", 0) or 0) for s in suppliers)
+        _sinv_for_dash = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+        total_we_owe = sum(float(si.get("total", 0) or 0) for si in _sinv_for_dash if si.get("status") != "paid")
         
         # ── Aging analysis ──
         customer_aging = {}
@@ -37961,24 +37980,41 @@ def report_creditors():
     biz_id = business.get("id") if business else None
     
     suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-    creditors = [s for s in suppliers if float(s.get("balance", 0)) > 0]
-    creditors = sorted(creditors, key=lambda x: float(x.get("balance", 0)), reverse=True)
+    suppliers_by_id = {s.get("id"): s for s in suppliers}
+    suppliers_by_name = {s.get("name", "").lower(): s for s in suppliers}
     
-    # Get all unpaid supplier invoices
+    # Get all unpaid supplier invoices — this is the SINGLE SOURCE OF TRUTH for creditors
     all_invoices = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
     unpaid_invoices = [inv for inv in all_invoices if inv.get("status") != "paid"]
     
-    total_owing = sum(float(s.get("balance", 0)) for s in creditors)
+    # Build creditors from unpaid invoices (not from suppliers.balance)
+    creditor_totals = {}
+    for inv in unpaid_invoices:
+        sup_id = inv.get("supplier_id", "")
+        sup_name = inv.get("supplier_name", "Unknown")
+        key = sup_id or sup_name
+        if key not in creditor_totals:
+            # Try to find supplier record for contact info
+            sup_record = suppliers_by_id.get(sup_id) or suppliers_by_name.get(sup_name.lower()) or {}
+            creditor_totals[key] = {
+                "id": sup_id,
+                "name": sup_record.get("name", sup_name),
+                "phone": sup_record.get("phone", ""),
+                "total": 0,
+                "invoices": []
+            }
+        creditor_totals[key]["total"] += float(inv.get("total", 0) or inv.get("amount", 0) or 0)
+        creditor_totals[key]["invoices"].append(inv)
+    
+    creditors_list = sorted(creditor_totals.values(), key=lambda x: x["total"], reverse=True)
+    total_owing = sum(c["total"] for c in creditors_list)
     
     # Build accordion rows
     creditors_html = ""
-    for s in creditors:
-        sup_id = s.get("id")
-        balance = float(s.get("balance", 0))
-        
-        # Get unpaid invoices for this supplier
-        sup_invoices = [inv for inv in unpaid_invoices if inv.get("supplier_id") == sup_id]
-        sup_invoices = sorted(sup_invoices, key=lambda x: x.get("date", ""))
+    for c in creditors_list:
+        sup_id = c["id"]
+        balance = c["total"]
+        sup_invoices = sorted(c["invoices"], key=lambda x: x.get("date", ""))
         
         # Calculate aging for each invoice
         from datetime import datetime
@@ -38019,8 +38055,8 @@ def report_creditors():
         <details style="background:var(--card);border-radius:6px;margin-bottom:4px;" {"open" if balance > 10000 else ""}>
             <summary style="cursor:pointer;padding:8px 12px;list-style:none;">
                 <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;">
-                    <span><strong>{safe_string(s.get("name", "-"))}</strong> <span style="color:var(--text-muted);font-size:11px;">({len(sup_invoices)} invoices)</span></span>
-                    <span style="text-align:center;color:var(--text-muted);">{safe_string(s.get("phone", ""))}</span>
+                    <span><strong>{safe_string(c.get("name", "-"))}</strong> <span style="color:var(--text-muted);font-size:11px;">({len(sup_invoices)} invoices)</span></span>
+                    <span style="text-align:center;color:var(--text-muted);">{safe_string(c.get("phone", ""))}</span>
                     <span style="text-align:right;color:var(--orange);font-weight:bold;">{money(balance)}</span>
                 </div>
             </summary>
@@ -38064,7 +38100,7 @@ def report_creditors():
     
     <div class="stat-card orange" style="margin-bottom:15px;">
         <div class="stat-value">{money(total_owing)}</div>
-        <div class="stat-label">Total Owed to {len(creditors)} suppliers</div>
+        <div class="stat-label">Total Owed to {len(creditors_list)} suppliers</div>
     </div>
     
     {header_row}
@@ -38138,23 +38174,6 @@ def report_creditors_aging():
             aging_data[key]["d120"] += amount
         
         aging_data[key]["total"] += amount
-    
-    # === SOURCE 2: Suppliers with balance > 0 but no invoices in aging ===
-    for s in suppliers:
-        sup_id = s.get("id")
-        name = s.get("name", "")
-        balance = float(s.get("balance", 0) or 0)
-        if balance <= 0:
-            continue
-        key = sup_id or name
-        if not key:
-            continue
-        if key not in aging_data:
-            # Supplier has a balance but no individual invoices — put into current bucket
-            aging_data[key] = {
-                "name": name,
-                "current": balance, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": balance
-            }
     
     sorted_aging = sorted(aging_data.values(), key=lambda x: x["total"], reverse=True)
     
@@ -39280,8 +39299,9 @@ def report_tb():
             if debtors_total > 0:
                 add_account("1200", "Debtors Control", debit=debtors_total)
             
-            # Creditors Control - from supplier balances
-            creditors_total = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
+            # Creditors Control - from unpaid supplier invoices (not suppliers.balance)
+            _sinv_for_tb = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+            creditors_total = sum(float(si.get("total", 0) or 0) for si in _sinv_for_tb if si.get("status") != "paid")
             if creditors_total > 0:
                 add_account("3000", "Creditors Control", credit=creditors_total)
             
@@ -43015,7 +43035,8 @@ def report_balance_sheet():
     # LIABILITIES
     # Current Liabilities
     suppliers = db.get("suppliers", {"business_id": biz_id}) if biz_id else []
-    total_creditors = sum(float(s.get("balance", 0)) for s in suppliers if float(s.get("balance", 0)) > 0)
+    _sinv_for_bs = db.get("supplier_invoices", {"business_id": biz_id}) if biz_id else []
+    total_creditors = sum(float(si.get("total", 0) or 0) for si in _sinv_for_bs if si.get("status") != "paid")
     
     # VAT Payable (output VAT from sales)
     invoices = db.get("invoices", {"business_id": biz_id}) if biz_id else []
