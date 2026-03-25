@@ -11517,8 +11517,8 @@ class Actions:
             
             # Cost of sales: Debit COS, Credit Stock
             create_journal_entry(biz_id, today(), f"COS - {item.get('description')}", f"COS-{sale_id[:8]}", [
-                {"account_code": "5000", "debit": float(cost) * quantity, "credit": 0},   # Cost of Sales
-                {"account_code": "1300", "debit": 0, "credit": float(cost) * quantity},   # Stock
+                {"account_code": resolve_gl_account(biz_id, "cogs"), "debit": float(cost) * quantity, "credit": 0},   # Cost of Sales
+                {"account_code": resolve_gl_account(biz_id, "stock"), "debit": 0, "credit": float(cost) * quantity},   # Stock
             ])
             
             return {
@@ -26744,25 +26744,27 @@ def api_stock_adjust():
         
         if gl_amount > 0:
             try:
+                stock_acc = resolve_gl_account(biz_id, "stock")
+                cogs_acc = resolve_gl_account(biz_id, "cogs")
                 item_name = item.get("name", item.get("description", "Stock item"))
                 item_code = item.get("code", "")
                 ref_label = f"Stock Adj: {item_code} - {item_name}" if item_code else f"Stock Adj: {item_name}"
                 
                 if movement_qty > 0:
-                    # Stock IN: DR 1300 Stock (asset increases), CR 5000 COGS (cost reversal / adjustment)
+                    # Stock IN: DR Stock (asset increases), CR COGS (cost reversal / adjustment)
                     gl_entries = [
-                        {"account_code": "1300", "debit": gl_amount, "credit": 0},
-                        {"account_code": "5000", "debit": 0, "credit": gl_amount},
+                        {"account_code": stock_acc, "debit": gl_amount, "credit": 0},
+                        {"account_code": cogs_acc, "debit": 0, "credit": gl_amount},
                     ]
                 else:
-                    # Stock OUT: DR 5000 COGS (expense), CR 1300 Stock (asset decreases)
+                    # Stock OUT: DR COGS (expense), CR Stock (asset decreases)
                     gl_entries = [
-                        {"account_code": "5000", "debit": gl_amount, "credit": 0},
-                        {"account_code": "1300", "debit": 0, "credit": gl_amount},
+                        {"account_code": cogs_acc, "debit": gl_amount, "credit": 0},
+                        {"account_code": stock_acc, "debit": 0, "credit": gl_amount},
                     ]
                 
                 create_journal_entry(biz_id, today(), f"{note or 'Stock adjustment'} ({current_qty} → {new_qty})", ref_label, gl_entries)
-                logger.info(f"[STOCK ADJ] GL posted: {ref_label} R{gl_amount:.2f} movement_qty={movement_qty}")
+                logger.info(f"[STOCK ADJ] GL posted: {ref_label} R{gl_amount:.2f} stock_acc={stock_acc} cogs_acc={cogs_acc}")
             except Exception as gl_err:
                 logger.error(f"[STOCK ADJ] GL entry failed (non-critical): {gl_err}")
         
@@ -35467,12 +35469,14 @@ def grv_new():
             # --- GL Journal Entry for GRV stock received ---
             if grv_gl_total > 0:
                 try:
+                    stock_acc = resolve_gl_account(biz_id, "stock")
+                    cogs_acc = resolve_gl_account(biz_id, "cogs")
                     grv_gl_entries = [
-                        {"account_code": "1300", "debit": grv_gl_total, "credit": 0},   # DR Stock (asset in)
-                        {"account_code": "5000", "debit": 0, "credit": grv_gl_total},   # CR COGS / Purchases
+                        {"account_code": stock_acc, "debit": grv_gl_total, "credit": 0},   # DR Stock (asset in)
+                        {"account_code": cogs_acc, "debit": 0, "credit": grv_gl_total},   # CR COGS / Purchases
                     ]
                     create_journal_entry(biz_id, today(), f"GRV {grv_num} stock received from {supplier_name}", f"GRV {grv_num}", grv_gl_entries)
-                    logger.info(f"[GRV] GL posted: GRV {grv_num} R{grv_gl_total:.2f}")
+                    logger.info(f"[GRV] GL posted: GRV {grv_num} R{grv_gl_total:.2f} stock_acc={stock_acc} cogs_acc={cogs_acc}")
                 except Exception as gl_err:
                     logger.error(f"[GRV] GL entry failed (non-critical): {gl_err}")
             
@@ -38611,6 +38615,102 @@ DEFAULT_ACCOUNTS = [
     {"code": "7000", "name": "General Expenses", "type": "expense", "category": "Operating Expenses"},
     {"code": "7050", "name": "Cash Over/Short", "type": "expense", "category": "Operating Expenses"},
 ]
+
+
+# ═══════════════════════════════════════════════════════════════
+# GL ACCOUNT RESOLVER - finds correct account code per business
+# Supports Sage-imported chart_of_accounts (e.g. 2100/005)
+# and ClickAI default accounts (e.g. 1300)
+# ═══════════════════════════════════════════════════════════════
+
+# Cache to avoid repeated DB lookups within same request
+_gl_account_cache = {}
+
+def resolve_gl_account(biz_id: str, role: str) -> str:
+    """
+    Find the correct GL account code for a business.
+    
+    role: 'stock', 'cogs', 'sales', 'bank', 'debtors', 'creditors', 'vat_output', 'vat_input'
+    
+    Returns the account_code string (e.g. '1300' or '2100/005')
+    Falls back to ClickAI defaults if nothing found.
+    """
+    
+    # Role definitions: (default_code, code_prefixes, name_keywords)
+    ROLE_MAP = {
+        "stock":      ("1300", ["1300", "13", "14"],   ["stock", "inventory", "voorraad", "trading stock", "goods"]),
+        "cogs":       ("5000", ["5000", "50", "51"],   ["cost of goods", "cost of sales", "cogs", "purchases", "koste van verkope"]),
+        "sales":      ("4000", ["4000", "40"],         ["sales", "revenue", "income", "verkope", "inkomste"]),
+        "bank":       ("1000", ["1000", "10"],         ["bank", "fnb", "standard", "absa", "nedbank", "capitec", "current account"]),
+        "debtors":    ("1200", ["1200", "12"],         ["debtor", "receivable", "trade receivable"]),
+        "creditors":  ("3000", ["3000", "30"],         ["creditor", "payable", "trade payable"]),
+        "vat_output": ("2100", ["2100", "31"],         ["vat output", "output vat", "output tax"]),
+        "vat_input":  ("1500", ["1500", "16"],         ["vat input", "input vat", "input tax"]),
+    }
+    
+    if role not in ROLE_MAP:
+        return role  # Unknown role, return as-is
+    
+    default_code, prefixes, keywords = ROLE_MAP[role]
+    
+    # Check cache
+    cache_key = f"{biz_id}:{role}"
+    if cache_key in _gl_account_cache:
+        return _gl_account_cache[cache_key]
+    
+    found_code = None
+    
+    try:
+        # 1. Check chart_of_accounts first (Sage import - most authoritative)
+        coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+        if coa:
+            for acc in coa:
+                code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
+                name = str(acc.get("account_name", "") or acc.get("name", "")).lower()
+                
+                # Match by code prefix
+                for prefix in prefixes:
+                    if code.startswith(prefix):
+                        found_code = code
+                        break
+                if found_code:
+                    break
+                
+                # Match by keyword in name
+                for kw in keywords:
+                    if kw in name:
+                        found_code = code
+                        break
+                if found_code:
+                    break
+        
+        # 2. If not found in COA, check accounts table
+        if not found_code:
+            accounts = db.get("accounts", {"business_id": biz_id}) or []
+            for acc in accounts:
+                code = str(acc.get("code", "")).strip()
+                name = str(acc.get("name", "")).lower()
+                
+                for prefix in prefixes:
+                    if code.startswith(prefix):
+                        found_code = code
+                        break
+                if found_code:
+                    break
+                
+                for kw in keywords:
+                    if kw in name:
+                        found_code = code
+                        break
+                if found_code:
+                    break
+    except Exception as e:
+        logger.error(f"[GL] resolve_gl_account failed for {role}: {e}")
+    
+    result = found_code or default_code
+    _gl_account_cache[cache_key] = result
+    logger.info(f"[GL] Resolved account '{role}' for biz {biz_id[:8]}.. → {result}")
+    return result
 
 
 def get_or_create_accounts(biz_id: str) -> list:
@@ -44525,13 +44625,15 @@ def api_po_receive(po_id):
         # --- GL Journal Entry for PO stock received ---
         try:
             if grv_total > 0 and update_stock:
+                stock_acc = resolve_gl_account(biz_id, "stock")
+                cogs_acc = resolve_gl_account(biz_id, "cogs")
                 po_gl_entries = [
-                    {"account_code": "1300", "debit": grv_total, "credit": 0},   # DR Stock (asset in)
-                    {"account_code": "5000", "debit": 0, "credit": grv_total},   # CR COGS / Purchases
+                    {"account_code": stock_acc, "debit": grv_total, "credit": 0},   # DR Stock (asset in)
+                    {"account_code": cogs_acc, "debit": 0, "credit": grv_total},   # CR COGS / Purchases
                 ]
                 sup_name = supplier_name_override or po.get("supplier_name", "")
                 create_journal_entry(biz_id, receive_date or today(), f"PO {po.get('po_number','')} received from {sup_name}", f"GRV {grv_num}", po_gl_entries)
-                logger.info(f"[PO RECEIVE] GL posted: GRV {grv_num} R{grv_total:.2f}")
+                logger.info(f"[PO RECEIVE] GL posted: GRV {grv_num} R{grv_total:.2f} stock_acc={stock_acc} cogs_acc={cogs_acc}")
         except Exception as gl_err:
             logger.error(f"[PO RECEIVE] GL entry failed (non-critical): {gl_err}")
         
@@ -52133,8 +52235,8 @@ def api_pos_sale():
                 f"COS - POS Sale {sale_num}",
                 f"COS-{sale_num}",
                 [
-                    {"account_code": "5000", "debit": float(total_cost), "credit": 0},   # Cost of Sales
-                    {"account_code": "1300", "debit": 0, "credit": float(total_cost)},   # Stock
+                    {"account_code": resolve_gl_account(biz_id, "cogs"), "debit": float(total_cost), "credit": 0},   # Cost of Sales
+                    {"account_code": resolve_gl_account(biz_id, "stock"), "debit": 0, "credit": float(total_cost)},   # Stock
                 ]
             )
         
