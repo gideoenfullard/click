@@ -6126,11 +6126,10 @@ class ZaneToolHandler:
         }
     
     def _tool_get_creditors(self, params: dict) -> dict:
-        """Get creditors with aging analysis — includes supplier invoices + outstanding POs + supplier balances"""
+        """Get creditors with aging analysis — includes supplier invoices + supplier balances (POs excluded as they are orders, not debt)"""
         limit = params.get("limit", 20)
         suppliers = self.db.get("suppliers", {"business_id": self.biz_id}) or []
         supplier_invoices = self.db.get("supplier_invoices", {"business_id": self.biz_id}) or []
-        purchase_orders = self.db.get("purchase_orders", {"business_id": self.biz_id}) or []
         
         today = datetime.now().date()
         supplier_aging = {}
@@ -6171,52 +6170,7 @@ class ZaneToolHandler:
             else:
                 sa["days_90_plus"] += amount
         
-        # === SOURCE 2: Outstanding POs (sent/partial) not yet invoiced ===
-        sinv_po_refs = set()
-        for si in supplier_invoices:
-            _ref = si.get("po_number") or si.get("reference") or ""
-            if _ref:
-                sinv_po_refs.add(_ref.strip().upper())
-        
-        for po in purchase_orders:
-            if po.get("status") not in ("sent", "partial"):
-                continue
-            po_num = (po.get("po_number") or "").strip().upper()
-            if po_num and po_num in sinv_po_refs:
-                continue  # Already has a supplier invoice
-            
-            supp_name = po.get("supplier_name", "Unknown")
-            amount = float(po.get("total", 0) or 0)
-            
-            po_date = po.get("date", "")
-            if po_date:
-                try:
-                    po_dt = datetime.strptime(str(po_date)[:10], "%Y-%m-%d").date()
-                    days_old = (today - po_dt).days
-                except:
-                    days_old = 0
-            else:
-                days_old = 0
-            
-            if supp_name not in supplier_aging:
-                supplier_aging[supp_name] = {
-                    "name": supp_name, "phone": "",
-                    "total": 0, "current": 0, "days_30": 0, "days_60": 0, "days_90_plus": 0
-                }
-            
-            sa = supplier_aging[supp_name]
-            sa["total"] += amount
-            
-            if days_old <= 30:
-                sa["current"] += amount
-            elif days_old <= 60:
-                sa["days_30"] += amount
-            elif days_old <= 90:
-                sa["days_60"] += amount
-            else:
-                sa["days_90_plus"] += amount
-        
-        # === SOURCE 3: Suppliers with balance but no invoices/POs ===
+        # === SOURCE 2: Suppliers with balance but no invoices ===
         for s in suppliers:
             name = s.get("name", "")
             balance = float(s.get("balance", 0) or 0)
@@ -38123,15 +38077,13 @@ def report_creditors_aging():
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
     
-    # Get ALL sources of supplier debt
+    # Get supplier invoices and suppliers (POs are orders, not debt — excluded from aging)
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         f_sinv = pool.submit(db.get, "supplier_invoices", {"business_id": biz_id}) if biz_id else None
-        f_po = pool.submit(db.get, "purchase_orders", {"business_id": biz_id}) if biz_id else None
         f_sup = pool.submit(db.get, "suppliers", {"business_id": biz_id}) if biz_id else None
     
     supplier_invoices = (f_sinv.result() if f_sinv else []) or []
-    purchase_orders = (f_po.result() if f_po else []) or []
     suppliers = (f_sup.result() if f_sup else []) or []
     supplier_map = {s.get("id"): s for s in suppliers}
     
@@ -38177,56 +38129,7 @@ def report_creditors_aging():
         
         aging_data[key]["total"] += amount
     
-    # === SOURCE 2: Outstanding purchase orders (sent/partial — not yet invoiced) ===
-    # Track which POs already have a matching supplier invoice to avoid double-counting
-    sinv_po_refs = set()
-    for si in supplier_invoices:
-        _ref = si.get("po_number") or si.get("reference") or ""
-        if _ref:
-            sinv_po_refs.add(_ref.strip().upper())
-    
-    outstanding_pos = [po for po in purchase_orders if po.get("status") in ("sent", "partial")]
-    for po in outstanding_pos:
-        po_num = (po.get("po_number") or "").strip().upper()
-        # Skip if this PO already has a supplier invoice
-        if po_num and po_num in sinv_po_refs:
-            continue
-        
-        supp_id = po.get("supplier_id")
-        supp_name = po.get("supplier_name", "Unknown")
-        key = supp_id or supp_name
-        if not key or key == "Unknown":
-            continue
-        
-        if key not in aging_data:
-            supp = supplier_map.get(supp_id, {}) if supp_id else {}
-            aging_data[key] = {
-                "name": supp.get("name") or supp_name,
-                "current": 0, "d30": 0, "d60": 0, "d90": 0, "d120": 0, "total": 0
-            }
-        
-        try:
-            po_date = datetime.strptime(po.get("date", today()), "%Y-%m-%d").date()
-        except:
-            po_date = today_date
-        
-        days_old = (today_date - po_date).days
-        amount = float(po.get("total", 0) or 0)
-        
-        if days_old <= 30:
-            aging_data[key]["current"] += amount
-        elif days_old <= 60:
-            aging_data[key]["d30"] += amount
-        elif days_old <= 90:
-            aging_data[key]["d60"] += amount
-        elif days_old <= 120:
-            aging_data[key]["d90"] += amount
-        else:
-            aging_data[key]["d120"] += amount
-        
-        aging_data[key]["total"] += amount
-    
-    # === SOURCE 3: Suppliers with balance > 0 but no invoices/POs in aging ===
+    # === SOURCE 2: Suppliers with balance > 0 but no invoices in aging ===
     for s in suppliers:
         sup_id = s.get("id")
         name = s.get("name", "")
@@ -38287,7 +38190,7 @@ def report_creditors_aging():
                 </tr>
             </thead>
             <tbody>
-                {rows or "<tr><td colspan='7' style='text-align:center;color:var(--text-muted)'>No outstanding purchases</td></tr>"}
+                {rows or "<tr><td colspan='7' style='text-align:center;color:var(--text-muted)'>No outstanding creditors</td></tr>"}
             </tbody>
             <tfoot style="font-weight:bold;background:rgba(255,255,255,0.05);">
                 <tr>
