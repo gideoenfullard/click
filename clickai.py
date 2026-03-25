@@ -78380,6 +78380,7 @@ def api_gl_migrate():
         "5002": ("5100", "purchases_other"),
     }
     # Only add if the target code actually exists in COA (validate)
+    coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
     coa_codes = set(str(a.get("account_code", "") or a.get("code", "")).strip() for a in coa)
     for old_code, (new_code, role_label) in _manual_extras.items():
         if old_code not in migration_map and new_code in coa_codes:
