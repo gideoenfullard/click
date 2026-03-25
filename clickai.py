@@ -10994,9 +10994,9 @@ class Actions:
             # Create journal entries for GL
             # Debit Debtors (1200), Credit Sales (4000) + VAT Output (2100)
             create_journal_entry(biz_id, today(), f"Invoice {inv_number} - {customer_name}", inv_number, [
-                {"account_code": "1200", "debit": float(amount), "credit": 0},         # Debtors
-                {"account_code": "4000", "debit": 0, "credit": float(excl_amount)},    # Sales
-                {"account_code": "2100", "debit": 0, "credit": float(vat_amount)},     # VAT Output
+                {"account_code": gl(biz_id, "debtors"), "debit": float(amount), "credit": 0},         # Debtors
+                {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(excl_amount)},    # Sales
+                {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat_amount)},     # VAT Output
             ])
             
             return {
@@ -11344,8 +11344,8 @@ class Actions:
         # Create journal entries for GL
         # Debit Bank (1000), Credit Debtors (1200)
         create_journal_entry(biz_id, today(), f"Payment from {customer['name']}", f"REC-{customer['id'][:8]}", [
-            {"account_code": "1000", "debit": float(amount), "credit": 0},   # Bank
-            {"account_code": "1200", "debit": 0, "credit": float(amount)},   # Debtors
+            {"account_code": gl(biz_id, "bank"), "debit": float(amount), "credit": 0},   # Bank
+            {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(amount)},   # Debtors
         ])
         
         return {
@@ -11390,8 +11390,8 @@ class Actions:
             expense_gl = IndustryKnowledge.get_gl_code(category) if category else "7999"
             create_journal_entry(biz_id, today(), description[:50], f"EXP-{expense['id'][:8]}", [
                 {"account_code": expense_gl, "debit": excl_amount, "credit": 0},        # Expense account
-                {"account_code": "1400", "debit": float(vat_amount), "credit": 0},  # VAT Input
-                {"account_code": "1000", "debit": 0, "credit": float(amount)},      # Bank
+                {"account_code": gl(biz_id, "vat_input"), "debit": float(vat_amount), "credit": 0},  # VAT Input
+                {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": float(amount)},      # Bank
             ])
             
             return {
@@ -11499,9 +11499,9 @@ class Actions:
             if payment_method == "account":
                 # Account sale: Debit Debtors, Credit Sales + VAT
                 create_journal_entry(biz_id, today(), f"Sale - {item.get('description')}", f"SALE-{sale_id[:8]}", [
-                    {"account_code": "1200", "debit": float(line_total), "credit": 0},  # Debtors
-                    {"account_code": "4000", "debit": 0, "credit": excl_amount},         # Sales
-                    {"account_code": "2100", "debit": 0, "credit": float(vat_amount)},   # VAT Output
+                    {"account_code": gl(biz_id, "debtors"), "debit": float(line_total), "credit": 0},  # Debtors
+                    {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": excl_amount},         # Sales
+                    {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat_amount)},   # VAT Output
                 ])
             else:
                 # Cash/Card/EFT sale
@@ -11511,14 +11511,14 @@ class Actions:
                     bank_account = "1000"  # Bank for card/EFT
                 create_journal_entry(biz_id, today(), f"Sale - {item.get('description')}", f"SALE-{sale_id[:8]}", [
                     {"account_code": bank_account, "debit": float(line_total), "credit": 0},
-                    {"account_code": "4000", "debit": 0, "credit": excl_amount},         # Sales
-                    {"account_code": "2100", "debit": 0, "credit": float(vat_amount)},   # VAT Output
+                    {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": excl_amount},         # Sales
+                    {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat_amount)},   # VAT Output
                 ])
             
             # Cost of sales: Debit COS, Credit Stock
             create_journal_entry(biz_id, today(), f"COS - {item.get('description')}", f"COS-{sale_id[:8]}", [
-                {"account_code": resolve_gl_account(biz_id, "cogs"), "debit": float(cost) * quantity, "credit": 0},   # Cost of Sales
-                {"account_code": resolve_gl_account(biz_id, "stock"), "debit": 0, "credit": float(cost) * quantity},   # Stock
+                {"account_code": gl(biz_id, "cogs"), "debit": float(cost) * quantity, "credit": 0},   # Cost of Sales
+                {"account_code": gl(biz_id, "stock"), "debit": 0, "credit": float(cost) * quantity},   # Stock
             ])
             
             return {
@@ -11998,9 +11998,9 @@ class Actions:
                 vat_amt = round(float(vat_amount), 2)
                 total_amt = round(float(amount), 2)
                 create_journal_entry(biz_id, today(), f"Supplier Invoice - {supplier_name}", invoice.get("invoice_number", ""), [
-                    {"account_code": "5100", "debit": net_amount, "credit": 0},      # Purchases/Cost of Sales
-                    {"account_code": "1400", "debit": vat_amt, "credit": 0},          # VAT Input
-                    {"account_code": "2000", "debit": 0, "credit": total_amt},         # Creditors
+                    {"account_code": gl(biz_id, "purchases"), "debit": net_amount, "credit": 0},      # Purchases/Cost of Sales
+                    {"account_code": gl(biz_id, "vat_input"), "debit": vat_amt, "credit": 0},          # VAT Input
+                    {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": total_amt},         # Creditors
                 ])
             except Exception as gl_err:
                 logger.error(f"[ZANE] GL entry failed for supplier invoice: {gl_err}")
@@ -26744,8 +26744,8 @@ def api_stock_adjust():
         
         if gl_amount > 0:
             try:
-                stock_acc = resolve_gl_account(biz_id, "stock")
-                cogs_acc = resolve_gl_account(biz_id, "cogs")
+                stock_acc = gl(biz_id, "stock")
+                cogs_acc = gl(biz_id, "cogs")
                 item_name = item.get("name", item.get("description", "Stock item"))
                 item_code = item.get("code", "")
                 ref_label = f"Stock Adj: {item_code} - {item_name}" if item_code else f"Stock Adj: {item_name}"
@@ -27437,9 +27437,9 @@ def invoice_new():
                 if payment_method == "account":
                     # Debit Debtors, Credit Sales + VAT
                     create_journal_entry(biz_id, today(), f"Invoice {inv_num} - {customer_name}", inv_num, [
-                        {"account_code": "1200", "debit": float(total), "credit": 0},
-                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
-                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
+                        {"account_code": gl(biz_id, "debtors"), "debit": float(total), "credit": 0},
+                        {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
                     ])
                     # Update customer balance
                     if customer_id:
@@ -27452,8 +27452,8 @@ def invoice_new():
                     bank_account = "1050" if payment_method == "cash" else "1000"
                     create_journal_entry(biz_id, today(), f"Invoice {inv_num} - {customer_name} ({payment_method.upper()})", inv_num, [
                         {"account_code": bank_account, "debit": float(total), "credit": 0},
-                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
-                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
+                        {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
                     ])
             except Exception as e:
                 logger.error(f"GL entry failed (non-critical): {e}")
@@ -27464,8 +27464,8 @@ def invoice_new():
                     _bank = "1050" if payment_method == "cash" else "1000"
                     _gl = [
                         {"account_code": _bank if payment_method != "account" else "1200", "debit": float(total), "credit": 0},
-                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
-                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
+                        {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
                     ]
                     log_allocation(
                         business_id=biz_id, allocation_type="invoice", source_table="invoices", source_id=invoice_id,
@@ -28384,7 +28384,7 @@ def api_invoice_pay(invoice_id):
             f"PAY-{inv_number}",
             [
                 {"account_code": bank_account, "debit": total, "credit": 0},  # Bank/Cash increases
-                {"account_code": "1200", "debit": 0, "credit": total},        # Debtors decreases
+                {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": total},        # Debtors decreases
             ]
         )
         
@@ -28432,7 +28432,7 @@ def api_invoice_pay(invoice_id):
                     amount=total,
                     gl_entries=[
                         {"account_code": bank_account, "debit": total, "credit": 0},
-                        {"account_code": "1200", "debit": 0, "credit": total},
+                        {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": total},
                     ],
                     customer_name=customer_name, payment_method=payment_method, reference=f"PAY-{inv_number}",
                     transaction_date=today(),
@@ -32473,9 +32473,9 @@ def quote_to_invoice(quote_id):
             f"Invoice {inv_num} (from Quote) - {customer_name}",
             inv_num,
             [
-                {"account_code": "1200", "debit": total, "credit": 0},      # Debtors
-                {"account_code": "4000", "debit": 0, "credit": subtotal},   # Sales
-                {"account_code": "2100", "debit": 0, "credit": vat},        # VAT Output
+                {"account_code": gl(biz_id, "debtors"), "debit": total, "credit": 0},      # Debtors
+                {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": subtotal},   # Sales
+                {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": vat},        # VAT Output
             ]
         )
         
@@ -33453,7 +33453,7 @@ def api_expenses_quick_add():
             {"account_code": expense_account, "debit": round(total_amount - vat_claimable, 2), "credit": 0},
         ]
         if vat_claimable > 0:
-            journal_entries.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})
+            journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_claimable, 2), "credit": 0})
         # Credit the correct account based on how it was paid
         credit_account = {"cash": "1050", "petty": "1100", "eft": "1000", "card": "1000"}.get(payment_method, "1000")
         journal_entries.append({"account_code": credit_account, "debit": 0, "credit": round(total_amount, 2)})
@@ -33540,8 +33540,8 @@ def api_expenses_sync_offline():
                 vat_claimable = 0.0 if is_no_vat else vat_amount
                 je = [{"account_code": expense_account, "debit": round(total_amount - vat_claimable, 2), "credit": 0}]
                 if vat_claimable > 0:
-                    je.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})
-                je.append({"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)})
+                    je.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_claimable, 2), "credit": 0})
+                je.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)})
                 create_journal_entry(biz_id, expense_date, desc[:50], f"EXP-{expense_rec['id'][:8]}", je)
                 
                 synced += 1
@@ -34305,7 +34305,7 @@ def payroll_run():
                     # Must be balanced: Total Debits = Total Credits
                     payroll_entries = [
                         # EXPENSE SIDE (Debits)
-                        {"account_code": "6200", "debit": round(basic, 2), "credit": 0},           # Salary expense
+                        {"account_code": gl(biz_id, "electricity"), "debit": round(basic, 2), "credit": 0},           # Salary expense
                     ]
                     
                     # Employer contributions as expense
@@ -34317,7 +34317,7 @@ def payroll_run():
                     
                     # LIABILITY & PAYMENT SIDE (Credits)
                     if paye > 0:
-                        payroll_entries.append({"account_code": "2200", "debit": 0, "credit": round(paye, 2)})      # PAYE Payable
+                        payroll_entries.append({"account_code": gl(biz_id, "paye"), "debit": 0, "credit": round(paye, 2)})      # PAYE Payable
                     if uif > 0 or employer_uif_amount > 0:
                         payroll_entries.append({"account_code": "2210", "debit": 0, "credit": round(uif + employer_uif_amount, 2)})  # UIF Payable (employee + employer)
                     if employer_sdl_amount > 0:
@@ -34326,10 +34326,10 @@ def payroll_run():
                     # Other deductions as liabilities (medical, pension, union, loan)
                     other_deduction_total = round(medical + union_fees + pension + loan + other_ded, 2)
                     if other_deduction_total > 0:
-                        payroll_entries.append({"account_code": "2400", "debit": 0, "credit": round(other_deduction_total, 2)})  # Other payroll deductions payable
+                        payroll_entries.append({"account_code": gl(biz_id, "loan"), "debit": 0, "credit": round(other_deduction_total, 2)})  # Other payroll deductions payable
                     
                     # Net pay to bank
-                    payroll_entries.append({"account_code": "1000", "debit": 0, "credit": round(net, 2)})  # Bank (NET pay)
+                    payroll_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(net, 2)})  # Bank (NET pay)
                     
                     create_journal_entry(biz_id, pay_date, f"Salary - {emp.get('name')}", f"PAY-{payslip_id[:8]}", payroll_entries)
                 else:
@@ -35469,8 +35469,8 @@ def grv_new():
             # --- GL Journal Entry for GRV stock received ---
             if grv_gl_total > 0:
                 try:
-                    stock_acc = resolve_gl_account(biz_id, "stock")
-                    cogs_acc = resolve_gl_account(biz_id, "cogs")
+                    stock_acc = gl(biz_id, "stock")
+                    cogs_acc = gl(biz_id, "cogs")
                     grv_gl_entries = [
                         {"account_code": stock_acc, "debit": grv_gl_total, "credit": 0},   # DR Stock (asset in)
                         {"account_code": cogs_acc, "debit": 0, "credit": grv_gl_total},   # CR COGS / Purchases
@@ -38624,93 +38624,126 @@ DEFAULT_ACCOUNTS = [
 # ═══════════════════════════════════════════════════════════════
 
 # Cache to avoid repeated DB lookups within same request
-_gl_account_cache = {}
+_gl_map_cache = {}  # biz_id → {role: code} — cleared per request cycle
 
-def resolve_gl_account(biz_id: str, role: str) -> str:
+# ClickAI standard chart of accounts — the defaults when no COA imported
+CLICKAI_DEFAULTS = {
+    "bank": "1000", "cash": "1050", "petty_cash": "1100",
+    "debtors": "1200", "stock": "1300", "vat_input": "1400",
+    "equipment": "1500", "vehicles": "1600", "accum_depr": "1700",
+    "creditors": "2000", "vat_output": "2100", "paye": "2200", "uif": "2300", "loan": "2400",
+    "capital": "3000", "retained": "3100", "drawings": "3200",
+    "sales": "4000", "services": "4100", "interest_received": "4200", "discount_received": "4300",
+    "cogs": "5000", "purchases": "5100", "carriage_in": "5200",
+    "salaries": "6000", "rent": "6100", "electricity": "6200", "telephone": "6300",
+    "insurance": "6400", "fuel": "6500", "repairs": "6600", "bank_charges": "6700",
+    "advertising": "6800", "depreciation": "6900", "general": "7000", "cash_short": "7050",
+}
+
+# Keywords to match Sage/Xero account names → ClickAI roles (most specific first)
+COA_KEYWORD_MAP = [
+    # Assets
+    (["bank", "current account", "cheque account", "savings account"], "bank"),
+    (["cash on hand", "cash float", "till float", "pos cash"], "cash"),
+    (["petty cash"], "petty_cash"),
+    (["trade receivable", "debtor", "accounts receivable"], "debtors"),
+    (["trading stock", "stock on hand", "inventory", "stock", "voorraad"], "stock"),
+    (["vat input", "input vat", "input tax"], "vat_input"),
+    (["equipment", "computer", "office equipment", "tools"], "equipment"),
+    (["vehicle", "motor vehicle", "delivery vehicle"], "vehicles"),
+    (["accumulated dep", "acc dep", "accum dep"], "accum_depr"),
+    # Liabilities
+    (["trade payable", "creditor", "accounts payable"], "creditors"),
+    (["vat output", "output vat", "output tax", "vat control", "vat / tax"], "vat_output"),
+    (["paye", "pay as you earn", "employees tax"], "paye"),
+    (["uif", "unemployment"], "uif"),
+    (["loan", "mortgage", "overdraft", "instalment"], "loan"),
+    # Equity
+    (["capital", "share capital", "member"], "capital"),
+    (["retained", "accumulated profit", "accumulated loss"], "retained"),
+    (["drawing", "divident"], "drawings"),
+    # Income
+    (["sales", "revenue", "turnover"], "sales"),
+    (["service income", "services rendered", "fee income"], "services"),
+    (["interest received", "interest income"], "interest_received"),
+    (["discount received"], "discount_received"),
+    # Cost of Sales
+    (["cost of sales", "cost of goods", "cogs"], "cogs"),
+    (["purchase", "stock purchase"], "purchases"),
+    (["carriage inward", "freight inward"], "carriage_in"),
+    # Expenses
+    (["salary", "salaries", "wages", "payroll"], "salaries"),
+    (["rent", "lease", "premises"], "rent"),
+    (["electric", "water", "municipal", "utilities"], "electricity"),
+    (["telephone", "cellphone", "airtime", "internet", "data cost"], "telephone"),
+    (["insurance"], "insurance"),
+    (["fuel", "petrol", "diesel"], "fuel"),
+    (["repair", "maintenance"], "repairs"),
+    (["bank charge", "bank fee", "service fee"], "bank_charges"),
+    (["advertis", "marketing", "promotion"], "advertising"),
+    (["depreciation"], "depreciation"),
+]
+
+
+def build_gl_map(biz_id: str) -> dict:
     """
-    Find the correct GL account code for a business.
-    
-    role: 'stock', 'cogs', 'sales', 'bank', 'debtors', 'creditors', 'vat_output', 'vat_input'
-    
-    Returns the account_code string (e.g. '1300' or '2100/005')
-    Falls back to ClickAI defaults if nothing found.
+    Build a role→code mapping for a business from its chart_of_accounts.
+    Returns dict like {"stock": "2100/005", "cogs": "2000/000", ...}
+    If no COA, returns empty dict (caller uses CLICKAI_DEFAULTS).
     """
+    coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+    if not coa:
+        return {}
     
-    # Role definitions: (default_code, code_prefixes, name_keywords)
-    ROLE_MAP = {
-        "stock":      ("1300", ["1300", "13", "14"],   ["stock", "inventory", "voorraad", "trading stock", "goods"]),
-        "cogs":       ("5000", ["5000", "50", "51"],   ["cost of goods", "cost of sales", "cogs", "purchases", "koste van verkope"]),
-        "sales":      ("4000", ["4000", "40"],         ["sales", "revenue", "income", "verkope", "inkomste"]),
-        "bank":       ("1000", ["1000", "10"],         ["bank", "fnb", "standard", "absa", "nedbank", "capitec", "current account"]),
-        "debtors":    ("1200", ["1200", "12"],         ["debtor", "receivable", "trade receivable"]),
-        "creditors":  ("3000", ["3000", "30"],         ["creditor", "payable", "trade payable"]),
-        "vat_output": ("2100", ["2100", "31"],         ["vat output", "output vat", "output tax"]),
-        "vat_input":  ("1500", ["1500", "16"],         ["vat input", "input vat", "input tax"]),
-    }
+    gl_map = {}
     
-    if role not in ROLE_MAP:
-        return role  # Unknown role, return as-is
-    
-    default_code, prefixes, keywords = ROLE_MAP[role]
-    
-    # Check cache
-    cache_key = f"{biz_id}:{role}"
-    if cache_key in _gl_account_cache:
-        return _gl_account_cache[cache_key]
-    
-    found_code = None
-    
-    try:
-        # 1. Check chart_of_accounts first (Sage import - most authoritative)
-        coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
-        if coa:
-            for acc in coa:
-                code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
-                name = str(acc.get("account_name", "") or acc.get("name", "")).lower()
-                
-                # Match by code prefix
-                for prefix in prefixes:
-                    if code.startswith(prefix):
-                        found_code = code
-                        break
-                if found_code:
-                    break
-                
-                # Match by keyword in name
-                for kw in keywords:
-                    if kw in name:
-                        found_code = code
-                        break
-                if found_code:
-                    break
+    # Scan ALL COA records, match by keyword
+    for acc in coa:
+        code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
+        name = str(acc.get("account_name", "") or acc.get("name", "")).lower()
+        if not code or not name:
+            continue
         
-        # 2. If not found in COA, check accounts table
-        if not found_code:
-            accounts = db.get("accounts", {"business_id": biz_id}) or []
-            for acc in accounts:
-                code = str(acc.get("code", "")).strip()
-                name = str(acc.get("name", "")).lower()
-                
-                for prefix in prefixes:
-                    if code.startswith(prefix):
-                        found_code = code
-                        break
-                if found_code:
+        for kw_list, role in COA_KEYWORD_MAP:
+            if role in gl_map:
+                continue  # Already matched this role, skip
+            for kw in kw_list:
+                if kw in name:
+                    gl_map[role] = code
                     break
-                
-                for kw in keywords:
-                    if kw in name:
-                        found_code = code
-                        break
-                if found_code:
-                    break
-    except Exception as e:
-        logger.error(f"[GL] resolve_gl_account failed for {role}: {e}")
     
-    result = found_code or default_code
-    _gl_account_cache[cache_key] = result
-    logger.info(f"[GL] Resolved account '{role}' for biz {biz_id[:8]}.. → {result}")
-    return result
+    if gl_map:
+        logger.info(f"[GL MAP] Built for biz {biz_id[:8]}: {gl_map}")
+    
+    return gl_map
+
+
+def gl(biz_id: str, role: str) -> str:
+    """
+    Get the GL account code for a role. Short name for use in GL entries.
+    
+    Usage: gl(biz_id, "stock") → "2100/005" (Sage) or "1300" (default)
+    
+    Checks: business gl_map (from COA import) → CLICKAI_DEFAULTS fallback
+    """
+    global _gl_map_cache
+    
+    # Get or build the map for this business
+    if biz_id not in _gl_map_cache:
+        _gl_map_cache[biz_id] = build_gl_map(biz_id)
+    
+    gl_map = _gl_map_cache[biz_id]
+    
+    # Return mapped code, or ClickAI default
+    if role in gl_map:
+        return gl_map[role]
+    
+    return CLICKAI_DEFAULTS.get(role, role)
+
+
+# Keep old name as alias for backwards compatibility
+def resolve_gl_account(biz_id: str, role: str) -> str:
+    return gl(biz_id, role)
 
 
 def get_or_create_accounts(biz_id: str) -> list:
@@ -44625,8 +44658,8 @@ def api_po_receive(po_id):
         # --- GL Journal Entry for PO stock received ---
         try:
             if grv_total > 0 and update_stock:
-                stock_acc = resolve_gl_account(biz_id, "stock")
-                cogs_acc = resolve_gl_account(biz_id, "cogs")
+                stock_acc = gl(biz_id, "stock")
+                cogs_acc = gl(biz_id, "cogs")
                 po_gl_entries = [
                     {"account_code": stock_acc, "debit": grv_total, "credit": 0},   # DR Stock (asset in)
                     {"account_code": cogs_acc, "debit": 0, "credit": grv_total},   # CR COGS / Purchases
@@ -44719,9 +44752,9 @@ def api_po_create_invoice(po_id):
             if success:
                 try:
                     create_journal_entry(biz_id, today(), f"Supplier Invoice {inv_number} - {po.get('supplier_name')}", inv_number, [
-                        {"account_code": "5100", "debit": float(subtotal), "credit": 0},  # Cost of Sales/Purchases
-                        {"account_code": "1400", "debit": float(vat), "credit": 0},
-                        {"account_code": "2000", "debit": 0, "credit": float(total)},
+                        {"account_code": gl(biz_id, "purchases"), "debit": float(subtotal), "credit": 0},  # Cost of Sales/Purchases
+                        {"account_code": gl(biz_id, "vat_input"), "debit": float(vat), "credit": 0},
+                        {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": float(total)},
                     ])
                     
                     if po.get("supplier_id"):
@@ -52182,8 +52215,8 @@ def api_pos_sale():
             sale_num,
             [
                 {"account_code": debit_account, "debit": float(total), "credit": 0},  # Cash/Bank/Debtors
-                {"account_code": "4000", "debit": 0, "credit": float(subtotal)},       # Sales
-                {"account_code": "2100", "debit": 0, "credit": float(vat)},            # VAT Output
+                {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},       # Sales
+                {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},            # VAT Output
             ]
         )
         
@@ -52235,8 +52268,8 @@ def api_pos_sale():
                 f"COS - POS Sale {sale_num}",
                 f"COS-{sale_num}",
                 [
-                    {"account_code": resolve_gl_account(biz_id, "cogs"), "debit": float(total_cost), "credit": 0},   # Cost of Sales
-                    {"account_code": resolve_gl_account(biz_id, "stock"), "debit": 0, "credit": float(total_cost)},   # Stock
+                    {"account_code": gl(biz_id, "cogs"), "debit": float(total_cost), "credit": 0},   # Cost of Sales
+                    {"account_code": gl(biz_id, "stock"), "debit": 0, "credit": float(total_cost)},   # Stock
                 ]
             )
         
@@ -52262,8 +52295,8 @@ def api_pos_sale():
                     amount=float(total),
                     gl_entries=[
                         {"account_code": debit_account, "debit": float(total), "credit": 0},
-                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
-                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
+                        {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
                     ],
                     stock_movements=_stock_moves,
                     customer_name=customer_name, payment_method=payment_method, reference=sale_num,
@@ -52366,8 +52399,8 @@ def api_pos_sync_offline():
                     sale_num,
                     [
                         {"account_code": debit_account, "debit": float(total), "credit": 0},
-                        {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
-                        {"account_code": "2100", "debit": 0, "credit": float(vat)},
+                        {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
                     ]
                 )
                 
@@ -52851,9 +52884,9 @@ def api_pos_invoice():
         # Create journal entries (Debit Debtors, Credit Sales + VAT)
         try:
             create_journal_entry(biz_id, today(), f"Invoice {inv_num} - {customer_name}", inv_num, [
-                {"account_code": "1200", "debit": float(total), "credit": 0},
-                {"account_code": "4000", "debit": 0, "credit": float(subtotal)},
-                {"account_code": "2100", "debit": 0, "credit": float(vat)},
+                {"account_code": gl(biz_id, "debtors"), "debit": float(total), "credit": 0},
+                {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},
+                {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},
             ])
         except Exception as je:
             logger.warning(f"[POS INV] Journal entry failed: {je}")
@@ -53026,9 +53059,9 @@ def api_pos_credit_note():
         # Credit Debtors, Debit Sales + VAT
         try:
             create_journal_entry(biz_id, today(), f"Credit Note {cn_num} - {customer_name}", cn_num, [
-                {"account_code": "1200", "debit": 0, "credit": float(total)},  # Credit Debtors
-                {"account_code": "4000", "debit": float(subtotal), "credit": 0},  # Debit Sales
-                {"account_code": "2100", "debit": float(vat), "credit": 0},  # Debit VAT
+                {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(total)},  # Credit Debtors
+                {"account_code": gl(biz_id, "sales"), "debit": float(subtotal), "credit": 0},  # Debit Sales
+                {"account_code": gl(biz_id, "vat_output"), "debit": float(vat), "credit": 0},  # Debit VAT
             ])
         except Exception as je:
             logger.warning(f"[POS CN] Journal entry failed: {je}")
@@ -53044,9 +53077,9 @@ def api_pos_credit_note():
                     description=f"POS Credit Note {cn_num} - {customer_name}",
                     amount=float(total),
                     gl_entries=[
-                        {"account_code": "1200", "debit": 0, "credit": float(total)},
-                        {"account_code": "4000", "debit": float(subtotal), "credit": 0},
-                        {"account_code": "2100", "debit": float(vat), "credit": 0},
+                        {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(total)},
+                        {"account_code": gl(biz_id, "sales"), "debit": float(subtotal), "credit": 0},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": float(vat), "credit": 0},
                     ],
                     customer_name=customer_name, reference=cn_num,
                     transaction_date=today(),
@@ -55084,6 +55117,81 @@ Return ONLY the JSON, nothing else."""
                         'owners equity': 'equity', "owner's equity": 'equity'
                     }
                     row_data['account_type'] = cat_map.get(cat, 'expense')
+                    
+                    # ═══════════════════════════════════════════════════════════
+                    # MAP SAGE ACCOUNT → CLICKAI STANDARD CODE
+                    # This maps external COA accounts to ClickAI's own codes
+                    # so all GL entries use a single consistent chart of accounts
+                    # ═══════════════════════════════════════════════════════════
+                    sage_name = str(row_data.get('account_name', '')).lower()
+                    sage_type = row_data.get('account_type', '')
+                    clickai_code = ""
+                    
+                    # Match by name keywords (most specific first)
+                    CLICKAI_NAME_MAP = [
+                        # Assets
+                        (["bank", "current account", "cheque account", "savings account"], "1000"),
+                        (["cash on hand", "cash float", "till float"], "1050"),
+                        (["petty cash"], "1100"),
+                        (["debtor", "trade receivable", "accounts receivable"], "1200"),
+                        (["trading stock", "stock on hand", "inventory", "stock", "voorraad", "goods"], "1300"),
+                        (["vat input", "input vat", "input tax"], "1400"),
+                        (["equipment", "computer", "office equipment", "tools"], "1500"),
+                        (["vehicle", "motor vehicle", "delivery vehicle"], "1600"),
+                        (["accumulated dep", "acc dep", "accum dep"], "1700"),
+                        # Liabilities
+                        (["creditor", "trade payable", "accounts payable"], "2000"),
+                        (["vat output", "output vat", "output tax"], "2100"),
+                        (["paye", "pay as you earn", "employees tax"], "2200"),
+                        (["uif", "unemployment"], "2300"),
+                        (["loan", "mortgage", "overdraft"], "2400"),
+                        # Equity
+                        (["capital", "share capital", "member"], "3000"),
+                        (["retained", "accumulated profit", "accumulated loss"], "3100"),
+                        (["drawing"], "3200"),
+                        # Income
+                        (["sales", "revenue", "turnover"], "4000"),
+                        (["service income", "services rendered", "fee income"], "4100"),
+                        (["interest received", "interest income"], "4200"),
+                        (["discount received"], "4300"),
+                        # Cost of Sales
+                        (["cost of sales", "cost of goods", "cogs"], "5000"),
+                        (["purchases", "stock purchases"], "5100"),
+                        (["carriage inward", "freight inward"], "5200"),
+                        # Expenses
+                        (["salary", "salaries", "wages", "payroll"], "6000"),
+                        (["rent", "lease", "premises"], "6100"),
+                        (["electric", "water", "municipal", "utilities"], "6200"),
+                        (["telephone", "cellphone", "airtime", "data", "internet"], "6300"),
+                        (["insurance"], "6400"),
+                        (["fuel", "petrol", "diesel"], "6500"),
+                        (["repair", "maintenance"], "6600"),
+                        (["bank charge", "bank fee", "service fee"], "6700"),
+                        (["advertis", "marketing", "promotion"], "6800"),
+                        (["depreciation"], "6900"),
+                    ]
+                    
+                    for kw_list, code in CLICKAI_NAME_MAP:
+                        for kw in kw_list:
+                            if kw in sage_name:
+                                clickai_code = code
+                                break
+                        if clickai_code:
+                            break
+                    
+                    # Fallback: map by category if no name match
+                    if not clickai_code:
+                        CLICKAI_CAT_MAP = {
+                            'asset': '1500',          # Generic asset
+                            'cost_of_sales': '5000',  # COS
+                            'expense': '7000',        # General Expenses
+                            'income': '4000',         # Sales
+                            'liability': '2400',      # Generic liability
+                            'equity': '3000',         # Capital
+                        }
+                        clickai_code = CLICKAI_CAT_MAP.get(sage_type, '7000')
+                    
+                    row_data['clickai_code'] = clickai_code
                     
                     # If we have 'balance' but not 'debit'/'credit' (Accounts.csv vs Trial Balance)
                     if row_data.get('balance') is not None and not row_data.get('debit') and not row_data.get('credit'):
@@ -62687,31 +62795,31 @@ def api_banking_categorize():
                 # --- SPECIAL MONEY OUT HANDLING ---
                 if category == "Owner Drawings":
                     create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                        {"account_code": "3200", "debit": expense_rounded, "credit": 0},  # Drawings
-                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
+                        {"account_code": gl(biz_id, "drawings"), "debit": expense_rounded, "credit": 0},  # Drawings
+                        {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                     ])
                 elif category == "Loan Repayment":
                     create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                        {"account_code": "2300", "debit": expense_rounded, "credit": 0},  # Loan liability down
-                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
+                        {"account_code": gl(biz_id, "uif"), "debit": expense_rounded, "credit": 0},  # Loan liability down
+                        {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                     ])
                 elif category == "Loan":
                     # Money OUT as Loan = repaying loan principal
                     create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                        {"account_code": "2300", "debit": expense_rounded, "credit": 0},  # Loan liability down
-                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
+                        {"account_code": gl(biz_id, "uif"), "debit": expense_rounded, "credit": 0},  # Loan liability down
+                        {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                     ])
                 elif category == "Customer Payment":
                     # Money OUT to customer = refund from bank
                     create_journal_entry(biz_id, txn_date, f"Customer refund: {desc_short}", ref, [
-                        {"account_code": "4000", "debit": expense_rounded, "credit": 0},   # Sales reversed
-                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},    # Bank out
+                        {"account_code": gl(biz_id, "sales"), "debit": expense_rounded, "credit": 0},   # Sales reversed
+                        {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},    # Bank out
                     ])
                 elif category == "Supplier Payment":
                     logger.info(f"[BANK] === Supplier Payment R{expense_amount} — starting processing ===")
                     create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                        {"account_code": "2000", "debit": expense_rounded, "credit": 0},
-                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},
+                        {"account_code": gl(biz_id, "creditors"), "debit": expense_rounded, "credit": 0},
+                        {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},
                     ])
                     
                     _matched_supplier = None
@@ -62765,8 +62873,8 @@ def api_banking_categorize():
                 elif category == "VAT Payment to SARS":
                     # Paying VAT liability - NOT an expense!
                     create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                        {"account_code": "2100", "debit": expense_rounded, "credit": 0},  # VAT Output liability down
-                        {"account_code": "1000", "debit": 0, "credit": expense_rounded},   # Bank
+                        {"account_code": gl(biz_id, "vat_output"), "debit": expense_rounded, "credit": 0},  # VAT Output liability down
+                        {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": expense_rounded},   # Bank
                     ])
                 elif category == "POS Deposit":
                     # POS Deposit as money OUT doesn't apply - skip
@@ -62794,8 +62902,8 @@ def api_banking_categorize():
                     {"account_code": gl_code, "debit": net_amount, "credit": 0},
                 ]
                 if vat_amount > 0:
-                    journal_entries.append({"account_code": "1400", "debit": vat_amount, "credit": 0})
-                journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(expense_amount, 2)})
+                    journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
+                journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(expense_amount, 2)})
                 
                 create_journal_entry(biz_id, txn_date, desc_short, ref, journal_entries)
                 logger.info(f"[BANK] Created expense: {category} GL={gl_code} R{expense_amount}")
@@ -62808,8 +62916,8 @@ def api_banking_categorize():
                 logger.info(f"[BANK] === Customer Payment R{income_amount} — starting processing ===")
                 # Customer paying their account - reduce debtors
                 create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
-                    {"account_code": "1200", "debit": 0, "credit": income_rounded},    # Debtors down
+                    {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": income_rounded},    # Debtors down
                 ])
                 
                 # Try to mark invoice as paid — in its own try/except so receipt ALWAYS runs
@@ -62905,27 +63013,27 @@ def api_banking_categorize():
             elif category == "POS Deposit":
                 # POS cash deposited into bank
                 create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
-                    {"account_code": "1050", "debit": 0, "credit": income_rounded},    # Cash On Hand down
+                    {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": gl(biz_id, "cash"), "debit": 0, "credit": income_rounded},    # Cash On Hand down
                 ])
                 
             elif category == "Owner Capital Introduced":
                 create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
-                    {"account_code": "3000", "debit": 0, "credit": income_rounded},    # Capital up
+                    {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": gl(biz_id, "capital"), "debit": 0, "credit": income_rounded},    # Capital up
                 ])
                 
             elif category == "Loan":
                 # Receiving loan funds
                 create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
-                    {"account_code": "2300", "debit": 0, "credit": income_rounded},    # Loan liability up
+                    {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": gl(biz_id, "uif"), "debit": 0, "credit": income_rounded},    # Loan liability up
                 ])
                 
             elif category == "Refund":
                 # Refund received - credit original expense
                 create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                    {"account_code": "1000", "debit": income_rounded, "credit": 0},   # Bank up
+                    {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},   # Bank up
                     {"account_code": "7900", "debit": 0, "credit": income_rounded},    # Sundry expenses reversed
                 ])
                 
@@ -62935,7 +63043,7 @@ def api_banking_categorize():
             else:
                 # Regular income
                 create_journal_entry(biz_id, txn_date, desc_short, ref, [
-                    {"account_code": "1000", "debit": income_rounded, "credit": 0},
+                    {"account_code": gl(biz_id, "bank"), "debit": income_rounded, "credit": 0},
                     {"account_code": gl_code, "debit": 0, "credit": income_rounded},
                 ])
         
@@ -65116,9 +65224,9 @@ def api_job_card_create_invoice(job_id):
                 f"Invoice {inv_number} - Job {job.get('job_number')}",
                 inv_number,
                 [
-                    {"account_code": "1200", "debit": float(invoice.get("total", 0)), "credit": 0},
-                    {"account_code": "4000", "debit": 0, "credit": float(invoice.get("subtotal", 0))},
-                    {"account_code": "2100", "debit": 0, "credit": float(invoice.get("vat", 0))}
+                    {"account_code": gl(biz_id, "debtors"), "debit": float(invoice.get("total", 0)), "credit": 0},
+                    {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(invoice.get("subtotal", 0))},
+                    {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(invoice.get("vat", 0))}
                 ]
             )
             
@@ -65275,9 +65383,9 @@ def api_job_card_create_both(job_id):
             f"Invoice {inv_number} - Job {job.get('job_number')}",
             inv_number,
             [
-                {"account_code": "1200", "debit": float(invoice.get("total", 0)), "credit": 0},
-                {"account_code": "4000", "debit": 0, "credit": float(invoice.get("subtotal", 0))},
-                {"account_code": "2100", "debit": 0, "credit": float(invoice.get("vat", 0))}
+                {"account_code": gl(biz_id, "debtors"), "debit": float(invoice.get("total", 0)), "credit": 0},
+                {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(invoice.get("subtotal", 0))},
+                {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(invoice.get("vat", 0))}
             ]
         )
         
@@ -70632,9 +70740,9 @@ def create_credit_note(invoice_id):
             f"Credit Note {cn_num} - {'partial ' if credit_type == 'partial' else ''}reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}",
             cn_num,
             [
-                {"account_code": "4000", "debit": float(cn_subtotal), "credit": 0},
-                {"account_code": "2100", "debit": float(cn_vat), "credit": 0},
-                {"account_code": "1200", "debit": 0, "credit": float(cn_total)},
+                {"account_code": gl(biz_id, "sales"), "debit": float(cn_subtotal), "credit": 0},
+                {"account_code": gl(biz_id, "vat_output"), "debit": float(cn_vat), "credit": 0},
+                {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(cn_total)},
             ]
         )
         
@@ -70671,9 +70779,9 @@ def create_credit_note(invoice_id):
                     description=f"Credit Note {cn_num} - {credit_type} - reversing {invoice.get('invoice_number', '')} - {invoice.get('customer_name', '')}",
                     amount=float(cn_total),
                     gl_entries=[
-                        {"account_code": "4000", "debit": float(cn_subtotal), "credit": 0},
-                        {"account_code": "2100", "debit": float(cn_vat), "credit": 0},
-                        {"account_code": "1200", "debit": 0, "credit": float(cn_total)},
+                        {"account_code": gl(biz_id, "sales"), "debit": float(cn_subtotal), "credit": 0},
+                        {"account_code": gl(biz_id, "vat_output"), "debit": float(cn_vat), "credit": 0},
+                        {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(cn_total)},
                     ],
                     customer_name=invoice.get("customer_name", ""), reference=cn_num,
                     transaction_date=today(),
@@ -71393,15 +71501,15 @@ def year_end_close():
     
     entries = []
     if total_income > 0:
-        entries.append({"account_code": "4000", "debit": total_income, "credit": 0})  # Close Sales
+        entries.append({"account_code": gl(biz_id, "sales"), "debit": total_income, "credit": 0})  # Close Sales
     if total_expenses > 0:
-        entries.append({"account_code": "5000", "debit": 0, "credit": total_expenses})  # Close Expenses
+        entries.append({"account_code": gl(biz_id, "cogs"), "debit": 0, "credit": total_expenses})  # Close Expenses
     
     # Net to Retained Earnings (3100)
     if net_profit >= 0:
-        entries.append({"account_code": "3100", "debit": 0, "credit": net_profit})
+        entries.append({"account_code": gl(biz_id, "retained"), "debit": 0, "credit": net_profit})
     else:
-        entries.append({"account_code": "3100", "debit": abs(net_profit), "credit": 0})
+        entries.append({"account_code": gl(biz_id, "retained"), "debit": abs(net_profit), "credit": 0})
     
     if entries:
         create_journal_entry(
@@ -75937,16 +76045,16 @@ def api_scan_save_supplier_invoice():
         if is_paid:
             # Paid: Debit Purchases + VAT Input, Credit Bank
             create_journal_entry(biz_id, data.get("date", today()), f"Purchase - {supplier_name}", f"INV-{inv_id[:8]}", [
-                {"account_code": "5100", "debit": round(net_amount, 2), "credit": 0},    # Purchases
-                {"account_code": "1400", "debit": round(vat_amount, 2), "credit": 0},    # VAT Input
-                {"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)},  # Bank
+                {"account_code": gl(biz_id, "purchases"), "debit": round(net_amount, 2), "credit": 0},    # Purchases
+                {"account_code": gl(biz_id, "vat_input"), "debit": round(vat_amount, 2), "credit": 0},    # VAT Input
+                {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)},  # Bank
             ])
         else:
             # Unpaid: Debit Purchases + VAT Input, Credit Creditors
             create_journal_entry(biz_id, data.get("date", today()), f"Purchase - {supplier_name}", f"INV-{inv_id[:8]}", [
-                {"account_code": "5100", "debit": round(net_amount, 2), "credit": 0},    # Purchases
-                {"account_code": "1400", "debit": round(vat_amount, 2), "credit": 0},    # VAT Input
-                {"account_code": "2000", "debit": 0, "credit": round(total_amount, 2)},  # Creditors
+                {"account_code": gl(biz_id, "purchases"), "debit": round(net_amount, 2), "credit": 0},    # Purchases
+                {"account_code": gl(biz_id, "vat_input"), "debit": round(vat_amount, 2), "credit": 0},    # VAT Input
+                {"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": round(total_amount, 2)},  # Creditors
             ])
         
         # Update supplier balance only if unpaid
@@ -75960,9 +76068,9 @@ def api_scan_save_supplier_invoice():
         try:
             if log_allocation:
                 _gl = [
-                    {"account_code": "5100", "debit": round(net_amount, 2), "credit": 0},
-                    {"account_code": "1400", "debit": round(vat_amount, 2), "credit": 0},
-                    {"account_code": "1000" if is_paid else "2000", "debit": 0, "credit": round(total_amount, 2)},
+                    {"account_code": gl(biz_id, "purchases"), "debit": round(net_amount, 2), "credit": 0},
+                    {"account_code": gl(biz_id, "vat_input"), "debit": round(vat_amount, 2), "credit": 0},
+                    {"account_code": gl(biz_id, "bank") if is_paid else gl(biz_id, "creditors"), "debit": 0, "credit": round(total_amount, 2)},
                 ]
                 log_allocation(
                     business_id=biz_id, allocation_type="scan_supplier_invoice", source_table="supplier_invoices", source_id=inv_id,
@@ -76231,9 +76339,9 @@ def api_scan_save_expense():
                 split_total += sp_amount
             # VAT Input (if claimable) on the total
             if vat_claimable > 0:
-                journal_entries.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})
+                journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_claimable, 2), "credit": 0})
             # Credit Bank for total (splits + VAT)
-            journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)})
+            journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)})
             logger.info(f"[SCAN SAVE] Multi-GL split: {len(splits)} categories for {desc[:30]}")
         else:
             # ═══ SINGLE GL: original flow ═══
@@ -76241,8 +76349,8 @@ def api_scan_save_expense():
                 {"account_code": expense_account, "debit": round(total_amount - vat_claimable, 2), "credit": 0},
             ]
             if vat_claimable > 0:
-                journal_entries.append({"account_code": "1400", "debit": round(vat_claimable, 2), "credit": 0})
-            journal_entries.append({"account_code": "1000", "debit": 0, "credit": round(total_amount, 2)})
+                journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_claimable, 2), "credit": 0})
+            journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)})
         
         create_journal_entry(biz_id, data.get("date", today()), desc[:50], f"EXP-{exp_id[:8]}", journal_entries)
         
@@ -78170,6 +78278,166 @@ def api_settings_business():
         import urllib.parse
         error_encoded = urllib.parse.quote(str(e)[:100])
         return redirect(f"/settings?error={error_encoded}")
+
+
+@app.route("/api/gl-migrate", methods=["GET", "POST"])
+@login_required
+def api_gl_migrate():
+    """
+    Migrate existing GL journals from ClickAI default codes to the business's
+    actual COA codes (from Sage/Xero import).
+    
+    GET  = preview (shows what would change)
+    POST = apply the migration
+    """
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    user = Auth.get_current_user()
+    
+    if not biz_id:
+        return jsonify({"error": "No business selected"})
+    
+    # Build the GL map from COA
+    global _gl_map_cache
+    _gl_map_cache = {}  # Clear cache
+    gl_map = build_gl_map(biz_id)
+    
+    if not gl_map:
+        return jsonify({"error": "No chart_of_accounts found for this business. Import a Sage/Xero COA first.", "gl_map": {}})
+    
+    # Build reverse map: ClickAI default code → Sage code
+    # e.g. "1300" → "2100/005" (because gl_map has "stock" → "2100/005" and CLICKAI_DEFAULTS has "stock" → "1300")
+    migration_map = {}  # old_code → new_code
+    for role, sage_code in gl_map.items():
+        default_code = CLICKAI_DEFAULTS.get(role)
+        if default_code and default_code != sage_code:
+            migration_map[default_code] = {"new_code": sage_code, "role": role}
+    
+    if not migration_map:
+        return jsonify({"message": "Nothing to migrate — COA codes match ClickAI defaults.", "gl_map": gl_map})
+    
+    # Get all journals for this business
+    all_journals = db.get("journals", {"business_id": biz_id}) or []
+    
+    # Count what needs to change
+    changes = []
+    for j in all_journals:
+        old_code = j.get("account_code", "")
+        if old_code in migration_map:
+            changes.append({
+                "journal_id": j.get("id"),
+                "date": j.get("date", ""),
+                "description": j.get("description", "")[:60],
+                "reference": j.get("reference", ""),
+                "old_code": old_code,
+                "new_code": migration_map[old_code]["new_code"],
+                "role": migration_map[old_code]["role"],
+                "debit": j.get("debit", 0),
+                "credit": j.get("credit", 0),
+            })
+    
+    # Also check journal_entries (OB entries)
+    all_je = db.get("journal_entries", {"business_id": biz_id}) or []
+    je_changes = []
+    for je in all_je:
+        old_code = je.get("account_code", "")
+        if old_code in migration_map:
+            je_changes.append({
+                "je_id": je.get("id"),
+                "account": je.get("account", ""),
+                "old_code": old_code,
+                "new_code": migration_map[old_code]["new_code"],
+                "role": migration_map[old_code]["role"],
+            })
+    
+    if request.method == "GET":
+        # Preview mode
+        summary = {}
+        for c in changes:
+            key = f"{c['old_code']} → {c['new_code']} ({c['role']})"
+            summary[key] = summary.get(key, 0) + 1
+        
+        return jsonify({
+            "mode": "PREVIEW — POST to this URL to apply",
+            "business": business.get("name", "?"),
+            "gl_map": gl_map,
+            "migration_map": {k: v["new_code"] + f" ({v['role']})" for k, v in migration_map.items()},
+            "journals_to_migrate": len(changes),
+            "journal_entries_to_migrate": len(je_changes),
+            "total_journals_in_db": len(all_journals),
+            "summary": summary,
+            "sample_changes": changes[:10],
+        })
+    
+    # POST = Apply migration
+    migrated = 0
+    failed = 0
+    
+    for c in changes:
+        try:
+            success = db.update("journals", c["journal_id"], {"account_code": c["new_code"]}, biz_id)
+            if success:
+                migrated += 1
+            else:
+                failed += 1
+        except Exception as e:
+            logger.error(f"[GL MIGRATE] Failed journal {c['journal_id']}: {e}")
+            failed += 1
+    
+    je_migrated = 0
+    for jc in je_changes:
+        try:
+            success = db.update("journal_entries", jc["je_id"], {"account_code": jc["new_code"]}, biz_id)
+            if success:
+                je_migrated += 1
+        except:
+            pass
+    
+    # Clear GL map cache so next request picks up fresh data
+    _gl_map_cache = {}
+    
+    logger.info(f"[GL MIGRATE] Done: {migrated} journals migrated, {failed} failed, {je_migrated} OB entries migrated")
+    
+    return jsonify({
+        "success": True,
+        "message": f"Migration complete: {migrated} journals + {je_migrated} OB entries migrated to Sage codes",
+        "journals_migrated": migrated,
+        "journals_failed": failed,
+        "je_migrated": je_migrated,
+    })
+
+
+@app.route("/api/debug-gl")
+@login_required
+def api_debug_gl():
+    """Shows GL map and COA for debugging"""
+    business = Auth.get_current_business()
+    biz_id = business.get("id") if business else None
+    
+    if not biz_id:
+        return jsonify({"error": "No business selected"})
+    
+    global _gl_map_cache
+    _gl_map_cache = {}
+    gl_map = build_gl_map(biz_id)
+    
+    coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
+    coa_dump = [{"code": a.get("account_code","") or a.get("code",""),
+                 "name": a.get("account_name","") or a.get("name",""),
+                 "category": a.get("category","")} for a in coa]
+    
+    # Show what gl() returns for each role
+    resolved = {}
+    for role in CLICKAI_DEFAULTS:
+        resolved[role] = gl(biz_id, role)
+    
+    return jsonify({
+        "business": business.get("name", "?"),
+        "coa_count": len(coa),
+        "gl_map_from_coa": gl_map,
+        "resolved_all_roles": resolved,
+        "coa_all": coa_dump,
+    })
 
 
 @app.route("/api/switch-business", methods=["POST"])
@@ -82492,9 +82760,9 @@ class RecurringInvoices:
         # Create GL journal entries
         try:
             create_journal_entry(business_id, today(), f"Invoice {inv_num} - {customer_name} (Recurring)", inv_num, [
-                {"account_code": "1200", "debit": float(total), "credit": 0},  # Debtors
-                {"account_code": "4000", "debit": 0, "credit": float(subtotal)},  # Sales
-                {"account_code": "2100", "debit": 0, "credit": float(vat)},  # VAT Output
+                {"account_code": gl(biz_id, "debtors"), "debit": float(total), "credit": 0},  # Debtors
+                {"account_code": gl(biz_id, "sales"), "debit": 0, "credit": float(subtotal)},  # Sales
+                {"account_code": gl(biz_id, "vat_output"), "debit": 0, "credit": float(vat)},  # VAT Output
             ])
             
             # Update customer balance
