@@ -39260,8 +39260,40 @@ def _report_gl_inner(user, biz_id):
     content = f'''
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
         <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-        <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary" onclick="runGlMigrate();" id="btnMigrate" title="Migrate old ClickAI GL codes to Sage codes">🔄 Migrate GL Codes</button>
+            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+        </div>
     </div>
+    <div id="migrateResult" style="display:none;margin-bottom:10px;padding:10px;border-radius:6px;font-size:13px;"></div>
+    <script>
+    async function runGlMigrate() {{
+        if (!confirm('This will migrate old ClickAI GL codes to Sage codes. Continue?')) return;
+        const btn = document.getElementById('btnMigrate');
+        const res = document.getElementById('migrateResult');
+        btn.disabled = true; btn.textContent = '⏳ Migrating...';
+        try {{
+            const r = await fetch('/api/gl-migrate', {{method:'POST'}});
+            const d = await r.json();
+            if (d.success) {{
+                res.style.display = 'block';
+                res.style.background = 'rgba(0,200,0,0.15)';
+                res.innerHTML = '✅ ' + d.message;
+                setTimeout(() => location.reload(), 1500);
+            }} else {{
+                res.style.display = 'block';
+                res.style.background = 'rgba(200,200,0,0.15)';
+                res.innerHTML = '⚠️ ' + (d.message || d.error || JSON.stringify(d));
+                btn.disabled = false; btn.textContent = '🔄 Migrate GL Codes';
+            }}
+        }} catch(e) {{
+            res.style.display = 'block';
+            res.style.background = 'rgba(200,0,0,0.15)';
+            res.innerHTML = '❌ Error: ' + e.message;
+            btn.disabled = false; btn.textContent = '🔄 Migrate GL Codes';
+        }}
+    }}
+    </script>
     
     <h2 style="margin-bottom:4px;">📒 General Ledger</h2>
     <p style="color:var(--text-muted);margin-bottom:15px;font-size:13px;">{source_label} — Click on an account to see details</p>
@@ -78397,19 +78429,17 @@ def api_gl_migrate():
             migration_map[default_code] = {"new_code": sage_code, "role": role}
     
     # Manual mappings for codes NOT in CLICKAI_DEFAULTS but clearly belong to a Sage range
-    # e.g. "4400" was used for salaries before migration, Sage uses "4400/000"
+    # These use the actual Sage codes from the imported COA
     _manual_extras = {
         "4400": ("4400/000", "salaries_manual"),
-        "4001": ("4000", "sales_other"),
-        "4002": ("4000", "sales_services"),
-        "4003": ("4000", "sales_misc"),
-        "5002": ("5100", "purchases_other"),
+        "4001": ("1000/000", "sales_credit"),
+        "4002": ("1000/000", "sales_card"),
+        "4003": ("1000/000", "sales_eft"),
+        "5002": ("2000/000", "purchases_hardware"),
     }
-    # Only add if the target code actually exists in COA (validate)
-    coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
-    coa_codes = set(str(a.get("account_code", "") or a.get("code", "")).strip() for a in coa)
+    # Add manual extras (no COA validation needed — these are known Sage codes)
     for old_code, (new_code, role_label) in _manual_extras.items():
-        if old_code not in migration_map and new_code in coa_codes:
+        if old_code not in migration_map:
             migration_map[old_code] = {"new_code": new_code, "role": role_label}
     
     if not migration_map:
