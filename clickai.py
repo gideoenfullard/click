@@ -78069,7 +78069,9 @@ def api_settings_business():
                 "tax_rate": 15,
                 "active": True,
                 "created_at": now(),
-                "user_id": user_id
+                "user_id": user_id,
+                "owner_id": user_id,
+                "business_name": request.form.get("name", "My Business"),
             }
             
             success, result = db.save("businesses", new_biz)
@@ -78119,16 +78121,32 @@ def api_settings_business():
         logger.info(f"[SETTINGS] Saving business {biz_id} for user {user_id}")
         logger.info(f"[SETTINGS] Updates: {updates}")
         
-        # UPSERT: Include id and preserve existing fields
-        updates["id"] = biz_id
-        # Preserve user_id and created_at from existing business
+        # START from the existing business record to preserve ALL columns
+        # This prevents NOT NULL violations on columns we don't show in the form
+        save_data = {}
         if business:
-            updates["user_id"] = business.get("user_id", user_id)
-            updates["created_at"] = business.get("created_at", now())
+            save_data = {k: v for k, v in business.items() if v is not None}
         
-        logger.info(f"[SETTINGS] Full upsert data: {updates}")
+        # Apply form updates on top
+        save_data.update(updates)
         
-        success, result = db.save("businesses", updates)
+        # Ensure id is set
+        save_data["id"] = biz_id
+        
+        # Sync name ↔ business_name (DB might have either/both columns)
+        biz_name_val = updates.get("name") or business.get("name") or business.get("business_name", "Business") if business else "Business"
+        save_data["name"] = biz_name_val
+        save_data["business_name"] = biz_name_val
+        
+        # Preserve critical fields
+        if business:
+            save_data["user_id"] = business.get("user_id", user_id)
+            save_data["owner_id"] = business.get("owner_id", business.get("user_id", user_id))
+            save_data["created_at"] = business.get("created_at", now())
+        
+        logger.info(f"[SETTINGS] Full upsert data keys: {list(save_data.keys())}")
+        
+        success, result = db.save("businesses", save_data)
         
         logger.info(f"[SETTINGS] Save result: success={success}, result={result}")
         
