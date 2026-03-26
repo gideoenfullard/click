@@ -1348,6 +1348,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 "status": "draft",
                 "emailed": False,
                 "created_by": user.get("id", "") if user else "",
+                "created_by_name": user.get("name", "") if user else "",
                 "created_at": now()
             }
             
@@ -3334,7 +3335,8 @@ Nothing else."""
                 "method": method,
                 "reference": reference,
                 "source": "manual",
-                "created_by": user.get("name", user.get("email", "")),
+                "created_by": user.get("id", "") if user else "",
+                "created_by_name": user.get("name", user.get("email", "")) if user else "",
                 "created_at": now()
             }
             

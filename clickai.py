@@ -2068,6 +2068,19 @@ def money(amount) -> str:
     except:
         return "R0.00"
 
+
+def get_acting_user() -> tuple:
+    """Get the logged-in user's ID and display name — auto-fills created_by everywhere.
+    Returns (user_id, user_name) — always strings, never None.
+    """
+    user = Auth.get_current_user()
+    if not user:
+        return "", "System"
+    uid = user.get("id", "")
+    name = user.get("name") or user.get("email") or "Unknown"
+    return uid, name
+
+
 def next_document_number(prefix: str, existing_docs: list, field: str = "invoice_number") -> str:
     """Generate next sequential document number, safe even after deletions.
     Extracts max number from existing docs and adds 1.
@@ -11447,10 +11460,28 @@ class Actions:
         
         # Create journal entries for GL
         # Debit Bank (1000), Credit Debtors (1200)
-        create_journal_entry(biz_id, today(), f"Payment from {customer['name']}", f"REC-{customer['id'][:8]}", [
-            {"account_code": gl(biz_id, "bank"), "debit": float(amount), "credit": 0},   # Bank
-            {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(amount)},   # Debtors
-        ])
+        _pay_gl = [
+            {"account_code": gl(biz_id, "bank"), "debit": float(amount), "credit": 0},
+            {"account_code": gl(biz_id, "debtors"), "debit": 0, "credit": float(amount)},
+        ]
+        create_journal_entry(biz_id, today(), f"Payment from {customer['name']}", f"REC-{customer['id'][:8]}", _pay_gl)
+        
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                _uid, _uname = get_acting_user()
+                log_allocation(
+                    business_id=biz_id, allocation_type="payment", source_table="receipts",
+                    source_id=customer["id"][:8],
+                    description=f"Payment received - {customer['name']}",
+                    amount=float(amount), gl_entries=_pay_gl,
+                    customer_name=customer["name"], payment_method="eft",
+                    reference=f"REC-{customer['id'][:8]}",
+                    transaction_date=today(),
+                    created_by=_uid, created_by_name=_uname
+                )
+        except Exception:
+            pass
         
         return {
             "success": True,
@@ -11492,11 +11523,27 @@ class Actions:
             excl_amount = float(amount - vat_amount)
             # Use proper GL code based on category
             expense_gl = IndustryKnowledge.get_gl_code(category) if category else "7999"
-            create_journal_entry(biz_id, today(), description[:50], f"EXP-{expense['id'][:8]}", [
-                {"account_code": expense_gl, "debit": excl_amount, "credit": 0},        # Expense account
-                {"account_code": gl(biz_id, "vat_input"), "debit": float(vat_amount), "credit": 0},  # VAT Input
-                {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": float(amount)},      # Bank
-            ])
+            _exp_gl = [
+                {"account_code": expense_gl, "debit": excl_amount, "credit": 0},
+                {"account_code": gl(biz_id, "vat_input"), "debit": float(vat_amount), "credit": 0},
+                {"account_code": gl(biz_id, "bank"), "debit": 0, "credit": float(amount)},
+            ]
+            create_journal_entry(biz_id, today(), description[:50], f"EXP-{expense['id'][:8]}", _exp_gl)
+            
+            # === ALLOCATION LOG ===
+            try:
+                if log_allocation:
+                    _uid, _uname = get_acting_user()
+                    log_allocation(
+                        business_id=biz_id, allocation_type="manual_expense",
+                        source_table="expenses", source_id=expense["id"],
+                        description=description[:200], amount=float(amount),
+                        gl_entries=_exp_gl, category=category, category_code=expense_gl,
+                        payment_method="eft", transaction_date=today(),
+                        created_by=_uid, created_by_name=_uname
+                    )
+            except Exception:
+                pass
             
             return {
                 "success": True,
@@ -12138,18 +12185,34 @@ class Actions:
             return {"success": False, "message": f"Debits ({money(total_debit)}) must equal Credits ({money(total_credit)})"}
         
         # Create journal entries
+        _jnl_ref = reference or generate_id()[:8]
         for entry in entries:
             db.save("journals", {
                 "id": generate_id(),
                 "business_id": biz_id,
                 "date": today(),
                 "description": description,
-                "reference": reference or generate_id()[:8],
+                "reference": _jnl_ref,
                 "account_code": entry.get("account_code", entry.get("account", "")),
                 "debit": float(entry.get("debit", 0)),
                 "credit": float(entry.get("credit", 0)),
                 "created_at": now()
             })
+        
+        # === ALLOCATION LOG ===
+        try:
+            if log_allocation:
+                _uid, _uname = get_acting_user()
+                log_allocation(
+                    business_id=biz_id, allocation_type="journal_entry",
+                    source_table="journals", source_id=_jnl_ref,
+                    description=f"Journal: {description[:200]}",
+                    amount=float(total_debit), gl_entries=entries,
+                    reference=_jnl_ref, transaction_date=today(),
+                    created_by=_uid, created_by_name=_uname
+                )
+        except Exception:
+            pass
         
         return {
             "success": True,
@@ -53606,7 +53669,9 @@ class RecurringInvoices:
             notes=f"{recurring.get('notes', '')} [Recurring: {recurring.get('id', '')[:8]}]",
             salesman=recurring.get("salesman", ""),
             salesman_name=recurring.get("salesman_name", ""),
-            sales_rep=recurring.get("salesman_name", "")
+            sales_rep=recurring.get("salesman_name", ""),
+            created_by="system",
+            created_by_name="Auto-Recurring"
         )
         invoice_id = invoice["id"]
         invoice["recurring_id"] = recurring.get("id")  # Link back to recurring template

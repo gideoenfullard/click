@@ -1677,7 +1677,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                         supplier_name=txn.get("supplier_name", "") or description.split()[0][:30] if description else "",
                         payment_method="eft", reference=f"BNK-{txn_id[:8]}",
                         transaction_date=txn_date,
-                        created_by=session.get("user_id", ""), created_by_name=""
+                        created_by=session.get("user_id", ""), created_by_name=(Auth.get_current_user() or {}).get("name", "")
                     )
             except Exception:
                 pass
