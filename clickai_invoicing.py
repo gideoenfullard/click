@@ -27,6 +27,8 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
 
     # === INVOICES + RECURRING INVOICES ===
 
+    @app.route("/invoices")
+    @login_required
     def invoices_page():
         """Invoices list - FAST direct query"""
         
@@ -3709,7 +3711,5 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
     def invoice_to_delivery_note(invoice_id):
         """Redirect to create delivery note from invoice"""
         return redirect(f"/delivery-note/new?invoice_id={invoice_id}")
-    
-    
 
     logger.info("[INVOICING] All invoicing routes registered ✓")
