@@ -1,17 +1,23 @@
 """
 ClickAI Allocation Log Module
 ===============================
-"Place of Safety" - Every transaction allocation logged and viewable.
+"Follow the Money" - Full audit trail ledger.
 
-Tracks:
-- POS sales (who, what, GL accounts, stock movement)
+Every transaction in the business is logged here:
+- POS sales (who, what, GL accounts, stock movement, payment method)
 - Scanned invoices (AI decisions, stock matching, category)
 - Scanned expenses (AI category, GL code, reasoning)
 - Bank statement imports (auto-categorization, matching)
 - Manual expenses, payments, credit notes
-- Journal entries
+- Journal entries, payroll, GRVs
 
-Each allocation can be reviewed and edited from /ledger
+The /ledger page shows accordion bundles that open to reveal:
+  Layer 1: Transaction summary (date, type, amount, who)
+  Layer 2: Full detail (items, customer/supplier, payment, GL journals)
+  Layer 3: Linked documents and stock movements
+
+Grouping: Per Transaction (default), Per Day, Per Customer, Per Cashier
+Search: Any field - customer, supplier, amount, reference, cashier, date
 
 Import in clickai.py with try/except:
     try:
@@ -25,6 +31,7 @@ Import in clickai.py with try/except:
 import json
 import logging
 from datetime import datetime
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +108,6 @@ def log_allocation(
         if not auto_match_key:
             amt_str = f"{abs(round(float(amount), 2)):.2f}"
             if supplier_name:
-                # Normalize: lowercase, strip spaces, just first word for matching
                 s_norm = supplier_name.strip().lower().split()[0] if supplier_name.strip() else ""
                 auto_match_key = f"sup:{s_norm}:{amt_str}"
             elif reference:
@@ -176,17 +182,11 @@ def log_allocation(
 def _try_auto_link(business_id: str, new_id: str, match_key: str, new_type: str, new_amount: float):
     """
     Try to find and link a partner allocation entry.
-    
-    Logic:
-    - A scanned invoice (scan_supplier_invoice) should link to a bank entry (bank_categorize) and vice versa
-    - Matching is by match_key (supplier+amount) OR by reference (invoice number)
-    - Only links if not already linked
     """
     global _db
     if not _db:
         return
     
-    # Define which types can pair with each other
     pair_types = {
         "scan_supplier_invoice": ["bank_categorize", "bank_import", "supplier_payment"],
         "scan_expense":          ["bank_categorize", "bank_import"],
@@ -211,41 +211,35 @@ def _try_auto_link(business_id: str, new_id: str, match_key: str, new_type: str,
         if a.get("id") == new_id:
             continue
         if a.get("linked_id"):
-            continue  # Already linked to something else
+            continue
         if a.get("allocation_type") not in valid_partners:
             continue
         
         score = 0
         
-        # Match by match_key (supplier+amount)
         if match_key and a.get("match_key") == match_key:
             score += 10
         
-        # Match by reference (invoice number)
         a_ref = (a.get("reference") or "").strip().upper()
-        # Check if new entry's reference appears in the other entry's description or reference
         if a_ref and match_key and a_ref in match_key.upper():
             score += 5
         
-        # Amount proximity (within 2% or R10)
         a_amt = abs(float(a.get("amount", 0)))
         if a_amt > 0 and new_amount > 0:
             diff = abs(a_amt - new_amount)
             pct = diff / max(a_amt, new_amount) if max(a_amt, new_amount) > 0 else 1
-            if diff < 0.02:  # Exact match
+            if diff < 0.02:
                 score += 8
-            elif pct < 0.02:  # Within 2%
+            elif pct < 0.02:
                 score += 5
-            elif diff <= 10:  # Within R10
+            elif diff <= 10:
                 score += 3
         
         if score > best_score:
             best_score = score
             best_match = a
     
-    # Need at least score 10 (match_key match) or 13 (ref + amount) to auto-link
     if best_match and best_score >= 10:
-        # Link both entries to each other (ignore errors if linked_id column doesn't exist yet)
         try:
             _db.save("allocation_log", {"id": new_id, "linked_id": best_match["id"]})
             _db.save("allocation_log", {"id": best_match["id"], "linked_id": new_id})
@@ -273,6 +267,36 @@ def _source_url(a):
     return f"{prefix}/{sid}"
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# TYPE CONFIG - Icons, Colors, Labels for each transaction type
+# ═══════════════════════════════════════════════════════════════════════════════
+
+TYPE_CONFIG = {
+    "pos_sale":               ("POS",    "#10b981", "POS Sale"),
+    "scan_supplier_invoice":  ("SCAN",   "#3b82f6", "Scanned Invoice"),
+    "scan_expense":           ("SCAN",   "#f59e0b", "Scanned Expense"),
+    "bank_import":            ("BANK",   "#8b5cf6", "Bank Import"),
+    "bank_categorize":        ("BANK",   "#6366f1", "Bank Categorize"),
+    "manual_expense":         ("EXP",    "#f97316", "Manual Expense"),
+    "payment":                ("PAY",    "#10b981", "Payment"),
+    "credit_note":            ("CN",     "#ef4444", "Credit Note"),
+    "journal_entry":          ("JNL",    "#64748b", "Journal Entry"),
+    "supplier_payment":       ("PAY",    "#0ea5e9", "Supplier Payment"),
+    "grv":                    ("GRV",    "#0f766e", "GRV"),
+    "grv_to_invoice":         ("GRV",    "#065f46", "GRV to Invoice"),
+    "invoice":                ("INV",    "#10b981", "Invoice"),
+    "payroll":                ("PAY",    "#7c3aed", "Payroll"),
+}
+
+# Payment method badges
+PAY_BADGES = {
+    "cash":    ("CASH",    "#10b981"),
+    "card":    ("CARD",    "#3b82f6"),
+    "eft":     ("EFT",     "#8b5cf6"),
+    "account": ("ACC",     "#f59e0b"),
+}
+
+
 def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, today_fn):
     """Register the /ledger page and API routes"""
     
@@ -282,12 +306,347 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
     _now = now_fn
     _today = today_fn
     
+    
+    def _build_gl_detail(a, money_fn):
+        """Build the GL journal entries detail HTML for an allocation"""
+        try:
+            gl = json.loads(a.get("gl_entries", "[]"))
+            if not gl:
+                return ""
+            
+            total_dr = sum(float(g.get("debit", 0)) for g in gl)
+            total_cr = sum(float(g.get("credit", 0)) for g in gl)
+            balanced = abs(total_dr - total_cr) < 0.02
+            bal_icon = "BALANCED" if balanced else "UNBALANCED"
+            bal_color = "#10b981" if balanced else "#ef4444"
+            
+            rows = ""
+            for g in gl:
+                code = g.get("account_code", "?")
+                name = g.get("account_name", "")
+                dr = float(g.get("debit", 0))
+                cr = float(g.get("credit", 0))
+                
+                dr_display = money_fn(dr) if dr > 0 else ""
+                cr_display = money_fn(cr) if cr > 0 else ""
+                
+                rows += f'''<tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:5px 8px;font-family:monospace;font-size:12px;font-weight:600;">{code}</td>
+                    <td style="padding:5px 8px;font-size:12px;color:var(--text-muted);">{name}</td>
+                    <td style="padding:5px 8px;text-align:right;font-family:monospace;font-size:12px;color:#10b981;font-weight:600;">{dr_display}</td>
+                    <td style="padding:5px 8px;text-align:right;font-family:monospace;font-size:12px;color:#ef4444;font-weight:600;">{cr_display}</td>
+                </tr>'''
+            
+            return f'''
+            <div style="margin-top:10px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+                <div style="background:rgba(99,102,241,0.08);padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);">GL Journal Entries</span>
+                    <span style="font-size:10px;font-weight:700;color:{bal_color};background:{bal_color}18;padding:2px 8px;border-radius:4px;">{bal_icon}</span>
+                </div>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr style="border-bottom:2px solid var(--border);">
+                            <th style="padding:6px 8px;text-align:left;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Account</th>
+                            <th style="padding:6px 8px;text-align:left;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Name</th>
+                            <th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Debit</th>
+                            <th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Credit</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows}
+                        <tr style="background:rgba(99,102,241,0.05);border-top:2px solid var(--border);">
+                            <td colspan="2" style="padding:6px 8px;font-size:11px;font-weight:700;">TOTALS</td>
+                            <td style="padding:6px 8px;text-align:right;font-family:monospace;font-size:12px;font-weight:700;color:#10b981;">{money_fn(total_dr)}</td>
+                            <td style="padding:6px 8px;text-align:right;font-family:monospace;font-size:12px;font-weight:700;color:#ef4444;">{money_fn(total_cr)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>'''
+        except:
+            return ""
+    
+    
+    def _build_stock_detail(a):
+        """Build stock movement detail HTML"""
+        try:
+            sm = json.loads(a.get("stock_movements", "[]"))
+            if not sm:
+                return ""
+            
+            rows = ""
+            for s in sm:
+                code = s.get("code", "?")
+                desc = s.get("description", "")
+                qty = s.get("qty_change", 0)
+                old_q = s.get("old_qty", "?")
+                new_q = s.get("new_qty", "?")
+                direction = "OUT" if qty < 0 else "IN"
+                dir_color = "#ef4444" if qty < 0 else "#10b981"
+                
+                rows += f'''<tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:4px 8px;font-family:monospace;font-size:12px;font-weight:600;">{code}</td>
+                    <td style="padding:4px 8px;font-size:12px;">{desc[:40]}</td>
+                    <td style="padding:4px 8px;text-align:center;">
+                        <span style="color:{dir_color};font-weight:700;font-size:11px;">{direction} {abs(qty)}</span>
+                    </td>
+                    <td style="padding:4px 8px;text-align:right;font-size:11px;color:var(--text-muted);">{old_q} &rarr; {new_q}</td>
+                </tr>'''
+            
+            return f'''
+            <div style="margin-top:10px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+                <div style="background:rgba(15,118,110,0.08);padding:8px 12px;">
+                    <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted);">Stock Movements ({len(sm)} items)</span>
+                </div>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr style="border-bottom:2px solid var(--border);">
+                            <th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Code</th>
+                            <th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Description</th>
+                            <th style="padding:5px 8px;text-align:center;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Qty</th>
+                            <th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--text-muted);text-transform:uppercase;">Old &rarr; New</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>'''
+        except:
+            return ""
+    
+    
+    def _build_linked_detail(a, alloc_by_id, money_fn, safe_string_fn):
+        """Build linked transaction detail HTML"""
+        linked_id = a.get("linked_id", "")
+        if not linked_id or linked_id not in alloc_by_id:
+            return ""
+        
+        partner = alloc_by_id[linked_id]
+        p_type = partner.get("allocation_type", "")
+        p_short, p_color, p_label = TYPE_CONFIG.get(p_type, ("?", "#888", p_type.replace("_", " ").title()))
+        p_date = (partner.get("transaction_date") or partner.get("created_at", ""))[:10]
+        p_ref = safe_string_fn(partner.get("reference", ""))
+        p_desc = safe_string_fn(partner.get("description", "")[:80])
+        p_amt = abs(float(partner.get("amount", 0)))
+        p_src_url = _source_url(partner)
+        
+        return f'''
+        <div style="margin-top:10px;border:1px solid #10b98144;border-radius:8px;overflow:hidden;">
+            <div style="background:rgba(16,185,129,0.08);padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#10b981;">Linked Transaction</span>
+                <a href="/{p_src_url}" style="font-size:11px;color:var(--primary);text-decoration:none;">View Document &rarr;</a>
+            </div>
+            <div style="padding:10px 12px;display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
+                <span style="background:{p_color}18;color:{p_color};padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;">{p_short} {p_label}</span>
+                <span style="font-size:12px;font-weight:600;">{p_date}</span>
+                <span style="font-size:12px;">{p_ref}</span>
+                <span style="font-size:12px;color:var(--text-muted);">{p_desc}</span>
+                <span style="font-size:13px;font-weight:700;">{money_fn(p_amt)}</span>
+            </div>
+        </div>'''
+    
+    
+    def _build_ai_detail(a, safe_string_fn):
+        """Build AI decision detail HTML"""
+        if not a.get("ai_reasoning"):
+            return ""
+        
+        conf = a.get("ai_confidence", "")
+        conf_color = {"HIGH": "#10b981", "MEDIUM": "#f59e0b", "LOW": "#ef4444"}.get(conf, "#888")
+        worker = safe_string_fn(a.get("ai_worker", ""))
+        reasoning = safe_string_fn(a.get("ai_reasoning", ""))
+        
+        return f'''
+        <div style="margin-top:10px;border:1px solid #8b5cf644;border-radius:8px;overflow:hidden;">
+            <div style="background:rgba(139,92,246,0.08);padding:8px 12px;display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#8b5cf6;">AI Decision — {worker}</span>
+                <span style="font-size:10px;font-weight:700;color:{conf_color};background:{conf_color}18;padding:2px 8px;border-radius:4px;">{conf}</span>
+            </div>
+            <div style="padding:10px 12px;font-size:12px;line-height:1.6;color:var(--text);">{reasoning}</div>
+        </div>'''
+    
+    
+    def _build_single_accordion(a, alloc_by_id, money_fn, safe_string_fn, idx):
+        """Build a single transaction accordion row"""
+        atype = a.get("allocation_type", "unknown")
+        short, color, label = TYPE_CONFIG.get(atype, ("?", "#888", atype.replace("_", " ").title()))
+        
+        amt = abs(float(a.get("amount", 0)))
+        
+        # Payment method badge
+        pm = (a.get("payment_method") or "").lower()
+        pm_label, pm_color = PAY_BADGES.get(pm, ("", "#888"))
+        pm_badge = f'<span style="background:{pm_color}18;color:{pm_color};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;margin-left:6px;">{pm_label}</span>' if pm_label else ""
+        
+        # AI badge
+        ai_badge = ""
+        if a.get("ai_worker"):
+            ai_badge = f'<span style="background:rgba(139,92,246,0.15);color:#8b5cf6;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:6px;">AI {safe_string_fn(a.get("ai_worker", ""))}</span>'
+        
+        # Linked badge
+        linked_badge = ""
+        if a.get("linked_id") and a.get("linked_id") in alloc_by_id:
+            linked_badge = '<span style="background:rgba(16,185,129,0.15);color:#10b981;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:4px;">LINKED</span>'
+        
+        # Date + Time
+        txn_date = (a.get("transaction_date") or "")[:10]
+        created = a.get("created_at", "")
+        created_date = created[:10] if len(created) >= 10 else ""
+        time_str = created[11:16] if len(created) > 16 else ""
+        date_display = txn_date or created_date
+        
+        # Who
+        who = safe_string_fn(a.get("created_by_name") or a.get("ai_worker") or "System")
+        
+        # Customer / supplier
+        entity = ""
+        if a.get("customer_name"):
+            entity = safe_string_fn(a.get("customer_name"))
+        elif a.get("supplier_name"):
+            entity = safe_string_fn(a.get("supplier_name"))
+        
+        # Reference
+        ref = safe_string_fn(a.get("reference", ""))
+        
+        # Description
+        desc = safe_string_fn(a.get("description", "-")[:80])
+        
+        # Category
+        cat = safe_string_fn(a.get("category", ""))
+        cat_code = safe_string_fn(a.get("category_code", ""))
+        
+        # Source URL
+        src_url = _source_url(a)
+        
+        # Extra data for PO links etc
+        extra_data = {}
+        try:
+            _ex = a.get("extra", "{}")
+            extra_data = json.loads(_ex) if isinstance(_ex, str) else (_ex or {})
+        except:
+            pass
+        
+        po_id = extra_data.get("po_id", "")
+        po_link = f'<a href="/purchase/{po_id}" style="font-size:11px;color:var(--primary);text-decoration:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;">View PO</a>' if po_id else ""
+        
+        # Build inner detail sections
+        gl_detail = _build_gl_detail(a, money_fn)
+        stock_detail = _build_stock_detail(a)
+        linked_detail = _build_linked_detail(a, alloc_by_id, money_fn, safe_string_fn)
+        ai_detail = _build_ai_detail(a, safe_string_fn)
+        
+        # Income or expense indicator
+        is_income = atype in ("pos_sale", "payment", "invoice", "bank_import")
+        amt_color = "#10b981" if is_income else "#ef4444"
+        amt_prefix = "+" if is_income else "-"
+        
+        aid = a.get("id", f"alloc_{idx}")
+        
+        return f'''
+        <div class="ledger-entry" style="border:1px solid var(--border);border-radius:10px;margin-bottom:6px;overflow:hidden;border-left:4px solid {color};">
+            <!-- ACCORDION HEADER - Layer 1 -->
+            <div onclick="toggleLedger('{aid}')" style="cursor:pointer;padding:12px 16px;display:grid;grid-template-columns:90px 1fr 130px 100px 40px;align-items:center;gap:10px;transition:background 0.15s;" 
+                 onmouseover="this.style.background='rgba(99,102,241,0.04)'" onmouseout="this.style.background='transparent'">
+                <!-- Date -->
+                <div>
+                    <div style="font-size:13px;font-weight:700;color:var(--text);">{date_display}</div>
+                    <div style="font-size:10px;color:var(--text-muted);">{time_str}</div>
+                </div>
+                <!-- Type + Description -->
+                <div style="min-width:0;">
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                        <span style="background:{color}18;color:{color};padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;letter-spacing:0.5px;">{short}</span>
+                        <span style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{desc}</span>
+                        {pm_badge}{ai_badge}{linked_badge}
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+                        {ref}{f' &bull; {entity}' if entity else ''}{f' &bull; {who}' if who != 'System' else ''}
+                    </div>
+                </div>
+                <!-- Amount -->
+                <div style="text-align:right;">
+                    <div style="font-size:15px;font-weight:800;color:{amt_color};font-family:monospace;">{amt_prefix}{money_fn(amt)}</div>
+                </div>
+                <!-- Running Balance placeholder -->
+                <div style="text-align:right;">
+                    <div style="font-size:11px;color:var(--text-muted);font-family:monospace;">&nbsp;</div>
+                </div>
+                <!-- Chevron -->
+                <div style="text-align:center;">
+                    <span id="chev_{aid}" style="color:var(--text-muted);font-size:14px;transition:transform 0.2s;display:inline-block;">&#9654;</span>
+                </div>
+            </div>
+            
+            <!-- ACCORDION BODY - Layer 2 & 3 -->
+            <div id="body_{aid}" style="display:none;border-top:1px solid var(--border);background:rgba(99,102,241,0.02);">
+                <div style="padding:16px;">
+                    
+                    <!-- Transaction Info Grid -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:10px;">
+                        <div>
+                            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Type</div>
+                            <div style="font-weight:600;font-size:13px;">{label}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Amount</div>
+                            <div style="font-weight:700;font-size:14px;color:{amt_color};font-family:monospace;">{money_fn(amt)}</div>
+                        </div>
+                        {f"""<div>
+                            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Payment</div>
+                            <div style="font-weight:600;font-size:13px;">{pm.upper() if pm else '-'}</div>
+                        </div>""" if pm else ""}
+                        {f"""<div>
+                            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Customer</div>
+                            <div style="font-weight:600;font-size:13px;">{entity}</div>
+                        </div>""" if a.get("customer_name") else ""}
+                        {f"""<div>
+                            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Supplier</div>
+                            <div style="font-weight:600;font-size:13px;">{safe_string_fn(a.get('supplier_name', ''))}</div>
+                        </div>""" if a.get("supplier_name") else ""}
+                        {f"""<div>
+                            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Category</div>
+                            <div style="font-weight:600;font-size:13px;">{cat} {f'({cat_code})' if cat_code else ''}</div>
+                        </div>""" if cat else ""}
+                        <div>
+                            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Reference</div>
+                            <div style="font-weight:600;font-size:13px;">{ref or '-'}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Created By</div>
+                            <div style="font-weight:600;font-size:13px;">{who}</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Source Document Link -->
+                    <div style="display:flex;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+                        <a href="/{src_url}" style="font-size:11px;color:var(--primary);text-decoration:none;padding:4px 10px;border:1px solid var(--border);border-radius:6px;">View Source Document</a>
+                        {po_link}
+                    </div>
+                    
+                    <!-- AI Decision (if applicable) -->
+                    {ai_detail}
+                    
+                    <!-- GL Journal Entries -->
+                    {gl_detail}
+                    
+                    <!-- Stock Movements -->
+                    {stock_detail}
+                    
+                    <!-- Linked Transaction -->
+                    {linked_detail}
+                    
+                </div>
+            </div>
+        </div>'''
+    
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LEDGER PAGE - "Follow the Money"
+    # ═══════════════════════════════════════════════════════════════════════════
+    
     @app.route("/ledger")
     @login_required
     def ledger_page():
-        """Allocation Ledger - Place of Safety"""
+        """Follow the Money - Full Audit Trail Ledger"""
         
-        # Import these at call time (they're defined after module registration in clickai.py)
         import clickai as _ck
         render_page = _ck.render_page
         money = _ck.money
@@ -300,18 +659,22 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
         if not biz_id:
             return render_page("Ledger", "<div class='card'><p>No business selected</p></div>", user, "ledger")
         
-        # Get filter params
         from flask import request as req
-        date_filter = req.args.get("date", "")  # Empty = show ALL (never hide data)
-        type_filter = req.args.get("type", "all")
-        search_q = req.args.get("q", "").strip()
-        page = int(req.args.get("page", 1))
-        per_page = 100
         
-        # Load allocations — ALWAYS load all, never discard
+        # ── FILTERS ──
+        date_from = req.args.get("from", "")
+        date_to = req.args.get("to", "")
+        type_filter = req.args.get("type", "all")
+        pay_filter = req.args.get("pay", "all")
+        search_q = req.args.get("q", "").strip()
+        group_by = req.args.get("group", "transaction")  # transaction | day | customer | cashier
+        page = int(req.args.get("page", 1))
+        per_page = 50
+        
+        # ── LOAD ALL ALLOCATIONS ──
         all_allocs = db.get("allocation_log", {"business_id": biz_id}) or []
         
-        # Hydrate: if transaction_date/match_key/linked_id missing at top level, read from extra
+        # Hydrate: read from extra if top-level fields missing
         for a in all_allocs:
             if not a.get("transaction_date") and a.get("extra"):
                 try:
@@ -323,326 +686,356 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
                 except:
                     pass
         
-        # Filter by date ONLY if explicitly chosen (data never disappears)
-        if date_filter:
-            all_allocs = [a for a in all_allocs if 
-                (a.get("transaction_date") or "")[:10] == date_filter or
-                (a.get("created_at") or "")[:10] == date_filter
-            ]
+        # ── APPLY FILTERS ──
+        filtered = all_allocs
         
-        # Filter by type
+        # Date range
+        if date_from:
+            filtered = [a for a in filtered if (a.get("transaction_date") or a.get("created_at", ""))[:10] >= date_from]
+        if date_to:
+            filtered = [a for a in filtered if (a.get("transaction_date") or a.get("created_at", ""))[:10] <= date_to]
+        
+        # Type
         if type_filter and type_filter != "all":
-            all_allocs = [a for a in all_allocs if a.get("allocation_type") == type_filter]
+            filtered = [a for a in filtered if a.get("allocation_type") == type_filter]
         
-        # Search
+        # Payment method
+        if pay_filter and pay_filter != "all":
+            filtered = [a for a in filtered if (a.get("payment_method") or "").lower() == pay_filter]
+        
+        # Search — search EVERYTHING
         if search_q:
             sq = search_q.lower()
-            all_allocs = [a for a in all_allocs if 
-                sq in (a.get("description") or "").lower() or
-                sq in (a.get("supplier_name") or "").lower() or
-                sq in (a.get("customer_name") or "").lower() or
-                sq in (a.get("reference") or "").lower() or
-                sq in (a.get("category") or "").lower() or
-                sq in (a.get("ai_worker") or "").lower() or
-                sq in (a.get("created_by_name") or "").lower()
-            ]
+            # Also search by amount (e.g. user types "1500" or "R1500")
+            sq_amt = sq.replace("r", "").replace(",", "").replace(" ", "").strip()
+            
+            def _matches(a):
+                # Text fields
+                for field in ("description", "supplier_name", "customer_name", "reference", 
+                              "category", "ai_worker", "created_by_name", "payment_method",
+                              "allocation_type", "category_code", "ai_reasoning"):
+                    if sq in (a.get(field) or "").lower():
+                        return True
+                # Amount match
+                try:
+                    if sq_amt and abs(float(a.get("amount", 0)) - float(sq_amt)) < 0.50:
+                        return True
+                except:
+                    pass
+                return False
+            
+            filtered = [a for a in filtered if _matches(a)]
         
-        # Sort newest first — prefer transaction_date, fallback to created_at
-        all_allocs = sorted(all_allocs, key=lambda x: x.get("transaction_date") or x.get("created_at", ""), reverse=True)
+        # ── SORT newest first ──
+        filtered = sorted(filtered, key=lambda x: x.get("transaction_date") or x.get("created_at", ""), reverse=True)
         
-        # Stats (on filtered set)
-        total_count = len(all_allocs)
-        total_amount = sum(abs(float(a.get("amount", 0))) for a in all_allocs)
-        ai_count = sum(1 for a in all_allocs if a.get("ai_worker"))
-        manual_count = total_count - ai_count
-        linked_count = sum(1 for a in all_allocs if a.get("linked_id"))
+        # ── STATS ──
+        total_count = len(filtered)
+        income_total = sum(abs(float(a.get("amount", 0))) for a in filtered 
+                          if a.get("allocation_type") in ("pos_sale", "payment", "invoice", "bank_import"))
+        expense_total = sum(abs(float(a.get("amount", 0))) for a in filtered 
+                           if a.get("allocation_type") in ("scan_supplier_invoice", "scan_expense", "manual_expense", 
+                                                           "supplier_payment", "grv", "credit_note"))
+        ai_count = sum(1 for a in filtered if a.get("ai_worker"))
+        linked_count = sum(1 for a in filtered if a.get("linked_id"))
         
-        # Pagination
-        start_idx = (page - 1) * per_page
-        page_allocs = all_allocs[start_idx:start_idx + per_page]
+        # ── PAGINATION (for transaction view) ──
         total_pages = max(1, (total_count + per_page - 1) // per_page)
+        start_idx = (page - 1) * per_page
         
-        # Build a quick ID lookup for linked entries
+        # ── BUILD ALLOC LOOKUP ──
         alloc_by_id = {a.get("id"): a for a in all_allocs}
         
-        # Build pagination HTML outside the f-string (Python 3.11 can't handle nested f-string comparisons)
+        # ── BUILD CONTENT BASED ON GROUPING ──
+        entries_html = ""
+        
+        if group_by == "transaction":
+            # Simple list of accordions — each transaction is its own accordion
+            page_allocs = filtered[start_idx:start_idx + per_page]
+            for idx, a in enumerate(page_allocs):
+                entries_html += _build_single_accordion(a, alloc_by_id, money, safe_string, start_idx + idx)
+        
+        elif group_by == "day":
+            # Group by date, each date is an outer accordion
+            by_day = defaultdict(list)
+            for a in filtered:
+                d = (a.get("transaction_date") or a.get("created_at", ""))[:10]
+                by_day[d].append(a)
+            
+            days = sorted(by_day.keys(), reverse=True)
+            # Paginate by days
+            page_days = days[start_idx:start_idx + per_page]
+            total_pages = max(1, (len(days) + per_page - 1) // per_page)
+            
+            for day in page_days:
+                day_allocs = by_day[day]
+                day_total = sum(abs(float(a.get("amount", 0))) for a in day_allocs)
+                day_income = sum(abs(float(a.get("amount", 0))) for a in day_allocs 
+                                if a.get("allocation_type") in ("pos_sale", "payment", "invoice", "bank_import"))
+                day_expense = sum(abs(float(a.get("amount", 0))) for a in day_allocs 
+                                 if a.get("allocation_type") not in ("pos_sale", "payment", "invoice", "bank_import"))
+                
+                inner_html = ""
+                for idx, a in enumerate(day_allocs):
+                    inner_html += _build_single_accordion(a, alloc_by_id, money, safe_string, idx)
+                
+                day_id = day.replace("-", "")
+                entries_html += f'''
+                <div style="border:2px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden;">
+                    <div onclick="toggleGroup('{day_id}')" style="cursor:pointer;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;background:rgba(99,102,241,0.06);"
+                         onmouseover="this.style.background='rgba(99,102,241,0.10)'" onmouseout="this.style.background='rgba(99,102,241,0.06)'">
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <span id="gchev_{day_id}" style="font-size:14px;transition:transform 0.2s;display:inline-block;color:var(--text-muted);">&#9654;</span>
+                            <span style="font-size:16px;font-weight:800;">{day}</span>
+                            <span style="font-size:12px;color:var(--text-muted);">{len(day_allocs)} transactions</span>
+                        </div>
+                        <div style="display:flex;gap:15px;align-items:center;">
+                            <span style="font-size:13px;color:#10b981;font-weight:700;font-family:monospace;">+{money(day_income)}</span>
+                            <span style="font-size:13px;color:#ef4444;font-weight:700;font-family:monospace;">-{money(day_expense)}</span>
+                        </div>
+                    </div>
+                    <div id="gbody_{day_id}" style="display:none;padding:10px;">
+                        {inner_html}
+                    </div>
+                </div>'''
+        
+        elif group_by in ("customer", "cashier"):
+            # Group by customer_name or created_by_name
+            field = "customer_name" if group_by == "customer" else "created_by_name"
+            by_entity = defaultdict(list)
+            for a in filtered:
+                key = a.get(field) or a.get("supplier_name") or "Unknown"
+                by_entity[key].append(a)
+            
+            entities = sorted(by_entity.keys())
+            page_entities = entities[start_idx:start_idx + per_page]
+            total_pages = max(1, (len(entities) + per_page - 1) // per_page)
+            
+            for entity in page_entities:
+                ent_allocs = by_entity[entity]
+                ent_total = sum(abs(float(a.get("amount", 0))) for a in ent_allocs)
+                
+                inner_html = ""
+                for idx, a in enumerate(ent_allocs):
+                    inner_html += _build_single_accordion(a, alloc_by_id, money, safe_string, idx)
+                
+                ent_id = "".join(c for c in entity if c.isalnum())[:20]
+                entries_html += f'''
+                <div style="border:2px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden;">
+                    <div onclick="toggleGroup('{ent_id}')" style="cursor:pointer;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;background:rgba(99,102,241,0.06);"
+                         onmouseover="this.style.background='rgba(99,102,241,0.10)'" onmouseout="this.style.background='rgba(99,102,241,0.06)'">
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <span id="gchev_{ent_id}" style="font-size:14px;transition:transform 0.2s;display:inline-block;color:var(--text-muted);">&#9654;</span>
+                            <span style="font-size:16px;font-weight:800;">{safe_string(entity)}</span>
+                            <span style="font-size:12px;color:var(--text-muted);">{len(ent_allocs)} transactions</span>
+                        </div>
+                        <div style="font-size:15px;font-weight:800;font-family:monospace;">{money(ent_total)}</div>
+                    </div>
+                    <div id="gbody_{ent_id}" style="display:none;padding:10px;">
+                        {inner_html}
+                    </div>
+                </div>'''
+        
+        if not entries_html:
+            entries_html = f'''
+            <div style="text-align:center;padding:60px 20px;color:var(--text-muted);">
+                <div style="font-size:48px;margin-bottom:15px;">&#128214;</div>
+                <div style="font-size:16px;font-weight:600;margin-bottom:8px;">No transactions found</div>
+                <div style="font-size:13px;">{'Try adjusting your filters or search terms.' if search_q or date_from or type_filter != 'all' else 'Transactions are logged automatically as they happen in POS, Invoices, Expenses, and more.'}</div>
+            </div>'''
+        
+        # ── PAGINATION HTML ──
         pagination_html = ""
         if total_pages > 1:
-            prev_btn = f'<a href="/ledger?page={page-1}&date={date_filter}&type={type_filter}&q={search_q}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">&larr; Prev</a>' if page > 1 else ''
-            next_btn = f'<a href="/ledger?page={page+1}&date={date_filter}&type={type_filter}&q={search_q}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">Next &rarr;</a>' if page < total_pages else ''
+            base_url = f"/ledger?from={date_from}&to={date_to}&type={type_filter}&pay={pay_filter}&q={search_q}&group={group_by}"
+            prev_btn = f'<a href="{base_url}&page={page-1}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">&larr; Prev</a>' if page > 1 else ''
+            next_btn = f'<a href="{base_url}&page={page+1}" class="btn btn-secondary" style="padding:6px 14px;font-size:13px;">Next &rarr;</a>' if page < total_pages else ''
             pagination_html = f'''
             <div style="display:flex;justify-content:center;gap:8px;margin-top:15px;align-items:center;">
                 {prev_btn}
-                <span style="color:var(--text-muted);font-size:13px;">Page {page} of {total_pages} ({total_count} entries)</span>
+                <span style="color:var(--text-muted);font-size:13px;">Page {page} of {total_pages}</span>
                 {next_btn}
             </div>'''
         
-        # Build date clear link
-        date_clear_html = f'<a href="/ledger" style="font-size:11px;color:var(--primary);text-decoration:none;">✕ Clear date</a>' if date_filter else '<span style="font-size:11px;color:var(--text-muted);">Showing all</span>'
-        
-        # Build no-results message
-        no_results_msg = f"No allocations found for {date_filter}" if date_filter else "No allocations found"
-        
-        # Build linked pairs badge
-        linked_pairs = linked_count // 2
-        linked_badge_html = f'<span style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">🔗 {linked_pairs} linked pairs</span>' if linked_count > 0 else ''
-        
-        # Type icons and colors
-        type_config = {
-            "pos_sale": ("🛒", "#10b981", "POS Sale"),
-            "scan_supplier_invoice": ("📸", "#3b82f6", "Scanned Invoice"),
-            "scan_expense": ("📸", "#f59e0b", "Scanned Expense"),
-            "bank_import": ("🏦", "#8b5cf6", "Bank Import"),
-            "bank_categorize": ("🏦", "#6366f1", "Bank Categorize"),
-            "manual_expense": ("✏️", "#f97316", "Manual Expense"),
-            "payment": ("💰", "#10b981", "Payment"),
-            "credit_note": ("🔴", "#ef4444", "Credit Note"),
-            "journal_entry": ("📒", "#64748b", "Journal Entry"),
-            "supplier_payment": ("💳", "#0ea5e9", "Supplier Payment"),
-            "grv": ("📦", "#0f766e", "GRV"),
-            "grv_to_invoice": ("📦📄", "#065f46", "GRV → Invoice"),
-            "invoice": ("📄", "#10b981", "Invoice"),
-        }
-        
-        # Build rows
-        rows = ""
-        for a in page_allocs:
-            atype = a.get("allocation_type", "unknown")
-            icon, color, label = type_config.get(atype, ("📋", "#888", atype.replace("_", " ").title()))
-            
-            amt = float(a.get("amount", 0))
-            
-            # AI badge
-            ai_badge = ""
-            if a.get("ai_worker"):
-                conf = a.get("ai_confidence", "")
-                conf_color = {"HIGH": "#10b981", "MEDIUM": "#f59e0b", "LOW": "#ef4444"}.get(conf, "#888")
-                ai_badge = f'<span style="background:rgba(139,92,246,0.15);color:#8b5cf6;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:6px;">🤖 {safe_string(a.get("ai_worker", ""))}</span>'
-            
-            # Linked badge — show if this entry has a partner
-            linked_badge = ""
-            linked_detail = ""
-            linked_id = a.get("linked_id", "")
-            if linked_id and linked_id in alloc_by_id:
-                partner = alloc_by_id[linked_id]
-                p_type = partner.get("allocation_type", "")
-                p_icon, p_color, p_label = type_config.get(p_type, ("📋", "#888", p_type.replace("_", " ").title()))
-                p_date = (partner.get("transaction_date") or partner.get("created_at", ""))[:10]
-                linked_badge = f'<span style="background:rgba(16,185,129,0.15);color:#10b981;padding:2px 6px;border-radius:4px;font-size:10px;margin-left:4px;" title="Linked to {p_label} from {p_date}">🔗</span>'
-                linked_detail = f"""<div style="margin-bottom:12px;padding:10px;background:rgba(16,185,129,0.08);border-radius:6px;border-left:3px solid #10b981;">
-                    <span style="font-size:10px;color:#10b981;text-transform:uppercase;letter-spacing:1px;font-weight:700;">🔗 Linked Transaction</span>
-                    <div style="margin-top:6px;font-size:12px;display:flex;gap:15px;flex-wrap:wrap;">
-                        <span><b>{p_icon} {p_label}</b></span>
-                        <span>{p_date}</span>
-                        <span>{money(abs(float(partner.get('amount', 0))))}</span>
-                        <span style="color:var(--text-muted);">{safe_string(partner.get('description', '')[:60])}</span>
-                        <a href="#" onclick="toggleDetail('{linked_id}');return false;" style="color:var(--primary);font-size:11px;">View partner →</a>
-                    </div>
-                </div>"""
-            
-            # Who
-            who = safe_string(a.get("created_by_name") or a.get("ai_worker") or "System")
-            
-            # Date + Time — show transaction_date prominently, created_at as secondary
-            txn_date = (a.get("transaction_date") or "")[:10]
-            created = a.get("created_at", "")
-            created_date = created[:10] if len(created) >= 10 else ""
-            time_str = created[11:16] if len(created) > 16 else ""
-            date_display = txn_date or created_date
-            # Show both if they differ
-            date_note = ""
-            if txn_date and created_date and txn_date != created_date:
-                date_note = f'<br><span style="font-size:9px;color:var(--text-muted);">logged {created_date}</span>'
-            
-            # GL summary
-            gl_summary = ""
-            try:
-                gl = json.loads(a.get("gl_entries", "[]"))
-                if gl:
-                    parts = []
-                    for g in gl:
-                        code = g.get("account_code", "?")
-                        dr = float(g.get("debit", 0))
-                        cr = float(g.get("credit", 0))
-                        if dr > 0:
-                            parts.append(f"DR {code} R{dr:,.2f}")
-                        if cr > 0:
-                            parts.append(f"CR {code} R{cr:,.2f}")
-                    gl_summary = " | ".join(parts[:4])
-                    if len(parts) > 4:
-                        gl_summary += f" +{len(parts)-4} more"
-            except:
-                pass
-            
-            # Stock summary
-            stock_summary = ""
-            try:
-                sm = json.loads(a.get("stock_movements", "[]"))
-                if sm:
-                    stock_summary = f"{len(sm)} item(s) affected"
-            except:
-                pass
-            
-            # Parse extra data for PO links etc
-            extra_data = {}
-            try:
-                _ex = a.get("extra", "{}")
-                extra_data = json.loads(_ex) if isinstance(_ex, str) else (_ex or {})
-            except:
-                pass
-            
-            # Pre-build links (avoid nested f-string issues on Python 3.11)
-            _src_url = _source_url(a)
-            _po_id = extra_data.get("po_id", "")
-            _po_link_html = f'<a href="/purchase/{_po_id}" style="font-size:11px;color:var(--primary);text-decoration:none;">📋 View PO</a>' if _po_id else ""
-            
-            rows += f'''
-            <tr class="alloc-row" onclick="toggleDetail('{a.get("id")}')" style="cursor:pointer;{'border-left:3px solid #10b981;' if linked_id else ''}">
-                <td style="padding:10px 8px;white-space:nowrap;">
-                    <span style="font-size:12px;font-weight:600;">{date_display}</span>
-                    <br><span style="font-size:10px;color:var(--text-muted);">{time_str}</span>
-                    {date_note}
-                </td>
-                <td style="padding:10px 8px;">
-                    <span style="background:{color}22;color:{color};padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;">{icon} {label}</span>
-                    {linked_badge}
-                </td>
-                <td style="padding:10px 8px;">
-                    <div style="font-weight:600;font-size:13px;">{safe_string(a.get("description", "-")[:60])}</div>
-                    <div style="font-size:11px;color:var(--text-muted);">
-                        {safe_string(a.get("reference", ""))}
-                        {f' • {safe_string(a.get("customer_name"))}' if a.get("customer_name") else ""}
-                        {f' • {safe_string(a.get("supplier_name"))}' if a.get("supplier_name") else ""}
-                    </div>
-                </td>
-                <td style="padding:10px 8px;text-align:right;font-weight:700;font-size:14px;">
-                    {money(amt)}
-                </td>
-                <td style="padding:10px 8px;">
-                    <span style="font-size:12px;">{safe_string(who)}</span>{ai_badge}
-                </td>
-                <td style="padding:10px 8px;text-align:center;">
-                    <span style="color:var(--text-muted);font-size:16px;">▸</span>
-                </td>
-            </tr>
-            <tr id="detail_{a.get("id")}" style="display:none;">
-                <td colspan="6" style="padding:0 8px 15px 8px;background:rgba(99,102,241,0.03);">
-                    <div style="padding:15px;border-radius:8px;border:1px solid var(--border);margin-top:2px;">
-                        
-                        {linked_detail}
-                        
-                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
-                            <div>
-                                <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Category</span>
-                                <div style="font-weight:600;font-size:13px;">{safe_string(a.get("category", "-"))} {f'({safe_string(a.get("category_code"))})' if a.get("category_code") else ""}</div>
-                            </div>
-                            <div>
-                                <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Payment</span>
-                                <div style="font-weight:600;font-size:13px;">{safe_string(a.get("payment_method", "-")).title()}</div>
-                            </div>
-                            <div>
-                                <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Source</span>
-                                <div style="font-weight:600;font-size:13px;">{safe_string(a.get("source_table", "-"))}/{safe_string(a.get("source_id", "-")[:8])}</div>
-                            </div>
-                        </div>
-                        
-                        {f"""<div style="margin-bottom:12px;padding:10px;background:rgba(139,92,246,0.08);border-radius:6px;border-left:3px solid #8b5cf6;">
-                            <span style="font-size:10px;color:#8b5cf6;text-transform:uppercase;letter-spacing:1px;font-weight:700;">🤖 AI Decision — {safe_string(a.get('ai_worker', ''))}</span>
-                            {f'<span style="margin-left:8px;background:{conf_color}22;color:{conf_color};padding:1px 6px;border-radius:3px;font-size:10px;">{a.get("ai_confidence", "")}</span>' if a.get("ai_confidence") else ""}
-                            <div style="margin-top:6px;font-size:12px;color:var(--text);line-height:1.6;">{safe_string(a.get('ai_reasoning', ''))}</div>
-                        </div>""" if a.get("ai_reasoning") else ""}
-                        
-                        {f"""<div style="margin-bottom:12px;">
-                            <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">GL Postings</span>
-                            <div style="font-family:monospace;font-size:11px;margin-top:4px;color:var(--text);line-height:1.8;">{gl_summary}</div>
-                        </div>""" if gl_summary else ""}
-                        
-                        {f"""<div style="margin-bottom:12px;">
-                            <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Stock Movement</span>
-                            <div style="font-size:12px;margin-top:4px;">{stock_summary}</div>
-                        </div>""" if stock_summary else ""}
-                        
-                        <div style="display:flex;gap:8px;margin-top:10px;">
-                            <a href="/{_src_url}" 
-                               style="font-size:11px;color:var(--primary);text-decoration:none;">📄 View Source Document</a>
-                            {_po_link_html}
-                        </div>
-                    </div>
-                </td>
-            </tr>
-            '''
-        
-        # Type filter options
+        # ── TYPE FILTER OPTIONS ──
         type_options = '<option value="all">All Types</option>'
-        for tkey, (ticon, tcolor, tlabel) in type_config.items():
+        for tkey, (tshort, tcolor, tlabel) in TYPE_CONFIG.items():
             selected = "selected" if type_filter == tkey else ""
-            type_options += f'<option value="{tkey}" {selected}>{ticon} {tlabel}</option>'
+            type_options += f'<option value="{tkey}" {selected}>{tshort} {tlabel}</option>'
         
+        # ── GROUP BY BUTTONS ──
+        def _grp_btn(val, lbl):
+            active = "background:var(--primary);color:white;font-weight:700;" if group_by == val else "background:var(--card);color:var(--text);"
+            return f'<a href="/ledger?from={date_from}&to={date_to}&type={type_filter}&pay={pay_filter}&q={search_q}&group={val}" style="padding:6px 14px;border-radius:6px;font-size:12px;text-decoration:none;border:1px solid var(--border);{active}">{lbl}</a>'
+        
+        group_btns = f'''
+            {_grp_btn("transaction", "Per Transaction")}
+            {_grp_btn("day", "Per Day")}
+            {_grp_btn("customer", "Per Customer")}
+            {_grp_btn("cashier", "Per Cashier")}
+        '''
+        
+        # ── MAIN PAGE ──
         content = f'''
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+        <!-- HEADER -->
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
             <div>
-                <h2 style="margin:0;">📒 Allocation Ledger</h2>
-                <p style="color:var(--text-muted);margin:4px 0 0 0;font-size:13px;">Place of Safety — every allocation, forever. Nothing gets deleted.</p>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <span style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">
-                    {total_count} entries
-                </span>
-                <span style="background:rgba(139,92,246,0.15);color:#8b5cf6;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;">
-                    🤖 {ai_count} AI
-                </span>
-                {linked_badge_html}
-                <span style="font-weight:700;font-size:15px;">
-                    {money(total_amount)}
-                </span>
+                <h2 style="margin:0;font-size:22px;">Follow the Money</h2>
+                <p style="color:var(--text-muted);margin:4px 0 0 0;font-size:13px;">Full audit trail — every transaction, every rand, forever.</p>
             </div>
         </div>
         
-        <div class="card" style="margin-bottom:15px;padding:15px;">
-            <form method="GET" action="/ledger" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-                <input type="date" name="date" value="{date_filter}" class="form-input" style="width:auto;" onchange="this.form.submit()">
-                {date_clear_html}
-                <select name="type" class="form-input" style="width:auto;" onchange="this.form.submit()">
-                    {type_options}
-                </select>
-                <input type="text" name="q" value="{safe_string(search_q)}" placeholder="Search supplier, ref, category..." class="form-input" style="width:200px;">
-                <button type="submit" class="btn btn-secondary" style="padding:8px 16px;">🔍</button>
-                <a href="/ledger" style="color:var(--text-muted);font-size:12px;margin-left:5px;">Clear all</a>
+        <!-- STATS BAR -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px;">
+            <div class="card" style="padding:12px 16px;text-align:center;">
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Transactions</div>
+                <div style="font-size:22px;font-weight:800;color:var(--text);">{total_count:,}</div>
+            </div>
+            <div class="card" style="padding:12px 16px;text-align:center;">
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Income</div>
+                <div style="font-size:18px;font-weight:800;color:#10b981;font-family:monospace;">{money(income_total)}</div>
+            </div>
+            <div class="card" style="padding:12px 16px;text-align:center;">
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Expenses</div>
+                <div style="font-size:18px;font-weight:800;color:#ef4444;font-family:monospace;">{money(expense_total)}</div>
+            </div>
+            <div class="card" style="padding:12px 16px;text-align:center;">
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">AI Processed</div>
+                <div style="font-size:22px;font-weight:800;color:#8b5cf6;">{ai_count}</div>
+            </div>
+            <div class="card" style="padding:12px 16px;text-align:center;">
+                <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;">Linked Pairs</div>
+                <div style="font-size:22px;font-weight:800;color:#10b981;">{linked_count // 2}</div>
+            </div>
+        </div>
+        
+        <!-- SEARCH & FILTERS -->
+        <div class="card" style="padding:14px;margin-bottom:16px;">
+            <form method="GET" action="/ledger" id="ledgerForm">
+                <input type="hidden" name="group" value="{group_by}">
+                
+                <!-- Search Bar -->
+                <div style="position:relative;margin-bottom:12px;">
+                    <input type="text" name="q" value="{safe_string(search_q)}" 
+                           placeholder="Search anything — customer, supplier, amount, reference, cashier, invoice number..." 
+                           class="form-input" 
+                           style="width:100%;padding:12px 16px 12px 40px;font-size:14px;border-radius:10px;">
+                    <span style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:16px;">&#128269;</span>
+                </div>
+                
+                <!-- Filter Row -->
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <input type="date" name="from" value="{date_from}" class="form-input" style="width:auto;font-size:12px;" title="From date">
+                    <span style="color:var(--text-muted);font-size:12px;">to</span>
+                    <input type="date" name="to" value="{date_to}" class="form-input" style="width:auto;font-size:12px;" title="To date">
+                    
+                    <select name="type" class="form-input" style="width:auto;font-size:12px;">
+                        {type_options}
+                    </select>
+                    
+                    <select name="pay" class="form-input" style="width:auto;font-size:12px;">
+                        <option value="all" {"selected" if pay_filter == "all" else ""}>All Payments</option>
+                        <option value="cash" {"selected" if pay_filter == "cash" else ""}>Cash</option>
+                        <option value="card" {"selected" if pay_filter == "card" else ""}>Card</option>
+                        <option value="eft" {"selected" if pay_filter == "eft" else ""}>EFT</option>
+                        <option value="account" {"selected" if pay_filter == "account" else ""}>Account</option>
+                    </select>
+                    
+                    <button type="submit" class="btn btn-primary" style="padding:8px 20px;font-size:13px;">Search</button>
+                    <a href="/ledger" style="color:var(--text-muted);font-size:12px;padding:6px;">Clear All</a>
+                </div>
             </form>
         </div>
         
-        <div class="card" style="padding:0;overflow-x:auto;">
-            <table style="width:100%;border-collapse:collapse;">
-                <thead>
-                    <tr style="border-bottom:2px solid var(--border);">
-                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:90px;">Date</th>
-                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:150px;">Type</th>
-                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Description</th>
-                        <th style="padding:10px 8px;text-align:right;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:110px;">Amount</th>
-                        <th style="padding:10px 8px;text-align:left;font-size:11px;color:var(--text-muted);text-transform:uppercase;width:140px;">By</th>
-                        <th style="padding:10px 8px;text-align:center;width:30px;"></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows or f"<tr><td colspan='6' style='text-align:center;padding:40px;color:var(--text-muted);'>{no_results_msg}<br><br>Allocations are logged automatically as transactions happen.</td></tr>"}
-                </tbody>
-            </table>
+        <!-- GROUP BY BAR -->
+        <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+            <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-right:6px;">Group by:</span>
+            {group_btns}
+        </div>
+        
+        <!-- LEDGER ENTRIES -->
+        <div id="ledgerEntries">
+            {entries_html}
         </div>
         
         {pagination_html}
         
+        <!-- JAVASCRIPT -->
         <script>
-        function toggleDetail(id) {{
-            const el = document.getElementById('detail_' + id);
-            if (el) {{
-                el.style.display = el.style.display === 'none' ? '' : 'none';
+        // Toggle individual transaction accordion
+        function toggleLedger(id) {{
+            const body = document.getElementById('body_' + id);
+            const chev = document.getElementById('chev_' + id);
+            if (!body) return;
+            
+            if (body.style.display === 'none') {{
+                body.style.display = '';
+                if (chev) chev.style.transform = 'rotate(90deg)';
+            }} else {{
+                body.style.display = 'none';
+                if (chev) chev.style.transform = 'rotate(0deg)';
             }}
         }}
+        
+        // Toggle group accordion (day/customer/cashier)
+        function toggleGroup(id) {{
+            const body = document.getElementById('gbody_' + id);
+            const chev = document.getElementById('gchev_' + id);
+            if (!body) return;
+            
+            if (body.style.display === 'none') {{
+                body.style.display = '';
+                if (chev) chev.style.transform = 'rotate(90deg)';
+            }} else {{
+                body.style.display = 'none';
+                if (chev) chev.style.transform = 'rotate(0deg)';
+            }}
+        }}
+        
+        // Expand all / Collapse all
+        function expandAll() {{
+            document.querySelectorAll('[id^="body_"]').forEach(el => el.style.display = '');
+            document.querySelectorAll('[id^="chev_"]').forEach(el => el.style.transform = 'rotate(90deg)');
+            document.querySelectorAll('[id^="gbody_"]').forEach(el => el.style.display = '');
+            document.querySelectorAll('[id^="gchev_"]').forEach(el => el.style.transform = 'rotate(90deg)');
+        }}
+        function collapseAll() {{
+            document.querySelectorAll('[id^="body_"]').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('[id^="chev_"]').forEach(el => el.style.transform = 'rotate(0deg)');
+            document.querySelectorAll('[id^="gbody_"]').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('[id^="gchev_"]').forEach(el => el.style.transform = 'rotate(0deg)');
+        }}
+        
+        // Keyboard shortcut: Enter in search to submit
+        document.querySelector('input[name="q"]').addEventListener('keydown', function(e) {{
+            if (e.key === 'Enter') {{
+                e.preventDefault();
+                document.getElementById('ledgerForm').submit();
+            }}
+        }});
         </script>
+        
+        <style>
+            .ledger-entry {{ transition: box-shadow 0.15s; }}
+            .ledger-entry:hover {{ box-shadow: 0 2px 12px rgba(0,0,0,0.08); }}
+            @media (max-width: 768px) {{
+                .ledger-entry > div:first-child {{
+                    grid-template-columns: 70px 1fr 90px !important;
+                }}
+                .ledger-entry > div:first-child > div:nth-child(4),
+                .ledger-entry > div:first-child > div:nth-child(5) {{
+                    display: none !important;
+                }}
+            }}
+        </style>
         '''
         
-        return render_page("Allocation Ledger", content, user, "ledger")
+        return render_page("Follow the Money", content, user, "ledger")
     
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LEDGER STATS API (for dashboard widget)
+    # ═══════════════════════════════════════════════════════════════════════════
     
     @app.route("/api/ledger/stats")
     @login_required
@@ -673,4 +1066,76 @@ def register_ledger_routes(app, db, login_required, Auth, generate_id, now_fn, t
             logger.error(f"[ALLOC LOG] Stats error: {e}")
             return {"today": 0, "ai": 0, "manual": 0}
     
-    logger.info("[ALLOC LOG] Ledger routes registered ✓")
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LEDGER SEARCH API (for AJAX / Zane)
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    @app.route("/api/ledger/search")
+    @login_required
+    def api_ledger_search():
+        """Search ledger entries via API - returns JSON"""
+        
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return {"results": [], "total": 0}
+        
+        from flask import request as req
+        q = req.args.get("q", "").strip().lower()
+        limit = min(int(req.args.get("limit", 20)), 100)
+        
+        if not q:
+            return {"results": [], "total": 0}
+        
+        try:
+            allocs = db.get("allocation_log", {"business_id": biz_id}) or []
+            
+            # Search amount too
+            q_amt = q.replace("r", "").replace(",", "").replace(" ", "").strip()
+            
+            results = []
+            for a in allocs:
+                matched = False
+                for field in ("description", "supplier_name", "customer_name", "reference", 
+                              "category", "created_by_name", "payment_method", "allocation_type"):
+                    if q in (a.get(field) or "").lower():
+                        matched = True
+                        break
+                
+                if not matched:
+                    try:
+                        if q_amt and abs(float(a.get("amount", 0)) - float(q_amt)) < 0.50:
+                            matched = True
+                    except:
+                        pass
+                
+                if matched:
+                    results.append({
+                        "id": a.get("id"),
+                        "date": (a.get("transaction_date") or a.get("created_at", ""))[:10],
+                        "type": a.get("allocation_type"),
+                        "description": (a.get("description") or "")[:80],
+                        "amount": float(a.get("amount", 0)),
+                        "payment_method": a.get("payment_method", ""),
+                        "customer": a.get("customer_name", ""),
+                        "supplier": a.get("supplier_name", ""),
+                        "reference": a.get("reference", ""),
+                        "created_by": a.get("created_by_name", ""),
+                    })
+                    
+                    if len(results) >= limit:
+                        break
+            
+            # Sort newest first
+            results.sort(key=lambda x: x.get("date", ""), reverse=True)
+            
+            return {"results": results, "total": len(results)}
+        
+        except Exception as e:
+            logger.error(f"[ALLOC LOG] Search error: {e}")
+            return {"results": [], "total": 0, "error": str(e)}
+    
+    
+    logger.info("[ALLOC LOG] Ledger routes registered — Follow the Money ✓")
