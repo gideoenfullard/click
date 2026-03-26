@@ -8,9 +8,11 @@
 #           Supplier Invoices page
 # ==============================================================================
 
+import os
 import json
 import time
 import logging
+import requests
 from datetime import datetime, timedelta
 from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
@@ -3198,94 +3200,70 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
     @app.route("/api/supplier/gl-suggest", methods=["POST"])
     @login_required
     def api_supplier_gl_suggest():
-        """Smart GL account suggestion — searches actual business accounts first, then keyword fallback"""
+        """GL account suggestion — sends full account list to AI for smart matching"""
         try:
             data = request.get_json()
-            desc = (data.get("description", "") or "").lower()
-            supplier_name = (data.get("supplier_name", "") or "").lower()
+            desc = (data.get("description", "") or "").strip()
+            supplier_name = (data.get("supplier_name", "") or "").strip()
             accounts = data.get("accounts", [])
             
             if not desc:
                 return jsonify({"success": False, "suggestion": ""})
             
-            combined = desc + " " + supplier_name
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                return jsonify({"success": True, "suggestion": "?|AI not available — please select manually"})
             
-            # === STEP 1: Search the ACTUAL account names from the business ===
-            # This catches Sage accounts like "4200/000 Printing AND Stationery"
-            best_score = 0
-            best_account = None
+            # Build account list for AI
+            acc_list = "\n".join([f"{a['code']} = {a['name']}" for a in accounts if a.get('code') and a.get('name')])
             
-            # Keywords to extract from description
-            search_words = [w for w in combined.replace("_", " ").split() if len(w) > 2]
-            
-            for acc in accounts:
-                acc_name = (acc.get("name", "") or "").lower().replace("_and_", " and ").replace("_", " ")
-                acc_code = acc.get("code", "")
+            prompt = f"""You are a South African bookkeeper. A supplier invoice needs to be allocated to a GL account.
+
+Supplier: {supplier_name}
+Description: {desc}
+
+Here are ALL available GL accounts:
+{acc_list}
+
+Which account code should this be allocated to? Pick the BEST match.
+Reply with ONLY the account code, then a pipe |, then the account name.
+Example: 3250/000|Cleaning
+Nothing else."""
+
+            try:
+                resp = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json"
+                    },
+                    json={
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": 50,
+                        "messages": [{"role": "user", "content": prompt}]
+                    },
+                    timeout=8
+                )
                 
-                # Score: how many description words appear in the account name
-                score = 0
-                for word in search_words:
-                    if word in acc_name:
-                        score += len(word)  # Longer word matches score higher
-                
-                if score > best_score:
-                    best_score = score
-                    best_account = acc
-            
-            if best_account and best_score >= 4:
-                return jsonify({
-                    "success": True, 
-                    "suggestion": f"{best_account['code']}|{best_account['name'].replace('_AND_', ' & ').replace('_', ' ')}"
-                })
-            
-            # === STEP 2: Keyword fallback for common expenses ===
-            keyword_map = [
-                (["diesel", "petrol", "fuel", "engen", "shell", "caltex", "sasol"], "Fuel"),
-                (["stationery", "stationary", "stasionêr", "paper", "ink", "toner", "printer", "cartridge", "printing"], "Stationery / Printing"),
-                (["rent", "lease", "huur", "premises", "rental"], "Rent / Lease"),
-                (["electric", "eskom", "municipal", "water", "utilities", "rates"], "Electricity / Water"),
-                (["phone", "cellphone", "airtime", "data", "internet", "vodacom", "mtn", "telkom"], "Telephone / Internet"),
-                (["insurance", "versekering", "hollard", "santam"], "Insurance"),
-                (["repair", "maintenance", "service", "fix", "parts"], "Repairs & Maintenance"),
-                (["bank charge", "bank fee", "transaction fee"], "Bank Charges"),
-                (["advertising", "marketing", "advert", "facebook", "promo", "signage"], "Advertising"),
-                (["salary", "wage", "payroll"], "Salaries & Wages"),
-                (["vehicle", "car", "truck", "bakkie", "motor"], "Motor Vehicle Expenses"),
-                (["courier", "delivery", "shipping", "freight", "postage"], "Courier / Postage"),
-                (["computer", "laptop", "software", "license", "hosting"], "Computer Expenses"),
-                (["consulting", "professional", "legal", "attorney", "audit"], "Consulting / Professional Fees"),
-                (["cleaning", "hygiene", "waste"], "Cleaning"),
-                (["donation", "donate"], "Donations"),
-                (["entertainment", "meals", "team building"], "Entertainment"),
-                (["training", "course", "seminar"], "Training"),
-                (["equipment", "tool", "machine", "furniture"], "Equipment"),
-            ]
-            
-            for keywords, category in keyword_map:
-                for kw in keywords:
-                    if kw in combined:
-                        # Search accounts for this category
-                        for acc in accounts:
-                            acc_name = (acc.get("name", "") or "").lower().replace("_and_", " and ").replace("_", " ")
-                            if any(cw in acc_name for cw in category.lower().split(" / ")[0].split()):
-                                return jsonify({
-                                    "success": True,
-                                    "suggestion": f"{acc['code']}|{acc['name'].replace('_AND_', ' & ').replace('_', ' ')}"
-                                })
-                        # No account found for this category
-                        return jsonify({
-                            "success": True,
-                            "suggestion": f"?|Looks like {category} — select the matching account from the dropdown"
-                        })
-            
-            return jsonify({"success": True, "suggestion": "?|Could not determine category — please select from the dropdown"})
+                if resp.status_code == 200:
+                    ai_text = resp.json().get("content", [{}])[0].get("text", "").strip()
+                    if "|" in ai_text:
+                        return jsonify({"success": True, "suggestion": ai_text})
+                    else:
+                        return jsonify({"success": True, "suggestion": f"?|{ai_text[:100]}"})
+                else:
+                    logger.error(f"[GL SUGGEST] AI error {resp.status_code}")
+                    return jsonify({"success": True, "suggestion": "?|AI error — please select manually"})
+                    
+            except Exception as ai_err:
+                logger.error(f"[GL SUGGEST] AI call failed: {ai_err}")
+                return jsonify({"success": True, "suggestion": "?|AI timeout — please select manually"})
         
         except Exception as e:
             logger.error(f"[GL SUGGEST] Error: {e}")
             return jsonify({"success": False, "suggestion": ""})
 
-    @app.route("/api/supplier/capture-invoice", methods=["POST"])
-    @login_required
     def api_supplier_capture_invoice():
         """Capture a supplier invoice (diesel, stationery, etc.) with GL entries — no stock codes"""
         try:
