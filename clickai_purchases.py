@@ -366,27 +366,55 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
         scanned_docs = sorted(scanned_docs, key=lambda x: x.get("created_at", ""), reverse=True)
         
-        # Fetch GL accounts for capture invoice dropdown — try accounts AND chart_of_accounts
-        _gl_accounts = db.get("accounts", {"business_id": biz_id}) if biz_id else []
-        if not _gl_accounts:
-            _gl_accounts = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
-        _gl_accounts = sorted(_gl_accounts, key=lambda x: x.get("code", "") or x.get("account_code", ""))
+        # Fetch GL accounts - try ALL sources: accounts, chart_of_accounts, then full defaults
         _gl_options = ""
         _gl_json = []
-        _common_expenses = {"5100": "Purchases / Stock", "6000": "Salaries & Wages", "6100": "Rent / Lease", "6200": "Electricity / Water", "6300": "Telephone / Internet", "6400": "Insurance", "6500": "Fuel / Diesel", "6600": "Repairs & Maintenance", "6700": "Bank Charges", "6800": "Advertising", "6900": "Depreciation", "7000": "General Expenses", "1500": "Equipment (Asset)"}
-        if _gl_accounts:
-            for acc in _gl_accounts:
-                _code = acc.get("code", "") or acc.get("account_code", "")
-                _name = acc.get("name", "") or acc.get("account_name", "")
+        
+        # Source 1: ClickAI accounts table (code, name)
+        _src_accounts = db.get("accounts", {"business_id": biz_id}) if biz_id else []
+        if _src_accounts:
+            for acc in sorted(_src_accounts, key=lambda x: x.get("code", "")):
+                _code = acc.get("code", "")
+                _name = acc.get("name", "")
                 if _code and _name:
-                    _sel = ' selected' if _code in ("7000", "7000/000") else ''
-                    _gl_options += f'<option value="{_code}"{_sel}>{_code} — {_name}</option>\n'
                     _gl_json.append({"code": _code, "name": _name})
-        if not _gl_options:
-            for _code, _name in sorted(_common_expenses.items()):
-                _sel = ' selected' if _code == "7000" else ''
-                _gl_options += f'<option value="{_code}"{_sel}>{_code} — {_name}</option>\n'
-                _gl_json.append({"code": _code, "name": _name})
+        
+        # Source 2: Sage chart_of_accounts (account_code, account_name) - merge if new codes
+        _src_coa = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
+        if _src_coa:
+            _existing_codes = {a["code"] for a in _gl_json}
+            for acc in sorted(_src_coa, key=lambda x: x.get("account_code", "")):
+                _code = acc.get("account_code", "")
+                _name = acc.get("account_name", "")
+                if _code and _name and _code not in _existing_codes:
+                    _gl_json.append({"code": _code, "name": _name})
+                    _existing_codes.add(_code)
+        
+        # Source 3: Full DEFAULT_ACCOUNTS if nothing found
+        if not _gl_json:
+            for _da in [
+                ("1000", "Bank"), ("1050", "Cash On Hand"), ("1100", "Petty Cash"),
+                ("1200", "Debtors Control"), ("1300", "Stock"), ("1400", "VAT Input"),
+                ("1500", "Equipment"), ("1600", "Vehicles"), ("1700", "Accumulated Depreciation"),
+                ("2000", "Creditors Control"), ("2100", "VAT Output"),
+                ("2200", "PAYE Payable"), ("2300", "UIF Payable"), ("2400", "Loan Account"),
+                ("3000", "Capital"), ("3100", "Retained Earnings"), ("3200", "Drawings"),
+                ("4000", "Sales"), ("4100", "Services Income"),
+                ("4200", "Interest Received"), ("4300", "Discount Received"),
+                ("5000", "Cost of Sales"), ("5100", "Purchases"), ("5200", "Carriage Inwards"),
+                ("6000", "Salaries & Wages"), ("6100", "Rent"), ("6200", "Electricity"),
+                ("6300", "Telephone"), ("6400", "Insurance"), ("6500", "Fuel"),
+                ("6600", "Repairs & Maintenance"), ("6700", "Bank Charges"),
+                ("6800", "Advertising"), ("6900", "Depreciation"),
+                ("7000", "General Expenses"), ("7050", "Cash Over/Short"),
+            ]:
+                _gl_json.append({"code": _da[0], "name": _da[1]})
+        
+        # Sort and build HTML options
+        _gl_json = sorted(_gl_json, key=lambda x: x["code"])
+        for _ga in _gl_json:
+            _sel = ' selected' if _ga["code"] in ("7000", "7000/000") else ''
+            _gl_options += f'<option value="{_ga["code"]}"{_sel}>{_ga["code"]} — {_ga["name"]}</option>\n'
         
         _gl_json_str = json.dumps(_gl_json)
         balance = float(supplier.get("balance", 0)) if can_see_balances else 0
