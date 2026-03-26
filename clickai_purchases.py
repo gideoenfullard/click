@@ -366,6 +366,23 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
         scanned_docs = sorted(scanned_docs, key=lambda x: x.get("created_at", ""), reverse=True)
         
+        # Fetch GL accounts for capture invoice dropdown
+        _gl_accounts = db.get("accounts", {"business_id": biz_id}) if biz_id else []
+        _gl_accounts = sorted(_gl_accounts, key=lambda x: x.get("code", ""))
+        _gl_options = ""
+        _common_expenses = {"6500": "Fuel / Diesel", "7000": "General Expenses", "6000": "Salaries & Wages", "6100": "Rent / Lease", "6200": "Electricity / Water", "6300": "Telephone / Internet", "6400": "Insurance", "6600": "Repairs & Maintenance", "6700": "Bank Charges", "6800": "Advertising", "5100": "Purchases / Stock", "1500": "Equipment (Asset)"}
+        if _gl_accounts:
+            for acc in _gl_accounts:
+                _code = acc.get("code", "")
+                _name = acc.get("name", "")
+                if _code and (_code.startswith("5") or _code.startswith("6") or _code.startswith("7") or _code.startswith("1") or _code.startswith("8")):
+                    _sel = ' selected' if _code == "7000" else ''
+                    _gl_options += f'<option value="{_code}"{_sel}>{_code} — {_name}</option>\n'
+        if not _gl_options:
+            for _code, _name in sorted(_common_expenses.items()):
+                _sel = ' selected' if _code == "7000" else ''
+                _gl_options += f'<option value="{_code}"{_sel}>{_code} — {_name}</option>\n'
+        
         balance = float(supplier.get("balance", 0)) if can_see_balances else 0
         
         # Stats - only if can see balances
@@ -502,7 +519,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         # Build payment button separately (can't have backslashes in f-string)
         supplier_name_escaped = safe_string(supplier.get("name", "")).replace("'", "")
-        payment_button = f'''<button class="btn btn-primary" onclick="document.getElementById('aiInput').value='Pay {supplier_name_escaped} R';document.getElementById('aiInput').focus();">💰 Record Payment</button>''' if can_see_balances else ""
+        payment_button = f'''<button class="btn btn-primary" onclick="document.getElementById('paymentModal').style.display='flex'">💰 Record Payment</button>''' if can_see_balances else ""
         
         # Build purchase orders HTML separately (avoids nested f-string issues)
         po_html = ""
@@ -524,6 +541,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             <div style="display:flex;gap:10px;">
                 <a href="/supplier/{supplier_id}/edit" class="btn btn-secondary">✏️ Edit</a>
                 <a href="/purchase/new?supplier_id={supplier_id}" class="btn btn-secondary">New PO</a>
+                <button class="btn btn-primary" onclick="document.getElementById('captureInvoiceModal').style.display='flex'">📄 Capture Invoice</button>
                 {payment_button}
             </div>
         </div>
@@ -744,6 +762,235 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         document.getElementById('scanModal').addEventListener('click', function(e) {{
             if (e.target === this) closeScanModal();
         }});
+        </script>
+        
+        <!-- Capture Supplier Invoice Modal -->
+        <div id="captureInvoiceModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;justify-content:center;align-items:center;">
+            <div style="background:var(--card);border-radius:12px;padding:30px;width:90%;max-width:550px;max-height:90vh;overflow-y:auto;border:1px solid var(--border);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                    <h2 style="margin:0;">📄 Capture Invoice</h2>
+                    <button onclick="document.getElementById('captureInvoiceModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;">&times;</button>
+                </div>
+                <p style="color:var(--text-muted);margin-bottom:20px;font-size:13px;">For expenses like diesel, stationery, etc. — no stock codes needed.</p>
+                
+                <div style="display:flex;flex-direction:column;gap:14px;">
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Invoice Number</label>
+                        <input type="text" id="capInvNumber" placeholder="e.g. INV-2024-001" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Date</label>
+                        <input type="date" id="capInvDate" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Description</label>
+                        <input type="text" id="capInvDesc" placeholder="e.g. Diesel for bakkie, Stationery" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">GL Account (Expense Type)</label>
+                        <select id="capInvGL" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                            {_gl_options}
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Amount (VAT Inclusive)</label>
+                        <input type="number" id="capInvAmount" placeholder="0.00" step="0.01" min="0.01" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:18px;font-weight:700;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <input type="checkbox" id="capInvVat" checked>
+                        <label for="capInvVat" style="font-size:13px;">VAT Inclusive (15%)</label>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <input type="checkbox" id="capInvPaid">
+                        <label for="capInvPaid" style="font-size:13px;">Already Paid</label>
+                    </div>
+                </div>
+                
+                <div style="display:flex;gap:10px;margin-top:20px;">
+                    <button onclick="submitCaptureInvoice()" id="capInvBtn" style="flex:1;padding:12px;background:var(--primary);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:15px;">Save Invoice</button>
+                    <button onclick="document.getElementById('captureInvoiceModal').style.display='none'" style="padding:12px 20px;background:var(--card);color:var(--text-muted);border:1px solid var(--border);border-radius:8px;cursor:pointer;">Cancel</button>
+                </div>
+                <div id="capInvMsg" style="margin-top:12px;text-align:center;display:none;"></div>
+            </div>
+        </div>
+        
+        <script>
+        document.getElementById('capInvDate').value = new Date().toISOString().split('T')[0];
+        
+        document.getElementById('captureInvoiceModal').addEventListener('click', function(e) {{
+            if (e.target === this) this.style.display = 'none';
+        }});
+        
+        async function submitCaptureInvoice() {{
+            const btn = document.getElementById('capInvBtn');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            const msg = document.getElementById('capInvMsg');
+            
+            const data = {{
+                supplier_id: '{supplier_id}',
+                supplier_name: '{safe_string(supplier.get("name", "")).replace(chr(39), "")}',
+                invoice_number: document.getElementById('capInvNumber').value.trim(),
+                date: document.getElementById('capInvDate').value,
+                description: document.getElementById('capInvDesc').value.trim(),
+                gl_code: document.getElementById('capInvGL').value,
+                amount: parseFloat(document.getElementById('capInvAmount').value) || 0,
+                vat_inclusive: document.getElementById('capInvVat').checked,
+                is_paid: document.getElementById('capInvPaid').checked
+            }};
+            
+            if (!data.amount) {{
+                msg.style.display = 'block';
+                msg.style.color = 'var(--red)';
+                msg.textContent = 'Please enter an amount';
+                btn.disabled = false;
+                btn.textContent = 'Save Invoice';
+                return;
+            }}
+            
+            try {{
+                const resp = await fetch('/api/supplier/capture-invoice', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify(data)
+                }});
+                const result = await resp.json();
+                if (result.success) {{
+                    msg.style.display = 'block';
+                    msg.style.color = 'var(--green)';
+                    msg.textContent = '✓ ' + result.message;
+                    setTimeout(() => location.reload(), 1500);
+                }} else {{
+                    msg.style.display = 'block';
+                    msg.style.color = 'var(--red)';
+                    msg.textContent = result.error || 'Failed to save';
+                    btn.disabled = false;
+                    btn.textContent = 'Save Invoice';
+                }}
+            }} catch(e) {{
+                msg.style.display = 'block';
+                msg.style.color = 'var(--red)';
+                msg.textContent = 'Error: ' + e.message;
+                btn.disabled = false;
+                btn.textContent = 'Save Invoice';
+            }}
+        }}
+        </script>
+        
+        <!-- Record Payment Modal -->
+        <div id="paymentModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;justify-content:center;align-items:center;">
+            <div style="background:var(--card);border-radius:12px;padding:30px;width:90%;max-width:500px;border:1px solid var(--border);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                    <h2 style="margin:0;">💰 Record Payment</h2>
+                    <button onclick="document.getElementById('paymentModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;">&times;</button>
+                </div>
+                <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px;">Pay <strong>{safe_string(supplier.get("name", ""))}</strong> — balance: <strong style="color:var(--orange);">R{float(supplier.get("balance", 0)):,.2f}</strong></p>
+                
+                <div style="display:flex;flex-direction:column;gap:14px;">
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Amount</label>
+                        <input type="number" id="payAmount" placeholder="0.00" step="0.01" min="0.01" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:20px;font-weight:700;">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Payment Method</label>
+                        <select id="payMethod" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                            <option value="eft" selected>EFT / Bank Transfer</option>
+                            <option value="cash">Cash</option>
+                            <option value="card">Card</option>
+                            <option value="cheque">Cheque</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Date</label>
+                        <input type="date" id="payDate" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Reference / Note</label>
+                        <input type="text" id="payRef" placeholder="e.g. INV-001, POP ref, etc." style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                    </div>
+                </div>
+                
+                <div style="display:flex;gap:10px;margin-top:20px;">
+                    <button onclick="submitPayment()" id="payBtn" style="flex:1;padding:12px;background:var(--green);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:15px;">Pay Now</button>
+                    <button onclick="tryZanePayment()" style="padding:12px 16px;background:var(--card);color:var(--primary);border:1px solid var(--primary);border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;" title="Ask Zane to process this payment">🤖 Ask Zane</button>
+                    <button onclick="document.getElementById('paymentModal').style.display='none'" style="padding:12px 16px;background:var(--card);color:var(--text-muted);border:1px solid var(--border);border-radius:8px;cursor:pointer;">Cancel</button>
+                </div>
+                <div id="payMsg" style="margin-top:12px;text-align:center;display:none;"></div>
+            </div>
+        </div>
+        
+        <script>
+        document.getElementById('payDate').value = new Date().toISOString().split('T')[0];
+        
+        document.getElementById('paymentModal').addEventListener('click', function(e) {{
+            if (e.target === this) this.style.display = 'none';
+        }});
+        
+        function tryZanePayment() {{
+            const amount = document.getElementById('payAmount').value || '';
+            const ref = document.getElementById('payRef').value || '';
+            const aiInput = document.getElementById('aiInput');
+            if (aiInput) {{
+                aiInput.value = 'Pay {supplier_name_escaped} R' + amount + (ref ? ' ref ' + ref : '');
+                aiInput.focus();
+                document.getElementById('paymentModal').style.display = 'none';
+            }} else {{
+                alert('Zane chat is not available on this page — use Pay Now instead.');
+            }}
+        }}
+        
+        async function submitPayment() {{
+            const btn = document.getElementById('payBtn');
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+            const msg = document.getElementById('payMsg');
+            
+            const amount = parseFloat(document.getElementById('payAmount').value) || 0;
+            if (!amount) {{
+                msg.style.display = 'block';
+                msg.style.color = 'var(--red)';
+                msg.textContent = 'Please enter an amount';
+                btn.disabled = false;
+                btn.textContent = 'Pay Now';
+                return;
+            }}
+            
+            const data = {{
+                supplier_id: '{supplier_id}',
+                supplier_name: '{supplier_name_escaped}',
+                amount: amount,
+                method: document.getElementById('payMethod').value,
+                date: document.getElementById('payDate').value,
+                reference: document.getElementById('payRef').value.trim()
+            }};
+            
+            try {{
+                const resp = await fetch('/api/supplier/record-payment', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify(data)
+                }});
+                const result = await resp.json();
+                if (result.success) {{
+                    msg.style.display = 'block';
+                    msg.style.color = 'var(--green)';
+                    msg.textContent = '✓ ' + result.message;
+                    setTimeout(() => location.reload(), 1500);
+                }} else {{
+                    msg.style.display = 'block';
+                    msg.style.color = 'var(--red)';
+                    msg.textContent = result.error || 'Failed';
+                    btn.disabled = false;
+                    btn.textContent = 'Pay Now';
+                }}
+            }} catch(e) {{
+                msg.style.display = 'block';
+                msg.style.color = 'var(--red)';
+                msg.textContent = 'Error: ' + e.message;
+                btn.disabled = false;
+                btn.textContent = 'Pay Now';
+            }}
+        }}
         </script>
         '''
         
@@ -2785,5 +3032,191 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         return render_page("Supplier Invoices", content, user, "supplier-invoices")
     
     
+
+    @app.route("/api/supplier/capture-invoice", methods=["POST"])
+    @login_required
+    def api_supplier_capture_invoice():
+        """Capture a supplier invoice (diesel, stationery, etc.) with GL entries — no stock codes"""
+        try:
+            user = Auth.get_current_user()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business"})
+            
+            data = request.get_json()
+            supplier_id = data.get("supplier_id", "")
+            supplier_name = data.get("supplier_name", "Unknown Supplier")
+            invoice_number = data.get("invoice_number", "")
+            inv_date = data.get("date", today())
+            description = data.get("description", "")
+            gl_code = data.get("gl_code", "7000")
+            amount = float(data.get("amount", 0))
+            vat_inclusive = data.get("vat_inclusive", True)
+            is_paid = data.get("is_paid", False)
+            
+            if amount <= 0:
+                return jsonify({"success": False, "error": "Amount must be greater than zero"})
+            
+            # Calculate VAT
+            if vat_inclusive:
+                vat_amount = round(amount * 15 / 115, 2)
+                net_amount = round(amount - vat_amount, 2)
+                total_amount = round(amount, 2)
+            else:
+                net_amount = round(amount, 2)
+                vat_amount = round(amount * 0.15, 2)
+                total_amount = round(net_amount + vat_amount, 2)
+            
+            # Generate invoice number if not provided
+            if not invoice_number:
+                existing = db.get("supplier_invoices", {"business_id": biz_id}) or []
+                invoice_number = next_document_number("SINV", existing, "invoice_number")
+            
+            # Create supplier invoice record
+            invoice = RecordFactory.supplier_invoice(
+                business_id=biz_id,
+                supplier_id=supplier_id,
+                supplier_name=supplier_name,
+                invoice_number=invoice_number,
+                date=inv_date,
+                subtotal=net_amount,
+                vat=vat_amount,
+                total=total_amount,
+                status="paid" if is_paid else "outstanding",
+                notes=description
+            )
+            inv_id = invoice["id"]
+            
+            success, err = db.save("supplier_invoices", invoice)
+            if not success:
+                return jsonify({"success": False, "error": f"Failed to save: {err}"})
+            
+            # Update supplier balance (if not paid, add to creditors)
+            if supplier_id and not is_paid:
+                try:
+                    supplier = db.get_one("suppliers", supplier_id)
+                    if supplier:
+                        new_balance = float(supplier.get("balance", 0)) + total_amount
+                        db.save("suppliers", {"id": supplier_id, "balance": new_balance})
+                except Exception as e:
+                    logger.error(f"[CAPTURE INV] Supplier balance update error: {e}")
+            
+            # Create GL journal entries
+            try:
+                if is_paid:
+                    # Already paid: Debit Expense + VAT Input, Credit Bank
+                    journal_entries = [
+                        {"account_code": gl_code, "debit": net_amount, "credit": 0},
+                    ]
+                    if vat_amount > 0:
+                        journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
+                    journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": total_amount})
+                else:
+                    # On account: Debit Expense + VAT Input, Credit Creditors
+                    journal_entries = [
+                        {"account_code": gl_code, "debit": net_amount, "credit": 0},
+                    ]
+                    if vat_amount > 0:
+                        journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": vat_amount, "credit": 0})
+                    journal_entries.append({"account_code": gl(biz_id, "creditors"), "debit": 0, "credit": total_amount})
+                
+                create_journal_entry(biz_id, inv_date, f"{description or supplier_name} - {invoice_number}", invoice_number, journal_entries)
+                logger.info(f"[CAPTURE INV] GL entries created: {gl_code} DR:{net_amount} for {supplier_name}")
+            except Exception as e:
+                logger.error(f"[CAPTURE INV] GL entry error (invoice still saved): {e}")
+            
+            return jsonify({
+                "success": True,
+                "message": f"Invoice {invoice_number} saved — R{total_amount:,.2f} ({description or supplier_name})",
+                "invoice_id": inv_id
+            })
+            
+        except Exception as e:
+            logger.error(f"[CAPTURE INV] Error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
+    @app.route("/api/supplier/record-payment", methods=["POST"])
+    @login_required
+    def api_supplier_record_payment():
+        """Record a payment to a supplier — reduces balance, creates GL journal"""
+        try:
+            user = Auth.get_current_user()
+            business = Auth.get_current_business()
+            biz_id = business.get("id") if business else None
+            if not biz_id:
+                return jsonify({"success": False, "error": "No business"})
+            
+            data = request.get_json()
+            supplier_id = data.get("supplier_id", "")
+            supplier_name = data.get("supplier_name", "Unknown")
+            amount = float(data.get("amount", 0))
+            method = data.get("method", "eft")
+            pay_date = data.get("date", today())
+            reference = data.get("reference", "")
+            
+            if amount <= 0:
+                return jsonify({"success": False, "error": "Amount must be greater than zero"})
+            
+            # Save supplier payment record
+            payment = {
+                "id": generate_id(),
+                "business_id": biz_id,
+                "supplier_id": supplier_id,
+                "supplier_name": supplier_name,
+                "amount": round(amount, 2),
+                "date": pay_date,
+                "method": method,
+                "reference": reference,
+                "source": "manual",
+                "created_by": user.get("name", user.get("email", "")),
+                "created_at": now()
+            }
+            
+            success, err = db.save("supplier_payments", payment)
+            if not success:
+                return jsonify({"success": False, "error": f"Failed to save payment: {err}"})
+            
+            # Update supplier balance
+            if supplier_id:
+                try:
+                    supplier = db.get_one("suppliers", supplier_id)
+                    if supplier:
+                        old_balance = float(supplier.get("balance", 0))
+                        new_balance = round(old_balance - amount, 2)
+                        db.save("suppliers", {"id": supplier_id, "balance": new_balance})
+                        logger.info(f"[PAY] Supplier balance: R{old_balance:,.2f} → R{new_balance:,.2f}")
+                except Exception as e:
+                    logger.error(f"[PAY] Balance update error: {e}")
+            
+            # GL journal: Debit Creditors, Credit Bank
+            try:
+                rounded = round(amount, 2)
+                ref_label = reference or f"PAY-{payment['id'][:8]}"
+                
+                # Choose bank account based on method
+                if method == "cash":
+                    bank_code = gl(biz_id, "cash")
+                elif method == "card":
+                    bank_code = gl(biz_id, "bank")
+                else:
+                    bank_code = gl(biz_id, "bank")
+                
+                create_journal_entry(biz_id, pay_date, f"Payment to {supplier_name}", ref_label, [
+                    {"account_code": gl(biz_id, "creditors"), "debit": rounded, "credit": 0},
+                    {"account_code": bank_code, "debit": 0, "credit": rounded},
+                ])
+                logger.info(f"[PAY] GL entry: Creditors DR:{rounded}, Bank CR:{rounded} for {supplier_name}")
+            except Exception as e:
+                logger.error(f"[PAY] GL entry error (payment still saved): {e}")
+            
+            return jsonify({
+                "success": True,
+                "message": f"Payment of R{amount:,.2f} to {supplier_name} recorded ({method.upper()})"
+            })
+            
+        except Exception as e:
+            logger.error(f"[PAY] Error: {e}")
+            return jsonify({"success": False, "error": str(e)})
 
     logger.info("[PURCHASES] All supplier & purchase routes registered ✓")

@@ -1261,11 +1261,17 @@ def register_report_routes(app, db, login_required, Auth, render_page,
         content = f'''
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
             <a href="/reports" style="color:var(--text-muted);">← Back to Reports</a>
-            <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <input type="text" id="glSearch" placeholder="Search ref, description or invoice..." 
+                    style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);width:280px;font-size:13px;"
+                    oninput="filterGL(this.value)">
+                <button class="btn btn-secondary" onclick="window.print();">🖨️ Print</button>
+            </div>
         </div>
         
         <h2 style="margin-bottom:4px;">📒 General Ledger</h2>
         <p style="color:var(--text-muted);margin-bottom:15px;font-size:13px;">{source_label} — Click on an account to see details</p>
+        <div id="glSearchResults" style="display:none;margin-bottom:12px;padding:12px;background:var(--card);border:1px solid var(--primary);border-radius:8px;"></div>
         
         <div style="position:sticky;top:56px;z-index:100;margin-bottom:4px;padding:8px 12px;background:var(--card);border-radius:6px;">
             <div style="display:grid;grid-template-columns:2fr 1fr 1fr;align-items:center;font-size:13px;font-weight:bold;">
@@ -1284,6 +1290,76 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 <span style="text-align:right;color:var(--red);">{money(total_credit_all)}</span>
             </div>
         </div>
+        
+        <script>
+        function filterGL(query) {{
+            const results = document.getElementById('glSearchResults');
+            const q = query.toLowerCase().trim();
+            
+            if (q.length < 2) {{
+                results.style.display = 'none';
+                // Show all accounts
+                document.querySelectorAll('.gl-account-card, details').forEach(el => el.style.display = '');
+                return;
+            }}
+            
+            // Search through all table rows in GL
+            let matches = [];
+            document.querySelectorAll('details').forEach(detail => {{
+                const accTitle = detail.querySelector('summary') ? detail.querySelector('summary').textContent.toLowerCase() : '';
+                let found = false;
+                detail.querySelectorAll('tbody tr').forEach(row => {{
+                    const cells = row.querySelectorAll('td');
+                    if (cells.length >= 3) {{
+                        const date = cells[0] ? cells[0].textContent.toLowerCase() : '';
+                        const desc = cells[1] ? cells[1].textContent.toLowerCase() : '';
+                        const ref = cells[2] ? cells[2].textContent.toLowerCase() : '';
+                        const debit = cells[3] ? cells[3].textContent : '';
+                        const credit = cells[4] ? cells[4].textContent : '';
+                        
+                        if (desc.includes(q) || ref.includes(q) || date.includes(q)) {{
+                            found = true;
+                            row.style.display = '';
+                            row.style.background = 'rgba(99,102,241,0.1)';
+                            matches.push({{
+                                account: accTitle.substring(0, 50),
+                                date: cells[0].textContent.trim(),
+                                desc: cells[1].textContent.trim().substring(0, 40),
+                                ref: cells[2].textContent.trim(),
+                                debit: debit.trim(),
+                                credit: credit.trim()
+                            }});
+                        }} else {{
+                            row.style.background = '';
+                        }}
+                    }}
+                }});
+                
+                if (found) {{
+                    detail.style.display = '';
+                    detail.open = true;
+                }} else {{
+                    detail.style.display = 'none';
+                }}
+            }});
+            
+            if (matches.length > 0) {{
+                let html = '<div style="font-weight:600;margin-bottom:8px;font-size:13px;">🔍 Found ' + matches.length + ' entries matching "' + query + '"</div>';
+                html += '<table style="width:100%;font-size:12px;border-collapse:collapse;">';
+                html += '<tr style="border-bottom:1px solid var(--border);"><th style="text-align:left;padding:4px;">Account</th><th style="text-align:left;padding:4px;">Date</th><th style="text-align:left;padding:4px;">Description</th><th style="text-align:left;padding:4px;">Ref</th><th style="text-align:right;padding:4px;">Debit</th><th style="text-align:right;padding:4px;">Credit</th></tr>';
+                matches.slice(0, 20).forEach(m => {{
+                    html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:3px 4px;">' + m.account + '</td><td style="padding:3px 4px;">' + m.date + '</td><td style="padding:3px 4px;">' + m.desc + '</td><td style="padding:3px 4px;color:var(--primary);">' + m.ref + '</td><td style="text-align:right;padding:3px 4px;">' + m.debit + '</td><td style="text-align:right;padding:3px 4px;">' + m.credit + '</td></tr>';
+                }});
+                if (matches.length > 20) html += '<tr><td colspan="6" style="padding:6px;color:var(--text-muted);font-style:italic;">...and ' + (matches.length - 20) + ' more</td></tr>';
+                html += '</table>';
+                results.innerHTML = html;
+                results.style.display = 'block';
+            }} else {{
+                results.innerHTML = '<span style="color:var(--text-muted);font-size:13px;">No entries found for "' + query + '"</span>';
+                results.style.display = 'block';
+            }}
+        }}
+        </script>
         '''
         
         return render_page("General Ledger", content, user, "reports")
