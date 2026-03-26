@@ -940,22 +940,39 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     const suggestedCode = parts[0].trim();
                     const reason = parts.slice(1).join('|').trim();
                     
-                    // Try to select it in dropdown
-                    const sel = document.getElementById('capInvGL');
-                    let found = false;
-                    for (let opt of sel.options) {{
-                        if (opt.value === suggestedCode || opt.value.startsWith(suggestedCode)) {{
-                            sel.value = opt.value;
-                            found = true;
-                            break;
+                    if (suggestedCode && suggestedCode !== '?') {{
+                        // Found a real account — select it
+                        const sel = document.getElementById('capInvGL');
+                        let found = false;
+                        for (let opt of sel.options) {{
+                            if (opt.value === suggestedCode) {{
+                                sel.value = opt.value;
+                                found = true;
+                                break;
+                            }}
                         }}
+                        
+                        msgDiv.style.color = 'var(--green)';
+                        msgDiv.innerHTML = '🤖 <strong>' + suggestedCode + '</strong> — ' + reason;
+                        if (!found) {{
+                            // Try partial match
+                            for (let opt of sel.options) {{
+                                if (opt.value.startsWith(suggestedCode.split('/')[0])) {{
+                                    sel.value = opt.value;
+                                    found = true;
+                                    break;
+                                }}
+                            }}
+                            if (!found) msgDiv.innerHTML += ' <span style="color:var(--orange);">(select manually)</span>';
+                        }}
+                    }} else {{
+                        // No specific account found — guide the user
+                        msgDiv.style.color = 'var(--primary)';
+                        msgDiv.innerHTML = '🤖 ' + reason;
                     }}
-                    
-                    msgDiv.style.color = 'var(--green)';
-                    msgDiv.innerHTML = '🤖 <strong>' + suggestedCode + '</strong> — ' + reason + (found ? '' : ' <span style="color:var(--orange);">(account not in list)</span>');
                 }} else {{
                     msgDiv.style.color = 'var(--text-muted)';
-                    msgDiv.textContent = '🤖 ' + answer.substring(0, 120);
+                    msgDiv.textContent = '🤖 ' + answer.substring(0, 150);
                 }}
             }} catch(e) {{
                 msgDiv.style.color = 'var(--red)';
@@ -3181,7 +3198,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
     @app.route("/api/supplier/gl-suggest", methods=["POST"])
     @login_required
     def api_supplier_gl_suggest():
-        """Smart GL account suggestion based on description keywords — no AI needed, works for all roles"""
+        """Smart GL account suggestion — searches actual business accounts first, then keyword fallback"""
         try:
             data = request.get_json()
             desc = (data.get("description", "") or "").lower()
@@ -3191,49 +3208,77 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             if not desc:
                 return jsonify({"success": False, "suggestion": ""})
             
-            # Keyword → GL code mapping (most specific first)
+            combined = desc + " " + supplier_name
+            
+            # === STEP 1: Search the ACTUAL account names from the business ===
+            # This catches Sage accounts like "4200/000 Printing AND Stationery"
+            best_score = 0
+            best_account = None
+            
+            # Keywords to extract from description
+            search_words = [w for w in combined.replace("_", " ").split() if len(w) > 2]
+            
+            for acc in accounts:
+                acc_name = (acc.get("name", "") or "").lower().replace("_and_", " and ").replace("_", " ")
+                acc_code = acc.get("code", "")
+                
+                # Score: how many description words appear in the account name
+                score = 0
+                for word in search_words:
+                    if word in acc_name:
+                        score += len(word)  # Longer word matches score higher
+                
+                if score > best_score:
+                    best_score = score
+                    best_account = acc
+            
+            if best_account and best_score >= 4:
+                return jsonify({
+                    "success": True, 
+                    "suggestion": f"{best_account['code']}|{best_account['name'].replace('_AND_', ' & ').replace('_', ' ')}"
+                })
+            
+            # === STEP 2: Keyword fallback for common expenses ===
             keyword_map = [
-                (["diesel", "petrol", "fuel", "engen", "shell", "caltex", "sasol", "bp fuel", "total fuel"], "6500", "Fuel / Diesel"),
-                (["stationery", "stationary", "stasionêr", "paper", "ink", "toner", "printer", "cartridge", "pens", "office supplies", "office supply"], "7000", "General Expenses (Stationery)"),
-                (["rent", "lease", "huur", "premises", "rental"], "6100", "Rent / Lease"),
-                (["electric", "eskom", "municipal", "water", "utilities", "rates", "refuse"], "6200", "Electricity / Water / Municipal"),
-                (["phone", "cellphone", "airtime", "data", "internet", "vodacom", "mtn", "telkom", "fibre", "wifi"], "6300", "Telephone / Internet"),
-                (["insurance", "versekering", "hollard", "santam", "outsurance", "discovery"], "6400", "Insurance"),
-                (["repair", "maintenance", "service", "fix", "parts", "workshop"], "6600", "Repairs & Maintenance"),
-                (["bank charge", "bank fee", "transaction fee", "card fee"], "6700", "Bank Charges"),
-                (["advertising", "marketing", "ad ", "advert", "facebook", "google ads", "promo", "signage"], "6800", "Advertising"),
-                (["salary", "wage", "payroll", "bonus", "commission"], "6000", "Salaries & Wages"),
-                (["stock", "inventory", "material", "raw material", "supplies", "goods"], "5100", "Purchases / Stock"),
-                (["equipment", "tool", "machine", "computer", "laptop", "device", "furniture"], "1500", "Equipment (Asset)"),
-                (["vehicle", "car", "truck", "bakkie", "trailer"], "1600", "Vehicles (Asset)"),
-                (["transport", "courier", "delivery", "shipping", "freight", "postnet"], "5200", "Carriage / Freight"),
-                (["cleaning", "hygiene", "sanitize", "waste"], "7000", "General Expenses (Cleaning)"),
-                (["license", "licence", "subscription", "software", "saas", "hosting", "domain"], "7000", "General Expenses (IT/Software)"),
-                (["training", "course", "seminar", "conference"], "7000", "General Expenses (Training)"),
-                (["legal", "attorney", "lawyer", "audit", "accounting"], "7000", "General Expenses (Professional Fees)"),
+                (["diesel", "petrol", "fuel", "engen", "shell", "caltex", "sasol"], "Fuel"),
+                (["stationery", "stationary", "stasionêr", "paper", "ink", "toner", "printer", "cartridge", "printing"], "Stationery / Printing"),
+                (["rent", "lease", "huur", "premises", "rental"], "Rent / Lease"),
+                (["electric", "eskom", "municipal", "water", "utilities", "rates"], "Electricity / Water"),
+                (["phone", "cellphone", "airtime", "data", "internet", "vodacom", "mtn", "telkom"], "Telephone / Internet"),
+                (["insurance", "versekering", "hollard", "santam"], "Insurance"),
+                (["repair", "maintenance", "service", "fix", "parts"], "Repairs & Maintenance"),
+                (["bank charge", "bank fee", "transaction fee"], "Bank Charges"),
+                (["advertising", "marketing", "advert", "facebook", "promo", "signage"], "Advertising"),
+                (["salary", "wage", "payroll"], "Salaries & Wages"),
+                (["vehicle", "car", "truck", "bakkie", "motor"], "Motor Vehicle Expenses"),
+                (["courier", "delivery", "shipping", "freight", "postage"], "Courier / Postage"),
+                (["computer", "laptop", "software", "license", "hosting"], "Computer Expenses"),
+                (["consulting", "professional", "legal", "attorney", "audit"], "Consulting / Professional Fees"),
+                (["cleaning", "hygiene", "waste"], "Cleaning"),
+                (["donation", "donate"], "Donations"),
+                (["entertainment", "meals", "team building"], "Entertainment"),
+                (["training", "course", "seminar"], "Training"),
+                (["equipment", "tool", "machine", "furniture"], "Equipment"),
             ]
             
-            combined = desc + " " + supplier_name
-            best_match = None
-            
-            for keywords, code, reason in keyword_map:
+            for keywords, category in keyword_map:
                 for kw in keywords:
                     if kw in combined:
-                        # Try to match to actual account list
-                        matched_code = code
+                        # Search accounts for this category
                         for acc in accounts:
-                            if acc.get("code", "").startswith(code) or acc.get("code", "") == code:
-                                matched_code = acc["code"]
-                                break
-                        best_match = (matched_code, reason)
-                        break
-                if best_match:
-                    break
+                            acc_name = (acc.get("name", "") or "").lower().replace("_and_", " and ").replace("_", " ")
+                            if any(cw in acc_name for cw in category.lower().split(" / ")[0].split()):
+                                return jsonify({
+                                    "success": True,
+                                    "suggestion": f"{acc['code']}|{acc['name'].replace('_AND_', ' & ').replace('_', ' ')}"
+                                })
+                        # No account found for this category
+                        return jsonify({
+                            "success": True,
+                            "suggestion": f"?|Looks like {category} — select the matching account from the dropdown"
+                        })
             
-            if best_match:
-                return jsonify({"success": True, "suggestion": f"{best_match[0]}|{best_match[1]}"})
-            else:
-                return jsonify({"success": True, "suggestion": "7000|General Expenses — couldn't determine a specific category"})
+            return jsonify({"success": True, "suggestion": "?|Could not determine category — please select from the dropdown"})
         
         except Exception as e:
             logger.error(f"[GL SUGGEST] Error: {e}")
