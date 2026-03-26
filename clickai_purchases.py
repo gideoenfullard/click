@@ -798,7 +798,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                             <input type="text" id="capInvGLSearch" placeholder="Type to filter accounts..." oninput="filterGLDropdown(this.value)" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
                             <button type="button" onclick="zaneGLSuggest()" id="zaneSuggestBtn" style="padding:8px 12px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;">🤖 Suggest</button>
                         </div>
-                        <select id="capInvGL" size="6" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);margin-top:4px;font-size:13px;">
+                        <select id="capInvGL" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);margin-top:4px;font-size:13px;">
                             {_gl_options}
                         </select>
                         <div id="zaneSuggestMsg" style="display:none;margin-top:4px;padding:6px 10px;border-radius:6px;font-size:12px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);"></div>
@@ -870,15 +870,17 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             msgDiv.textContent = 'Zane is checking...';
             
             try {{
-                const resp = await fetch('/api/ai', {{
+                const resp = await fetch('/api/supplier/gl-suggest', {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
                     body: JSON.stringify({{
-                        message: 'I need to allocate a supplier invoice to a GL account. The supplier is "' + supplierName + '" and the description is "' + desc + '". Based on this, which GL account code should I use? Here are the available accounts: ' + _allGLAccounts.map(a => a.code + '=' + a.name).join(', ') + '. Reply with ONLY the account code, then a pipe |, then a short reason. Example: 6500|Fuel expense for vehicle. Nothing else.'
+                        description: desc,
+                        supplier_name: supplierName,
+                        accounts: _allGLAccounts
                     }})
                 }});
                 const result = await resp.json();
-                const answer = (result.response || result.message || '').trim();
+                const answer = (result.suggestion || '').trim();
                 
                 if (answer.includes('|')) {{
                     const parts = answer.split('|');
@@ -3123,6 +3125,67 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
     
     
 
+    @app.route("/api/supplier/gl-suggest", methods=["POST"])
+    @login_required
+    def api_supplier_gl_suggest():
+        """Smart GL account suggestion based on description keywords — no AI needed, works for all roles"""
+        try:
+            data = request.get_json()
+            desc = (data.get("description", "") or "").lower()
+            supplier_name = (data.get("supplier_name", "") or "").lower()
+            accounts = data.get("accounts", [])
+            
+            if not desc:
+                return jsonify({"success": False, "suggestion": ""})
+            
+            # Keyword → GL code mapping (most specific first)
+            keyword_map = [
+                (["diesel", "petrol", "fuel", "engen", "shell", "caltex", "sasol", "bp fuel", "total fuel"], "6500", "Fuel / Diesel"),
+                (["stationery", "stasionêr", "paper", "ink", "toner", "printer", "cartridge", "pens", "office supplies"], "7000", "General Expenses (Stationery)"),
+                (["rent", "lease", "huur", "premises", "rental"], "6100", "Rent / Lease"),
+                (["electric", "eskom", "municipal", "water", "utilities", "rates", "refuse"], "6200", "Electricity / Water / Municipal"),
+                (["phone", "cellphone", "airtime", "data", "internet", "vodacom", "mtn", "telkom", "fibre", "wifi"], "6300", "Telephone / Internet"),
+                (["insurance", "versekering", "hollard", "santam", "outsurance", "discovery"], "6400", "Insurance"),
+                (["repair", "maintenance", "service", "fix", "parts", "workshop"], "6600", "Repairs & Maintenance"),
+                (["bank charge", "bank fee", "transaction fee", "card fee"], "6700", "Bank Charges"),
+                (["advertising", "marketing", "ad ", "advert", "facebook", "google ads", "promo", "signage"], "6800", "Advertising"),
+                (["salary", "wage", "payroll", "bonus", "commission"], "6000", "Salaries & Wages"),
+                (["stock", "inventory", "material", "raw material", "supplies", "goods"], "5100", "Purchases / Stock"),
+                (["equipment", "tool", "machine", "computer", "laptop", "device", "furniture"], "1500", "Equipment (Asset)"),
+                (["vehicle", "car", "truck", "bakkie", "trailer"], "1600", "Vehicles (Asset)"),
+                (["transport", "courier", "delivery", "shipping", "freight", "postnet"], "5200", "Carriage / Freight"),
+                (["cleaning", "hygiene", "sanitize", "waste"], "7000", "General Expenses (Cleaning)"),
+                (["license", "licence", "subscription", "software", "saas", "hosting", "domain"], "7000", "General Expenses (IT/Software)"),
+                (["training", "course", "seminar", "conference"], "7000", "General Expenses (Training)"),
+                (["legal", "attorney", "lawyer", "audit", "accounting"], "7000", "General Expenses (Professional Fees)"),
+            ]
+            
+            combined = desc + " " + supplier_name
+            best_match = None
+            
+            for keywords, code, reason in keyword_map:
+                for kw in keywords:
+                    if kw in combined:
+                        # Try to match to actual account list
+                        matched_code = code
+                        for acc in accounts:
+                            if acc.get("code", "").startswith(code) or acc.get("code", "") == code:
+                                matched_code = acc["code"]
+                                break
+                        best_match = (matched_code, reason)
+                        break
+                if best_match:
+                    break
+            
+            if best_match:
+                return jsonify({"success": True, "suggestion": f"{best_match[0]}|{best_match[1]}"})
+            else:
+                return jsonify({"success": True, "suggestion": "7000|General Expenses — couldn't determine a specific category"})
+        
+        except Exception as e:
+            logger.error(f"[GL SUGGEST] Error: {e}")
+            return jsonify({"success": False, "suggestion": ""})
+
     @app.route("/api/supplier/capture-invoice", methods=["POST"])
     @login_required
     def api_supplier_capture_invoice():
@@ -3216,6 +3279,21 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             except Exception as e:
                 logger.error(f"[CAPTURE INV] GL entry error (invoice still saved): {e}")
             
+            # === ALLOCATION LOG ===
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="supplier_invoice", source_table="supplier_invoices", source_id=inv_id,
+                        description=f"{description or supplier_name} - {invoice_number}",
+                        amount=total_amount, gl_entries=journal_entries if 'journal_entries' in dir() else [],
+                        category="Supplier Invoice", category_code=gl_code,
+                        supplier_name=supplier_name, payment_method="account" if not is_paid else "paid",
+                        reference=invoice_number, transaction_date=inv_date,
+                        created_by=user.get("id", ""), created_by_name=user.get("name", "")
+                    )
+            except Exception:
+                pass
+            
             return jsonify({
                 "success": True,
                 "message": f"Invoice {invoice_number} saved — R{total_amount:,.2f} ({description or supplier_name})",
@@ -3299,6 +3377,25 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 logger.info(f"[PAY] GL entry: Creditors DR:{rounded}, Bank CR:{rounded} for {supplier_name}")
             except Exception as e:
                 logger.error(f"[PAY] GL entry error (payment still saved): {e}")
+            
+            # === ALLOCATION LOG ===
+            try:
+                if log_allocation:
+                    log_allocation(
+                        business_id=biz_id, allocation_type="supplier_payment", source_table="supplier_payments", source_id=payment["id"],
+                        description=f"Payment to {supplier_name}",
+                        amount=round(amount, 2),
+                        gl_entries=[
+                            {"account_code": gl(biz_id, "creditors"), "debit": rounded, "credit": 0},
+                            {"account_code": bank_code, "debit": 0, "credit": rounded},
+                        ],
+                        category="Supplier Payment", category_code=gl(biz_id, "creditors"),
+                        supplier_name=supplier_name, payment_method=method,
+                        reference=reference or ref_label, transaction_date=pay_date,
+                        created_by=user.get("id", ""), created_by_name=user.get("name", "")
+                    )
+            except Exception:
+                pass
             
             return jsonify({
                 "success": True,
