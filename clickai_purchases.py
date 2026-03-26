@@ -547,7 +547,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             <div style="display:flex;gap:10px;">
                 <a href="/supplier/{supplier_id}/edit" class="btn btn-secondary">✏️ Edit</a>
                 <a href="/purchase/new?supplier_id={supplier_id}" class="btn btn-secondary">New PO</a>
-                <button class="btn btn-primary" onclick="document.getElementById('captureInvoiceModal').style.display='flex'">📄 Capture Invoice</button>
+                <button class="btn btn-primary" onclick="openCaptureInvoice()">📄 Capture Invoice</button>
                 {payment_button}
             </div>
         </div>
@@ -775,7 +775,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             <div style="background:var(--card);border-radius:12px;padding:30px;width:90%;max-width:550px;max-height:90vh;overflow-y:auto;border:1px solid var(--border);">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
                     <h2 style="margin:0;">📄 Capture Invoice</h2>
-                    <button onclick="document.getElementById('captureInvoiceModal').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;">&times;</button>
+                    <button onclick="closeCaptureInvoice()" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;">&times;</button>
                 </div>
                 <p style="color:var(--text-muted);margin-bottom:20px;font-size:13px;">For expenses like diesel, stationery, etc. — no stock codes needed.</p>
                 
@@ -819,7 +819,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 
                 <div style="display:flex;gap:10px;margin-top:20px;">
                     <button onclick="submitCaptureInvoice()" id="capInvBtn" style="flex:1;padding:12px;background:var(--primary);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:15px;">Save Invoice</button>
-                    <button onclick="document.getElementById('captureInvoiceModal').style.display='none'" style="padding:12px 20px;background:var(--card);color:var(--text-muted);border:1px solid var(--border);border-radius:8px;cursor:pointer;">Cancel</button>
+                    <button onclick="closeCaptureInvoice()" style="padding:12px 20px;background:var(--card);color:var(--text-muted);border:1px solid var(--border);border-radius:8px;cursor:pointer;">Cancel</button>
                 </div>
                 <div id="capInvMsg" style="margin-top:12px;text-align:center;display:none;"></div>
             </div>
@@ -828,8 +828,29 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         <script>
         document.getElementById('capInvDate').value = new Date().toISOString().split('T')[0];
         
+        function openCaptureInvoice() {{
+            // Reset all fields and messages
+            document.getElementById('capInvNumber').value = '';
+            document.getElementById('capInvDate').value = new Date().toISOString().split('T')[0];
+            document.getElementById('capInvDesc').value = '';
+            document.getElementById('capInvGLSearch').value = '';
+            document.getElementById('capInvAmount').value = '';
+            document.getElementById('capInvVat').checked = true;
+            document.getElementById('capInvPaid').checked = false;
+            document.getElementById('capInvMsg').style.display = 'none';
+            document.getElementById('zaneSuggestMsg').style.display = 'none';
+            document.getElementById('capInvBtn').disabled = false;
+            document.getElementById('capInvBtn').textContent = 'Save Invoice';
+            filterGLDropdown(''); // Reset dropdown to show all
+            document.getElementById('captureInvoiceModal').style.display = 'flex';
+        }}
+        
+        function closeCaptureInvoice() {{
+            document.getElementById('captureInvoiceModal').style.display = 'none';
+        }}
+        
         document.getElementById('captureInvoiceModal').addEventListener('click', function(e) {{
-            if (e.target === this) this.style.display = 'none';
+            if (e.target === this) closeCaptureInvoice();
         }});
         
         // GL account search/filter
@@ -839,7 +860,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             const sel = document.getElementById('capInvGL');
             const q = query.toLowerCase().trim();
             sel.innerHTML = '';
-            const filtered = q ? _allGLAccounts.filter(a => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q)) : _allGLAccounts;
+            let filtered = _allGLAccounts;
+            if (q) {{
+                filtered = _allGLAccounts.filter(a => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q));
+                if (filtered.length === 0) filtered = _allGLAccounts; // Don't empty — show all if no match
+            }}
             filtered.forEach(a => {{
                 const opt = document.createElement('option');
                 opt.value = a.code;
@@ -3141,7 +3166,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             # Keyword → GL code mapping (most specific first)
             keyword_map = [
                 (["diesel", "petrol", "fuel", "engen", "shell", "caltex", "sasol", "bp fuel", "total fuel"], "6500", "Fuel / Diesel"),
-                (["stationery", "stasionêr", "paper", "ink", "toner", "printer", "cartridge", "pens", "office supplies"], "7000", "General Expenses (Stationery)"),
+                (["stationery", "stationary", "stasionêr", "paper", "ink", "toner", "printer", "cartridge", "pens", "office supplies", "office supply"], "7000", "General Expenses (Stationery)"),
                 (["rent", "lease", "huur", "premises", "rental"], "6100", "Rent / Lease"),
                 (["electric", "eskom", "municipal", "water", "utilities", "rates", "refuse"], "6200", "Electricity / Water / Municipal"),
                 (["phone", "cellphone", "airtime", "data", "internet", "vodacom", "mtn", "telkom", "fibre", "wifi"], "6300", "Telephone / Internet"),
