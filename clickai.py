@@ -17957,12 +17957,12 @@ CSS = """
 /* Prevent horizontal overflow globally */
 html, body {
     max-width: 100vw;
-    overflow-x: hidden;
 }
 
 html {
     width: 100%;
     height: 100%;
+    overflow-x: hidden;
 }
 
 body {
@@ -17979,6 +17979,7 @@ body {
 @media (min-width: 769px) {
     body {
         overflow-y: auto;
+        padding-top: 0; /* main-scroll handles offset */
     }
 }
 
@@ -17991,8 +17992,10 @@ body {
 .header {
     background: var(--card);
     border-bottom: 1px solid var(--border);
-    position: sticky;
+    position: fixed;
     top: 0;
+    left: 0;
+    right: 0;
     z-index: 1000;
 }
 
@@ -18080,6 +18083,11 @@ body {
     background: rgba(255,255,255,0.1);
 }
 
+/* Desktop: offset content below fixed header */
+.main-scroll {
+    padding-top: 80px;
+}
+
 /* Mobile: Swipe navigation with center selection */
 @media (max-width: 768px) {
     body {
@@ -18096,7 +18104,9 @@ body {
     }
     
     .main-scroll {
-        height: calc(100vh - 90px);
+        padding-top: 0;
+        margin-top: 80px;
+        height: calc(100vh - 80px);
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
     }
@@ -18779,6 +18789,8 @@ select.form-input optgroup {
         max-height: none !important;
         overflow: visible !important;
         position: static !important;
+        padding-top: 0 !important;
+        margin-top: 0 !important;
     }
 }
 
@@ -19549,7 +19561,7 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     }}
     @media (max-width: 768px) {{
         .mobile-nav {{ display: flex; align-items: center; justify-content: space-around; }}
-        .main-scroll {{ height: calc(100vh - 90px - 70px) !important; padding-bottom: 70px; }}
+        .main-scroll {{ height: calc(100vh - 80px - 70px) !important; padding-bottom: 70px; }}
     }}
     .mobile-nav a, .mobile-nav button {{
         display: flex;
