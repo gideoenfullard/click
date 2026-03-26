@@ -22,7 +22,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         generate_id, money, safe_string, safe_uuid,
                         next_document_number, get_user_role, get_zane_chat,
                         RecordFactory, CSS, now, today, extract_time,
-                        create_journal_entry, log_allocation, gl):
+                        create_journal_entry, log_allocation, gl,
+                        AuditLog, Email):
     """Register all POS and Bar routes with the Flask app."""
 
     @app.route("/pos")

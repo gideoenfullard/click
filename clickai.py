@@ -38858,21 +38858,6 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
             logger.warning(f"[GL] Account {account_code} not found for business {biz_id}")
 
 
-# Register POS & Bar routes (separate module)
-try:
-    if POS_ROUTES_LOADED:
-        register_pos_routes(
-            app, db, login_required, Auth, render_page,
-            generate_id, money, safe_string, safe_uuid,
-            next_document_number, get_user_role, get_zane_chat,
-            RecordFactory, CSS, now, today, extract_time,
-            create_journal_entry, log_allocation, gl
-        )
-        logger.info("[POS] Routes registered ✓")
-except Exception as e:
-    logger.error(f"[POS] Failed to register routes: {e}")
-
-
 @app.route("/reports/gl")
 @login_required
 def report_gl():
@@ -72268,6 +72253,22 @@ class AuditLog:
             return db.get("audit_log", filters, limit=limit)
         except:
             return []
+
+
+# Register POS & Bar routes (separate module)
+try:
+    if POS_ROUTES_LOADED:
+        register_pos_routes(
+            app, db, login_required, Auth, render_page,
+            generate_id, money, safe_string, safe_uuid,
+            next_document_number, get_user_role, get_zane_chat,
+            RecordFactory, CSS, now, today, extract_time,
+            create_journal_entry, log_allocation, gl,
+            AuditLog, Email
+        )
+        logger.info("[POS] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[POS] Failed to register routes: {e}")
 
 
 # 
