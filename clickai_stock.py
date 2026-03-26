@@ -9,6 +9,7 @@
 # ==============================================================================
 
 import json
+import time
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -23,7 +24,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                           smart_stock_code,
                           has_reactor_hud, jarvis_hud_header, jarvis_techline,
                           RecordFactory, Email, AuditLog, BoltPricer,
-                          JARVIS_HUD_CSS, THEME_REACTOR_SKINS):
+                          JARVIS_HUD_CSS, THEME_REACTOR_SKINS, _pulse_cache):
     """Register all Stock & Fulltech routes with the Flask app."""
 
     @app.route("/stock")

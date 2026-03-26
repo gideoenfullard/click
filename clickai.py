@@ -61786,7 +61786,7 @@ try:
             smart_stock_code,
             has_reactor_hud, jarvis_hud_header, jarvis_techline,
             RecordFactory, Email, AuditLog, BoltPricer,
-            JARVIS_HUD_CSS, THEME_REACTOR_SKINS
+            JARVIS_HUD_CSS, THEME_REACTOR_SKINS, _pulse_cache
         )
         logger.info("[STOCK] Routes registered ✓")
 except Exception as e:
