@@ -366,23 +366,29 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         scanned_docs = [d for d in all_scanned_docs if d.get("supplier_id") == supplier_id]
         scanned_docs = sorted(scanned_docs, key=lambda x: x.get("created_at", ""), reverse=True)
         
-        # Fetch GL accounts for capture invoice dropdown
+        # Fetch GL accounts for capture invoice dropdown — try accounts AND chart_of_accounts
         _gl_accounts = db.get("accounts", {"business_id": biz_id}) if biz_id else []
-        _gl_accounts = sorted(_gl_accounts, key=lambda x: x.get("code", ""))
+        if not _gl_accounts:
+            _gl_accounts = db.get("chart_of_accounts", {"business_id": biz_id}) if biz_id else []
+        _gl_accounts = sorted(_gl_accounts, key=lambda x: x.get("code", "") or x.get("account_code", ""))
         _gl_options = ""
-        _common_expenses = {"6500": "Fuel / Diesel", "7000": "General Expenses", "6000": "Salaries & Wages", "6100": "Rent / Lease", "6200": "Electricity / Water", "6300": "Telephone / Internet", "6400": "Insurance", "6600": "Repairs & Maintenance", "6700": "Bank Charges", "6800": "Advertising", "5100": "Purchases / Stock", "1500": "Equipment (Asset)"}
+        _gl_json = []
+        _common_expenses = {"5100": "Purchases / Stock", "6000": "Salaries & Wages", "6100": "Rent / Lease", "6200": "Electricity / Water", "6300": "Telephone / Internet", "6400": "Insurance", "6500": "Fuel / Diesel", "6600": "Repairs & Maintenance", "6700": "Bank Charges", "6800": "Advertising", "6900": "Depreciation", "7000": "General Expenses", "1500": "Equipment (Asset)"}
         if _gl_accounts:
             for acc in _gl_accounts:
-                _code = acc.get("code", "")
-                _name = acc.get("name", "")
-                if _code and (_code.startswith("5") or _code.startswith("6") or _code.startswith("7") or _code.startswith("1") or _code.startswith("8")):
-                    _sel = ' selected' if _code == "7000" else ''
+                _code = acc.get("code", "") or acc.get("account_code", "")
+                _name = acc.get("name", "") or acc.get("account_name", "")
+                if _code and _name:
+                    _sel = ' selected' if _code in ("7000", "7000/000") else ''
                     _gl_options += f'<option value="{_code}"{_sel}>{_code} — {_name}</option>\n'
+                    _gl_json.append({"code": _code, "name": _name})
         if not _gl_options:
             for _code, _name in sorted(_common_expenses.items()):
                 _sel = ' selected' if _code == "7000" else ''
                 _gl_options += f'<option value="{_code}"{_sel}>{_code} — {_name}</option>\n'
+                _gl_json.append({"code": _code, "name": _name})
         
+        _gl_json_str = json.dumps(_gl_json)
         balance = float(supplier.get("balance", 0)) if can_see_balances else 0
         
         # Stats - only if can see balances
@@ -788,9 +794,14 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">GL Account (Expense Type)</label>
-                        <select id="capInvGL" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);">
+                        <div style="display:flex;gap:6px;">
+                            <input type="text" id="capInvGLSearch" placeholder="Type to filter accounts..." oninput="filterGLDropdown(this.value)" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;">
+                            <button type="button" onclick="zaneGLSuggest()" id="zaneSuggestBtn" style="padding:8px 12px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;">🤖 Suggest</button>
+                        </div>
+                        <select id="capInvGL" size="6" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);margin-top:4px;font-size:13px;">
                             {_gl_options}
                         </select>
+                        <div id="zaneSuggestMsg" style="display:none;margin-top:4px;padding:6px 10px;border-radius:6px;font-size:12px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);"></div>
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:4px;font-weight:600;font-size:13px;">Amount (VAT Inclusive)</label>
@@ -820,6 +831,85 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         document.getElementById('captureInvoiceModal').addEventListener('click', function(e) {{
             if (e.target === this) this.style.display = 'none';
         }});
+        
+        // GL account search/filter
+        const _allGLAccounts = {_gl_json_str};
+        
+        function filterGLDropdown(query) {{
+            const sel = document.getElementById('capInvGL');
+            const q = query.toLowerCase().trim();
+            sel.innerHTML = '';
+            const filtered = q ? _allGLAccounts.filter(a => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q)) : _allGLAccounts;
+            filtered.forEach(a => {{
+                const opt = document.createElement('option');
+                opt.value = a.code;
+                opt.textContent = a.code + ' — ' + a.name;
+                sel.appendChild(opt);
+            }});
+            if (filtered.length > 0) sel.value = filtered[0].code;
+        }}
+        
+        // Zane GL suggestion
+        async function zaneGLSuggest() {{
+            const desc = document.getElementById('capInvDesc').value.trim();
+            const supplierName = '{supplier_name_escaped}';
+            const msgDiv = document.getElementById('zaneSuggestMsg');
+            const btn = document.getElementById('zaneSuggestBtn');
+            
+            if (!desc) {{
+                msgDiv.style.display = 'block';
+                msgDiv.style.color = 'var(--orange)';
+                msgDiv.textContent = 'Type a description first so Zane can suggest the right account.';
+                return;
+            }}
+            
+            btn.disabled = true;
+            btn.textContent = '🤖 Thinking...';
+            msgDiv.style.display = 'block';
+            msgDiv.style.color = 'var(--text-muted)';
+            msgDiv.textContent = 'Zane is checking...';
+            
+            try {{
+                const resp = await fetch('/api/ai', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{
+                        message: 'I need to allocate a supplier invoice to a GL account. The supplier is "' + supplierName + '" and the description is "' + desc + '". Based on this, which GL account code should I use? Here are the available accounts: ' + _allGLAccounts.map(a => a.code + '=' + a.name).join(', ') + '. Reply with ONLY the account code, then a pipe |, then a short reason. Example: 6500|Fuel expense for vehicle. Nothing else.'
+                    }})
+                }});
+                const result = await resp.json();
+                const answer = (result.response || result.message || '').trim();
+                
+                if (answer.includes('|')) {{
+                    const parts = answer.split('|');
+                    const suggestedCode = parts[0].trim();
+                    const reason = parts.slice(1).join('|').trim();
+                    
+                    // Try to select it in dropdown
+                    const sel = document.getElementById('capInvGL');
+                    let found = false;
+                    for (let opt of sel.options) {{
+                        if (opt.value === suggestedCode || opt.value.startsWith(suggestedCode)) {{
+                            sel.value = opt.value;
+                            found = true;
+                            break;
+                        }}
+                    }}
+                    
+                    msgDiv.style.color = 'var(--green)';
+                    msgDiv.innerHTML = '🤖 <strong>' + suggestedCode + '</strong> — ' + reason + (found ? '' : ' <span style="color:var(--orange);">(account not in list)</span>');
+                }} else {{
+                    msgDiv.style.color = 'var(--text-muted)';
+                    msgDiv.textContent = '🤖 ' + answer.substring(0, 120);
+                }}
+            }} catch(e) {{
+                msgDiv.style.color = 'var(--red)';
+                msgDiv.textContent = 'Could not reach Zane: ' + e.message;
+            }}
+            
+            btn.disabled = false;
+            btn.textContent = '🤖 Suggest';
+        }}
         
         async function submitCaptureInvoice() {{
             const btn = document.getElementById('capInvBtn');
