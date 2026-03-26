@@ -1125,7 +1125,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                                 <div class="ssp-dropdown po-stock-dd"></div>
                             </div>
                             <input type="text" name="item_desc[]" class="form-input" placeholder="Description" required>
-                            <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
+                            <input type="number" name="item_qty[]" class="form-input" value="1" min="0.01" step="any" onchange="calculateTotals()">
                             <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
                             <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
                             <span></span>
@@ -1252,7 +1252,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <div class="ssp-dropdown po-stock-dd"></div>
                 </div>
                 <input type="text" name="item_desc[]" class="form-input" placeholder="Description">
-                <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
+                <input type="number" name="item_qty[]" class="form-input" value="1" min="0.01" step="any" onchange="calculateTotals()">
                 <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
                 <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
                 <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove(); calculateTotals();">✕</button>
@@ -1908,7 +1908,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <div class="ssp-dropdown po-stock-dd"></div>
                 </div>
                 <input type="text" name="item_desc[]" class="form-input" placeholder="Description" required value="{safe_string(item.get('description', ''))}">
-                <input type="number" name="item_qty[]" class="form-input" value="{item.get('qty', 1)}" min="1" step="1" onchange="calculateTotals()">
+                <input type="number" name="item_qty[]" class="form-input" value="{item.get('qty', 1)}" min="0.01" step="any" onchange="calculateTotals()">
                 <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()" value="{item.get('price', '')}">
                 <span class="line-total" style="text-align:right;font-weight:600;">R{item.get('total', 0):.2f}</span>
                 <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove();calculateTotals();">&times;</button>
@@ -2019,7 +2019,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <div class="ssp-dropdown po-stock-dd"></div>
                 </div>
                 <input type="text" name="item_desc[]" class="form-input" placeholder="Description" required>
-                <input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()">
+                <input type="number" name="item_qty[]" class="form-input" value="1" min="0.01" step="any" onchange="calculateTotals()">
                 <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()">
                 <span class="line-total" style="text-align:right;font-weight:600;">R0.00</span>
                 <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove();calculateTotals();">&times;</button>

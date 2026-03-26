@@ -373,7 +373,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                                 <div class="stock-dropdown" style="display:none;"></div>
                             </td>
                             <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
-                            <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                            <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                             <td class="row-total">R0.00</td>
                             <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
@@ -502,7 +502,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     <div class="stock-dropdown" style="display:none;"></div>
                 </td>
                 <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
-                <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                 <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                 <td class="row-total">R0.00</td>
                 <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">\u2715</button></td>
@@ -1707,7 +1707,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                     <tbody id="itemsBody">
                         <tr>
                             <td><input type="text" name="item_desc[]" class="form-input" placeholder="e.g., Monthly Retainer" required></td>
-                            <td><input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()"></td>
+                            <td><input type="number" name="item_qty[]" class="form-input" value="1" min="0.01" step="any" onchange="calculateTotals()"></td>
                             <td><input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()"></td>
                             <td style="text-align: right; padding-top: 12px;"><span class="line-total">R0.00</span></td>
                         </tr>
@@ -1761,7 +1761,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             const row = document.createElement('tr');
             row.innerHTML = `
                 <td><input type="text" name="item_desc[]" class="form-input" placeholder="Description"></td>
-                <td><input type="number" name="item_qty[]" class="form-input" value="1" min="1" step="1" onchange="calculateTotals()"></td>
+                <td><input type="number" name="item_qty[]" class="form-input" value="1" min="0.01" step="any" onchange="calculateTotals()"></td>
                 <td><input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()"></td>
                 <td style="text-align: right; padding-top: 12px;">
                     <span class="line-total">R0.00</span>
@@ -2394,7 +2394,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
                         <tr>
                             <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
                             <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
-                            <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                            <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                             <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                             <td class="row-total">R0.00</td>
                             <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
@@ -2482,7 +2482,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             row.innerHTML = `
                 <td style="position:relative;"><input type="text" name="item_desc[]" autocomplete="off" oninput="stockSearch(this)" onfocus="stockSearch(this)" placeholder="Type 2+ chars to search stock..." style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"><input type="hidden" name="item_stock_id[]" value=""><div class="stock-dropdown" style="display:none;"></div></td>
                 <td><input type="text" name="item_unit[]" placeholder="ea" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;"></td>
-                <td><input type="number" name="item_qty[]" value="1" min="1" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
+                <td><input type="number" name="item_qty[]" value="1" min="0.01" step="any" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                 <td><input type="number" name="item_price[]" step="0.01" onchange="calcRow(this)" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);"></td>
                 <td class="row-total">R0.00</td>
                 <td><button type="button" onclick="deleteRow(this)" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 10px;cursor:pointer;">✕</button></td>
