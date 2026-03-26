@@ -202,7 +202,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
     @app.route("/supplier/new", methods=["GET", "POST"])
     @login_required
     def supplier_new():
-        """Create new supplier - simple form"""
+        """Create new supplier - comprehensive form"""
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
@@ -210,35 +210,21 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         if request.method == "POST":
             name = request.form.get("name", "").strip()
-            phone = request.form.get("phone", "").strip()
-            email = request.form.get("email", "").strip()
-            address = request.form.get("address", "").strip()
             code = request.form.get("code", "").strip()
-            contact_name = request.form.get("contact_name", "").strip()
-            category = request.form.get("category", "").strip()
-            vat_number = request.form.get("vat_number", "").strip()
             
-            # AUTO-GENERATE SMART CODE if not provided (e.g., AFR001 for Afrisam)
             if not code and biz_id and name:
                 try:
                     import re
-                    # Get first 3 letters of name (uppercase, letters only)
                     name_clean = re.sub(r'[^a-zA-Z]', '', name).upper()
                     prefix = name_clean[:3] if len(name_clean) >= 3 else name_clean.ljust(3, 'X')
-                    
-                    # Get existing codes with this prefix
                     existing = db.get("suppliers", {"business_id": biz_id}, limit=5000)
                     max_num = 0
                     for s in existing:
-                        existing_code = s.get("code", "")
-                        if existing_code.upper().startswith(prefix):
-                            nums = re.findall(r'\d+', existing_code)
-                            if nums:
-                                num = int(nums[-1])
-                                if num > max_num:
-                                    max_num = num
-                    
-                    # Generate next code: AFR001, AFR002, etc.
+                        ec = s.get("code", "")
+                        if ec.upper().startswith(prefix):
+                            nums = re.findall(r'\d+', ec)
+                            if nums and int(nums[-1]) > max_num:
+                                max_num = int(nums[-1])
                     code = f"{prefix}{(max_num + 1):03d}"
                     logger.info(f"[SUPPLIER] Smart code for '{name}': {code}")
                 except Exception as e:
@@ -248,17 +234,21 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             if not name:
                 flash("Supplier name is required", "error")
             else:
+                fields = _get_form_fields()
+                fields["address"] = fields.get("physical_address", "")
+                try:
+                    fields["discount_percentage"] = float(request.form.get("discount_percentage", 0) or 0)
+                except:
+                    fields["discount_percentage"] = 0
+                try:
+                    fields["credit_limit"] = float(request.form.get("credit_limit", 0) or 0)
+                except:
+                    fields["credit_limit"] = 0
+                
                 supplier = RecordFactory.supplier(
-                    business_id=biz_id,
-                    name=name,
-                    code=code,
-                    phone=phone,
-                    email=email,
-                    address=address,
-                    contact_name=contact_name,
-                    category=category,
-                    vat_number=vat_number,
-                    created_by=user.get("id", "") if user else ""
+                    business_id=biz_id, name=name, code=code,
+                    created_by=user.get("id", "") if user else "",
+                    **fields
                 )
                 supplier_id = supplier["id"]
                 
@@ -269,57 +259,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 else:
                     flash(f"Error creating supplier: {err}", "error")
         
-        content = '''
-        <div class="card" style="max-width: 600px;">
-            <h2 style="margin-bottom: 20px;">New Supplier</h2>
-            <form method="POST">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                    <div>
-                        <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
-                        <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
-                        <input type="text" name="code" placeholder="Auto: AFR001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                        <small style="color:var(--text-muted);">Leave empty - auto-generates from name (e.g. Afrisam → AFR001)</small>
-                    </div>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                    <div>
-                        <label style="display:block;margin-bottom:5px;font-weight:500;">Contact Person</label>
-                        <input type="text" name="contact_name" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;font-weight:500;">Category</label>
-                        <input type="text" name="category" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                    </div>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                    <div>
-                        <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
-                        <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                    </div>
-                    <div>
-                        <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
-                        <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                    </div>
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
-                    <input type="text" name="vat_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
-                    <textarea name="address" rows="2" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);"></textarea>
-                </div>
-                <div style="display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary">Create Supplier</button>
-                    <a href="/suppliers" class="btn btn-secondary">Cancel</a>
-                </div>
-            </form>
-        </div>
-        '''
-        
+        content = _supplier_form()
         return render_page("New Supplier", content, user, "suppliers")
     
     
@@ -1164,7 +1104,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
     @app.route("/supplier/<supplier_id>/edit", methods=["GET", "POST"])
     @login_required
     def supplier_edit(supplier_id):
-        """Edit supplier"""
+        """Edit supplier - comprehensive form"""
         
         user = Auth.get_current_user()
         business = Auth.get_current_business()
@@ -1175,61 +1115,36 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             return redirect("/suppliers")
         
         if request.method == "POST":
-            supplier["name"] = request.form.get("name", "").strip()
-            supplier["phone"] = request.form.get("phone", "").strip()
-            supplier["email"] = request.form.get("email", "").strip()
-            supplier["address"] = request.form.get("address", "").strip()
-            
-            try:
-                supplier["balance"] = float(request.form.get("balance", 0) or 0)
-            except:
-                pass
-            
-            db.save("suppliers", supplier)
-            flash(f"Supplier '{supplier['name']}' updated!", "success")
-            return redirect(f"/supplier/{supplier_id}")
+            name = request.form.get("name", "").strip()
+            if not name:
+                flash("Supplier name is required", "error")
+            else:
+                fields = _get_form_fields()
+                fields["name"] = name
+                fields["code"] = request.form.get("code", "").strip()
+                fields["address"] = fields.get("physical_address", "")
+                try:
+                    fields["balance"] = float(request.form.get("balance", 0) or 0)
+                except:
+                    fields["balance"] = float(supplier.get("balance", 0))
+                try:
+                    fields["credit_limit"] = float(request.form.get("credit_limit", 0) or 0)
+                except:
+                    fields["credit_limit"] = 0
+                try:
+                    fields["discount_percentage"] = float(request.form.get("discount_percentage", 0) or 0)
+                except:
+                    fields["discount_percentage"] = 0
+                
+                success = db.update("suppliers", supplier_id, fields)
+                if success:
+                    flash(f"Supplier '{name}' updated!", "success")
+                    return redirect(f"/supplier/{supplier_id}")
+                else:
+                    flash("Error updating supplier", "error")
         
-        content = f'''
-        <div style="margin-bottom:20px;">
-            <a href="/supplier/{supplier_id}" style="color:var(--text-muted);">← Back to {safe_string(supplier.get("name", "Supplier"))}</a>
-        </div>
-        
-        <div class="card">
-            <h2 style="margin-bottom:20px;">Edit Supplier</h2>
-            <form method="POST">
-                <div style="margin-bottom: 20px;">
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
-                    <input type="text" name="name" value="{safe_string(supplier.get("name", ""))}" required 
-                        style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
-                    <input type="text" name="phone" value="{safe_string(supplier.get("phone", ""))}"
-                        style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
-                    <input type="email" name="email" value="{safe_string(supplier.get("email", ""))}"
-                        style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
-                    <textarea name="address" rows="2" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">{safe_string(supplier.get("address", ""))}</textarea>
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Balance (we owe them)</label>
-                    <input type="number" name="balance" value="{supplier.get("balance", 0)}" step="0.01"
-                        style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div style="display:flex;gap:10px;">
-                    <button type="submit" class="btn btn-primary">Save Changes</button>
-                    <a href="/supplier/{supplier_id}" class="btn btn-secondary">Cancel</a>
-                </div>
-            </form>
-        </div>
-        '''
-        
-        return render_page("Edit Supplier", content, user, "suppliers")
+        content = _supplier_form(v=supplier, is_edit=True)
+        return render_page(f"Edit {supplier.get('name', 'Supplier')}", content, user, "suppliers")
     
     
 

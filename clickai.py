@@ -3221,14 +3221,21 @@ class RecordFactory:
     @staticmethod
     def customer(business_id: str, name: str, **kwargs) -> dict:
         """Create a customer record with all required fields"""
-        # Known fields - anything not here goes to extra_data
-        known_fields = {'id', 'business_id', 'code', 'name', 'phone', 'cell', 'fax', 'email', 
-                        'website', 'address', 'vat_number', 'balance', 'credit_limit', 'active', 
-                        'created_at', 'created_by', 'category', 'contact_name', 'price_list', 
-                        'payment_terms', 'notes', 'payment_intelligence', 'sales_rep', 
-                        'discount_percentage', 'vat_type'}
-        
-        # Collect extra fields not in known_fields (for Sage custom fields etc)
+        known_fields = {
+            'id', 'business_id', 'code', 'name',
+            'contact_name', 'phone', 'cell', 'fax', 'email', 'website',
+            'accounts_contact_name', 'accounts_contact_phone', 'accounts_contact_email',
+            'sales_contact_name', 'sales_contact_phone', 'sales_contact_email',
+            'cc_emails',
+            'address', 'physical_address', 'postal_address', 'delivery_address',
+            'vat_number', 'registration_number', 'trading_as',
+            'bank_name', 'bank_branch', 'bank_branch_code', 'bank_account_number', 'bank_account_type',
+            'balance', 'credit_limit', 'active',
+            'category', 'price_list', 'payment_terms', 'notes',
+            'payment_intelligence', 'sales_rep',
+            'discount_percentage', 'vat_type', 'currency',
+            'created_at', 'created_by',
+        }
         extra = {k: v for k, v in kwargs.items() if k not in known_fields and v}
         
         return {
@@ -3236,40 +3243,65 @@ class RecordFactory:
             "business_id": business_id,
             "code": kwargs.get("code", ""),
             "name": name,
+            "contact_name": kwargs.get("contact_name", ""),
             "phone": kwargs.get("phone", ""),
             "cell": kwargs.get("cell", ""),
             "fax": kwargs.get("fax", ""),
             "email": kwargs.get("email", ""),
             "website": kwargs.get("website", ""),
-            "address": kwargs.get("address", ""),
+            "accounts_contact_name": kwargs.get("accounts_contact_name", ""),
+            "accounts_contact_phone": kwargs.get("accounts_contact_phone", ""),
+            "accounts_contact_email": kwargs.get("accounts_contact_email", ""),
+            "sales_contact_name": kwargs.get("sales_contact_name", ""),
+            "sales_contact_phone": kwargs.get("sales_contact_phone", ""),
+            "sales_contact_email": kwargs.get("sales_contact_email", ""),
+            "cc_emails": kwargs.get("cc_emails", ""),
+            "address": kwargs.get("address", kwargs.get("physical_address", "")),
+            "physical_address": kwargs.get("physical_address", kwargs.get("address", "")),
+            "postal_address": kwargs.get("postal_address", ""),
+            "delivery_address": kwargs.get("delivery_address", ""),
             "vat_number": kwargs.get("vat_number", ""),
+            "registration_number": kwargs.get("registration_number", ""),
+            "trading_as": kwargs.get("trading_as", ""),
+            "bank_name": kwargs.get("bank_name", ""),
+            "bank_branch": kwargs.get("bank_branch", ""),
+            "bank_branch_code": kwargs.get("bank_branch_code", ""),
+            "bank_account_number": kwargs.get("bank_account_number", ""),
+            "bank_account_type": kwargs.get("bank_account_type", ""),
             "balance": float(kwargs.get("balance", 0) or 0),
             "credit_limit": float(kwargs.get("credit_limit", 0) or 0),
             "active": kwargs.get("active", True),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", ""),
             "category": kwargs.get("category", ""),
-            "contact_name": kwargs.get("contact_name", ""),
             "price_list": kwargs.get("price_list", "retail"),
             "sales_rep": kwargs.get("sales_rep", ""),
             "discount_percentage": float(kwargs.get("discount_percentage", 0) or 0),
             "vat_type": kwargs.get("vat_type", ""),
             "payment_terms": kwargs.get("payment_terms", ""),
+            "currency": kwargs.get("currency", "ZAR"),
             "notes": kwargs.get("notes", ""),
             "payment_intelligence": kwargs.get("payment_intelligence"),
-            "extra_data": extra if extra else None  # Store Sage user fields etc as JSON
+            "created_at": kwargs.get("created_at") or now(),
+            "created_by": kwargs.get("created_by", ""),
+            "extra_data": extra if extra else None
         }
     
     @staticmethod
     def supplier(business_id: str, name: str, **kwargs) -> dict:
         """Create a supplier record with all required fields"""
-        # Known fields - anything not here goes to extra_data
-        known_fields = {'id', 'business_id', 'code', 'name', 'phone', 'cell', 'fax', 'email',
-                        'website', 'address', 'vat_number', 'balance', 'credit_limit', 'active', 
-                        'created_at', 'created_by', 'category', 'contact_name', 'payment_terms', 
-                        'notes', 'discount_percentage', 'vat_type'}
-        
-        # Collect extra fields (for Sage custom fields etc)
+        known_fields = {
+            'id', 'business_id', 'code', 'name',
+            'contact_name', 'phone', 'cell', 'fax', 'email', 'website',
+            'accounts_contact_name', 'accounts_contact_phone', 'accounts_contact_email',
+            'sales_contact_name', 'sales_contact_phone', 'sales_contact_email',
+            'cc_emails',
+            'address', 'physical_address', 'postal_address',
+            'vat_number', 'registration_number', 'trading_as',
+            'bank_name', 'bank_branch', 'bank_branch_code', 'bank_account_number', 'bank_account_type',
+            'balance', 'credit_limit', 'active',
+            'category', 'payment_terms', 'notes',
+            'discount_percentage', 'vat_type', 'currency',
+            'created_at', 'created_by',
+        }
         extra = {k: v for k, v in kwargs.items() if k not in known_fields and v}
         
         return {
@@ -3277,24 +3309,42 @@ class RecordFactory:
             "business_id": business_id,
             "code": kwargs.get("code", ""),
             "name": name,
+            "contact_name": kwargs.get("contact_name", ""),
             "phone": kwargs.get("phone", ""),
             "cell": kwargs.get("cell", ""),
             "fax": kwargs.get("fax", ""),
             "email": kwargs.get("email", ""),
             "website": kwargs.get("website", ""),
-            "address": kwargs.get("address", ""),
+            "accounts_contact_name": kwargs.get("accounts_contact_name", ""),
+            "accounts_contact_phone": kwargs.get("accounts_contact_phone", ""),
+            "accounts_contact_email": kwargs.get("accounts_contact_email", ""),
+            "sales_contact_name": kwargs.get("sales_contact_name", ""),
+            "sales_contact_phone": kwargs.get("sales_contact_phone", ""),
+            "sales_contact_email": kwargs.get("sales_contact_email", ""),
+            "cc_emails": kwargs.get("cc_emails", ""),
+            "address": kwargs.get("address", kwargs.get("physical_address", "")),
+            "physical_address": kwargs.get("physical_address", kwargs.get("address", "")),
+            "postal_address": kwargs.get("postal_address", ""),
             "vat_number": kwargs.get("vat_number", ""),
+            "registration_number": kwargs.get("registration_number", ""),
+            "trading_as": kwargs.get("trading_as", ""),
+            "bank_name": kwargs.get("bank_name", ""),
+            "bank_branch": kwargs.get("bank_branch", ""),
+            "bank_branch_code": kwargs.get("bank_branch_code", ""),
+            "bank_account_number": kwargs.get("bank_account_number", ""),
+            "bank_account_type": kwargs.get("bank_account_type", ""),
             "balance": float(kwargs.get("balance", 0) or 0),
             "credit_limit": float(kwargs.get("credit_limit", 0) or 0),
             "active": kwargs.get("active", True),
-            "created_at": kwargs.get("created_at") or now(),
-            "created_by": kwargs.get("created_by", ""),
             "category": kwargs.get("category", ""),
             "contact_name": kwargs.get("contact_name", ""),
             "payment_terms": kwargs.get("payment_terms", ""),
             "discount_percentage": float(kwargs.get("discount_percentage", 0) or 0),
             "vat_type": kwargs.get("vat_type", ""),
+            "currency": kwargs.get("currency", "ZAR"),
             "notes": kwargs.get("notes", ""),
+            "created_at": kwargs.get("created_at") or now(),
+            "created_by": kwargs.get("created_by", ""),
             "extra_data": extra if extra else None
         }
     
@@ -24514,10 +24564,200 @@ def customer_view(customer_id):
     return render_page(customer.get("name", "Customer"), content, user, "customers")
 
 
+# ── COMPREHENSIVE FORM HELPERS (for supplier + customer new/edit forms) ──
+
+FORM_CSS = '''
+<style>
+.fs{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:20px;}
+.fs h3{margin:0 0 15px 0;font-size:15px;color:var(--primary);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);padding-bottom:10px;}
+.fg2{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;}
+.fg3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:15px;}
+.fg1{margin-bottom:15px;}
+.fl{display:block;margin-bottom:5px;font-weight:500;font-size:13px;color:var(--text-muted);}
+.fl .rq{color:var(--red);}
+.fi{width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:14px;box-sizing:border-box;transition:border-color 0.2s;}
+.fi:focus{border-color:var(--primary);outline:none;box-shadow:0 0 0 3px var(--primary-glow);}
+.fi::placeholder{color:rgba(136,136,170,0.5);}
+textarea.fi{resize:vertical;min-height:60px;}
+.fh{font-size:11px;color:var(--text-muted);margin-top:4px;}
+@media(max-width:768px){.fg2,.fg3{grid-template-columns:1fr;}}
+</style>
+'''
+
+def _bank_opts(sel=""):
+    banks = [("","-- Select Bank --"),("ABSA","ABSA"),("FNB","First National Bank (FNB)"),("Nedbank","Nedbank"),("Standard Bank","Standard Bank"),("Capitec","Capitec"),("Investec","Investec"),("African Bank","African Bank"),("TymeBank","TymeBank"),("Discovery Bank","Discovery Bank"),("Other","Other")]
+    return "".join(f'<option value="{v}" {"selected" if v==sel else ""}>{l}</option>' for v,l in banks)
+
+def _acct_opts(sel=""):
+    types = [("","-- Select Type --"),("Current","Current / Cheque"),("Savings","Savings"),("Transmission","Transmission")]
+    return "".join(f'<option value="{v}" {"selected" if v==sel else ""}>{l}</option>' for v,l in types)
+
+def _pt_opts(sel="", default="COD"):
+    terms = ["COD","7 Days","14 Days","30 Days","60 Days","90 Days","EOM","Prepaid"]
+    s = sel or default
+    return "".join(f'<option value="{t}" {"selected" if t==s else ""}>{t}</option>' for t in terms)
+
+def _pl_opts(sel="retail"):
+    lists = [("retail","Retail (Default)"),("wholesale","Wholesale"),("trade","Trade"),("vip","VIP / Special")]
+    return "".join(f'<option value="{v}" {"selected" if v==sel else ""}>{l}</option>' for v,l in lists)
+
+def _cur_opts(sel="ZAR"):
+    currencies = [("ZAR","ZAR (Rand)"),("USD","USD (Dollar)"),("EUR","EUR (Euro)"),("GBP","GBP (Pound)")]
+    return "".join(f'<option value="{v}" {"selected" if v==sel else ""}>{l}</option>' for v,l in currencies)
+
+def _vat_opts(sel=""):
+    types = [("","Standard (15%)"),("exempt","VAT Exempt"),("zero","Zero Rated")]
+    return "".join(f'<option value="{v}" {"selected" if v==sel else ""}>{l}</option>' for v,l in types)
+
+def _get_form_fields():
+    """Extract all comprehensive contact fields from request.form"""
+    return {
+        "contact_name": request.form.get("contact_name", "").strip(),
+        "phone": request.form.get("phone", "").strip(),
+        "cell": request.form.get("cell", "").strip(),
+        "fax": request.form.get("fax", "").strip(),
+        "email": request.form.get("email", "").strip(),
+        "website": request.form.get("website", "").strip(),
+        "accounts_contact_name": request.form.get("accounts_contact_name", "").strip(),
+        "accounts_contact_phone": request.form.get("accounts_contact_phone", "").strip(),
+        "accounts_contact_email": request.form.get("accounts_contact_email", "").strip(),
+        "sales_contact_name": request.form.get("sales_contact_name", "").strip(),
+        "sales_contact_phone": request.form.get("sales_contact_phone", "").strip(),
+        "sales_contact_email": request.form.get("sales_contact_email", "").strip(),
+        "cc_emails": request.form.get("cc_emails", "").strip(),
+        "physical_address": request.form.get("physical_address", "").strip(),
+        "postal_address": request.form.get("postal_address", "").strip(),
+        "vat_number": request.form.get("vat_number", "").strip(),
+        "registration_number": request.form.get("registration_number", "").strip(),
+        "trading_as": request.form.get("trading_as", "").strip(),
+        "bank_name": request.form.get("bank_name", "").strip(),
+        "bank_branch_code": request.form.get("bank_branch_code", "").strip(),
+        "bank_account_number": request.form.get("bank_account_number", "").strip(),
+        "bank_account_type": request.form.get("bank_account_type", "").strip(),
+        "category": request.form.get("category", "").strip(),
+        "payment_terms": request.form.get("payment_terms", "").strip(),
+        "currency": request.form.get("currency", "ZAR").strip(),
+        "notes": request.form.get("notes", "").strip(),
+    }
+
+def _supplier_form(v=None, is_edit=False):
+    """Full supplier form HTML. v=supplier dict for edit, None for new."""
+    if v is None: v = {}
+    def val(k, d=""): return safe_string(str(v.get(k, d) or d))
+    back = f'<a href="/supplier/{v.get("id")}" style="color:var(--text-muted);">← Back to {val("name","Supplier")}</a>' if is_edit else '<a href="/suppliers" style="color:var(--text-muted);">← Back to Suppliers</a>'
+    title = "Edit Supplier" if is_edit else "New Supplier"
+    btn = "Save Changes" if is_edit else "Create Supplier"
+    cancel = f'/supplier/{v.get("id")}' if is_edit else "/suppliers"
+    bal = ""
+    if is_edit:
+        bal = f'''<div><label class="fl">Balance (we owe them)</label><input type="number" name="balance" class="fi" value="{val('balance','0')}" step="0.01"></div>'''
+    return f'''{FORM_CSS}
+    <div style="margin-bottom:15px;">{back}</div>
+    <div class="card" style="max-width:900px;">
+        <h2 style="margin-bottom:5px;">{title}</h2>
+        <p style="color:var(--text-muted);margin-bottom:20px;font-size:13px;">Only Name is required — everything else is optional.</p>
+        <form method="POST">
+            <div class="fs"><h3>🏢 Company Details</h3>
+                <div class="fg2"><div><label class="fl">Company Name <span class="rq">*</span></label><input type="text" name="name" required class="fi" value="{val('name')}" placeholder="e.g. Afrisam (Pty) Ltd" autofocus></div><div><label class="fl">Trading As</label><input type="text" name="trading_as" class="fi" value="{val('trading_as')}" placeholder="e.g. Afrisam Readymix"></div></div>
+                <div class="fg3"><div><label class="fl">Code</label><input type="text" name="code" class="fi" value="{val('code')}" placeholder="Auto: AFR001"><div class="fh">Leave empty — auto-generates from name</div></div><div><label class="fl">Category</label><input type="text" name="category" class="fi" value="{val('category')}" placeholder="e.g. Building Materials"></div><div><label class="fl">Currency</label><select name="currency" class="fi">{_cur_opts(val('currency','ZAR'))}</select></div></div>
+            </div>
+            <div class="fs"><h3>👤 Primary Contact</h3>
+                <div class="fg2"><div><label class="fl">Contact Person</label><input type="text" name="contact_name" class="fi" value="{val('contact_name')}" placeholder="Full name"></div><div><label class="fl">Email</label><input type="email" name="email" class="fi" value="{val('email')}" placeholder="main@company.com"></div></div>
+                <div class="fg3"><div><label class="fl">Phone (Landline)</label><input type="text" name="phone" class="fi" value="{val('phone')}" placeholder="011 123 4567"></div><div><label class="fl">Cell / Mobile</label><input type="text" name="cell" class="fi" value="{val('cell')}" placeholder="082 123 4567"></div><div><label class="fl">Fax</label><input type="text" name="fax" class="fi" value="{val('fax')}" placeholder="011 123 4568"></div></div>
+                <div class="fg1"><label class="fl">Website</label><input type="text" name="website" class="fi" value="{val('website')}" placeholder="https://www.company.co.za"></div>
+            </div>
+            <div class="fs"><h3>📋 Accounts Contact</h3>
+                <div class="fg3"><div><label class="fl">Name</label><input type="text" name="accounts_contact_name" class="fi" value="{val('accounts_contact_name')}" placeholder="Accounts person"></div><div><label class="fl">Phone</label><input type="text" name="accounts_contact_phone" class="fi" value="{val('accounts_contact_phone')}" placeholder="011 123 4569"></div><div><label class="fl">Email</label><input type="email" name="accounts_contact_email" class="fi" value="{val('accounts_contact_email')}" placeholder="accounts@company.com"></div></div>
+            </div>
+            <div class="fs"><h3>💼 Sales Contact / Rep</h3>
+                <div class="fg3"><div><label class="fl">Name</label><input type="text" name="sales_contact_name" class="fi" value="{val('sales_contact_name')}" placeholder="Sales rep name"></div><div><label class="fl">Phone</label><input type="text" name="sales_contact_phone" class="fi" value="{val('sales_contact_phone')}" placeholder="082 987 6543"></div><div><label class="fl">Email</label><input type="email" name="sales_contact_email" class="fi" value="{val('sales_contact_email')}" placeholder="sales@company.com"></div></div>
+            </div>
+            <div class="fs"><h3>📧 Additional Email Addresses</h3>
+                <div class="fg1"><label class="fl">CC Email Addresses</label><input type="text" name="cc_emails" class="fi" value="{val('cc_emails')}" placeholder="po@company.com, orders@company.com, admin@company.com"><div class="fh">Separate multiple emails with commas. CC'd on purchase orders.</div></div>
+            </div>
+            <div class="fs"><h3>📍 Addresses</h3>
+                <div class="fg1"><label class="fl">Physical / Street Address</label><textarea name="physical_address" class="fi" rows="2" placeholder="123 Main Road, Sandton, 2196">{val('physical_address', val('address'))}</textarea></div>
+                <div class="fg1"><label class="fl">Postal Address</label><textarea name="postal_address" class="fi" rows="2" placeholder="PO Box 1234, Sandton, 2146">{val('postal_address')}</textarea><div class="fh">Leave empty if same as physical address</div></div>
+            </div>
+            <div class="fs"><h3>📄 Registration Details</h3>
+                <div class="fg2"><div><label class="fl">VAT Number</label><input type="text" name="vat_number" class="fi" value="{val('vat_number')}" placeholder="4123456789"></div><div><label class="fl">Company Reg Number</label><input type="text" name="registration_number" class="fi" value="{val('registration_number')}" placeholder="2020/123456/07"></div></div>
+            </div>
+            <div class="fs"><h3>🏦 Banking Details</h3>
+                <div class="fg2"><div><label class="fl">Bank Name</label><select name="bank_name" class="fi">{_bank_opts(val('bank_name'))}</select></div><div><label class="fl">Account Type</label><select name="bank_account_type" class="fi">{_acct_opts(val('bank_account_type'))}</select></div></div>
+                <div class="fg2"><div><label class="fl">Branch / Branch Code</label><input type="text" name="bank_branch_code" class="fi" value="{val('bank_branch_code')}" placeholder="e.g. 632005"></div><div><label class="fl">Account Number</label><input type="text" name="bank_account_number" class="fi" value="{val('bank_account_number')}" placeholder="Account number"></div></div>
+            </div>
+            <div class="fs"><h3>💰 Payment Terms</h3>
+                <div class="fg3"><div><label class="fl">Payment Terms</label><select name="payment_terms" class="fi">{_pt_opts(val('payment_terms'),'30 Days')}</select></div><div><label class="fl">Discount %</label><input type="number" name="discount_percentage" class="fi" value="{val('discount_percentage','0')}" step="0.5" min="0" max="100"></div><div><label class="fl">Credit Limit (R)</label><input type="number" name="credit_limit" class="fi" value="{val('credit_limit','0')}" step="100"></div></div>
+                {bal}
+            </div>
+            <div class="fs"><h3>📝 Notes</h3><div class="fg1"><textarea name="notes" class="fi" rows="3" placeholder="Any additional notes...">{val('notes')}</textarea></div></div>
+            <div style="display:flex;gap:10px;padding-top:10px;"><button type="submit" class="btn btn-primary" style="padding:12px 30px;font-size:15px;">{btn}</button><a href="{cancel}" class="btn btn-secondary" style="padding:12px 30px;font-size:15px;">Cancel</a></div>
+        </form>
+    </div>'''
+
+def _customer_form(v=None, is_edit=False):
+    """Full customer form HTML. v=customer dict for edit, None for new."""
+    if v is None: v = {}
+    def val(k, d=""): return safe_string(str(v.get(k, d) or d))
+    back = f'<a href="/customer/{v.get("id")}" style="color:var(--text-muted);">← Back to {val("name","Customer")}</a>' if is_edit else '<a href="/customers" style="color:var(--text-muted);">← Back to Customers</a>'
+    title = "Edit Customer" if is_edit else "New Customer"
+    btn = "Save Changes" if is_edit else "Create Customer"
+    cancel = f'/customer/{v.get("id")}' if is_edit else "/customers"
+    bal = ""
+    if is_edit:
+        bal = f'''<div><label class="fl">Balance (they owe us)</label><input type="number" name="balance" class="fi" value="{val('balance','0')}" step="0.01"></div>'''
+    return f'''{FORM_CSS}
+    <div style="margin-bottom:15px;">{back}</div>
+    <div class="card" style="max-width:900px;">
+        <h2 style="margin-bottom:5px;">{title}</h2>
+        <p style="color:var(--text-muted);margin-bottom:20px;font-size:13px;">Only Name is required — everything else is optional.</p>
+        <form method="POST">
+            <div class="fs"><h3>🏢 Company / Customer Details</h3>
+                <div class="fg2"><div><label class="fl">Customer Name <span class="rq">*</span></label><input type="text" name="name" required class="fi" value="{val('name')}" placeholder="e.g. ABC Construction (Pty) Ltd" autofocus></div><div><label class="fl">Trading As</label><input type="text" name="trading_as" class="fi" value="{val('trading_as')}" placeholder="e.g. ABC Builders"></div></div>
+                <div class="fg3"><div><label class="fl">Code</label><input type="text" name="code" class="fi" value="{val('code')}" placeholder="Auto: ABC001"><div class="fh">Leave empty — auto-generates from name</div></div><div><label class="fl">Category</label><input type="text" name="category" class="fi" value="{val('category')}" placeholder="e.g. Construction"></div><div><label class="fl">Currency</label><select name="currency" class="fi">{_cur_opts(val('currency','ZAR'))}</select></div></div>
+            </div>
+            <div class="fs"><h3>👤 Primary Contact</h3>
+                <div class="fg2"><div><label class="fl">Contact Person</label><input type="text" name="contact_name" class="fi" value="{val('contact_name')}" placeholder="Full name"></div><div><label class="fl">Email</label><input type="email" name="email" class="fi" value="{val('email')}" placeholder="main@company.com"></div></div>
+                <div class="fg3"><div><label class="fl">Phone (Landline)</label><input type="text" name="phone" class="fi" value="{val('phone')}" placeholder="011 123 4567"></div><div><label class="fl">Cell / Mobile</label><input type="text" name="cell" class="fi" value="{val('cell')}" placeholder="082 123 4567"></div><div><label class="fl">Fax</label><input type="text" name="fax" class="fi" value="{val('fax')}" placeholder="011 123 4568"></div></div>
+                <div class="fg1"><label class="fl">Website</label><input type="text" name="website" class="fi" value="{val('website')}" placeholder="https://www.customer.co.za"></div>
+            </div>
+            <div class="fs"><h3>📋 Accounts Contact</h3>
+                <div class="fg3"><div><label class="fl">Name</label><input type="text" name="accounts_contact_name" class="fi" value="{val('accounts_contact_name')}" placeholder="Accounts person"></div><div><label class="fl">Phone</label><input type="text" name="accounts_contact_phone" class="fi" value="{val('accounts_contact_phone')}" placeholder="011 123 4569"></div><div><label class="fl">Email</label><input type="email" name="accounts_contact_email" class="fi" value="{val('accounts_contact_email')}" placeholder="accounts@company.com"></div></div>
+            </div>
+            <div class="fs"><h3>💼 Sales Contact</h3>
+                <div class="fg3"><div><label class="fl">Their Sales Rep</label><input type="text" name="sales_contact_name" class="fi" value="{val('sales_contact_name')}" placeholder="Their rep name"></div><div><label class="fl">Phone</label><input type="text" name="sales_contact_phone" class="fi" value="{val('sales_contact_phone')}" placeholder="082 987 6543"></div><div><label class="fl">Email</label><input type="email" name="sales_contact_email" class="fi" value="{val('sales_contact_email')}" placeholder="sales@company.com"></div></div>
+                <div class="fg1"><label class="fl">Your Sales Rep (assigned)</label><input type="text" name="sales_rep" class="fi" value="{val('sales_rep')}" placeholder="Your staff member handling this account"></div>
+            </div>
+            <div class="fs"><h3>📧 Additional Email Addresses</h3>
+                <div class="fg1"><label class="fl">CC Email Addresses</label><input type="text" name="cc_emails" class="fi" value="{val('cc_emails')}" placeholder="accounts@co.com, manager@co.com, admin@co.com"><div class="fh">Separate multiple emails with commas. CC'd on invoices and statements.</div></div>
+            </div>
+            <div class="fs"><h3>📍 Addresses</h3>
+                <div class="fg1"><label class="fl">Physical / Street Address</label><textarea name="physical_address" class="fi" rows="2" placeholder="123 Main Road, Sandton, 2196">{val('physical_address', val('address'))}</textarea></div>
+                <div class="fg1"><label class="fl">Postal Address</label><textarea name="postal_address" class="fi" rows="2" placeholder="PO Box 1234, Sandton, 2146">{val('postal_address')}</textarea><div class="fh">Leave empty if same as physical address</div></div>
+                <div class="fg1"><label class="fl">Delivery Address</label><textarea name="delivery_address" class="fi" rows="2" placeholder="Site address for deliveries">{val('delivery_address')}</textarea><div class="fh">Used on delivery notes. Leave empty if same as physical.</div></div>
+            </div>
+            <div class="fs"><h3>📄 Registration Details</h3>
+                <div class="fg2"><div><label class="fl">VAT Number</label><input type="text" name="vat_number" class="fi" value="{val('vat_number')}" placeholder="4123456789"></div><div><label class="fl">Company Reg Number</label><input type="text" name="registration_number" class="fi" value="{val('registration_number')}" placeholder="2020/123456/07"></div></div>
+            </div>
+            <div class="fs"><h3>🏦 Banking Details</h3>
+                <div class="fg2"><div><label class="fl">Bank Name</label><select name="bank_name" class="fi">{_bank_opts(val('bank_name'))}</select></div><div><label class="fl">Account Type</label><select name="bank_account_type" class="fi">{_acct_opts(val('bank_account_type'))}</select></div></div>
+                <div class="fg2"><div><label class="fl">Branch / Branch Code</label><input type="text" name="bank_branch_code" class="fi" value="{val('bank_branch_code')}" placeholder="e.g. 632005"></div><div><label class="fl">Account Number</label><input type="text" name="bank_account_number" class="fi" value="{val('bank_account_number')}" placeholder="Account number"></div></div>
+            </div>
+            <div class="fs"><h3>💰 Pricing & Payment Terms</h3>
+                <div class="fg3"><div><label class="fl">Price List</label><select name="price_list" class="fi">{_pl_opts(val('price_list','retail'))}</select></div><div><label class="fl">Payment Terms</label><select name="payment_terms" class="fi">{_pt_opts(val('payment_terms'),'COD')}</select></div><div><label class="fl">Credit Limit (R)</label><input type="number" name="credit_limit" class="fi" value="{val('credit_limit','0')}" step="100"></div></div>
+                <div class="fg2"><div><label class="fl">Discount %</label><input type="number" name="discount_percentage" class="fi" value="{val('discount_percentage','0')}" step="0.5" min="0" max="100"></div><div><label class="fl">VAT Type</label><select name="vat_type" class="fi">{_vat_opts(val('vat_type'))}</select></div></div>
+                {bal}
+            </div>
+            <div class="fs"><h3>📝 Notes</h3><div class="fg1"><textarea name="notes" class="fi" rows="3" placeholder="Any additional notes...">{val('notes')}</textarea></div></div>
+            <div style="display:flex;gap:10px;padding-top:10px;"><button type="submit" class="btn btn-primary" style="padding:12px 30px;font-size:15px;">{btn}</button><a href="{cancel}" class="btn btn-secondary" style="padding:12px 30px;font-size:15px;">Cancel</a></div>
+        </form>
+    </div>'''
+
+
 @app.route("/customer/new", methods=["GET", "POST"])
 @login_required
 def customer_new():
-    """Create new customer - simple form"""
+    """Create new customer - comprehensive form"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -24525,158 +24765,66 @@ def customer_new():
     
     if request.method == "POST":
         name = request.form.get("name", "").strip()
-        phone = request.form.get("phone", "").strip()
-        email = request.form.get("email", "").strip()
-        address = request.form.get("address", "").strip()
         code = request.form.get("code", "").strip()
-        contact_name = request.form.get("contact_name", "").strip()
-        category = request.form.get("category", "").strip()
-        vat_number = request.form.get("vat_number", "").strip()
-        price_list = request.form.get("price_list", "retail").strip()
-        payment_terms = request.form.get("payment_terms", "COD").strip()
-        cc_email = request.form.get("cc_email", "").strip()
         
-        # AUTO-GENERATE SMART CODE if not provided (e.g., AFR001 for Afrisam)
         if not code and biz_id and name:
             try:
                 import re
-                # Get prefix from name (first 3 letters, uppercase, letters only)
-                clean_name = re.sub(r'[^a-zA-Z]', '', name)  # Remove non-letters
+                clean_name = re.sub(r'[^a-zA-Z]', '', name)
                 prefix = clean_name[:3].upper() if len(clean_name) >= 3 else clean_name.upper().ljust(3, 'X')
-                
-                # Get existing codes with this prefix
                 existing = db.get("customers", {"business_id": biz_id}, limit=5000)
                 max_num = 0
                 for c in existing:
-                    existing_code = c.get("code", "")
-                    if existing_code and existing_code.upper().startswith(prefix):
-                        # Extract number part (e.g., "AFR001" -> 1)
-                        nums = re.findall(r'\d+', existing_code)
-                        if nums:
-                            num = int(nums[-1])
-                            if num > max_num:
-                                max_num = num
-                
-                # Generate code: PREFIX + 3-digit number
-                code = f"{prefix}{(max_num + 1):03d}"  # e.g. AFR001, AFR002
+                    ec = c.get("code", "")
+                    if ec and ec.upper().startswith(prefix):
+                        nums = re.findall(r'\d+', ec)
+                        if nums and int(nums[-1]) > max_num:
+                            max_num = int(nums[-1])
+                code = f"{prefix}{(max_num + 1):03d}"
                 logger.info(f"[CUSTOMER] Smart code for '{name}': {code}")
             except Exception as e:
                 logger.error(f"[CUSTOMER] Smart code error: {e}")
-                code = f"C{generate_id()[:6].upper()}"  # Fallback
+                code = f"C{generate_id()[:6].upper()}"
         
         if not name:
             flash("Customer name is required", "error")
         else:
+            fields = _get_form_fields()
+            fields["price_list"] = request.form.get("price_list", "retail").strip()
+            fields["sales_rep"] = request.form.get("sales_rep", "").strip()
+            fields["delivery_address"] = request.form.get("delivery_address", "").strip()
+            fields["vat_type"] = request.form.get("vat_type", "").strip()
+            fields["address"] = fields.get("physical_address", "")
+            try:
+                fields["credit_limit"] = float(request.form.get("credit_limit", 0) or 0)
+            except:
+                fields["credit_limit"] = 0
+            try:
+                fields["discount_percentage"] = float(request.form.get("discount_percentage", 0) or 0)
+            except:
+                fields["discount_percentage"] = 0
+            
             customer = RecordFactory.customer(
-                business_id=biz_id,
-                name=name,
-                code=code,
-                phone=phone,
-                email=email,
-                address=address,
-                contact_name=contact_name,
-                category=category,
-                vat_number=vat_number,
-                price_list=price_list,
-                payment_terms=payment_terms,
-                created_by=user.get("id", "") if user else ""
+                business_id=biz_id, name=name, code=code,
+                created_by=user.get("id", "") if user else "",
+                **fields
             )
-            # Save CC email as extra field
-            if cc_email:
-                customer["cc_email"] = cc_email
-            customer_id = customer["id"]
             
             success, err = db.save("customers", customer)
             if success:
                 flash(f"Customer '{name}' created", "success")
-                return redirect(f"/customer/{customer_id}")
+                return redirect(f"/customer/{customer['id']}")
             else:
                 flash(f"Error creating customer: {err}", "error")
     
-    content = '''
-    <div class="card" style="max-width: 600px;">
-        <h2 style="margin-bottom: 20px;">New Customer</h2>
-        <form method="POST">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
-                    <input type="text" name="name" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
-                    <input type="text" name="code" placeholder="Auto: AFR001" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                    <small style="color:var(--text-muted);">Leave empty - auto-generates from name (e.g. Afrisam → AFR001)</small>
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Contact Person</label>
-                    <input type="text" name="contact_name" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Category</label>
-                    <input type="text" name="category" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
-                    <input type="text" name="phone" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
-                    <input type="email" name="email" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
-                    <input type="text" name="vat_number" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Payment Terms *</label>
-                    <select name="payment_terms" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                        <option value="COD">COD (Cash on Delivery)</option>
-                        <option value="Current Month">Current Month</option>
-                        <option value="30 Days">30 Days After Statement</option>
-                    </select>
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Price List</label>
-                    <select name="price_list" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                        <option value="retail">Retail (Default)</option>
-                        <option value="wholesale">Wholesale</option>
-                        <option value="trade">Trade</option>
-                        <option value="vip">VIP/Special</option>
-                    </select>
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">CC Email (optional)</label>
-                    <input type="text" name="cc_email" placeholder="extra@email.com, admin@email.com" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                    <small style="color:var(--text-muted);">Separate multiple with commas</small>
-                </div>
-            </div>
-            <div style="margin-bottom: 20px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
-                <textarea name="address" rows="2" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);"></textarea>
-            </div>
-            <div style="display:flex;gap:10px;">
-                <button type="submit" class="btn btn-primary">Create Customer</button>
-                <a href="/customers" class="btn btn-secondary">Cancel</a>
-            </div>
-        </form>
-    </div>
-    '''
-    
+    content = _customer_form()
     return render_page("New Customer", content, user, "customers")
 
 
 @app.route("/customer/<customer_id>/edit", methods=["GET", "POST"])
 @login_required
 def customer_edit(customer_id):
-    """Edit existing customer"""
+    """Edit existing customer - comprehensive form"""
     
     user = Auth.get_current_user()
     business = Auth.get_current_business()
@@ -24689,155 +24837,39 @@ def customer_edit(customer_id):
     
     if request.method == "POST":
         name = request.form.get("name", "").strip()
-        phone = request.form.get("phone", "").strip()
-        cell = request.form.get("cell", "").strip()
-        email = request.form.get("email", "").strip()
-        email_cc = request.form.get("email_cc", "").strip()
-        address = request.form.get("address", "").strip()
-        code = request.form.get("code", "").strip()
-        contact_name = request.form.get("contact_name", "").strip()
-        category = request.form.get("category", "").strip()
-        vat_number = request.form.get("vat_number", "").strip()
-        price_list = request.form.get("price_list", "retail").strip()
-        credit_limit = request.form.get("credit_limit", "0").strip()
-        payment_terms = request.form.get("payment_terms", "").strip()
-        sales_rep = request.form.get("sales_rep", "").strip()
-        notes = request.form.get("notes", "").strip()
-        
         if not name:
             flash("Customer name is required", "error")
         else:
+            fields = _get_form_fields()
+            fields["name"] = name
+            fields["code"] = request.form.get("code", "").strip()
+            fields["address"] = fields.get("physical_address", "")
+            fields["price_list"] = request.form.get("price_list", "retail").strip()
+            fields["sales_rep"] = request.form.get("sales_rep", "").strip()
+            fields["delivery_address"] = request.form.get("delivery_address", "").strip()
+            fields["vat_type"] = request.form.get("vat_type", "").strip()
             try:
-                credit_limit_val = float(credit_limit) if credit_limit else 0
+                fields["balance"] = float(request.form.get("balance", 0) or 0)
             except:
-                credit_limit_val = 0
+                fields["balance"] = float(customer.get("balance", 0))
+            try:
+                fields["credit_limit"] = float(request.form.get("credit_limit", 0) or 0)
+            except:
+                fields["credit_limit"] = 0
+            try:
+                fields["discount_percentage"] = float(request.form.get("discount_percentage", 0) or 0)
+            except:
+                fields["discount_percentage"] = 0
             
-            updates = {
-                "name": name,
-                "code": code,
-                "phone": phone,
-                "cell": cell,
-                "email": email,
-                "email_cc": email_cc,
-                "address": address,
-                "contact_name": contact_name,
-                "category": category,
-                "vat_number": vat_number,
-                "price_list": price_list,
-                "credit_limit": credit_limit_val,
-                "payment_terms": payment_terms,
-                "sales_rep": sales_rep,
-                "notes": notes
-            }
-            
-            result = db.update("customers", customer_id, updates)
+            result = db.update("customers", customer_id, fields)
             if result:
                 flash(f"Customer '{name}' updated", "success")
                 return redirect(f"/customer/{customer_id}")
             else:
                 flash("Error updating customer", "error")
     
-    # GET - show form with current values
-    c = customer
-    price_list_options = ""
-    for pl in ["retail", "wholesale", "trade", "vip"]:
-        selected = "selected" if c.get("price_list") == pl else ""
-        price_list_options += f'<option value="{pl}" {selected}>{pl.title()}</option>'
-    
-    # Pre-build payment terms selected (Python 3.11 f-string compat)
-    pt_cod = "selected" if c.get("payment_terms") == "COD" else ""
-    pt_current = "selected" if c.get("payment_terms") == "Current Month" else ""
-    pt_30 = "selected" if c.get("payment_terms") == "30 Days" else ""
-    
-    content = f'''
-    <div class="card" style="max-width: 700px;">
-        <h2 style="margin-bottom: 20px;">Edit Customer</h2>
-        <form method="POST">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Name *</label>
-                    <input type="text" name="name" value="{safe_string(c.get('name', ''))}" required style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
-                    <input type="text" name="code" value="{safe_string(c.get('code', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Contact Person</label>
-                    <input type="text" name="contact_name" value="{safe_string(c.get('contact_name', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Category</label>
-                    <input type="text" name="category" value="{safe_string(c.get('category', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Phone</label>
-                    <input type="text" name="phone" value="{safe_string(c.get('phone', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Cell</label>
-                    <input type="text" name="cell" value="{safe_string(c.get('cell', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Email</label>
-                    <input type="email" name="email" value="{safe_string(c.get('email', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-            </div>
-            <div style="margin-bottom:15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">📧 CC / Additional Emails <span style="color:var(--text-muted);font-weight:normal;font-size:12px;">(comma separated - invoices & statements will go to all)</span></label>
-                <input type="text" name="email_cc" value="{safe_string(c.get('email_cc', ''))}" placeholder="e.g. accounts@company.co.za, manager@company.co.za, boss@company.co.za" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">VAT Number</label>
-                    <input type="text" name="vat_number" value="{safe_string(c.get('vat_number', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Price List</label>
-                    <select name="price_list" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                        {price_list_options}
-                    </select>
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:15px;">
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Credit Limit</label>
-                    <input type="number" name="credit_limit" value="{c.get('credit_limit', 0) or 0}" step="0.01" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Payment Terms</label>
-                    <select name="payment_terms" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                        <option value="COD" {pt_cod}>COD (Cash on Delivery)</option>
-                        <option value="Current Month" {pt_current}>Current Month</option>
-                        <option value="30 Days" {pt_30}>30 Days After Statement</option>
-                    </select>
-                </div>
-                <div>
-                    <label style="display:block;margin-bottom:5px;font-weight:500;">Sales Rep</label>
-                    <input type="text" name="sales_rep" value="{safe_string(c.get('sales_rep', ''))}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
-                </div>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Address</label>
-                <textarea name="address" rows="2" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">{safe_string(c.get('address', ''))}</textarea>
-            </div>
-            <div style="margin-bottom: 20px;">
-                <label style="display:block;margin-bottom:5px;font-weight:500;">Notes</label>
-                <textarea name="notes" rows="3" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">{safe_string(c.get('notes', ''))}</textarea>
-            </div>
-            <div style="display:flex;gap:10px;">
-                <button type="submit" class="btn btn-primary">Save Changes</button>
-                <a href="/customer/{customer_id}" class="btn btn-secondary">Cancel</a>
-            </div>
-        </form>
-    </div>
-    '''
-    
-    return render_page("Edit Customer", content, user, "customers")
+    content = _customer_form(v=customer, is_edit=True)
+    return render_page(f"Edit {customer.get('name', 'Customer')}", content, user, "customers")
 
 
 # ==================== RENTAL / PROPERTY MANAGEMENT ====================
