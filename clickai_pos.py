@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 def register_pos_routes(app, db, login_required, Auth, render_page,
                         generate_id, money, safe_string, safe_uuid,
                         next_document_number, get_user_role, get_zane_chat,
-                        RecordFactory):
+                        RecordFactory, CSS):
     """Register all POS and Bar routes with the Flask app."""
 
     @app.route("/pos")

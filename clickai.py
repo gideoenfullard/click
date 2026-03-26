@@ -23337,7 +23337,7 @@ try:
             app, db, login_required, Auth, render_page,
             generate_id, money, safe_string, safe_uuid,
             next_document_number, get_user_role, get_zane_chat,
-            RecordFactory
+            RecordFactory, CSS
         )
         logger.info("[POS] Routes registered ✓")
 except Exception as e:
