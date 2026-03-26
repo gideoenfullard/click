@@ -2167,11 +2167,6 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             logger.error(f"[RECURRING] Escalation error: {e}")
             return jsonify({"success": False, "error": str(e)})
     
-    
-    # ==================== RENTAL / PROPERTY MANAGEMENT ====================
-    
-    @app.route("/rentals")
-    @login_required
 
     # === QUOTES + DELIVERY NOTES ===
 
