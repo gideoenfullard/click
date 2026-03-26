@@ -1772,7 +1772,6 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
             return jsonify({"success": False, "error": "No business"})
         
         # Cache stock list for 30 seconds per business (avoid hammering Supabase)
-        global _pulse_cache
         cache_key = f"stock_list_{biz_id}"
         cached = _pulse_cache.get(cache_key)
         if cached and (time.time() - cached.get("ts", 0)) < 30:
