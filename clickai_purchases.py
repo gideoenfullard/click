@@ -31,6 +31,12 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                               JARVIS_HUD_CSS, THEME_REACTOR_SKINS):
     """Register all Supplier and Purchase routes with the Flask app."""
 
+    # Import form helpers from clickai module level (defined in clickai.py)
+    # These are needed by supplier_new and supplier_edit
+    import clickai as _main
+    _supplier_form = _main._supplier_form
+    _get_form_fields = _main._get_form_fields
+
     # === SUPPLIERS ===
 
     @app.route("/suppliers")
