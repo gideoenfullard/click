@@ -17,6 +17,9 @@ from flask import request, jsonify, session, redirect, flash
 
 logger = logging.getLogger(__name__)
 
+# SA VAT rate constant (same as in clickai.py)
+VAT_RATE = Decimal("0.15")
+
 
 def register_pos_routes(app, db, login_required, Auth, render_page,
                         generate_id, money, safe_string, safe_uuid,
@@ -159,7 +162,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             cashier_buttons += f'<button class="cashier-btn {is_active}" data-uid="{cu_id}" onclick="switchCashier(this, &apos;{cu_id}&apos;, &apos;{cu_name}&apos;)">{cu_name}</button>'
         
         # Salesman options for POS quote modal
-        pos_salesman_options = f'<option value="{current_user_id}" data-name="{current_user_name}" style="color:#000;background:#fff;">{current_user_name} (me)</option>'
+        pos_salesman_options = f'<option value="{current_user_id}" data-name="{current_user_name}">{current_user_name} (me)</option>'
         _pos_seen_ids = {current_user_id}
         for cu in cashier_list:
             cu_id = cu.get("id") or ""
@@ -169,7 +172,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 if " " in cu_name:
                     cu_name = cu_name.split()[0]
                 cu_name = cu_name[:12]
-                pos_salesman_options += f'<option value="{cu_id}" data-name="{cu_name}" style="color:#000;background:#fff;">{cu_name}</option>'
+                pos_salesman_options += f'<option value="{cu_id}" data-name="{cu_name}">{cu_name}</option>'
         
         pos_css = '''
         <style>
