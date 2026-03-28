@@ -11522,7 +11522,7 @@ class Actions:
             biz_id = context.get("business_id")
             excl_amount = float(amount - vat_amount)
             # Use proper GL code based on category
-            expense_gl = IndustryKnowledge.get_gl_code(category) if category else "7999"
+            expense_gl = IndustryKnowledge.get_gl_code(category, business_id=biz_id) if category else "7999"
             _exp_gl = [
                 {"account_code": expense_gl, "debit": excl_amount, "credit": 0},
                 {"account_code": gl(biz_id, "vat_input"), "debit": float(vat_amount), "credit": 0},
@@ -15020,8 +15020,46 @@ class IndustryKnowledge:
     }
     
     @classmethod
-    def build_category_list_for_ai(cls):
-        """Build comprehensive category list for AI prompts — Zane uses this to pick the right category"""
+    def build_category_list_for_ai(cls, business_id=None):
+        """Build category list for AI prompts.
+        
+        If the business has imported a Chart of Accounts (Sage/Xero),
+        send THOSE accounts to the AI — they have the real codes.
+        Falls back to hardcoded BOOKING_CATEGORIES for new businesses.
+        """
+        # Try to use real COA first
+        if business_id:
+            try:
+                coa = db.get("chart_of_accounts", {"business_id": business_id}) or []
+                if coa:
+                    from collections import defaultdict
+                    groups = defaultdict(list)
+                    for acc in coa:
+                        code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
+                        name = acc.get("account_name", "") or acc.get("name", "")
+                        cat = acc.get("category", "Other") or "Other"
+                        source = acc.get("source", "")
+                        if not code or not name:
+                            continue
+                        # Skip System Account summaries (they're totals, not bookable accounts)
+                        if source == "System Account":
+                            continue
+                        groups[cat].append((code, name))
+                    
+                    if groups:
+                        lines = []
+                        for cat_name in sorted(groups.keys()):
+                            lines.append(f"\n### {cat_name}:")
+                            for code, name in sorted(groups[cat_name]):
+                                lines.append(f"  - {name} (GL {code})")
+                        lines.append("\n### Special:")
+                        lines.append("  - Ignore (GL )")
+                        logger.info(f"[AI CATEGORIES] Using real COA ({sum(len(v) for v in groups.values())} accounts) for biz {business_id[:8]}")
+                        return "\n".join(lines)
+            except Exception as e:
+                logger.error(f"[AI CATEGORIES] Error loading COA: {e}")
+        
+        # Fallback to hardcoded BOOKING_CATEGORIES for businesses without COA
         lines = []
         for group_key, group in cls.BOOKING_CATEGORIES.items():
             lines.append(f"\n### {group['label']}:")
@@ -15030,26 +15068,95 @@ class IndustryKnowledge:
         return "\n".join(lines)
     
     @classmethod
-    def get_gl_code(cls, category_name):
-        """Look up GL code for a category name — used when saving transactions"""
+    def get_gl_code(cls, category_name, business_id=None):
+        """Look up GL code for a category name — used when saving transactions.
+        
+        Priority:
+        1. If business has COA, search by name match → return Sage code (e.g. 3250/000)
+        2. Fallback to BOOKING_CATEGORIES → return ClickAI code (e.g. 6140)
+        3. Final fallback: "7999" (General Expenses)
+        """
+        if not category_name:
+            return "7999"
+        
+        cat_lower = category_name.strip().lower()
+        
+        # ─── Priority 1: Check real Chart of Accounts ───
+        if business_id:
+            try:
+                coa = db.get("chart_of_accounts", {"business_id": business_id}) or []
+                if coa:
+                    # Exact match on account name
+                    for acc in coa:
+                        acc_name = (acc.get("account_name", "") or acc.get("name", "")).strip().lower()
+                        acc_code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
+                        source = acc.get("source", "")
+                        if source == "System Account":
+                            continue
+                        if acc_name and acc_code and acc_name == cat_lower:
+                            return acc_code
+                    
+                    # Partial match — category name in account name or vice versa
+                    for acc in coa:
+                        acc_name = (acc.get("account_name", "") or acc.get("name", "")).strip().lower()
+                        acc_code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
+                        source = acc.get("source", "")
+                        if source == "System Account":
+                            continue
+                        if acc_name and acc_code:
+                            if cat_lower in acc_name or acc_name in cat_lower:
+                                return acc_code
+                    
+                    # Word overlap — "Cleaning & Hygiene" vs "Cleaning"
+                    cat_words = set(w for w in cat_lower.replace("&", "").replace("/", " ").replace("_and_", " ").split() if len(w) >= 3)
+                    if cat_words:
+                        best_score = 0
+                        best_code = None
+                        for acc in coa:
+                            acc_name = (acc.get("account_name", "") or acc.get("name", "")).strip().lower()
+                            acc_code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
+                            source = acc.get("source", "")
+                            if not acc_name or not acc_code or source == "System Account":
+                                continue
+                            acc_words = set(w for w in acc_name.replace("&", "").replace("/", " ").replace("_and_", " ").split() if len(w) >= 3)
+                            overlap = len(cat_words & acc_words)
+                            if overlap > best_score:
+                                best_score = overlap
+                                best_code = acc_code
+                        if best_code and best_score >= 1:
+                            return best_code
+            except Exception as e:
+                logger.error(f"[GL CODE] COA lookup error: {e}")
+        
+        # ─── Priority 2: Hardcoded BOOKING_CATEGORIES (no COA or no match) ───
         for group in cls.BOOKING_CATEGORIES.values():
             for cat_name, gl_code in group["items"]:
-                if cat_name.lower() == category_name.lower():
+                if cat_name.lower() == cat_lower:
                     return gl_code
-        # Partial match fallback
         for group in cls.BOOKING_CATEGORIES.values():
             for cat_name, gl_code in group["items"]:
-                if category_name.lower() in cat_name.lower() or cat_name.lower() in category_name.lower():
+                if cat_lower in cat_name.lower() or cat_name.lower() in cat_lower:
                     return gl_code
-        return "7999"  # General Expenses fallback
+        return "7999"
     
     @classmethod
-    def get_all_category_names(cls):
-        """Get flat list of all category names"""
+    def get_all_category_names(cls, business_id=None):
+        """Get flat list of all category names — includes COA when available"""
         names = []
+        if business_id:
+            try:
+                coa = db.get("chart_of_accounts", {"business_id": business_id}) or []
+                for acc in coa:
+                    name = (acc.get("account_name", "") or acc.get("name", "")).strip()
+                    source = acc.get("source", "")
+                    if name and source != "System Account":
+                        names.append(name)
+            except Exception:
+                pass
         for group in cls.BOOKING_CATEGORIES.values():
             for cat_name, _ in group["items"]:
-                names.append(cat_name)
+                if cat_name not in names:
+                    names.append(cat_name)
         return names
     
 class ScannerMemory:
@@ -26661,7 +26768,7 @@ def api_expenses_quick_add():
             net_amount = round(total_amount - vat_amount, 2)
         
         # GL code
-        expense_account = IndustryKnowledge.get_gl_code(category)
+        expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
         
         desc = f"{supplier} - {description}".strip(" -") if supplier else description
         is_offline = data.get("offline_date") is not None
@@ -26696,7 +26803,7 @@ def api_expenses_quick_add():
         if vat_claimable > 0:
             journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_claimable, 2), "credit": 0})
         # Credit the correct account based on how it was paid
-        credit_account = {"cash": "1050", "petty": "1100", "eft": "1000", "card": "1000"}.get(payment_method, "1000")
+        credit_account = {"cash": gl(biz_id, "cash"), "petty": gl(biz_id, "petty_cash"), "eft": gl(biz_id, "bank"), "card": gl(biz_id, "bank")}.get(payment_method, gl(biz_id, "bank"))
         journal_entries.append({"account_code": credit_account, "debit": 0, "credit": round(total_amount, 2)})
         
         create_journal_entry(biz_id, expense_date, desc[:50], f"EXP-{expense['id'][:8]}", journal_entries)
@@ -26761,7 +26868,7 @@ def api_expenses_sync_offline():
                 vat_amount = 0.0 if is_no_vat else round(total_amount * 0.15 / 1.15, 2)
                 net_amount = round(total_amount - vat_amount, 2)
                 
-                expense_account = IndustryKnowledge.get_gl_code(category)
+                expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
                 desc = f"{supplier} - {description}".strip(" -") if supplier else description
                 desc += " [OFFLINE]"
                 
@@ -29487,48 +29594,54 @@ CLICKAI_DEFAULTS = {
     "advertising": "6800", "depreciation": "6900", "general": "7000", "cash_short": "7050",
 }
 
-# Keywords to match Sage/Xero account names → ClickAI roles (most specific first)
+# Keywords to match Sage/Xero account names → ClickAI roles
+# Format: (keywords, role, required_categories_or_None)
+# required_categories restricts matching to accounts in those Sage categories
+# This prevents "bank" matching "Bank Charges" (Expenses) instead of the actual bank (Current Assets)
 COA_KEYWORD_MAP = [
-    # Assets
-    (["bank", "current account", "cheque account", "savings account"], "bank"),
-    (["cash on hand", "cash float", "till float", "pos cash"], "cash"),
-    (["petty cash"], "petty_cash"),
-    (["trade receivable", "debtor", "accounts receivable"], "debtors"),
-    (["trading stock", "stock on hand", "inventory", "stock", "voorraad"], "stock"),
-    (["vat input", "input vat", "input tax"], "vat_input"),
-    (["equipment", "computer", "office equipment", "tools"], "equipment"),
-    (["vehicle", "motor vehicle", "delivery vehicle"], "vehicles"),
-    (["accumulated dep", "acc dep", "accum dep"], "accum_depr"),
-    # Liabilities
-    (["trade payable", "creditor", "accounts payable"], "creditors"),
-    (["vat output", "output vat", "output tax", "vat control", "vat / tax"], "vat_output"),
-    (["paye", "pay as you earn", "employees tax"], "paye"),
-    (["uif", "unemployment"], "uif"),
-    (["loan", "mortgage", "overdraft", "instalment"], "loan"),
-    # Equity
-    (["capital", "share capital", "member"], "capital"),
-    (["retained", "accumulated profit", "accumulated loss"], "retained"),
-    (["drawing", "divident"], "drawings"),
-    # Income
-    (["sales", "revenue", "turnover"], "sales"),
-    (["service income", "services rendered", "fee income"], "services"),
-    (["interest received", "interest income"], "interest_received"),
-    (["discount received"], "discount_received"),
-    # Cost of Sales
-    (["cost of sales", "cost of goods", "cogs"], "cogs"),
-    (["purchase", "stock purchase"], "purchases"),
-    (["carriage inward", "freight inward"], "carriage_in"),
-    # Expenses
-    (["salary", "salaries", "wages", "payroll"], "salaries"),
-    (["rent", "lease", "premises"], "rent"),
-    (["electric", "water", "municipal", "utilities"], "electricity"),
-    (["telephone", "cellphone", "airtime", "internet", "data cost"], "telephone"),
-    (["insurance"], "insurance"),
-    (["fuel", "petrol", "diesel"], "fuel"),
-    (["repair", "maintenance"], "repairs"),
-    (["bank charge", "bank fee", "service fee"], "bank_charges"),
-    (["advertis", "marketing", "promotion"], "advertising"),
-    (["depreciation"], "depreciation"),
+    # Assets — MUST be in asset categories
+    (["standard bank", "fnb ", "absa ", "nedbank ", "capitec", "current account", "cheque account", "savings account"], "bank", ["current assets", "bank account"]),
+    (["cash on hand", "cash float", "till float", "pos cash"], "cash", ["current assets"]),
+    (["petty cash"], "petty_cash", ["current assets"]),
+    (["trade receivable", "debtor", "accounts receivable"], "debtors", ["current assets"]),
+    (["trading stock", "stock on hand", "inventory control"], "stock", ["current assets"]),
+    (["vat input", "input vat", "input tax"], "vat_input", ["current assets"]),
+    (["equipment", "office equipment", "tools", "machinery"], "equipment", ["non-current assets", "current assets"]),
+    (["vehicle", "motor vehicle", "delivery vehicle"], "vehicles", ["non-current assets", "current assets"]),
+    (["accumulated dep", "acc dep", "accum dep"], "accum_depr", ["non-current assets"]),
+    # Liabilities — MUST be in liability categories
+    (["trade payable", "accounts payable"], "creditors", ["current liabilities"]),
+    # VAT — check both System Account "VAT Payable" and Account Balance "Vat / TAX Control"
+    (["vat output", "output vat", "output tax", "vat control", "vat / tax", "vat payable"], "vat_output", ["current liabilities"]),
+    # PAYE/UIF — in Sage these are often EXPENSE accounts (4400/005), not liabilities
+    (["sars - paye", "sars-paye", "paye", "pay as you earn", "employees tax"], "paye", None),
+    (["sars - uif", "sars-uif", "uif", "unemployment"], "uif", None),
+    # Loan — can be asset (loan TO subsidiary) or liability (loan FROM bank)
+    (["loan"], "loan", ["non-current assets", "non-current liabilities", "current liabilities"]),
+    # Equity — MUST be in equity categories
+    (["capital", "share capital", "member"], "capital", ["owners equity", "equity"]),
+    (["retained", "accumulated profit", "accumulated loss"], "retained", ["owners equity", "equity"]),
+    (["drawing"], "drawings", ["owners equity", "equity"]),
+    # Income — MUST be in income/sales categories
+    (["sales", "revenue", "turnover"], "sales", ["sales", "income", "other income"]),
+    (["service income", "services rendered", "fee income"], "services", ["sales", "income"]),
+    (["interest received", "interest income"], "interest_received", ["other income", "income"]),
+    (["discount received"], "discount_received", ["other income", "income"]),
+    # Cost of Sales — MUST be in COS category
+    (["cost of sales", "cost of goods", "cogs"], "cogs", ["cost of sales"]),
+    (["purchase", "stock purchase"], "purchases", ["cost of sales"]),
+    (["carriage inward", "freight inward"], "carriage_in", ["cost of sales"]),
+    # Expenses — these CAN match freely (category=None) since they're all expenses anyway
+    (["salary", "salaries", "wages", "payroll"], "salaries", None),
+    (["rent", "lease", "premises"], "rent", None),
+    (["electric", "water", "municipal", "utilities"], "electricity", None),
+    (["telephone", "cellphone", "airtime", "internet", "data cost"], "telephone", None),
+    (["insurance"], "insurance", ["expenses"]),
+    (["fuel", "petrol", "diesel"], "fuel", None),
+    (["repair", "maintenance"], "repairs", ["expenses"]),
+    (["bank charge", "bank fee", "service fee"], "bank_charges", ["expenses"]),
+    (["advertis", "marketing", "promotion"], "advertising", None),
+    (["depreciation"], "depreciation", None),
 ]
 
 
@@ -29537,6 +29650,9 @@ def build_gl_map(biz_id: str) -> dict:
     Build a role→code mapping for a business from its chart_of_accounts.
     Returns dict like {"stock": "2100/005", "cogs": "2000/000", ...}
     If no COA, returns empty dict (caller uses CLICKAI_DEFAULTS).
+    
+    Category-aware: "bank" only matches accounts in "Current Assets",
+    not "Bank Charges" which is an Expense.
     """
     coa = db.get("chart_of_accounts", {"business_id": biz_id}) or []
     if not coa:
@@ -29544,16 +29660,31 @@ def build_gl_map(biz_id: str) -> dict:
     
     gl_map = {}
     
-    # Scan ALL COA records, match by keyword
+    # Scan ALL COA records, match by keyword + category
     for acc in coa:
         code = str(acc.get("account_code", "") or acc.get("code", "")).strip()
         name = str(acc.get("account_name", "") or acc.get("name", "")).lower()
+        category = str(acc.get("category", "") or "").lower().strip()
+        source = str(acc.get("source", "") or "").strip()
         if not code or not name:
             continue
         
-        for kw_list, role in COA_KEYWORD_MAP:
+        for entry in COA_KEYWORD_MAP:
+            kw_list, role = entry[0], entry[1]
+            required_cats = entry[2] if len(entry) > 2 else None
+            
             if role in gl_map:
                 continue  # Already matched this role, skip
+            
+            # Check category constraint if specified
+            if required_cats is not None:
+                # For System Accounts, use their category (e.g. "Trade Payables" → "Current Liabilities")
+                # For Account Balance items, use their category column
+                if not any(rc in category for rc in required_cats):
+                    # Also check if source type matches (e.g. "Bank Account Balance")
+                    if not any(rc in source.lower() for rc in required_cats):
+                        continue  # Category doesn't match, skip
+            
             for kw in kw_list:
                 if kw in name:
                     gl_map[role] = code
@@ -48967,7 +49098,7 @@ def api_scan_suggest_category():
         biz_name = business.get("name", "") if business else ""
         
         # Build comprehensive category knowledge for Zane
-        all_categories = IndustryKnowledge.build_category_list_for_ai()
+        all_categories = IndustryKnowledge.build_category_list_for_ai(business_id=business.get("id") if business else None)
         
         # Build JSON examples as plain strings (avoids f-string brace escaping issues)
         json_ask = '{"needs_clarification":true,"question":"[explain what you see + ask]","options":[{"label":"[option 1]","value":"[short]"},{"label":"[option 2]","value":"[short]"},{"label":"None of these","value":"manual"}],"confidence":0.6,"explanation":""}'
@@ -49130,7 +49261,7 @@ def api_scan_save_expense():
         payment_method = data.get("payment_method", "cash")
         
         # Get GL code from comprehensive lookup
-        expense_account = IndustryKnowledge.get_gl_code(category)
+        expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
         
         user = Auth.get_current_user()
         expense = RecordFactory.expense(
@@ -49169,7 +49300,7 @@ def api_scan_save_expense():
             for sp in splits:
                 sp_amount = float(sp.get("amount", 0))
                 sp_category = sp.get("category", "General Expenses")
-                sp_gl = IndustryKnowledge.get_gl_code(sp_category)
+                sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
                 journal_entries.append({"account_code": sp_gl, "debit": round(sp_amount, 2), "credit": 0})
                 split_total += sp_amount
             # VAT Input (if claimable) on the total
