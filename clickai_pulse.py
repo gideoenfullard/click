@@ -314,8 +314,8 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
 
             <div class="card" style="margin-bottom:20px;border:1px solid rgba(16,185,129,0.3);">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                    <h3 style="margin:0;color:#10b981;">Recent Activity (All Types)</h3>
-                    <a href="/payments" style="color:#10b981;font-size:13px;">View all &rarr;</a>
+                    <h3 style="margin:0;color:#10b981;">&#9889; Live Feed — Wie het wat gedoen</h3>
+                    <span style="color:var(--text-muted);font-size:11px;">Laaste 7 dae</span>
                 </div>
                 <div id="pulseRecentActivity"><div class="pulse-loading">Loading...</div></div>
             </div>
@@ -934,73 +934,103 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
 
             # Quotes
             _gather(quotes, "created_at", "created_by",
-                    lambda q: f"Quote {q.get('quote_number', '')} → {(q.get('customer_name', '') or '')[:25]}",
+                    lambda q: f"Quote {q.get('quote_number', '')} vir {(q.get('customer_name', '') or 'Unknown')[:25]}",
                     lambda q: float(q.get("total", 0) or 0),
                     "&#128221;", "#f59e0b", "quotes", "q_amt")
 
             # Invoices
             _gather(invoices, "date", "created_by",
-                    lambda i: f"Invoice {i.get('invoice_number', '')} → {(i.get('customer_name', '') or '')[:25]}",
+                    lambda i: f"Invoice {i.get('invoice_number', '')} vir {(i.get('customer_name', '') or 'Unknown')[:25]} ({i.get('status', 'draft')})",
                     lambda i: float(i.get("total", 0) or 0),
                     "&#128196;", "#3b82f6", "invoices", "inv_amt")
 
             # POS Sales
             _gather(sales, "date", "created_by",
-                    lambda s: f"POS #{str(s.get('id', ''))[:6]} ({s.get('payment_method', 'cash')})",
+                    lambda s: f"POS Sale ({s.get('payment_method', 'cash')}) {s.get('items_count', len(s.get('items', [])) if isinstance(s.get('items'), list) else '')} items",
                     lambda s: float(s.get("total", 0) or 0),
                     "&#128176;", "#10b981", "sales", "s_amt")
 
             # Payments
             _gather(payments, "date", "created_by",
-                    lambda p: f"Payment from {(p.get('customer_name', '') or '')[:25]}",
+                    lambda p: f"Betaling ontvang van {(p.get('customer_name', '') or 'Customer')[:25]} ({p.get('payment_method', '') or 'n/a'})",
                     lambda p: float(p.get("amount", 0) or 0),
                     "&#10003;", "#10b981", "payments", "p_amt")
 
             # Credit Notes
             _gather(credit_notes, "date", "created_by",
-                    lambda cn: f"Credit Note {cn.get('credit_note_number', cn.get('number', ''))} → {(cn.get('customer_name', '') or '')[:25]}",
+                    lambda cn: f"Credit Note {cn.get('credit_note_number', cn.get('number', ''))} vir {(cn.get('customer_name', '') or 'Unknown')[:25]} ({cn.get('reason', '') or 'no reason'})" if cn.get('reason') else f"Credit Note {cn.get('credit_note_number', cn.get('number', ''))} vir {(cn.get('customer_name', '') or 'Unknown')[:25]}",
                     lambda cn: float(cn.get("total", 0) or 0),
                     "&#9888;", "#ef4444", "credit_notes", "cn_amt", "created_at")
 
             # Delivery Notes
             _gather(delivery_notes, "date", "created_by",
-                    lambda dn: f"Delivery {dn.get('delivery_note_number', dn.get('number', ''))} → {(dn.get('customer_name', '') or '')[:25]}",
+                    lambda dn: f"Aflewering {dn.get('delivery_note_number', dn.get('number', ''))} na {(dn.get('customer_name', '') or 'Unknown')[:25]}",
                     lambda dn: float(dn.get("total", 0) or 0),
                     "&#128666;", "#8b5cf6", "delivery_notes", "dn_amt", "created_at")
 
             # Purchase Orders
             _gather(purchase_orders, "date", "created_by",
-                    lambda po: f"PO {po.get('po_number', po.get('number', ''))} → {(po.get('supplier_name', '') or '')[:25]}",
+                    lambda po: f"Bestelling {po.get('po_number', po.get('number', ''))} aan {(po.get('supplier_name', '') or 'Unknown')[:25]} ({po.get('status', 'draft')})",
                     lambda po: float(po.get("total", 0) or 0),
                     "&#128230;", "#f97316", "purchase_orders", "po_amt", "created_at")
 
             # Job Cards
             _gather(jobs_list, "date", "created_by",
-                    lambda j: f"Job {j.get('job_number', j.get('number', ''))} → {(j.get('customer_name', '') or '')[:25]}" + (f" ({j.get('status', '')})" if j.get("status") else ""),
+                    lambda j: f"Job {j.get('job_number', j.get('number', ''))} vir {(j.get('customer_name', '') or 'Unknown')[:25]}" + (f" — {j.get('status', '')}" if j.get("status") else ""),
                     lambda j: float(j.get("total", j.get("quoted_total", 0)) or 0),
                     "&#128295;", "#06b6d4", "jobs", "j_amt", "created_at")
 
             # GRVs
             _gather(grvs, "date", "created_by",
-                    lambda g: f"GRV {g.get('grv_number', g.get('number', ''))} from {(g.get('supplier_name', '') or '')[:25]}",
+                    lambda g: f"GRV {g.get('grv_number', g.get('number', ''))} van {(g.get('supplier_name', '') or 'Unknown')[:25]} ontvang",
                     lambda g: float(g.get("total", 0) or 0),
                     "&#128230;", "#14b8a6", "grvs", "grv_amt", "created_at")
 
             # ── NEW: Expenses ──
             _gather(expenses, "date", "created_by",
-                    lambda e: f"Expense: {(e.get('description', e.get('category', '')) or '')[:30]}",
+                    lambda e: f"Uitgawe: {(e.get('description', e.get('category', '')) or 'Onbekend')[:30]}" + (f" ({e.get('supplier_name', '')[:20]})" if e.get('supplier_name') else ""),
                     lambda e: float(e.get("amount", e.get("total", 0)) or 0),
                     "&#128181;", "#f43f5e", "expenses", "exp_amt", "created_at")
 
             # ── NEW: Bank Transactions ──
+            def _bank_text(bt):
+                amt = float(bt.get("amount", 0) or 0)
+                direction = "Inbetaling" if amt >= 0 else "Betaling uit"
+                desc = (bt.get("description", bt.get("reference", "")) or "")[:30]
+                return f"Bank {direction}: {desc}"
+
             _gather(bank_txns, "date", "created_by",
-                    lambda bt: f"Bank: {(bt.get('description', bt.get('reference', '')) or '')[:30]}",
+                    _bank_text,
                     lambda bt: abs(float(bt.get("amount", 0) or 0)),
                     "&#127974;", "#0ea5e9", "bank_txns", "bt_amt", "created_at")
 
-            # ── NEW: Cash-Ups ──
+            # ── NEW: Cash-Ups (rich detail) ──
+            def _cashup_text(cu):
+                cu_type = cu.get("type", cu.get("reading_type", "close"))
+                cashier = cu.get("cashier_name", "") or ""
+                sys_total = float(cu.get("system_total", 0) or 0)
+                decl_total = float(cu.get("declared_total", 0) or 0)
+                type_label = {"x_reading": "X-Read", "blind_cashup": "Blind Cash-Up", "z_reading": "Z-Close"}.get(cu_type, cu_type)
+
+                if cu_type == "blind_cashup" and decl_total > 0:
+                    diff = decl_total - sys_total
+                    if abs(diff) < 0.01:
+                        status = "&#10003; Balanced"
+                    elif diff > 0:
+                        status = f"&#9650; R{diff:.2f} over"
+                    else:
+                        status = f"&#9888; R{abs(diff):.2f} short"
+                    return f"{type_label}: {cashier} declared R{decl_total:,.2f} {status}" if cashier else f"{type_label}: declared R{decl_total:,.2f} {status}"
+                elif cu_type == "x_reading":
+                    return f"{type_label}: R{sys_total:,.2f} so far" + (f" ({cashier})" if cashier else "")
+                elif cu_type == "z_reading":
+                    who = cu.get("created_by_name", "") or cashier or ""
+                    return f"{type_label}: Day closed at R{sys_total:,.2f}" + (f" by {who}" if who else "")
+                else:
+                    return f"Cash-Up ({type_label}) R{sys_total:,.2f}" + (f" — {cashier}" if cashier else "")
+
             _gather(cashups, "date", "created_by",
-                    lambda cu: f"Cash-Up ({cu.get('type', cu.get('reading_type', 'close'))}) {cu.get('status', '')}",
+                    _cashup_text,
                     lambda cu: float(cu.get("system_total", cu.get("declared_total", 0)) or 0),
                     "&#128176;", "#84cc16", "cashups", "cu_amt", "created_at")
 
@@ -1013,10 +1043,12 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 _ensure_team(uid)
                 hrs = float(ts_entry.get("hours", ts_entry.get("total_hours", 0)) or 0)
                 emp_name = (ts_entry.get("employee_name", "") or "")[:20]
+                project = (ts_entry.get("project", ts_entry.get("task", ts_entry.get("description", ""))) or "")[:25]
                 ts_ts = str(ts_entry.get("created_at", ""))
                 time_str = ts_ts[11:16] if len(ts_ts) > 16 else ""
+                text = f"Timesheet: {emp_name} {hrs:.1f}h" + (f" — {project}" if project else "")
                 action = {"time": time_str, "sort": ts_ts, "icon": "&#128337;", "color": "#a855f7",
-                          "text": f"Timesheet: {emp_name} {hrs:.1f}h", "amount": 0}
+                          "text": text, "amount": 0}
                 day_key = "today" if ts_date == today_str else "yesterday"
                 team_data[uid][day_key].append(action)
                 team_data[uid][f"{day_key}_totals"]["timesheets"] += 1
@@ -1115,58 +1147,85 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                     rec_date = str(rec.get(date_field, rec.get(extra_date_field or "created_at", "")))[:10]
                     if rec_date >= seven_days_ago:
                         who = user_names.get(rec.get(uid_field, rec.get("created_by", "")), "")
-                        who_tag = f' <span style="color:var(--text-muted);font-size:11px;">by {who}</span>' if who else ""
+                        if who:
+                            who_tag = f'<strong style="color:#d1d5db;">{who}</strong> &mdash; '
+                        else:
+                            who_tag = ""
                         activity_feed.append({
                             "date": rec_date,
                             "time": extract_time(rec.get("created_at", "")),
-                            "text": get_text(rec) + who_tag,
+                            "text": who_tag + get_text(rec),
                             "amount": get_amount(rec),
                             "icon": icon, "color": color
                         })
 
             _add_activity(payments, "date",
-                          lambda p: f'{(p.get("customer_name", "") or "Customer")[:20]} paid',
+                          lambda p: f'Betaling ontvang van {(p.get("customer_name", "") or "Customer")[:20]} ({p.get("payment_method", "") or "n/a"})',
                           lambda p: float(p.get("amount", 0) or 0), "&#10003;", "#10b981")
 
             _add_activity(invoices, "date",
-                          lambda i: f'Invoice {i.get("invoice_number", "")} → {(i.get("customer_name", "") or "")[:20]}',
+                          lambda i: f'Invoice {i.get("invoice_number", "")} vir {(i.get("customer_name", "") or "Unknown")[:20]} ({i.get("status", "draft")})',
                           lambda i: float(i.get("total", 0) or 0), "&#128196;", "#f59e0b")
 
             _add_activity(sales, "date",
-                          lambda s: f'POS #{str(s.get("id", ""))[:6]} ({s.get("payment_method", "cash")})',
+                          lambda s: f'POS Sale ({s.get("payment_method", "cash")})',
                           lambda s: float(s.get("total", 0) or 0), "&#128176;", "#10b981")
 
             _add_activity(credit_notes, "date",
-                          lambda cn: f'CN {cn.get("credit_note_number", cn.get("number", ""))} → {(cn.get("customer_name", "") or "")[:20]}',
+                          lambda cn: f'Credit Note {cn.get("credit_note_number", cn.get("number", ""))} vir {(cn.get("customer_name", "") or "Unknown")[:20]}',
                           lambda cn: float(cn.get("total", 0) or 0), "&#9888;", "#ef4444", extra_date_field="created_at")
 
             _add_activity(delivery_notes, "date",
-                          lambda dn: f'Del {dn.get("delivery_note_number", dn.get("number", ""))} → {(dn.get("customer_name", "") or "")[:20]}',
+                          lambda dn: f'Aflewering {dn.get("delivery_note_number", dn.get("number", ""))} na {(dn.get("customer_name", "") or "Unknown")[:20]}',
                           lambda dn: float(dn.get("total", 0) or 0), "&#128666;", "#8b5cf6", extra_date_field="created_at")
 
             _add_activity(purchase_orders, "date",
-                          lambda po: f'PO {po.get("po_number", po.get("number", ""))} → {(po.get("supplier_name", "") or "")[:20]}',
+                          lambda po: f'Bestelling {po.get("po_number", po.get("number", ""))} aan {(po.get("supplier_name", "") or "Unknown")[:20]} ({po.get("status", "draft")})',
                           lambda po: float(po.get("total", 0) or 0), "&#128230;", "#f97316", extra_date_field="created_at")
 
             _add_activity(jobs_list, "date",
-                          lambda j: f'Job {j.get("job_number", j.get("number", ""))} → {(j.get("customer_name", "") or "")[:20]}',
+                          lambda j: f'Job {j.get("job_number", j.get("number", ""))} vir {(j.get("customer_name", "") or "Unknown")[:20]}',
                           lambda j: float(j.get("total", j.get("quoted_total", 0)) or 0), "&#128295;", "#06b6d4", extra_date_field="created_at")
 
             _add_activity(grvs, "date",
-                          lambda g: f'GRV {g.get("grv_number", g.get("number", ""))} from {(g.get("supplier_name", "") or "")[:20]}',
+                          lambda g: f'GRV {g.get("grv_number", g.get("number", ""))} van {(g.get("supplier_name", "") or "Unknown")[:20]} ontvang',
                           lambda g: float(g.get("total", 0) or 0), "&#128230;", "#14b8a6", extra_date_field="created_at")
 
             _add_activity(expenses, "date",
-                          lambda e: f'Expense: {(e.get("description", e.get("category", "")) or "")[:25]}',
+                          lambda e: f'Uitgawe: {(e.get("description", e.get("category", "")) or "Onbekend")[:25]}',
                           lambda e: float(e.get("amount", e.get("total", 0)) or 0), "&#128181;", "#f43f5e", extra_date_field="created_at")
 
+            def _bank_activity_text(bt):
+                amt = float(bt.get("amount", 0) or 0)
+                direction = "Inbetaling" if amt >= 0 else "Betaling uit"
+                desc = (bt.get("description", bt.get("reference", "")) or "")[:25]
+                return f'Bank {direction}: {desc}'
+
             _add_activity(bank_txns, "date",
-                          lambda bt: f'Bank: {(bt.get("description", bt.get("reference", "")) or "")[:25]}',
+                          _bank_activity_text,
                           lambda bt: abs(float(bt.get("amount", 0) or 0)), "&#127974;", "#0ea5e9", extra_date_field="created_at")
 
             _add_activity(cashups, "date",
-                          lambda cu: f'Cash-Up ({cu.get("type", cu.get("reading_type", "close"))})',
+                          _cashup_text,
                           lambda cu: float(cu.get("system_total", cu.get("declared_total", 0)) or 0), "&#128176;", "#84cc16", extra_date_field="created_at")
+
+            # Timesheets in activity feed
+            for ts_entry in timesheets:
+                ts_date = str(ts_entry.get("date", ts_entry.get("created_at", "")))[:10]
+                if ts_date >= seven_days_ago:
+                    who = user_names.get(ts_entry.get("created_by", ts_entry.get("employee_id", "")), "")
+                    emp_name = (ts_entry.get("employee_name", "") or "")[:20]
+                    hrs = float(ts_entry.get("hours", ts_entry.get("total_hours", 0)) or 0)
+                    project = (ts_entry.get("project", ts_entry.get("task", ts_entry.get("description", ""))) or "")[:25]
+                    who_tag = f'<strong style="color:#d1d5db;">{who}</strong> &mdash; ' if who else ""
+                    text = f"Timesheet: {emp_name} {hrs:.1f}h" + (f" — {project}" if project else "")
+                    activity_feed.append({
+                        "date": ts_date,
+                        "time": extract_time(ts_entry.get("created_at", "")),
+                        "text": who_tag + text,
+                        "amount": 0,
+                        "icon": "&#128337;", "color": "#a855f7"
+                    })
 
             activity_feed.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
 
@@ -1176,20 +1235,27 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
 
             if today_acts:
                 activity_html += '<div style="margin-bottom:15px;"><div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">TODAY</div>'
-                for a in today_acts[:15]:
-                    activity_html += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;margin-bottom:4px;border-left:3px solid {a["color"]};"><div><span style="margin-right:8px;">{a["icon"]}</span>{a["text"]}</div><div style="color:{a["color"]};font-weight:bold;">{fmt(a["amount"])}</div></div>'
+                for a in today_acts[:20]:
+                    time_badge = f'<span style="color:var(--text-muted);font-size:11px;margin-right:6px;">{a["time"]}</span>' if a["time"] else ""
+                    amt_html = f'<div style="color:{a["color"]};font-weight:bold;white-space:nowrap;">{fmt(a["amount"])}</div>' if a["amount"] else ""
+                    activity_html += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;margin-bottom:4px;border-left:3px solid {a["color"]};"><div style="font-size:13px;">{time_badge}<span style="margin-right:6px;">{a["icon"]}</span>{a["text"]}</div>{amt_html}</div>'
+                if len(today_acts) > 20:
+                    activity_html += f'<div style="text-align:center;color:var(--text-muted);font-size:12px;padding:6px;">+{len(today_acts)-20} more today</div>'
                 activity_html += '</div>'
 
             if yesterday_acts:
                 activity_html += '<div style="margin-bottom:15px;"><div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">YESTERDAY</div>'
-                for a in yesterday_acts[:10]:
-                    activity_html += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px;border-bottom:1px solid rgba(255,255,255,0.05);"><div style="font-size:13px;"><span style="margin-right:6px;">{a["icon"]}</span>{a["text"]}</div><div style="color:{a["color"]};font-size:13px;">{fmt(a["amount"])}</div></div>'
+                for a in yesterday_acts[:12]:
+                    time_badge = f'<span style="color:var(--text-muted);font-size:10px;margin-right:4px;">{a["time"]}</span>' if a["time"] else ""
+                    amt_html = f'<div style="color:{a["color"]};font-size:13px;">{fmt(a["amount"])}</div>' if a["amount"] else ""
+                    activity_html += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:6px;border-bottom:1px solid rgba(255,255,255,0.05);"><div style="font-size:13px;">{time_badge}<span style="margin-right:6px;">{a["icon"]}</span>{a["text"]}</div>{amt_html}</div>'
                 activity_html += '</div>'
 
             if older_acts:
                 activity_html += '<div><div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">EARLIER THIS WEEK</div>'
-                for a in older_acts[:8]:
-                    activity_html += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px;border-bottom:1px solid rgba(255,255,255,0.03);"><div style="font-size:12px;color:var(--text-muted);"><span style="margin-right:6px;">{a["icon"]}</span>{a["date"][5:]} {a["text"]}</div><div style="color:var(--text-muted);font-size:12px;">{fmt(a["amount"])}</div></div>'
+                for a in older_acts[:10]:
+                    amt_html = f'<div style="color:var(--text-muted);font-size:12px;">{fmt(a["amount"])}</div>' if a["amount"] else ""
+                    activity_html += f'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px;border-bottom:1px solid rgba(255,255,255,0.03);"><div style="font-size:12px;color:var(--text-muted);"><span style="margin-right:6px;">{a["icon"]}</span>{a["date"][5:]} {a["text"]}</div>{amt_html}</div>'
                 activity_html += '</div>'
 
             # ── STOCK ALERTS ──
