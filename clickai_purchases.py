@@ -619,8 +619,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
             <div class="card">
-                <h3 style="margin-bottom:15px;">Recent Bills/Expenses</h3>
-                <table class="table">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                    <h3 style="margin:0;">Recent Bills/Expenses ({len(expenses)})</h3>
+                    <input type="text" placeholder="🔍 Search..." oninput="filterTable(this, 'expensesTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:180px;font-size:12px;">
+                </div>
+                <table class="table" id="expensesTable">
                     <thead>
                         <tr><th>Reference</th><th>Date</th><th>Description</th><th>Amount</th><th>Status</th></tr>
                     </thead>
@@ -631,8 +634,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
             </div>
             
             <div class="card">
-                <h3 style="margin-bottom:15px;">Payments Made</h3>
-                <table class="table">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                    <h3 style="margin:0;">Payments Made ({len(payments)})</h3>
+                    <input type="text" placeholder="🔍 Search..." oninput="filterTable(this, 'paymentsTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:180px;font-size:12px;">
+                </div>
+                <table class="table" id="paymentsTable">
                     <thead>
                         <tr><th>Reference</th><th>Date</th><th>Amount</th><th>Method</th></tr>
                     </thead>
@@ -645,8 +651,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         ''' + (f'''
         <div class="card" style="margin-top:20px;">
-            <h3 style="margin-bottom:15px;">Invoices ({len(supplier_invoices)})</h3>
-            <table class="table">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                <h3 style="margin:0;">Invoices ({len(supplier_invoices)})</h3>
+                <input type="text" placeholder="🔍 Search invoices..." oninput="filterTable(this, 'supplierInvTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:200px;font-size:12px;">
+            </div>
+            <table class="table" id="supplierInvTable">
                 <thead>
                     <tr><th>Invoice #</th><th>Date</th><th>Due Date</th><th>Amount</th><th>Status</th></tr>
                 </thead>
@@ -660,8 +669,11 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         
         <!-- Purchase Orders Section -->
         <div class="card" style="margin-top:20px;">
-            <h3 style="margin-bottom:15px;">📋 Purchase Orders ({len(purchase_orders)})</h3>
-            <table class="table">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                <h3 style="margin:0;">📋 Purchase Orders ({len(purchase_orders)})</h3>
+                <input type="text" placeholder="🔍 Search POs..." oninput="filterTable(this, 'poTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:180px;font-size:12px;">
+            </div>
+            <table class="table" id="poTable">
                 <thead>
                     <tr><th>PO Number</th><th>Date</th><th>Total</th><th>Status</th></tr>
                 </thead>
@@ -690,6 +702,21 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        // Search/filter any table by text
+        function filterTable(input, tableId) {{
+            const q = input.value.toLowerCase().trim();
+            const table = document.getElementById(tableId);
+            if (!table) return;
+            const rows = table.querySelectorAll('tbody tr');
+            let visible = 0;
+            rows.forEach(row => {{
+                const text = row.textContent.toLowerCase();
+                const match = !q || q.split(/\s+/).every(term => text.includes(term));
+                row.style.display = match ? '' : 'none';
+                if (match) visible++;
+            }});
+        }}
+        
         // Auto-collapse tables with more than 50 rows
         document.addEventListener('DOMContentLoaded', function() {{
             document.querySelectorAll('.card table.table tbody').forEach(function(tbody) {{
@@ -3153,8 +3180,131 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
         return render_page("Supplier Invoices", content, user, "supplier-invoices")
     
     
+    @app.route("/supplier-invoice/<invoice_id>")
+    @login_required
+    def supplier_invoice_view(invoice_id):
+        """View a single supplier invoice"""
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        invoice = db.get_one("supplier_invoices", invoice_id)
+        if not invoice:
+            flash("Supplier invoice not found", "error")
+            return redirect("/supplier-invoices")
+        
+        # Parse items
+        raw_items = invoice.get("items", [])
+        if isinstance(raw_items, str):
+            try:
+                raw_items = json.loads(raw_items)
+            except:
+                raw_items = []
+        
+        items_html = ""
+        for item in (raw_items or []):
+            desc = safe_string(str(item.get("description", "-")))
+            qty = float(item.get("qty", item.get("quantity", 1)))
+            price = float(item.get("price", item.get("unit_price", 0)))
+            total = float(item.get("total", item.get("line_total", qty * price)))
+            items_html += f'''
+            <tr>
+                <td>{desc}</td>
+                <td style="text-align:right;">{qty:.2f}</td>
+                <td style="text-align:right;">{money(price)}</td>
+                <td style="text-align:right;">{money(total)}</td>
+            </tr>
+            '''
+        
+        status = invoice.get("status", "unpaid")
+        status_color = "var(--green)" if status == "paid" else "var(--orange)"
+        supplier_id = invoice.get("supplier_id", "")
+        supplier_name = safe_string(invoice.get("supplier_name", "-"))
+        
+        back_link = f'/supplier/{supplier_id}' if supplier_id else '/supplier-invoices'
+        
+        content = f'''
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+            <a href="{back_link}" style="color:var(--text-muted);">← Back</a>
+            <div style="display:flex;gap:10px;">
+                <span style="padding:6px 16px;border-radius:20px;font-size:13px;font-weight:700;color:white;background:{status_color};">{status.upper()}</span>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:start;">
+                <div>
+                    <h2 style="margin:0;">Supplier Invoice</h2>
+                    <p style="font-size:20px;font-weight:bold;margin:5px 0;color:var(--primary);">{safe_string(invoice.get("invoice_number", "-"))}</p>
+                </div>
+                <div style="text-align:right;">
+                    <p style="color:var(--text-muted);margin:0;font-size:12px;">TOTAL</p>
+                    <p style="font-size:28px;font-weight:bold;margin:0;">{money(invoice.get("total", 0))}</p>
+                </div>
+            </div>
+            
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:15px;margin-top:20px;padding-top:15px;border-top:1px solid var(--border);">
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">SUPPLIER</span>
+                    <span style="font-size:14px;">{"<a href=/supplier/" + supplier_id + " style=color:var(--primary)>" + supplier_name + "</a>" if supplier_id else supplier_name}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">DATE</span>
+                    <span style="font-size:14px;">{invoice.get("date", "-")}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">DUE DATE</span>
+                    <span style="font-size:14px;">{invoice.get("due_date", "-")}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">SUBTOTAL</span>
+                    <span style="font-size:14px;">{money(invoice.get("subtotal", 0))}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">VAT (15%)</span>
+                    <span style="font-size:14px;">{money(invoice.get("vat", 0))}</span>
+                </div>
+                <div>
+                    <span style="color:var(--text-muted);font-size:11px;display:block;">REFERENCE</span>
+                    <span style="font-size:14px;">{safe_string(invoice.get("reference", invoice.get("notes", "-")))}</span>
+                </div>
+            </div>
+        </div>
+        
+        ''' + (f'''
+        <div class="card" style="margin-top:20px;">
+            <h3 style="margin-bottom:15px;">Line Items</h3>
+            <table class="table">
+                <thead>
+                    <tr><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Price</th><th style="text-align:right;">Total</th></tr>
+                </thead>
+                <tbody>
+                    {items_html}
+                </tbody>
+                <tfoot>
+                    <tr style="font-weight:bold;border-top:2px solid var(--border);">
+                        <td colspan="3" style="text-align:right;">Subtotal</td>
+                        <td style="text-align:right;">{money(invoice.get("subtotal", 0))}</td>
+                    </tr>
+                    <tr>
+                        <td colspan="3" style="text-align:right;">VAT (15%)</td>
+                        <td style="text-align:right;">{money(invoice.get("vat", 0))}</td>
+                    </tr>
+                    <tr style="font-weight:bold;font-size:16px;">
+                        <td colspan="3" style="text-align:right;">Total</td>
+                        <td style="text-align:right;">{money(invoice.get("total", 0))}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        ''' if items_html else '') + '''
+        '''
+        
+        return render_page(f"Supplier Invoice {invoice.get('invoice_number', '')}", content, user, "purchases")
+    
 
-    @app.route("/api/supplier/gl-suggest", methods=["POST"])
+
     @login_required
     def api_supplier_gl_suggest():
         """GL account suggestion — sends full account list to AI for smart matching"""

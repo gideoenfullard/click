@@ -24594,8 +24594,11 @@ def customer_view(customer_id):
     </div>
     
     <div class="card">
-        <h3 style="margin-bottom:15px;"> Invoices</h3>
-        <table class="table">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;"> Invoices ({len(invoices)})</h3>
+            <input type="text" placeholder="🔍 Search invoices..." oninput="filterTable(this, 'invoicesTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:200px;font-size:12px;">
+        </div>
+        <table class="table" id="invoicesTable">
             <thead>
                 <tr><th>Number</th><th>Date</th><th>Amount</th><th>Status</th></tr>
             </thead>
@@ -24606,8 +24609,11 @@ def customer_view(customer_id):
     </div>
     
     <div class="card">
-        <h3 style="margin-bottom:15px;">🛒 POS Sales</h3>
-        <table class="table">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;">🛒 POS Sales ({len(sales)})</h3>
+            <input type="text" placeholder="🔍 Search sales..." oninput="filterTable(this, 'salesTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:180px;font-size:12px;">
+        </div>
+        <table class="table" id="salesTable">
             <thead>
                 <tr><th>Sale #</th><th>Date</th><th>Amount</th><th>Method</th></tr>
             </thead>
@@ -24618,8 +24624,11 @@ def customer_view(customer_id):
     </div>
     
     <div class="card">
-        <h3 style="margin-bottom:15px;"> Payments Received</h3>
-        <table class="table">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;"> Payments Received ({len(receipts)})</h3>
+            <input type="text" placeholder="🔍 Search..." oninput="filterTable(this, 'receiptsTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:180px;font-size:12px;">
+        </div>
+        <table class="table" id="receiptsTable">
             <thead>
                 <tr><th>Receipt</th><th>Date</th><th>Amount</th><th>Method</th></tr>
             </thead>
@@ -24631,8 +24640,11 @@ def customer_view(customer_id):
     
     <!-- Credit Notes -->
     <div class="card">
-        <h3 style="margin-bottom:15px;">📕 Credit Notes ({len(credit_notes)})</h3>
-        <table class="table">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;">📕 Credit Notes ({len(credit_notes)})</h3>
+            <input type="text" placeholder="🔍 Search..." oninput="filterTable(this, 'creditNotesTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:180px;font-size:12px;">
+        </div>
+        <table class="table" id="creditNotesTable">
             <thead>
                 <tr><th>CN Number</th><th>Date</th><th>Invoice</th><th>Amount</th><th>Reason</th></tr>
             </thead>
@@ -24644,8 +24656,11 @@ def customer_view(customer_id):
     
     <!-- Quotes -->
     <div class="card">
-        <h3 style="margin-bottom:15px;">📝 Quotes ({len(quotes)})</h3>
-        <table class="table">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;">📝 Quotes ({len(quotes)})</h3>
+            <input type="text" placeholder="🔍 Search..." oninput="filterTable(this, 'quotesTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:180px;font-size:12px;">
+        </div>
+        <table class="table" id="quotesTable">
             <thead>
                 <tr><th>Quote</th><th>Date</th><th>Total</th><th>Status</th></tr>
             </thead>
@@ -24657,8 +24672,11 @@ def customer_view(customer_id):
     
     <!-- Delivery Notes -->
     <div class="card">
-        <h3 style="margin-bottom:15px;">🚚 Delivery Notes ({len(delivery_notes)})</h3>
-        <table class="table">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;">🚚 Delivery Notes ({len(delivery_notes)})</h3>
+            <input type="text" placeholder="🔍 Search..." oninput="filterTable(this, 'deliveryNotesTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:180px;font-size:12px;">
+        </div>
+        <table class="table" id="deliveryNotesTable">
             <thead>
                 <tr><th>DN Number</th><th>Date</th><th>Invoice</th><th>Status</th></tr>
             </thead>
@@ -24670,8 +24688,11 @@ def customer_view(customer_id):
     
     <!-- Jobs -->
     <div class="card">
-        <h3 style="margin-bottom:15px;">🔧 Jobs ({len(jobs)})</h3>
-        <table class="table">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+            <h3 style="margin:0;">🔧 Jobs ({len(jobs)})</h3>
+            <input type="text" placeholder="🔍 Search..." oninput="filterTable(this, 'jobsTable')" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:180px;font-size:12px;">
+        </div>
+        <table class="table" id="jobsTable">
             <thead>
                 <tr><th>Job</th><th>Title</th><th>Value</th><th>Status</th></tr>
             </thead>
@@ -24721,6 +24742,19 @@ def customer_view(customer_id):
     </div>
     
     <script>
+    // Search/filter any table by text
+    function filterTable(input, tableId) {{
+        const q = input.value.toLowerCase().trim();
+        const table = document.getElementById(tableId);
+        if (!table) return;
+        const rows = table.querySelectorAll('tbody tr');
+        rows.forEach(row => {{
+            const text = row.textContent.toLowerCase();
+            const match = !q || q.split(/\s+/).every(term => text.includes(term));
+            row.style.display = match ? '' : 'none';
+        }});
+    }}
+    
     // Auto-collapse tables with more than 50 rows
     document.addEventListener('DOMContentLoaded', function() {{
         document.querySelectorAll('.card table.table tbody').forEach(function(tbody) {{
