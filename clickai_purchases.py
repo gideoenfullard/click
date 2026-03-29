@@ -2243,7 +2243,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 <input type="text" name="item_desc[]" class="form-input" placeholder="Description" required value="{safe_string(item.get('description', ''))}">
                 <input type="number" name="item_qty[]" class="form-input" value="{item.get('qty', 1)}" min="0.01" step="any" onchange="calculateTotals()">
                 <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()" value="{item.get('price', '')}">
-                <span class="line-total" style="text-align:right;font-weight:600;">R{float(item.get('total', 0) or 0):.2f}</span>
+                <span class="line-total" style="text-align:right;font-weight:600;">R{item.get('total', 0):.2f}</span>
                 <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove();calculateTotals();">&times;</button>
             </div>
             '''
@@ -2316,9 +2316,9 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <button type="button" class="po-add-btn" onclick="addRow()" style="margin-top:10px;">+ Add Line Item</button>
                     
                     <div class="po-totals" style="margin-top:16px;">
-                        <div class="po-totals-row"><span>Subtotal</span><span id="subtotal">R{float(po.get('subtotal', 0) or 0):.2f}</span></div>
-                        <div class="po-totals-row"><span>VAT (15%)</span><span id="vat">R{float(po.get('vat', 0) or 0):.2f}</span></div>
-                        <div class="po-totals-row grand"><span>Total</span><span id="total">R{float(po.get('total', 0) or 0):.2f}</span></div>
+                        <div class="po-totals-row"><span>Subtotal</span><span id="subtotal">R{po.get('subtotal', 0):.2f}</span></div>
+                        <div class="po-totals-row"><span>VAT (15%)</span><span id="vat">R{po.get('vat', 0):.2f}</span></div>
+                        <div class="po-totals-row grand"><span>Total</span><span id="total">R{po.get('total', 0):.2f}</span></div>
                     </div>
                 </div>
                 
@@ -2670,11 +2670,29 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                             stock_by_code[final_code] = new_stock
                             logger.info(f"[PO RECEIVE] Auto-created stock: {final_code} = {item_desc}")
                     
-                    # Now update the stock quantity
+                    # Now update the stock quantity + cost/selling price
                     if stock_item:
                         current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
                         new_qty = current_qty + qty_received
-                        db.update_stock(stock_item["id"], {"qty": new_qty, "quantity": new_qty}, biz_id)
+                        stock_updates = {"qty": new_qty, "quantity": new_qty}
+                        
+                        # Update cost price from PO and recalc selling price (maintain markup %)
+                        po_price = float(items[idx].get("price", 0) or 0)
+                        if po_price > 0:
+                            old_cost = float(stock_item.get("cost_price") or stock_item.get("cost") or 0)
+                            old_sell = float(stock_item.get("selling_price") or stock_item.get("price") or 0)
+                            stock_updates["cost_price"] = po_price
+                            stock_updates["cost"] = po_price
+                            if old_cost > 0 and old_sell > 0:
+                                markup_ratio = old_sell / old_cost
+                                new_sell = round(po_price * markup_ratio, 2)
+                            else:
+                                new_sell = round(po_price * 1.3, 2)
+                            stock_updates["selling_price"] = new_sell
+                            stock_updates["price"] = new_sell
+                            logger.info(f"[PO RECEIVE] Price recalc {stock_item.get('code','')}: cost {old_cost}->{po_price}, sell {old_sell}->{new_sell}")
+                        
+                        db.update_stock(stock_item["id"], stock_updates, biz_id)
                         logger.info(f"[PO RECEIVE] Updated stock {stock_item.get('code')}: {current_qty} + {qty_received} = {new_qty}")
                         
                         # Store stock info in item for GRV tracking
@@ -2718,12 +2736,29 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     line_total = round(float(unit_price) * qty_received, 2)
                     grv_total += line_total
                     
-                    # Update stock cost price if price was entered
+                    # Update stock cost price AND recalculate selling price (maintain markup %)
                     if unit_price and items[idx].get("stock_id") and update_stock:
                         try:
-                            db.update_stock(items[idx]["stock_id"], {"cost_price": float(unit_price)}, biz_id)
-                        except:
-                            pass
+                            new_cost = float(unit_price)
+                            stock_updates = {"cost_price": new_cost, "cost": new_cost}
+                            # Recalc selling price: keep existing markup ratio
+                            existing = db.get_one_stock(items[idx]["stock_id"])
+                            if existing:
+                                old_cost = float(existing.get("cost_price") or existing.get("cost") or 0)
+                                old_sell = float(existing.get("selling_price") or existing.get("price") or 0)
+                                if old_cost > 0 and old_sell > 0:
+                                    markup_ratio = old_sell / old_cost
+                                    new_sell = round(new_cost * markup_ratio, 2)
+                                elif new_cost > 0:
+                                    new_sell = round(new_cost * 1.3, 2)  # Default 30% markup
+                                else:
+                                    new_sell = old_sell
+                                stock_updates["selling_price"] = new_sell
+                                stock_updates["price"] = new_sell
+                                logger.info(f"[GRV] Price recalc {items[idx].get('code','')}: cost {old_cost}->{new_cost}, sell {old_sell}->{new_sell}")
+                            db.update_stock(items[idx]["stock_id"], stock_updates, biz_id)
+                        except Exception as e:
+                            logger.error(f"[GRV] Cost/price update failed: {e}")
                     
                     received_items.append({
                         "description": items[idx].get("description", "-"),
