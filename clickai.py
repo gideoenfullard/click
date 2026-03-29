@@ -3535,7 +3535,7 @@ class RecordFactory:
         vat = float(kwargs.get("vat", 0))
         net = float(kwargs.get("net", amt - vat))
         
-        return {
+        record = {
             "id": kwargs.get("id") or generate_id(),
             "business_id": business_id,
             "date": kwargs.get("date") or now()[:10],
@@ -3555,6 +3555,20 @@ class RecordFactory:
             "created_at": kwargs.get("created_at") or now(),
             "created_by": kwargs.get("created_by", "")
         }
+        
+        # Split transaction fields (scan splits + bank linking)
+        if kwargs.get("splits"):
+            record["splits"] = kwargs["splits"]
+        if kwargs.get("bank_transaction_id"):
+            record["bank_transaction_id"] = kwargs["bank_transaction_id"]
+        if kwargs.get("is_split_line"):
+            record["is_split_line"] = True
+            record["split_parent_amount"] = kwargs.get("split_parent_amount", 0)
+        if kwargs.get("bank_matched"):
+            record["bank_matched"] = True
+            record["bank_matched_at"] = kwargs.get("bank_matched_at", now())
+        
+        return record
     
     @staticmethod
     def payment(business_id: str, customer_id: str, invoice_id: str, amount: float, **kwargs) -> dict:
@@ -47733,6 +47747,7 @@ def api_scan_suggest_category():
         # Build JSON examples as plain strings (avoids f-string brace escaping issues)
         json_ask = '{"needs_clarification":true,"question":"[explain what you see + ask]","options":[{"label":"[option 1]","value":"[short]"},{"label":"[option 2]","value":"[short]"},{"label":"None of these","value":"manual"}],"confidence":0.6,"explanation":""}'
         json_book = '{"needs_clarification":false,"action":"expense|supplier","action_label":"Book as Expense|Stock Purchase","category":"[exact from list]","confidence":0.95,"explanation":"[1 sentence]","vat_warning":"","is_stock":false|true}'
+        json_split = '{"needs_clarification":false,"action":"expense","action_label":"Book as Expense","category":"Split","confidence":0.95,"explanation":"[1 sentence]","vat_warning":"","is_stock":false,"is_split":true,"splits":[{"description":"[item desc]","amount":[number],"category":"[exact from list]"},{"description":"[item desc]","amount":[number],"category":"[exact from list]"}]}'
         
         own_biz_note = ""
         if biz_name and supplier_name and (biz_name.lower() in supplier_name.lower() or supplier_name.lower() in biz_name.lower()):
@@ -47743,10 +47758,10 @@ def api_scan_suggest_category():
         
         if user_answer:
             rule1 = "1. FOLLOW-UP. User answered. If clear, book it. If still ambiguous, ask ONE more question."
-            json_section = f"If unclear, ASK:\n{json_ask}\n\nIf clear, BOOK:\n{json_book}"
+            json_section = f"If unclear, ASK:\n{json_ask}\n\nIf clear, BOOK:\n{json_book}\n\nIf SPLIT (multiple different categories on one slip):\n{json_split}"
         else:
             rule1 = "1. FIRST CALL. You MUST ask. Never auto-book first time. Show what you see, explain, give options."
-            json_section = f"ASK format (MUST use on first call):\n{json_ask}\n\nNOTE: NEVER return needs_clarification:false on first call."
+            json_section = f"ASK format (MUST use on first call):\n{json_ask}\n\nNOTE: NEVER return needs_clarification:false on first call.\n\nBut if you clearly see DIFFERENT item types needing DIFFERENT GL categories (e.g. diesel + food + repairs on one slip), you MAY return a SPLIT on first call:\n{json_split}"
         
         prompt = f"""You are Zane, bookkeeper for {biz_name}. Help book this invoice. Be direct, no emojis.
 
@@ -47767,6 +47782,7 @@ RULES:
 4. Key question: OWN USE (expense) or STOCK FOR RESALE (supplier invoice)?
 5. Fuel own use: warn no VAT claim
 6. NEVER say General Expenses. If unsure, ask.
+7. SPLIT DETECTION: If the items list contains DIFFERENT types of purchases that belong to DIFFERENT expense categories (e.g. diesel + pie + puncture repair on one garage slip), return is_split:true with a splits array. Each split must have a description, amount, and exact category from the list above. Split amounts must add up to the total. Only split when items clearly fall into 2+ DIFFERENT categories — do NOT split items that all belong to the same category.
 
 stock/resale: action=supplier, is_stock=true. expense: action=expense, is_stock=false.
 
@@ -47775,11 +47791,10 @@ JSON only:
 
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=500,
+            max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
         
-        ai_response = response.content[0].text
         ai_response = response.content[0].text
         suggestion = extract_json_from_text(ai_response)
         
@@ -47894,6 +47909,10 @@ def api_scan_save_expense():
         expense_account = IndustryKnowledge.get_gl_code(category, business_id=biz_id)
         
         user = Auth.get_current_user()
+        
+        # Get splits data from Zane (if multi-category)
+        splits = data.get("splits")  # Multi-GL split from Zane
+        
         expense = RecordFactory.expense(
             business_id=biz_id,
             description=desc,
@@ -47908,7 +47927,8 @@ def api_scan_save_expense():
             supplier_name=data.get("supplier_name", ""),
             payment_method=payment_method,
             status="paid",
-            created_by=user.get("id") if user else None
+            created_by=user.get("id") if user else None,
+            splits=splits if splits and len(splits) > 1 else None
         )
         exp_id = expense["id"]
         
@@ -47921,7 +47941,6 @@ def api_scan_save_expense():
         
         # Create journal entries for GL
         total_amount = float(data.get("total", 0))
-        splits = data.get("splits")  # Multi-GL split from Zane
         
         if splits and len(splits) > 1:
             # ═══ MULTI-GL SPLIT: each split line gets its own debit ═══
