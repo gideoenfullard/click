@@ -2270,7 +2270,7 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                 <input type="text" name="item_desc[]" class="form-input" placeholder="Description" required value="{safe_string(item.get('description', ''))}">
                 <input type="number" name="item_qty[]" class="form-input" value="{item.get('qty', 1)}" min="0.01" step="any" onchange="calculateTotals()">
                 <input type="number" name="item_price[]" class="form-input" placeholder="0.00" step="0.01" onchange="calculateTotals()" value="{item.get('price', '')}">
-                <span class="line-total" style="text-align:right;font-weight:600;">R{item.get('total', 0):.2f}</span>
+                <span class="line-total" style="text-align:right;font-weight:600;">R{float(item.get('total') or 0):.2f}</span>
                 <button type="button" class="po-rm" onclick="this.closest('.po-item-row').remove();calculateTotals();">&times;</button>
             </div>
             '''
@@ -2343,9 +2343,9 @@ def register_purchases_routes(app, db, login_required, Auth, render_page,
                     <button type="button" class="po-add-btn" onclick="addRow()" style="margin-top:10px;">+ Add Line Item</button>
                     
                     <div class="po-totals" style="margin-top:16px;">
-                        <div class="po-totals-row"><span>Subtotal</span><span id="subtotal">R{po.get('subtotal', 0):.2f}</span></div>
-                        <div class="po-totals-row"><span>VAT (15%)</span><span id="vat">R{po.get('vat', 0):.2f}</span></div>
-                        <div class="po-totals-row grand"><span>Total</span><span id="total">R{po.get('total', 0):.2f}</span></div>
+                        <div class="po-totals-row"><span>Subtotal</span><span id="subtotal">R{float(po.get('subtotal') or 0):.2f}</span></div>
+                        <div class="po-totals-row"><span>VAT (15%)</span><span id="vat">R{float(po.get('vat') or 0):.2f}</span></div>
+                        <div class="po-totals-row grand"><span>Total</span><span id="total">R{float(po.get('total') or 0):.2f}</span></div>
                     </div>
                 </div>
                 
