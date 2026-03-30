@@ -26417,6 +26417,26 @@ Extract the recurring amount. Return valid JSON only."""
 def expenses_page():
     """Expenses list"""
     
+    def _detect_payment_method(description):
+        """Smart-detect payment method from bank/expense description text."""
+        desc_upper = (description or "").upper()
+        # EFT patterns
+        if any(kw in desc_upper for kw in [
+            "ELECTRONIC BANKING", "EFT ", "BANK PAYMENT", "PAYMENT TO ",
+            "DEBIT ORDER", "ACB DEBIT", "MAGTAPE", "IMMEDIATE PAYMENT",
+            "REALTIME CLEARING", "BATCH PAYMENT", "NETCASH", "NEDBANK",
+            "FNB ", "ABSA ", "STANDARD BANK", "CAPITEC", "SERVICE AGREEMENT"
+        ]):
+            return "eft"
+        # Card patterns
+        if any(kw in desc_upper for kw in [
+            "DEBIT CARD", "CREDIT CARD", "CARD PURCHASE", "POS PURCHASE",
+            "MASTERCARD", "VISA ", "SPEEDPOINT", "YOCO ", "IKHOKHA",
+            "SNAPSCAN", "ZAPPER", "TAP AND GO", "CONTACTLESS"
+        ]):
+            return "card"
+        return ""
+
     user = Auth.get_current_user()
     business = Auth.get_current_business()
     biz_id = business.get("id") if business else None
@@ -26429,15 +26449,23 @@ def expenses_page():
     total_expenses = sum(float(e.get("amount", 0)) for e in expenses)
     total_vat = sum(float(e.get("vat", 0)) for e in expenses)
     
-    # Payment method counts
-    cash_count = sum(1 for e in expenses if (e.get("payment_method") or "").lower() == "cash")
-    card_count = sum(1 for e in expenses if (e.get("payment_method") or "").lower() == "card")
-    eft_count = sum(1 for e in expenses if (e.get("payment_method") or "").lower() == "eft")
+    # Smart method resolution: use stored value, but if empty/cash, try detect from description
+    def _resolve_method(e):
+        stored = (e.get("payment_method") or "").lower()
+        if stored and stored != "cash":
+            return stored
+        detected = _detect_payment_method(e.get("description", ""))
+        return detected if detected else stored or "cash"
+
+    # Payment method counts (using smart resolution)
+    cash_count = sum(1 for e in expenses if _resolve_method(e) == "cash")
+    card_count = sum(1 for e in expenses if _resolve_method(e) == "card")
+    eft_count = sum(1 for e in expenses if _resolve_method(e) == "eft")
     
     rows = ""
     for e in expenses[:500]:
-        # Expenses are ALWAYS paid - determine method
-        method = (e.get("payment_method") or "cash").lower()
+        # Expenses are ALWAYS paid - determine method with smart detection
+        method = _resolve_method(e)
         method_icons = {"cash": "💵 Cash", "card": "💳 Card", "eft": "🏦 EFT"}
         method_colors = {"cash": "#10b981", "card": "#8b5cf6", "eft": "#3b82f6"}
         method_label = method_icons.get(method, "💵 Cash")
