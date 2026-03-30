@@ -130,7 +130,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         # POS print settings
         pos_settings = {
             "auto_print": business.get("pos_auto_print", False) if business else False,
-            "print_duplicates": True,  # Always print 2 copies
+            "print_duplicates": business.get("pos_print_duplicates", False) if business else False,
             "print_format": business.get("pos_print_format", "ask") if business else "ask",
             "slip_footer": business.get("pos_slip_footer", "Thank you for your purchase!") if business else "Thank you for your purchase!",
             "business_name": (business.get("name") or business.get("business_name") or "Business") if business else "Business",
