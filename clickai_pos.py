@@ -3907,7 +3907,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 var slipContent = document.getElementById('slipContent').innerHTML;
                 
                 var styles = format === 'thermal' ? 
-                    'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } * { font-weight: bold !important; color: #000 !important; background: transparent !important; } table { width: 100%; border-collapse: collapse; } td { font-weight: bold !important; padding: 2px 0; } @page { size: 80mm auto; margin: 0; } @media print { body { width: 72mm; } }' :
+                    'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } * { font-weight: bold !important; color: #000 !important; background: transparent !important; } table { width: 100%; border-collapse: collapse; } td { font-weight: bold !important; padding: 2px 0; } @page { size: 80mm auto; margin: 0; } @media print { body { width: 72mm; } div[style*="page-break-before"] { page-break-before: always; margin-top: 0; padding-top: 4mm; } }' :
                     'body { width: 210mm; margin: 20mm; font-family: Arial, sans-serif; font-size: 18px; color: #000; background: #fff; } @page { size: A4; margin: 20mm; }';
                 
                 fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
@@ -3917,6 +3917,24 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // Exit fullscreen before print (browsers block print dialog in fullscreen)
             if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
             
+            // If duplicates enabled, combine both copies into ONE document with page-break
+            // This ensures the thermal printer cuts between copies
+            if (posSettings.print_duplicates && format === 'thermal') {
+                var dupHtml = fullHtml.replace('</body>', 
+                    '<div style="page-break-after:always;"></div>' +
+                    '</body>');
+                // Insert second copy before closing </body>
+                var bodyContent = fullHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/);
+                if (bodyContent && bodyContent[1]) {
+                    var storeCopyContent = bodyContent[1] + '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div>';
+                    dupHtml = fullHtml.replace('</body>', 
+                        '<div style="page-break-before:always;margin-top:0;"></div>' +
+                        storeCopyContent +
+                        '</body>');
+                }
+                fullHtml = dupHtml;
+            }
+
             // Use hidden iframe — avoids popup window staying open
             var pf = document.getElementById('posPrintFrame');
             if (!pf) {
@@ -3958,23 +3976,6 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // Wait for iframe content to load, then print
             if (fd.readyState === 'complete') { setTimeout(_executePrint, 300); }
             else { pf.onload = function() { setTimeout(_executePrint, 200); }; setTimeout(_executePrint, 1000); }
-            
-            // Duplicate copy (store copy) — fires 3s after first print
-            if (posSettings.print_duplicates) {
-                setTimeout(function() {
-                    var dupHtml = fullHtml.replace('</body>', '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body>');
-                    fd.open(); fd.write(dupHtml); fd.close();
-                    function _executeDup() {
-                        try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) {}
-                        // Return to fullscreen again after store copy
-                        if (f11Mode && !document.fullscreenElement) {
-                            try { document.documentElement.requestFullscreen(); } catch(e) {}
-                        }
-                    }
-                    if (fd.readyState === 'complete') { setTimeout(_executeDup, 300); }
-                    else { pf.onload = function() { setTimeout(_executeDup, 200); }; setTimeout(_executeDup, 1000); }
-                }, 3000);
-            }
         }
         
         function closePrintModal() {
