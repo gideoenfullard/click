@@ -3317,7 +3317,7 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
             
             # Generate DN number
             existing = db.get("delivery_notes", {"business_id": biz_id}) or []
-            dn_num = next_document_number("DN-", existing, "dn_number")
+            dn_num = next_document_number("DN-", existing, "delivery_note_number")
             
             # Get source invoice info
             source_inv_number = ""
@@ -3704,7 +3704,87 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
     @app.route("/invoice/<invoice_id>/create-delivery-note")
     @login_required
     def invoice_to_delivery_note(invoice_id):
-        """Redirect to create delivery note from invoice"""
-        return redirect(f"/delivery-note/new?invoice_id={invoice_id}")
+        """Create delivery note directly from invoice data — no form needed"""
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        invoice = db.get_one("invoices", invoice_id)
+        if not invoice:
+            return redirect("/invoices?error=Invoice+not+found")
+        
+        # Get items from the invoice
+        try:
+            inv_items = json.loads(invoice.get("items", "[]"))
+        except:
+            inv_items = []
+        
+        if not inv_items:
+            return redirect(f"/invoice/{invoice_id}?error=Invoice+has+no+items")
+        
+        # Build DN items from invoice items (description + quantity only, no pricing on DN)
+        dn_items = []
+        for item in inv_items:
+            desc = item.get("description") or item.get("desc") or "-"
+            qty = item.get("quantity") or item.get("qty") or 1
+            dn_items.append({
+                "description": desc,
+                "quantity": float(qty),
+                "stock_id": item.get("stock_id")
+            })
+        
+        # Generate DN number
+        existing = db.get("delivery_notes", {"business_id": biz_id}) or []
+        dn_num = next_document_number("DN-", existing, "delivery_note_number")
+        
+        dn_id = generate_id()
+        delivery_note = {
+            "id": dn_id,
+            "business_id": biz_id,
+            "delivery_note_number": dn_num,
+            "date": today(),
+            "customer_id": invoice.get("customer_id") or None,
+            "customer_name": invoice.get("customer_name", ""),
+            "source_invoice_id": invoice_id,
+            "source_invoice_number": invoice.get("invoice_number", ""),
+            "delivery_address": "",
+            "items": json.dumps(dn_items),
+            "notes": "",
+            "status": "draft",
+            "created_at": now(),
+            "created_by": user.get("email", "") if user else ""
+        }
+        
+        success, _ = db.save("delivery_notes", delivery_note)
+        
+        if success:
+            # Update invoice status
+            db.update("invoices", invoice_id, {"status": "delivered"})
+            
+            # Reduce stock for each item that has a stock_id
+            for item in dn_items:
+                stock_id = item.get("stock_id")
+                if stock_id:
+                    try:
+                        stock_item = db.get_one_stock(stock_id)
+                        if stock_item:
+                            current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
+                            sold_qty = float(item.get("quantity", 0))
+                            new_qty = current_qty - sold_qty
+                            db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
+                            logger.info(f"[DN] Stock {stock_id}: {current_qty} - {sold_qty} = {new_qty}")
+                            try:
+                                db.save("stock_movements", RecordFactory.stock_movement(
+                                    business_id=biz_id, stock_id=stock_id, movement_type="out",
+                                    quantity=sold_qty, reference=f"DN {dn_num}"
+                                ))
+                            except Exception as sm_err:
+                                logger.error(f"[STOCK MOVEMENT] Save failed: {sm_err}")
+                    except Exception as e:
+                        logger.error(f"[DN] Stock reduce error for {stock_id}: {e}")
+            
+            return redirect(f"/delivery-note/{dn_id}")
+        
+        return redirect(f"/invoice/{invoice_id}?error=Failed+to+create+delivery+note")
 
     logger.info("[INVOICING] All invoicing routes registered ✓")
