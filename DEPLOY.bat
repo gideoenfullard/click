@@ -41,7 +41,7 @@ git commit -m "deploy %date% %time:~0,5%"
 echo.
 
 echo [2/3] Git push...
-git push origin master 2>nul || git push origin main 2>nul
+git push origin main 2>nul
 echo.
 
 :: --- FLY DEPLOY (die belangrike stuk!) ---
