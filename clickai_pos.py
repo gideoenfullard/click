@@ -3917,6 +3917,30 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // Exit fullscreen before print (browsers block print dialog in fullscreen)
             if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
             
+            // If duplicates enabled for thermal: build BOTH copies into ONE document
+            // with a forced page-break between them so the printer cuts
+            if (posSettings.print_duplicates && format === 'thermal') {
+                var slipBody = document.getElementById('slipContent');
+                if (slipBody) {
+                    var slip1 = slipBody.innerHTML;
+                    var slip2 = slip1 + '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div>';
+                    
+                    var dualStyles = 'body { width: 72mm; margin: 0; padding: 0; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+                        ' * { font-weight: bold !important; color: #000 !important; background: transparent !important; }' +
+                        ' table { width: 100%; border-collapse: collapse; }' +
+                        ' td { font-weight: bold !important; padding: 2px 0; }' +
+                        ' .slip-copy { page-break-after: always; padding: 4mm; }' +
+                        ' .slip-copy:last-child { page-break-after: auto; }' +
+                        ' @page { size: 80mm auto; margin: 0; }' +
+                        ' @media print { body { width: 72mm; } }';
+                    
+                    fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + dualStyles + '</style></head><body>' +
+                        '<div class="slip-copy">' + slip1 + '</div>' +
+                        '<div class="slip-copy">' + slip2 + '</div>' +
+                        '</body></html>';
+                }
+            }
+            
             // Use hidden iframe — avoids popup window staying open
             var pf = document.getElementById('posPrintFrame');
             if (!pf) {
@@ -3946,49 +3970,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 try {
                     pf.contentWindow.focus();
                     pf.contentWindow.print();
+                    _afterPrint();
                 } catch(e) {
                     console.log('[POS] Print error:', e);
-                }
-                
-                // Always print 2nd copy (STORE COPY) as separate print job for thermal
-                if (format === 'thermal') {
-                    setTimeout(function() {
-                        try {
-                            var slipBody = document.getElementById('slipContent');
-                            if (slipBody) {
-                                var storeCopyContent = slipBody.innerHTML + 
-                                    '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div>';
-                                
-                                var storeStyles = 'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
-                                    ' * { font-weight: bold !important; color: #000 !important; background: transparent !important; }' +
-                                    ' table { width: 100%; border-collapse: collapse; }' +
-                                    ' td { font-weight: bold !important; padding: 2px 0; }' +
-                                    ' @page { size: 80mm auto; margin: 0; }' +
-                                    ' @media print { body { width: 72mm; } }';
-                                
-                                var storeHtml = '<!DOCTYPE html><html><head><title>POS Slip - Store Copy</title><style>' + storeStyles + '</style></head><body>' + storeCopyContent + '</body></html>';
-                                
-                                var fd2 = pf.contentDocument || pf.contentWindow.document;
-                                fd2.open(); fd2.write(storeHtml); fd2.close();
-                                
-                                setTimeout(function() {
-                                    try {
-                                        pf.contentWindow.focus();
-                                        pf.contentWindow.print();
-                                    } catch(e2) {
-                                        console.log('[POS] Store copy print error:', e2);
-                                    }
-                                    _afterPrint();
-                                }, 500);
-                            } else {
-                                _afterPrint();
-                            }
-                        } catch(e) {
-                            console.log('[POS] Store copy error:', e);
-                            _afterPrint();
-                        }
-                    }, 500);
-                } else {
                     _afterPrint();
                 }
             }
@@ -5734,11 +5718,15 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         }}
         
         async function confirmZRead() {{
-            const counted = document.getElementById('cashCounted').textContent;
-            const diff = document.getElementById('cashDiff').textContent;
+            const countedText = document.getElementById('cashCounted').textContent;
+            const diffText = document.getElementById('cashDiff').textContent;
             const status = document.getElementById('cashStatus').textContent;
             
-            if (!confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + counted + '\\nDifference: ' + diff + '\\n\\nThis will mark the day as CLOSED.')) return;
+            if (!confirm('Close day for {date_desc}?\\n\\n' + status + '\\nCounted: ' + countedText + '\\nDifference: ' + diffText + '\\n\\nThis will mark the day as CLOSED.')) return;
+            
+            // Strip R prefix and commas for numeric storage
+            const countedNum = parseFloat(countedText.replace(/[R,\\s]/g, '')) || 0;
+            const diffNum = parseFloat(diffText.replace(/[R,\\s]/g, '')) || 0;
             
             // ═══ SAVE Z-READ TO DATABASE — marks day as closed ═══
             try {{
@@ -5752,8 +5740,8 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         system_account: {account_total},
                         system_total: {grand_total},
                         sale_count: {transaction_count},
-                        cash_counted: counted,
-                        cash_difference: diff,
+                        cash_counted: countedNum,
+                        cash_difference: diffNum,
                         cash_status: status
                     }})
                 }});
