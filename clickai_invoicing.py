@@ -3713,11 +3713,15 @@ def register_invoicing_routes(app, db, login_required, Auth, render_page,
         if not invoice:
             return redirect("/invoices?error=Invoice+not+found")
         
-        # Get items from the invoice
-        try:
-            inv_items = json.loads(invoice.get("items", "[]"))
-        except:
-            inv_items = []
+        # Get items from the invoice (handle both JSON string and list)
+        raw_items = invoice.get("items", [])
+        if isinstance(raw_items, str):
+            try:
+                inv_items = json.loads(raw_items)
+            except:
+                inv_items = []
+        else:
+            inv_items = raw_items if raw_items else []
         
         if not inv_items:
             return redirect(f"/invoice/{invoice_id}?error=Invoice+has+no+items")
