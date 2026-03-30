@@ -1012,14 +1012,26 @@ function renderHistory() {{
                 })
 
             elif cashup_type == "z_reading":
+                # Strip R prefix, commas, spaces from cash values (frontend sends formatted text like "R2,504.00")
+                def _clean_money(val):
+                    if isinstance(val, (int, float)):
+                        return float(val)
+                    if isinstance(val, str):
+                        cleaned = val.replace("R", "").replace(",", "").replace(" ", "").strip()
+                        try:
+                            return float(cleaned) if cleaned else 0
+                        except ValueError:
+                            return 0
+                    return 0
+                
                 record.update({
                     "system_cash": data.get("system_cash", 0),
                     "system_card": data.get("system_card", 0),
                     "system_account": data.get("system_account", 0),
                     "system_total": data.get("system_total", 0),
                     "sale_count": data.get("sale_count", 0),
-                    "cash_counted": data.get("cash_counted", ""),
-                    "cash_difference": data.get("cash_difference", ""),
+                    "cash_counted": _clean_money(data.get("cash_counted", 0)),
+                    "cash_difference": _clean_money(data.get("cash_difference", 0)),
                     "cash_status": data.get("cash_status", ""),
                     "created_by_name": user.get("name", "") if user else "",
                 })
