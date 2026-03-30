@@ -3907,7 +3907,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 var slipContent = document.getElementById('slipContent').innerHTML;
                 
                 var styles = format === 'thermal' ? 
-                    'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } * { font-weight: bold !important; color: #000 !important; background: transparent !important; } table { width: 100%; border-collapse: collapse; } td { font-weight: bold !important; padding: 2px 0; } @page { size: 80mm auto; margin: 0; } @media print { body { width: 72mm; } div[style*="page-break-before"] { page-break-before: always; margin-top: 0; padding-top: 4mm; } }' :
+                    'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; } * { font-weight: bold !important; color: #000 !important; background: transparent !important; } table { width: 100%; border-collapse: collapse; } td { font-weight: bold !important; padding: 2px 0; } @page { size: 80mm auto; margin: 0; } @media print { body { width: 72mm; } }' :
                     'body { width: 210mm; margin: 20mm; font-family: Arial, sans-serif; font-size: 18px; color: #000; background: #fff; } @page { size: A4; margin: 20mm; }';
                 
                 fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
@@ -3917,19 +3917,6 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // Exit fullscreen before print (browsers block print dialog in fullscreen)
             if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
             
-            // If duplicates enabled for thermal: build both copies into one document with page-break
-            if (posSettings.print_duplicates && format === 'thermal') {
-                var slipBody = document.getElementById('slipContent');
-                if (slipBody) {
-                    var copyHtml = slipBody.innerHTML;
-                    var storeCopy = '<div style="page-break-before:always;padding-top:2mm;"></div>' +
-                        copyHtml +
-                        '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div>';
-                    // Inject store copy before </body>
-                    fullHtml = fullHtml.replace('</body>', storeCopy + '</body>');
-                }
-            }
-
             // Use hidden iframe — avoids popup window staying open
             var pf = document.getElementById('posPrintFrame');
             if (!pf) {
@@ -3971,6 +3958,23 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // Wait for iframe content to load, then print
             if (fd.readyState === 'complete') { setTimeout(_executePrint, 300); }
             else { pf.onload = function() { setTimeout(_executePrint, 200); }; setTimeout(_executePrint, 1000); }
+            
+            // Duplicate copy (store copy) — fires 3s after first print
+            if (posSettings.print_duplicates) {
+                setTimeout(function() {
+                    var dupHtml = fullHtml.replace('</body>', '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div></body>');
+                    fd.open(); fd.write(dupHtml); fd.close();
+                    function _executeDup() {
+                        try { pf.contentWindow.focus(); pf.contentWindow.print(); } catch(e) {}
+                        // Return to fullscreen again after store copy
+                        if (f11Mode && !document.fullscreenElement) {
+                            try { document.documentElement.requestFullscreen(); } catch(e) {}
+                        }
+                    }
+                    if (fd.readyState === 'complete') { setTimeout(_executeDup, 300); }
+                    else { pf.onload = function() { setTimeout(_executeDup, 200); }; setTimeout(_executeDup, 1000); }
+                }, 3000);
+            }
         }
         
         function closePrintModal() {
@@ -6117,40 +6121,28 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             
             # Update stock quantities and create Cost of Sales entries
             total_cost = Decimal("0")
-            logger.info(f"[POS DEBUG] Processing {len(items)} items for stock update")
             for item in items:
-                logger.info(f"[POS DEBUG] Item received: {item}")
                 stock_id = item.get("stock_id")
                 qty_sold = int(item.get("quantity", 0))
                 
-                logger.info(f"[POS DEBUG] stock_id={stock_id}, qty_sold={qty_sold}")
-                
                 if stock_id:
                     stock_item = db.get_one_stock(stock_id)
-                    logger.info(f"[POS DEBUG] Found stock_item: {stock_item.get('code') if stock_item else 'NOT FOUND'}")
                     if stock_item:
-                        # Update stock quantity
                         current_qty = float(stock_item.get("qty") or stock_item.get("quantity") or 0)
-                        new_qty = current_qty - qty_sold  # Allow negative
-                        logger.info(f"[POS DEBUG] Updating stock {stock_id}: {current_qty} - {qty_sold} = {new_qty}")
+                        new_qty = current_qty - qty_sold
                         
                         if qty_sold > 0:
                             success = db.update_stock(stock_id, {"qty": new_qty, "quantity": new_qty}, biz_id)
-                            logger.info(f"[POS DEBUG] Stock update result: {success}")
                             if not success:
                                 logger.error(f"[POS] Failed to update stock {stock_id} - qty was {current_qty}, tried to set {new_qty}")
                             else:
-                                # Log stock movement
                                 try:
                                     db.save("stock_movements", RecordFactory.stock_movement(
                                         business_id=biz_id, stock_id=stock_id, movement_type="out",
                                         quantity=qty_sold, reference=f"POS Sale {sale_num}"
                                     ))
                                 except Exception as sm_err: logger.error(f"[STOCK MOVEMENT] Save failed: {sm_err}")
-                        else:
-                            logger.warning(f"[POS DEBUG] Skipping stock update - qty_sold is 0")
                         
-                        # Calculate cost of sales
                         cost_price = Decimal(str(stock_item.get("cost") or stock_item.get("cost_price") or 0))
                         line_cost = cost_price * qty_sold
                         total_cost += line_cost
