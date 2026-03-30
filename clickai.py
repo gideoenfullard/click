@@ -28452,6 +28452,7 @@ def get_or_create_accounts(biz_id: str) -> list:
                     "code": acc["code"],
                     "name": acc["name"],
                     "type": acc["type"],
+                    "category": acc.get("category", "General"),
                     "balance": 0,
                     "created_at": now()
                 })
@@ -28473,27 +28474,19 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
     """
     
     if not biz_id:
-        logger.error("[GL] No business_id provided for journal entry")
         return
     
     # Validate balance: total debits must equal total credits
     total_debits = sum(float(e.get("debit", 0)) for e in entries)
     total_credits = sum(float(e.get("credit", 0)) for e in entries)
-    if abs(total_debits - total_credits) > 0.02:  # Allow 2c rounding tolerance
-        logger.error(f"[GL] UNBALANCED journal entry! ref={reference} debits={total_debits:.2f} credits={total_credits:.2f} diff={total_debits - total_credits:.2f}")
-        # Still save but log the error for debugging
-    
-    # Ensure accounts exist for this business
-    get_or_create_accounts(biz_id)
-    
-    logger.info(f"[GL] Creating journal: {reference} - {description}")
+    if abs(total_debits - total_credits) > 0.02:
+        logger.error(f"[GL] UNBALANCED journal entry! ref={reference} debits={total_debits:.2f} credits={total_credits:.2f}")
     
     for entry in entries:
         account_code = entry.get("account_code")
         debit = float(entry.get("debit", 0))
         credit = float(entry.get("credit", 0))
         
-        # Save journal entry
         success, err = db.save("journals", {
             "id": generate_id(),
             "business_id": biz_id,
@@ -28508,32 +28501,6 @@ def create_journal_entry(biz_id: str, date: str, description: str, reference: st
         
         if not success:
             logger.error(f"[GL] Failed to save journal entry: {err}")
-            continue
-        
-        logger.info(f"[GL] Journal saved: {account_code} DR:{debit} CR:{credit}")
-        
-        # Update account balance
-        all_accounts = db.get("accounts", {"business_id": biz_id})
-        acc = None
-        for a in all_accounts:
-            if a.get("code") == account_code:
-                acc = a
-                break
-        
-        if acc:
-            current_balance = float(acc.get("balance", 0))
-            # Debits increase assets/expenses, decrease liabilities/equity/income
-            # Credits decrease assets/expenses, increase liabilities/equity/income
-            acc_type = acc.get("type", "")
-            if acc_type in ("asset", "expense"):
-                new_balance = current_balance + debit - credit
-            else:
-                new_balance = current_balance - debit + credit
-            
-            db.update("accounts", acc["id"], {"balance": new_balance})
-            logger.info(f"[GL] Account {account_code} balance updated: {current_balance} -> {new_balance}")
-        else:
-            logger.warning(f"[GL] Account {account_code} not found for business {biz_id}")
 
 # 
 # JOURNALS - Manual entries
