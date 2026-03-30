@@ -3917,22 +3917,17 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // Exit fullscreen before print (browsers block print dialog in fullscreen)
             if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
             
-            // If duplicates enabled, combine both copies into ONE document with page-break
-            // This ensures the thermal printer cuts between copies
+            // If duplicates enabled for thermal: build both copies into one document with page-break
             if (posSettings.print_duplicates && format === 'thermal') {
-                var dupHtml = fullHtml.replace('</body>', 
-                    '<div style="page-break-after:always;"></div>' +
-                    '</body>');
-                // Insert second copy before closing </body>
-                var bodyContent = fullHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/);
-                if (bodyContent && bodyContent[1]) {
-                    var storeCopyContent = bodyContent[1] + '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div>';
-                    dupHtml = fullHtml.replace('</body>', 
-                        '<div style="page-break-before:always;margin-top:0;"></div>' +
-                        storeCopyContent +
-                        '</body>');
+                var slipBody = document.getElementById('slipContent');
+                if (slipBody) {
+                    var copyHtml = slipBody.innerHTML;
+                    var storeCopy = '<div style="page-break-before:always;padding-top:2mm;"></div>' +
+                        copyHtml +
+                        '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div>';
+                    // Inject store copy before </body>
+                    fullHtml = fullHtml.replace('</body>', storeCopy + '</body>');
                 }
-                fullHtml = dupHtml;
             }
 
             // Use hidden iframe — avoids popup window staying open
