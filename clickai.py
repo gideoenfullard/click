@@ -45876,6 +45876,12 @@ def scan_inbox_page():
         }} else {{
             // Zane has a clear answer
             currentZaneCategory = sugg.category || '';  // Store for processAs
+            
+            // Hide stock code badges if Zane says this is NOT stock
+            if (!sugg.is_stock) {{
+                document.querySelectorAll('.stock-badges-row').forEach(el => el.style.display = 'none');
+            }}
+            
             let actionColor = '#f59e0b'; // orange for expense
             if (sugg.action === 'supplier') actionColor = '#6366f1'; // blue
             
@@ -46044,7 +46050,7 @@ def scan_inbox_page():
                                            onblur="this.style.background='transparent';this.style.padding='0';this.style.color='#fff'"
                                     />
                                 </div>
-                                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                <div class="stock-badges-row" style="display:flex;gap:8px;flex-wrap:wrap;">
                                     ${{codeBadge}}
                                     <span style="background:#6366f1;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">
                                         5000/COS
