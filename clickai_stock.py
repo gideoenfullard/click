@@ -2018,10 +2018,166 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
     @app.route("/stock/edit/<stock_id>", methods=["GET", "POST"])
     @login_required
     def stock_edit(stock_id):
-        """Edit stock item - redirect to detail page with edit capability"""
-        # For now, redirect to detail page
-        # The detail page has all the info, edit can be done inline or via modal
-        return redirect(f"/stock/{stock_id}")
+        """Edit stock item - full edit form"""
+        
+        user = Auth.get_current_user()
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+        
+        if not biz_id:
+            return redirect("/stock")
+        
+        item = db.get_one_stock(stock_id)
+        if not item or item.get("business_id") != biz_id:
+            flash("Stock item not found", "error")
+            return redirect("/stock")
+        
+        # Get categories for dropdown
+        all_stock = db.get_all_stock(biz_id)
+        categories = sorted(set(s.get("category") or "General" for s in all_stock))
+        
+        if request.method == "POST":
+            code = request.form.get("code", "").strip()
+            description = request.form.get("description", "").strip()
+            category = request.form.get("category", "").strip()
+            new_category = request.form.get("new_category", "").strip()
+            cost_price_str = request.form.get("cost_price", "0")
+            selling_price_str = request.form.get("selling_price", "0")
+            unit = request.form.get("unit", "").strip()
+            reorder_str = request.form.get("reorder_level", "0")
+            
+            if new_category:
+                category = new_category
+            
+            try:
+                cost_price = float(cost_price_str.replace(",", "").replace("R", "").strip() or 0)
+            except:
+                cost_price = float(item.get("cost_price", 0) or 0)
+            try:
+                selling_price = float(selling_price_str.replace(",", "").replace("R", "").strip() or 0)
+            except:
+                selling_price = float(item.get("selling_price", 0) or 0)
+            try:
+                reorder_level = int(float(reorder_str.replace(",", "").strip() or 0))
+            except:
+                reorder_level = 0
+            
+            if not description:
+                flash("Description is required", "error")
+                return redirect(f"/stock/edit/{stock_id}")
+            
+            updates = {
+                "code": code,
+                "description": description,
+                "category": category or "General",
+                "cost_price": cost_price,
+                "selling_price": selling_price,
+                "unit": unit,
+                "reorder_level": reorder_level,
+            }
+            
+            result = db.update_stock(stock_id, updates, biz_id)
+            if result:
+                flash(f"'{description}' updated successfully", "success")
+            else:
+                flash("Error updating stock item", "error")
+            return redirect(f"/stock/{stock_id}")
+        
+        # === GET: Show edit form ===
+        code = safe_string(item.get("code", ""))
+        desc = safe_string(item.get("description", ""))
+        cost = float(item.get("cost_price", 0) or 0)
+        price = float(item.get("selling_price", 0) or 0)
+        category = item.get("category", "General") or "General"
+        unit = item.get("unit", "") or ""
+        reorder = int(item.get("reorder_level", 0) or 0)
+        
+        category_options = '<option value="">-- Select Category --</option>'
+        for cat in categories:
+            sel = ' selected' if cat == category else ''
+            category_options += f'<option value="{safe_string(cat)}"{sel}>{safe_string(cat)}</option>'
+        category_options += '<option value="__new__">+ New Category</option>'
+        
+        content = f'''
+        <div style="margin-bottom:15px;">
+            <a href="/stock/{stock_id}" style="color:var(--primary);text-decoration:none;">&larr; Back to {desc}</a>
+        </div>
+        
+        <div class="card" style="max-width: 650px;">
+            <h2 style="margin-bottom: 20px;">Edit Stock Item</h2>
+            <form method="POST">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Code</label>
+                        <input type="text" name="code" value="{code}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Category</label>
+                        <select name="category" id="categorySelect" onchange="checkNewCategory()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                            {category_options}
+                        </select>
+                        <input type="hidden" name="new_category" id="newCategoryInput" value="">
+                    </div>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label style="display:block;margin-bottom:5px;font-weight:500;">Description *</label>
+                    <input type="text" name="description" required value="{desc}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:15px;margin-bottom:15px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Cost Price (excl VAT)</label>
+                        <input type="text" name="cost_price" value="{cost:.2f}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Selling Price (excl VAT)</label>
+                        <input type="text" name="selling_price" value="{price:.2f}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Unit</label>
+                        <input type="text" name="unit" value="{safe_string(unit)}" placeholder="e.g. each, kg, m" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:20px;">
+                    <div>
+                        <label style="display:block;margin-bottom:5px;font-weight:500;">Reorder Level</label>
+                        <input type="text" name="reorder_level" value="{reorder}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                    </div>
+                    <div style="display:flex;align-items:end;">
+                        <div style="padding:10px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:6px;font-size:12px;color:var(--orange);width:100%;">
+                            &#9888; Quantity can only be changed via Stock Adjust or POS sales
+                        </div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:10px;">
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                    <a href="/stock/{stock_id}" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+        
+        <script>
+        function checkNewCategory() {{
+            const sel = document.getElementById('categorySelect');
+            if (sel.value === '__new__') {{
+                const newCat = prompt('Enter new category name:');
+                if (newCat) {{
+                    const opt = document.createElement('option');
+                    opt.value = newCat;
+                    opt.text = newCat;
+                    opt.selected = true;
+                    sel.insertBefore(opt, sel.lastElementChild);
+                    document.getElementById('newCategoryInput').value = newCat;
+                }} else {{
+                    sel.value = '{safe_string(category)}';
+                }}
+            }} else {{
+                document.getElementById('newCategoryInput').value = '';
+            }}
+        }}
+        </script>
+        '''
+        
+        return render_page(f"Edit: {desc}", content, user, "stock")
     
     
     @app.route("/api/stock/search")
