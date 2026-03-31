@@ -2757,8 +2757,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     if (e.key === 'Enter') {
                         e.preventDefault();
                         e.stopPropagation();
-                        // Reprint with same format
-                        _slipPrinted = false;  // Reset so doPrintSlip sets it again after print
+                        // Reprint with same format — doPrintSlip will set _slipPrinted = true again after print
+                        _slipPrinted = false;
+                        _hideReprintState();
                         doPrintSlip(_lastPrintFormat || 'thermal');
                         return;
                     } else if (e.key === 'Escape') {
@@ -3942,15 +3943,19 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
             
             // === PRINT via hidden iframe ===
-            var pf = document.getElementById('posPrintFrame');
-            if (!pf) {
-                pf = document.createElement('iframe');
-                pf.id = 'posPrintFrame';
-                pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
-                document.body.appendChild(pf);
-            }
+            // ALWAYS destroy old iframe and create fresh one — browsers cache/skip print on reused iframes
+            var oldPf = document.getElementById('posPrintFrame');
+            if (oldPf) oldPf.remove();
+            
+            var pf = document.createElement('iframe');
+            pf.id = 'posPrintFrame';
+            pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
+            document.body.appendChild(pf);
+            
+            // Add cache-busting comment so browser treats it as new content
+            var cacheBust = '<!-- print-' + Date.now() + ' -->';
             var fd = pf.contentDocument || pf.contentWindow.document;
-            fd.open(); fd.write(fullHtml); fd.close();
+            fd.open(); fd.write(fullHtml + cacheBust); fd.close();
             
             function _executePrint() {
                 try {
@@ -3964,8 +3969,9 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 _showReprintState();
             }
             
-            if (fd.readyState === 'complete') { setTimeout(_executePrint, 300); }
-            else { pf.onload = function() { setTimeout(_executePrint, 200); }; setTimeout(_executePrint, 1000); }
+            pf.onload = function() { setTimeout(_executePrint, 250); };
+            // Fallback in case onload already fired
+            setTimeout(function() { if (!_slipPrinted) _executePrint(); }, 1200);
         }
         
         function _showReprintState() {
