@@ -47879,6 +47879,7 @@ RULES:
 5. FUEL: There is NEVER VAT on fuel in South Africa (diesel, petrol, paraffin). The full amount is the expense. Do NOT calculate VAT on fuel line items.
 6. NEVER say General Expenses. If unsure, ask.
 7. SPLIT DETECTION: If the items list contains DIFFERENT types of purchases that belong to DIFFERENT expense categories (e.g. diesel + pie + puncture repair on one garage slip), return is_split:true with a splits array. Each split must have a description, amount (EXCL VAT for non-fuel items, FULL amount for fuel items), and exact category from the list above. Split amounts must add up to the invoice subtotal (excl VAT). Use the actual item amounts from the items list — do NOT estimate or redistribute amounts. Only split when items clearly fall into 2+ DIFFERENT categories — do NOT split items that all belong to the same category.
+8. FOOD/DRINKS bought for staff (pies, cooldrinks, lunch, snacks) = Staff Welfare. NEVER use Ignore or Entertainment for food bought at fuel stations or shops for workers. Entertainment is only for client entertainment (restaurants, events with clients). Ignore should ONLY be used when the user explicitly says to ignore an item.
 
 stock/resale: action=supplier, is_stock=true. expense: action=expense, is_stock=false.
 
