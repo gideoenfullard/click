@@ -45914,6 +45914,33 @@ def scan_inbox_page():
                 }});
                 html += `<div style="text-align:right;margin-top:6px;font-size:12px;color:var(--text-muted);">Jy kan bedrae aanpas voor jy save</div>`;
                 html += `</div>`;
+                
+                // ═══ RECALCULATE VAT: exclude fuel items (no VAT on fuel in SA) ═══
+                var fuelKeys = ['fuel','diesel','petrol','paraffin','unleaded','93','95'];
+                var fuelCatKeys = ['fuel','petrol'];
+                var vatableTotal = 0;
+                var fuelTotal = 0;
+                sugg.splits.forEach(function(sp) {{
+                    var d = (sp.description || '').toLowerCase();
+                    var c = (sp.category || '').toLowerCase();
+                    var isFuel = fuelKeys.some(function(k) {{ return d.indexOf(k) >= 0; }}) || fuelCatKeys.some(function(k) {{ return c.indexOf(k) >= 0; }});
+                    if (isFuel) {{
+                        fuelTotal += parseFloat(sp.amount || 0);
+                    }} else {{
+                        vatableTotal += parseFloat(sp.amount || 0);
+                    }}
+                }});
+                var recalcVat = Math.round(vatableTotal * 0.15 * 100) / 100;
+                var recalcSubtotal = Math.round((fuelTotal + vatableTotal) * 100) / 100;
+                var recalcTotal = Math.round((recalcSubtotal + recalcVat) * 100) / 100;
+                // Update the form fields
+                var subtotalEl = document.querySelector('input[name="subtotal"], #subtotalField, [data-field="subtotal"]');
+                var vatEl = document.querySelector('input[name="vat"], #vatField, [data-field="vat"]');
+                var totalEl = document.querySelector('input[name="total"], #totalField, [data-field="total"]');
+                if (subtotalEl) subtotalEl.value = recalcSubtotal.toFixed(2);
+                if (vatEl) vatEl.value = recalcVat.toFixed(2);
+                if (totalEl) totalEl.value = recalcTotal.toFixed(2);
+                
             }} else {{
                 window._zaneSplits = null;
                 // Show category for expenses (single)
@@ -47769,16 +47796,16 @@ def api_scan_suggest_category():
         if items:
             parts = []
             for item in items[:10]:
-                desc = item.get("description", "").strip()
+                desc_txt = item.get("description", "").strip()
                 amt = item.get("total", item.get("amount", item.get("line_total", 0)))
                 try:
                     amt = float(amt or 0)
                 except:
                     amt = 0
-                if desc and amt > 0:
-                    parts.append(f"{desc} R{amt:.2f}")
-                elif desc:
-                    parts.append(desc)
+                if desc_txt and amt > 0:
+                    parts.append(f"{desc_txt} R{amt:.2f}")
+                elif desc_txt:
+                    parts.append(desc_txt)
             items_desc = ", ".join(parts) if parts else ""
         
         # Ask Claude for smart action recommendation
@@ -47829,7 +47856,7 @@ RULES:
 4. Key question: OWN USE (expense) or STOCK FOR RESALE (supplier invoice)?
 5. FUEL: There is NEVER VAT on fuel in South Africa (diesel, petrol, paraffin). The full amount is the expense. Do NOT calculate VAT on fuel line items.
 6. NEVER say General Expenses. If unsure, ask.
-7. SPLIT DETECTION: If the items list contains DIFFERENT types of purchases that belong to DIFFERENT expense categories (e.g. diesel + pie + puncture repair on one garage slip), return is_split:true with a splits array. Each split must have a description, amount (EXCL VAT for non-fuel items, FULL amount for fuel items), and exact category from the list above. Split amounts must add up to the invoice subtotal (excl VAT). Use the actual item amounts from the items list — do NOT estimate or redistribute amounts. Only split when items clearly fall into 2+ DIFFERENT categories — do NOT split items that all belong to the same category.
+7. SPLIT DETECTION: If the items list contains DIFFERENT types of purchases that belong to DIFFERENT expense categories (e.g. diesel + pie + puncture repair on one garage slip), return is_split:true with a splits array. Each split must have a description, amount (FULL amount for fuel items since no VAT applies, EXCL VAT for non-fuel items), and exact category from the list above. Use the actual item amounts from the items list — do NOT estimate or redistribute amounts. Only split when items clearly fall into 2+ DIFFERENT categories.
 
 stock/resale: action=supplier, is_stock=true. expense: action=expense, is_stock=false.
 
@@ -47991,20 +48018,41 @@ def api_scan_save_expense():
         
         if splits and len(splits) > 1:
             # ═══ MULTI-GL SPLIT: each split line gets its own debit ═══
+            # For splits, calculate VAT per-item because fuel has NO VAT
+            fuel_keywords = ["fuel", "diesel", "petrol", "paraffin", "unleaded", "95", "93"]
+            no_vat_cat_keywords = ["fuel", "entertainment", "meals", "membership"]
+            
             journal_entries = []
             split_total = 0
+            total_vat_claimable = 0.0
+            
             for sp in splits:
                 sp_amount = float(sp.get("amount", 0))
-                sp_category = sp.get("category", "General Expenses")
+                sp_category = sp.get("category", "")
+                sp_desc = sp.get("description", "").lower()
                 sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
-                journal_entries.append({"account_code": sp_gl, "debit": round(sp_amount, 2), "credit": 0})
-                split_total += sp_amount
-            # VAT Input (if claimable) on the total
-            if vat_claimable > 0:
-                journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": round(vat_claimable, 2), "credit": 0})
-            # Credit Bank for total (splits + VAT)
+                
+                # Check if this split item is fuel or other no-VAT category
+                is_fuel = any(kw in sp_desc for kw in fuel_keywords) or any(kw in sp_category.lower() for kw in no_vat_cat_keywords)
+                
+                if is_fuel:
+                    # Fuel: full amount is expense, no VAT claimable
+                    journal_entries.append({"account_code": sp_gl, "debit": round(sp_amount, 2), "credit": 0})
+                    split_total += sp_amount
+                else:
+                    # Non-fuel: amount is excl VAT, VAT is claimable
+                    journal_entries.append({"account_code": sp_gl, "debit": round(sp_amount, 2), "credit": 0})
+                    sp_vat = round(sp_amount * 0.15, 2)
+                    total_vat_claimable += sp_vat
+                    split_total += sp_amount
+            
+            # VAT Input — only on non-fuel items
+            if total_vat_claimable > 0:
+                journal_entries.append({"account_code": gl(biz_id, "vat_input"), "debit": round(total_vat_claimable, 2), "credit": 0})
+            
+            # Credit Bank for actual total paid
             journal_entries.append({"account_code": gl(biz_id, "bank"), "debit": 0, "credit": round(total_amount, 2)})
-            logger.info(f"[SCAN SAVE] Multi-GL split: {len(splits)} categories for {desc[:30]}")
+            logger.info(f"[SCAN SAVE] Multi-GL split: {len(splits)} categories, VAT claimable: R{total_vat_claimable:.2f} for {desc[:30]}")
         else:
             # ═══ SINGLE GL: original flow ═══
             journal_entries = [
