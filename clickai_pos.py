@@ -2751,11 +2751,34 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // === PRINT MODAL KEYBOARD HANDLING ===
             const printModal = document.getElementById('printSlipModal');
             if (printModal && printModal.style.display === 'flex') {
+                
+                // === REPRINT STATE: slip already printed, Enter = print again, Esc = done ===
+                if (_slipPrinted) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        // Reprint with same format
+                        _slipPrinted = false;  // Reset so doPrintSlip sets it again after print
+                        doPrintSlip(_lastPrintFormat || 'thermal');
+                        return;
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        _finishPrintAndReset();
+                        return;
+                    }
+                    // Ignore all other keys in reprint state
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
+                
+                // === NORMAL STATE: choose print format ===
                 const buttons = [
                     document.getElementById('btnPrintThermal'),
                     document.getElementById('btnPrintA4'),
                     document.getElementById('btnPrintSkip')
-                ].filter(b => b);  // Filter out nulls
+                ].filter(b => b);
                 
                 if (buttons.length > 0) {
                     const currentIndex = buttons.findIndex(btn => btn === document.activeElement);
@@ -2789,7 +2812,6 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                         if (document.activeElement && buttons.includes(document.activeElement)) {
                             document.activeElement.click();
                         } else {
-                            // Default to thermal print
                             buttons[0].click();
                         }
                         return;
@@ -3784,8 +3806,12 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             }, changeGiven >= 0.01 ? 1200 : 200);  // longer delay if there's change to show
         }
         
+        var _slipPrinted = false;  // Track if slip was printed (Enter = reprint, Esc = done)
+        var _lastPrintFormat = null;
+        
         function doPrintSlip(format) {
             var fullHtml;
+            _lastPrintFormat = format;
             
             if (format === 'a4' && lastSaleData) {
                 // === BUILD FULL A4 TAX INVOICE ===
@@ -3805,7 +3831,6 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 var bizBankAcc = biz.bank_account || '';
                 var bizBankBranch = biz.bank_branch || '';
                 
-                // Build items rows
                 var itemsRows = '';
                 (sd.items || []).forEach(function(item) {
                     var qty = item.quantity || item.qty || 1;
@@ -3903,7 +3928,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     
                     '</body></html>';
             } else {
-                // === THERMAL SLIP (existing behavior) ===
+                // === THERMAL SLIP ===
                 var slipContent = document.getElementById('slipContent').innerHTML;
                 
                 var styles = format === 'thermal' ? 
@@ -3913,97 +3938,79 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + styles + '</style></head><body>' + slipContent + '</body></html>';
             }
             
-            // === THERMAL PRINT via hidden iframe ===
-            // Exit fullscreen before print (browsers block print dialog in fullscreen)
+            // Exit fullscreen before print
             if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
             
-            // === PRINT HELPER: load HTML into hidden iframe and print ===
-            function _getOrCreateFrame() {
-                var pf = document.getElementById('posPrintFrame');
-                if (!pf) {
-                    pf = document.createElement('iframe');
-                    pf.id = 'posPrintFrame';
-                    pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
-                    document.body.appendChild(pf);
+            // === PRINT via hidden iframe ===
+            var pf = document.getElementById('posPrintFrame');
+            if (!pf) {
+                pf = document.createElement('iframe');
+                pf.id = 'posPrintFrame';
+                pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
+                document.body.appendChild(pf);
+            }
+            var fd = pf.contentDocument || pf.contentWindow.document;
+            fd.open(); fd.write(fullHtml); fd.close();
+            
+            function _executePrint() {
+                try {
+                    pf.contentWindow.focus();
+                    pf.contentWindow.print();
+                } catch(e) {
+                    console.log('[POS] Print error:', e);
                 }
-                return pf;
+                // After print: show "printed" state — Enter = reprint, Esc = done
+                _slipPrinted = true;
+                _showReprintState();
             }
             
-            function _printOneSlip(html, callback) {
-                var pf = _getOrCreateFrame();
-                var fd = pf.contentDocument || pf.contentWindow.document;
-                fd.open(); fd.write(html); fd.close();
-                
-                function doPrint() {
-                    try {
-                        pf.contentWindow.focus();
-                        pf.contentWindow.print();
-                    } catch(e) {
-                        console.log('[POS] Print error:', e);
-                    }
-                    if (callback) setTimeout(callback, 500);
-                }
-                
-                if (fd.readyState === 'complete') { setTimeout(doPrint, 300); }
-                else { pf.onload = function() { setTimeout(doPrint, 200); }; setTimeout(doPrint, 1000); }
-            }
+            if (fd.readyState === 'complete') { setTimeout(_executePrint, 300); }
+            else { pf.onload = function() { setTimeout(_executePrint, 200); }; setTimeout(_executePrint, 1000); }
+        }
+        
+        function _showReprintState() {
+            // Hide normal buttons, show reprint message
+            var btnRow = document.getElementById('printButtonRow');
+            if (btnRow) btnRow.style.display = 'none';
             
-            function _buildSlipHtml(content, copyLabel) {
-                var thermalStyles = 'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
-                    ' * { font-weight: bold !important; color: #000 !important; background: transparent !important; }' +
-                    ' table { width: 100%; border-collapse: collapse; }' +
-                    ' td { font-weight: bold !important; padding: 2px 0; }' +
-                    ' @page { size: 80mm auto; margin: 0; }' +
-                    ' @media print { body { width: 72mm; } }';
-                var labelHtml = copyLabel ? '<div style="text-align:center;font-size:12px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;font-weight:bold;">** ' + copyLabel + ' **</div>' : '';
-                return '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + thermalStyles + '</style></head><body>' + content + labelHtml + '</body></html>';
-            }
-            
-            function _afterPrint() {
+            var reprintRow = document.getElementById('reprintRow');
+            if (!reprintRow) {
+                reprintRow = document.createElement('div');
+                reprintRow.id = 'reprintRow';
+                reprintRow.style.cssText = 'padding:20px;text-align:center;border-top:2px solid #eee;';
+                reprintRow.innerHTML = '<div style="font-size:18px;font-weight:bold;color:#10b981;margin-bottom:12px;">&#10004; Printed!</div>' +
+                    '<div style="font-size:16px;color:#333;margin-bottom:8px;">Press <kbd style="background:#e5e7eb;padding:4px 12px;border-radius:4px;font-weight:bold;font-size:18px;">Enter</kbd> to print another copy</div>' +
+                    '<div style="font-size:16px;color:#333;">Press <kbd style="background:#e5e7eb;padding:4px 12px;border-radius:4px;font-weight:bold;font-size:18px;">Esc</kbd> when done</div>';
                 var modal = document.getElementById('printSlipModal');
-                if (modal) modal.style.display = 'none';
-                var _btnRow = document.getElementById('printButtonRow');
-                if (_btnRow) _btnRow.style.display = 'flex';
-                if (f11Mode && !document.fullscreenElement) {
-                    try { document.documentElement.requestFullscreen(); } catch(e) {}
-                }
-                if (typeof afterSaleReset === 'function') afterSaleReset();
+                if (modal) modal.querySelector('div').appendChild(reprintRow);
             }
-            
-            // Exit fullscreen before print (browsers block print dialog in fullscreen)
-            if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
-            
-            // === DUPLICATE PRINT: Two SEPARATE print jobs so printer cuts between them ===
-            if (posSettings.print_duplicates && format === 'thermal') {
-                var slipBody = document.getElementById('slipContent');
-                if (slipBody) {
-                    var slipInner = slipBody.innerHTML;
-                    var customerHtml = _buildSlipHtml(slipInner, 'CUSTOMER COPY');
-                    var storeHtml = _buildSlipHtml(slipInner, 'STORE COPY');
-                    
-                    // Print copy 1 (customer), then after printer finishes, print copy 2 (store)
-                    _printOneSlip(customerHtml, function() {
-                        // Short delay so printer processes first job and cuts
-                        setTimeout(function() {
-                            _printOneSlip(storeHtml, function() {
-                                _afterPrint();
-                            });
-                        }, 1500);
-                    });
-                } else {
-                    _afterPrint();
-                }
-            } else {
-                // === SINGLE PRINT (no duplicates, or A4 format) ===
-                _printOneSlip(fullHtml, function() {
-                    _afterPrint();
-                });
+            reprintRow.style.display = 'block';
+        }
+        
+        function _hideReprintState() {
+            var reprintRow = document.getElementById('reprintRow');
+            if (reprintRow) reprintRow.style.display = 'none';
+            var btnRow = document.getElementById('printButtonRow');
+            if (btnRow) btnRow.style.display = 'flex';
+        }
+        
+        function _finishPrintAndReset() {
+            _slipPrinted = false;
+            _lastPrintFormat = null;
+            _hideReprintState();
+            var modal = document.getElementById('printSlipModal');
+            if (modal) modal.style.display = 'none';
+            if (f11Mode && !document.fullscreenElement) {
+                try { document.documentElement.requestFullscreen(); } catch(e) {}
             }
+            if (typeof afterSaleReset === 'function') afterSaleReset();
         }
         
         function closePrintModal() {
+            _slipPrinted = false;
+            _lastPrintFormat = null;
+            _hideReprintState();
             document.getElementById('printSlipModal').style.display = 'none';
-            // Show the button row again in case someone opens it manually later
             var _btnRow = document.getElementById('printButtonRow');
             if (_btnRow) _btnRow.style.display = 'flex';
             afterSaleReset();
@@ -4501,7 +4508,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                     <button onclick="showEmailSlipModal()" style="width:100%;padding:15px;border-radius:8px;border:2px solid #8b5cf6;background:white;color:#8b5cf6;cursor:pointer;font-size:14px;">Email Slip to Customer [4]</button>
                 </div>
                 <div style="text-align:center;padding:10px;color:#666;font-size:12px;">
-                    Use Tab/Arrows to navigate • Enter to select • Or press 1, 2, 3, 4
+                    Enter = Print • Esc = Skip • After print: Enter = another copy, Esc = done
                 </div>
             </div>
         </div>
