@@ -2754,17 +2754,24 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 // === REPRINT STATE: slip already printed, Enter = print again, Esc = done ===
                 if (_slipPrinted && !_printInProgress) {
-                    if (e.key === 'Enter') {
+                    if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
                         e.stopPropagation();
-                        _slipPrinted = false;
-                        _hideReprintState();
-                        doPrintSlip(_lastPrintFormat || 'thermal');
+                        _doReprint();
                         return;
                     } else if (e.key === 'Escape') {
                         e.preventDefault();
                         e.stopPropagation();
                         _finishPrintAndReset();
+                        return;
+                    } else if (e.key === 'Tab' || e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                        // Allow tab between Print Again and Done buttons
+                        e.preventDefault();
+                        e.stopPropagation();
+                        var rp = document.getElementById('btnReprint');
+                        var dn = document.getElementById('btnDone');
+                        if (document.activeElement === rp && dn) dn.focus();
+                        else if (rp) rp.focus();
                         return;
                     }
                     // Ignore all other keys in reprint state
@@ -3983,6 +3990,13 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 _printInProgress = false;
                 _slipPrinted = true;
                 _showReprintState();
+                // CRITICAL: Return focus to main page so keyboard events work again
+                // print() steals focus to the iframe — we must reclaim it
+                setTimeout(function() {
+                    try { document.body.focus(); } catch(e) {}
+                    var rb = document.getElementById('btnReprint');
+                    if (rb) rb.focus();
+                }, 300);
             }
             
             pf.onload = function() { setTimeout(_executePrint, 250); };
@@ -3990,7 +4004,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         }
         
         function _showReprintState() {
-            // Hide normal buttons, show reprint message
+            // Hide normal buttons, show reprint message with clickable buttons
             var btnRow = document.getElementById('printButtonRow');
             if (btnRow) btnRow.style.display = 'none';
             
@@ -3999,13 +4013,23 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 reprintRow = document.createElement('div');
                 reprintRow.id = 'reprintRow';
                 reprintRow.style.cssText = 'padding:20px;text-align:center;border-top:2px solid #eee;';
-                reprintRow.innerHTML = '<div style="font-size:18px;font-weight:bold;color:#10b981;margin-bottom:12px;">&#10004; Printed!</div>' +
-                    '<div style="font-size:16px;color:#333;margin-bottom:8px;">Press <kbd style="background:#e5e7eb;padding:4px 12px;border-radius:4px;font-weight:bold;font-size:18px;">Enter</kbd> to print another copy</div>' +
-                    '<div style="font-size:16px;color:#333;">Press <kbd style="background:#e5e7eb;padding:4px 12px;border-radius:4px;font-weight:bold;font-size:18px;">Esc</kbd> when done</div>';
                 var modal = document.getElementById('printSlipModal');
                 if (modal) modal.querySelector('div').appendChild(reprintRow);
             }
+            reprintRow.innerHTML = '<div style="font-size:18px;font-weight:bold;color:#10b981;margin-bottom:15px;">&#10004; Printed!</div>' +
+                '<div style="display:flex;gap:12px;justify-content:center;">' +
+                '<button id="btnReprint" tabindex="0" onclick="_doReprint()" ' +
+                'style="padding:16px 30px;border-radius:8px;border:3px solid #10b981;background:#10b981;color:white;cursor:pointer;font-weight:bold;font-size:16px;">&#9166; Print Again</button>' +
+                '<button id="btnDone" tabindex="0" onclick="_finishPrintAndReset()" ' +
+                'style="padding:16px 30px;border-radius:8px;border:2px solid #ccc;background:white;color:#333;cursor:pointer;font-size:16px;">Esc &#10005; Done</button>' +
+                '</div>';
             reprintRow.style.display = 'block';
+        }
+        
+        function _doReprint() {
+            _slipPrinted = false;
+            _hideReprintState();
+            doPrintSlip(_lastPrintFormat || 'thermal');
         }
         
         function _hideReprintState() {
