@@ -53,7 +53,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
         already_done = [t for t in all_transactions if t.get("matched")]
         
         # Get expense categories
-        expense_categories = IndustryKnowledge.get_expense_categories(biz_id) if biz_id else ["General Expenses"]
+        expense_categories = IndustryKnowledge.get_expense_categories(biz_id) if biz_id else ["Sundry Expenses"]
         category_options = "".join([f'<option value="{c}">{c}</option>' for c in expense_categories])
         
         # Add common categories
@@ -1527,8 +1527,8 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 "MAKRO": "Stock Purchase",
                 "BUILDERS": "Stock Purchase",
                 "CASHBUILD": "Stock Purchase",
-                "TAKEALOT": "General Expenses",
-                "AMAZON": "General Expenses",
+                "TAKEALOT": "Online Purchases",
+                "AMAZON": "Online Purchases",
                 "PAYROLL": "Salaries",
                 "SALARY": "Salaries",
                 "WAGES": "Salaries",
@@ -1546,6 +1546,26 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             imported = 0
             auto_matched = 0
             suggested = 0
+            skipped_dupes = 0
+            
+            # ═══════════════════════════════════════════════════════════════
+            # DEDUP: Build fingerprint set of existing transactions
+            # Prevents re-importing the same statement twice
+            # ═══════════════════════════════════════════════════════════════
+            existing_txns = db.get("bank_transactions", {"business_id": biz_id}) or []
+            existing_fingerprints = set()
+            for et in existing_txns:
+                _e_date = str(et.get("date", ""))[:10]
+                _e_desc = (et.get("description") or "").strip().upper()[:80]
+                _e_amt = round(float(et.get("amount", 0)), 2)
+                _e_deb = round(float(et.get("debit", 0)), 2)
+                _e_cre = round(float(et.get("credit", 0)), 2)
+                existing_fingerprints.add((_e_date, _e_desc, _e_amt))
+                # Also add debit/credit variant in case amount was stored differently
+                if _e_deb > 0 or _e_cre > 0:
+                    existing_fingerprints.add((_e_date, _e_desc, round(_e_cre - _e_deb, 2)))
+            
+            logger.info(f"[BANK IMPORT] Dedup: {len(existing_fingerprints)} existing fingerprints loaded")
             
             for row in data_rows:
                 try:
@@ -1582,6 +1602,19 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                     # Also skip rows with zero amount (just balance lines)
                     if debit == 0 and credit == 0 and amount == 0:
                         continue
+                    
+                    # ═══════════════════════════════════════════════════════════════
+                    # DEDUP CHECK: Skip if this transaction already exists
+                    # ═══════════════════════════════════════════════════════════════
+                    _fp_date = str(txn_date)[:10]
+                    _fp_desc = desc_upper.strip()[:80]
+                    _fp_amt = round(amount, 2)
+                    fingerprint = (_fp_date, _fp_desc, _fp_amt)
+                    if fingerprint in existing_fingerprints:
+                        skipped_dupes += 1
+                        continue
+                    # Also add this new one to prevent dupes within the same import file
+                    existing_fingerprints.add(fingerprint)
                     
                     # ═══════════════════════════════════════════════════════════════
                     # SMART MATCHING LOGIC
@@ -1689,14 +1722,18 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             
             needs_attention = imported - auto_matched - suggested
             
+            dupe_msg = f" ({skipped_dupes} duplicates skipped)" if skipped_dupes > 0 else ""
+            logger.info(f"[BANK IMPORT] Done: {imported} imported, {skipped_dupes} dupes skipped, {auto_matched} auto-matched, {suggested} suggested")
+            
             return jsonify({
                 "success": True, 
-                "message": f"Imported {imported} transactions",
+                "message": f"Imported {imported} transactions{dupe_msg}",
                 "stats": {
                     "total": imported,
                     "auto_matched": auto_matched,
                     "suggested": suggested,
-                    "needs_attention": max(0, needs_attention)
+                    "needs_attention": max(0, needs_attention),
+                    "duplicates_skipped": skipped_dupes
                 }
             })
             
@@ -2424,7 +2461,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
             try:
                 cats = IndustryKnowledge.get_all_category_names()
             except:
-                cats = ["General Expenses"]
+                cats = ["Sundry Expenses"]
             return jsonify({"success": False, "error": str(e), "all_categories": cats})
     
     
@@ -2503,7 +2540,7 @@ def register_banking_routes(app, db, login_required, Auth, render_page,
                 
                 for sp in splits:
                     sp_amount = round(float(sp.get("amount", 0)), 2)
-                    sp_category = sp.get("category", "General Expenses")
+                    sp_category = sp.get("category", "Sundry Expenses")
                     sp_gl = IndustryKnowledge.get_gl_code(sp_category, business_id=biz_id)
                     
                     is_no_vat = any(nv in sp_category.lower() for nv in no_vat_cats)
