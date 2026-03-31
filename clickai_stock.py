@@ -2066,12 +2066,30 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                 flash("Description is required", "error")
                 return redirect(f"/stock/edit/{stock_id}")
             
+            # === Auto-recalc selling price if cost changed but selling wasn't manually changed ===
+            old_cost = float(item.get("cost_price", 0) or 0)
+            old_sell = float(item.get("selling_price", 0) or 0)
+            cost_changed = abs(cost_price - old_cost) > 0.001
+            # Check if user manually changed selling price from the original
+            sell_changed = abs(selling_price - old_sell) > 0.001
+            
+            if cost_changed and not sell_changed and cost_price > 0:
+                # Cost changed but user left selling price at old value — auto-recalc
+                if old_cost > 0 and old_sell > 0:
+                    markup_ratio = old_sell / old_cost
+                    selling_price = round(cost_price * markup_ratio, 2)
+                else:
+                    # No prior ratio — default 30% markup
+                    selling_price = round(cost_price * 1.3, 2)
+                logger.info(f"[STOCK EDIT] Auto-recalc selling: cost {old_cost}->{cost_price}, sell {old_sell}->{selling_price}")
+            
             updates = {
                 "code": code,
                 "description": description,
                 "category": category or "General",
                 "cost_price": cost_price,
                 "selling_price": selling_price,
+                "price": selling_price,
                 "unit": unit,
                 "reorder_level": reorder_level,
             }
@@ -2131,6 +2149,7 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Selling Price (excl VAT)</label>
                         <input type="text" name="selling_price" value="{price:.2f}" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);">
+                        <div id="marginPreview" style="font-size:12px;margin-top:4px;font-weight:500;"></div>
                     </div>
                     <div>
                         <label style="display:block;margin-bottom:5px;font-weight:500;">Unit</label>
@@ -2156,6 +2175,49 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
         </div>
         
         <script>
+        // === Auto-recalc selling price when cost changes ===
+        var _origCost = {cost:.2f};
+        var _origSell = {price:.2f};
+        var _markupRatio = (_origCost > 0 && _origSell > 0) ? (_origSell / _origCost) : 1.3;
+        var _sellManuallyEdited = false;
+        
+        var costInput = document.querySelector('input[name="cost_price"]');
+        var sellInput = document.querySelector('input[name="selling_price"]');
+        var marginDiv = document.getElementById('marginPreview');
+        
+        if (costInput) costInput.addEventListener('input', function() {{
+            if (_sellManuallyEdited) return;  // User took control of selling price
+            var newCost = parseFloat(this.value.replace(/,/g,'').replace('R','')) || 0;
+            if (newCost > 0) {{
+                var newSell = Math.round(newCost * _markupRatio * 100) / 100;
+                sellInput.value = newSell.toFixed(2);
+                updateMarginPreview(newCost, newSell);
+            }}
+        }});
+        
+        if (sellInput) {{
+            sellInput.addEventListener('focus', function() {{ _sellManuallyEdited = true; }});
+            sellInput.addEventListener('input', function() {{
+                var c = parseFloat(costInput.value.replace(/,/g,'').replace('R','')) || 0;
+                var s = parseFloat(this.value.replace(/,/g,'').replace('R','')) || 0;
+                updateMarginPreview(c, s);
+            }});
+        }}
+        
+        function updateMarginPreview(cost, sell) {{
+            var div = document.getElementById('marginPreview');
+            if (!div) return;
+            if (sell > 0 && cost > 0) {{
+                var margin = ((sell - cost) / sell * 100).toFixed(1);
+                var markup = ((sell / cost - 1) * 100).toFixed(1);
+                div.innerHTML = 'Margin: ' + margin + '% &nbsp;|&nbsp; Markup: ' + markup + '%';
+                div.style.color = margin > 0 ? '#10b981' : '#ef4444';
+            }} else {{
+                div.innerHTML = '';
+            }}
+        }}
+        updateMarginPreview(_origCost, _origSell);
+        
         function checkNewCategory() {{
             const sel = document.getElementById('categorySelect');
             if (sel.value === '__new__') {{
