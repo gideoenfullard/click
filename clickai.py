@@ -47764,10 +47764,22 @@ def api_scan_suggest_category():
         # Check if user already answered a clarification question
         user_answer = data.get("clarification_answer", "")
         
-        # Build description of what was purchased
+        # Build description of what was purchased — INCLUDE amounts so AI can split correctly
         items_desc = ""
         if items:
-            items_desc = ", ".join([item.get("description", "") for item in items[:5]])
+            parts = []
+            for item in items[:10]:
+                desc = item.get("description", "").strip()
+                amt = item.get("total", item.get("amount", item.get("line_total", 0)))
+                try:
+                    amt = float(amt or 0)
+                except:
+                    amt = 0
+                if desc and amt > 0:
+                    parts.append(f"{desc} R{amt:.2f}")
+                elif desc:
+                    parts.append(desc)
+            items_desc = ", ".join(parts) if parts else ""
         
         # Ask Claude for smart action recommendation
         client = _anthropic_client
@@ -47815,9 +47827,9 @@ RULES:
 2. Show what items you see and what the supplier is known for
 3. ALWAYS let user decide. They know their business.
 4. Key question: OWN USE (expense) or STOCK FOR RESALE (supplier invoice)?
-5. Fuel own use: warn no VAT claim
+5. FUEL: There is NEVER VAT on fuel in South Africa (diesel, petrol, paraffin). The full amount is the expense. Do NOT calculate VAT on fuel line items.
 6. NEVER say General Expenses. If unsure, ask.
-7. SPLIT DETECTION: If the items list contains DIFFERENT types of purchases that belong to DIFFERENT expense categories (e.g. diesel + pie + puncture repair on one garage slip), return is_split:true with a splits array. Each split must have a description, amount, and exact category from the list above. Split amounts must add up to the total. Only split when items clearly fall into 2+ DIFFERENT categories — do NOT split items that all belong to the same category.
+7. SPLIT DETECTION: If the items list contains DIFFERENT types of purchases that belong to DIFFERENT expense categories (e.g. diesel + pie + puncture repair on one garage slip), return is_split:true with a splits array. Each split must have a description, amount (EXCL VAT for non-fuel items, FULL amount for fuel items), and exact category from the list above. Split amounts must add up to the invoice subtotal (excl VAT). Use the actual item amounts from the items list — do NOT estimate or redistribute amounts. Only split when items clearly fall into 2+ DIFFERENT categories — do NOT split items that all belong to the same category.
 
 stock/resale: action=supplier, is_stock=true. expense: action=expense, is_stock=false.
 
