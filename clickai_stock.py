@@ -2067,38 +2067,83 @@ def register_stock_routes(app, db, login_required, Auth, render_page,
                 return redirect(f"/stock/edit/{stock_id}")
             
             # === Auto-recalc selling price if cost changed but selling wasn't manually changed ===
-            old_cost = float(item.get("cost_price", 0) or 0)
-            old_sell = float(item.get("selling_price", 0) or 0)
+            old_cost = float(item.get("cost_price") or item.get("cost") or 0)
+            old_sell = float(item.get("selling_price") or item.get("price") or 0)
             cost_changed = abs(cost_price - old_cost) > 0.001
-            # Check if user manually changed selling price from the original
             sell_changed = abs(selling_price - old_sell) > 0.001
             
             if cost_changed and not sell_changed and cost_price > 0:
-                # Cost changed but user left selling price at old value — auto-recalc
                 if old_cost > 0 and old_sell > 0:
                     markup_ratio = old_sell / old_cost
                     selling_price = round(cost_price * markup_ratio, 2)
                 else:
-                    # No prior ratio — default 30% markup
                     selling_price = round(cost_price * 1.3, 2)
                 logger.info(f"[STOCK EDIT] Auto-recalc selling: cost {old_cost}->{cost_price}, sell {old_sell}->{selling_price}")
             
-            updates = {
+            # === Direct PATCH to Supabase with column-stripping retry ===
+            fields = {
                 "code": code,
                 "description": description,
                 "category": category or "General",
                 "cost_price": cost_price,
                 "selling_price": selling_price,
-                "price": selling_price,
                 "unit": unit,
                 "reorder_level": reorder_level,
             }
             
-            result = db.update_stock(stock_id, updates, biz_id)
-            if result:
-                flash(f"'{description}' updated successfully", "success")
+            logger.info(f"[STOCK EDIT] Saving stock_id={stock_id}: {fields}")
+            
+            patch_url = f"{db.url}/rest/v1/stock_items?id=eq.{stock_id}&business_id=eq.{biz_id}"
+            patch_headers = {**db.headers, "Prefer": "return=representation"}
+            
+            saved = False
+            max_retries = 4
+            for attempt in range(max_retries):
+                try:
+                    import requests as _req
+                    resp = _req.patch(patch_url, headers=patch_headers, json=fields, timeout=30)
+                    logger.info(f"[STOCK EDIT] Attempt {attempt+1}: status={resp.status_code}, body={resp.text[:200]}")
+                    
+                    if resp.status_code == 200:
+                        result = resp.json()
+                        if result and len(result) > 0:
+                            saved = True
+                            # Invalidate stock cache
+                            try:
+                                import clickai as _main
+                                _main._stock_cache.pop(biz_id, None)
+                            except:
+                                pass
+                            break
+                        else:
+                            logger.warning(f"[STOCK EDIT] 200 but empty — ID/biz mismatch?")
+                            break
+                    elif resp.status_code == 400:
+                        # Try to find and remove the bad column
+                        import re
+                        bad_match = re.search(r'column["\s]+(\w+)', resp.text, re.IGNORECASE)
+                        if not bad_match:
+                            bad_match = re.search(r'"(\w+)".*(?:not found|does not exist|unknown)', resp.text, re.IGNORECASE)
+                        if bad_match:
+                            bad_col = bad_match.group(1)
+                            logger.warning(f"[STOCK EDIT] Removing bad column '{bad_col}' and retrying")
+                            fields.pop(bad_col, None)
+                            if not fields:
+                                break
+                        else:
+                            logger.error(f"[STOCK EDIT] 400 error but can't identify bad column: {resp.text[:200]}")
+                            break
+                    else:
+                        logger.error(f"[STOCK EDIT] Unexpected status {resp.status_code}: {resp.text[:200]}")
+                        break
+                except Exception as e:
+                    logger.error(f"[STOCK EDIT] Exception on attempt {attempt+1}: {e}")
+                    break
+            
+            if saved:
+                flash(f"'{description}' updated — Cost: R{cost_price:.2f}, Sell: R{selling_price:.2f}", "success")
             else:
-                flash("Error updating stock item", "error")
+                flash("Error updating stock item — check server logs", "error")
             return redirect(f"/stock/{stock_id}")
         
         # === GET: Show edit form ===
