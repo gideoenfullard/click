@@ -8,7 +8,7 @@ UPGRADED to track ALL activity types:
 - Invoices, Quotes, POS Sales, Payments, Credit Notes
 - Delivery Notes, Purchase Orders, Job Cards, GRVs
 - Expenses, Bank Transactions, Cash-Ups, Timesheets
-- Journals, Scanned Documents, Stock Movements, Supplier Payments
+- Scan Inbox items, Stock Movements
 
 Overdue invoices shown per-invoice (not just per-customer grouping).
 Every action tracked to exact user via created_by field.
@@ -16,8 +16,8 @@ Every action tracked to exact user via created_by field.
 DB Tables read (all read-only, no writes except cache):
   invoices, sales, payments, quotes, credit_notes, delivery_notes,
   purchase_orders, jobs, goods_received, expenses, bank_transactions,
-  cash_ups, timesheet_entries, journals, scanned_documents,
-  stock_movements, supplier_payments, reminders, todos, notes, daily_briefings
+  cash_ups, timesheet_entries, scan_inbox, scanned_documents,
+  stock_movements, reminders, todos, notes, daily_briefings
 
 Routes:
   /pulse                  — Page (skeleton, data via AJAX)
@@ -722,11 +722,6 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 f_bank_txns = pool.submit(db.get, "bank_transactions", {"business_id": biz_id})
                 f_cashups = pool.submit(db.get, "cash_ups", {"business_id": biz_id})
                 f_timesheets = pool.submit(db.get, "timesheet_entries", {"business_id": biz_id})
-                # Additional activity sources
-                f_journals = pool.submit(db.get, "journals", {"business_id": biz_id})
-                f_scan_inbox = pool.submit(db.get, "scanned_documents", {"business_id": biz_id})
-                f_stock_moves = pool.submit(db.get, "stock_movements", {"business_id": biz_id})
-                f_supplier_payments = pool.submit(db.get, "supplier_payments", {"business_id": biz_id})
 
                 def _safe(future, label=""):
                     try:
@@ -750,10 +745,6 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 bank_txns = _safe(f_bank_txns, "bank_transactions")
                 cashups = _safe(f_cashups, "cash_ups")
                 timesheets = _safe(f_timesheets, "timesheet_entries")
-                journals = _safe(f_journals, "journals")
-                scan_docs = _safe(f_scan_inbox, "scanned_documents")
-                stock_moves = _safe(f_stock_moves, "stock_movements")
-                supplier_payments = _safe(f_supplier_payments, "supplier_payments")
 
                 try:
                     team_users = f_users.result(timeout=20) or []
@@ -830,7 +821,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 danger_html += f'''<div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(239,68,68,0.1);border-radius:8px;margin-bottom:8px;border-left:4px solid #ef4444;">
                     <div><strong style="color:#fff;">{c["name"][:25]}</strong><div style="color:#ef4444;font-size:12px;">{c["oldest_days"]} days overdue</div></div>
                     <div style="text-align:right;"><div style="color:#ef4444;font-weight:bold;font-size:18px;">{fmt(c["total"])}</div>
-                    <button onclick="quickZane('Stuur herinnering aan {cname_safe}')" style="font-size:10px;padding:3px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-top:4px;">&#128241; Herinner</button></div></div>'''
+                    <button onclick="quickZane('Send reminder to {cname_safe}')" style="font-size:10px;padding:3px 8px;background:#ef4444;border:none;border-radius:4px;color:white;cursor:pointer;margin-top:4px;">&#128241; Remind</button></div></div>'''
 
             # Warning HTML
             warning_html = ""
@@ -839,7 +830,7 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 warning_html += f'''<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:rgba(249,115,22,0.1);border-radius:6px;margin-bottom:6px;border-left:3px solid #f97316;">
                     <div><strong style="color:#fff;">{c["name"][:25]}</strong><span style="color:#f97316;font-size:11px;margin-left:8px;">{c["oldest_days"]}d</span></div>
                     <div style="display:flex;align-items:center;gap:8px;"><span style="color:#f97316;font-weight:bold;">{fmt(c["total"])}</span>
-                    <button onclick="quickZane('Stuur herinnering aan {cname_safe}')" style="font-size:9px;padding:2px 6px;background:#f97316;border:none;border-radius:3px;color:white;cursor:pointer;">&#128241;</button></div></div>'''
+                    <button onclick="quickZane('Send reminder to {cname_safe}')" style="font-size:9px;padding:2px 6px;background:#f97316;border:none;border-radius:3px;color:white;cursor:pointer;">&#128241;</button></div></div>'''
 
             # Watch HTML
             watch_html = ""
@@ -901,20 +892,18 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                                          "credit_notes": 0, "delivery_notes": 0, "purchase_orders": 0,
                                          "jobs": 0, "grvs": 0, "expenses": 0, "bank_txns": 0,
                                          "cashups": 0, "timesheets": 0,
-                                         "journals": 0, "scans": 0, "stock_moves": 0, "sup_payments": 0,
                                          "inv_amt": 0, "q_amt": 0, "s_amt": 0, "p_amt": 0,
                                          "cn_amt": 0, "dn_amt": 0, "po_amt": 0, "j_amt": 0,
                                          "grv_amt": 0, "exp_amt": 0, "bt_amt": 0, "cu_amt": 0,
-                                         "ts_hrs": 0, "jnl_amt": 0, "sm_amt": 0, "sp_amt": 0},
+                                         "ts_hrs": 0},
                         "yesterday_totals": {"invoices": 0, "quotes": 0, "sales": 0, "payments": 0,
                                              "credit_notes": 0, "delivery_notes": 0, "purchase_orders": 0,
                                              "jobs": 0, "grvs": 0, "expenses": 0, "bank_txns": 0,
                                              "cashups": 0, "timesheets": 0,
-                                             "journals": 0, "scans": 0, "stock_moves": 0, "sup_payments": 0,
                                              "inv_amt": 0, "q_amt": 0, "s_amt": 0, "p_amt": 0,
                                              "cn_amt": 0, "dn_amt": 0, "po_amt": 0, "j_amt": 0,
                                              "grv_amt": 0, "exp_amt": 0, "bt_amt": 0, "cu_amt": 0,
-                                             "ts_hrs": 0, "jnl_amt": 0, "sm_amt": 0, "sp_amt": 0}
+                                             "ts_hrs": 0}
                     }
 
             # Ensure ALL team members show (even idle ones)
@@ -945,13 +934,13 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
 
             # Quotes
             _gather(quotes, "created_at", "created_by",
-                    lambda q: f"Quote {q.get('quote_number', '')} vir {(q.get('customer_name', '') or 'Unknown')[:25]}",
+                    lambda q: f"Quote {q.get('quote_number', '')} for {(q.get('customer_name', '') or 'Unknown')[:25]}",
                     lambda q: float(q.get("total", 0) or 0),
                     "&#128221;", "#f59e0b", "quotes", "q_amt")
 
             # Invoices
             _gather(invoices, "date", "created_by",
-                    lambda i: f"Invoice {i.get('invoice_number', '')} vir {(i.get('customer_name', '') or 'Unknown')[:25]} ({i.get('status', 'draft')})",
+                    lambda i: f"Invoice {i.get('invoice_number', '')} for {(i.get('customer_name', '') or 'Unknown')[:25]} ({i.get('status', 'draft')})",
                     lambda i: float(i.get("total", 0) or 0),
                     "&#128196;", "#3b82f6", "invoices", "inv_amt")
 
@@ -963,50 +952,50 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
 
             # Payments
             _gather(payments, "date", "created_by",
-                    lambda p: f"Betaling ontvang van {(p.get('customer_name', '') or 'Customer')[:25]} ({p.get('payment_method', '') or 'n/a'})",
+                    lambda p: f"Payment received from {(p.get('customer_name', '') or 'Customer')[:25]} ({p.get('payment_method', '') or 'n/a'})",
                     lambda p: float(p.get("amount", 0) or 0),
                     "&#10003;", "#10b981", "payments", "p_amt")
 
             # Credit Notes
             _gather(credit_notes, "date", "created_by",
-                    lambda cn: f"Credit Note {cn.get('credit_note_number', cn.get('number', ''))} vir {(cn.get('customer_name', '') or 'Unknown')[:25]} ({cn.get('reason', '') or 'no reason'})" if cn.get('reason') else f"Credit Note {cn.get('credit_note_number', cn.get('number', ''))} vir {(cn.get('customer_name', '') or 'Unknown')[:25]}",
+                    lambda cn: f"Credit Note {cn.get('credit_note_number', cn.get('number', ''))} for {(cn.get('customer_name', '') or 'Unknown')[:25]} ({cn.get('reason', '') or 'no reason'})" if cn.get('reason') else f"Credit Note {cn.get('credit_note_number', cn.get('number', ''))} for {(cn.get('customer_name', '') or 'Unknown')[:25]}",
                     lambda cn: float(cn.get("total", 0) or 0),
                     "&#9888;", "#ef4444", "credit_notes", "cn_amt", "created_at")
 
             # Delivery Notes
             _gather(delivery_notes, "date", "created_by",
-                    lambda dn: f"Aflewering {dn.get('delivery_note_number', dn.get('number', ''))} na {(dn.get('customer_name', '') or 'Unknown')[:25]}",
+                    lambda dn: f"Delivery {dn.get('delivery_note_number', dn.get('number', ''))} to {(dn.get('customer_name', '') or 'Unknown')[:25]}",
                     lambda dn: float(dn.get("total", 0) or 0),
                     "&#128666;", "#8b5cf6", "delivery_notes", "dn_amt", "created_at")
 
             # Purchase Orders
             _gather(purchase_orders, "date", "created_by",
-                    lambda po: f"Bestelling {po.get('po_number', po.get('number', ''))} aan {(po.get('supplier_name', '') or 'Unknown')[:25]} ({po.get('status', 'draft')})",
+                    lambda po: f"PO {po.get('po_number', po.get('number', ''))} to {(po.get('supplier_name', '') or 'Unknown')[:25]} ({po.get('status', 'draft')})",
                     lambda po: float(po.get("total", 0) or 0),
                     "&#128230;", "#f97316", "purchase_orders", "po_amt", "created_at")
 
             # Job Cards
             _gather(jobs_list, "date", "created_by",
-                    lambda j: f"Job {j.get('job_number', j.get('number', ''))} vir {(j.get('customer_name', '') or 'Unknown')[:25]}" + (f" — {j.get('status', '')}" if j.get("status") else ""),
+                    lambda j: f"Job {j.get('job_number', j.get('number', ''))} for {(j.get('customer_name', '') or 'Unknown')[:25]}" + (f" — {j.get('status', '')}" if j.get("status") else ""),
                     lambda j: float(j.get("total", j.get("quoted_total", 0)) or 0),
                     "&#128295;", "#06b6d4", "jobs", "j_amt", "created_at")
 
             # GRVs
             _gather(grvs, "date", "created_by",
-                    lambda g: f"GRV {g.get('grv_number', g.get('number', ''))} van {(g.get('supplier_name', '') or 'Unknown')[:25]} ontvang",
+                    lambda g: f"GRV {g.get('grv_number', g.get('number', ''))} from {(g.get('supplier_name', '') or 'Unknown')[:25]} received",
                     lambda g: float(g.get("total", 0) or 0),
                     "&#128230;", "#14b8a6", "grvs", "grv_amt", "created_at")
 
             # ── NEW: Expenses ──
             _gather(expenses, "date", "created_by",
-                    lambda e: f"Uitgawe: {(e.get('description', e.get('category', '')) or 'Onbekend')[:30]}" + (f" ({e.get('supplier_name', '')[:20]})" if e.get('supplier_name') else ""),
+                    lambda e: f"Expense: {(e.get('description', e.get('category', '')) or 'Unknown')[:30]}" + (f" ({e.get('supplier_name', '')[:20]})" if e.get('supplier_name') else ""),
                     lambda e: float(e.get("amount", e.get("total", 0)) or 0),
                     "&#128181;", "#f43f5e", "expenses", "exp_amt", "created_at")
 
             # ── NEW: Bank Transactions ──
             def _bank_text(bt):
                 amt = float(bt.get("amount", 0) or 0)
-                direction = "Inbetaling" if amt >= 0 else "Betaling uit"
+                direction = "Deposit" if amt >= 0 else "Payment"
                 desc = (bt.get("description", bt.get("reference", "")) or "")[:30]
                 return f"Bank {direction}: {desc}"
 
@@ -1045,30 +1034,6 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                     lambda cu: float(cu.get("system_total", cu.get("declared_total", 0)) or 0),
                     "&#128176;", "#84cc16", "cashups", "cu_amt", "created_at")
 
-            # ── Journals ──
-            _gather(journals, "date", "created_by",
-                    lambda j: f"Joernaal {j.get('journal_number', j.get('reference', ''))} — {(j.get('description', j.get('memo', '')) or 'Geen beskrywing')[:30]}",
-                    lambda j: float(j.get("total", j.get("debit_total", 0)) or 0),
-                    "&#128210;", "#7c3aed", "journals", "jnl_amt", "created_at")
-
-            # ── Scanned Documents ──
-            _gather(scan_docs, "created_at", "created_by",
-                    lambda sd: f"Skandeer: {(sd.get('document_type', sd.get('type', '')) or 'dokument')} — {(sd.get('filename', sd.get('description', sd.get('supplier_name', ''))) or '')[:30]}" + (f" ({sd.get('status', '')})" if sd.get('status') else ""),
-                    lambda sd: float(sd.get("total", sd.get("amount", 0)) or 0),
-                    "&#128196;", "#ec4899", "scans", "sm_amt", "created_at")
-
-            # ── Stock Movements ──
-            _gather(stock_moves, "created_at", "created_by",
-                    lambda sm: f"Voorraad {sm.get('movement_type', sm.get('type', 'adjustment'))}: {(sm.get('stock_code', sm.get('description', '')) or '')[:25]} qty {sm.get('quantity', sm.get('qty', 0))}",
-                    lambda sm: abs(float(sm.get("value", sm.get("total", 0)) or 0)),
-                    "&#128230;", "#d97706", "stock_moves", "sm_amt", "created_at")
-
-            # ── Supplier Payments ──
-            _gather(supplier_payments, "date", "created_by",
-                    lambda sp: f"Betaal aan {(sp.get('supplier_name', '') or 'Verskaffer')[:25]} ({sp.get('payment_method', '') or 'n/a'})",
-                    lambda sp: float(sp.get("amount", sp.get("total", 0)) or 0),
-                    "&#128181;", "#dc2626", "sup_payments", "sp_amt", "created_at")
-
             # ── NEW: Timesheets (track hours not amount) ──
             for ts_entry in timesheets:
                 ts_date = str(ts_entry.get("date", ts_entry.get("created_at", "")))[:10]
@@ -1105,10 +1070,6 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                 if totals.get("bank_txns"): parts.append(f'<span style="color:#0ea5e9;">{totals["bank_txns"]} bank {fmt(totals["bt_amt"])}</span>')
                 if totals.get("cashups"): parts.append(f'<span style="color:#84cc16;">{totals["cashups"]} cash-up</span>')
                 if totals.get("timesheets"): parts.append(f'<span style="color:#a855f7;">{totals["timesheets"]} ts {totals["ts_hrs"]:.1f}h</span>')
-                if totals.get("journals"): parts.append(f'<span style="color:#7c3aed;">{totals["journals"]} jnl {fmt(totals["jnl_amt"])}</span>')
-                if totals.get("scans"): parts.append(f'<span style="color:#ec4899;">{totals["scans"]} scan</span>')
-                if totals.get("stock_moves"): parts.append(f'<span style="color:#d97706;">{totals["stock_moves"]} stk mv</span>')
-                if totals.get("sup_payments"): parts.append(f'<span style="color:#dc2626;">{totals["sup_payments"]} sup pay {fmt(totals["sp_amt"])}</span>')
                 return " &bull; ".join(parts) if parts else '<span style="color:#ef4444;">No activity</span>'
 
             # ── Build action lines helper ──
@@ -1199,11 +1160,11 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                         })
 
             _add_activity(payments, "date",
-                          lambda p: f'Betaling ontvang van {(p.get("customer_name", "") or "Customer")[:20]} ({p.get("payment_method", "") or "n/a"})',
+                          lambda p: f'Payment received from {(p.get("customer_name", "") or "Customer")[:20]} ({p.get("payment_method", "") or "n/a"})',
                           lambda p: float(p.get("amount", 0) or 0), "&#10003;", "#10b981")
 
             _add_activity(invoices, "date",
-                          lambda i: f'Invoice {i.get("invoice_number", "")} vir {(i.get("customer_name", "") or "Unknown")[:20]} ({i.get("status", "draft")})',
+                          lambda i: f'Invoice {i.get("invoice_number", "")} for {(i.get("customer_name", "") or "Unknown")[:20]} ({i.get("status", "draft")})',
                           lambda i: float(i.get("total", 0) or 0), "&#128196;", "#f59e0b")
 
             _add_activity(sales, "date",
@@ -1211,32 +1172,32 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
                           lambda s: float(s.get("total", 0) or 0), "&#128176;", "#10b981")
 
             _add_activity(credit_notes, "date",
-                          lambda cn: f'Credit Note {cn.get("credit_note_number", cn.get("number", ""))} vir {(cn.get("customer_name", "") or "Unknown")[:20]}',
+                          lambda cn: f'Credit Note {cn.get("credit_note_number", cn.get("number", ""))} for {(cn.get("customer_name", "") or "Unknown")[:20]}',
                           lambda cn: float(cn.get("total", 0) or 0), "&#9888;", "#ef4444", extra_date_field="created_at")
 
             _add_activity(delivery_notes, "date",
-                          lambda dn: f'Aflewering {dn.get("delivery_note_number", dn.get("number", ""))} na {(dn.get("customer_name", "") or "Unknown")[:20]}',
+                          lambda dn: f'Delivery {dn.get("delivery_note_number", dn.get("number", ""))} to {(dn.get("customer_name", "") or "Unknown")[:20]}',
                           lambda dn: float(dn.get("total", 0) or 0), "&#128666;", "#8b5cf6", extra_date_field="created_at")
 
             _add_activity(purchase_orders, "date",
-                          lambda po: f'Bestelling {po.get("po_number", po.get("number", ""))} aan {(po.get("supplier_name", "") or "Unknown")[:20]} ({po.get("status", "draft")})',
+                          lambda po: f'PO {po.get("po_number", po.get("number", ""))} to {(po.get("supplier_name", "") or "Unknown")[:20]} ({po.get("status", "draft")})',
                           lambda po: float(po.get("total", 0) or 0), "&#128230;", "#f97316", extra_date_field="created_at")
 
             _add_activity(jobs_list, "date",
-                          lambda j: f'Job {j.get("job_number", j.get("number", ""))} vir {(j.get("customer_name", "") or "Unknown")[:20]}',
+                          lambda j: f'Job {j.get("job_number", j.get("number", ""))} for {(j.get("customer_name", "") or "Unknown")[:20]}',
                           lambda j: float(j.get("total", j.get("quoted_total", 0)) or 0), "&#128295;", "#06b6d4", extra_date_field="created_at")
 
             _add_activity(grvs, "date",
-                          lambda g: f'GRV {g.get("grv_number", g.get("number", ""))} van {(g.get("supplier_name", "") or "Unknown")[:20]} ontvang',
+                          lambda g: f'GRV {g.get("grv_number", g.get("number", ""))} from {(g.get("supplier_name", "") or "Unknown")[:20]} received',
                           lambda g: float(g.get("total", 0) or 0), "&#128230;", "#14b8a6", extra_date_field="created_at")
 
             _add_activity(expenses, "date",
-                          lambda e: f'Uitgawe: {(e.get("description", e.get("category", "")) or "Onbekend")[:25]}',
+                          lambda e: f'Expense: {(e.get("description", e.get("category", "")) or "Unknown")[:25]}',
                           lambda e: float(e.get("amount", e.get("total", 0)) or 0), "&#128181;", "#f43f5e", extra_date_field="created_at")
 
             def _bank_activity_text(bt):
                 amt = float(bt.get("amount", 0) or 0)
-                direction = "Inbetaling" if amt >= 0 else "Betaling uit"
+                direction = "Deposit" if amt >= 0 else "Payment"
                 desc = (bt.get("description", bt.get("reference", "")) or "")[:25]
                 return f'Bank {direction}: {desc}'
 
@@ -1247,26 +1208,6 @@ def register_pulse_routes(app, db, login_required, Auth, generate_id, now, today
             _add_activity(cashups, "date",
                           _cashup_text,
                           lambda cu: float(cu.get("system_total", cu.get("declared_total", 0)) or 0), "&#128176;", "#84cc16", extra_date_field="created_at")
-
-            # Journals in activity feed
-            _add_activity(journals, "date",
-                          lambda j: f'Joernaal {j.get("journal_number", j.get("reference", ""))} — {(j.get("description", j.get("memo", "")) or "Geen beskrywing")[:25]}',
-                          lambda j: float(j.get("total", j.get("debit_total", 0)) or 0), "&#128210;", "#7c3aed", extra_date_field="created_at")
-
-            # Scanned documents in activity feed
-            _add_activity(scan_docs, "created_at",
-                          lambda sd: f'Skandeer: {(sd.get("document_type", sd.get("type", "")) or "dokument")} — {(sd.get("filename", sd.get("description", sd.get("supplier_name", ""))) or "")[:25]}',
-                          lambda sd: float(sd.get("total", sd.get("amount", 0)) or 0), "&#128196;", "#ec4899", extra_date_field="created_at")
-
-            # Stock movements in activity feed
-            _add_activity(stock_moves, "created_at",
-                          lambda sm: f'Voorraad {sm.get("movement_type", sm.get("type", "adjustment"))}: {(sm.get("stock_code", sm.get("description", "")) or "")[:20]} qty {sm.get("quantity", sm.get("qty", 0))}',
-                          lambda sm: abs(float(sm.get("value", sm.get("total", 0)) or 0)), "&#128230;", "#d97706", extra_date_field="created_at")
-
-            # Supplier payments in activity feed
-            _add_activity(supplier_payments, "date",
-                          lambda sp: f'Betaal aan {(sp.get("supplier_name", "") or "Verskaffer")[:20]} ({sp.get("payment_method", "") or "n/a"})',
-                          lambda sp: float(sp.get("amount", sp.get("total", 0)) or 0), "&#128181;", "#dc2626", extra_date_field="created_at")
 
             # Timesheets in activity feed
             for ts_entry in timesheets:
