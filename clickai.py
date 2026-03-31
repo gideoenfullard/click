@@ -19421,63 +19421,83 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
     elif role == "staff":
         # Staff can see basic operational items (no financial pages)
         nav_items = [
-            ("dashboard", "/", "Dashboard"),
-            ("pos", "/pos", "POS"),
-            ("customers", "/customers", "Customers"),
-            ("suppliers", "/suppliers", "Suppliers"),
-            ("stock", "/stock", "Stock"),
-            ("purchases", "/purchases", "Purchases"),
-            ("delivery-notes", "/delivery-notes", "Delivery Notes"),
-            ("jobs", "/jobs", "Jobs"),
+            ("dashboard", "/", "&#9776; Dashboard"),
+            ("pos", "/pos", "&#128179; POS"),
+            ("customers", "/customers", "&#128101; Customers"),
+            ("suppliers", "/suppliers", "&#128722; Suppliers"),
+            ("stock", "/stock", "&#128230; Stock"),
+            ("purchases", "/purchases", "&#128230; Purchases"),
+            ("delivery-notes", "/delivery-notes", "&#128666; Delivery Notes"),
+            ("jobs", "/jobs", "&#128295; Jobs"),
         ]
     elif role == "manager":
         # Managers can see most things except settings
         nav_items = [
-            ("dashboard", "/", "Dashboard"),
-            ("pulse", "/pulse", "Pulse"),
-            ("pos", "/pos", "POS"),
-            ("customers", "/customers", "Customers"),
-            ("suppliers", "/suppliers", "Suppliers"),
-            ("stock", "/stock", "Stock"),
-            ("invoices", "/invoices", "Invoices"),
+            ("dashboard", "/", "&#9776; Dashboard"),
+            ("pulse", "/pulse", "&#9889; Pulse"),
+            ("_div1", "", ""),
+            ("pos", "/pos", "&#128179; POS"),
+            ("cashup", "/cashup", "&#128176; Cash Up"),
+            ("customers", "/customers", "&#128101; Customers"),
+            ("_div2", "", ""),
+            ("invoices", "/invoices", "&#128196; Invoices"),
             ("quotes", "/quotes", "Quotes"),
-            ("purchases", "/purchases", "Purchases"),
-            ("delivery-notes", "/delivery-notes", "Delivery Notes"),
-            ("jobs", "/jobs", "Jobs"),
-            ("expenses", "/expenses", "Expenses"),
-            ("banking", "/banking", "Banking"),
-            ("reports", "/reports", "Reports"),
-            ("ledger", "/ledger", "Ledger"),
-            ("inbox", "/scan-inbox", "Inbox"),
+            ("delivery-notes", "/delivery-notes", "&#128666; Delivery Notes"),
+            ("_div3", "", ""),
+            ("suppliers", "/suppliers", "&#128722; Suppliers"),
+            ("purchases", "/purchases", "&#128230; Purchases"),
+            ("_div4", "", ""),
+            ("stock", "/stock", "&#128230; Stock"),
+            ("jobs", "/jobs", "&#128295; Jobs"),
+            ("_div5", "", ""),
+            ("expenses", "/expenses", "&#128181; Expenses"),
+            ("banking", "/banking", "&#127974; Banking"),
+            ("timesheets", "/timesheets", "&#128337; Timesheets"),
+            ("_div6", "", ""),
+            ("reports", "/reports", "&#128202; Reports"),
+            ("ledger", "/ledger", "&#128214; Ledger"),
+            ("inbox", "/scan-inbox", "&#128232; Inbox"),
         ]
     else:
-        # Admin and Owner see everything
+        # Admin and Owner see everything — grouped with icons
         nav_items = [
-            ("dashboard", "/", "Dashboard"),
-            ("pulse", "/pulse", "Pulse"),
-            ("pos", "/pos", "POS"),
-            ("customers", "/customers", "Customers"),
-            ("suppliers", "/suppliers", "Suppliers"),
-            ("stock", "/stock", "Stock"),
-            ("invoices", "/invoices", "Invoices"),
-            ("quotes", "/quotes", "Quotes"),
-            ("purchases", "/purchases", "Purchases"),
-            ("delivery-notes", "/delivery-notes", "Delivery Notes"),
-            ("jobs", "/jobs", "Jobs"),
-            ("expenses", "/expenses", "Expenses"),
-            ("banking", "/banking", "Banking"),
-            ("payroll", "/payroll", "Payroll"),
-            ("reports", "/reports", "Reports"),
-            ("ledger", "/ledger", "Ledger"),
-            ("intelligence", "/intelligence", "AI"),
-            ("tools", "/tools", "Tools"),
-            ("import", "/smart-import", "Import"),
-            ("inbox", "/scan-inbox", "Inbox"),
-            ("settings", "/settings", "Settings"),
+            ("dashboard", "/", "&#9776; Dashboard"),
+            ("pulse", "/pulse", "&#9889; Pulse"),
+            ("_div1", "", ""),
+            ("pos", "/pos", "&#128179; POS"),
+            ("cashup", "/cashup", "&#128176; Cash Up"),
+            ("customers", "/customers", "&#128101; Customers"),
+            ("_div2", "", ""),
+            ("invoices", "/invoices", "&#128196; Invoices"),
+            ("quotes", "/quotes", "&#128221; Quotes"),
+            ("delivery-notes", "/delivery-notes", "&#128666; Delivery Notes"),
+            ("_div3", "", ""),
+            ("suppliers", "/suppliers", "&#128722; Suppliers"),
+            ("purchases", "/purchases", "&#128230; Purchases"),
+            ("_div4", "", ""),
+            ("stock", "/stock", "&#128230; Stock"),
+            ("jobs", "/jobs", "&#128295; Jobs"),
+            ("_div5", "", ""),
+            ("expenses", "/expenses", "&#128181; Expenses"),
+            ("banking", "/banking", "&#127974; Banking"),
+            ("payroll", "/payroll", "&#128178; Payroll"),
+            ("timesheets", "/timesheets", "&#128337; Timesheets"),
+            ("_div6", "", ""),
+            ("reports", "/reports", "&#128202; Reports"),
+            ("ledger", "/ledger", "&#128214; Ledger"),
+            ("_div7", "", ""),
+            ("intelligence", "/intelligence", "&#129302; AI"),
+            ("tools", "/tools", "&#128736; Tools"),
+            ("import", "/smart-import", "&#128229; Import"),
+            ("inbox", "/scan-inbox", "&#128232; Inbox"),
+            ("settings", "/settings", "&#9881; Settings"),
         ]
     
     nav_html = ""
     for key, url, label in nav_items:
+        if key.startswith("_div"):
+            nav_html += '<span class="nav-divider" style="display:inline-block;width:1px;height:20px;background:var(--border);margin:0 4px;flex-shrink:0;opacity:0.5;align-self:center;"></span>'
+            continue
         active_class = "active" if key == active else ""
         nav_html += f'<a href="{url}" class="{active_class}">{label}</a>'
     
@@ -20310,6 +20330,57 @@ def render_page(title: str, content: str, user: dict = None, active: str = "") -
         window.addEventListener('offline', () => {{ console.log('[OFFLINE] Offline'); updateGlobalBanner(); }});
         updateGlobalBanner();
     }})();
+    </script>
+    
+    <!-- ═══ TOAST NOTIFICATIONS ═══ -->
+    <div id="toastContainer" style="position:fixed;top:20px;right:20px;z-index:999999;display:flex;flex-direction:column;gap:10px;pointer-events:none;"></div>
+    <style>
+    .clickai-toast {{
+        pointer-events:auto;
+        min-width:280px;max-width:420px;padding:14px 20px 14px 16px;
+        border-radius:10px;color:#fff;font-size:14px;line-height:1.4;
+        display:flex;align-items:flex-start;gap:10px;
+        box-shadow:0 8px 30px rgba(0,0,0,0.3);
+        animation:toastIn 0.3s ease-out;
+        border-left:4px solid;position:relative;
+        backdrop-filter:blur(12px);
+    }}
+    .clickai-toast.toast-success {{ background:rgba(16,185,129,0.92);border-color:#059669; }}
+    .clickai-toast.toast-error {{ background:rgba(239,68,68,0.92);border-color:#dc2626; }}
+    .clickai-toast.toast-warning {{ background:rgba(245,158,11,0.92);border-color:#d97706; }}
+    .clickai-toast.toast-info {{ background:rgba(99,102,241,0.92);border-color:#6366f1; }}
+    .clickai-toast .toast-icon {{ font-size:18px;flex-shrink:0;margin-top:1px; }}
+    .clickai-toast .toast-msg {{ flex:1; }}
+    .clickai-toast .toast-close {{
+        position:absolute;top:8px;right:10px;background:none;border:none;
+        color:rgba(255,255,255,0.7);cursor:pointer;font-size:16px;padding:0 4px;
+        line-height:1;
+    }}
+    .clickai-toast .toast-close:hover {{ color:#fff; }}
+    .clickai-toast.toast-out {{ animation:toastOut 0.25s ease-in forwards; }}
+    @keyframes toastIn {{ from {{ opacity:0;transform:translateX(40px); }} to {{ opacity:1;transform:translateX(0); }} }}
+    @keyframes toastOut {{ from {{ opacity:1;transform:translateX(0); }} to {{ opacity:0;transform:translateX(40px); }} }}
+    @media (max-width:500px) {{
+        #toastContainer {{ top:10px;right:10px;left:10px; }}
+        .clickai-toast {{ min-width:auto;max-width:none; }}
+    }}
+    </style>
+    <script>
+    function showToast(message, type, duration) {{
+        type = type || 'info';
+        duration = duration || 4000;
+        var icons = {{success:'&#10004;',error:'&#10008;',warning:'&#9888;',info:'&#8505;'}};
+        var container = document.getElementById('toastContainer');
+        if (!container) return;
+        var toast = document.createElement('div');
+        toast.className = 'clickai-toast toast-' + type;
+        toast.innerHTML = '<span class="toast-icon">' + (icons[type]||'') + '</span>'
+            + '<span class="toast-msg">' + message + '</span>'
+            + '<button class="toast-close" onclick="this.parentElement.classList.add(\'toast-out\');setTimeout(function(){{this.parentElement.remove()}}.bind(this),250)">&times;</button>';
+        container.appendChild(toast);
+        var _t = toast;
+        setTimeout(function(){{ _t.classList.add('toast-out'); setTimeout(function(){{ _t.remove(); }}, 250); }}, duration);
+    }}
     </script>
 </body>
 </html>'''
