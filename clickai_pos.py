@@ -3917,69 +3917,88 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             // Exit fullscreen before print (browsers block print dialog in fullscreen)
             if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
             
-            // If duplicates enabled for thermal: build BOTH copies into ONE document
-            // with a forced page-break between them so the printer cuts
-            if (posSettings.print_duplicates && format === 'thermal') {
-                var slipBody = document.getElementById('slipContent');
-                if (slipBody) {
-                    var slip1 = slipBody.innerHTML;
-                    var slip2 = slip1 + '<div style="text-align:center;font-size:11px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;">** STORE COPY **</div>';
-                    
-                    var dualStyles = 'body { width: 72mm; margin: 0; padding: 0; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
-                        ' * { font-weight: bold !important; color: #000 !important; background: transparent !important; }' +
-                        ' table { width: 100%; border-collapse: collapse; }' +
-                        ' td { font-weight: bold !important; padding: 2px 0; }' +
-                        ' .slip-copy { page-break-after: always; padding: 4mm; }' +
-                        ' .slip-copy:last-child { page-break-after: auto; }' +
-                        ' @page { size: 80mm auto; margin: 0; }' +
-                        ' @media print { body { width: 72mm; } }';
-                    
-                    fullHtml = '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + dualStyles + '</style></head><body>' +
-                        '<div class="slip-copy">' + slip1 + '</div>' +
-                        '<div class="slip-copy">' + slip2 + '</div>' +
-                        '</body></html>';
+            // === PRINT HELPER: load HTML into hidden iframe and print ===
+            function _getOrCreateFrame() {
+                var pf = document.getElementById('posPrintFrame');
+                if (!pf) {
+                    pf = document.createElement('iframe');
+                    pf.id = 'posPrintFrame';
+                    pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
+                    document.body.appendChild(pf);
                 }
+                return pf;
             }
             
-            // Use hidden iframe — avoids popup window staying open
-            var pf = document.getElementById('posPrintFrame');
-            if (!pf) {
-                pf = document.createElement('iframe');
-                pf.id = 'posPrintFrame';
-                pf.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:600px;border:none;';
-                document.body.appendChild(pf);
+            function _printOneSlip(html, callback) {
+                var pf = _getOrCreateFrame();
+                var fd = pf.contentDocument || pf.contentWindow.document;
+                fd.open(); fd.write(html); fd.close();
+                
+                function doPrint() {
+                    try {
+                        pf.contentWindow.focus();
+                        pf.contentWindow.print();
+                    } catch(e) {
+                        console.log('[POS] Print error:', e);
+                    }
+                    if (callback) setTimeout(callback, 500);
+                }
+                
+                if (fd.readyState === 'complete') { setTimeout(doPrint, 300); }
+                else { pf.onload = function() { setTimeout(doPrint, 200); }; setTimeout(doPrint, 1000); }
             }
-            var fd = pf.contentDocument || pf.contentWindow.document;
-            fd.open(); fd.write(fullHtml); fd.close();
+            
+            function _buildSlipHtml(content, copyLabel) {
+                var thermalStyles = 'body { width: 72mm; margin: 0; padding: 4mm; font-family: "Courier New", monospace; font-size: 16px; font-weight: bold; color: #000; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+                    ' * { font-weight: bold !important; color: #000 !important; background: transparent !important; }' +
+                    ' table { width: 100%; border-collapse: collapse; }' +
+                    ' td { font-weight: bold !important; padding: 2px 0; }' +
+                    ' @page { size: 80mm auto; margin: 0; }' +
+                    ' @media print { body { width: 72mm; } }';
+                var labelHtml = copyLabel ? '<div style="text-align:center;font-size:12px;margin-top:10px;border-top:1px dashed #000;padding-top:5px;font-weight:bold;">** ' + copyLabel + ' **</div>' : '';
+                return '<!DOCTYPE html><html><head><title>POS Slip</title><style>' + thermalStyles + '</style></head><body>' + content + labelHtml + '</body></html>';
+            }
             
             function _afterPrint() {
-                // Close the slip modal
                 var modal = document.getElementById('printSlipModal');
                 if (modal) modal.style.display = 'none';
                 var _btnRow = document.getElementById('printButtonRow');
                 if (_btnRow) _btnRow.style.display = 'flex';
-                // Return to fullscreen
                 if (f11Mode && !document.fullscreenElement) {
                     try { document.documentElement.requestFullscreen(); } catch(e) {}
                 }
-                // Reset POS for next sale
                 if (typeof afterSaleReset === 'function') afterSaleReset();
             }
             
-            function _executePrint() {
-                try {
-                    pf.contentWindow.focus();
-                    pf.contentWindow.print();
-                    _afterPrint();
-                } catch(e) {
-                    console.log('[POS] Print error:', e);
+            // Exit fullscreen before print (browsers block print dialog in fullscreen)
+            if (document.fullscreenElement) { try { document.exitFullscreen(); } catch(e) {} }
+            
+            // === DUPLICATE PRINT: Two SEPARATE print jobs so printer cuts between them ===
+            if (posSettings.print_duplicates && format === 'thermal') {
+                var slipBody = document.getElementById('slipContent');
+                if (slipBody) {
+                    var slipInner = slipBody.innerHTML;
+                    var customerHtml = _buildSlipHtml(slipInner, 'CUSTOMER COPY');
+                    var storeHtml = _buildSlipHtml(slipInner, 'STORE COPY');
+                    
+                    // Print copy 1 (customer), then after printer finishes, print copy 2 (store)
+                    _printOneSlip(customerHtml, function() {
+                        // Short delay so printer processes first job and cuts
+                        setTimeout(function() {
+                            _printOneSlip(storeHtml, function() {
+                                _afterPrint();
+                            });
+                        }, 1500);
+                    });
+                } else {
                     _afterPrint();
                 }
+            } else {
+                // === SINGLE PRINT (no duplicates, or A4 format) ===
+                _printOneSlip(fullHtml, function() {
+                    _afterPrint();
+                });
             }
-            
-            // Wait for iframe content to load, then print
-            if (fd.readyState === 'complete') { setTimeout(_executePrint, 300); }
-            else { pf.onload = function() { setTimeout(_executePrint, 200); }; setTimeout(_executePrint, 1000); }
         }
         
         function closePrintModal() {
