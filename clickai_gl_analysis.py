@@ -578,6 +578,16 @@ def register_gl_analysis_routes(app, db, login_required, Auth, render_page,
         <!-- RESULTS (hidden until upload) -->
         <div id="glResults" style="display:none;">
 
+            <!-- ACTION BAR -->
+            <div class="card" style="margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                <h3 id="glReportTitle" style="margin:0;">GL Analysis Report</h3>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-secondary" onclick="downloadFullReport()" style="font-size:12px;padding:6px 14px;">⬇️ Download</button>
+                    <button class="btn btn-secondary" onclick="showGLEmailModal()" style="font-size:12px;padding:6px 14px;">📧 Email</button>
+                    <button class="btn btn-secondary" onclick="window.print();" style="font-size:12px;padding:6px 14px;">🖨️ Print</button>
+                </div>
+            </div>
+
             <!-- SUMMARY CARDS -->
             <div class="stats-grid" id="summaryCards" style="margin-bottom:20px;"></div>
 
@@ -605,6 +615,23 @@ def register_gl_analysis_routes(app, db, login_required, Auth, render_page,
             <!-- ZANE AI INSIGHTS -->
             <div class="card" id="aiCard" style="margin-bottom:20px;background:linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.05));border:1px solid rgba(99,102,241,0.2);"></div>
 
+        </div>
+
+        <!-- EMAIL MODAL -->
+        <div id="glEmailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:var(--card, #1a1a2e);border:1px solid var(--border, #333);border-radius:12px;padding:25px;width:90%;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+                    <h3 style="margin:0;color:var(--primary, #6366f1);">Email GL Report</h3>
+                    <button onclick="closeGLEmailModal()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">✕</button>
+                </div>
+                <input type="email" id="glEmailTo" class="form-input" placeholder="email@example.com" style="width:100%;margin-bottom:10px;">
+                <input type="text" id="glEmailSubject" class="form-input" placeholder="Subject (optional)" style="width:100%;margin-bottom:15px;">
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button class="btn btn-secondary" onclick="closeGLEmailModal()">Cancel</button>
+                    <button class="btn btn-primary" id="glSendEmailBtn" onclick="sendGLReportEmail()">Send</button>
+                </div>
+                <p id="glEmailStatus" style="margin:10px 0 0 0;font-size:12px;display:none;"></p>
+            </div>
         </div>
 
         <script>
@@ -873,6 +900,184 @@ def register_gl_analysis_routes(app, db, login_required, Auth, render_page,
             } catch(e) {
                 document.getElementById('aiInsights').innerHTML = '<p style="color:#f59e0b;">Could not load AI analysis. The figures above are still accurate.</p>';
             }
+        }
+
+        // ═══ BUILD FULL REPORT HTML (light theme for download/email) ═══
+        function buildReportHTML() {
+            const dateStr = new Date().toISOString().slice(0,10);
+            const s = glAnalysisData.summary;
+            const trend = glAnalysisData.revenue_trend || [];
+            const tc = glAnalysisData.top_customers || [];
+            const ts = glAnalysisData.top_suppliers || [];
+            const anomalies = glAnalysisData.anomalies || [];
+            const accs = glAnalysisData.account_table || [];
+            const aiEl = document.getElementById('aiInsights');
+            const aiHtml = (aiEl && !aiEl.querySelector('.spinner')) ? aiEl.innerHTML : '<p>AI analysis not yet available.</p>';
+
+            return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>GL Analysis Report</title>
+<style>
+body { font-family: Arial, Helvetica, sans-serif; max-width: 900px; margin: 30px auto; padding: 20px; color: #1a1a2e; line-height: 1.7; font-size: 14px; }
+h1, h2, h3, h4 { color: #1a1a2e; }
+h1 { color: #4f46e5; border-bottom: 2px solid #4f46e5; padding-bottom: 10px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+th { text-align: left; padding: 8px; border-bottom: 2px solid #e5e7eb; color: #6366f1; font-weight: 600; font-size: 12px; }
+td { padding: 6px 8px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
+.metric { display: inline-block; padding: 12px 18px; margin: 4px; border-radius: 8px; text-align: center; min-width: 120px; }
+.metric .label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 1px; }
+.metric .value { font-size: 1.2rem; font-weight: 700; }
+.green { color: #10b981; }
+.red { color: #ef4444; }
+.amber { color: #f59e0b; }
+.purple { color: #6366f1; }
+.flag { padding: 10px 14px; margin-bottom: 6px; border-left: 3px solid #ef4444; background: #fef2f2; border-radius: 0 6px 6px 0; }
+.flag.warn { border-left-color: #f59e0b; background: #fffbeb; }
+.section { margin: 30px 0; }
+hr { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
+@media print { body { margin: 0; } }
+</style></head><body>
+<h1>GL Analysis Report</h1>
+<p style="color:#6b7280;font-size:12px;">Generated by ClickAI | ${dateStr} | Period: ${s.date_from} to ${s.date_to} (${s.months} months)</p>
+
+<div class="section">
+<h2>Summary</h2>
+<div>
+<span class="metric" style="background:#f0fdf4;"><span class="label">Accounts</span><br><span class="value">${s.account_count}</span></span>
+<span class="metric" style="background:#f0f9ff;"><span class="label">Transactions</span><br><span class="value">${s.transaction_count.toLocaleString()}</span></span>
+<span class="metric" style="background:${s.tb_balanced ? '#f0fdf4' : '#fef2f2'};"><span class="label">Trial Balance</span><br><span class="value ${s.tb_balanced ? 'green' : 'red'}">${s.tb_balanced ? '✓ Balanced' : '✗ Off by R' + Math.abs(s.tb_difference).toFixed(2)}</span></span>
+</div>
+</div>
+
+<div class="section">
+<h2>Trial Balance</h2>
+<table><tr><th>Total Debits</th><th>Total Credits</th><th>Difference</th></tr>
+<tr><td class="green" style="font-weight:700;font-size:1.1rem;">${R(s.tb_total_debit)}</td><td class="red" style="font-weight:700;font-size:1.1rem;">${R(s.tb_total_credit)}</td><td style="font-weight:700;font-size:1.1rem;color:${s.tb_balanced ? '#10b981' : '#ef4444'};">${R(s.tb_difference)}</td></tr></table>
+</div>
+
+<div class="section">
+<h2>Profit & Loss</h2>
+<table><tr><th>Revenue</th><th>Cost of Sales</th><th>Gross Profit</th><th>GP%</th><th>Expenses</th><th>Net Profit</th><th>NP%</th></tr>
+<tr>
+<td class="green" style="font-weight:700;">${R(s.total_income)}</td>
+<td class="red">${R(s.total_cos)}</td>
+<td style="font-weight:700;">${R(s.gross_profit)}</td>
+<td>${s.gp_margin}%</td>
+<td class="amber">${R(s.total_expenses)}</td>
+<td style="font-weight:700;color:${s.net_profit >= 0 ? '#10b981' : '#ef4444'};">${R(s.net_profit)}</td>
+<td>${s.np_margin}%</td>
+</tr></table>
+</div>
+
+${trend.length > 1 ? '<div class="section"><h2>Monthly Revenue</h2><table><tr>' + trend.map(t => '<th style="text-align:center;">' + t.month.substring(5) + '</th>').join('') + '</tr><tr>' + trend.map(t => '<td style="text-align:center;font-weight:600;">' + R(t.amount) + '</td>').join('') + '</tr></table></div>' : ''}
+
+${tc.length > 0 ? '<div class="section"><h2>Top Customers</h2><table><tr><th>#</th><th>Customer</th><th style="text-align:right;">Total</th></tr>' + tc.map((c,i) => '<tr><td>' + (i+1) + '</td><td>' + c.name + '</td><td style="text-align:right;font-weight:600;">' + R(c.total) + '</td></tr>').join('') + '</table></div>' : ''}
+
+${ts.length > 0 ? '<div class="section"><h2>Top Suppliers</h2><table><tr><th>#</th><th>Supplier</th><th style="text-align:right;">Total</th></tr>' + ts.map((c,i) => '<tr><td>' + (i+1) + '</td><td>' + c.name + '</td><td style="text-align:right;font-weight:600;">' + R(c.total) + '</td></tr>').join('') + '</table></div>' : ''}
+
+<div class="section">
+<h2>Red Flags & Anomalies</h2>
+${anomalies.length === 0 ? '<p class="green" style="font-weight:600;">✅ No anomalies detected.</p>' :
+anomalies.map(a => {
+    const cls = a.severity === 'alert' ? 'flag' : 'flag warn';
+    const icon = a.severity === 'alert' ? '🔴' : '🟡';
+    const typeLabel = a.type === 'possible_duplicate' ? 'Possible Duplicate' : a.type === 'large_transaction' ? 'Large Transaction' : a.type === 'suspense_balance' ? 'Suspense Balance' : a.type;
+    return '<div class="' + cls + '"><strong>' + icon + ' ' + typeLabel + '</strong> — ' + R(a.amount) + '<br><span style="font-size:12px;color:#6b7280;">' + a.detail + '</span></div>';
+}).join('')}
+</div>
+
+<div class="section">
+<h2>Account Summary</h2>
+<table><tr><th>Account</th><th>Category</th><th style="text-align:right;">Period Dr</th><th style="text-align:right;">Period Cr</th><th style="text-align:right;">Closing Dr</th><th style="text-align:right;">Closing Cr</th><th style="text-align:right;">Txns</th></tr>
+${accs.map(a => '<tr><td>' + a.name + '</td><td style="color:#6366f1;font-size:11px;">' + a.category + '</td><td style="text-align:right;">' + (a.period_dr ? R(a.period_dr) : '-') + '</td><td style="text-align:right;">' + (a.period_cr ? R(a.period_cr) : '-') + '</td><td style="text-align:right;font-weight:600;">' + (a.closing_dr ? R(a.closing_dr) : '-') + '</td><td style="text-align:right;font-weight:600;">' + (a.closing_cr ? R(a.closing_cr) : '-') + '</td><td style="text-align:right;">' + a.txn_count + '</td></tr>').join('')}
+</table>
+</div>
+
+<div class="section">
+<h2>Zane AI Analysis</h2>
+${aiHtml}
+</div>
+
+<hr><p style="color:#6b7280;font-size:11px;text-align:center;">Generated by <strong style="color:#6366f1;">ClickAI</strong> — AI-Powered Business Management | ${dateStr}</p>
+</body></html>`;
+        }
+
+        // ═══ DOWNLOAD FULL REPORT ═══
+        function downloadFullReport() {
+            if (!glAnalysisData) { alert('No data loaded yet'); return; }
+            const html = buildReportHTML();
+            const dateStr = new Date().toISOString().slice(0,10);
+            const blob = new Blob([html], {type: 'text/html'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'GL_Analysis_' + dateStr + '.html';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
+
+        // ═══ EMAIL MODAL ═══
+        function showGLEmailModal() {
+            if (!glAnalysisData) { alert('No data loaded yet'); return; }
+            document.getElementById('glEmailSubject').value = 'GL Analysis Report — ' + glAnalysisData.summary.date_from + ' to ' + glAnalysisData.summary.date_to;
+            document.getElementById('glEmailStatus').style.display = 'none';
+            document.getElementById('glEmailModal').style.display = 'flex';
+            document.getElementById('glEmailTo').focus();
+        }
+
+        function closeGLEmailModal() {
+            document.getElementById('glEmailModal').style.display = 'none';
+        }
+
+        async function sendGLReportEmail() {
+            const to = document.getElementById('glEmailTo').value.trim();
+            const subject = document.getElementById('glEmailSubject').value.trim() || 'GL Analysis Report';
+            const status = document.getElementById('glEmailStatus');
+            const btn = document.getElementById('glSendEmailBtn');
+
+            if (!to || !to.includes('@')) {
+                status.style.display = 'block';
+                status.style.color = '#ef4444';
+                status.textContent = 'Please enter a valid email address';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            status.style.display = 'block';
+            status.style.color = 'var(--text-muted)';
+            status.textContent = 'Sending report...';
+
+            try {
+                const reportHtml = buildReportHTML();
+                // Extract just the body content for the email
+                const bodyMatch = reportHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+                const bodyContent = bodyMatch ? bodyMatch[1] : reportHtml;
+
+                const resp = await fetch('/api/reports/email', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        to_email: to,
+                        subject: subject,
+                        report_html: bodyContent,
+                        report_title: 'GL Analysis Report'
+                    })
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    status.style.color = '#10b981';
+                    status.textContent = '✅ ' + data.message;
+                    setTimeout(() => closeGLEmailModal(), 2000);
+                } else {
+                    status.style.color = '#ef4444';
+                    status.textContent = '✗ ' + (data.error || 'Failed to send');
+                }
+            } catch(err) {
+                status.style.color = '#ef4444';
+                status.textContent = '✗ Network error: ' + err.message;
+            }
+            btn.disabled = false;
+            btn.textContent = 'Send';
         }
         </script>
         '''
