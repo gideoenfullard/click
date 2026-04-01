@@ -56,6 +56,16 @@ def register_report_routes(app, db, login_required, Auth, render_page,
             </div>
         </div>
         
+        <div class="card" style="background:linear-gradient(135deg, rgba(16,185,129,0.15), rgba(99,102,241,0.1));margin-bottom:20px;cursor:pointer;border:1px solid rgba(16,185,129,0.3);" onclick="window.location='/reports/gl-analysis'">
+            <div style="display:flex;align-items:center;gap:15px;">
+                <span style="font-size:40px;">🔬</span>
+                <div>
+                    <h3 style="margin:0;">GL Analysis</h3>
+                    <p style="color:var(--text-muted);margin:5px 0 0 0;">Upload a client GL from Sage or Xero — instant TB check, anomaly detection & AI insights</p>
+                </div>
+            </div>
+        </div>
+        
         <h3 style="margin:20px 0 10px 0;color:var(--text-muted);">Debtors & Creditors</h3>
         <div class="stats-grid">
             <div class="card" style="cursor:pointer" onclick="window.location='/reports/aging'">
@@ -5391,6 +5401,10 @@ def register_report_routes(app, db, login_required, Auth, render_page,
                 <div class="card report-btn" style="cursor:pointer" onclick="generateReport('forecast')">
                     <h4>Cash Flow Forecast</h4>
                     <p style="color:var(--text-muted);font-size:13px;">Next 30 days projection</p>
+                </div>
+                <div class="card report-btn" style="cursor:pointer;border:1px solid rgba(16,185,129,0.3);background:linear-gradient(135deg, rgba(16,185,129,0.08), rgba(99,102,241,0.05));" onclick="window.location='/reports/gl-analysis'">
+                    <h4>🔬 GL Analysis</h4>
+                    <p style="color:var(--text-muted);font-size:13px;">Upload Sage/Xero GL — full analysis with AI</p>
                 </div>
             </div>
             

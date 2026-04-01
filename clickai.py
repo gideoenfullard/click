@@ -185,6 +185,12 @@ except ImportError:
     REPORTS_ROUTES_LOADED = False
 
 try:
+    from clickai_gl_analysis import register_gl_analysis_routes
+    GL_ANALYSIS_LOADED = True
+except ImportError:
+    GL_ANALYSIS_LOADED = False
+
+try:
     from clickai_invoicing import register_invoicing_routes
     INVOICING_ROUTES_LOADED = True
 except ImportError:
@@ -49419,6 +49425,17 @@ try:
         logger.info("[REPORTS] Routes registered ✓")
 except Exception as e:
     logger.error(f"[REPORTS] Failed to register routes: {e}")
+
+# Register GL Analysis routes (separate module)
+try:
+    if GL_ANALYSIS_LOADED:
+        register_gl_analysis_routes(
+            app, db, login_required, Auth, render_page,
+            now, today, _anthropic_client
+        )
+        logger.info("[GL ANALYSIS] Routes registered ✓")
+except Exception as e:
+    logger.error(f"[GL ANALYSIS] Failed to register routes: {e}")
 
 
 # 
