@@ -384,15 +384,17 @@ def run_gl_analysis(accounts):
         categories[cat]["credit"] = round(categories[cat]["credit"], 2)
 
     # ── 3. Key financial figures ──
+    # Use NET figures: Income = credits - debits (credit notes reduce income)
+    # COS = debits - credits, Expenses = debits - credits
     income = categories.get("Income", {})
     cos = categories.get("Cost of Sales", {})
     expenses = categories.get("Expenses", {})
 
-    total_income = income.get("credit", 0)
-    total_cos = cos.get("debit", 0)
+    total_income = income.get("credit", 0) - income.get("debit", 0)  # Net of credit notes
+    total_cos = cos.get("debit", 0) - cos.get("credit", 0)  # Net of purchase returns
     gross_profit = round(total_income - total_cos, 2)
     gp_margin = round((gross_profit / total_income * 100), 1) if total_income > 0 else 0
-    total_expenses = expenses.get("debit", 0)
+    total_expenses = expenses.get("debit", 0) - expenses.get("credit", 0)  # Net of refunds
     net_profit = round(gross_profit - total_expenses, 2)
     np_margin = round((net_profit / total_income * 100), 1) if total_income > 0 else 0
 
