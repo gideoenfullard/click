@@ -279,42 +279,69 @@ def parse_generic_gl(file_content, filename=""):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _classify_account(name):
-    """Classify account into category for grouping."""
+    """Classify account into category for grouping.
+    
+    Order matters: more specific patterns must check BEFORE generic ones.
+    E.g. 'Income Tax Payable' must match Liabilities before 'income' matches Income.
+    'Nedbank Current Account' must match Assets before 'bank charge' matches Expenses.
+    'Accumulated Depreciation' must match Assets (contra) before 'depreciation' matches Expenses.
+    """
     n = name.lower()
 
-    # Income
-    if any(k in n for k in ("sales", "revenue", "income", "interest received", "discount received")):
-        return "Income"
-    # Cost of Sales
-    if any(k in n for k in ("purchase", "cost of sale", "cogs", "carriage", "outsourced", "packaging", "freight")):
-        return "Cost of Sales"
-    # Expenses
-    if any(k in n for k in ("expense", "fee", "charge", "rent", "salary", "wage", "telephone",
-                             "internet", "insurance", "fuel", "repair", "depreciation", "advertising",
-                             "entertainment", "stationery", "printing", "transport", "delivery",
-                             "training", "welfare", "licence", "license", "software", "consulting",
-                             "consumable", "workmens", "small tool", "royalt", "office", "lease",
-                             "bank charge", "rounding", "it expense", "accounting")):
-        return "Expenses"
-    # Assets
-    if any(k in n for k in ("bank", "current account", "savings", "petty cash", "cash on hand",
-                             "receivable", "debtor", "stock", "inventory", "equipment", "furniture",
-                             "vehicle", "deposit", "loan:", "staff loan", "office equipment")):
-        # Distinguish asset from liability loans
-        if "payable" in n or "creditor" in n:
-            return "Liabilities"
-        return "Assets"
-    # Liabilities
-    if any(k in n for k in ("payable", "creditor", "vat payable", "paye", "uif", "sdl",
-                             "emp201", "income tax", "trade payable", "accrual")):
-        return "Liabilities"
-    # Equity
-    if any(k in n for k in ("capital", "retained", "drawing", "shareholder", "member",
-                             "balance control", "owner", "equity")):
-        return "Equity"
-    # Accumulated depreciation (contra asset)
+    # ── 1. Accumulated depreciation (contra-asset) — before Expenses catches "depreciation"
     if "acc" in n and "depr" in n:
         return "Assets"
+
+    # ── 2. Liabilities — before Income catches "income tax payable" or "retained income"
+    if any(k in n for k in ("trade payable", "vat payable", "income tax payable",
+                             "emp201 payable", "sars emp", "creditor",
+                             "paye payable", "uif payable", "sdl payable", "accrual")):
+        return "Liabilities"
+
+    # ── 3. Equity — before Income catches "retained income"
+    if any(k in n for k in ("capital", "retained income", "retained earning",
+                             "drawing", "shareholder loan", "member",
+                             "balance control", "owner", "equity")):
+        return "Equity"
+
+    # ── 4. Assets — before Expenses catches "bank charge", "office expense", etc.
+    #    Bank accounts, receivables, fixed assets, loans given, deposits
+    if any(k in n for k in ("current account", "savings account", "savings",
+                             "petty cash", "cash on hand", "cash float",
+                             "receivable", "debtor",
+                             "stock on hand", "inventory", "raw material",
+                             "equipment @ cost", "furniture @ cost", "vehicle @ cost",
+                             "office equipment @ cost",
+                             "equipment loan",
+                             "deposit paid", "deposits paid",
+                             "loan:", "staff loan")):
+        return "Assets"
+    # Bank accounts by name (Nedbank, FNB, ABSA, etc.) — but NOT "bank charge"
+    if any(k in n for k in ("nedbank", "fnb", "absa", "standard bank", "capitec",
+                             "investec", "tymebank")) and "charge" not in n:
+        return "Assets"
+
+    # ── 5. Income
+    if any(k in n for k in ("sales", "revenue", "interest received",
+                             "discount received", "other income")):
+        return "Income"
+
+    # ── 6. Cost of Sales
+    if any(k in n for k in ("purchase", "cost of sale", "cogs", "carriage",
+                             "outsourced", "packaging", "freight")):
+        return "Cost of Sales"
+
+    # ── 7. Expenses (catch-all for operating costs)
+    if any(k in n for k in ("expense", "fee", "charge", "rent", "salary", "wage",
+                             "telephone", "internet", "insurance", "fuel",
+                             "repair", "maintenance", "depreciation", "advertising",
+                             "entertainment", "stationery", "printing",
+                             "transport", "delivery", "training", "welfare",
+                             "licence", "license", "software", "consulting",
+                             "consumable", "workmens", "small tool", "royalt",
+                             "office expense", "office cost", "lease",
+                             "bank charge", "rounding", "it expense", "accounting")):
+        return "Expenses"
 
     return "Other"
 
@@ -407,7 +434,7 @@ def run_gl_analysis(accounts):
         key=lambda x: x["total"], reverse=True
     )[:10]
 
-    # ── 7. Top suppliers (from COS/expense accounts) ──
+    # ── 7. Top suppliers (from COS/expense accounts + Trade Payables) ──
     supplier_totals = defaultdict(float)
     for a in accounts:
         cat = _classify_account(a["name"])
@@ -415,8 +442,17 @@ def run_gl_analysis(accounts):
             for t in a["transactions"]:
                 if t["party"]:
                     supplier_totals[t["party"]] += t["debit"]
+        # Also include Trade Payables credit side (supplier invoices booked)
+        if "trade payable" in a["name"].lower():
+            for t in a["transactions"]:
+                if t["party"] and t["credit"] > 0:
+                    supplier_totals[t["party"]] += t["credit"]
+    # Filter out bank account names from supplier list
+    _bank_keywords = ("nedbank", "fnb", "absa", "standard bank", "capitec",
+                       "investec", "tymebank", "current account", "savings")
     top_suppliers = sorted(
-        [{"name": k, "total": round(v, 2)} for k, v in supplier_totals.items()],
+        [{"name": k, "total": round(v, 2)} for k, v in supplier_totals.items()
+         if not any(bk in k.lower() for bk in _bank_keywords)],
         key=lambda x: x["total"], reverse=True
     )[:10]
 
@@ -1200,18 +1236,23 @@ ANOMALIES DETECTED ({len(anomalies)}):
 
 EMPTY ACCOUNTS: {', '.join(empty_accounts[:10]) if empty_accounts else 'None'}
 
-Please provide your analysis as HTML (no markdown). Include:
-1. <h4>Overall Health</h4> — Is this business in good shape? Any immediate concerns?
-2. <h4>Profitability</h4> — Comment on GP margin and NP margin. Are they healthy for a SA SME?
-3. <h4>Revenue Concentration</h4> — Is revenue spread across clients or dangerously concentrated?
-4. <h4>Red Flags</h4> — Comment on each anomaly. Which are serious and which are benign?
-5. <h4>Recommendations</h4> — 3-5 specific, actionable recommendations.
+Please provide your analysis as simple HTML fragments ONLY — just <h4>, <p>, <ul>, <li>, <strong>, <span> tags.
+DO NOT include <!DOCTYPE>, <html>, <head>, <style>, <body> or any CSS. The output will be embedded in an existing page.
+Use inline styles only where needed (e.g. color:red for negative numbers).
 
-Keep it direct and practical. No fluff. Use South African business context (Rands, SARS, etc)."""
+Include ALL of these sections (do not cut short):
+1. <h4>Overall Health</h4> — Is this business in good shape? Any immediate concerns? Give a clear verdict.
+2. <h4>Profitability Analysis</h4> — Comment on GP margin and NP margin. Are they healthy for a SA SME? What's driving the numbers? Compare to typical SA industry benchmarks.
+3. <h4>Revenue Concentration Risk</h4> — Is revenue dangerously concentrated in few clients? Calculate % contribution of top 3. What happens if the biggest client leaves?
+4. <h4>Cash Flow Observations</h4> — Comment on the monthly revenue pattern. Flag any seasonality, spikes, or concerning gaps. Note months with unusual activity.
+5. <h4>Red Flags & Anomaly Review</h4> — Review each anomaly type. Which are genuinely concerning (investigate!) and which are likely benign (e.g. journal entries, split payments)? Be specific.
+6. <h4>Recommendations</h4> — 5 specific, actionable recommendations numbered 1-5. Include concrete next steps. Think like a rekenmeester advising the business owner.
+
+Keep it direct, practical, and thorough. Use South African business context (Rands, SARS, BEE, etc). This is a professional report that may be emailed to a client."""
 
             response = _anthropic_client.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=2000,
+                max_tokens=4000,
                 messages=[{"role": "user", "content": prompt}],
             )
 
@@ -1219,6 +1260,15 @@ Keep it direct and practical. No fluff. Use South African business context (Rand
             for block in response.content:
                 if hasattr(block, "text"):
                     analysis_html += block.text
+
+            # Strip any accidental full HTML document tags Haiku might return
+            import re as _re
+            analysis_html = _re.sub(r'<!DOCTYPE[^>]*>', '', analysis_html)
+            analysis_html = _re.sub(r'</?html[^>]*>', '', analysis_html)
+            analysis_html = _re.sub(r'<head>.*?</head>', '', analysis_html, flags=_re.DOTALL)
+            analysis_html = _re.sub(r'</?body[^>]*>', '', analysis_html)
+            analysis_html = _re.sub(r'<style[^>]*>.*?</style>', '', analysis_html, flags=_re.DOTALL)
+            analysis_html = _re.sub(r'<meta[^>]*>', '', analysis_html)
 
             return jsonify({"success": True, "analysis": analysis_html})
 
