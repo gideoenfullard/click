@@ -56,17 +56,26 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
         total_sales = total_cash + total_card + total_account
         sale_count = len(sales)
 
-        # Get cashiers who made sales today
+        # Get cashiers who made sales today — keyed by cashier_id for per-cashier cash-up
         cashier_sales = {}
         for s in sales:
             cid = s.get("created_by") or "unknown"
-            cname = s.get("customer_name", "").split(" - ")[-1] if " - " in s.get("customer_name", "") else ""
-            # Try to get cashier name from notes
-            notes = s.get("notes", "")
-            if "Cashier:" in notes:
-                cname = notes.split("Cashier:")[-1].strip()
+            # Best source of cashier name: the sale record itself
+            cname = ""
+            # 1. Try cashier_name field (set by POS cashier bar)
+            if s.get("cashier_name"):
+                cname = s["cashier_name"]
+            # 2. Try created_by_name
+            elif s.get("created_by_name"):
+                cname = s["created_by_name"]
+            # 3. Try notes fallback
+            elif "Cashier:" in (s.get("notes") or ""):
+                cname = s["notes"].split("Cashier:")[-1].strip()
             if cid not in cashier_sales:
-                cashier_sales[cid] = {"name": cname or cid[:8], "cash": 0, "card": 0, "account": 0, "count": 0}
+                cashier_sales[cid] = {"id": cid, "name": cname or cid[:8], "cash": 0, "card": 0, "account": 0, "count": 0}
+            elif cname and cashier_sales[cid]["name"] == cid[:8]:
+                # Update name if we found a better one
+                cashier_sales[cid]["name"] = cname
             pm = s.get("payment_method", "cash")
             amt = float(s.get("total", 0) or 0)
             cashier_sales[cid][pm] = cashier_sales[cid].get(pm, 0) + amt
@@ -92,7 +101,17 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
         except:
             pass
 
-        cashiers_json = json.dumps(list(cashier_sales.values()), default=str)
+        # Enrich cashier_sales names from team list
+        team_name_map = {t.get("id", ""): t.get("name", t.get("email", "")) for t in team}
+        for cid, cdata in cashier_sales.items():
+            if cid in team_name_map and team_name_map[cid]:
+                better_name = team_name_map[cid]
+                if " " in better_name:
+                    better_name = better_name.split()[0]
+                cdata["name"] = better_name
+
+        # Per-cashier sales dict keyed by cashier_id — used in JS for per-cashier blind cashup
+        cashier_sales_json = json.dumps(cashier_sales, default=str)
         cashups_json = json.dumps(cash_ups, default=str)
         team_json = json.dumps([{"id": t.get("id", ""), "name": t.get("name", t.get("email", ""))} for t in team], default=str)
 
@@ -688,6 +707,7 @@ select.form-input {{
                 <span class="rv">{sale_count}</span>
             </div>
         </div>
+        {'<div id="xreadPerCashier"></div>' if is_manager and len(cashier_sales) > 1 else ''}
         <button class="submit-btn blue" onclick="saveXReading()">Save X-Reading</button>
     </div>
 
@@ -701,9 +721,10 @@ select.form-input {{
 
         <div class="form-group">
             <label>Cashier / Till Operator</label>
-            <select class="form-input" id="blindCashier">
+            <select class="form-input" id="blindCashier" onchange="updateCashierInfo()">
                 <option value="">— Select —</option>
             </select>
+            <div id="cashierInfo" style="font-size:0.8rem;color:var(--text-dim);margin-top:6px;min-height:1.2em;"></div>
         </div>
 
         <div class="form-group">
@@ -794,6 +815,7 @@ const TEAM = {team_json};
 const HISTORY = {cashups_json};
 const USER_ID = '{user_id}';
 const USER_ALREADY_SUBMITTED = {'true' if user_already_submitted else 'false'};
+const CASHIER_SALES = {cashier_sales_json};
 
 const DENOMINATIONS = [
     {{ label: 'R200', value: 200, type: 'note' }},
@@ -815,6 +837,7 @@ document.addEventListener('DOMContentLoaded', () => {{
     buildDenomGrid();
     buildTeamDropdown();
     renderHistory();
+    buildXReadPerCashier();
     if (USER_ALREADY_SUBMITTED && !IS_MANAGER) {{
         showSubmittedState();
     }}
@@ -840,6 +863,64 @@ function buildTeamDropdown() {{
         opt.textContent = t.name;
         sel.appendChild(opt);
     }});
+}}
+
+// Helper: get system totals for a specific cashier (or global if no match)
+function getCashierTotals(cashierId) {{
+    if (cashierId && CASHIER_SALES[cashierId]) {{
+        const cs = CASHIER_SALES[cashierId];
+        return {{
+            cash: cs.cash || 0,
+            card: cs.card || 0,
+            account: cs.account || 0,
+            total: (cs.cash || 0) + (cs.card || 0) + (cs.account || 0),
+            count: cs.count || 0,
+            name: cs.name || ''
+        }};
+    }}
+    // Cashier has no sales today — return zeros
+    return {{ cash: 0, card: 0, account: 0, total: 0, count: 0, name: '' }};
+}}
+
+// Build per-cashier breakdown for X-Reading (managers only, >1 cashier)
+function buildXReadPerCashier() {{
+    const container = document.getElementById('xreadPerCashier');
+    if (!container) return;
+    const ids = Object.keys(CASHIER_SALES);
+    if (ids.length <= 1) return;
+
+    let html = '<h3 style="font-family:Orbitron,monospace;font-size:0.7rem;letter-spacing:2px;color:var(--accent);margin:20px 0 12px;text-transform:uppercase;">Per Cashier Breakdown</h3>';
+    ids.forEach(cid => {{
+        const cs = CASHIER_SALES[cid];
+        const cTotal = (cs.cash || 0) + (cs.card || 0) + (cs.account || 0);
+        html += `<div class="result-box" style="margin-bottom:10px;">
+            <div style="font-family:Orbitron,monospace;font-size:0.7rem;letter-spacing:1px;color:var(--accent);margin-bottom:8px;text-transform:uppercase;">${{cs.name || cid.substring(0,8)}}</div>
+            <div class="detail-grid">
+                <div class="dl">Cash</div><div class="dv" style="color:var(--green)">R${{(cs.cash || 0).toFixed(2)}}</div>
+                <div class="dl">Card</div><div class="dv" style="color:var(--orange)">R${{(cs.card || 0).toFixed(2)}}</div>
+                <div class="dl">Account</div><div class="dv" style="color:var(--accent)">R${{(cs.account || 0).toFixed(2)}}</div>
+                <div class="dl" style="font-weight:700;color:var(--text)">Total</div><div class="dv" style="font-weight:700;">R${{cTotal.toFixed(2)}}</div>
+                <div class="dl">Sales</div><div class="dv">${{cs.count || 0}}</div>
+            </div>
+        </div>`;
+    }});
+    container.innerHTML = html;
+}}
+
+// Show cashier's sales info when selected in blind cashup dropdown
+function updateCashierInfo() {{
+    const sel = document.getElementById('blindCashier');
+    const info = document.getElementById('cashierInfo');
+    if (!sel.value) {{
+        info.textContent = '';
+        return;
+    }}
+    const ct = getCashierTotals(sel.value);
+    if (ct.count > 0) {{
+        info.innerHTML = '<span style="color:var(--accent);">' + ct.count + ' sale' + (ct.count !== 1 ? 's' : '') + ' recorded for this cashier today</span>';
+    }} else {{
+        info.innerHTML = '<span style="color:var(--orange);">No sales recorded for this cashier today</span>';
+    }}
 }}
 
 let activePanel = null;
@@ -987,9 +1068,17 @@ async function submitBlindCashUp() {{
     const cashSalesDeclared = cashCounted - floatAmt;
     const declaredTotal = cashSalesDeclared + cardDeclared + accountDeclared;
 
-    const cashDisc = cashSalesDeclared - SYS_CASH;
-    const cardDisc = cardDeclared - SYS_CARD;
-    const totalDisc = declaredTotal - (SYS_CASH + SYS_CARD + SYS_ACCOUNT);
+    // Use PER-CASHIER system totals (not global)
+    const ct = getCashierTotals(cashierId);
+    const sysCash = ct.cash;
+    const sysCard = ct.card;
+    const sysAccount = ct.account;
+    const sysTotal = ct.total;
+    const sysCount = ct.count;
+
+    const cashDisc = cashSalesDeclared - sysCash;
+    const cardDisc = cardDeclared - sysCard;
+    const totalDisc = declaredTotal - sysTotal;
 
     const denomBreakdown = {{}};
     DENOMINATIONS.forEach((d, i) => {{
@@ -1012,14 +1101,14 @@ async function submitBlindCashUp() {{
                 account_declared: accountDeclared,
                 declared_total: declaredTotal,
                 denominations: denomBreakdown,
-                system_cash: SYS_CASH,
-                system_card: SYS_CARD,
-                system_account: SYS_ACCOUNT,
-                system_total: SYS_CASH + SYS_CARD + SYS_ACCOUNT,
+                system_cash: sysCash,
+                system_card: sysCard,
+                system_account: sysAccount,
+                system_total: sysTotal,
                 cash_discrepancy: cashDisc,
                 card_discrepancy: cardDisc,
                 total_discrepancy: totalDisc,
-                sale_count: SALE_COUNT
+                sale_count: sysCount
             }})
         }});
         const data = await resp.json();
@@ -1042,9 +1131,10 @@ async function submitBlindCashUp() {{
         const discLabel = (v) => v > 0.01 ? '+R' + v.toFixed(2) + ' OVER' : v < -0.01 ? '-R' + Math.abs(v).toFixed(2) + ' SHORT' : 'EXACT MATCH';
 
         revealBox.innerHTML = `
+            <div style="font-family:Orbitron,monospace;font-size:0.65rem;letter-spacing:2px;color:var(--accent);margin-bottom:10px;text-transform:uppercase;">Cashier: ${{cashierName}}</div>
             <div class="result-row">
                 <span class="rl">System Cash Sales</span>
-                <span class="rv" style="color:var(--green)">R${{SYS_CASH.toFixed(2)}}</span>
+                <span class="rv" style="color:var(--green)">R${{sysCash.toFixed(2)}}</span>
             </div>
             <div class="result-row">
                 <span class="rl">Your Cash Count (minus float)</span>
@@ -1057,7 +1147,7 @@ async function submitBlindCashUp() {{
             <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
             <div class="result-row">
                 <span class="rl">System Card Sales</span>
-                <span class="rv" style="color:var(--orange)">R${{SYS_CARD.toFixed(2)}}</span>
+                <span class="rv" style="color:var(--orange)">R${{sysCard.toFixed(2)}}</span>
             </div>
             <div class="result-row">
                 <span class="rl">Your Card Slips</span>
@@ -1070,7 +1160,7 @@ async function submitBlindCashUp() {{
             <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
             <div class="result-row">
                 <span class="rl">System Account Sales</span>
-                <span class="rv" style="color:var(--accent)">R${{SYS_ACCOUNT.toFixed(2)}}</span>
+                <span class="rv" style="color:var(--accent)">R${{sysAccount.toFixed(2)}}</span>
             </div>
             <div class="result-row">
                 <span class="rl">Your Account/Vouchers</span>
