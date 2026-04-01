@@ -860,23 +860,25 @@ function showPanel(id) {{
 }}
 
 function showSubmittedState(declaredTotal) {{
-    const blindBtn = document.getElementById('blindCashUpBtn');
-    if (blindBtn) {{
-        blindBtn.disabled = true;
-        blindBtn.querySelector('.btn-label').textContent = 'SUBMITTED';
-        blindBtn.querySelector('.btn-icon').textContent = '✅';
-    }}
+    // Completely hide the action buttons
+    const actionsDiv = document.getElementById('actionButtons');
+    if (actionsDiv) actionsDiv.style.display = 'none';
+
+    // Hide blind panel if open
     const blindPanel = document.getElementById('panel-blind');
-    if (blindPanel) blindPanel.classList.remove('active');
+    if (blindPanel) blindPanel.style.display = 'none';
     activePanel = null;
-    const confirm = document.getElementById('submittedConfirm');
-    if (confirm) {{
+
+    // Show confirmation banner
+    const confirmEl = document.getElementById('submittedConfirm');
+    if (confirmEl) {{
         let detailText = 'Your cash up has been recorded. Your manager will review the results.';
         if (declaredTotal !== undefined) {{
             detailText = 'Your declared total: <strong>R' + declaredTotal.toFixed(2) + '</strong><br>Your manager will review the results.';
         }}
+        detailText += '<br><br><a href="/pos/history" style="display:inline-block;padding:10px 24px;background:#00d4ff;color:#000;border-radius:6px;text-decoration:none;font-weight:700;font-family:Orbitron,monospace;font-size:0.75rem;letter-spacing:2px;">GO TO HISTORY</a>';
         document.getElementById('confirmDetail').innerHTML = detailText;
-        confirm.style.display = 'block';
+        confirmEl.style.display = 'block';
     }}
 }}
 

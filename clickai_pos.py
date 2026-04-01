@@ -5581,12 +5581,14 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
         <script>
         // ═══ TODAY'S CASH UPS ═══
         const TODAY_CASHUPS = {_today_cashups_json};
+        try {{
         (function renderCashupHistory() {{
             const section = document.getElementById('cashupHistorySection');
             if (!section || !TODAY_CASHUPS || TODAY_CASHUPS.length === 0) return;
+            const n = (v) => parseFloat(v || 0) || 0;
             
             let html = '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;">';
-            html += '<h3 style="margin:0 0 15px 0;font-size:16px;">Today\'s Cash Ups</h3>';
+            html += '<h3 style="margin:0 0 15px 0;font-size:16px;">Today&#39;s Cash Ups</h3>';
             
             const sorted = TODAY_CASHUPS.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
             sorted.forEach(h => {{
@@ -5595,29 +5597,25 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
                 
                 if (type === 'blind_cashup') {{
                     badge = '<span style="background:#065f46;color:#6ee7b7;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:bold;">BLIND CASH UP</span>';
-                    const disc = h.total_discrepancy || 0;
-                    const discColor = Math.abs(disc) < 0.01 ? '#10b981' : disc > 0 ? '#10b981' : '#ef4444';
+                    const disc = n(h.total_discrepancy);
                     const discText = Math.abs(disc) < 0.01 ? 'Exact match' : (disc > 0 ? '+R' + disc.toFixed(2) + ' over' : '-R' + Math.abs(disc).toFixed(2) + ' short');
                     detail = '<div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;font-size:13px;">';
                     detail += '<span style="color:var(--text-muted);">Cashier:</span><span style="font-weight:600;">' + (h.cashier_name || '—') + '</span>';
-                    detail += '<span style="color:var(--text-muted);">Declared:</span><span style="font-weight:600;">R' + (h.declared_total || 0).toFixed(2) + '</span>';
-                    detail += '<span style="color:var(--text-muted);">System:</span><span style="font-weight:600;">R' + (h.system_total || 0).toFixed(2) + '</span>';
-                    detail += '<span style="color:var(--text-muted);">Float:</span><span style="font-weight:600;">R' + (h.float_amount || 0).toFixed(2) + '</span>';
-                    detail += '<span style="color:var(--text-muted);">Cash Counted:</span><span style="font-weight:600;">R' + (h.cash_counted || 0).toFixed(2) + '</span>';
-                    detail += '<span style="color:var(--text-muted);">Cash Diff:</span><span style="font-weight:600;color:' + (Math.abs(h.cash_discrepancy || 0) < 0.01 ? '#10b981' : (h.cash_discrepancy||0) < 0 ? '#ef4444' : '#10b981') + ';">' + ((h.cash_discrepancy||0) > 0 ? '+' : '') + 'R' + (h.cash_discrepancy || 0).toFixed(2) + '</span>';
-                    detail += '<span style="color:var(--text-muted);">Card Declared:</span><span style="font-weight:600;">R' + (h.card_declared || 0).toFixed(2) + '</span>';
-                    detail += '<span style="color:var(--text-muted);">Card Diff:</span><span style="font-weight:600;color:' + (Math.abs(h.card_discrepancy || 0) < 0.01 ? '#10b981' : (h.card_discrepancy||0) < 0 ? '#ef4444' : '#10b981') + ';">' + ((h.card_discrepancy||0) > 0 ? '+' : '') + 'R' + (h.card_discrepancy || 0).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Declared:</span><span style="font-weight:600;">R' + n(h.declared_total).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">System:</span><span style="font-weight:600;">R' + n(h.system_total).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Cash Diff:</span><span style="font-weight:600;color:' + (Math.abs(n(h.cash_discrepancy)) < 0.01 ? '#10b981' : n(h.cash_discrepancy) < 0 ? '#ef4444' : '#10b981') + ';">' + (n(h.cash_discrepancy) > 0 ? '+' : '') + 'R' + n(h.cash_discrepancy).toFixed(2) + '</span>';
+                    detail += '<span style="color:var(--text-muted);">Card Diff:</span><span style="font-weight:600;color:' + (Math.abs(n(h.card_discrepancy)) < 0.01 ? '#10b981' : n(h.card_discrepancy) < 0 ? '#ef4444' : '#10b981') + ';">' + (n(h.card_discrepancy) > 0 ? '+' : '') + 'R' + n(h.card_discrepancy).toFixed(2) + '</span>';
                     detail += '</div>';
                     detail += '<div style="margin-top:8px;padding:6px 12px;border-radius:6px;text-align:center;font-weight:bold;font-size:13px;background:' + (Math.abs(disc) < 0.01 ? '#d1fae5' : disc > 0 ? '#dbeafe' : '#fee2e2') + ';color:' + (Math.abs(disc) < 0.01 ? '#065f46' : disc > 0 ? '#1e40af' : '#991b1b') + ';">' + discText + '</div>';
                 }} else if (type === 'x_reading') {{
                     badge = '<span style="background:#1e3a5f;color:#7dd3fc;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:bold;">X-READ</span>';
-                    detail = '<div style="margin-top:6px;font-size:13px;">Total: <strong>R' + (h.system_total || 0).toFixed(2) + '</strong> | ' + (h.sale_count || 0) + ' sales</div>';
+                    detail = '<div style="margin-top:6px;font-size:13px;">Total: <strong>R' + n(h.system_total).toFixed(2) + '</strong> | ' + (h.sale_count || 0) + ' sales</div>';
                 }} else if (type === 'z_reading') {{
                     badge = '<span style="background:#78350f;color:#fde68a;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:bold;">Z-READ</span>';
-                    const cashDiff = h.cash_difference || 0;
+                    const cashDiff = n(h.cash_difference);
                     const zStatus = h.cash_status || (Math.abs(cashDiff) < 0.01 ? 'Balanced' : 'R' + Math.abs(cashDiff).toFixed(2) + (cashDiff > 0 ? ' over' : ' short'));
-                    detail = '<div style="margin-top:6px;font-size:13px;">Day closed | System: <strong>R' + (h.system_total || 0).toFixed(2) + '</strong> | ' + (h.sale_count || 0) + ' sales';
-                    if (h.cash_counted) detail += ' | Counted: <strong>R' + (h.cash_counted || 0).toFixed(2) + '</strong> | ' + zStatus;
+                    detail = '<div style="margin-top:6px;font-size:13px;">Day closed | System: <strong>R' + n(h.system_total).toFixed(2) + '</strong> | ' + (h.sale_count || 0) + ' sales';
+                    if (h.cash_counted) detail += ' | Counted: <strong>R' + n(h.cash_counted).toFixed(2) + '</strong> | ' + zStatus;
                     if (h.created_by_name) detail += ' | By: <strong>' + h.created_by_name + '</strong>';
                     detail += '</div>';
                 }}
@@ -5632,6 +5630,7 @@ def register_pos_routes(app, db, login_required, Auth, render_page,
             html += '</div>';
             section.innerHTML = html;
         }})();
+        }} catch(e) {{ console.error('Cashup history render error:', e); }}
 
         function applyFilters() {{
             const from = document.getElementById('dateFrom').value;
