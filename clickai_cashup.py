@@ -12,13 +12,14 @@ Features:
 - Float tracking
 - Discrepancy reporting
 - Manager review/approval
+- Weekly history with date browsing
 
 DB Table: cash_ups
 """
 
 import json
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from decimal import Decimal
 
 logger = logging.getLogger("clickai")
@@ -75,6 +76,13 @@ def register_cashup_routes(app, db, login_required, Auth, generate_id, now, toda
         cash_ups = db.get("cash_ups", {"business_id": biz_id, "date": today()}) if biz_id else []
         cash_ups = cash_ups or []
 
+        # Check if current user already submitted a blind cashup today
+        user_id = user.get("id", "") if user else ""
+        user_already_submitted = any(
+            c.get("type") == "blind_cashup" and c.get("cashier_id") == user_id
+            for c in cash_ups
+        )
+
         # Get team members for dropdown
         team = []
         try:
@@ -128,7 +136,6 @@ body {{
     overflow-x: hidden;
 }}
 
-/* ─── TOP NAV ─── */
 .top-bar {{
     display: flex;
     align-items: center;
@@ -155,7 +162,6 @@ body {{
 }}
 .top-bar .back-btn:hover {{ color: var(--accent); border-color: var(--accent); }}
 
-/* ─── STATS ROW ─── */
 .stats-row {{
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -204,14 +210,12 @@ body {{
     margin-top: 4px;
 }}
 
-/* ─── MAIN CONTENT ─── */
 .main {{
     padding: 0 20px 100px 20px;
     max-width: 800px;
     margin: 0 auto;
 }}
 
-/* ─── ACTION BUTTONS ─── */
 .actions {{
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -256,8 +260,18 @@ body {{
     background: rgba(0, 255, 136, 0.25);
     box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);
 }}
+.action-btn:disabled {{
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-color: var(--border);
+    background: var(--surface);
+}}
+.action-btn:disabled:hover {{
+    border-color: var(--border);
+    background: var(--surface);
+    box-shadow: none;
+}}
 
-/* ─── PANELS ─── */
 .panel {{
     display: none;
     background: var(--surface);
@@ -283,7 +297,6 @@ body {{
     border-bottom: 1px solid var(--border);
 }}
 
-/* ─── FORM ELEMENTS ─── */
 .form-group {{
     margin-bottom: 14px;
 }}
@@ -319,7 +332,6 @@ select.form-input {{
     cursor: pointer;
 }}
 
-/* ─── DENOMINATION GRID ─── */
 .denom-grid {{
     display: grid;
     grid-template-columns: auto 1fr auto;
@@ -358,7 +370,6 @@ select.form-input {{
     text-align: right;
 }}
 
-/* ─── RESULT BOX ─── */
 .result-box {{
     background: var(--bg);
     border: 1px solid var(--border);
@@ -382,7 +393,6 @@ select.form-input {{
 .result-row.short .rv {{ color: var(--red); }}
 .result-row.match .rv {{ color: var(--green); }}
 
-/* ─── SUBMIT BTN ─── */
 .submit-btn {{
     width: 100%;
     padding: 14px;
@@ -408,7 +418,6 @@ select.form-input {{
 }}
 .submit-btn.blue:hover {{ box-shadow: 0 0 20px rgba(0, 212, 255, 0.3); }}
 
-/* ─── HISTORY ─── */
 .history-item {{
     background: var(--surface2);
     border: 1px solid var(--border);
@@ -440,7 +449,6 @@ select.form-input {{
 .disc-short {{ color: var(--red) !important; }}
 .disc-match {{ color: var(--green) !important; }}
 
-/* ─── HIDDEN TOTALS (for blind cash up) ─── */
 .system-reveal {{
     display: none;
     animation: revealSlide 0.5s ease;
@@ -458,9 +466,148 @@ select.form-input {{
 }}
 .empty-state .icon {{ font-size: 2.5rem; margin-bottom: 10px; }}
 
+.submitted-confirmation {{
+    text-align: center;
+    padding: 30px 20px;
+    background: var(--surface);
+    border: 1px solid var(--green);
+    border-radius: 10px;
+    margin: 16px 0;
+}}
+.submitted-confirmation .check-icon {{
+    font-size: 3rem;
+    margin-bottom: 12px;
+}}
+.submitted-confirmation .confirm-title {{
+    font-family: 'Orbitron', monospace;
+    font-size: 0.85rem;
+    letter-spacing: 2px;
+    color: var(--green);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+}}
+.submitted-confirmation .confirm-detail {{
+    color: var(--text-dim);
+    font-size: 0.95rem;
+}}
+
+.tab-bar {{
+    display: flex;
+    gap: 0;
+    margin: 24px 0 12px;
+    border-bottom: 2px solid var(--border);
+}}
+.tab-btn {{
+    flex: 1;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-family: 'Orbitron', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+}}
+.tab-btn:hover {{ color: var(--text); }}
+.tab-btn.active {{
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}}
+
+.tab-content {{
+    display: none;
+}}
+.tab-content.active {{
+    display: block;
+}}
+
+.week-nav {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    padding: 10px 0;
+}}
+.week-nav button {{
+    padding: 8px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}}
+.week-nav button:hover {{ border-color: var(--accent); color: var(--accent); }}
+.week-nav .week-label {{
+    font-family: 'Orbitron', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+}}
+
+.day-group {{
+    margin-bottom: 14px;
+}}
+.day-header {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}}
+.day-header:hover {{ border-color: var(--accent); }}
+.day-header .day-date {{
+    font-family: 'Orbitron', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    color: var(--accent);
+}}
+.day-header .day-summary {{
+    font-size: 0.85rem;
+    color: var(--text-dim);
+}}
+.day-header .day-arrow {{
+    color: var(--text-dim);
+    transition: transform 0.2s;
+    font-size: 1.2rem;
+}}
+.day-header.open .day-arrow {{
+    transform: rotate(180deg);
+}}
+.day-body {{
+    display: none;
+    padding: 10px 0 0 0;
+}}
+.day-body.open {{
+    display: block;
+    animation: slideIn 0.3s ease;
+}}
+
+.detail-grid {{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 16px;
+    padding: 8px 0;
+    font-size: 0.85rem;
+}}
+.detail-grid .dl {{ color: var(--text-dim); }}
+.detail-grid .dv {{ color: var(--text); font-weight: 600; text-align: right; }}
+
 @media (max-width: 480px) {{
     .stats-row {{ grid-template-columns: repeat(2, 1fr); }}
     .actions {{ grid-template-columns: 1fr; }}
+    .detail-grid {{ grid-template-columns: 1fr 1fr; }}
 }}
 </style>
 </head>
@@ -472,7 +619,6 @@ select.form-input {{
     <a href="/" class="back-btn">Dashboard</a>
 </div>
 
-<!-- ═══ SYSTEM STATS (visible to managers only, on X-Reading) ═══ -->
 {'<div class="stats-row" id="statsRow">' if is_manager else '<div class="stats-row" id="statsRow" style="display:none;">'}
     <div class="stat-card cash">
         <div class="stat-label">Cash</div>
@@ -498,16 +644,22 @@ select.form-input {{
 
 <div class="main">
 
-    <!-- ═══ ACTION BUTTONS ═══ -->
-    <div class="actions">
+    <div class="actions" id="actionButtons">
         {_xread_btn}
-        <button class="action-btn primary" onclick="showPanel('blind')">
+        <button class="action-btn primary" id="blindCashUpBtn" onclick="showPanel('blind')">
             <span class="btn-icon">🔒</span>
             <span class="btn-label">Blind Cash Up</span>
         </button>
     </div>
 
-    <!-- ═══ X-READING PANEL (managers only) ═══ -->
+    <!-- Submitted confirmation (shown after cashier submits) -->
+    <div class="submitted-confirmation" id="submittedConfirm" style="display:none;">
+        <div class="check-icon">✅</div>
+        <div class="confirm-title">Cash Up Submitted</div>
+        <div class="confirm-detail" id="confirmDetail">Your declared total has been recorded. Your manager will review the results.</div>
+    </div>
+
+    <!-- X-READING PANEL (managers only) -->
     {'<div class="panel" id="panel-xread">' if is_manager else '<div class="panel" id="panel-xread" style="display:none !important;">'}
         <div class="panel-title">X-Reading — Mid-Day Check</div>
         <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">
@@ -538,9 +690,9 @@ select.form-input {{
         <button class="submit-btn blue" onclick="saveXReading()">Save X-Reading</button>
     </div>
 
-    <!-- ═══ BLIND CASH UP PANEL ═══ -->
+    <!-- BLIND CASH UP PANEL -->
     <div class="panel" id="panel-blind">
-        <div class="panel-title">🔒 Blind Cash Up</div>
+        <div class="panel-title">Blind Cash Up</div>
         <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">
             Count your cash, card slips, and vouchers. Enter totals below.<br>
             System totals are <strong style="color:var(--red)">hidden</strong> until you submit.
@@ -561,9 +713,7 @@ select.form-input {{
         <h3 style="font-family:'Orbitron',monospace; font-size:0.7rem; letter-spacing:2px; color:var(--green); margin: 18px 0 12px; text-transform:uppercase;">
             Cash Denomination Count
         </h3>
-        <div class="denom-grid" id="denomGrid">
-            <!-- Filled by JS -->
-        </div>
+        <div class="denom-grid" id="denomGrid"></div>
         <div class="result-box" style="margin-top:12px;">
             <div class="result-row total">
                 <span class="rl">Total Cash Counted</span>
@@ -588,34 +738,50 @@ select.form-input {{
             </div>
         </div>
 
-        <button class="submit-btn green" onclick="submitBlindCashUp()">Submit & Reveal</button>
+        <button class="submit-btn green" id="submitBlindBtn" onclick="submitBlindCashUp()">Submit & Reveal</button>
 
-        <!-- ═══ SYSTEM REVEAL (shown after submit) ═══ -->
         <div class="system-reveal" id="systemReveal">
             <h3 style="font-family:'Orbitron',monospace; font-size:0.75rem; letter-spacing:3px; color:var(--accent); margin: 20px 0 12px; text-transform:uppercase; text-align:center;">
-                ⚡ System Comparison
+                System Comparison
             </h3>
-            <div class="result-box" id="revealBox">
-                <!-- Filled by JS after submit -->
+            <div class="result-box" id="revealBox"></div>
+        </div>
+    </div>
+
+    <!-- TAB SWITCHER: TODAY / WEEKLY HISTORY -->
+    <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('today')">Today</button>
+        <button class="tab-btn" onclick="switchTab('weekly')">Weekly History</button>
+    </div>
+
+    <!-- TAB: TODAY'S HISTORY -->
+    <div class="tab-content active" id="tab-today">
+        <div id="historyList">
+            <div class="empty-state" id="emptyHistory">
+                <div class="icon">🧾</div>
+                <div>No cash ups recorded today</div>
             </div>
         </div>
     </div>
 
-    <!-- ═══ TODAY'S HISTORY ═══ -->
-    <h3 style="font-family:'Orbitron',monospace; font-size:0.7rem; letter-spacing:2px; color:var(--text-dim); margin: 24px 0 12px; text-transform:uppercase;">
-        Today's Cash Ups
-    </h3>
-    <div id="historyList">
-        <div class="empty-state" id="emptyHistory">
-            <div class="icon">🧾</div>
-            <div>No cash ups recorded today</div>
+    <!-- TAB: WEEKLY HISTORY -->
+    <div class="tab-content" id="tab-weekly">
+        <div class="week-nav">
+            <button onclick="shiftWeek(-1)">&larr; Previous</button>
+            <span class="week-label" id="weekLabel">Loading...</span>
+            <button onclick="shiftWeek(1)">Next &rarr;</button>
+        </div>
+        <div id="weeklyList">
+            <div class="empty-state">
+                <div class="icon">📅</div>
+                <div>Click "Weekly History" to load data</div>
+            </div>
         </div>
     </div>
 
 </div>
 
 <script>
-// ═══ DATA ═══
 const SYS_CASH = {total_cash};
 const SYS_CARD = {total_card};
 const SYS_ACCOUNT = {total_account};
@@ -625,8 +791,9 @@ const IS_MANAGER = {'true' if is_manager else 'false'};
 const TODAY_DATE = '{today()}';
 const TEAM = {team_json};
 const HISTORY = {cashups_json};
+const USER_ID = '{user_id}';
+const USER_ALREADY_SUBMITTED = {'true' if user_already_submitted else 'false'};
 
-// SA denominations
 const DENOMINATIONS = [
     {{ label: 'R200', value: 200, type: 'note' }},
     {{ label: 'R100', value: 100, type: 'note' }},
@@ -641,13 +808,15 @@ const DENOMINATIONS = [
     {{ label: '10c', value: 0.10, type: 'coin' }},
 ];
 
-// ═══ INIT ═══
+let weekOffset = 0;
+
 document.addEventListener('DOMContentLoaded', () => {{
     buildDenomGrid();
     buildTeamDropdown();
     renderHistory();
-
-    // Hide stats on load for EVERYONE — only show when X-Reading panel is opened
+    if (USER_ALREADY_SUBMITTED && !IS_MANAGER) {{
+        showSubmittedState();
+    }}
     document.getElementById('statsRow').style.display = 'none';
 }});
 
@@ -672,7 +841,6 @@ function buildTeamDropdown() {{
     }});
 }}
 
-// ═══ PANELS ═══
 let activePanel = null;
 function showPanel(id) {{
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -683,9 +851,6 @@ function showPanel(id) {{
     }}
     panel.classList.add('active');
     activePanel = id;
-
-    // Hide system stats when blind cash up is active (for everyone)
-    // Only show stats on X-Reading for managers
     if (id === 'blind' || !IS_MANAGER) {{
         document.getElementById('statsRow').style.display = 'none';
     }} else {{
@@ -693,7 +858,36 @@ function showPanel(id) {{
     }}
 }}
 
-// ═══ DENOMINATION COUNTING ═══
+function showSubmittedState(declaredTotal) {{
+    const blindBtn = document.getElementById('blindCashUpBtn');
+    if (blindBtn) {{
+        blindBtn.disabled = true;
+        blindBtn.querySelector('.btn-label').textContent = 'SUBMITTED';
+        blindBtn.querySelector('.btn-icon').textContent = '✅';
+    }}
+    const blindPanel = document.getElementById('panel-blind');
+    if (blindPanel) blindPanel.classList.remove('active');
+    activePanel = null;
+    const confirm = document.getElementById('submittedConfirm');
+    if (confirm) {{
+        let detailText = 'Your cash up has been recorded. Your manager will review the results.';
+        if (declaredTotal !== undefined) {{
+            detailText = 'Your declared total: <strong>R' + declaredTotal.toFixed(2) + '</strong><br>Your manager will review the results.';
+        }}
+        document.getElementById('confirmDetail').innerHTML = detailText;
+        confirm.style.display = 'block';
+    }}
+}}
+
+function switchTab(tab) {{
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    const btn = document.querySelector(`.tab-btn[onclick="switchTab('${{tab}}')"]`);
+    if (btn) btn.classList.add('active');
+    document.getElementById('tab-' + tab).classList.add('active');
+    if (tab === 'weekly') loadWeeklyHistory();
+}}
+
 function updateCashTotal() {{
     let total = 0;
     DENOMINATIONS.forEach((d, i) => {{
@@ -724,14 +918,12 @@ function getCashCounted() {{
     return total;
 }}
 
-// Update declared total when card/account/float changes
 document.addEventListener('input', (e) => {{
     if (['blindCard', 'blindAccount', 'blindFloat'].includes(e.target.id)) {{
         updateDeclaredTotal();
     }}
 }});
 
-// ═══ X-READING SAVE ═══
 async function saveXReading() {{
     try {{
         const resp = await fetch('/api/cashup/save', {{
@@ -758,7 +950,6 @@ async function saveXReading() {{
     }}
 }}
 
-// ═══ BLIND CASH UP ═══
 async function submitBlindCashUp() {{
     const cashier = document.getElementById('blindCashier');
     const cashierName = cashier.options[cashier.selectedIndex]?.text || '';
@@ -769,7 +960,6 @@ async function submitBlindCashUp() {{
         return;
     }}
 
-    // ═══ CHECK: Has this cashier already done a blind cashup today? ═══
     try {{
         const histResp = await fetch('/api/cashup/history?date=' + encodeURIComponent(TODAY_DATE));
         const histData = await histResp.json();
@@ -778,7 +968,7 @@ async function submitBlindCashUp() {{
                 c.type === 'blind_cashup' && c.cashier_id === cashierId
             );
             if (existing.length > 0) {{
-                alert(cashierName + ' het reeds vandag n blind cashup ingedien. Net een per kassier per dag.');
+                alert(cashierName + ' has already submitted a blind cash up today. Only one per cashier per day.');
                 return;
             }}
         }}
@@ -791,23 +981,19 @@ async function submitBlindCashUp() {{
     const cardDeclared = parseFloat(document.getElementById('blindCard').value) || 0;
     const accountDeclared = parseFloat(document.getElementById('blindAccount').value) || 0;
 
-    // Cash sales = cash counted minus the float
     const cashSalesDeclared = cashCounted - floatAmt;
     const declaredTotal = cashSalesDeclared + cardDeclared + accountDeclared;
 
-    // Calculate discrepancies
     const cashDisc = cashSalesDeclared - SYS_CASH;
     const cardDisc = cardDeclared - SYS_CARD;
     const totalDisc = declaredTotal - (SYS_CASH + SYS_CARD + SYS_ACCOUNT);
 
-    // Build denomination breakdown
     const denomBreakdown = {{}};
     DENOMINATIONS.forEach((d, i) => {{
         const qty = parseInt(document.getElementById('denom_' + i).value) || 0;
         if (qty > 0) denomBreakdown[d.label] = qty;
     }});
 
-    // ═══ SAVE FIRST — before showing anything ═══
     try {{
         const resp = await fetch('/api/cashup/save', {{
             method: 'POST',
@@ -844,17 +1030,14 @@ async function submitBlindCashUp() {{
         return;
     }}
 
-    // ═══ DISABLE ALL INPUTS — cashup is locked ═══
-    document.querySelectorAll('#panel-blind input, #panel-blind select').forEach(el => el.disabled = true);
-    document.querySelector('#panel-blind .submit-btn').style.display = 'none';
-
-    // ═══ SHOW RESULT ═══
-    const revealBox = document.getElementById('revealBox');
-    const discClass = (v) => v > 0.01 ? 'over' : v < -0.01 ? 'short' : 'match';
-    const discLabel = (v) => v > 0.01 ? '+R' + v.toFixed(2) + ' OVER' : v < -0.01 ? '-R' + Math.abs(v).toFixed(2) + ' SHORT' : 'EXACT MATCH ✓';
-
     if (IS_MANAGER) {{
-        // Managers see full comparison
+        document.querySelectorAll('#panel-blind input, #panel-blind select').forEach(el => el.disabled = true);
+        document.getElementById('submitBlindBtn').style.display = 'none';
+
+        const revealBox = document.getElementById('revealBox');
+        const discClass = (v) => v > 0.01 ? 'over' : v < -0.01 ? 'short' : 'match';
+        const discLabel = (v) => v > 0.01 ? '+R' + v.toFixed(2) + ' OVER' : v < -0.01 ? '-R' + Math.abs(v).toFixed(2) + ' SHORT' : 'EXACT MATCH';
+
         revealBox.innerHTML = `
             <div class="result-row">
                 <span class="rl">System Cash Sales</span>
@@ -897,54 +1080,173 @@ async function submitBlindCashUp() {{
             </div>
         `;
         document.getElementById('statsRow').style.display = '';
+        document.getElementById('systemReveal').classList.add('show');
+        setTimeout(() => location.reload(), 1500);
     }} else {{
-        // Staff only see confirmation — NO system totals, NO discrepancies
-        revealBox.innerHTML = `
-            <div style="text-align:center;padding:20px;">
-                <div style="font-size:2rem;margin-bottom:10px;">✅</div>
-                <div style="font-size:1.1rem;font-weight:700;color:var(--green);margin-bottom:8px;">Cash Up Submitted</div>
-                <div style="color:var(--text-dim);font-size:0.9rem;">Your declared total: <strong>R${{declaredTotal.toFixed(2)}}</strong></div>
-                <div style="color:var(--text-dim);font-size:0.85rem;margin-top:8px;">Your manager will review the results.</div>
-            </div>
-        `;
+        showSubmittedState(declaredTotal);
     }}
-
-    document.getElementById('systemReveal').classList.add('show');
 }}
 
-// ═══ HISTORY RENDER ═══
+// ═══ TODAY'S HISTORY ═══
 function renderHistory() {{
     const list = document.getElementById('historyList');
     if (!HISTORY || HISTORY.length === 0) return;
-
     document.getElementById('emptyHistory').style.display = 'none';
-
     const sorted = HISTORY.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    list.innerHTML = sorted.map(h => renderHistoryItem(h, IS_MANAGER)).join('');
+}}
+
+function renderHistoryItem(h, showManagerDetail) {{
+    const type = h.type || 'unknown';
+    const typeClass = type === 'x_reading' ? 'xread' : type === 'blind_cashup' ? 'blind' : type === 'z_reading' ? 'zread' : 'blind';
+    const typeLabel = type === 'x_reading' ? 'X-Read' : type === 'blind_cashup' ? 'Blind Cash Up' : type === 'z_reading' ? 'Z-Read' : type;
+    const time = h.created_at ? new Date(h.created_at).toLocaleTimeString() : '';
     
-    list.innerHTML = sorted.map(h => {{
-        const type = h.type || 'unknown';
-        const typeClass = type === 'x_reading' ? 'xread' : type === 'blind_cashup' ? 'blind' : 'zread';
-        const typeLabel = type === 'x_reading' ? 'X-Read' : type === 'blind_cashup' ? 'Blind Cash Up' : type;
-        const time = h.created_at ? new Date(h.created_at).toLocaleTimeString() : '';
+    let detail = '';
+    if (type === 'x_reading') {{
+        detail = `Total: <span>R${{(h.system_total || 0).toFixed(2)}}</span> | ${{h.sale_count || 0}} sales`;
+    }} else if (type === 'blind_cashup') {{
+        const disc = h.total_discrepancy || 0;
+        const discCls = disc > 0.01 ? 'disc-over' : disc < -0.01 ? 'disc-short' : 'disc-match';
+        const discTxt = disc > 0.01 ? '+R' + disc.toFixed(2) + ' over' : disc < -0.01 ? '-R' + Math.abs(disc).toFixed(2) + ' short' : 'Exact match';
+        detail = `Cashier: <span>${{h.cashier_name || '—'}}</span> | Declared: <span>R${{(h.declared_total || 0).toFixed(2)}}</span> | <span class="${{discCls}}">${{discTxt}}</span>`;
         
-        let detail = '';
-        if (type === 'x_reading') {{
-            detail = `Total: <span>R${{(h.system_total || 0).toFixed(2)}}</span> | ${{h.sale_count || 0}} sales`;
-        }} else if (type === 'blind_cashup') {{
-            const disc = h.total_discrepancy || 0;
-            const discCls = disc > 0.01 ? 'disc-over' : disc < -0.01 ? 'disc-short' : 'disc-match';
-            const discTxt = disc > 0.01 ? '+R' + disc.toFixed(2) + ' over' : disc < -0.01 ? '-R' + Math.abs(disc).toFixed(2) + ' short' : 'Exact match';
-            detail = `Cashier: <span>${{h.cashier_name || '—'}}</span> | Declared: <span>R${{(h.declared_total || 0).toFixed(2)}}</span> | <span class="${{discCls}}">${{discTxt}}</span>`;
+        if (showManagerDetail) {{
+            const cashDisc = h.cash_discrepancy || 0;
+            const cardDisc = h.card_discrepancy || 0;
+            const cDiscCls = cashDisc > 0.01 ? 'disc-over' : cashDisc < -0.01 ? 'disc-short' : 'disc-match';
+            const cdDiscCls = cardDisc > 0.01 ? 'disc-over' : cardDisc < -0.01 ? 'disc-short' : 'disc-match';
+            detail += `
+                <div class="detail-grid" style="margin-top:8px;">
+                    <div class="dl">Float</div><div class="dv">R${{(h.float_amount || 0).toFixed(2)}}</div>
+                    <div class="dl">Cash Counted</div><div class="dv">R${{(h.cash_counted || 0).toFixed(2)}}</div>
+                    <div class="dl">Cash Declared</div><div class="dv">R${{(h.cash_declared || 0).toFixed(2)}}</div>
+                    <div class="dl">System Cash</div><div class="dv">R${{(h.system_cash || 0).toFixed(2)}}</div>
+                    <div class="dl">Cash Diff</div><div class="dv ${{cDiscCls}}">${{cashDisc > 0 ? '+' : ''}}R${{cashDisc.toFixed(2)}}</div>
+                    <div class="dl">Card Declared</div><div class="dv">R${{(h.card_declared || 0).toFixed(2)}}</div>
+                    <div class="dl">System Card</div><div class="dv">R${{(h.system_card || 0).toFixed(2)}}</div>
+                    <div class="dl">Card Diff</div><div class="dv ${{cdDiscCls}}">${{cardDisc > 0 ? '+' : ''}}R${{cardDisc.toFixed(2)}}</div>
+                </div>`;
         }}
-        
-        return `<div class="history-item">
-            <div class="history-header">
-                <span class="history-type ${{typeClass}}">${{typeLabel}}</span>
-                <span class="history-time">${{time}}</span>
-            </div>
-            <div class="history-detail">${{detail}}</div>
-        </div>`;
-    }}).join('');
+    }} else if (type === 'z_reading') {{
+        const cashDiff = h.cash_difference || 0;
+        const status = h.cash_status || '';
+        const statusCls = Math.abs(cashDiff) < 0.01 ? 'disc-match' : cashDiff > 0 ? 'disc-over' : 'disc-short';
+        detail = `Day closed | System: <span>R${{(h.system_total || 0).toFixed(2)}}</span> | ${{h.sale_count || 0}} sales`;
+        if (h.cash_counted) {{
+            detail += ` | Cash counted: <span>R${{(h.cash_counted || 0).toFixed(2)}}</span> | <span class="${{statusCls}}">${{status || (Math.abs(cashDiff) < 0.01 ? 'Balanced' : 'R' + Math.abs(cashDiff).toFixed(2) + (cashDiff > 0 ? ' over' : ' short'))}}</span>`;
+        }}
+        if (showManagerDetail && h.created_by_name) {{
+            detail += ` | Closed by: <span>${{h.created_by_name}}</span>`;
+        }}
+    }}
+    
+    return `<div class="history-item">
+        <div class="history-header">
+            <span class="history-type ${{typeClass}}">${{typeLabel}}</span>
+            <span class="history-time">${{time}}</span>
+        </div>
+        <div class="history-detail">${{detail}}</div>
+    </div>`;
+}}
+
+// ═══ WEEKLY HISTORY ═══
+async function loadWeeklyHistory() {{
+    const weeklyList = document.getElementById('weeklyList');
+    weeklyList.innerHTML = '<div class="empty-state"><div class="icon">⏳</div><div>Loading...</div></div>';
+
+    const today = new Date();
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 6 + (weekOffset * 7));
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + 6);
+
+    const startStr = startDate.toISOString().split('T')[0];
+    const endStr = endDate.toISOString().split('T')[0];
+
+    const fmtDate = (d) => d.toLocaleDateString('en-ZA', {{ day: 'numeric', month: 'short' }});
+    document.getElementById('weekLabel').textContent = fmtDate(startDate) + ' — ' + fmtDate(endDate);
+
+    try {{
+        const resp = await fetch(`/api/cashup/weekly?start=${{startStr}}&end=${{endStr}}`);
+        const data = await resp.json();
+        if (!data.success) {{
+            weeklyList.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div>Failed to load</div></div>';
+            return;
+        }}
+
+        const records = data.cash_ups || [];
+        if (records.length === 0) {{
+            weeklyList.innerHTML = '<div class="empty-state"><div class="icon">📅</div><div>No cash ups this week</div></div>';
+            return;
+        }}
+
+        const byDate = {{}};
+        records.forEach(r => {{
+            const d = r.date || 'Unknown';
+            if (!byDate[d]) byDate[d] = [];
+            byDate[d].push(r);
+        }});
+
+        const sortedDates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+
+        weeklyList.innerHTML = sortedDates.map(dateStr => {{
+            const dayRecords = byDate[dateStr];
+            const blindCount = dayRecords.filter(r => r.type === 'blind_cashup').length;
+            const xCount = dayRecords.filter(r => r.type === 'x_reading').length;
+            const zCount = dayRecords.filter(r => r.type === 'z_reading').length;
+            
+            let parts = [];
+            if (blindCount > 0) parts.push(blindCount + ' blind');
+            if (xCount > 0) parts.push(xCount + ' X-read');
+            if (zCount > 0) parts.push(zCount + ' Z-read');
+            const summary = parts.join(', ') || 'No records';
+
+            const dt = new Date(dateStr + 'T00:00:00');
+            const dayName = dt.toLocaleDateString('en-ZA', {{ weekday: 'short', day: 'numeric', month: 'short' }});
+
+            const totalDisc = dayRecords.filter(r => r.type === 'blind_cashup')
+                .reduce((sum, r) => sum + (r.total_discrepancy || 0), 0);
+            let discBadge = '';
+            if (blindCount > 0) {{
+                if (Math.abs(totalDisc) < 0.01) {{
+                    discBadge = '<span style="color:var(--green);margin-left:8px;font-size:0.8rem;">✓</span>';
+                }} else if (totalDisc > 0) {{
+                    discBadge = '<span style="color:var(--green);margin-left:8px;font-size:0.8rem;">+R' + totalDisc.toFixed(2) + '</span>';
+                }} else {{
+                    discBadge = '<span style="color:var(--red);margin-left:8px;font-size:0.8rem;">-R' + Math.abs(totalDisc).toFixed(2) + '</span>';
+                }}
+            }}
+
+            const items = dayRecords.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+                .map(r => renderHistoryItem(r, IS_MANAGER)).join('');
+
+            return `<div class="day-group">
+                <div class="day-header" onclick="toggleDay(this)">
+                    <div>
+                        <span class="day-date">${{dayName}}</span>
+                        <span class="day-summary" style="margin-left:12px;">${{summary}}${{discBadge}}</span>
+                    </div>
+                    <span class="day-arrow">▼</span>
+                </div>
+                <div class="day-body">${{items}}</div>
+            </div>`;
+        }}).join('');
+
+    }} catch(e) {{
+        weeklyList.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div>Error: ' + e.message + '</div></div>';
+    }}
+}}
+
+function toggleDay(header) {{
+    header.classList.toggle('open');
+    header.nextElementSibling.classList.toggle('open');
+}}
+
+function shiftWeek(dir) {{
+    weekOffset += dir;
+    if (weekOffset > 0) {{ weekOffset = 0; return; }}
+    loadWeeklyHistory();
 }}
 </script>
 
@@ -1012,7 +1314,6 @@ function renderHistory() {{
                 })
 
             elif cashup_type == "z_reading":
-                # Strip R prefix, commas, spaces from cash values (frontend sends formatted text like "R2,504.00")
                 def _clean_money(val):
                     if isinstance(val, (int, float)):
                         return float(val)
@@ -1052,12 +1353,12 @@ function renderHistory() {{
 
 
     # ═══════════════════════════════════════════════════════════════
-    # CASH UP HISTORY API
+    # CASH UP HISTORY API (single day)
     # ═══════════════════════════════════════════════════════════════
     @app.route("/api/cashup/history")
     @login_required
     def api_cashup_history():
-        """Get cash up history"""
+        """Get cash up history for a single date"""
         business = Auth.get_current_business()
         biz_id = business.get("id") if business else None
 
@@ -1067,4 +1368,40 @@ function renderHistory() {{
         records = db.get("cash_ups", {"business_id": biz_id, "date": date_filter}) if biz_id else []
         return jsonify({"success": True, "cash_ups": records or []})
 
-    logger.info("[CASHUP] Cash Up module loaded - routes: /cashup, /api/cashup/save, /api/cashup/history")
+
+    # ═══════════════════════════════════════════════════════════════
+    # CASH UP WEEKLY HISTORY API (date range)
+    # ═══════════════════════════════════════════════════════════════
+    @app.route("/api/cashup/weekly")
+    @login_required
+    def api_cashup_weekly():
+        """Get cash up history for a date range (up to 7 days)"""
+        business = Auth.get_current_business()
+        biz_id = business.get("id") if business else None
+
+        from flask import request as req, jsonify
+
+        start_date = req.args.get("start", "")
+        end_date = req.args.get("end", "")
+
+        if not start_date or not end_date or not biz_id:
+            return jsonify({"success": False, "error": "Missing start/end date or business"})
+
+        try:
+            all_records = db.get("cash_ups", {"business_id": biz_id}) or []
+            
+            filtered = [
+                r for r in all_records
+                if start_date <= (r.get("date") or "") <= end_date
+            ]
+
+            filtered.sort(key=lambda r: (r.get("date", ""), r.get("created_at", "")), reverse=True)
+
+            return jsonify({"success": True, "cash_ups": filtered})
+
+        except Exception as e:
+            logger.error(f"[CASHUP] Weekly history error: {e}")
+            return jsonify({"success": False, "error": str(e)})
+
+
+    logger.info("[CASHUP] Cash Up module loaded - routes: /cashup, /api/cashup/save, /api/cashup/history, /api/cashup/weekly")
